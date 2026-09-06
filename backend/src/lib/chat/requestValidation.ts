@@ -128,17 +128,24 @@ function parseMessageFiles(
 
     let versionNumber: number | undefined;
     if (file.version_number !== undefined) {
-      if (
-        typeof file.version_number !== "number" ||
-        !Number.isInteger(file.version_number) ||
-        file.version_number < 1
-      ) {
+      // Tolerate integer-valued strings ("15", "15.0"): document pickers can
+      // carry version numbers that crossed a storage boundary as text (the
+      // SQLite provider stores them as TEXT), and rejecting those turned
+      // every attach into an opaque 400.
+      const raw = file.version_number;
+      const coerced =
+        typeof raw === "number"
+          ? raw
+          : typeof raw === "string" && /^\d+(\.\d+)?$/.test(raw.trim())
+            ? Number(raw.trim())
+            : NaN;
+      if (!Number.isInteger(coerced) || coerced < 1) {
         return {
           ok: false,
           detail: `messages[${messageIndex}].files[${fileIndex}].version_number must be a positive integer`,
         };
       }
-      versionNumber = file.version_number;
+      versionNumber = coerced;
     }
 
     files.push({

@@ -1,9 +1,9 @@
 import crypto from "node:crypto";
 import type { Session } from "@supabase/supabase-js";
-import { createServerSupabase } from "./supabase";
+import { createServerDatabase, type ServerDatabase } from "./database";
 import { authHandoffEncryptionSecret } from "./runtimeConfig";
 
-type Db = ReturnType<typeof createServerSupabase>;
+type Db = ServerDatabase;
 
 const HANDOFF_TABLE = "auth_handoff_tickets";
 const DEFAULT_TTL_SECONDS = 120;
@@ -124,7 +124,7 @@ export async function issueAuthHandoff(input: {
   session: Session;
   db?: Db;
 }): Promise<string> {
-  const db = input.db ?? createServerSupabase();
+  const db = input.db ?? createServerDatabase();
   const ticket = crypto.randomBytes(32).toString("base64url");
   const hash = ticketHash(ticket);
   const context = {
@@ -162,7 +162,7 @@ export async function consumeAuthHandoff(input: {
   origin: string;
   db?: Db;
 }): Promise<ConsumedAuthHandoff | null> {
-  const db = input.db ?? createServerSupabase();
+  const db = input.db ?? createServerDatabase();
   const consumedAt = new Date().toISOString();
   const { data, error } = await db
     .from(HANDOFF_TABLE)

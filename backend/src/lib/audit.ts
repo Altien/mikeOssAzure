@@ -2,9 +2,9 @@
 // migration). Fire-and-forget by design: recording an event must NEVER throw
 // or block the user-facing path — failures are logged and swallowed.
 
-import type { createServerSupabase } from "./supabase";
+import type { ServerDatabase } from "./database";
 
-type Db = ReturnType<typeof createServerSupabase>;
+type Db = ServerDatabase;
 
 export type AuditStatus = "completed" | "cancelled" | "failed";
 

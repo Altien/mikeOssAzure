@@ -4,9 +4,10 @@ import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { ChatInput } from "./ChatInput";
 
 vi.mock("@/app/lib/mikeApi", () => ({
-    listWorkflows: vi.fn(async () => []),
-    uploadProjectDocument: vi.fn(),
-    uploadStandaloneDocument: vi.fn(),
+     listWorkflows: vi.fn(async () => []),
+     getConfiguredModels: vi.fn(async () => []),
+     uploadProjectDocument: vi.fn(),
+     uploadStandaloneDocument: vi.fn(),
 }));
 
 vi.mock("@/app/contexts/UserProfileContext", () => ({
@@ -66,10 +67,13 @@ class ResizeObserverMock {
 function emptyApiKeys() {
     return {
         claude: { configured: false, source: null },
+        kimi: { configured: false, source: null },
         gemini: { configured: false, source: null },
         openai: { configured: false, source: null },
         openrouter: { configured: false, source: null },
         vercel: { configured: false, source: null },
+        "opencode-go": { configured: false, source: null },
+        synthetic: { configured: false, source: null },
         courtlistener: { configured: false, source: null },
     };
 }
@@ -80,6 +84,7 @@ function mockProfile(apiKeysDegraded: boolean) {
             openRouterModels: [],
             vercelModels: [],
             openCodeGoModels: [],
+            syntheticModels: [],
             lastSelectedChatModel: "gpt-5.6-luna",
             lastSelectedReasoningLevel: "high",
             apiKeys: emptyApiKeys(),

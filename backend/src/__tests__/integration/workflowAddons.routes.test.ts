@@ -7,8 +7,8 @@ const { from, eq } = vi.hoisted(() => ({
   eq: vi.fn(),
 }));
 
-vi.mock("../../lib/supabase", () => ({
-  createServerSupabase: () => ({ from }),
+vi.mock("../../lib/database", () => ({
+  createServerDatabase: () => ({ from }),
 }));
 
 vi.mock("../../middleware/auth", () => ({

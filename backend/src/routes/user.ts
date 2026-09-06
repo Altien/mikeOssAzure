@@ -577,6 +577,9 @@ const ROUTER_MODEL_ID_RE: Record<RouterSlug, RegExp> = {
     openrouter: CATALOG_MODEL_ID_RE,
     vercel: CATALOG_MODEL_ID_RE,
     "opencode-go": /^[^\s]+$/,
+    // Synthetic ids carry family prefixes and, for pinned ids, a vendor path:
+    // "syn:large:text" and "hf:zai-org/GLM-5.2".
+    synthetic: /^[^\s]+$/,
 };
 
 /**
@@ -587,6 +590,7 @@ export const ROUTER_PROFILE_FIELDS: Record<RouterSlug, string> = {
     openrouter: "openRouterModels",
     vercel: "vercelModels",
     "opencode-go": "openCodeGoModels",
+    synthetic: "syntheticModels",
 };
 
 export function normalizeRouterModels(

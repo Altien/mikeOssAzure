@@ -14,6 +14,7 @@ import {
   updateLegalMonitor,
   type LegalMonitorInput,
   type LegalMonitorSourceType,
+  normalizeSeverity,
 } from "../lib/legalMonitors";
 import { configuredModelSummaries } from "../lib/llm/registry";
 import {
@@ -78,6 +79,8 @@ function readInput(body: unknown): LegalMonitorInput {
     alertEmail: typeof value.alertEmail === "string" ? value.alertEmail : null,
     emailEnabled: value.emailEnabled === true,
     knowledgeCaptureEnabled: value.knowledgeCaptureEnabled === true,
+    // Unset means 'low', which filters nothing — the pre-threshold behaviour.
+    materialityThreshold: normalizeSeverity(value.materialityThreshold ?? "low"),
     enabled: value.enabled !== false,
   };
 }

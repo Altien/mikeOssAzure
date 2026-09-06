@@ -18,6 +18,15 @@ import { useOpenCodeGoModels } from "@/app/hooks/useOpenCodeGoModels";
 export type ModelOption = ModelToggleOption;
 export type { ReasoningLevel };
 
+function dedupeById(options: ModelOption[]): ModelOption[] {
+    const seen = new Set<string>();
+    return options.filter((option) => {
+        if (seen.has(option.id)) return false;
+        seen.add(option.id);
+        return true;
+    });
+}
+
 export const MODELS: ModelOption[] = [
     { id: "claude-fable-5", label: "Claude Fable 5", group: "Anthropic" },
     { id: "claude-opus-5", label: "Claude Opus 5", group: "Anthropic" },
@@ -200,7 +209,12 @@ export function useConfiguredModelOptions(
  * Router slugs, which double as model-id prefixes and API-key provider names.
  * Kept in sync with backend/src/lib/routerModels.ts ROUTER_SLUGS.
  */
-export const ROUTER_SLUGS = ["openrouter", "vercel", "opencode-go"] as const;
+export const ROUTER_SLUGS = [
+  "openrouter",
+  "vercel",
+  "opencode-go",
+  "synthetic",
+] as const;
 export type RouterSlug = (typeof ROUTER_SLUGS)[number];
 
 const ROUTER_VENDOR_GROUPS: Record<string, string> = {
@@ -270,6 +284,7 @@ interface Props {
   openRouterModels?: string[];
   vercelModels?: string[];
   openCodeGoModels?: string[];
+  syntheticModels?: string[];
   compact?: boolean;
   /** Render as a full-width liquid-glass control inside a modal form. */
   modalInput?: boolean;
@@ -319,6 +334,30 @@ export function openCodeGoModelOptions(models: string[]): ModelOption[] {
   }));
 }
 
+/**
+ * Synthetic ids come in two families: pinned "hf:<vendor>/<model>" ids and
+ * floating "syn:<size>:<capability>" aliases. Trim the pin prefix and render
+ * aliases by segment so the composer does not show "Syn (Large:text)".
+ */
+export function syntheticModelDisplayName(model: string): string {
+  if (model.startsWith("syn:")) {
+    const [size, ...rest] = model.slice("syn:".length).split(":");
+    if (!size) return model;
+    const name = modelDisplayName(size);
+    return rest.length ? `${name} (${rest.join(", ")})` : name;
+  }
+  return modelDisplayName(model.replace(/^hf:/, ""));
+}
+
+export function syntheticModelOptions(models: string[]): ModelOption[] {
+  return models.map((model) => ({
+    id: `synthetic/${model}`,
+    label: syntheticModelDisplayName(model),
+    group: "Synthetic",
+    source: "Synthetic",
+  }));
+}
+
 export function ModelToggle({
   value,
   onChange,
@@ -327,6 +366,7 @@ export function ModelToggle({
   openRouterModels = [],
   vercelModels = [],
   openCodeGoModels = [],
+  syntheticModels = [],
   compact = false,
   modalInput = false,
   onNoModelsClick,
@@ -334,17 +374,22 @@ export function ModelToggle({
   onReasoningChange,
 }: Props) {
   const ollamaModels = useOllamaModels();
-  const models = [
-    ...MODELS,
+  // Reuse the configured-model merge (static catalog + configured registry
+  // models + Ollama + OpenCode Go) so deployment-configured models like a
+  // local Qwen server appear in the Assistant composer, not just in settings.
+  const configuredBase = useConfiguredModelOptions(MODELS);
+  const models = dedupeById([
+    ...configuredBase,
     ...openRouterModelOptions(openRouterModels),
     ...vercelModelOptions(vercelModels),
     ...openCodeGoModelOptions(openCodeGoModels),
+    ...syntheticModelOptions(syntheticModels),
     ...ollamaModels.map((model) => ({
       ...model,
       label: modelDisplayName(model.id),
       source: "Local",
     })),
-  ];
+  ]);
   const availableModels = models.filter((model) => {
     if (model.group === "Local") return true;
     if (apiKeysLoading) return false; // nothing offered until known
@@ -374,6 +419,7 @@ export function ModelToggle({
     openrouter: openRouterModels,
     vercel: vercelModels,
     "opencode-go": openCodeGoModels,
+    synthetic: syntheticModels,
   });
   return (
     <ModelToggleUI

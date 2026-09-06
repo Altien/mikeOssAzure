@@ -53,6 +53,39 @@ describe("chat request validation", () => {
         });
     });
 
+    it("coerces integer-valued string version numbers", () => {
+        // Document pickers can carry version numbers that crossed a TEXT
+        // storage boundary (the SQLite provider); they must not 400.
+        expect(
+            parseChatMessages([
+                {
+                    role: "user",
+                    content: "hello",
+                    files: [
+                        {
+                            filename: "contract.pdf",
+                            document_id: "d1",
+                            version_number: "15.0" as unknown as number,
+                        },
+                    ],
+                },
+            ]),
+        ).toMatchObject({
+            ok: true,
+            value: [
+                {
+                    files: [
+                        {
+                            filename: "contract.pdf",
+                            document_id: "d1",
+                            version_number: 15,
+                        },
+                    ],
+                },
+            ],
+        });
+    });
+
     it.each([
         [undefined, "messages must be a non-empty array"],
         [[], "messages must be a non-empty array"],
@@ -96,6 +129,18 @@ describe("chat request validation", () => {
                     role: "user",
                     content: "hello",
                     files: [{ filename: "contract.pdf", version_number: 0 }],
+                },
+            ],
+            "messages[0].files[0].version_number must be a positive integer",
+        ],
+        [
+            [
+                {
+                    role: "user",
+                    content: "hello",
+                    files: [
+                        { filename: "contract.pdf", version_number: "abc" },
+                    ],
                 },
             ],
             "messages[0].files[0].version_number must be a positive integer",

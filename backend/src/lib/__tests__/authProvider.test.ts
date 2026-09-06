@@ -2,14 +2,11 @@ import { describe, expect, it } from "vitest";
 import { resolveAuthProvider } from "../authProvider";
 
 describe("auth provider selection", () => {
-  it("defaults fresh deployments to Supabase Auth", () => {
-    expect(resolveAuthProvider({})).toBe("supabase");
+  it("defaults fresh deployments to local auth", () => {
+    expect(resolveAuthProvider({})).toBe("local");
   });
 
-  it("honors explicit Supabase and local providers", () => {
-    expect(resolveAuthProvider({ MIKE_AUTH_PROVIDER: "supabase" })).toBe(
-      "supabase",
-    );
+  it("honors the explicit local provider", () => {
     expect(resolveAuthProvider({ MIKE_AUTH_PROVIDER: "LOCAL" })).toBe("local");
   });
 
@@ -26,5 +23,11 @@ describe("auth provider selection", () => {
     expect(() => resolveAuthProvider({ MIKE_AUTH_PROVIDER: "oauth" })).toThrow(
       'Unsupported MIKE_AUTH_PROVIDER "oauth"',
     );
+  });
+
+  it("rejects the removed Supabase provider", () => {
+    expect(() =>
+      resolveAuthProvider({ MIKE_AUTH_PROVIDER: "supabase" }),
+    ).toThrow('Unsupported MIKE_AUTH_PROVIDER "supabase"');
   });
 });

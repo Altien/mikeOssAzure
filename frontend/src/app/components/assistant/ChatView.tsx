@@ -33,6 +33,7 @@ import { invalidateDocxBytes } from "@/app/hooks/useFetchDocxBytes";
 import { useSelectedModel } from "@/app/hooks/useSelectedModel";
 import { resolvePanelDocumentVersion } from "./panelDocumentVersion";
 import { LIQUID_GLASS_TRANSLUCENT_ACTION_CLASS } from "@/app/components/ui/liquid-surface";
+import { speakWithBrowser } from "@/app/lib/browserSpeech";
 
 interface Props {
     chatId?: string | null;
@@ -102,6 +103,41 @@ export function ChatView({
     const [reloadingEditIds, setReloadingEditIds] = useState<Set<string>>(
         () => new Set(),
     );
+    const lastSpokenMessageIdRef = useRef<string | null>(null);
+    const cancelSpeechRef = useRef<(() => void) | null>(null);
+
+    const speakResponse = useCallback((text: string) => {
+        if (!text || cancelSpeechRef.current) return;
+
+        const finish = () => {
+            cancelSpeechRef.current = null;
+        };
+        try {
+            cancelSpeechRef.current = speakWithBrowser(text, {
+                onEnd: finish,
+                onError: (event) => {
+                    console.error("Browser text-to-speech failed", {
+                        error: event.error,
+                    });
+                    finish();
+                },
+            });
+        } catch (error) {
+            console.warn(
+                error instanceof Error
+                    ? error.message
+                    : "Text-to-speech is unavailable.",
+            );
+            finish();
+        }
+    }, []);
+
+    useEffect(() => {
+        return () => {
+            cancelSpeechRef.current?.();
+            cancelSpeechRef.current = null;
+        };
+    }, []);
     const { setSidebarOpen } = useSidebar();
     const panelCloseTimerRef = useRef<number | null>(null);
     const activeTab = tabs.find((tab) => tab.id === activeTabId);
@@ -474,6 +510,22 @@ export function ChatView({
         },
         [patchTab],
     );
+
+    // Speak each completed assistant response once.
+    useEffect(() => {
+        const lastMessage = messages[messages.length - 1];
+        if (
+            lastMessage?.role === "assistant" &&
+            !isResponseLoading &&
+            lastMessage.id &&
+            lastMessage.id !== lastSpokenMessageIdRef.current &&
+            lastMessage.content &&
+            !cancelSpeechRef.current
+        ) {
+            speakResponse(lastMessage.content);
+            lastSpokenMessageIdRef.current = lastMessage.id;
+        }
+    }, [messages, isResponseLoading, speakResponse]);
 
     const messagesContainerRef = useRef<HTMLDivElement>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);

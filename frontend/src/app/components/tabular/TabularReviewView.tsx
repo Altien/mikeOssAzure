@@ -1033,8 +1033,11 @@ export function TRView({ reviewId, projectId }: Props) {
                                                 profile?.openRouterModels
                                             }
                                             vercelModels={profile?.vercelModels}
-                                            openCodeGoModels={
+                                             openCodeGoModels={
                                                 profile?.openCodeGoModels
+                                            }
+                                            syntheticModels={
+                                                profile?.syntheticModels
                                             }
                                             onNoModelsClick={setNoModelsWarning}
                                         />

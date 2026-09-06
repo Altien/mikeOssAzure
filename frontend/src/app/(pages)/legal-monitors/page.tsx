@@ -57,9 +57,13 @@ import {
     type LegalMonitorRun,
     type LegalMonitorSourceInput,
     type LegalMonitorSourceType,
+    LEGAL_MONITOR_SEVERITIES,
+    type LegalMonitorSeverity,
 } from "@/app/lib/mikeApi";
 
-const DEFAULT_MODEL = "gemini-3-flash-preview";
+// No hardcoded provider default: the monitor form requires an explicit
+    // pick before saving (see canSave).
+const DEFAULT_MODEL = "";
 
 const EMPTY_DRAFT: LegalMonitorInput = {
     name: "",
@@ -77,6 +81,7 @@ const EMPTY_DRAFT: LegalMonitorInput = {
     alertEmail: null,
     emailEnabled: false,
     knowledgeCaptureEnabled: false,
+    materialityThreshold: "low",
     enabled: true,
 };
 
@@ -100,6 +105,26 @@ function intervalLabel(hours: number) {
     if (hours === 336) return "Every 2 weeks";
     if (hours === 720) return "Monthly";
     return `Every ${hours / 24} days`;
+}
+
+const SEVERITY_LABEL: Record<LegalMonitorSeverity, string> = {
+    critical: "Critical",
+    high: "High",
+    medium: "Medium",
+    low: "Low",
+};
+
+// Colour reinforces the ranking; the word carries it, so the meaning survives
+// for anyone who cannot separate these hues.
+const SEVERITY_TEXT_CLASS: Record<LegalMonitorSeverity, string> = {
+    critical: "text-red-700",
+    high: "text-amber-700",
+    medium: "text-gray-600",
+    low: "text-gray-400",
+};
+
+function severityLabel(severity: LegalMonitorSeverity) {
+    return SEVERITY_LABEL[severity] ?? SEVERITY_LABEL.medium;
 }
 
 function sourceTypeLabel(source: LegalMonitorSourceType) {
@@ -130,6 +155,7 @@ function draftFromMonitor(monitor: LegalMonitor): LegalMonitorInput {
         alertEmail: monitor.alertEmail,
         emailEnabled: monitor.emailEnabled,
         knowledgeCaptureEnabled: monitor.knowledgeCaptureEnabled,
+        materialityThreshold: monitor.materialityThreshold,
         enabled: monitor.enabled,
     };
 }
@@ -620,6 +646,7 @@ export default function LegalMonitorsPage() {
 
                         <section className="grid gap-4 border-t border-gray-200 pt-4 sm:grid-cols-2 lg:grid-cols-3">
                             <div><ModalFieldLabel htmlFor="monitor-items">Maximum items per run</ModalFieldLabel><ModalSelect id="monitor-items" value={String(draft.maxItemsPerRun)} options={[10, 25, 50, 100].map((count) => ({ value: String(count), label: String(count) }))} onChange={(value) => setDraft((current) => ({ ...current, maxItemsPerRun: Number(value) }))} /></div>
+                            <div><ModalFieldLabel htmlFor="monitor-threshold">Alert threshold</ModalFieldLabel><ModalSelect id="monitor-threshold" value={draft.materialityThreshold} options={LEGAL_MONITOR_SEVERITIES.map((severity) => ({ value: severity, label: `${severityLabel(severity)} and above` }))} onChange={(value) => setDraft((current) => ({ ...current, materialityThreshold: value as LegalMonitorSeverity }))} /><p className="mt-1 text-xs text-gray-400">Every development is recorded and ranked. Only those at or above this level are emailed.</p></div>
                             <div className="sm:col-span-2"><ToggleRow label="Email material updates" icon={<Mail className="h-4 w-4" />} checked={draft.emailEnabled} disabled={!configuration?.emailAvailable} onChange={(checked) => setDraft((current) => ({ ...current, emailEnabled: checked }))} />{draft.emailEnabled && <div className="mt-2"><ModalTextInput id="monitor-email" type="email" value={draft.alertEmail ?? ""} onChange={(event) => setDraft((current) => ({ ...current, alertEmail: event.target.value }))} /></div>}</div>
                             <div className="sm:col-span-2 lg:col-span-3"><ToggleRow label="Save run reports to Library" icon={<LibraryBig className="h-4 w-4" />} checked={draft.knowledgeCaptureEnabled} onChange={(checked) => setDraft((current) => ({ ...current, knowledgeCaptureEnabled: checked }))} />{draft.knowledgeCaptureEnabled && <p className="mt-1 text-xs text-gray-500">A living Markdown knowledgebase is kept in Library &rsaquo; Legal Monitors. Each run weaves new developments into it — valid prior knowledge is kept, superseded facts are corrected — and the assistant can read it or you can attach it as monitor context.</p>}</div>
                         </section>
@@ -736,7 +763,7 @@ function ToggleRow({ label, icon, checked, disabled, onChange }: { label: string
 
 function RunReport({ run }: { run: LegalMonitorRun }) {
     const sourceErrors = run.sourceErrors ?? [];
-    return <div><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-medium text-gray-400">{dateTime(run.completedAt)}</p><h2 className="mt-1 font-serif text-xl text-gray-900">{run.hasMaterialUpdates ? `${run.developments.length} material development${run.developments.length === 1 ? "" : "s"}` : "No material updates"}</h2></div><div className="flex flex-wrap gap-2 text-xs text-gray-500"><span className="rounded-md bg-gray-100 px-2 py-1">{run.sourceItemCount} source items</span>{run.toolCalls > 0 && <span className="rounded-md bg-gray-100 px-2 py-1">{run.toolCalls} connector calls</span>}{run.emailStatus === "sent" && <span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-700">Alert sent</span>}</div></div>{run.error && <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{run.error}</div>}{sourceErrors.length > 0 && <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><p className="font-semibold">Source errors</p>{sourceErrors.map((sourceError) => <p key={sourceError} className="mt-1 break-words">{sourceError}</p>)}</div>}{run.summary && <p className="mt-4 text-sm font-medium leading-6 text-gray-700">{run.summary}</p>}{run.developments.length > 0 && <div className="mt-5 divide-y divide-gray-100 border-y border-gray-200">{run.developments.map((development, index) => <div key={`${development.url ?? development.title}-${index}`} className="py-4"><div className="flex flex-wrap items-start justify-between gap-2"><h3 className="text-sm font-semibold text-gray-800">{development.title}</h3>{development.url && <a href={development.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-blue-600">Source<ExternalLink className="h-3 w-3" /></a>}</div><p className="mt-1 text-xs text-gray-400">{[development.sourceName, development.citation, development.date].filter(Boolean).join(" · ")}</p><p className="mt-2 text-sm leading-6 text-gray-600">{development.whyItMatters}</p></div>)}</div>}{run.report && <div className="legal-monitor-markdown prose prose-sm mt-6 max-w-none font-serif text-gray-800"><ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={(url) => defaultUrlTransform(url)}>{run.report}</ReactMarkdown></div>}</div>;
+    return <div><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-medium text-gray-400">{dateTime(run.completedAt)}</p><h2 className="mt-1 font-serif text-xl text-gray-900">{run.hasMaterialUpdates ? `${run.developments.length} material development${run.developments.length === 1 ? "" : "s"}${run.developments.length ? ` · highest ${severityLabel(run.developments[0].severity).toLowerCase()}` : ""}` : "No material updates"}</h2></div><div className="flex flex-wrap gap-2 text-xs text-gray-500"><span className="rounded-md bg-gray-100 px-2 py-1">{run.sourceItemCount} source items</span>{run.toolCalls > 0 && <span className="rounded-md bg-gray-100 px-2 py-1">{run.toolCalls} connector calls</span>}{run.emailStatus === "sent" && <span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-700">Alert sent</span>}</div></div>{run.error && <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{run.error}</div>}{sourceErrors.length > 0 && <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><p className="font-semibold">Source errors</p>{sourceErrors.map((sourceError) => <p key={sourceError} className="mt-1 break-words">{sourceError}</p>)}</div>}{run.summary && <p className="mt-4 text-sm font-medium leading-6 text-gray-700">{run.summary}</p>}{run.developments.length > 0 && <div className="mt-5 divide-y divide-gray-100 border-y border-gray-200">{run.developments.map((development, index) => <div key={`${development.url ?? development.title}-${index}`} className="py-4"><div className="flex flex-wrap items-start justify-between gap-2"><h3 className="text-sm font-semibold text-gray-800">{development.title}</h3>{development.url && <a href={development.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-blue-600">Source<ExternalLink className="h-3 w-3" /></a>}</div><p className="mt-1 text-xs text-gray-400"><span className={cn("font-medium", SEVERITY_TEXT_CLASS[development.severity] ?? SEVERITY_TEXT_CLASS.medium)}>{severityLabel(development.severity)}</span>{[development.sourceName, development.citation, development.date].filter(Boolean).length > 0 && <span> · {[development.sourceName, development.citation, development.date].filter(Boolean).join(" · ")}</span>}{typeof development.confidence === "number" && development.confidence < 0.5 && <span> · low confidence</span>}</p>{development.unverified?.length > 0 && <p className="mt-1 text-xs text-amber-700">Unverified: {development.unverified.join("; ")}. Check the linked source before relying on this.</p>}<p className="mt-2 text-sm leading-6 text-gray-600">{development.whyItMatters}</p></div>)}</div>}{run.report && <div className="legal-monitor-markdown prose prose-sm mt-6 max-w-none font-serif text-gray-800"><ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={(url) => defaultUrlTransform(url)}>{run.report}</ReactMarkdown></div>}</div>;
 }
 
 function StatusPill({ monitor, running }: { monitor: LegalMonitor; running: boolean }) {

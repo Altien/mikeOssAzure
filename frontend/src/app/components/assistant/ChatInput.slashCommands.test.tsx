@@ -8,6 +8,7 @@ import { ChatInput, type ChatInputHandle } from "./ChatInput";
 
 vi.mock("@/app/lib/mikeApi", () => ({
     listWorkflows: vi.fn(),
+    getConfiguredModels: vi.fn(async () => []),
     uploadProjectDocument: vi.fn(),
     uploadStandaloneDocument: vi.fn(),
 }));

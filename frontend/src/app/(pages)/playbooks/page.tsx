@@ -32,6 +32,36 @@ function newRule(index: number): PlaybookRule {
 function newPosition(name: string): PlaybookPosition { return { name, criteria: "", sampleClauses: [] }; }
 function newClause(): PlaybookClause { return { text: "", usage: "illustrative", sourceRefs: [] }; }
 
+async function extractReviewText(file: File): Promise<string> {
+  const lower = file.name.toLowerCase();
+  if (lower.endsWith(".docx")) {
+    return (await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() })).value;
+  }
+  if (lower.endsWith(".pdf")) {
+    const pdfjs = await import("pdfjs-dist");
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+      "pdfjs-dist/build/pdf.worker.min.mjs",
+      import.meta.url,
+    ).toString();
+    const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
+    const pages: string[] = [];
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const content = await page.getTextContent();
+      pages.push(
+        (content.items as Array<{ str?: string }>)
+          .map((item) => item.str ?? "")
+          .join(" "),
+      );
+    }
+    return pages.map((text, index) => `[Page ${index + 1}]\n${text}`).join("\n\n");
+  }
+  return file.text();
+}
+
+const DEFAULT_REVIEW_INSTRUCTIONS =
+  "Run a complete playbook review. Prioritize unacceptable and missing-required terms, quote exact contract language, and provide complete replacement language for issues that need revision.";
+
 export default function PlaybooksPage() {
   const { profile } = useUserProfile();
   const configuredModelOptions = useConfiguredModelOptions(SETTINGS_MODELS);
@@ -51,6 +81,7 @@ export default function PlaybooksPage() {
   const [model, setModel] = useState("");
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewFile, setReviewFile] = useState<File | null>(null);
+  const [reviewInstructions, setReviewInstructions] = useState(DEFAULT_REVIEW_INSTRUCTIONS);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [reviewMode, setReviewMode] = useState<"strict" | "permissive">("strict");
   const [run, setRun] = useState<PlaybookRun | null>(null);
@@ -136,10 +167,8 @@ export default function PlaybooksPage() {
     if (!selected || !reviewFile) return;
     setBusy("review"); setError(null); setReviewError(null);
     try {
-      const documentText = reviewFile.name.toLowerCase().endsWith(".docx")
-        ? (await mammoth.extractRawText({ arrayBuffer: await reviewFile.arrayBuffer() })).value
-        : await reviewFile.text();
-      const result = await reviewDocumentWithPlaybook(selected.id, { documentText, documentName: reviewFile.name, model, reviewMode });
+      const documentText = await extractReviewText(reviewFile);
+      const result = await reviewDocumentWithPlaybook(selected.id, { documentText, documentName: reviewFile.name, instructions: reviewInstructions, model, reviewMode });
       setRun(result); setReviewOpen(false);
     } catch (err) { setReviewError(err instanceof Error ? err.message : "Review failed."); }
     finally { setBusy(null); }
@@ -181,7 +210,7 @@ export default function PlaybooksPage() {
       </main>
     </div>
     <Modal open={importOpen} onClose={() => { if (busy !== "import") { setImportOpen(false); setImportError(null); } }} size="sm" breadcrumbs={["Playbooks", "Import Word playbook"]} footerStatus={busy === "import" ? <span className="text-xs text-gray-500">Long files can take several minutes</span> : null} primaryAction={{ label: busy === "import" ? "Compiling…" : "Import and compile", icon: busy === "import" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />, variant: "blue", disabled: !importFile || !model || !!busy, onClick: () => void doImport() }} cancelAction={{ label: "Cancel", onClick: () => { setImportOpen(false); setImportError(null); }, disabled: busy === "import" }}><div className="space-y-4 overflow-y-auto pb-4"><p className="text-sm text-gray-600">The imported concepts, positions, and sample clauses remain a draft until you review and publish them.</p>{busy === "import" && <div role="status" className="flex items-start gap-2 rounded-xl border border-blue-300/70 bg-blue-50 px-3 py-2.5 text-sm text-blue-800"><Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" /><span>The model is compiling and validating the playbook. If its first response is invalid, MikeOSS will automatically retry it. Keep this window open.</span></div>}{importError && <div role="alert" className="flex items-start gap-2 rounded-xl border border-red-300/70 bg-red-50 px-3 py-2.5 text-sm text-red-700"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{importError}</span></div>}<div><ModalFieldLabel>Playbook name (optional)</ModalFieldLabel><ModalTextInput value={importName} onChange={(event) => setImportName(event.target.value)} /></div><div><ModalFieldLabel>Word playbook</ModalFieldLabel><input type="file" accept=".docx" onChange={(event) => { setImportFile(event.target.files?.[0] ?? null); setImportError(null); }} className="block w-full text-sm" /></div><div><ModalFieldLabel>Compilation model</ModalFieldLabel>{models.length > 0 ? <ModalSelect id="playbook-import-model" value={model} onChange={(value) => { setModel(value); setImportError(null); }} options={models} searchable searchPlaceholder="Search models..." menuClassName="max-h-64" /> : <p className="text-sm text-amber-700">No compilation model is available. <a href="/account/api-keys" className="underline">Configure an API key</a> or enable a local model.</p>}</div></div></Modal>
-    <Modal open={reviewOpen} onClose={() => { if (busy !== "review") { setReviewOpen(false); setReviewError(null); } }} size="sm" breadcrumbs={["Playbooks", "Review document"]} footerStatus={busy === "review" ? <span className="flex items-center gap-1.5 text-xs text-gray-500"><Loader2 className="h-3.5 w-3.5 animate-spin" />Reviewing the document…</span> : null} primaryAction={{ label: busy === "review" ? "Reviewing…" : "Start review", icon: busy === "review" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />, variant: "blue", disabled: !reviewFile || !model || !!busy, onClick: () => void review() }} cancelAction={{ label: "Cancel", onClick: () => { setReviewOpen(false); setReviewError(null); }, disabled: busy === "review" }}><div className="space-y-4 overflow-y-auto pb-4">{reviewError && <div role="alert" className="flex items-start gap-2 rounded-xl border border-red-300/70 bg-red-50 px-3 py-2.5 text-sm text-red-700"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{reviewError}</span></div>}<div><ModalFieldLabel>Contract</ModalFieldLabel><input type="file" accept=".docx,.txt" onChange={(event) => { setReviewFile(event.target.files?.[0] ?? null); setReviewError(null); }} className="block w-full text-sm" /></div><div><ModalFieldLabel>Review model</ModalFieldLabel>{models.length > 0 ? <ModalSelect id="playbook-review-model" value={model} onChange={(value) => { setModel(value); setReviewError(null); }} options={models} searchable searchPlaceholder="Search models..." menuClassName="max-h-64" /> : <p className="text-sm text-amber-700">No review model is available. <a href="/account/api-keys" className="underline">Configure an API key</a> or enable a local model.</p>}</div><div><ModalFieldLabel>Review posture</ModalFieldLabel><ModalSelect id="playbook-review-mode" value={reviewMode} onChange={(value) => setReviewMode(value as "strict" | "permissive")} options={[{ value: "strict", label: "Strict — push standard positions" }, { value: "permissive", label: "Permissive — allow fallbacks" }]} /></div></div></Modal>
+    <Modal open={reviewOpen} onClose={() => { if (busy !== "review") { setReviewOpen(false); setReviewError(null); } }} size="sm" breadcrumbs={["Playbooks", "Review document"]} footerStatus={busy === "review" ? <span className="flex items-center gap-1.5 text-xs text-gray-500"><Loader2 className="h-3.5 w-3.5 animate-spin" />Reviewing the document…</span> : null} primaryAction={{ label: busy === "review" ? "Reviewing…" : "Start review", icon: busy === "review" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />, variant: "blue", disabled: !reviewFile || !model || !!busy, onClick: () => void review() }} cancelAction={{ label: "Cancel", onClick: () => { setReviewOpen(false); setReviewError(null); }, disabled: busy === "review" }}><div className="space-y-4 overflow-y-auto pb-4">{reviewError && <div role="alert" className="flex items-start gap-2 rounded-xl border border-red-300/70 bg-red-50 px-3 py-2.5 text-sm text-red-700"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{reviewError}</span></div>}<div><ModalFieldLabel>Contract</ModalFieldLabel><input type="file" accept=".pdf,.docx,.txt" onChange={(event) => { setReviewFile(event.target.files?.[0] ?? null); setReviewError(null); }} className="block w-full text-sm" /><p className="mt-1 text-xs text-gray-500">PDF, DOCX, or TXT files are supported. PDFs are reviewed from extracted text; keep the original Word file if you need formatting-preserving redlines.</p></div><div><ModalFieldLabel>Review instructions</ModalFieldLabel><textarea value={reviewInstructions} onChange={(event) => setReviewInstructions(event.target.value)} rows={4} aria-label="Review instructions" className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-gray-400 focus:ring-2 focus:ring-blue-200" /><div className="mt-2 flex flex-wrap gap-2" aria-label="Suggested review prompts">{["Run a complete playbook review. Prioritize unacceptable and missing-required terms, quote exact contract language, and provide complete replacement language for issues that need revision.", "Show only unacceptable and missing-required terms.", "Explain the highest-risk deviations and propose redlines."].map((suggestion) => <button key={suggestion} type="button" onClick={() => setReviewInstructions(suggestion)} className="rounded-full border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-300">{suggestion.length > 55 ? "Complete review" : suggestion}</button>)}</div></div><div><ModalFieldLabel>Review model</ModalFieldLabel>{models.length > 0 ? <ModalSelect id="playbook-review-model" value={model} onChange={(value) => { setModel(value); setReviewError(null); }} options={models} searchable searchPlaceholder="Search models..." menuClassName="max-h-64" /> : <p className="text-sm text-amber-700">No review model is available. <a href="/account/api-keys" className="underline">Configure an API key</a> or enable a local model.</p>}</div><div><ModalFieldLabel>Review posture</ModalFieldLabel><ModalSelect id="playbook-review-mode" value={reviewMode} onChange={(value) => setReviewMode(value as "strict" | "permissive")} options={[{ value: "strict", label: "Strict — push standard positions" }, { value: "permissive", label: "Permissive — allow fallbacks" }]} /></div></div></Modal>
   </div>;
 }
 
@@ -199,5 +228,6 @@ function PositionGroup({ title, positions, onChange, single = false }: { title: 
 
 function ReviewResults({ run }: { run: PlaybookRun }) {
   const tone: Record<string, string> = { acceptable: "bg-green-100 text-green-800", not_applicable: "bg-gray-100 text-gray-700", needs_review: "bg-amber-100 text-amber-900", unacceptable: "bg-red-100 text-red-800", missing_required: "bg-red-100 text-red-800", outside_scope: "bg-blue-100 text-blue-800" };
-  return <section className="mt-8 border-t border-gray-200 pt-5"><h2 className="font-serif text-xl">Latest review</h2><p className="mt-2 text-sm text-gray-700">{run.summary}</p><div className="mt-4 space-y-3">{run.findings.map((finding) => <article key={finding.id} className="rounded-md border border-gray-200 bg-white p-4"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold">{finding.ruleName}</h3><span className={`rounded px-2 py-1 text-[11px] font-medium ${tone[finding.status]}`}>{finding.status.replaceAll("_", " ")}</span></div>{finding.location && <div className="mt-1 text-xs text-gray-500">{finding.location}</div>}<p className="mt-2 text-sm text-gray-700">{finding.analysis}</p>{finding.quote && <blockquote className="mt-2 border-l-2 border-gray-300 pl-3 text-xs text-gray-600">{finding.quote}</blockquote>}{finding.suggestedText && <div className="mt-3 text-xs"><span className="font-semibold">Suggested language:</span> {finding.suggestedText}</div>}</article>)}</div></section>;
+  const isWordSource = !!run.documentName && /\.docx?$/i.test(run.documentName);
+  return <section className="mt-8 border-t border-gray-200 pt-5"><h2 className="font-serif text-xl">Latest review</h2><p className="mt-2 text-sm text-gray-700">{run.summary}</p>{run.documentName && !isWordSource && <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2.5 text-sm text-blue-900">This review used extracted text from <span className="font-medium">{run.documentName}</span>. For a formatting-preserving Word redline, provide the original DOCX in Assistant; if it is unavailable, Mike can create a text-reconstructed DOCX and will warn that formatting may differ.</div>}<div className="mt-4 space-y-3">{run.findings.map((finding) => <article key={finding.id} className="rounded-md border border-gray-200 bg-white p-4"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold">{finding.ruleName}</h3><span className={`rounded px-2 py-1 text-[11px] font-medium ${tone[finding.status]}`}>{finding.status.replaceAll("_", " ")}</span></div>{finding.location && <div className="mt-1 text-xs text-gray-500">{finding.location}</div>}<p className="mt-2 text-sm text-gray-700">{finding.analysis}</p>{finding.quote && <blockquote className="mt-2 border-l-2 border-gray-300 pl-3 text-xs text-gray-600">{finding.quote}</blockquote>}{finding.suggestedText && <div className="mt-3 text-xs"><span className="font-semibold">Suggested language:</span> {finding.suggestedText}</div>}</article>)}</div></section>;
 }

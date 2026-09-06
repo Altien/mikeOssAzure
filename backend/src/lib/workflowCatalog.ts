@@ -1,6 +1,6 @@
-import type { createServerSupabase } from "./supabase";
+import type { ServerDatabase } from "./database";
 
-type Db = ReturnType<typeof createServerSupabase>;
+type Db = ServerDatabase;
 
 export type WorkflowCatalogContributor = {
   name: string;

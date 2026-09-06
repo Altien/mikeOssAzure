@@ -5,12 +5,13 @@ import {
   reasoningLevelsForModel,
   type ReasoningLevel,
 } from "@mike/model-toggle-ui";
-import { getOllamaModels, type ApiKeyStatus } from "../../api/mikeApi";
+import { getConfiguredModels, getOllamaModels, type ApiKeyStatus } from "../../api/mikeApi";
 import {
   isModelAvailable,
   modelDisplayName,
   openCodeGoModelOptions,
   openRouterModelOptions,
+  syntheticModelOptions,
   vercelModelOptions,
   STATIC_MODELS,
   type ModelOption,
@@ -24,6 +25,7 @@ export function ModelToggle({
   openRouterModels,
   vercelModels,
   openCodeGoModels,
+  syntheticModels,
   compact = false,
   onNoModelsClick,
   reasoningLevel,
@@ -38,18 +40,32 @@ export function ModelToggle({
   openRouterModels: string[];
   vercelModels: string[];
   openCodeGoModels: string[];
+  syntheticModels: string[];
   compact?: boolean;
   onNoModelsClick?: () => void;
   reasoningLevel?: ReasoningLevel;
   onReasoningChange?: (level: ReasoningLevel) => void;
 }): React.ReactElement {
   const [ollamaModels, setOllamaModels] = useState<ModelOption[]>([]);
+  const [configuredModels, setConfiguredModels] = useState<ModelOption[]>([]);
 
   useEffect(() => {
     let cancelled = false;
     void getOllamaModels()
       .then((models) => {
         if (!cancelled) setOllamaModels(models);
+      })
+      .catch(() => {});
+    void getConfiguredModels()
+      .then((models) => {
+        if (cancelled) return;
+        const options = models.map((model) => ({
+          id: model.id,
+          label: model.label || model.id,
+          group: model.location === "local" ? "Local" : "Configured",
+          source: "Configured",
+        }));
+        setConfiguredModels(options);
       })
       .catch(() => {});
     return () => {
@@ -61,6 +77,7 @@ export function ModelToggle({
     const openRouterOptions = openRouterModelOptions(openRouterModels);
     const vercelOptions = vercelModelOptions(vercelModels);
     const openCodeGoOptions = openCodeGoModelOptions(openCodeGoModels);
+    const syntheticOptions = syntheticModelOptions(syntheticModels);
     const localOptions = ollamaModels.map((model) => ({
       ...model,
       label: modelDisplayName(model.id),
@@ -68,9 +85,11 @@ export function ModelToggle({
     }));
     return [
       ...STATIC_MODELS,
+      ...configuredModels,
       ...openRouterOptions,
       ...vercelOptions,
       ...openCodeGoOptions,
+      ...syntheticOptions,
       ...localOptions,
     ].filter(
       (model) =>
@@ -79,9 +98,11 @@ export function ModelToggle({
   }, [
     keyStatus,
     ollamaModels,
+    configuredModels,
     openRouterModels,
     vercelModels,
     openCodeGoModels,
+    syntheticModels,
   ]);
   const selected = models.find((model) => model.id === value);
   const supportedReasoningLevels = reasoningLevelsForModel(value);

@@ -1,7 +1,6 @@
-import { createServerSupabase } from "./supabase";
 import { createServerSQLite } from "./sqlite";
 
-export const DATABASE_PROVIDERS = ["supabase", "sqlite"] as const;
+export const DATABASE_PROVIDERS = ["sqlite"] as const;
 export type DatabaseProvider = (typeof DATABASE_PROVIDERS)[number];
 
 // The existing SQLite adapter deliberately implements the subset of the
@@ -16,35 +15,20 @@ export function resolveDatabaseProvider(
   env: NodeJS.ProcessEnv = process.env,
 ): DatabaseProvider {
   const configured = env.MIKE_DATABASE_PROVIDER?.trim().toLowerCase();
-  if (configured) {
-    if (configured === "supabase" || configured === "sqlite") {
-      return configured;
-    }
+  if (configured && configured !== "sqlite") {
     throw new Error(
-      `Unsupported MIKE_DATABASE_PROVIDER "${configured}". Expected one of: ${DATABASE_PROVIDERS.join(", ")}.`,
+      `Unsupported MIKE_DATABASE_PROVIDER "${configured}". This fork uses SQLite.`,
     );
   }
-
-  // Compatibility for existing local installations created before the
-  // provider setting existed. Fresh installations default to upstream
-  // Supabase unless they explicitly select SQLite.
-  if (
-    env.SQLITE_DB_PATH?.trim() &&
-    !env.SUPABASE_URL?.trim() &&
-    !env.SUPABASE_SECRET_KEY?.trim()
-  ) {
-    return "sqlite";
-  }
-  return "supabase";
+  return "sqlite";
 }
 
 export function createServerDatabase(): ServerDatabase {
-  if (resolveDatabaseProvider() === "sqlite") {
-    return createServerSQLite();
-  }
-  return createServerSupabase() as unknown as ServerDatabase;
+  resolveDatabaseProvider();
+  return createServerSQLite();
 }
 
 export function databaseProviderIsSQLite(): boolean {
-  return resolveDatabaseProvider() === "sqlite";
+  resolveDatabaseProvider();
+  return true;
 }

@@ -643,15 +643,18 @@ export function managedTrademarkToolSchema(
     typeof properties.owner_name === "object" &&
     !Array.isArray(properties.owner_name)
       ? (properties.owner_name as Record<string, unknown>)
-      : { type: ["string", "null"] };
+      : { type: "string" };
   properties.owner_name = {
     ...ownerProperty,
     description:
       "Exact current owner/applicant legal name. Use this for owner portfolios; Mike searches the owner field, pages candidates, and returns up to 100 normalized exact ownerName matches by default in a compact, complete portfolio format. Do not put an owner name in query.",
   };
   properties.owner_names = {
-    type: ["array", "null"],
-    items: { type: "string", minLength: 1 },
+    // Plain "array", not ["array", "null"]: Google's tool-schema conversion
+    // lowers union types to anyOf branches that lose their items schema, so
+    // every Gemini call fails validation. Omission already covers null.
+    type: "array",
+    items: { type: "string" },
     minItems: 1,
     maxItems: MAX_EXACT_OWNER_BATCH_SIZE,
     description:
@@ -662,7 +665,7 @@ export function managedTrademarkToolSchema(
     typeof properties.limit === "object" &&
     !Array.isArray(properties.limit)
       ? (properties.limit as Record<string, unknown>)
-      : { type: ["integer", "null"] };
+      : { type: "integer" };
   properties.limit = {
     ...limitProperty,
     description:

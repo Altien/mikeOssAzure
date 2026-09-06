@@ -5,12 +5,11 @@ import {
 } from "../storage";
 
 describe("storage provider selection", () => {
-  it("defaults fresh deployments to upstream R2", () => {
-    expect(resolveStorageProvider({})).toBe("r2");
+  it("defaults fresh deployments to SQLite", () => {
+    expect(resolveStorageProvider({})).toBe("sqlite");
   });
 
-  it("honors an explicit provider", () => {
-    expect(resolveStorageProvider({ MIKE_STORAGE_PROVIDER: "r2" })).toBe("r2");
+  it("honors the explicit SQLite provider", () => {
     expect(resolveStorageProvider({ MIKE_STORAGE_PROVIDER: "SQLITE" })).toBe(
       "sqlite",
     );
@@ -22,21 +21,16 @@ describe("storage provider selection", () => {
     ).toBe("sqlite");
   });
 
-  it("does not override configured R2 with a legacy SQLite path", () => {
-    expect(
-      resolveStorageProvider({
-        SQLITE_STORAGE_PATH: "./data/mike-files.sqlite",
-        R2_ENDPOINT_URL: "https://example.r2.cloudflarestorage.com",
-        R2_ACCESS_KEY_ID: "key",
-        R2_SECRET_ACCESS_KEY: "secret",
-      }),
-    ).toBe("r2");
-  });
-
   it("rejects unknown providers", () => {
     expect(() =>
       resolveStorageProvider({ MIKE_STORAGE_PROVIDER: "filesystem" }),
     ).toThrow('Unsupported MIKE_STORAGE_PROVIDER "filesystem"');
+  });
+
+  it("rejects the removed R2 provider", () => {
+    expect(() =>
+      resolveStorageProvider({ MIKE_STORAGE_PROVIDER: "r2" }),
+    ).toThrow('Unsupported MIKE_STORAGE_PROVIDER "r2"');
   });
 
   it("creates the selected SQLite provider in the test profile", () => {

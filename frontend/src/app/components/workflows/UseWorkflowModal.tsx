@@ -124,13 +124,14 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
             return;
         }
         const defaultModel = profile.tabularModel;
-        const router = (["openrouter", "vercel", "opencode-go"] as const).find(
-            (slug) => defaultModel.startsWith(`${slug}/`),
-        );
+        const router = (
+            ["openrouter", "vercel", "opencode-go", "synthetic"] as const
+        ).find((slug) => defaultModel.startsWith(`${slug}/`));
         const routerSelections: Record<RouterSlug, string[]> = {
             openrouter: profile.openRouterModels,
             vercel: profile.vercelModels,
             "opencode-go": profile.openCodeGoModels,
+            synthetic: profile.syntheticModels,
         };
         const routerSelectionValid =
             !router ||
@@ -430,6 +431,9 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
                                     vercelModels={profile?.vercelModels}
                                     openCodeGoModels={
                                         profile?.openCodeGoModels
+                                    }
+                                    syntheticModels={
+                                        profile?.syntheticModels
                                     }
                                     onNoModelsClick={setNoModelsWarning}
                                 />

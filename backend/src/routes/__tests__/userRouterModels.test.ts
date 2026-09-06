@@ -119,6 +119,7 @@ const API_KEY_STATUS = {
     openrouter: true,
     vercel: true,
     "opencode-go": true,
+    synthetic: true,
     courtlistener: false,
     sources: {
         claude: null,
@@ -127,6 +128,7 @@ const API_KEY_STATUS = {
         openrouter: "user",
         vercel: "user",
         "opencode-go": "user",
+        synthetic: "user",
         courtlistener: null,
     },
 };
@@ -138,6 +140,7 @@ beforeEach(() => {
         openrouter: [],
         vercel: [],
         "opencode-go": [],
+        synthetic: [],
     });
     replaceUserRouterModels.mockResolvedValue(undefined);
 });
@@ -259,6 +262,37 @@ describe("PATCH /user/profile router model selections", () => {
         );
         expect(replaceUserRouterModels).not.toHaveBeenCalled();
     });
+
+    it("accepts Synthetic's colon-bearing catalog ids", async () => {
+        const response = await request(app)
+            .patch("/user/profile")
+            .send({
+                syntheticModels: [
+                    "syn:large:text",
+                    "synthetic/hf:zai-org/GLM-5.2",
+                ],
+            });
+
+        expect(response.status).toBe(200);
+        expect(replaceUserRouterModels).toHaveBeenCalledWith(
+            "user-1",
+            "synthetic",
+            ["syn:large:text", "hf:zai-org/GLM-5.2"],
+            expect.anything(),
+        );
+    });
+
+    it("rejects Synthetic ids containing whitespace", async () => {
+        const response = await request(app)
+            .patch("/user/profile")
+            .send({ syntheticModels: ["not a model"] });
+
+        expect(response.status).toBe(400);
+        expect(response.body.detail).toBe(
+            "syntheticModels contains an invalid or duplicate model ID",
+        );
+        expect(replaceUserRouterModels).not.toHaveBeenCalled();
+    });
 });
 
 describe("normalizeRouterModels", () => {
@@ -299,5 +333,14 @@ describe("normalizeRouterModels", () => {
                 "opencode-go",
             ),
         ).toEqual(["glm-5.3", "qwen3.8-max", "minimax-m3"]);
+    });
+
+    it("keeps Synthetic ids whole, colons and vendor path included", () => {
+        expect(
+            normalizeRouterModels(
+                ["syn:large:text", "hf:zai-org/GLM-5.2"],
+                "synthetic",
+            ),
+        ).toEqual(["syn:large:text", "hf:zai-org/GLM-5.2"]);
     });
 });

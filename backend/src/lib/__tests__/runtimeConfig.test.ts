@@ -3,14 +3,30 @@ import { validateRuntimeConfiguration } from "../runtimeConfig";
 
 const validProduction = {
   NODE_ENV: "production",
-  SUPABASE_URL: "https://project.supabase.co",
-  SUPABASE_PUBLISHABLE_KEY: "publishable-key",
-  SUPABASE_SECRET_KEY: "service-role-key",
+  MIKE_AUTH_PROVIDER: "local",
+  MIKE_DATABASE_PROVIDER: "sqlite",
+  MIKE_STORAGE_PROVIDER: "sqlite",
   FRONTEND_URL: "https://app.example.test",
   API_PUBLIC_URL: "https://app.example.test/api",
 } as NodeJS.ProcessEnv;
 
 describe("runtime authentication configuration", () => {
+  it("accepts local auth without Supabase credentials", () => {
+    expect(() =>
+      validateRuntimeConfiguration({
+        MIKE_AUTH_PROVIDER: "local",
+        MIKE_DATABASE_PROVIDER: "sqlite",
+        MIKE_STORAGE_PROVIDER: "sqlite",
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects the removed Supabase auth provider", () => {
+    expect(() =>
+      validateRuntimeConfiguration({ MIKE_AUTH_PROVIDER: "supabase" }),
+    ).toThrow(/This fork uses local SQLite authentication/);
+  });
+
   it("accepts a complete production configuration", () => {
     expect(() => validateRuntimeConfiguration(validProduction)).not.toThrow();
   });
@@ -34,11 +50,13 @@ describe("runtime authentication configuration", () => {
     ).toThrow(/AUTH_HANDOFF_ENCRYPTION_SECRET is required/);
   });
 
-  it("accepts the legacy anon key name for the user-session client", () => {
+  it("does not infer a hosted provider from obsolete credentials", () => {
     expect(() =>
       validateRuntimeConfiguration({
-        ...validProduction,
-        SUPABASE_PUBLISHABLE_KEY: undefined,
+        MIKE_AUTH_PROVIDER: "local",
+        MIKE_DATABASE_PROVIDER: "sqlite",
+        MIKE_STORAGE_PROVIDER: "sqlite",
+        SUPABASE_URL: "https://obsolete.example.test",
         SUPABASE_ANON_KEY: "legacy-anon-key",
       }),
     ).not.toThrow();

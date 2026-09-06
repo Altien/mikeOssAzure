@@ -1,3 +1,5 @@
+import { getAuthToken } from "@/app/lib/auth";
+
 export const AUTH_SESSION_INVALIDATED_EVENT = "mike:auth-session-invalidated";
 
 /**
@@ -5,11 +7,15 @@ export const AUTH_SESSION_INVALIDATED_EVENT = "mike:auth-session-invalidated";
  * browser's in-memory auth state when the backend rejects the session.
  */
 export async function authenticatedFetch(
-    input: RequestInfo | URL,
-    init?: RequestInit,
+  input: RequestInfo | URL,
+  init?: RequestInit,
 ): Promise<Response> {
+    const token = await getAuthToken();
+    const headers = new Headers(init?.headers);
+    if (token) headers.set("Authorization", `Bearer ${token}`);
     const response = await globalThis.fetch(input, {
         ...init,
+        headers,
         credentials: "include",
     });
 

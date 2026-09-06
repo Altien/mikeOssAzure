@@ -1,3 +1,14 @@
+import {
+    getCurrentUser,
+    localAuth,
+    setPassword,
+    signInWithPassword,
+    signOut,
+    signUpWithPassword,
+    updateEmail,
+    type AuthUser as LocalAuthUser,
+} from "@/app/lib/auth";
+
 export interface AuthUser {
     id: string;
     email: string;
@@ -24,150 +35,105 @@ export class AuthApiError extends Error {
     }
 }
 
-async function authRequest<T>(path: string, init?: RequestInit): Promise<T> {
-    const response = await fetch(`/api/auth${path}`, {
-        ...init,
-        credentials: "include",
-        cache: "no-store",
-        headers: {
-            ...(init?.body ? { "Content-Type": "application/json" } : {}),
-            ...(init?.headers as Record<string, string> | undefined),
-        },
-    });
-    if (!response.ok) {
-        const body = (await response.json().catch(() => ({}))) as {
-            code?: unknown;
-            detail?: unknown;
-        };
-        throw new AuthApiError(
-            response.status,
-            typeof body.code === "string" ? body.code : null,
-            typeof body.detail === "string"
-                ? body.detail
-                : "Authentication could not be completed.",
-        );
-    }
-    if (response.status === 204) return undefined as T;
-    return response.json() as Promise<T>;
+function mapLocalUser(user: LocalAuthUser): AuthUser {
+    return {
+        id: user.id,
+        email: user.email,
+        pendingEmail: user.pendingEmail ?? user.new_email ?? null,
+        createdWithGoogle: false,
+    };
+}
+
+function unsupported(feature: string): never {
+    throw new AuthApiError(
+        501,
+        "local_auth_unsupported",
+        `${feature} is unavailable with SQLite authentication.`,
+    );
+}
+
+async function unwrapMfa<T>(
+    result: Promise<{ data: T; error: Error | null }>,
+): Promise<T> {
+    const { data, error } = await result;
+    if (error) throw error;
+    return data;
 }
 
 export async function getAuthSession(): Promise<AuthUser | null> {
-    try {
-        return (await authRequest<{ user: AuthUser }>("/session")).user;
-    } catch (error) {
-        if (error instanceof AuthApiError && error.status === 401) return null;
-        throw error;
-    }
+    const user = await getCurrentUser();
+    return user ? mapLocalUser(user) : null;
 }
 
 export async function login(email: string, password: string) {
-    return authRequest<{ user: AuthUser }>("/login", {
-        method: "POST",
-        body: JSON.stringify({ email, password }),
-    });
+    const { user } = await signInWithPassword(email, password);
+    return { user: mapLocalUser(user) };
 }
 
-export async function signup(email: string, password: string, next: string) {
-    return authRequest<{
-        user: AuthUser;
-        requiresEmailConfirmation: boolean;
-    }>("/signup", {
-        method: "POST",
-        body: JSON.stringify({ email, password, next }),
-    });
+export async function signup(email: string, password: string, _next: string) {
+    const { user } = await signUpWithPassword(email, password);
+    return {
+        user: mapLocalUser(user),
+        requiresEmailConfirmation: false,
+    };
 }
 
-export async function startGoogleOAuth(next: string) {
-    return authRequest<{ url: string }>("/oauth", {
-        method: "POST",
-        body: JSON.stringify({ provider: "google", next }),
-    });
+export async function startGoogleOAuth(_next: string) {
+    unsupported("Google sign-in");
 }
 
-export async function exchangeAuthCode(code: string) {
-    return authRequest<{ user: AuthUser }>("/exchange", {
-        method: "POST",
-        body: JSON.stringify({ code }),
-    });
+export async function exchangeAuthCode(_code: string) {
+    unsupported("OAuth code exchange");
 }
 
-export async function requestPasswordReset(email: string) {
-    return authRequest<void>("/password-reset", {
-        method: "POST",
-        body: JSON.stringify({ email }),
-    });
+export async function requestPasswordReset(_email: string) {
+    unsupported("Password reset");
 }
 
-export async function logout(scope: "local" | "global" = "local") {
-    return authRequest<void>("/logout", {
-        method: "POST",
-        body: JSON.stringify({ scope }),
-    });
+export async function logout(_scope: "local" | "global" = "local") {
+    await signOut();
 }
 
-export async function updateAuthEmail(email: string, next: string) {
-    return authRequest<{ user: AuthUser }>("/email", {
-        method: "PATCH",
-        body: JSON.stringify({ email, next }),
-    });
+export async function updateAuthEmail(email: string, _next: string) {
+    return { user: mapLocalUser(await updateEmail(email)) };
 }
 
-export async function updateAuthPassword(password: string, signOut = false) {
-    return authRequest<{ user: AuthUser }>("/password", {
-        method: "PATCH",
-        body: JSON.stringify({ password, signOut }),
-    });
+export async function updateAuthPassword(password: string, _signOut = false) {
+    return { user: mapLocalUser(await setPassword(password)) };
 }
 
-export function listMfaFactors() {
-    return authRequest<{ all: MfaFactor[]; totp: MfaFactor[] }>("/mfa/factors");
+export async function listMfaFactors() {
+    return unwrapMfa(localAuth.mfa.listFactors());
 }
 
-export function getMfaAssurance() {
-    return authRequest<{
-        currentLevel: string | null;
-        nextLevel: string | null;
-    }>("/mfa/assurance");
+export async function getMfaAssurance() {
+    return unwrapMfa(localAuth.mfa.getAuthenticatorAssuranceLevel());
 }
 
-export function enrollMfa(friendlyName: string) {
-    return authRequest<{
-        id: string;
-        totp: { qr_code: string; secret: string };
-    }>("/mfa/enroll", {
-        method: "POST",
-        body: JSON.stringify({ friendlyName }),
-    });
-}
-
-export function challengeMfa(factorId: string) {
-    return authRequest<{ id: string }>("/mfa/challenge", {
-        method: "POST",
-        body: JSON.stringify({ factorId }),
-    });
-}
-
-export function verifyMfa(factorId: string, challengeId: string, code: string) {
-    return authRequest<unknown>("/mfa/verify", {
-        method: "POST",
-        body: JSON.stringify({ factorId, challengeId, code }),
-    });
-}
-
-export function challengeAndVerifyMfa(factorId: string, code: string) {
-    return authRequest<unknown>("/mfa/challenge-and-verify", {
-        method: "POST",
-        body: JSON.stringify({ factorId, code }),
-    });
-}
-
-export function unenrollMfa(factorId: string) {
-    return authRequest<unknown>(
-        `/mfa/factors/${encodeURIComponent(factorId)}`,
-        {
-            method: "DELETE",
-        },
+export async function enrollMfa(friendlyName: string) {
+    return unwrapMfa(
+        localAuth.mfa.enroll({ factorType: "totp", friendlyName }),
     );
+}
+
+export async function challengeMfa(factorId: string) {
+    return unwrapMfa(localAuth.mfa.challenge({ factorId }));
+}
+
+export async function verifyMfa(
+    factorId: string,
+    challengeId: string,
+    code: string,
+) {
+    return unwrapMfa(localAuth.mfa.verify({ factorId, challengeId, code }));
+}
+
+export async function challengeAndVerifyMfa(factorId: string, code: string) {
+    return unwrapMfa(localAuth.mfa.challengeAndVerify({ factorId, code }));
+}
+
+export async function unenrollMfa(factorId: string) {
+    return unwrapMfa(localAuth.mfa.unenroll({ factorId }));
 }
 
 export function clearLegacyBrowserAuthStorage() {

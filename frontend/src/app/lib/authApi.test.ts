@@ -1,34 +1,30 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-    AuthApiError,
-    challengeAndVerifyMfa,
-    challengeMfa,
     clearLegacyBrowserAuthStorage,
-    enrollMfa,
-    exchangeAuthCode,
     getAuthSession,
-    getMfaAssurance,
     listMfaFactors,
     login,
     logout,
     requestPasswordReset,
     signup,
     startGoogleOAuth,
-    unenrollMfa,
-    updateAuthEmail,
-    updateAuthPassword,
-    verifyMfa,
 } from "./authApi";
 
 const fetchMock = vi.fn();
-const user = {
+const localUser = {
     id: "user-1",
     email: "lawyer@example.test",
     pendingEmail: null,
-    createdWithGoogle: false,
 };
 
-describe("cookie auth client", () => {
+function jsonResponse(body: unknown, status = 200) {
+    return new Response(JSON.stringify(body), {
+        status,
+        headers: { "Content-Type": "application/json" },
+    });
+}
+
+describe("SQLite auth facade", () => {
     beforeEach(() => {
         fetchMock.mockReset();
         vi.stubGlobal("fetch", fetchMock);
@@ -40,269 +36,151 @@ describe("cookie auth client", () => {
         vi.unstubAllGlobals();
     });
 
-    it("logs in through the same-origin gateway without an Authorization header", async () => {
+    it("logs in through the SQLite endpoint and maps the local user", async () => {
         fetchMock.mockResolvedValue(
-            new Response(JSON.stringify({ user }), {
-                status: 200,
-                headers: { "Content-Type": "application/json" },
-            }),
+            jsonResponse({ token: "local-token", user: localUser }),
         );
 
-        await expect(login(user.email, "correct horse")).resolves.toEqual({
-            user,
+        await expect(login(localUser.email, "correct horse")).resolves.toEqual({
+            user: {
+                ...localUser,
+                createdWithGoogle: false,
+            },
         });
         expect(fetchMock).toHaveBeenCalledWith(
-            "/api/auth/login",
+            "/api/user/auth/login",
             expect.objectContaining({
                 method: "POST",
-                credentials: "include",
                 cache: "no-store",
-                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    email: user.email,
+                    email: localUser.email,
                     password: "correct horse",
                 }),
             }),
         );
-        expect(
-            (fetchMock.mock.calls[0][1] as RequestInit).headers,
-        ).not.toHaveProperty("Authorization");
+        expect(window.localStorage.getItem("mike_auth_token")).toBe(
+            "local-token",
+        );
     });
 
-    it("maps an expired cookie session to a signed-out state", async () => {
-        fetchMock.mockResolvedValue(
-            new Response(JSON.stringify({ detail: "expired" }), {
-                status: 401,
-                headers: { "Content-Type": "application/json" },
+    it("loads the bearer-token session from the SQLite backend", async () => {
+        window.localStorage.setItem("mike_auth_token", "local-token");
+        fetchMock.mockResolvedValue(jsonResponse({ user: localUser }));
+
+        await expect(getAuthSession()).resolves.toEqual({
+            ...localUser,
+            createdWithGoogle: false,
+        });
+        expect(fetchMock).toHaveBeenCalledWith(
+            "/api/user/auth/session",
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    Authorization: "Bearer local-token",
+                }),
             }),
         );
+    });
 
+    it("does not request a session when no local token exists", async () => {
         await expect(getAuthSession()).resolves.toBeNull();
+        expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it("returns the current cookie-authenticated user", async () => {
+    it("signs up locally without requiring email confirmation", async () => {
         fetchMock.mockResolvedValue(
-            new Response(JSON.stringify({ user }), {
-                status: 200,
-                headers: { "Content-Type": "application/json" },
-            }),
+            jsonResponse({ token: "signup-token", user: localUser }),
         );
 
-        await expect(getAuthSession()).resolves.toEqual(user);
-    });
-
-    it("does not hide non-401 session errors", async () => {
-        fetchMock.mockResolvedValue(
-            new Response(JSON.stringify({ detail: "Unavailable" }), {
-                status: 503,
-                headers: { "Content-Type": "application/json" },
-            }),
-        );
-
-        await expect(getAuthSession()).rejects.toMatchObject({
-            status: 503,
-            message: "Unavailable",
+        await expect(
+            signup(localUser.email, "long-password", "/onboarding/profile"),
+        ).resolves.toEqual({
+            user: { ...localUser, createdWithGoogle: false },
+            requiresEmailConfirmation: false,
         });
+        expect(fetchMock).toHaveBeenCalledWith(
+            "/api/user/auth/signup",
+            expect.objectContaining({ method: "POST" }),
+        );
     });
 
-    it("preserves structured server auth failures", async () => {
+    it("logs out through SQLite and clears the bearer token", async () => {
+        window.localStorage.setItem("mike_auth_token", "local-token");
+        fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+
+        await logout();
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            "/api/user/auth/logout",
+            expect.objectContaining({ method: "POST" }),
+        );
+        expect(window.localStorage.getItem("mike_auth_token")).toBeNull();
+    });
+
+    it("uses the SQLite MFA adapter", async () => {
+        window.localStorage.setItem("mike_auth_token", "local-token");
         fetchMock.mockResolvedValue(
-            new Response(
-                JSON.stringify({
-                    code: "invalid_credentials",
-                    detail: "Invalid login credentials",
-                }),
+            jsonResponse({
+                factors: [
+                    {
+                        id: "factor-1",
+                        factor_type: "totp",
+                        status: "verified",
+                    },
+                ],
+                currentLevel: "aal2",
+                nextLevel: "aal2",
+            }),
+        );
+
+        await expect(listMfaFactors()).resolves.toEqual({
+            all: [
                 {
-                    status: 400,
-                    headers: { "Content-Type": "application/json" },
+                    id: "factor-1",
+                    factor_type: "totp",
+                    status: "verified",
                 },
-            ),
-        );
-
-        const error = await login(user.email, "wrong").catch(
-            (caught) => caught,
-        );
-        expect(error).toBeInstanceOf(AuthApiError);
-        expect(error).toMatchObject({
-            status: 400,
-            code: "invalid_credentials",
-            message: "Invalid login credentials",
+            ],
+            totp: [
+                {
+                    id: "factor-1",
+                    factor_type: "totp",
+                    status: "verified",
+                },
+            ],
         });
+        expect(fetchMock).toHaveBeenCalledWith(
+            "/api/user/mfa/status",
+            expect.any(Object),
+        );
     });
 
-    it("handles a bodyless logout response", async () => {
-        fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
-
-        await expect(logout()).resolves.toBeUndefined();
-    });
-
-    it.each([
-        [
-            "signup",
-            () => signup("new@example.test", "long-password", "/onboarding"),
-            "/api/auth/signup",
-            "POST",
-            {
-                email: "new@example.test",
-                password: "long-password",
-                next: "/onboarding",
-            },
-        ],
-        [
-            "Google OAuth",
-            () => startGoogleOAuth("/onboarding"),
-            "/api/auth/oauth",
-            "POST",
-            { provider: "google", next: "/onboarding" },
-        ],
-        [
-            "code exchange",
-            () => exchangeAuthCode("oauth-code"),
-            "/api/auth/exchange",
-            "POST",
-            { code: "oauth-code" },
-        ],
-        [
-            "email update",
-            () => updateAuthEmail("next@example.test", "/settings"),
-            "/api/auth/email",
-            "PATCH",
-            { email: "next@example.test", next: "/settings" },
-        ],
-        [
-            "password update",
-            () => updateAuthPassword("new-password", true),
-            "/api/auth/password",
-            "PATCH",
-            { password: "new-password", signOut: true },
-        ],
-        [
-            "factor enrollment",
-            () => enrollMfa("Work phone"),
-            "/api/auth/mfa/enroll",
-            "POST",
-            { friendlyName: "Work phone" },
-        ],
-        [
-            "factor challenge",
-            () => challengeMfa("factor-1"),
-            "/api/auth/mfa/challenge",
-            "POST",
-            { factorId: "factor-1" },
-        ],
-        [
-            "factor verification",
-            () => verifyMfa("factor-1", "challenge-1", "123456"),
-            "/api/auth/mfa/verify",
-            "POST",
-            {
-                factorId: "factor-1",
-                challengeId: "challenge-1",
-                code: "123456",
-            },
-        ],
-        [
-            "combined factor verification",
-            () => challengeAndVerifyMfa("factor-1", "123456"),
-            "/api/auth/mfa/challenge-and-verify",
-            "POST",
-            { factorId: "factor-1", code: "123456" },
-        ],
-        [
-            "factor removal",
-            () => unenrollMfa("factor/with slash"),
-            "/api/auth/mfa/factors/factor%2Fwith%20slash",
-            "DELETE",
-            undefined,
-        ],
-        [
-            "factor listing",
-            () => listMfaFactors(),
-            "/api/auth/mfa/factors",
-            undefined,
-            undefined,
-        ],
-        [
-            "assurance lookup",
-            () => getMfaAssurance(),
-            "/api/auth/mfa/assurance",
-            undefined,
-            undefined,
-        ],
-    ] as const)(
-        "sends the %s request through the auth gateway",
-        async (_name, invoke, path, method, body) => {
-            fetchMock.mockResolvedValue(
-                new Response(JSON.stringify({ user }), {
-                    status: 200,
-                    headers: { "Content-Type": "application/json" },
-                }),
-            );
-
-            await invoke();
-
-            expect(fetchMock).toHaveBeenCalledWith(
-                path,
-                expect.objectContaining({
-                    ...(method ? { method } : {}),
-                    ...(body ? { body: JSON.stringify(body) } : {}),
-                    credentials: "include",
-                    cache: "no-store",
-                }),
-            );
-        },
-    );
-
-    it("requests password reset and global logout without reading a response body", async () => {
-        fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
-
-        await requestPasswordReset("lawyer@example.test");
-        await logout("global");
-
-        expect(fetchMock).toHaveBeenNthCalledWith(
-            1,
-            "/api/auth/password-reset",
+    it("rejects auth features that SQLite does not implement", async () => {
+        await expect(startGoogleOAuth("/onboarding/profile")).rejects.toEqual(
             expect.objectContaining({
-                method: "POST",
-                body: JSON.stringify({ email: "lawyer@example.test" }),
+                code: "local_auth_unsupported",
+                message:
+                    "Google sign-in is unavailable with SQLite authentication.",
             }),
         );
-        expect(fetchMock).toHaveBeenNthCalledWith(
-            2,
-            "/api/auth/logout",
+        await expect(requestPasswordReset(localUser.email)).rejects.toEqual(
             expect.objectContaining({
-                method: "POST",
-                body: JSON.stringify({ scope: "global" }),
+                code: "local_auth_unsupported",
             }),
         );
+        expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it("uses a safe fallback for malformed auth error responses", async () => {
-        fetchMock.mockResolvedValue(new Response("not-json", { status: 500 }));
-
-        await expect(login(user.email, "wrong")).rejects.toMatchObject({
-            status: 500,
-            code: null,
-            message: "Authentication could not be completed.",
-        });
-    });
-
-    it("removes legacy Supabase sessions without touching unrelated settings", () => {
-        window.localStorage.setItem("sb-project-auth-token", "access-token");
-        window.sessionStorage.setItem("supabase.auth.session", "refresh-token");
-        window.localStorage.setItem("sidebarOpen", "true");
+    it("removes obsolete hosted-auth sessions but preserves the SQLite token", () => {
+        window.localStorage.setItem("mike_auth_token", "local-token");
+        window.localStorage.setItem("sb-project-auth-token", "obsolete-token");
+        window.sessionStorage.setItem("supabase.auth.session", "obsolete-session");
 
         clearLegacyBrowserAuthStorage();
 
+        expect(window.localStorage.getItem("mike_auth_token")).toBe(
+            "local-token",
+        );
         expect(window.localStorage.getItem("sb-project-auth-token")).toBeNull();
-        expect(
-            window.sessionStorage.getItem("supabase.auth.session"),
-        ).toBeNull();
-        expect(window.localStorage.getItem("sidebarOpen")).toBe("true");
-    });
-
-    it("is a no-op during server rendering", () => {
-        vi.stubGlobal("window", undefined);
-        expect(() => clearLegacyBrowserAuthStorage()).not.toThrow();
+        expect(window.sessionStorage.getItem("supabase.auth.session")).toBeNull();
     });
 });

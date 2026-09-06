@@ -53,9 +53,11 @@ const MODEL_API_KEY_FIELDS = [
             "OpenCode Go is a low-cost subscription for open coding models. After saving, choose any available OpenCode Go model from the searchable model picker.",
     },
     {
-        provider: "opencode-go",
-        label: "OpenCode Go API Key",
-        placeholder: "sk-...",
+        provider: "synthetic",
+        label: "Synthetic API Key",
+        placeholder: "sk-syn-...",
+        description:
+            "After saving, pick the Synthetic models you want offered in the composer below.",
     },
 ] as const;
 

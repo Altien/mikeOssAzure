@@ -53,6 +53,10 @@ import {
   validateLegalMonitorDocuments,
   type LegalMonitorReferenceDocument,
 } from "./legalMonitorDocuments";
+import {
+  countUnverified,
+  verifyDevelopments,
+} from "./legalMonitorVerification";
 import { upsertMonitorKnowledgebase } from "./legalMonitorKnowledgeCapture";
 
 type Db = ServerDatabase;
@@ -90,6 +94,8 @@ export type LegalMonitor = {
   emailEnabled: boolean;
   knowledgeCaptureEnabled: boolean;
   knowledgeDocumentId: string | null;
+  /** Developments below this severity are recorded but kept out of the digest. */
+  materialityThreshold: LegalMonitorSeverity;
   enabled: boolean;
   nextRunAt: string | null;
   lastRunAt: string | null;
@@ -98,6 +104,56 @@ export type LegalMonitor = {
   createdAt: string;
   updatedAt: string;
 };
+
+export const LEGAL_MONITOR_SEVERITIES = [
+  "critical",
+  "high",
+  "medium",
+  "low",
+] as const;
+export type LegalMonitorSeverity = (typeof LEGAL_MONITOR_SEVERITIES)[number];
+
+/** Descending order, so a lower index is always the more urgent development. */
+const SEVERITY_RANK: Record<LegalMonitorSeverity, number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+};
+
+export function severityRank(severity: LegalMonitorSeverity): number {
+  return SEVERITY_RANK[severity];
+}
+
+/** True when `severity` is at least as urgent as `threshold`. */
+export function meetsSeverityThreshold(
+  severity: LegalMonitorSeverity,
+  threshold: LegalMonitorSeverity,
+): boolean {
+  return SEVERITY_RANK[severity] <= SEVERITY_RANK[threshold];
+}
+
+export function normalizeSeverity(value: unknown): LegalMonitorSeverity {
+  return typeof value === "string" &&
+    (LEGAL_MONITOR_SEVERITIES as readonly string[]).includes(value)
+    ? (value as LegalMonitorSeverity)
+    : // An unscored development is still worth showing, just never at the top.
+      "medium";
+}
+
+/** Most urgent first; ties keep the model's original ordering. */
+export function sortDevelopmentsBySeverity(
+  developments: LegalMonitorDevelopment[],
+): LegalMonitorDevelopment[] {
+  return developments
+    .map((development, index) => ({ development, index }))
+    .sort(
+      (a, b) =>
+        SEVERITY_RANK[a.development.severity] -
+          SEVERITY_RANK[b.development.severity] || a.index - b.index,
+    )
+    .map((entry) => entry.development);
+}
 
 export type LegalMonitorDevelopment = {
   title: string;
@@ -113,6 +169,14 @@ export type LegalMonitorDevelopment = {
   citation: string | null;
   sourceName: string | null;
   whyItMatters: string;
+  severity: LegalMonitorSeverity;
+  /** The model's own confidence, 0-1. Low confidence is worth showing, quietly. */
+  confidence: number | null;
+  /**
+   * Set when the deterministic verification pass could not reconcile the
+   * development's url or citation against the fetched source material.
+   */
+  unverified: string[];
 };
 
 export type LegalMonitorRun = {
@@ -150,6 +214,7 @@ export type LegalMonitorInput = {
   alertEmail?: string | null;
   emailEnabled: boolean;
   knowledgeCaptureEnabled?: boolean;
+  materialityThreshold?: LegalMonitorSeverity;
   enabled: boolean;
 };
 
@@ -170,6 +235,7 @@ type MonitorRow = {
   email_enabled: boolean | number | string;
   knowledge_capture_enabled?: boolean | number | string;
   knowledge_document_id?: string | null;
+  materiality_threshold?: string | null;
   enabled: boolean | number | string;
   next_run_at: string | null;
   last_run_at: string | null;
@@ -287,6 +353,10 @@ export function ensureLegalMonitorSchema(): void {
     getSqliteDb().exec(
       `alter table legal_monitors add column knowledge_document_id text`,
     );
+  if (!monitorColumns.has("materiality_threshold"))
+    getSqliteDb().exec(
+      `alter table legal_monitors add column materiality_threshold text not null default 'low'`,
+    );
   const runColumns = new Set(
     getSqliteDb()
       .prepare(`pragma table_info("legal_monitor_runs")`)
@@ -354,6 +424,10 @@ function publicMonitor(
     emailEnabled: truthy(row.email_enabled),
     knowledgeCaptureEnabled: truthy(row.knowledge_capture_enabled),
     knowledgeDocumentId: row.knowledge_document_id || null,
+    // 'low' preserves the pre-threshold behaviour: nothing is filtered out.
+    materialityThreshold: normalizeSeverity(
+      row.materiality_threshold ?? "low",
+    ),
     enabled: truthy(row.enabled),
     nextRunAt: row.next_run_at,
     lastRunAt: row.last_run_at,
@@ -486,6 +560,9 @@ function validateInput(input: LegalMonitorInput): LegalMonitorInput {
     sourceTypes,
     alertEmail,
     knowledgeCaptureEnabled: input.knowledgeCaptureEnabled === true,
+    materialityThreshold: normalizeSeverity(
+      input.materialityThreshold ?? "low",
+    ),
   };
 }
 
@@ -653,6 +730,7 @@ export async function createLegalMonitor(
     email_enabled: input.emailEnabled,
     knowledge_capture_enabled: input.knowledgeCaptureEnabled === true,
     knowledge_document_id: null,
+    materiality_threshold: normalizeSeverity(input.materialityThreshold),
     enabled: input.enabled,
     next_run_at: input.enabled ? nextRunAt(input.intervalHours, now) : null,
     last_run_at: null,
@@ -734,6 +812,7 @@ export async function updateLegalMonitor(
     max_items_per_run: input.maxItemsPerRun,
     email_enabled: input.emailEnabled,
     knowledge_capture_enabled: input.knowledgeCaptureEnabled === true,
+    materiality_threshold: normalizeSeverity(input.materialityThreshold),
     enabled: input.enabled,
     next_run_at: input.enabled
       ? scheduleChanged || !current.nextRunAt
@@ -1152,8 +1231,13 @@ function analysisPrompt(
       ? `Library reference context:\n${referenceContext}\n\nUse these files only to understand terminology, obligations, risk posture, and relevance. They are background context, not evidence that a new development occurred. Do not cite a reference file as the source of a development, and do not turn its pre-existing contents into an alert item.`
       : "",
     `Return only JSON with this exact shape:
-{"summary":"one sentence","hasMaterialUpdates":true,"developments":[{"title":"","type":"case_law|statute|regulatory|cybersecurity|industry|other","date":"YYYY-MM-DD or null","url":"https://... or null","citation":"citation, rule, bulletin, or statute identifier or null","sourceName":"source name or null","whyItMatters":""}],"report":"markdown report"}
-Set hasMaterialUpdates false and developments [] when there is no genuinely new, on-topic development. Every factual assertion in the report must be traceable to the source dossier. Prefer primary regulatory sources over trade coverage, identify source provenance, and link the underlying item when available. Never invent a URL, date, citation, holding, deadline, or legal status. Clearly distinguish proposals from final rules, enacted law from bills, and pending decisions from precedential opinions.`,
+{"summary":"one sentence","hasMaterialUpdates":true,"developments":[{"title":"","type":"case_law|statute|regulatory|cybersecurity|industry|other","date":"YYYY-MM-DD or null","url":"https://... or null","citation":"citation, rule, bulletin, or statute identifier or null","sourceName":"source name or null","whyItMatters":"","severity":"critical|high|medium|low","confidence":0.0}],"report":"markdown report"}
+Score every development independently against this monitor's topic and jurisdiction:
+- critical: a binding obligation, deadline, or prohibition that takes effect or changes now, and demands action.
+- high: a final rule, decided case, or enacted law that changes the analysis but does not demand action this week.
+- medium: a proposal, consultation, or pending decision worth tracking.
+- low: commentary, trade coverage, or context with no operative effect.
+Judge severity by operative legal effect on this monitor's scope, never by how prominent the coverage is. Set confidence between 0 and 1 to express how certain you are of the development and its scoring. Set hasMaterialUpdates false and developments [] when there is no genuinely new, on-topic development. Every factual assertion in the report must be traceable to the source dossier. Prefer primary regulatory sources over trade coverage, identify source provenance, and link the underlying item when available. Never invent a URL, date, citation, holding, deadline, or legal status. Clearly distinguish proposals from final rules, enacted law from bills, and pending decisions from precedential opinions.`,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -1241,12 +1325,19 @@ export function parseAnalysis(raw: string): {
                 : null,
             whyItMatters:
               typeof row.whyItMatters === "string" ? row.whyItMatters : "",
+            severity: normalizeSeverity(row.severity),
+            confidence:
+              typeof row.confidence === "number" &&
+              Number.isFinite(row.confidence)
+                ? Math.min(1, Math.max(0, row.confidence))
+                : null,
+            unverified: [],
           },
         ];
       })
     : [];
   const seen = new Set<string>();
-  const developments = parsedDevelopments.filter((development) => {
+  const deduped = parsedDevelopments.filter((development) => {
     const key = (development.url || development.citation || development.title)
       .trim()
       .toLowerCase();
@@ -1254,6 +1345,7 @@ export function parseAnalysis(raw: string): {
     seen.add(key);
     return true;
   });
+  const developments = sortDevelopmentsBySeverity(deduped);
   return {
     summary:
       typeof parsed.summary === "string"
@@ -1378,8 +1470,26 @@ async function deliverEmail(
   if (!monitor.emailEnabled) return { status: "not_requested", error: null };
   if (!result.hasMaterialUpdates)
     return { status: "skipped_no_updates", error: null };
-  const subject = `[Mike Monitor] ${monitor.name}: ${result.developments.length} development${result.developments.length === 1 ? "" : "s"}`;
-  const text = `${result.summary}\n\n${result.report}\n\nOpen Mike to review the complete run history.`;
+  // The run keeps every development for the record; the digest only carries
+  // the ones that clear this monitor's threshold.
+  const notable = result.developments.filter((development) =>
+    meetsSeverityThreshold(development.severity, monitor.materialityThreshold),
+  );
+  if (!notable.length) return { status: "skipped_no_updates", error: null };
+  const held = result.developments.length - notable.length;
+  const subject = `[Mike Monitor] ${monitor.name}: ${notable.length} development${notable.length === 1 ? "" : "s"}`;
+  const text = [
+    result.summary,
+    "",
+    result.report,
+    held > 0
+      ? `\n${held} lower-severity development${held === 1 ? "" : "s"} recorded below your ${monitor.materialityThreshold} threshold; open Mike to review ${held === 1 ? "it" : "them"}.`
+      : "",
+    "",
+    "Open Mike to review the complete run history.",
+  ]
+    .filter((part) => part !== "")
+    .join("\n");
   let canUseGmail = false;
   try {
     canUseGmail = await gmailDeliveryAvailable(userId, db);
@@ -1860,6 +1970,18 @@ export async function runLegalMonitor(
           developments: [],
           hasMaterialUpdates: false,
         };
+    analysis.developments = verifyDevelopments(
+      analysis.developments,
+      collected.items,
+    );
+    const unverifiedCount = countUnverified(analysis.developments);
+    if (unverifiedCount > 0) {
+      sourceErrors = [
+        ...sourceErrors,
+        `${unverifiedCount} development${unverifiedCount === 1 ? "" : "s"} could not be reconciled against the fetched sources and ${unverifiedCount === 1 ? "is" : "are"} marked unverified.`,
+      ];
+    }
+
     if (
       monitor.knowledgeCaptureEnabled &&
       analysisUserPrompt &&

@@ -117,6 +117,24 @@ export async function getOllamaModels(): Promise<OllamaModelOption[]> {
   return body.models ?? [];
 }
 
+interface ConfiguredModelOption {
+  id: string;
+  label: string;
+  provider: string;
+  location: "cloud" | "local" | "committee";
+}
+
+/** Deployment-configured models (e.g. a local Qwen server), mirroring GET /user/models. */
+export async function getConfiguredModels(): Promise<ConfiguredModelOption[]> {
+  const res = await fetchWithRefresh(`${BASE_URL}/user/models`, {
+    cache: "no-store",
+    headers: { Accept: "application/json", ...(await getAuthHeaders()) },
+  });
+  if (!res.ok) return [];
+  const body = (await res.json()) as { configured?: ConfiguredModelOption[] };
+  return body.configured ?? [];
+}
+
 interface WordChatServerMessage {
   id: string;
   role: "user" | "assistant";

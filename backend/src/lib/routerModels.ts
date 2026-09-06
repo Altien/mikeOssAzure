@@ -4,7 +4,11 @@ import { resolveModel } from "./llm/models";
 
 type Db = ReturnType<typeof createServerDatabase>;
 
-export type RouterSlug = "openrouter" | "vercel" | "opencode-go";
+export type RouterSlug =
+    | "openrouter"
+    | "vercel"
+    | "opencode-go"
+    | "synthetic";
 
 /**
  * Every router, in the order the settings UI lists them. A router's slug is
@@ -15,6 +19,7 @@ export const ROUTER_SLUGS: readonly RouterSlug[] = [
     "openrouter",
     "vercel",
     "opencode-go",
+    "synthetic",
 ];
 
 /** One saved model selection per router. */
@@ -44,6 +49,7 @@ const ROUTER_LABELS: Record<RouterSlug, string> = {
     openrouter: "OpenRouter",
     vercel: "Vercel AI Gateway",
     "opencode-go": "OpenCode Go",
+    synthetic: "Synthetic",
 };
 
 /**

@@ -670,6 +670,7 @@ export async function buildDocContext(
         filename,
         source_kind:
           doc.library_kind === "template" ? "library_template" : "document",
+        size_bytes: doc.size_bytes ?? null,
       });
     }
   }
@@ -717,6 +718,7 @@ export async function buildProjectDocContext(
     active_version_number?: number | null;
     folder_id?: string | null;
     storage_path?: string | null;
+    size_bytes?: number | null;
   }[];
   await attachActiveVersionPaths(db, docList);
 
@@ -761,6 +763,7 @@ export async function buildProjectDocContext(
       storage_path: doc.storage_path,
       file_type: doc.file_type ?? "",
       filename,
+      size_bytes: doc.size_bytes ?? null,
     });
     const path = resolvePath(doc.folder_id ?? null);
     if (path) folderPaths.set(docLabel, path);

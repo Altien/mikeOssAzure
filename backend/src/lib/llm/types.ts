@@ -10,6 +10,7 @@ export type Provider =
     | "openrouter"
     | "vercel"
     | "opencode-go"
+    | "synthetic"
     | "ollama";
 
 export const REASONING_LEVELS = [
@@ -63,6 +64,7 @@ export type UserApiKeys = {
     openrouter?: string | null;
     vercel?: string | null;
     "opencode-go"?: string | null;
+    synthetic?: string | null;
     courtlistener?: string | null;
 };
 
@@ -109,6 +111,8 @@ export type ConfiguredModel = {
     extraBody?: Record<string, unknown>;
     /** Enable chunked Assistant playbook passes for this model. */
     playbookChunking?: boolean;
+    /** Context window in tokens. Used to decide when to chunk attached docs. */
+    contextWindow?: number;
 };
 
 export type CommitteeModel = {

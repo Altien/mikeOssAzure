@@ -63,9 +63,14 @@ export const GEMINI_LOW_MODELS = [
 ] as const;
 export const OPENAI_LOW_MODELS = ["gpt-5.6-luna", "gpt-5.4-mini"] as const;
 
-export const DEFAULT_MAIN_MODEL = "gemini-3-flash-preview";
-export const DEFAULT_TITLE_MODEL = "gemini-3.5-flash-lite";
-export const DEFAULT_TABULAR_MODEL = "gemini-3-flash-preview";
+// There is deliberately NO hardcoded default model here (neither main,
+// title, nor tabular). A silent fallback runs the risk of attributing a
+// reply to — and billing — a provider the user never chose (this bit a
+// deployment whose stale composer selection quietly ran Gemini against an
+// exhausted spend cap). Callers resolve from what is actually usable:
+// saved router selections first, then registry/built-in models with keys
+// (see userSettings.resolveTierFallback and streaming's pickDefaultModel),
+// and fail loudly when nothing is configured.
 
 const STANDARD_REASONING_LEVELS: readonly ReasoningLevel[] =
     REASONING_LEVELS.filter((level) => level !== "max");
@@ -160,10 +165,39 @@ export function providerForModel(model: string): Provider {
     if (model.startsWith("openrouter/")) return "openrouter";
     if (model.startsWith("vercel/")) return "vercel";
     if (model.startsWith("opencode-go/")) return "opencode-go";
+    if (model.startsWith("synthetic/")) return "synthetic";
     if (model.startsWith("claude")) return "claude";
     if (model.startsWith("gemini")) return "gemini";
     if (model.startsWith("gpt-")) return "openai";
     throw new Error(`Unknown model id: ${model}`);
+}
+
+// Conservative context-window defaults (tokens) by provider family. Used to
+// decide when an attached playbook document is large enough to warrant
+// chunked analysis passes. Configured models can override via `contextWindow`.
+const PROVIDER_CONTEXT_WINDOW_DEFAULTS: Partial<Record<Provider, number>> = {
+    claude: 200_000,
+    gemini: 1_000_000,
+    openai: 400_000,
+    ollama: 131_072,
+};
+
+export const DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS = 131_072;
+
+export function modelContextWindowTokens(model: string): number {
+    const configured = getConfiguredModel(model);
+    if (configured?.contextWindow && configured.contextWindow > 0) {
+        return configured.contextWindow;
+    }
+    try {
+        const provider = providerForModel(model);
+        return (
+            PROVIDER_CONTEXT_WINDOW_DEFAULTS[provider] ??
+            DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS
+        );
+    } catch {
+        return DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS;
+    }
 }
 
 // Renamed/retired static ids → their current equivalents. Stored preferences
@@ -186,8 +220,10 @@ export function resolveModel(
             canonical.startsWith("ollama/") ||
             /^(?:openrouter|vercel)\/[^\s/]+\/[^\s]+$/.test(canonical) ||
             // OpenCode Go's catalog ids are single-segment ("glm-5"), not the
-            // vendor/model pairs OpenRouter and Vercel publish.
-            /^opencode-go\/[^\s]+$/.test(canonical))
+            // vendor/model pairs OpenRouter and Vercel publish. Synthetic ids
+            // carry their own family prefixes ("hf:zai-org/GLM-5.2",
+            // "syn:large:text"), so accept any single namespaced segment.
+            /^(?:opencode-go|synthetic)\/[^\s]+$/.test(canonical))
     )
         return canonical;
     return fallback;
@@ -203,6 +239,10 @@ export function vercelModelId(model: string): string {
 
 export function openCodeGoModelId(model: string): string {
     return model.replace(/^opencode-go\//, "");
+}
+
+export function syntheticModelId(model: string): string {
+    return model.replace(/^synthetic\//, "");
 }
 
 export function isOpenCodeGoChatCompletionsModel(model: string): boolean {
@@ -241,6 +281,8 @@ function providerKeyAvailable(
             return !!apiKeys?.openrouter?.trim() || hasEnvApiKey("openrouter");
         case "vercel":
             return !!apiKeys?.vercel?.trim() || hasEnvApiKey("vercel");
+        case "synthetic":
+            return !!apiKeys?.synthetic?.trim() || hasEnvApiKey("synthetic");
         case "ollama":
             return true;
         default:

@@ -13,8 +13,6 @@ import {
     authGlassCardClassName,
     authInputClassName,
 } from "@/app/components/auth/authStyles";
-import { AuthDivider } from "@/app/components/auth/AuthDivider";
-import { GoogleAuthButton } from "@/app/components/auth/GoogleAuthButton";
 import { FieldLabel } from "@/app/components/ui/form-field";
 import { knownErrorCodeMessage } from "@/app/lib/userFacingError";
 
@@ -90,17 +88,9 @@ export default function LoginPage() {
                         </div>
 
                         <div>
-                            <div className="flex items-start justify-between gap-3">
-                                <FieldLabel htmlFor="password">
-                                    Password
-                                </FieldLabel>
-                                <Link
-                                    href="/forgot-password"
-                                    className="text-xs font-medium text-gray-500 transition-colors hover:text-gray-950"
-                                >
-                                    Forgot password?
-                                </Link>
-                            </div>
+                            <FieldLabel htmlFor="password">
+                                Password
+                            </FieldLabel>
                             <Input
                                 id="password"
                                 type="password"
@@ -139,12 +129,6 @@ export default function LoginPage() {
                                 {loading ? "Logging in..." : "Log in"}
                             </PillButton>
                         </div>
-                        <AuthDivider />
-                        <GoogleAuthButton
-                            onError={setError}
-                            disabled={loading}
-                            onLoadingChange={setLoading}
-                        />
                     </form>
                 </div>
                 <div className="text-center text-sm text-gray-500">

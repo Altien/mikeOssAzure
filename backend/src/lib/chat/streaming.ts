@@ -56,7 +56,14 @@ import {
 } from "./tools/documentOps";
 import { verifyCitations } from "./verifyCitations";
 import { getConfiguredModel } from "../llm/registry";
-import { analyzePlaybookChunks } from "./playbookChunking";
+import { modelContextWindowTokens } from "../llm/models";
+import {
+  analyzePlaybookChunks,
+  chunkBudgetCharsForContext,
+  estimateDocumentChars,
+  estimateTokenCount,
+  shouldChunkForContext,
+} from "./playbookChunking";
 import { spotlight } from "./contextBuilders";
 
 function isDingDuffMcpTool(tool: OpenAIToolSchema): boolean {
@@ -513,7 +520,7 @@ Use the available DingDuff MCP tool(s) for case retrieval, case reading, and cas
     if (!requestedModel) {
       throw new UserFacingError(
         model
-          ? `Model "${model}" is not available. Select another model.`
+          ? `Model "${model}" is not available on this deployment. Select another model.`
           : "Select a model before sending a message.",
       );
     }
@@ -524,24 +531,57 @@ Use the available DingDuff MCP tool(s) for case retrieval, case reading, and cas
       db,
       "throw",
     );
+    // Decide whether to chunk the attached playbook documents based on the
+    // selected model's context window, not a hardcoded per-model flag. The
+    // model's configured `contextWindow` (or a provider-family default) is the
+    // budget; we chunk when the estimated document tokens plus history/
+    // instructions/tools/answer overhead would approach or exceed it. An
+    // explicit `playbookChunking: true` still forces chunking on.
+    const contextWindowTokens = modelContextWindowTokens(selectedModel);
+    const overheadChars = [
+      systemPrompt,
+      ...chatMessages.map((message) => message.content ?? ""),
+      JSON.stringify(activeTools ?? []),
+    ].join("\n");
+    const overheadTokens = estimateTokenCount(overheadChars.length);
+    const documentTokens = (playbookChunkDocumentIds ?? []).reduce(
+      (sum, docId) => {
+        const label = resolveDocLabel(docId, docStore, docIndex);
+        const info = label ? docStore.get(label) : undefined;
+        return sum + estimateTokenCount(estimateDocumentChars(info ?? {}));
+      },
+      0,
+    );
     const shouldChunkPlaybook =
-      playbookChunkDocumentIds?.length &&
-      getConfiguredModel(selectedModel)?.playbookChunking === true;
+      (playbookChunkDocumentIds?.length ?? 0) > 0 &&
+      (getConfiguredModel(selectedModel)?.playbookChunking === true ||
+        shouldChunkForContext({
+          contextWindowTokens,
+          documentTokens,
+          overheadTokens,
+        }));
+    const chunkBudgetChars = chunkBudgetCharsForContext({
+      contextWindowTokens,
+      overheadTokens,
+    });
 
     if (shouldChunkPlaybook) {
       const documents = await Promise.all(
-        playbookChunkDocumentIds.map(async (docId) => ({
-          id: docId,
-          filename: docStore.get(docId)?.filename ?? docId,
-          text: await readDocumentContent(
-            docId,
-            docStore,
-            write,
-            docIndex,
-            db,
-            { maxChars: Number.MAX_SAFE_INTEGER },
-          ),
-        })),
+        playbookChunkDocumentIds!.map(async (docId) => {
+          const label = resolveDocLabel(docId, docStore, docIndex) ?? docId;
+          return {
+            id: docId,
+            filename: docStore.get(label)?.filename ?? docId,
+            text: await readDocumentContent(
+              label,
+              docStore,
+              write,
+              docIndex,
+              db,
+              { maxChars: Number.MAX_SAFE_INTEGER },
+            ),
+          };
+        }),
       );
       for (const document of documents) {
         events.push({
@@ -552,6 +592,7 @@ Use the available DingDuff MCP tool(s) for case retrieval, case reading, and cas
       }
       const chunkSummaries = await analyzePlaybookChunks({
         documents,
+        maxChars: chunkBudgetChars,
         signal,
         runPass: async ({ documentId, filename, index, total, text }) => {
           let summary = "";

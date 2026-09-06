@@ -130,6 +130,10 @@ playbooksRouter.post("/:playbookId/review", async (req, res) => {
       typeof req.body?.documentName === "string"
         ? req.body.documentName
         : undefined;
+    const instructions =
+      typeof req.body?.instructions === "string"
+        ? req.body.instructions
+        : undefined;
     const reviewMode =
       req.body?.reviewMode === "permissive"
         ? ("permissive" as const)
@@ -140,6 +144,7 @@ playbooksRouter.post("/:playbookId/review", async (req, res) => {
         playbookId: req.params.playbookId,
         documentText: text,
         documentName,
+        instructions,
         model,
         reviewMode,
       }),

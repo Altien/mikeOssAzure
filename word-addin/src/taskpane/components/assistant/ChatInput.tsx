@@ -10,6 +10,7 @@ import { WorkflowModal } from "../workflows/WorkflowModal";
 import { ChatInput as ChatInputShell } from "../../../shared/chat/ChatInput";
 import {
   getApiKeyStatus,
+  getConfiguredModels,
   getUserProfile,
   listWorkflows,
   uploadStandaloneDocument,
@@ -107,6 +108,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
     const [openRouterModels, setOpenRouterModels] = useState<string[]>([]);
     const [vercelModels, setVercelModels] = useState<string[]>([]);
     const [openCodeGoModels, setOpenCodeGoModels] = useState<string[]>([]);
+    const [syntheticModels, setSyntheticModels] = useState<string[]>([]);
+    const [configuredModelIds, setConfiguredModelIds] = useState<string[]>([]);
     const [profileLastSelectedModel, setProfileLastSelectedModel] = useState<
       string | null
     >(null);
@@ -115,8 +118,9 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
       sessionKey,
       chatModel,
       lastSelectedModel: lastSelectedModel ?? profileLastSelectedModel,
+      configuredModelIds,
       routerSelections: profileLoaded
-        ? { openRouterModels, vercelModels, openCodeGoModels }
+        ? { openRouterModels, vercelModels, openCodeGoModels, syntheticModels }
         : null,
       apiKeyStatus: keyStatus,
     });
@@ -239,6 +243,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
           setOpenRouterModels(profile.openRouterModels ?? []);
           setVercelModels(profile.vercelModels ?? []);
           setOpenCodeGoModels(profile.openCodeGoModels ?? []);
+          setSyntheticModels(profile.syntheticModels ?? []);
           setProfileLastSelectedModel(profile.lastSelectedChatModel ?? null);
           setProfileLastSelectedReasoningLevel(
             profile.lastSelectedReasoningLevel ?? "high",
@@ -247,6 +252,12 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
         }
         setKeyStatusLoading(false);
       });
+      void getConfiguredModels()
+        .then((models) => {
+          if (cancelled) return;
+          setConfiguredModelIds(models.map((model) => model.id));
+        })
+        .catch(() => {});
       return () => {
         cancelled = true;
       };
@@ -572,6 +583,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
                     openRouterModels={openRouterModels}
                     vercelModels={vercelModels}
                     openCodeGoModels={openCodeGoModels}
+                    syntheticModels={syntheticModels}
                     compact={compactControls}
                     reasoningLevel={resolvedReasoningLevel}
                     onReasoningChange={(next) => {
@@ -588,7 +600,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
                           openRouterModels.length === 0) ||
                         (keyStatus?.vercel && vercelModels.length === 0) ||
                         (keyStatus?.["opencode-go"] &&
-                          openCodeGoModels.length === 0);
+                          openCodeGoModels.length === 0) ||
+                        (keyStatus?.synthetic && syntheticModels.length === 0);
                       setModelError(
                         routerHasNoModels
                           ? "Your router is connected, but it has no saved models. Add one in Bring Your Own Keys → Routers."

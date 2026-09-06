@@ -1,7 +1,7 @@
 import type { Response } from "express";
-import type { createServerSupabase } from "../supabase";
+import type { ServerDatabase } from "../database";
 
-type Db = ReturnType<typeof createServerSupabase>;
+type Db = ServerDatabase;
 type AssistantMessageTable = "chat_messages" | "word_chat_messages";
 
 export async function reserveAssistantMessage(args: {

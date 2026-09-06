@@ -204,6 +204,7 @@ export function titleModelForChat(
         case "openrouter":
         case "vercel":
         case "opencode-go":
+        case "synthetic":
         case "ollama":
         case "openai-compatible":
             return resolvedChatModel;

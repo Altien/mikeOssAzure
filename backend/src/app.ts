@@ -23,9 +23,9 @@ import { legalMonitorsRouter } from "./routes/legalMonitors";
 import { promptsRouter } from "./routes/prompts";
 import { playbooksRouter } from "./routes/playbooks";
 import { gmailRouter } from "./routes/gmail";
+import { voiceRouter } from "./routes/voice";
 import { requireDeploymentModule } from "./lib/deploymentModules";
 import { auditRouter } from "./routes/audit";
-import { authRouter } from "./routes/auth";
 import { manifestPublicKey } from "./lib/manifestSigning";
 import {
   handleUnhandledError,
@@ -156,12 +156,6 @@ const authEmailLimiter = makeLimiter({
   message: "Too many authentication requests. Please try again later.",
 });
 
-const authFlowLimiter = makeLimiter({
-  windowMs: minutes(envInt("RATE_LIMIT_AUTH_FLOW_WINDOW_MINUTES", 15)),
-  max: envInt("RATE_LIMIT_AUTH_FLOW_MAX", 30),
-  message: "Too many authentication requests. Please try again later.",
-});
-
 const authMfaLimiter = makeLimiter({
   windowMs: minutes(envInt("RATE_LIMIT_AUTH_MFA_WINDOW_MINUTES", 15)),
   max: envInt("RATE_LIMIT_AUTH_MFA_MAX", 20),
@@ -222,11 +216,10 @@ app.use(
 
 app.use(generalLimiter);
 
-app.post("/auth/login", authLoginIpLimiter);
-app.post(["/auth/signup", "/auth/password-reset"], authEmailLimiter);
-app.post(["/auth/oauth", "/auth/exchange", "/auth/handoff"], authFlowLimiter);
+app.post("/user/auth/login", authLoginIpLimiter);
+app.post("/user/auth/signup", authEmailLimiter);
 app.post(
-  ["/auth/mfa/verify", "/auth/mfa/challenge-and-verify"],
+  "/user/mfa/verify",
   authMfaLimiter,
 );
 
@@ -274,9 +267,8 @@ app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 // Body-aware account throttling complements the per-IP login limiter. The key
 // is a one-way digest, so email addresses never enter the limiter store.
-app.post("/auth/login", authLoginAccountLimiter);
+app.post("/user/auth/login", authLoginAccountLimiter);
 
-app.use("/auth", authRouter);
 app.use("/chat", chatRouter);
 app.use("/word-chat", wordChatRouter);
 app.use("/models", modelsRouter);
@@ -292,6 +284,7 @@ app.use("/user", userRouter);
 app.use("/users", userRouter);
 app.use("/download", downloadsRouter);
 app.use("/documents", sourceDocumentsRouter);
+app.use("/voice", voiceRouter);
 app.use(
   "/integrations/ironclad",
   requireDeploymentModule("ironclad"),

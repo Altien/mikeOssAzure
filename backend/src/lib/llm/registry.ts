@@ -70,11 +70,18 @@ function defaultConfiguredModels(): ConfiguredModel[] {
     },
     {
       id: "qwen3.8-local",
-      label: "Qwen 3.8 (local)",
+      label: "Qwen 3.8 Guilfoyle (local)",
       provider: "openai-compatible",
       location: "local",
-      apiModel: "/home/dwmcqueen/vulcan/models/jackrong-qwen3.8-27b/Qwen3.8-27B-MTP-Q4_K_M.gguf",
+      // Guilfoyle now advertises the served model as `qwen38`.
+      apiModel: "qwen38",
       baseUrl: "http://192.168.9.142:9091/v1",
+      apiKeyEnv: "GUILFOYLE_DIRK_API_KEY",
+      // Guilfoyle serves n_ctx=208384 on port 9091; chunk attached playbook docs
+      // once they approach that window (see modelContextWindowTokens).
+      contextWindow: 208_384,
+      // Guilfoyle must be launched with automatic tool choice and the Qwen
+      // parser (`--enable-auto-tool-choice --tool-call-parser qwen3`).
       // Qwen's reasoning mode can consume the entire local generation budget
       // on large document reviews before producing visible content.
       extraBody: { chat_template_kwargs: { enable_thinking: false } },

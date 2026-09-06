@@ -1,4 +1,14 @@
+import { mkdtempSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { defineConfig } from "vitest/config";
+
+// Tests must never touch the developer's real databases under
+// <cwd>/data/. CI gets this isolation for free (a fresh checkout has no
+// data/ directory), so local runs get their own empty, disposable copies.
+// One directory per run, so concurrent or repeated runs cannot see each
+// other's residue. Leftovers under os.tmpdir() are OS-managed.
+const sqliteTestDir = mkdtempSync(path.join(os.tmpdir(), "mike-vitest-"));
 
 export default defineConfig({
     test: {
@@ -9,6 +19,8 @@ export default defineConfig({
             MIKE_DATABASE_PROVIDER: "sqlite",
             MIKE_STORAGE_PROVIDER: "sqlite",
             MIKE_AUTH_PROVIDER: "local",
+            SQLITE_DB_PATH: path.join(sqliteTestDir, "mike.sqlite"),
+            SQLITE_STORAGE_PATH: path.join(sqliteTestDir, "mike-files.sqlite"),
         },
         include: ["src/**/*.test.ts"],
         exclude: ["dist/**", "node_modules/**"],

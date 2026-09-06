@@ -163,6 +163,49 @@ export function normalizeJsonSchema(schema: unknown): Record<string, unknown> {
     if (!out.properties || typeof out.properties !== "object") {
         out.properties = {};
     }
+    return sanitizeJsonSchemaArrays(out);
+}
+
+// Some providers (Google) reject tool declarations whose array parameters do
+// not declare an `items` schema, and connector authors routinely omit it.
+// Fill those gaps recursively so one loose connector cannot break every
+// model call. The fill-in `items: {}` means "any element type".
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function sanitizeJsonSchemaArrays(
+    node: Record<string, unknown>,
+): Record<string, unknown> {
+    const out = { ...node };
+    const includesArray =
+        out.type === "array" ||
+        (Array.isArray(out.type) && out.type.includes("array"));
+    if (includesArray && !out.items) {
+        out.items = {};
+    }
+    if (isJsonObject(out.items)) {
+        out.items = sanitizeJsonSchemaArrays(out.items);
+    }
+    if (out.properties && typeof out.properties === "object") {
+        out.properties = Object.fromEntries(
+            Object.entries(out.properties as Record<string, unknown>).map(
+                ([key, value]) => [
+                    key,
+                    isJsonObject(value)
+                        ? sanitizeJsonSchemaArrays(value)
+                        : value,
+                ],
+            ),
+        );
+    }
+    for (const keyword of ["anyOf", "oneOf", "allOf", "prefixItems"]) {
+        if (Array.isArray(out[keyword])) {
+            out[keyword] = (out[keyword] as unknown[]).map((branch) =>
+                isJsonObject(branch) ? sanitizeJsonSchemaArrays(branch) : branch,
+            );
+        }
+    }
     return out;
 }
 

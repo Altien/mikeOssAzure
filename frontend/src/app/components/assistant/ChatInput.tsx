@@ -15,7 +15,10 @@ import {
     Library,
     ListChecks,
     Loader2,
+    Mic,
+    Pause,
     Square,
+    Volume2,
     Waypoints,
     X,
 } from "lucide-react";
@@ -56,6 +59,7 @@ import {
 } from "@/app/lib/modelAvailability";
 import type { Document, Message, Workflow } from "../shared/types";
 import type { DirectoryTab } from "../shared/useDirectoryData";
+// BlobPart is a standard web type, no import needed
 import { cn } from "@/app/lib/utils";
 import { featureEnabled } from "@/app/lib/featureFlags";
 import {
@@ -64,6 +68,7 @@ import {
 } from "@/app/components/ui/liquid-surface";
 import {
     listWorkflows,
+    getConfiguredModels,
     uploadProjectDocument,
     uploadStandaloneDocument,
 } from "@/app/lib/mikeApi";
@@ -135,6 +140,84 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     } | null>(null);
     const [storedSelectedPlaybook, setStoredSelectedPlaybook] =
         useState<AssistantPlaybookSelection | null>(null);
+    // Voice input state
+    const [isRecording, setIsRecording] = useState(false);
+    const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+    const [audioChunks, setAudioChunks] = useState<Blob[]>([]);
+
+    // Voice recording handlers
+    const startVoiceRecording = useCallback(async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            // Use webm format which is widely supported
+            const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+            recorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    audioChunks.push(event.data);
+                }
+            };
+            recorder.onstop = async () => {
+                // Clean up the stream
+                stream.getTracks().forEach(track => track.stop());
+
+                // Create blob from audio chunks
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                setAudioChunks([]); // Clear chunks
+
+                // Send to backend for speech-to-text
+                await handleVoiceInput(audioBlob);
+            };
+
+            setMediaRecorder(recorder);
+            setAudioChunks([]);
+            recorder.start();
+            setIsRecording(true);
+        } catch (err) {
+            console.error("Error accessing microphone:", err);
+            // Show error to user
+            alert("Could not access microphone. Please check permissions.");
+        }
+    }, []);
+
+    const stopVoiceRecording = useCallback(() => {
+        if (mediaRecorder && isRecording) {
+            mediaRecorder.stop();
+            setIsRecording(false);
+        }
+    }, [isRecording, mediaRecorder]);
+
+    const handleVoiceInput = useCallback(async (audioBlob: Blob) => {
+        try {
+            const formData = new FormData();
+            formData.append('audio', audioBlob, 'recording.webm');
+
+            const response = await fetch('/voice/stt', {
+                method: 'POST',
+                body: formData,
+                credentials: 'include' // Important for sending cookies
+            });
+
+            if (!response.ok) {
+                throw new Error(`STT failed: ${response.status}`);
+            }
+
+            const result = await response.json();
+            if (result.text) {
+                setValue(result.text);
+                // Focus and adjust textarea height
+                requestAnimationFrame(() => {
+                    if (textareaRef.current) {
+                        textareaRef.current.focus();
+                        textareaRef.current.style.height = "auto";
+                        textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 192)}px`;
+                    }
+                });
+            }
+        } catch (err) {
+            console.error("Error processing voice input:", err);
+            alert("Failed to process voice input. Please try again.");
+        }
+    }, []);
     const {
         profile,
         loading: profileLoading,
@@ -142,6 +225,22 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         persistChatModelSelection,
         persistChatReasoningSelection,
     } = useUserProfile();
+    // Deployment-configured model ids (e.g. a local Qwen server) must be
+    // selectable in the Assistant, not just in Settings. Fetch them once so
+    // the composer's picker and the selection hooks accept them.
+    const [configuredModelIds, setConfiguredModelIds] = useState<string[]>([]);
+    useEffect(() => {
+        let cancelled = false;
+        getConfiguredModels()
+            .then((configured) => {
+                if (cancelled) return;
+                setConfiguredModelIds(configured.map((model) => model.id));
+            })
+            .catch(() => {});
+        return () => {
+            cancelled = true;
+        };
+    }, []);
     // A degraded profile is the local fallback, whose router lists are empty
     // because the truth is UNKNOWN. Passing them on would let one dropped
     // /user/profile request rewrite the saved composer selection to the
@@ -151,13 +250,15 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         selectionKey: chatKey,
         chatModel,
         lastSelectedModel: profile?.lastSelectedChatModel,
+        configuredModelIds: configuredModelIds,
         routerSelections:
             profile && !apiKeysDegraded
                 ? {
-                  openRouterModels: profile.openRouterModels,
-                  vercelModels: profile.vercelModels,
-                  openCodeGoModels: profile.openCodeGoModels,
-                  }
+                   openRouterModels: profile.openRouterModels,
+                   vercelModels: profile.vercelModels,
+                   openCodeGoModels: profile.openCodeGoModels,
+                   syntheticModels: profile.syntheticModels,
+                   }
                 : null,
         apiKeys: apiKeysDegraded ? undefined : profile?.apiKeys,
     });
@@ -789,6 +890,25 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                     <span className={compactControls ? "hidden" : "hidden sm:inline"}>Playbook</span>
                                 </button>
                             )}
+                            {/* Voice controls */}
+                            <button
+                                type="button"
+                                onClick={isRecording ? stopVoiceRecording : startVoiceRecording}
+                                aria-label={isRecording ? "Stop recording" : "Record voice input"}
+                                className={cn(
+                                    "flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm transition-colors",
+                                    isRecording
+                                        ? "text-red-600 hover:text-red-700"
+                                        : "text-gray-400 hover:text-gray-700",
+                                )}
+                            >
+                                {isRecording ? (
+                                    <Square className="h-3.5 w-3.5" />
+                                ) : (
+                                    <Mic className="h-3.5 w-3.5" />
+                                )}
+                                <span className={compactControls ? "hidden" : "hidden sm:inline"}>Voice</span>
+                            </button>
                         </div>
 
                         <div className="flex items-center gap-1">
@@ -803,6 +923,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                     openRouterModels={profile?.openRouterModels}
                                     vercelModels={profile?.vercelModels}
                                     openCodeGoModels={profile?.openCodeGoModels}
+                                    syntheticModels={profile?.syntheticModels}
                                     compact={compactControls}
                                     onNoModelsClick={setNoModelsWarning}
                                     reasoningLevel={reasoningLevel}

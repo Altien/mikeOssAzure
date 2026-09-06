@@ -9,15 +9,13 @@ import {
     CLAUDE_LOW_MODELS,
     GEMINI_LOW_MODELS,
     OPENAI_LOW_MODELS,
-    DEFAULT_MAIN_MODEL,
-    DEFAULT_TITLE_MODEL,
-    DEFAULT_TABULAR_MODEL,
     providerForModel,
     resolveModel,
     resolveUsableModel,
     openRouterModelId,
     vercelModelId,
     openCodeGoModelId,
+    syntheticModelId,
     isOpenCodeGoChatCompletionsModel,
     isOpenCodeGoMessagesModel,
     isSupportedOpenCodeGoModel,
@@ -89,6 +87,13 @@ describe("providerForModel", () => {
         expect(providerForModel("opencode-go/glm-5")).toBe("opencode-go");
     });
 
+    it("maps namespaced Synthetic ids to the synthetic provider", () => {
+        expect(providerForModel("synthetic/syn:large:text")).toBe("synthetic");
+        expect(providerForModel("synthetic/hf:zai-org/GLM-5.2")).toBe(
+            "synthetic",
+        );
+    });
+
     it("throws on an unknown model id", () => {
         expect(() => providerForModel("llama-3")).toThrow(/Unknown model id/);
         expect(() => providerForModel("")).toThrow(/Unknown model id/);
@@ -108,36 +113,36 @@ describe("providerForModel", () => {
 
 describe("resolveModel", () => {
     it("returns a known model id unchanged", () => {
-        expect(resolveModel("claude-opus-5", DEFAULT_MAIN_MODEL)).toBe(
+        expect(resolveModel("claude-opus-5", "gemini-3-flash-preview")).toBe(
             "claude-opus-5",
         );
-        expect(resolveModel("gemini-3.7-flash", DEFAULT_MAIN_MODEL)).toBe(
+        expect(resolveModel("gemini-3.7-flash", "gemini-3-flash-preview")).toBe(
             "gemini-3.7-flash",
         );
-        expect(resolveModel("gpt-5.6-sol", DEFAULT_MAIN_MODEL)).toBe(
+        expect(resolveModel("gpt-5.6-sol", "gemini-3-flash-preview")).toBe(
             "gpt-5.6-sol",
         );
-        expect(resolveModel("kimi-k3", DEFAULT_MAIN_MODEL)).toBe("kimi-k3");
-        expect(resolveModel("ollama/qwen3.6", DEFAULT_MAIN_MODEL)).toBe(
+        expect(resolveModel("kimi-k3", "gemini-3-flash-preview")).toBe("kimi-k3");
+        expect(resolveModel("ollama/qwen3.6", "gemini-3-flash-preview")).toBe(
             "ollama/qwen3.6",
         );
         expect(
-            resolveModel("openrouter/openai/gpt-5", DEFAULT_MAIN_MODEL),
+            resolveModel("openrouter/openai/gpt-5", "gemini-3-flash-preview"),
         ).toBe("openrouter/openai/gpt-5");
     });
 
     it("falls back for unknown model ids", () => {
-        expect(resolveModel("gpt-3.5-turbo", DEFAULT_MAIN_MODEL)).toBe(
-            DEFAULT_MAIN_MODEL,
+        expect(resolveModel("gpt-3.5-turbo", "gemini-3-flash-preview")).toBe(
+            "gemini-3-flash-preview",
         );
     });
 
     it("falls back for null, undefined, and empty ids", () => {
-        expect(resolveModel(null, DEFAULT_MAIN_MODEL)).toBe(DEFAULT_MAIN_MODEL);
-        expect(resolveModel(undefined, DEFAULT_TABULAR_MODEL)).toBe(
-            DEFAULT_TABULAR_MODEL,
+        expect(resolveModel(null, "gemini-3-flash-preview")).toBe("gemini-3-flash-preview");
+        expect(resolveModel(undefined, "gemini-3.7-flash")).toBe(
+            "gemini-3.7-flash",
         );
-        expect(resolveModel("", DEFAULT_TITLE_MODEL)).toBe(DEFAULT_TITLE_MODEL);
+        expect(resolveModel("", "gemini-3.5-flash-lite")).toBe("gemini-3.5-flash-lite");
     });
 
     it("accepts models from every tier of the catalog", () => {
@@ -161,9 +166,9 @@ describe("resolveModel", () => {
         // Stored preferences outlive catalog renames; without the mapping the
         // saved value silently degrades to the fallback.
         expect(
-            resolveModel("gemini-3.1-flash-lite-preview", DEFAULT_MAIN_MODEL),
+            resolveModel("gemini-3.1-flash-lite-preview", "gemini-3-flash-preview"),
         ).toBe("gemini-3.5-flash-lite");
-        expect(resolveModel("gpt-5.4-lite", DEFAULT_MAIN_MODEL)).toBe(
+        expect(resolveModel("gpt-5.4-lite", "gemini-3-flash-preview")).toBe(
             "gpt-5.4-mini",
         );
     });
@@ -172,35 +177,60 @@ describe("resolveModel", () => {
         expect(
             resolveModel(
                 "openrouter/meta-llama/llama-4-maverick",
-                DEFAULT_MAIN_MODEL,
+                "gemini-3-flash-preview",
             ),
         ).toBe("openrouter/meta-llama/llama-4-maverick");
-        expect(resolveModel("openrouter/invalid", DEFAULT_MAIN_MODEL)).toBe(
-            DEFAULT_MAIN_MODEL,
+        expect(resolveModel("openrouter/invalid", "gemini-3-flash-preview")).toBe(
+            "gemini-3-flash-preview",
         );
     });
 
     it("accepts namespaced Vercel AI Gateway model ids", () => {
-        expect(resolveModel("vercel/openai/gpt-5.4", DEFAULT_MAIN_MODEL)).toBe(
+        expect(resolveModel("vercel/openai/gpt-5.4", "gemini-3-flash-preview")).toBe(
             "vercel/openai/gpt-5.4",
         );
-        expect(resolveModel("vercel/invalid", DEFAULT_MAIN_MODEL)).toBe(
-            DEFAULT_MAIN_MODEL,
+        expect(resolveModel("vercel/invalid", "gemini-3-flash-preview")).toBe(
+            "gemini-3-flash-preview",
         );
     });
 
     it("accepts OpenCode Go's single-segment model ids", () => {
         // Unlike the other two routers, OpenCode Go's catalog ids are bare
         // names — requiring a vendor/model pair would reject all of them.
-        expect(resolveModel("opencode-go/glm-5", DEFAULT_MAIN_MODEL)).toBe(
+        expect(resolveModel("opencode-go/glm-5", "gemini-3-flash-preview")).toBe(
             "opencode-go/glm-5",
         );
-        expect(resolveModel("opencode-go/", DEFAULT_MAIN_MODEL)).toBe(
-            DEFAULT_MAIN_MODEL,
+        expect(resolveModel("opencode-go/", "gemini-3-flash-preview")).toBe(
+            "gemini-3-flash-preview",
         );
-        expect(resolveModel("opencode-go/a b", DEFAULT_MAIN_MODEL)).toBe(
-            DEFAULT_MAIN_MODEL,
+        expect(resolveModel("opencode-go/a b", "gemini-3-flash-preview")).toBe(
+            "gemini-3-flash-preview",
         );
+    });
+
+    it("accepts both Synthetic catalog id families", () => {
+        for (const id of [
+            "synthetic/syn:large:text",
+            "synthetic/hf:zai-org/GLM-5.2",
+            "synthetic/hf:nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
+        ]) {
+            expect(resolveModel(id, "gemini-3-flash-preview")).toBe(id);
+        }
+        expect(resolveModel("synthetic/", "gemini-3-flash-preview")).toBe(
+            "gemini-3-flash-preview",
+        );
+    });
+});
+
+describe("syntheticModelId", () => {
+    it("removes only the internal provider namespace", () => {
+        expect(syntheticModelId("synthetic/syn:large:text")).toBe(
+            "syn:large:text",
+        );
+        expect(syntheticModelId("synthetic/hf:zai-org/GLM-5.2")).toBe(
+            "hf:zai-org/GLM-5.2",
+        );
+        expect(syntheticModelId("syn:large:text")).toBe("syn:large:text");
     });
 });
 
@@ -241,7 +271,7 @@ describe("openRouterModelId", () => {
         // id is "openrouter/openrouter/auto": resolveModel must accept it and
         // the adapter must strip exactly one namespace segment.
         expect(
-            resolveModel("openrouter/openrouter/auto", DEFAULT_MAIN_MODEL),
+            resolveModel("openrouter/openrouter/auto", "gemini-3-flash-preview"),
         ).toBe("openrouter/openrouter/auto");
         expect(openRouterModelId("openrouter/openrouter/auto")).toBe(
             "openrouter/auto",
@@ -255,7 +285,7 @@ describe("vercelModelId", () => {
     });
 
     it("preserves catalog ids that begin with the router's own slug", () => {
-        expect(resolveModel("vercel/vercel/v0-1.5-md", DEFAULT_MAIN_MODEL)).toBe(
+        expect(resolveModel("vercel/vercel/v0-1.5-md", "gemini-3-flash-preview")).toBe(
             "vercel/vercel/v0-1.5-md",
         );
         expect(vercelModelId("vercel/vercel/v0-1.5-md")).toBe(
@@ -273,7 +303,7 @@ describe("resolveUsableModel", () => {
         expect(
             resolveUsableModel(
                 "ollama/qwen3.6",
-                DEFAULT_MAIN_MODEL,
+                "gemini-3-flash-preview",
                 {},
             ),
         ).toBe("ollama/qwen3.6");
@@ -283,17 +313,27 @@ describe("resolveUsableModel", () => {
         expect(
             resolveUsableModel(
                 "openrouter/anthropic/claude-sonnet-4",
-                DEFAULT_MAIN_MODEL,
+                "gemini-3-flash-preview",
                 { openrouter: "user-openrouter-key" },
             ),
         ).toBe("openrouter/anthropic/claude-sonnet-4");
+    });
+
+    it("keeps a dynamic Synthetic model when its user key is available", () => {
+        expect(
+            resolveUsableModel(
+                "synthetic/syn:large:text",
+                "gemini-3-flash-preview",
+                { synthetic: "user-synthetic-key" },
+            ),
+        ).toBe("synthetic/syn:large:text");
     });
 
     it("keeps the selected model when its user API key is available", () => {
         expect(
             resolveUsableModel(
                 "gemini-3-flash-preview",
-                DEFAULT_MAIN_MODEL,
+                "gemini-3-flash-preview",
                 { gemini: "user-gemini-key" },
             ),
         ).toBe("gemini-3-flash-preview");
@@ -307,46 +347,42 @@ describe("resolveUsableModel", () => {
         vi.stubEnv("KIMI_API_KEY", "");
 
         expect(
-            resolveUsableModel(undefined, DEFAULT_MAIN_MODEL, {
+            resolveUsableModel(undefined, "gemini-3-flash-preview", {
                 kimi: "user-kimi-key",
             }),
         ).toBe("kimi-k3");
     });
 
-    it("falls back to a keyless configured model when no provider keys are set", () => {
+    it("falls back to a configured model with an env key when no provider keys are set", () => {
         vi.stubEnv("GEMINI_API_KEY", "");
         vi.stubEnv("ANTHROPIC_API_KEY", "");
         vi.stubEnv("CLAUDE_API_KEY", "");
         vi.stubEnv("OPENAI_API_KEY", "");
         vi.stubEnv("KIMI_API_KEY", "");
-
-        // qwen3.8-local requires no API key, so it is the only usable
-        // configured model once every provider key is absent.
-        expect(resolveUsableModel(undefined, DEFAULT_MAIN_MODEL, {})).toBe(
+        // The local Qwen 3.8 (Dirk) model has its own env key, so it remains
+        // the only usable configured model once every provider key is absent.
+        vi.stubEnv("GUILFOYLE_DIRK_API_KEY", "test-key");
+        expect(resolveUsableModel(undefined, "gemini-3-flash-preview", {})).toBe(
             "qwen3.8-local",
         );
     });
 });
 
 // ---------------------------------------------------------------------------
-// Default model sanity
+// No-silent-default contract
 // ---------------------------------------------------------------------------
 
-describe("default models", () => {
-    it("every default resolves to itself (defaults are in the catalog)", () => {
-        expect(resolveModel(DEFAULT_MAIN_MODEL, "x")).toBe(DEFAULT_MAIN_MODEL);
-        expect(resolveModel(DEFAULT_TITLE_MODEL, "x")).toBe(
-            DEFAULT_TITLE_MODEL,
-        );
-        expect(resolveModel(DEFAULT_TABULAR_MODEL, "x")).toBe(
-            DEFAULT_TABULAR_MODEL,
-        );
+describe("no silent default model", () => {
+    it("resolves unresolvable ids to an empty fallback so callers fail loudly", () => {
+        expect(resolveModel("gpt-3.5-turbo", "")).toBe("");
+        expect(resolveModel(undefined, "")).toBe("");
+        expect(resolveModel(null, "")).toBe("");
     });
 
-    it("every default has a resolvable provider", () => {
-        expect(providerForModel(DEFAULT_MAIN_MODEL)).toBe("gemini");
-        expect(providerForModel(DEFAULT_TITLE_MODEL)).toBe("gemini");
-        expect(providerForModel(DEFAULT_TABULAR_MODEL)).toBe("gemini");
+    it("still resolves catalog ids when the fallback is empty", () => {
+        expect(resolveModel("gemini-3-flash-preview", "")).toBe(
+            "gemini-3-flash-preview",
+        );
     });
 });
 

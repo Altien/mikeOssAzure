@@ -3,9 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SignupPage from "./page";
 
-const { signup, startGoogleOAuth, refreshSession, replace, push } = vi.hoisted(() => ({
+const { signup, refreshSession, replace, push } = vi.hoisted(() => ({
     signup: vi.fn(),
-    startGoogleOAuth: vi.fn(),
     refreshSession: vi.fn(),
     replace: vi.fn(),
     push: vi.fn(),
@@ -18,7 +17,6 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/app/lib/authApi", () => ({
     signup,
-    startGoogleOAuth,
 }));
 
 vi.mock("@/app/contexts/AuthContext", () => ({
@@ -36,7 +34,6 @@ vi.mock("@/app/components/site-logo", () => ({
 describe("SignupPage", () => {
     beforeEach(() => {
         signup.mockReset();
-        startGoogleOAuth.mockReset();
         refreshSession.mockReset();
         replace.mockReset();
         push.mockReset();
@@ -74,16 +71,11 @@ describe("SignupPage", () => {
         expect(push).toHaveBeenCalledWith("/signup/check-email");
     });
 
-    it("places Google signup after the primary signup action", () => {
+    it("does not offer hosted OAuth", () => {
         render(<SignupPage />);
 
-        const signup = screen.getByRole("button", { name: "Sign up" });
-        const google = screen.getByRole("button", {
-            name: "Continue with Google",
-        });
         expect(
-            signup.compareDocumentPosition(google) &
-                Node.DOCUMENT_POSITION_FOLLOWING,
-        ).toBeTruthy();
+            screen.queryByRole("button", { name: "Continue with Google" }),
+        ).not.toBeInTheDocument();
     });
 });

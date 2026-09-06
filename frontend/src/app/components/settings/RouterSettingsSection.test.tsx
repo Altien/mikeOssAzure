@@ -4,21 +4,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const {
     getOpenRouterModels,
     getOpenCodeGoModels,
+    getSyntheticModels,
     updateOpenRouterModels,
     updateOpenCodeGoModels,
+    updateSyntheticModels,
     openCodeGoConfigured,
+    syntheticConfigured,
 } = vi.hoisted(() => ({
     getOpenRouterModels: vi.fn(),
     getOpenCodeGoModels: vi.fn(),
+    getSyntheticModels: vi.fn(),
     updateOpenRouterModels: vi.fn(),
     updateOpenCodeGoModels: vi.fn(),
+    updateSyntheticModels: vi.fn(),
     openCodeGoConfigured: { value: false },
+    syntheticConfigured: { value: false },
 }));
 
 vi.mock("@/app/lib/mikeApi", () => ({
     getOpenRouterModels,
     getVercelModels: vi.fn().mockResolvedValue([]),
     getOpenCodeGoModels,
+    getSyntheticModels,
 }));
 
 vi.mock("@/app/contexts/UserProfileContext", () => ({
@@ -31,14 +38,20 @@ vi.mock("@/app/contexts/UserProfileContext", () => ({
                     configured: openCodeGoConfigured.value,
                     source: openCodeGoConfigured.value ? "user" : null,
                 },
+                synthetic: {
+                    configured: syntheticConfigured.value,
+                    source: syntheticConfigured.value ? "user" : null,
+                },
             },
             openRouterModels: ["anthropic/claude-sonnet-4.5"],
             vercelModels: [],
             openCodeGoModels: [],
+            syntheticModels: [],
         },
         updateOpenRouterModels,
         updateVercelModels: vi.fn(),
         updateOpenCodeGoModels,
+        updateSyntheticModels,
     }),
 }));
 
@@ -51,8 +64,12 @@ describe("RouterSettingsSection", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         openCodeGoConfigured.value = false;
+        syntheticConfigured.value = false;
         getOpenCodeGoModels.mockResolvedValue([
             { id: "glm-5", label: "GLM-5" },
+        ]);
+        getSyntheticModels.mockResolvedValue([
+            { id: "syn:large:text", label: "GLM-5.2 (Syn Large)" },
         ]);
         getOpenRouterModels.mockResolvedValue([
             {

@@ -189,6 +189,9 @@ describe("router slugs", () => {
         );
         expect(routerForModelId("vercel/openai/gpt-5.4")).toBe("vercel");
         expect(routerForModelId("opencode-go/glm-5")).toBe("opencode-go");
+        expect(routerForModelId("synthetic/hf:zai-org/GLM-5.2")).toBe(
+            "synthetic",
+        );
         expect(routerForModelId("gemini-3-flash-preview")).toBeNull();
     });
 
@@ -197,6 +200,7 @@ describe("router slugs", () => {
             openrouter: ["openai/gpt-5.4"],
             vercel: [],
             "opencode-go": ["glm-5"],
+            synthetic: ["syn:large:text"],
         };
 
         expect(
@@ -204,6 +208,13 @@ describe("router slugs", () => {
         ).toBe(true);
         expect(
             isRouterModelSelected("opencode-go/kimi-k3", selections),
+        ).toBe(false);
+        // A colon-bearing Synthetic id round-trips through the slug slice.
+        expect(
+            isRouterModelSelected("synthetic/syn:large:text", selections),
+        ).toBe(true);
+        expect(
+            isRouterModelSelected("synthetic/hf:zai-org/GLM-5.2", selections),
         ).toBe(false);
         // A selection is per-router: the same catalog id saved for one router
         // must not unlock another.
@@ -233,6 +244,27 @@ describe("router slugs", () => {
             ),
         ).rejects.toThrow(
             "Model opencode-go/glm-5 is not in your saved OpenCode Go models",
+        );
+    });
+
+    it("names Synthetic in the outside-selection error", async () => {
+        const query: Record<string, unknown> = {};
+        for (const method of ["select", "eq", "order"]) {
+            query[method] = vi.fn(() => query);
+        }
+        query.then = (resolve: (value: unknown) => unknown) =>
+            Promise.resolve({ data: [], error: null }).then(resolve);
+
+        await expect(
+            resolveRequestedModel(
+                "synthetic/syn:large:text",
+                "gemini-3-flash-preview",
+                "user-1",
+                { from: vi.fn(() => query) } as never,
+                "throw",
+            ),
+        ).rejects.toThrow(
+            "Model synthetic/syn:large:text is not in your saved Synthetic models",
         );
     });
 });

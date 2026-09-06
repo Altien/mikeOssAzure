@@ -1,14 +1,7 @@
-/**
- * Mike API client. Supabase deployments use the same-origin cookie gateway;
- * local deployments retain the fork's direct backend and bearer-token path.
- */
+/** Mike API client for the SQLite backend and local bearer-token auth. */
 
 import { isPanelDocument } from "@/app/components/shared/types";
-import {
-    getAuthToken,
-    resolveBrowserAuthProvider,
-} from "@/app/lib/auth";
-import { authenticatedFetch } from "@/app/lib/authEvents";
+import { getAuthToken } from "@/app/lib/auth";
 import type {
     AskInputResponseItem,
     AssistantEvent,
@@ -54,21 +47,23 @@ interface ServerChatDetailOut {
 }
 
 const configuredApiBase = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-const usesDirectBackend =
-    Boolean(configuredApiBase) || resolveBrowserAuthProvider() === "local";
-
-export const API_BASE =
-    configuredApiBase || (usesDirectBackend ? "http://localhost:3001" : "/api");
+export const API_BASE = configuredApiBase || "/api";
 
 const apiFetch: typeof fetch = async (input, init) => {
-    if (!usesDirectBackend) {
-        return authenticatedFetch(input, init);
-    }
-
-    const headers = new Headers(init?.headers);
     const token = await getAuthToken();
-    if (token) headers.set("Authorization", `Bearer ${token}`);
-    return globalThis.fetch(input, { ...init, headers });
+    if (!token) {
+        return globalThis.fetch(input, {
+            ...init,
+            credentials: "include",
+        });
+    }
+    const headers = new Headers(init?.headers);
+    headers.set("Authorization", `Bearer ${token}`);
+    return globalThis.fetch(input, {
+        ...init,
+        headers,
+        credentials: "include",
+    });
 };
 const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
@@ -588,6 +583,7 @@ export interface UserProfile {
     openRouterModels: string[];
     vercelModels: string[];
     openCodeGoModels: string[];
+    syntheticModels: string[];
     apiKeyStatus: ApiKeyStatus;
 }
 
@@ -703,6 +699,7 @@ export async function updateUserProfile(payload: {
     openRouterModels?: string[];
     vercelModels?: string[];
     openCodeGoModels?: string[];
+    syntheticModels?: string[];
 }): Promise<UserProfile> {
     return apiRequest<UserProfile>("/user/profile", {
         method: "PATCH",
@@ -759,6 +756,7 @@ export type ApiKeyProvider =
     | "openrouter"
     | "vercel"
     | "opencode-go"
+    | "synthetic"
     | "courtlistener";
 export type ApiKeySource = "user" | "env" | null;
 export type ApiKeyState = Record<
@@ -824,6 +822,13 @@ export async function getVercelModels(): Promise<RouterCatalogModel[]> {
 export async function getOpenCodeGoModels(): Promise<RouterCatalogModel[]> {
     const { models } = await apiRequest<{ models: RouterCatalogModel[] }>(
         "/models/opencode-go",
+    );
+    return models;
+}
+
+export async function getSyntheticModels(): Promise<RouterCatalogModel[]> {
+    const { models } = await apiRequest<{ models: RouterCatalogModel[] }>(
+        "/models/synthetic",
     );
     return models;
 }
@@ -937,6 +942,7 @@ export interface LegalMonitor {
     alertEmail: string | null;
     emailEnabled: boolean;
     knowledgeCaptureEnabled: boolean;
+    materialityThreshold: LegalMonitorSeverity;
     knowledgeDocumentId: string | null;
     enabled: boolean;
     nextRunAt: string | null;
@@ -957,6 +963,14 @@ export interface LegalMonitorReferenceDocument {
     updatedAt: string | null;
 }
 
+export const LEGAL_MONITOR_SEVERITIES = [
+    "critical",
+    "high",
+    "medium",
+    "low",
+] as const;
+export type LegalMonitorSeverity = (typeof LEGAL_MONITOR_SEVERITIES)[number];
+
 export interface LegalMonitorDevelopment {
     title: string;
     type: "case_law" | "statute" | "regulatory" | "cybersecurity" | "industry" | "other";
@@ -965,6 +979,10 @@ export interface LegalMonitorDevelopment {
     citation: string | null;
     sourceName: string | null;
     whyItMatters: string;
+    severity: LegalMonitorSeverity;
+    confidence: number | null;
+    /** Reasons the deterministic verification pass could not reconcile this item. */
+    unverified: string[];
 }
 
 export interface LegalMonitorRun {
@@ -1002,6 +1020,7 @@ export interface LegalMonitorInput {
     alertEmail: string | null;
     emailEnabled: boolean;
     knowledgeCaptureEnabled: boolean;
+    materialityThreshold: LegalMonitorSeverity;
     enabled: boolean;
 }
 
@@ -1168,7 +1187,7 @@ export async function updatePlaybook(playbookId: string, draft: PlaybookContent)
 export async function publishPlaybook(playbookId: string): Promise<Playbook> {
     return apiRequest(`/playbooks/${encodeURIComponent(playbookId)}/publish`, { method: "POST" });
 }
-export async function reviewDocumentWithPlaybook(playbookId: string, payload: { documentText: string; documentName?: string; model: string; reviewMode: "strict" | "permissive" }): Promise<PlaybookRun> {
+export async function reviewDocumentWithPlaybook(playbookId: string, payload: { documentText: string; documentName?: string; instructions?: string; model: string; reviewMode: "strict" | "permissive" }): Promise<PlaybookRun> {
     return apiRequest(`/playbooks/${encodeURIComponent(playbookId)}/review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
 }
 export async function listPlaybookRuns(playbookId: string): Promise<PlaybookRun[]> { return apiRequest(`/playbooks/${encodeURIComponent(playbookId)}/runs`); }

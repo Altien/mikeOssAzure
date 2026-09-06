@@ -62,17 +62,9 @@ export function validateRuntimeConfiguration(
   env: NodeJS.ProcessEnv = process.env,
 ): void {
   const errors: string[] = [];
-  const session = supabaseSessionConfiguration(env);
-
-  if (!session.url) errors.push("SUPABASE_URL is required");
-  if (!session.key) {
-    errors.push("SUPABASE_PUBLISHABLE_KEY (or SUPABASE_ANON_KEY) is required");
-  }
-  if (!env.SUPABASE_SECRET_KEY?.trim()) {
-    errors.push("SUPABASE_SECRET_KEY is required");
-  }
-
-  if (session.url) parsedUrl(session.url, "SUPABASE_URL", errors);
+  resolveAuthProvider(env);
+  resolveDatabaseProvider(env);
+  resolveStorageProvider(env);
 
   if (env.AUTH_HANDOFF_ENCRYPTION_SECRET?.trim()) {
     if (env.AUTH_HANDOFF_ENCRYPTION_SECRET.trim().length < 32) {
@@ -125,3 +117,6 @@ export function validateRuntimeConfiguration(
     );
   }
 }
+import { resolveAuthProvider } from "./authProvider";
+import { resolveDatabaseProvider } from "./database";
+import { resolveStorageProvider } from "./storage";

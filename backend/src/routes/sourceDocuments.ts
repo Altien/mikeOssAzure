@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { getCourtlistenerCaseOpinions } from "../lib/courtlistener";
-import { createServerSupabase } from "../lib/supabase";
+import { createServerDatabase } from "../lib/database";
 import { getUserModelSettings } from "../lib/userSettings";
 import { caseClusterId, normalizeCaseDocument } from "../lib/sourceDocuments";
 import { sendInternalError } from "../lib/httpError";
@@ -30,7 +30,7 @@ sourceDocumentsRouter.get("/:documentId", async (req, res) => {
     if (!request) {
       request = getCourtlistenerCaseOpinions({
         clusterId,
-        db: createServerSupabase(),
+        db: createServerDatabase(),
         includeFullText: true,
         maxChars: 50000,
         apiToken: settings.api_keys.courtlistener,

@@ -16,11 +16,15 @@ import type { ApiKeyState } from "../lib/mikeApi";
  * (frontend/src/wordAddin/catalogParity.test.ts) can compare it against the
  * add-in's hand-mirrored copy instead of restating the rule.
  */
-export function isAllowedModelId(id: string): boolean {
+export function isAllowedModelId(
+    id: string,
+    configuredModelIds?: ReadonlySet<string>,
+): boolean {
     return (
         ALLOWED_MODEL_IDS.has(id) ||
         id.startsWith("ollama/") ||
-        ROUTER_SLUGS.some((slug) => id.startsWith(`${slug}/`))
+        ROUTER_SLUGS.some((slug) => id.startsWith(`${slug}/`)) ||
+        configuredModelIds?.has(id) === true
     );
 }
 
@@ -28,13 +32,22 @@ export interface SelectedModelSources {
     selectionKey?: string | null;
     chatModel?: string | null;
     lastSelectedModel?: string | null;
+    /** Deployment-configured model ids (e.g. a local Qwen server). */
+    configuredModelIds?: string[] | null;
     routerSelections?: {
         openRouterModels: string[];
         vercelModels: string[];
         openCodeGoModels: string[];
+        syntheticModels: string[];
     } | null;
     /** Undefined means availability is unknown and must fail open. */
     apiKeys?: ApiKeyState;
+}
+
+function configuredIds(sources: SelectedModelSources): ReadonlySet<string> | undefined {
+    return sources.configuredModelIds?.length
+        ? new Set(sources.configuredModelIds)
+        : undefined;
 }
 
 function usableStoredModel(
@@ -43,7 +56,7 @@ function usableStoredModel(
 ): string | null {
     if (!value) return null;
     const canonical = canonicalModelId(value);
-    if (!isAllowedModelId(canonical)) return null;
+    if (!isAllowedModelId(canonical, configuredIds(sources))) return null;
 
     const router = ROUTER_SLUGS.find((slug) =>
         canonical.startsWith(`${slug}/`),
@@ -53,6 +66,7 @@ function usableStoredModel(
             openrouter: sources.routerSelections.openRouterModels,
             vercel: sources.routerSelections.vercelModels,
             "opencode-go": sources.routerSelections.openCodeGoModels,
+            synthetic: sources.routerSelections.syntheticModels,
         };
         if (!selections[router].includes(canonical.slice(router.length + 1))) {
             return null;
@@ -74,17 +88,25 @@ export function useSelectedModel(
     const openRouterModels = sources.routerSelections?.openRouterModels;
     const vercelModels = sources.routerSelections?.vercelModels;
     const openCodeGoModels = sources.routerSelections?.openCodeGoModels;
+    const syntheticModels = sources.routerSelections?.syntheticModels;
     const hasRouterSelections = sources.routerSelections != null;
+    const configuredModelIds = sources.configuredModelIds;
+    const configuredIdsRef = useRef(configuredModelIds);
+    useEffect(() => {
+        configuredIdsRef.current = configuredModelIds;
+    }, [configuredModelIds]);
     const selectionSources = useMemo<SelectedModelSources>(
         () => ({
             selectionKey: sources.selectionKey,
             chatModel: sources.chatModel,
             lastSelectedModel: sources.lastSelectedModel,
+            configuredModelIds,
             routerSelections: hasRouterSelections
                 ? {
                       openRouterModels: openRouterModels ?? [],
                       vercelModels: vercelModels ?? [],
                       openCodeGoModels: openCodeGoModels ?? [],
+                      syntheticModels: syntheticModels ?? [],
                   }
                 : null,
             apiKeys: sources.apiKeys,
@@ -93,10 +115,12 @@ export function useSelectedModel(
             sources.selectionKey,
             sources.chatModel,
             sources.lastSelectedModel,
+            configuredModelIds,
             hasRouterSelections,
             openRouterModels,
             vercelModels,
             openCodeGoModels,
+            syntheticModels,
             sources.apiKeys,
         ],
     );
@@ -130,7 +154,14 @@ export function useSelectedModel(
 
     const setModel = useCallback((id: string) => {
         const canonical = canonicalModelId(id);
-        const next = isAllowedModelId(canonical) ? canonical : "";
+        const next = isAllowedModelId(
+            canonical,
+            configuredIdsRef.current?.length
+                ? new Set(configuredIdsRef.current)
+                : undefined,
+        )
+            ? canonical
+            : "";
         manuallySelected.current = true;
         setModelState(next);
     }, []);

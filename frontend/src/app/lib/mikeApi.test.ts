@@ -290,7 +290,7 @@ describe("MikeApiError / isMfaRequiredError", () => {
 });
 
 describe("apiRequest plumbing (via thin wrappers)", () => {
-    it("uses the cookie-authenticated gateway and JSON accept header", async () => {
+    it("uses the same-origin gateway and JSON accept header", async () => {
         fetchMock.mockResolvedValue(jsonResponse({ tier: "free" }));
 
         const profile = await getUserProfile();
@@ -305,7 +305,7 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
         expect(init.credentials).toBe("include");
     });
 
-    it("never attaches an Authorization header", async () => {
+    it("does not attach an Authorization header without a local session", async () => {
         fetchMock.mockResolvedValue(jsonResponse([]));
 
         await listProjects();
@@ -2053,6 +2053,7 @@ describe("thin endpoint wrappers", () => {
     };
 
     const legalMonitorInput: LegalMonitorInput = {
+        materialityThreshold: "low",
         name: "Privacy watch",
         topic: "Data privacy enforcement",
         jurisdiction: "AU",

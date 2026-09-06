@@ -1,5 +1,4 @@
 import path from "node:path";
-import { r2StorageProvider } from "./storage/r2";
 import { sqliteStorageProvider } from "./storage/sqlite";
 import type { StorageProvider } from "./storage/types";
 
@@ -10,37 +9,24 @@ export {
   sanitizeDispositionFilename,
 } from "./storage/filenames";
 
-export const STORAGE_PROVIDERS = ["r2", "sqlite"] as const;
+export const STORAGE_PROVIDERS = ["sqlite"] as const;
 export type StorageProviderName = (typeof STORAGE_PROVIDERS)[number];
 
 export function resolveStorageProvider(
   env: NodeJS.ProcessEnv = process.env,
 ): StorageProviderName {
   const configured = env.MIKE_STORAGE_PROVIDER?.trim().toLowerCase();
-  if (configured) {
-    if (configured === "r2" || configured === "sqlite") return configured;
+  if (configured && configured !== "sqlite") {
     throw new Error(
-      `Unsupported MIKE_STORAGE_PROVIDER "${configured}". Expected one of: ${STORAGE_PROVIDERS.join(", ")}.`,
+      `Unsupported MIKE_STORAGE_PROVIDER "${configured}". This fork uses SQLite storage.`,
     );
   }
-
-  // Preserve pre-provider local installations while keeping upstream R2 as
-  // the default for fresh deployments.
-  if (
-    env.SQLITE_STORAGE_PATH?.trim() &&
-    !env.R2_ENDPOINT_URL?.trim() &&
-    !env.R2_ACCESS_KEY_ID?.trim() &&
-    !env.R2_SECRET_ACCESS_KEY?.trim()
-  ) {
-    return "sqlite";
-  }
-  return "r2";
+  return "sqlite";
 }
 
 export function createStorageProvider(): StorageProvider {
-  return resolveStorageProvider() === "sqlite"
-    ? sqliteStorageProvider
-    : r2StorageProvider;
+  resolveStorageProvider();
+  return sqliteStorageProvider;
 }
 
 function provider(): StorageProvider {

@@ -1,9 +1,9 @@
 import "dotenv/config";
-import { createServerSupabase } from "../lib/supabase";
+import { createServerDatabase } from "../lib/database";
 import { syncWorkflowCatalog } from "../lib/workflowCatalogSync";
 
 async function main() {
-  const result = await syncWorkflowCatalog(createServerSupabase());
+  const result = await syncWorkflowCatalog(createServerDatabase());
   console.log(
     `Synced ${result.workflows} Mike workflows and ${result.references} reference files from ${result.sourceCommit}`,
   );

@@ -12,7 +12,6 @@ import { getSqliteDb } from "./sqlite";
 import { completeText, type UserApiKeys } from "./llm";
 import {
   builtInModelIds,
-  DEFAULT_MAIN_MODEL,
   providerForModel,
 } from "./llm/models";
 import {
@@ -435,7 +434,8 @@ function providerKeyName(
     | "openai"
     | "openrouter"
     | "vercel"
-    | "opencode-go",
+    | "opencode-go"
+    | "synthetic",
 ): keyof UserApiKeys {
   return provider;
 }
@@ -448,6 +448,7 @@ function providerDisplayName(provider: keyof UserApiKeys): string {
   if (provider === "openrouter") return "OpenRouter";
   if (provider === "vercel") return "Vercel AI Gateway";
   if (provider === "opencode-go") return "OpenCode Go";
+  if (provider === "synthetic") return "Synthetic";
   return "CourtListener";
 }
 
@@ -579,13 +580,9 @@ async function availablePlaybookModels(userId: string, db: Db) {
   const availableModelIds = candidateIds.filter(
     (modelId) => playbookModelAvailability(modelId, apiKeys, features).available,
   );
-  const preferred = [
-    profile?.title_model,
-    profile?.tabular_model,
-    DEFAULT_MAIN_MODEL,
-  ]
-    .map((value) => (typeof value === "string" ? value : ""))
-    .find((modelId) => availableModelIds.includes(modelId));
+  const preferred = [profile?.title_model, profile?.tabular_model].find(
+    (modelId) => typeof modelId === "string" && availableModelIds.includes(modelId),
+  );
   return {
     apiKeys,
     configuredModels,
@@ -1085,8 +1082,11 @@ function reviewPrompt(
   content: PlaybookContent,
   documentText: string,
   mode: "strict" | "permissive",
+  instructions?: string,
 ): string {
   return `Review the full contract against the published playbook. Apply unacceptable positions first. In strict mode, fallback matches still need review. In permissive mode, a fallback may be acceptable but explain which fallback applies. Flag a missing required rule as missing_required. Use not_applicable only when an optional concept is absent. Quote exact contract text so Word can locate it. suggestedText must be a complete replacement for quote, or the complete clause to insert for missing_required. Do not suggest an edit for acceptable or not_applicable findings. Do not invent contract language or findings.
+
+${instructions?.trim() ? `ADDITIONAL REVIEW INSTRUCTIONS:\n${instructions.trim().slice(0, 8_000)}\n` : ""}
 
 Return JSON only:
 {"summary":"","findings":[{"topicId":"topic-1|null","ruleId":"topic-1-rule-1|null","ruleName":"","status":"not_applicable|acceptable|needs_review|unacceptable|missing_required|outside_scope","quote":"exact contract text or empty when missing","location":"section or heading","analysis":"","suggestedText":""}]}
@@ -1176,6 +1176,7 @@ export async function reviewWithPlaybook(args: {
   playbookId: string;
   documentText: string;
   documentName?: string;
+  instructions?: string;
   model: string;
   reviewMode: "strict" | "permissive";
   db?: Db;
@@ -1227,7 +1228,7 @@ export async function reviewWithPlaybook(args: {
       model: args.model,
       systemPrompt:
         "You are a cautious contract review system. Apply only the supplied playbook and return auditable JSON.",
-      user: reviewPrompt(content, args.documentText, args.reviewMode),
+      user: reviewPrompt(content, args.documentText, args.reviewMode, args.instructions),
       maxTokens: 20_000,
       apiKeys,
     });

@@ -1331,18 +1331,17 @@ export function ensureLocalProfile(userId: string, email?: string | null) {
     .prepare(`select id from "user_profiles" where "user_id" = ? limit 1`)
     .get(userId);
   if (existing) return;
-  new SqliteQueryBuilder("user_profiles")
-    .insert({
-      user_id: userId,
-      email: email?.toLowerCase() ?? null,
-      tier: "Free",
-      message_credits_used: 0,
-      credits_reset_date: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString(),
-      tabular_model: "gemini-3-flash-preview",
-      mfa_on_login: 0,
-      legal_research_us: 1,
-      feature_flags: {},
-      updated_at: now,
-    })
-    .then(() => undefined);
+    new SqliteQueryBuilder("user_profiles")
+      .insert({
+        user_id: userId,
+        email: email?.toLowerCase() ?? null,
+        tier: "Free",
+        message_credits_used: 0,
+        credits_reset_date: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString(),
+        mfa_on_login: 0,
+        legal_research_us: 1,
+        feature_flags: {},
+        updated_at: now,
+      })
+      .then(() => undefined);
 }

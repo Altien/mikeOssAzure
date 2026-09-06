@@ -20,6 +20,7 @@ import {
     canonicalModelId,
     openCodeGoModelOptions,
     openRouterModelOptions,
+    syntheticModelOptions,
     useConfiguredModelOptions,
     vercelModelOptions,
     type ModelOption,
@@ -57,6 +58,9 @@ export default function ModelPreferencesPage() {
     const selectedVercelOptions = vercelModelOptions(vercelSelection);
     const selectedOpenCodeGoOptions = openCodeGoModelOptions(
         profile?.openCodeGoModels ?? [],
+    );
+    const selectedSyntheticOptions = syntheticModelOptions(
+        profile?.syntheticModels ?? [],
     );
 
     useEffect(() => {
@@ -115,6 +119,7 @@ export default function ModelPreferencesPage() {
                                 ...selectedOpenRouterOptions,
                                 ...selectedVercelOptions,
                                 ...selectedOpenCodeGoOptions,
+                                ...selectedSyntheticOptions,
                                 ...ollamaModels,
                             ]}
                             apiKeys={profile?.apiKeys}
@@ -143,6 +148,7 @@ export default function ModelPreferencesPage() {
                                 ...selectedOpenRouterOptions,
                                 ...selectedVercelOptions,
                                 ...selectedOpenCodeGoOptions,
+                                ...selectedSyntheticOptions,
                                 ...ollamaModels,
                             ]}
                             apiKeys={profile?.apiKeys}

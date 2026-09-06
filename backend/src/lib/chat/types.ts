@@ -32,6 +32,8 @@ export type DocStore = Map<
      * the model when it chooses to read them.
      */
     inline_text?: string;
+    /** Active version size in bytes, when known (cheap size signal). */
+    size_bytes?: number | null;
   }
 >;
 

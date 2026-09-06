@@ -198,7 +198,7 @@ alter table public.auth_handoff_tickets enable row level security;
 create table if not exists public.user_api_keys (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
-  provider text not null check (provider in ('claude', 'gemini', 'openai', 'openrouter', 'vercel', 'opencode-go', 'courtlistener')),
+  provider text not null check (provider in ('claude', 'gemini', 'openai', 'openrouter', 'vercel', 'opencode-go', 'synthetic', 'courtlistener')),
   encrypted_key text not null,
   iv text not null,
   auth_tag text not null,
@@ -2127,6 +2127,9 @@ create table if not exists public.legal_monitors (
   max_items_per_run integer not null default 50,
   alert_email text,
   email_enabled boolean not null default false,
+  -- Developments below this severity are recorded and ranked, but held out of
+  -- the emailed digest. 'low' filters nothing.
+  materiality_threshold text not null default 'low',
   enabled boolean not null default true,
   next_run_at timestamptz,
   last_run_at timestamptz,

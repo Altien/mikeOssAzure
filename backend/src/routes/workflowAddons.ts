@@ -6,7 +6,7 @@ import {
 } from "express";
 import crypto from "crypto";
 import { requireAuth } from "../middleware/auth";
-import { createServerSupabase } from "../lib/supabase";
+import { createServerDatabase } from "../lib/database";
 import {
   deleteFile,
   downloadFile,
@@ -31,7 +31,7 @@ workflowAddonsRouter.get(
   "/",
   requireAuth,
   asyncRoute(async (req, res) => {
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const type = typeof req.query.type === "string" ? req.query.type : null;
     let query = db
       .from("mike_workflows")
@@ -45,10 +45,10 @@ workflowAddonsRouter.get(
     const { data, error } = await query.order("title", { ascending: true });
     if (error) return void sendInternalError(res, error);
     res.json(
-      (data ?? []).map(({ workflow_key, ...addon }) => ({
-        ...addon,
-        addon_key: workflow_key,
-      })),
+      (data ?? []).map((row: Record<string, unknown>) => {
+        const { workflow_key: workflowKey, ...addon } = row;
+        return { ...addon, addon_key: workflowKey };
+      }),
     );
   }),
 );
@@ -57,7 +57,7 @@ workflowAddonsRouter.get(
   "/:addonId",
   requireAuth,
   asyncRoute(async (req, res) => {
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const { data, error } = await db
       .from("mike_workflows")
       .select("*")
@@ -94,7 +94,7 @@ workflowAddonsRouter.post(
   requireAuth,
   asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
-    const db = createServerSupabase();
+    const db = createServerDatabase();
     const { data: addon } = await db
       .from("mike_workflows")
       .select("*")

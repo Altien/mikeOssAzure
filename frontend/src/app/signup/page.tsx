@@ -26,8 +26,6 @@ import {
     MIN_PASSWORD_LENGTH,
     minimumPasswordMessage,
 } from "@/app/components/auth/passwordPolicy";
-import { AuthDivider } from "@/app/components/auth/AuthDivider";
-import { GoogleAuthButton } from "@/app/components/auth/GoogleAuthButton";
 import { FieldLabel } from "@/app/components/ui/form-field";
 
 function SignupContent() {
@@ -239,12 +237,6 @@ function SignupContent() {
                             >
                                 {loading ? "Creating account..." : "Sign up"}
                             </PillButton>
-                            <AuthDivider />
-                            <GoogleAuthButton
-                                onError={setError}
-                                disabled={loading}
-                                onLoadingChange={setLoading}
-                            />
                         </div>
                     </form>
                 </div>

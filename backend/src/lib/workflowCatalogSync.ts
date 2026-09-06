@@ -1,7 +1,7 @@
 import { readFile } from "fs/promises";
 import { contentTypeForDocumentType } from "./documentTypes";
 import { storageEnabled, uploadFile } from "./storage";
-import type { createServerSupabase } from "./supabase";
+import type { ServerDatabase } from "./database";
 import {
   prepareWorkflowCatalog,
   removePreparedWorkflowCatalog,
@@ -10,7 +10,7 @@ import {
   type WorkflowCatalogSourceWorkflow,
 } from "./workflowCatalogSource";
 
-type Db = ReturnType<typeof createServerSupabase>;
+type Db = ServerDatabase;
 
 export type WorkflowCatalogSyncResult = {
   workflows: number;

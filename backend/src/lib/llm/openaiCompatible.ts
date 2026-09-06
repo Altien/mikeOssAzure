@@ -325,17 +325,18 @@ class TextToolMarkupFilter {
       return visible;
     }
 
-    for (
-      let index = lower.lastIndexOf("<");
-      index >= 0;
-      index = lower.lastIndexOf("<", index - 1)
-    ) {
+    let index = lower.lastIndexOf("<");
+    while (index >= 0) {
       const suffix = lower.slice(index);
       if (TEXT_TOOL_MARKERS.some((marker) => marker.startsWith(suffix))) {
         const visible = this.buffer.slice(0, index);
         this.buffer = this.buffer.slice(index);
         return visible;
       }
+      // String.lastIndexOf normalizes a negative fromIndex to zero. Without
+      // this guard, a non-tool "<" at position zero is found forever.
+      if (index === 0) break;
+      index = lower.lastIndexOf("<", index - 1);
     }
     const visible = this.buffer;
     this.buffer = "";

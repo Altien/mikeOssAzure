@@ -106,6 +106,30 @@ describe("OpenAI-compatible response timeout", () => {
     });
 });
 
+describe("OpenAI-compatible streaming content", () => {
+    it("does not loop when visible content starts with a non-tool angle bracket", async () => {
+        global.fetch = vi.fn().mockResolvedValue(
+            sseResponse([
+                {
+                    choices: [
+                        {
+                            delta: { content: "<p>Visible response</p>" },
+                        },
+                    ],
+                },
+            ]),
+        );
+
+        await expect(
+            streamOpenAICompatible({
+                model: "test-cloud-deepseek",
+                systemPrompt: "Answer directly.",
+                messages: [{ role: "user", content: "Respond." }],
+            }),
+        ).resolves.toEqual({ fullText: "<p>Visible response</p>" });
+    });
+});
+
 describe("local OpenAI-compatible tool orchestration", () => {
     it("forces a final answer pass when the model closes with no visible text", async () => {
         const fetchMock = vi

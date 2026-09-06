@@ -21,12 +21,6 @@ export default defineConfig({
         globals: true,
         environment: "jsdom",
         setupFiles: ["./vitest.setup.ts"],
-        // Supabase-provider tests need deterministic dummy credentials. Local
-        // provider tests explicitly override the provider/env per module load.
-        env: {
-            NEXT_PUBLIC_SUPABASE_URL: "http://localhost:54321",
-            NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY: "test-anon-key",
-        },
         // jsdom 27's CSS-color parser (@asamuzakjp/css-color) is CJS but
         // require()s the ESM-only @csstools/css-calc. That require() happens
         // in the worker process while the jsdom environment boots — before

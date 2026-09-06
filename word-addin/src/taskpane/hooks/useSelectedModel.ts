@@ -11,13 +11,24 @@ interface SelectedModelSources {
   sessionKey: number;
   chatModel?: string | null;
   lastSelectedModel?: string | null;
+  /** Deployment-configured model ids (e.g. a local Qwen server). */
+  configuredModelIds?: string[] | null;
   routerSelections?: {
     openRouterModels: string[];
     vercelModels: string[];
     openCodeGoModels: string[];
+    syntheticModels: string[];
   } | null;
   /** Null means the key-status request failed and availability fails open. */
   apiKeyStatus: ApiKeyStatus | null;
+}
+
+function configuredIds(
+  sources: SelectedModelSources,
+): ReadonlySet<string> | undefined {
+  return sources.configuredModelIds?.length
+    ? new Set(sources.configuredModelIds)
+    : undefined;
 }
 
 function usableStoredModel(
@@ -26,13 +37,14 @@ function usableStoredModel(
 ): string | null {
   if (!value) return null;
   const model = canonicalModelId(value);
-  if (!isAllowedModelId(model)) return null;
+  if (!isAllowedModelId(model, configuredIds(sources))) return null;
   const router = ROUTER_SLUGS.find((slug) => model.startsWith(`${slug}/`));
   if (router && sources.routerSelections) {
     const selections = {
       openrouter: sources.routerSelections.openRouterModels,
       vercel: sources.routerSelections.vercelModels,
       "opencode-go": sources.routerSelections.openCodeGoModels,
+      synthetic: sources.routerSelections.syntheticModels,
     };
     if (!selections[router].includes(model.slice(router.length + 1))) {
       return null;
@@ -54,6 +66,8 @@ export function useSelectedModel(
   const openRouterModels = sources.routerSelections?.openRouterModels;
   const vercelModels = sources.routerSelections?.vercelModels;
   const openCodeGoModels = sources.routerSelections?.openCodeGoModels;
+  const syntheticModels = sources.routerSelections?.syntheticModels;
+  const configuredModelIds = sources.configuredModelIds;
 
   useEffect(() => {
     if (previousSessionKey.current !== sources.sessionKey) {
@@ -79,15 +93,17 @@ export function useSelectedModel(
     sources.chatModel,
     sources.lastSelectedModel,
     sources.apiKeyStatus,
+    configuredModelIds,
     openRouterModels,
     vercelModels,
     openCodeGoModels,
+    syntheticModels,
   ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setModel = useCallback((raw: string): void => {
     const next = canonicalModelId(raw);
     manualSelection.current = true;
-    setModelState(isAllowedModelId(next) ? next : "");
+    setModelState(isAllowedModelId(next, configuredIds(sources)) ? next : "");
     setSettingsResolved(true);
   }, []);
   return [model, setModel, settingsResolved];

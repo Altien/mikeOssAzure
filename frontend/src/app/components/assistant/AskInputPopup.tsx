@@ -248,7 +248,7 @@ export function AskInputPopup({
                         ? { version_id: doc.current_version_id }
                         : {}),
                     ...(doc.active_version_number != null
-                        ? { version_number: doc.active_version_number }
+                        ? { version_number: Number(doc.active_version_number) }
                         : {}),
                 },
             ];

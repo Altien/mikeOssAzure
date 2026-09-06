@@ -4,7 +4,10 @@
 
 import { Router } from "express";
 import { requireAuth, requireMfaIfEnrolled } from "../middleware/auth";
-import { createServerSupabase } from "../lib/supabase";
+import {
+  createServerDatabase,
+  type ServerDatabase,
+} from "../lib/database";
 import { normalizeDisplayName } from "../lib/userLookup";
 import { sendInternalError } from "../lib/httpError";
 
@@ -20,7 +23,7 @@ const MAX_PAGE = 100_000;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export async function accessibleProjectIds(
-  db: ReturnType<typeof createServerSupabase>,
+  db: ServerDatabase,
   userId: string,
   email: string | undefined,
 ): Promise<string[]> {
@@ -121,7 +124,7 @@ export function parseQuery(
 }
 
 export async function queryEvents(
-  db: ReturnType<typeof createServerSupabase>,
+  db: ServerDatabase,
   userId: string,
   email: string | undefined,
   q: AuditQuery,
@@ -155,8 +158,8 @@ export async function queryEvents(
   const userIds = [
     ...new Set(
       result.data
-        .map((event) => event.user_id as string | null)
-        .filter((userId): userId is string => Boolean(userId)),
+        .map((event: Record<string, unknown>) => event.user_id as string | null)
+        .filter((userId: string | null): userId is string => Boolean(userId)),
     ),
   ];
   const displayNameByUserId = new Map<string, string | null>();
@@ -177,7 +180,7 @@ export async function queryEvents(
 
   return {
     ...result,
-    data: result.data.map((row) => {
+    data: result.data.map((row: Record<string, unknown>) => {
       const { user_id: userId, ...event } = row;
       return {
         ...event,
@@ -190,7 +193,7 @@ export async function queryEvents(
 auditRouter.get("/", async (req, res) => {
   const userId = res.locals.userId as string;
   const email = res.locals.userEmail as string | undefined;
-  const db = createServerSupabase();
+  const db = createServerDatabase();
   const parsed = parseQuery(req.query as Record<string, unknown>, PAGE_SIZE);
   if (!parsed.ok) return void res.status(400).json({ detail: parsed.error });
   const q = parsed.query;
@@ -218,7 +221,7 @@ export function csvCell(v: unknown): string {
 auditRouter.get("/export", requireMfaIfEnrolled, async (req, res) => {
   const userId = res.locals.userId as string;
   const email = res.locals.userEmail as string | undefined;
-  const db = createServerSupabase();
+  const db = createServerDatabase();
   const parsed = parseQuery(req.query as Record<string, unknown>, EXPORT_LIMIT);
   if (!parsed.ok) return void res.status(400).json({ detail: parsed.error });
   const q = parsed.query;

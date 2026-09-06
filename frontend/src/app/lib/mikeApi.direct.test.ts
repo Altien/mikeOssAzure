@@ -9,10 +9,9 @@ afterEach(() => {
 
 describe("direct backend API transport", () => {
     it("preserves local-provider bearer authentication", async () => {
-        vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "");
+        vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "http://localhost:3001");
         vi.doMock("@/app/lib/auth", () => ({
             getAuthToken: vi.fn().mockResolvedValue("local-token"),
-            resolveBrowserAuthProvider: () => "local",
         }));
 
         const fetchMock = vi.fn().mockResolvedValue(
@@ -32,6 +31,6 @@ describe("direct backend API transport", () => {
         expect(new Headers(init.headers).get("Authorization")).toBe(
             "Bearer local-token",
         );
-        expect(init.credentials).toBeUndefined();
+        expect(init.credentials).toBe("include");
     });
 });

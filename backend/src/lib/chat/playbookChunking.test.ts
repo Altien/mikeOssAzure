@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   analyzePlaybookChunks,
+  chunkBudgetCharsForContext,
+  estimateDocumentChars,
+  estimateTokenCount,
+  shouldChunkForContext,
   splitPlaybookDocument,
 } from "./playbookChunking";
 
@@ -61,5 +65,60 @@ describe("playbook document chunking", () => {
         runPass,
       }),
     ).rejects.toMatchObject({ name: "AbortError" });
+  });
+});
+
+describe("context-window playbook chunking decision", () => {
+  it("estimates tokens from stored bytes and inline text", () => {
+    // 4 chars/token default: 10_000 chars => 2_500 tokens.
+    expect(estimateTokenCount(10_000)).toBe(2_500);
+    expect(estimateDocumentChars({ size_bytes: 4_000 })).toBe(4_000);
+    expect(estimateDocumentChars({ inline_text: "abc" })).toBe(3);
+    expect(estimateDocumentChars({})).toBe(0);
+  });
+
+  it("inflates compressed office/PDF byte sizes so they are not under-chunked", () => {
+    expect(estimateDocumentChars({ size_bytes: 4_000, file_type: "docx" })).toBe(
+      16_000,
+    );
+    expect(estimateDocumentChars({ size_bytes: 4_000, file_type: "pdf" })).toBe(
+      16_000,
+    );
+  });
+
+  it("chunks only when documents plus overhead approach the context window", () => {
+    const contextWindowTokens = 208_000;
+    // A 900K-char document ≈ 225K tokens past a 208K window.
+    expect(
+      shouldChunkForContext({
+        contextWindowTokens,
+        documentTokens: 225_000,
+        overheadTokens: 8_000,
+      }),
+    ).toBe(true);
+    // A 252K-char document ≈ 63K tokens fits comfortably.
+    expect(
+      shouldChunkForContext({
+        contextWindowTokens,
+        documentTokens: 63_000,
+        overheadTokens: 8_000,
+      }),
+    ).toBe(false);
+  });
+
+  it("derives the per-chunk budget from the model context window", () => {
+    const contextWindowTokens = 208_000;
+    const overheadTokens = 8_000;
+    const budgetChars = chunkBudgetCharsForContext({
+      contextWindowTokens,
+      overheadTokens,
+    });
+    expect(budgetChars).toBeGreaterThan(0);
+    expect(budgetChars).toBeLessThanOrEqual(
+      Number(process.env.PLAYBOOK_CHUNK_MAX_CHARS) || 75_000,
+    );
+    expect(budgetChars).toBeLessThanOrEqual(
+      (contextWindowTokens - overheadTokens) * 4,
+    );
   });
 });

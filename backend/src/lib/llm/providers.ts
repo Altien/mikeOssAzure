@@ -11,6 +11,7 @@ import {
   openCodeGoModelId,
   openRouterModelId,
   providerForModel,
+  syntheticModelId,
   vercelModelId,
 } from "./models";
 import type {
@@ -28,6 +29,9 @@ const OPENROUTER_BASE_URL =
 const OPENCODE_GO_BASE_URL =
   process.env.OPENCODE_GO_BASE_URL?.trim().replace(/\/+$/, "") ||
   "https://opencode.ai/zen/go/v1";
+const SYNTHETIC_BASE_URL =
+  process.env.SYNTHETIC_BASE_URL?.trim().replace(/\/+$/, "") ||
+  "https://api.synthetic.new/openai/v1";
 const VERCEL_GATEWAY_BASE_URL =
   process.env.VERCEL_AI_GATEWAY_BASE_URL?.trim().replace(/\/+$/, "");
 
@@ -41,19 +45,21 @@ type CompleteProviderParams = {
 
 type RouterProvider = Extract<
   Provider,
-  "openrouter" | "vercel" | "opencode-go"
+  "openrouter" | "vercel" | "opencode-go" | "synthetic"
 >;
 
 const ROUTER_LABELS: Record<RouterProvider, string> = {
   openrouter: "OpenRouter",
   vercel: "Vercel AI Gateway",
   "opencode-go": "OpenCode Go",
+  synthetic: "Synthetic",
 };
 
 const ROUTER_KEY_ENV_HINTS: Record<RouterProvider, string> = {
   openrouter: "OPENROUTER_API_KEY",
   vercel: "AI_GATEWAY_API_KEY",
   "opencode-go": "OPENCODE_API_KEY",
+  synthetic: "SYNTHETIC_API_KEY",
 };
 
 function requiredKey(
@@ -79,6 +85,7 @@ function routerEnvironmentKey(provider: RouterProvider): string | undefined {
     );
   }
   if (provider === "opencode-go") return process.env.OPENCODE_API_KEY?.trim();
+  if (provider === "synthetic") return process.env.SYNTHETIC_API_KEY?.trim();
   return process.env.OPENROUTER_API_KEY?.trim();
 }
 
@@ -88,6 +95,7 @@ function routerUserKey(
 ): string | null | undefined {
   if (provider === "vercel") return apiKeys?.vercel;
   if (provider === "opencode-go") return apiKeys?.["opencode-go"];
+  if (provider === "synthetic") return apiKeys?.synthetic;
   return apiKeys?.openrouter;
 }
 
@@ -169,6 +177,25 @@ async function createRouterAdapter(
     };
   }
 
+  if (provider === "synthetic") {
+    const { createOpenAICompatible } = await import("@ai-sdk/openai-compatible");
+    const synthetic = createOpenAICompatible({
+      name: "synthetic",
+      apiKey: key,
+      baseURL: SYNTHETIC_BASE_URL,
+      fetch: aiSdkFetch,
+    });
+    return {
+      provider,
+      label: ROUTER_LABELS[provider],
+      model: synthetic(syntheticModelId(model)),
+      modelId: model,
+      // Synthetic aliases do not tell us whether the selected endpoint accepts
+      // reasoning fields, so do not attach them to every request.
+      supportsReasoning: false,
+    };
+  }
+
   const { createOpenAICompatible } = await import("@ai-sdk/openai-compatible");
   const openCodeGo = createOpenAICompatible({
     name: "opencodeGo",
@@ -247,7 +274,11 @@ async function createProviderAdapter(
     };
   }
 
-  if (provider === "openrouter" || provider === "vercel") {
+  if (
+    provider === "openrouter" ||
+    provider === "vercel" ||
+    provider === "synthetic"
+  ) {
     return createRouterAdapter(provider, model, apiKeys);
   }
 

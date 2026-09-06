@@ -10,31 +10,38 @@ import { NewTRModal } from "./NewTRModal";
 vi.mock("@/app/lib/mikeApi", () => ({
     getProject: vi.fn(),
     listWorkflows: vi.fn(async () => []),
+    getConfiguredModels: vi.fn(async () => []),
     uploadProjectDocument: vi.fn(),
     uploadStandaloneDocument: vi.fn(),
 }));
 
-vi.mock("@/app/contexts/UserProfileContext", () => ({
-    useUserProfile: () => ({
-        profile: {
-            tabularModel: "gemini-3-flash-preview",
-            apiKeys: {
-                claude: { configured: false, source: null },
-                gemini: { configured: true, source: "user" },
-                openai: { configured: false, source: null },
-                openrouter: { configured: false, source: null },
-                vercel: { configured: false, source: null },
-                "opencode-go": { configured: false, source: null },
-                courtlistener: { configured: false, source: null },
-            },
-            openRouterModels: [],
-            vercelModels: [],
-            openCodeGoModels: [],
+vi.mock("@/app/contexts/UserProfileContext", () => {
+    const profile = {
+        tabularModel: "gemini-3-flash-preview",
+        apiKeys: {
+            claude: { configured: false, source: null },
+            gemini: { configured: true, source: "user" },
+            openai: { configured: false, source: null },
+            openrouter: { configured: false, source: null },
+            vercel: { configured: false, source: null },
+            "opencode-go": { configured: false, source: null },
+            synthetic: { configured: false, source: null },
+            courtlistener: { configured: false, source: null },
         },
-        loading: false,
-        apiKeysDegraded: false,
-    }),
-}));
+        openRouterModels: [],
+        vercelModels: [],
+        openCodeGoModels: [],
+        syntheticModels: [],
+    };
+    return {
+        useUserProfile: () => ({
+            profile,
+            loading: false,
+            apiKeysDegraded: false,
+        }),
+        useOptionalUserProfile: () => ({ profile }),
+    };
+});
 
 vi.mock("@/app/hooks/useOllamaModels", () => ({
     useOllamaModels: () => [],

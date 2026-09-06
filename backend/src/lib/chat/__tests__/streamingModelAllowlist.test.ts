@@ -99,6 +99,19 @@ describe("runLLMStream router-model allowlist", () => {
         expect(streamChatWithTools).not.toHaveBeenCalled();
     });
 
+    it("fails an unknown explicit id instead of degrading to the default", async () => {
+        // A stale or unprefixed composer value ("stealth/ox-alpha") used to
+        // fall through resolveModel's fallback and run as DEFAULT_MAIN_MODEL,
+        // so the user saw an unrelated default-model failure instead of an
+        // error naming their actual selection.
+        const db = routerModelsDb([{ model_id: "stealth/ox-alpha" }]);
+
+        await expect(runStreamWithModel(db, "stealth/ox-alpha")).rejects.toThrow(
+            /Model "stealth\/ox-alpha" is not available on this deployment/,
+        );
+        expect(streamChatWithTools).not.toHaveBeenCalled();
+    });
+
     it("also fails for non-members when the user brings their own key", async () => {
         const db = routerModelsDb([]);
 

@@ -350,9 +350,17 @@ export async function streamAiSdk(
           break;
         }
         case "tool-error":
-          throw new Error(errorMessage(part.error, config.label));
+          // Rethrow the original error rather than re-wrapping: control-flow
+          // sentinels (e.g. the ask_inputs pause) and typed errors (AbortError,
+          // UserFacingError) are recognized upstream by class/name, which a
+          // plain new Error() would erase.
+          throw part.error instanceof Error
+            ? part.error
+            : new Error(errorMessage(part.error, config.label));
         case "error":
-          throw new Error(errorMessage(part.error, config.label));
+          throw part.error instanceof Error
+            ? part.error
+            : new Error(errorMessage(part.error, config.label));
         case "abort": {
           const error = new Error(part.reason || "Stream aborted.");
           error.name = "AbortError";

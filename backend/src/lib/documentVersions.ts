@@ -168,7 +168,12 @@ export async function attachActiveVersionPaths<T extends VersionPathRow>(
         const v = d.current_version_id ? byId.get(d.current_version_id) : null;
         d.storage_path = v?.storage_path ?? null;
         d.pdf_storage_path = v?.pdf_storage_path ?? null;
-        d.active_version_number = v?.version_number ?? null;
+        // SQLite stores version_number as TEXT; expose the documented
+        // number shape so clients relying on the type don't leak strings.
+        d.active_version_number =
+            v?.version_number == null
+                ? null
+                : Number(v.version_number);
         d.filename = v?.filename?.trim() || "Untitled document";
         d.file_type = v?.file_type ?? null;
         d.size_bytes = v?.size_bytes ?? null;

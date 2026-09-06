@@ -184,6 +184,7 @@ interface UserProfile {
   openRouterModels: string[];
   vercelModels: string[];
   openCodeGoModels: string[];
+  syntheticModels: string[];
   apiKeyStatus: ApiKeyStatus;
 }
 
@@ -221,6 +222,7 @@ export interface ApiKeyStatus {
   openrouter: boolean;
   vercel: boolean;
   "opencode-go": boolean;
+  synthetic: boolean;
   courtlistener: boolean;
   sources?: Partial<
     Record<
@@ -231,6 +233,7 @@ export interface ApiKeyStatus {
       | "openrouter"
       | "vercel"
       | "opencode-go"
+      | "synthetic"
       | "courtlistener",
       "user" | "env" | null
     >

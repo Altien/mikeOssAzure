@@ -41,4 +41,27 @@ describe("authenticatedFetch", () => {
         expect(listener).not.toHaveBeenCalled();
         window.removeEventListener(AUTH_SESSION_INVALIDATED_EVENT, listener);
     });
+
+    it("adds the local bearer token to protected resource requests", async () => {
+        localStorage.setItem("mike_auth_token", "test-token");
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValue(new Response(null, { status: 204 }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await authenticatedFetch("/api/documents/document-1/display");
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            "/api/documents/document-1/display",
+            expect.objectContaining({ credentials: "include" }),
+        );
+        const [, requestInit] = fetchMock.mock.calls[0] as [
+            RequestInfo,
+            RequestInit,
+        ];
+        expect(new Headers(requestInit.headers).get("Authorization")).toBe(
+            "Bearer test-token",
+        );
+        localStorage.removeItem("mike_auth_token");
+    });
 });

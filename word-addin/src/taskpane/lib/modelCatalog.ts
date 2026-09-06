@@ -11,7 +11,12 @@ import type { ApiKeyStatus } from "../api/client";
 export type ModelGroup = string;
 
 /** Kept in sync with frontend ModelToggle.tsx ROUTER_SLUGS. */
-export const ROUTER_SLUGS = ["openrouter", "vercel", "opencode-go"] as const;
+export const ROUTER_SLUGS = [
+  "openrouter",
+  "vercel",
+  "opencode-go",
+  "synthetic",
+] as const;
 
 export interface ModelOption {
   id: string;
@@ -72,7 +77,7 @@ const MODEL_NAME_ACRONYMS: Record<string, string> = {
 
 export function modelDisplayName(modelId: string): string {
   const normalized = modelId
-    .replace(/^(?:openrouter|vercel|opencode-go|ollama)\//, "")
+    .replace(/^(?:openrouter|vercel|opencode-go|synthetic|ollama)\//, "")
     .split("/")
     .at(-1)!
     .replace(/(\d)-(\d)/g, "$1.$2");
@@ -130,6 +135,26 @@ export function openCodeGoModelOptions(models: string[]): ModelOption[] {
   }));
 }
 
+/** Mirrors the web app's syntheticModelDisplayName — see the drift guard. */
+export function syntheticModelDisplayName(model: string): string {
+  if (model.startsWith("syn:")) {
+    const [size, ...rest] = model.slice("syn:".length).split(":");
+    if (!size) return model;
+    const name = modelDisplayName(size);
+    return rest.length ? `${name} (${rest.join(", ")})` : name;
+  }
+  return modelDisplayName(model.replace(/^hf:/, ""));
+}
+
+export function syntheticModelOptions(models: string[]): ModelOption[] {
+  return models.map((model) => ({
+    id: `synthetic/${model}`,
+    label: syntheticModelDisplayName(model),
+    group: "Synthetic",
+    source: "Synthetic",
+  }));
+}
+
 const ROUTER_VENDOR_GROUPS: Record<string, string> = {
   anthropic: "Anthropic",
   claude: "Anthropic",
@@ -180,11 +205,15 @@ export function underlyingProviderGroup(
   return "Other providers";
 }
 
-export function isAllowedModelId(id: string): boolean {
+export function isAllowedModelId(
+  id: string,
+  configuredModelIds?: ReadonlySet<string>,
+): boolean {
   return (
     ALLOWED_MODEL_IDS.has(id) ||
     id.startsWith("ollama/") ||
-    ROUTER_SLUGS.some((slug) => id.startsWith(`${slug}/`))
+    ROUTER_SLUGS.some((slug) => id.startsWith(`${slug}/`)) ||
+    configuredModelIds?.has(id) === true
   );
 }
 
@@ -201,6 +230,7 @@ export function isModelAvailable(
   if (modelId.startsWith("openrouter/")) return !!status.openrouter;
   if (modelId.startsWith("vercel/")) return !!status.vercel;
   if (modelId.startsWith("opencode-go/")) return !!status["opencode-go"];
+  if (modelId.startsWith("synthetic/")) return !!status.synthetic;
   const model = STATIC_MODELS.find((item) => item.id === modelId);
   if (!model || model.group === "Local" || model.group === "Committee") {
     return false;
@@ -221,6 +251,9 @@ export function missingModelProvider(modelId: string): string {
   }
   if (modelId.startsWith("opencode-go/") || group === "OpenCode Go") {
     return "OpenCode Go";
+  }
+  if (modelId.startsWith("synthetic/") || group === "Synthetic") {
+    return "Synthetic";
   }
   return group === "Anthropic"
     ? "Anthropic"

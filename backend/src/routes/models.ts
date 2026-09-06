@@ -17,7 +17,9 @@ function catalogPrice(value: unknown): string | undefined {
     if (typeof value !== "string" && typeof value !== "number") {
         return undefined;
     }
-    const normalized = String(value).trim();
+    // Synthetic quotes per-token prices as "$0.000001"; the other catalogs
+    // send bare numbers. Normalize to the client formatter's numeric shape.
+    const normalized = String(value).trim().replace(/^\$/, "");
     const amount = Number(normalized);
     return normalized && Number.isFinite(amount) && amount >= 0
         ? normalized
@@ -334,3 +336,86 @@ export async function openCodeGoModelsHandler(
 }
 
 modelsRouter.get("/opencode-go", requireAuth, openCodeGoModelsHandler);
+
+// Synthetic's public catalog (https://api.synthetic.new), limited to text
+// models that support tool calling because Mike supplies tools on interactive
+// chat requests. As with the other routers, do not expose the catalog until
+// the requesting user has a configured key.
+modelsRouter.get("/synthetic", requireAuth, async (_req, res) => {
+    const userId = res.locals.userId as string;
+    try {
+        const apiKeys = await getUserApiKeys(userId, createServerDatabase());
+        if (!apiKeys.synthetic?.trim()) {
+            return void res.status(422).json({
+                code: "missing_api_key",
+                detail: "A Synthetic API key is required to list models.",
+            });
+        }
+
+        // Read per request so SYNTHETIC_BASE_URL overrides and test doubles
+        // are picked up without restarting the backend.
+        const baseUrl = (
+            process.env.SYNTHETIC_BASE_URL?.trim() ||
+            "https://api.synthetic.new/openai/v1"
+        ).replace(/\/+$/, "");
+        const response = await fetch(`${baseUrl}/models`);
+        if (!response.ok) {
+            const detail = await response.text().catch(() => "");
+            sendInternalError(
+                res,
+                new Error(
+                    `Synthetic model catalog request failed (${response.status})${detail ? `: ${detail}` : ""}`,
+                ),
+                502,
+            );
+            return;
+        }
+
+        const payload = (await response.json()) as {
+            data?: Array<{
+                id?: unknown;
+                name?: unknown;
+                hugging_face_id?: unknown;
+                output_modalities?: unknown;
+                supported_features?: unknown;
+                pricing?: { prompt?: unknown; completion?: unknown };
+            }>;
+        };
+        const models = (payload.data ?? []).flatMap((model) => {
+            const outputs = Array.isArray(model.output_modalities)
+                ? model.output_modalities
+                : [];
+            const features = Array.isArray(model.supported_features)
+                ? model.supported_features
+                : [];
+            const id = typeof model.id === "string" ? model.id.trim() : "";
+            if (
+                !outputs.includes("text") ||
+                !features.includes("tools") ||
+                !id ||
+                /\s/.test(id) ||
+                id.length > 200
+            ) {
+                return [];
+            }
+            // Synthetic's `name` repeats the alias for its "syn:*" entries, so
+            // the Hugging Face id is the only field that identifies the model
+            // actually serving an alias such as "syn:large:text".
+            const huggingFaceId =
+                typeof model.hugging_face_id === "string"
+                    ? model.hugging_face_id.trim()
+                    : "";
+            const name =
+                typeof model.name === "string" ? model.name.trim() : "";
+            const label = name && name !== id ? name : huggingFaceId || id;
+            const pricing = catalogPricing(
+                model.pricing?.prompt,
+                model.pricing?.completion,
+            );
+            return [{ id, label, ...(pricing ? { pricing } : {}) }];
+        });
+        res.json({ models });
+    } catch (error) {
+        sendInternalError(res, error);
+    }
+});
