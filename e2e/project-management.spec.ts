@@ -47,10 +47,14 @@ async function createProject(
     await expect(nameInput).toBeVisible({ timeout: 5_000 });
     await nameInput.fill(projectName);
 
-    /* NewProjectModal is a two-step wizard: "Details" (name / CM number /
-       practice / colleagues) then "Add Documents". Only the second step has a
-       submit button — the first step's primary action is a plain "Next". */
+    /* NewProjectModal is a three-step wizard: Details, Access, then Add
+       Documents. Project creation happens only from the final step. */
     await page.getByRole("button", { name: "Next", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Access" })).toBeVisible();
+    await page.getByRole("button", { name: "Next", exact: true }).click();
+    await expect(
+        page.getByRole("dialog", { name: "Add Documents" }),
+    ).toBeVisible();
 
     if (filePath) {
         /* On the documents step the footer "Upload" button opens a hidden file
@@ -63,7 +67,7 @@ async function createProject(
         ).toBeVisible({ timeout: 5_000 });
     }
 
-    /* Submit — NewProjectModal's onCreated calls router.push(`/projects/${id}`).
+    /* Create — NewProjectModal's onCreated calls router.push(`/projects/${id}`).
        The PDF upload runs (awaited) inside handleSubmit before onCreated fires,
        so allow extra time for navigation when a file is attached.
 
@@ -73,10 +77,10 @@ async function createProject(
        directory now loads via one batched listProjects?include=documents
        request, so a single submit is reliable.)
 
-       The documents step's primary action submits the form (its label flips
-       to "Creating…" while in flight, so match on the submit type instead). */
+       The documents step's primary action is a button whose label flips to
+       "Creating…" while in flight. */
     const navTimeout = filePath ? 30_000 : 15_000;
-    await page.locator('button[type="submit"]').click();
+    await page.getByRole("button", { name: "Create project" }).click();
     await page.waitForURL(/\/projects\/.+/, { timeout: navTimeout });
 }
 
@@ -264,23 +268,47 @@ test("file upload type validation — .txt file is rejected", async ({ page }) =
      *   (a) UI: AddDocumentsModal filters unsupported files client-side
      *       (partitionSupportedDocumentFiles) and shows a visible warning —
      *       no request is sent, so we assert the warning + absence of the file.
-     *   (b) Server: the upload endpoint must still 400 unsupported extensions
-     *       (defense in depth for API/SDK callers that bypass the web UI).
-     *       The UI never emits that request anymore, so we exercise the
-     *       endpoint directly through the same-origin gateway and cookie
-     *       session.
+     *   (b) Server: the upload-session endpoint must still 400 unsupported
+     *       extensions (defense in depth for API/SDK callers that bypass the
+     *       web UI). The retired multipart endpoint is checked separately for
+     *       its intentional 410 response.
      */
 
-    /* Open the Add Documents modal. The "Add Documents" button only renders
-       once ProjectPage has loaded the project. */
-    const addDocsBtn = page.getByRole("button", { name: "Add Documents" });
-    await waitForProjectLoaded(page, addDocsBtn);
+    /* The project header now exposes document actions from an Upload menu.
+       Its icon-only trigger contains the upload SVG, unlike the empty-state
+       Upload button, which keeps this selector unambiguous. */
+    const uploadMenuBtn = page
+        .getByRole("button", { name: "Upload", exact: true })
+        .filter({ has: page.locator("svg.lucide-upload") })
+        .first();
+    await waitForProjectLoaded(page, uploadMenuBtn);
 
-    /* (b) Server-side rejection — REGRESSION: fails if type validation is
-       removed from the upload handler. */
+    /* (b) Server-side rejection on the active protocol — REGRESSION: fails if
+       type validation is removed from upload-session manifest parsing. */
     const projectId = page.url().match(/\/projects\/([0-9a-f-]{36})/)?.[1];
     expect(projectId, "expected to be on a /projects/<id> page").toBeTruthy();
-    const uploadStatus = await page.evaluate(async (id) => {
+    const uploadResponses = await page.evaluate(async (id) => {
+        const sessionResponse = await fetch("/api/upload-sessions", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                purpose: "document_create",
+                destination: {
+                    scope: "project",
+                    project_id: id,
+                },
+                files: [
+                    {
+                        client_id: "unsupported-text-file",
+                        filename: "test.txt",
+                        size_bytes: 52,
+                    },
+                ],
+            }),
+        });
+        const sessionBody = await sessionResponse.json();
+
         const body = new FormData();
         body.append(
             "file",
@@ -290,17 +318,40 @@ test("file upload type validation — .txt file is rejected", async ({ page }) =
             ),
             "test.txt",
         );
-        const response = await fetch(`/api/projects/${id}/documents`, {
+        const legacyResponse = await fetch(`/api/projects/${id}/documents`, {
             method: "POST",
             credentials: "include",
             body,
         });
-        return response.status;
+        return {
+            session: {
+                status: sessionResponse.status,
+                body: sessionBody,
+            },
+            legacy: {
+                status: legacyResponse.status,
+                body: await legacyResponse.json(),
+            },
+        };
     }, projectId);
-    expect(uploadStatus).toBe(400);
+    expect(uploadResponses.session.status).toBe(400);
+    expect(uploadResponses.session.body).toMatchObject({
+        code: "invalid_upload_session",
+    });
+    expect(uploadResponses.session.body.detail).toContain(
+        "Unsupported file type: txt",
+    );
+    expect(uploadResponses.legacy).toEqual({
+        status: 410,
+        body: {
+            code: "upload_session_required",
+            detail: "This upload endpoint has been replaced by /upload-sessions.",
+        },
+    });
 
     /* (a) UI-side filtering with a visible warning. */
-    await addDocsBtn.click();
+    await uploadMenuBtn.click();
+    await page.getByRole("menuitem", { name: "Saved files" }).click();
 
     const fileChooserPromise = page.waitForEvent("filechooser");
     /* The Upload button label is "Upload" (not "Uploading…") when idle */

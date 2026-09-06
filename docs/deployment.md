@@ -96,6 +96,70 @@ the web app deletes legacy Supabase local/session-storage entries and the Word
 add-in deletes legacy OfficeRuntime access/refresh tokens. Users authenticate
 once to establish the new cookie; tokens are not copied through JavaScript.
 
+### Object-storage CORS for direct uploads
+
+Mike's upload-session API gives an authenticated browser a short-lived signed
+`PUT` URL for one specific staging object. The bucket must therefore allow
+browser `PUT` requests from each deployed frontend origin. Configure the
+equivalent of this CORS policy in Cloudflare R2, MinIO, RustFS, or the selected
+S3-compatible provider:
+
+```json
+[
+  {
+    "AllowedOrigins": ["https://your-mike.example"],
+    "AllowedMethods": ["PUT", "HEAD"],
+    "AllowedHeaders": ["Content-Type", "x-amz-*"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3600
+  }
+]
+```
+
+List exact trusted origins; do not use `*` for a production deployment. The
+signed URL authorizes only its generated object key and expires independently
+of the CORS cache. The backend still verifies the uploaded byte count and
+copies accepted bytes to a non-signed, sealed key before queuing processing.
+Each file is verified and queued as soon as its individual `PUT` completes;
+the remaining files in the same session may continue uploading while the
+worker creates documents or document versions from earlier files. Success and
+definite transfer failure are both reported through the file's idempotent
+completion endpoint. The client retries that control request and then polls the
+session, whose status is derived from its file rows; there is no separate
+session-wide completion request.
+
+Upload sessions accept at most 50 supported files, 100 MB per file, and 2 GB
+in total. Users may run multiple independent upload sessions concurrently and,
+by default, may create at most 50 sessions per hour. Upload-session mutation,
+polling, and hourly creation limits can be overridden with the
+`RATE_LIMIT_UPLOAD_SESSION_*` environment variables documented in
+`backend/.env.example`; missing or invalid values use the documented defaults.
+Sessions that update the same mutable document version remain mutually
+exclusive. Sessions
+expire after 30 minutes, extended by a further 30 minutes each time a file
+completes so a slow batch is not destroyed mid-upload, up to four hours from
+creation; individual signed URLs expire after 15 minutes and can
+be refreshed while the session is pending. These limits are enforced atomically
+in PostgreSQL, not only in the browser.
+
+The Express process also runs a durable upload-processing pool. By default,
+each backend replica claims up to 8 jobs concurrently while PostgreSQL limits
+each user to two active jobs across all replicas. Override these defaults with
+`UPLOAD_PROCESSING_CONCURRENCY` (capped at 64) and
+`UPLOAD_PROCESSING_MAX_RUNNING_PER_USER`; every claim loop polls the database,
+so raising the pool raises idle query load in proportion. Workers claim jobs
+with database leases, retry a failed file up to three times, and clean expired,
+cancelled, and terminally failed temporary objects. A single document
+conversion is killed after `UPLOAD_CONVERT_TIMEOUT_MS` (default 120000, clamped
+to 10000-600000) and a worker stops renewing its lease after
+`UPLOAD_JOB_WALL_CLOCK_MS` (default 900000, clamped to 60000-3600000) so a
+wedged job is recovered by another worker instead of holding its slot. Terminal session metadata is retained
+for seven days so clients can inspect outcomes, then deleted in bounded cleanup
+batches.
+Deployments must therefore run `backend/src/index.ts`
+(the normal `npm start` entry point), rather than importing the Express app
+without starting its worker.
+
 Model-provider keys and the CourtListener token can be configured globally in
 `backend/.env` or per user under **Settings > API Keys**. When a key is
 configured globally, its matching field is read-only.
@@ -199,6 +263,31 @@ docker run --rm -p 3200:3200 \
 Put an HTTPS ingress or reverse proxy in front of port 3200. The included host
 serves `dist/` and streams `/api/*` to the backend while preserving cookies,
 `Set-Cookie`, `Origin`, request bodies, and SSE responses.
+
+## Background jobs and Redis
+
+Mike runs durable background jobs (document conversion, tabular extraction,
+audit recording, account deletion, storage cleanup, export builds) through one
+of two interchangeable transports:
+
+- **With Redis** (`REDIS_URL` set): jobs are delivered instantly through
+  BullMQ, and tabular reviews stream live progress over Redis pub/sub. The
+  bundled Docker Compose stack ships a Redis service and enables this by
+  default for new installs.
+- **Without Redis**: the same jobs run through a Postgres-backed queue
+  (`db_jobs`, created by the schema/migrations) with a polling worker. No
+  extra infrastructure is required — an existing deployment that upgrades in
+  place keeps working with no configuration changes and no Redis. Progress
+  streaming falls back to short database polls.
+
+The transport is selected automatically; `QUEUE_DRIVER=postgres` forces the
+database queue even when `REDIS_URL` is set.
+
+By default, workers run in a worker thread inside the backend process, so no
+extra process management is needed. To run them on separate hardware, start
+`node dist/worker.js` (any number of instances — work is partitioned safely)
+and set `WORKERS_MODE=none` on the API process. The compose file contains a
+commented `worker` service demonstrating this.
 
 ## Deployment safety
 

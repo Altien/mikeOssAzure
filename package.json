@@ -11,10 +11,10 @@
         "word-addin:typecheck": "npm --prefix word-addin run typecheck"
     },
     "devDependencies": {
-        "@axe-core/playwright": "^4.12.1",
-        "@playwright/test": "^1.61.1",
-        "@types/node": "^22.14.1",
-        "typescript": "^5.8.3"
+        "@axe-core/playwright": "^4.13.0",
+        "@playwright/test": "^1.62.1",
+        "@types/node": "^26.4.0",
+        "typescript": "^7.0.2"
     },
     "engines": {
         "node": ">=22"

@@ -83,5 +83,8 @@
         "vitest": "^4.1.9",
         "wrangler": "^4.90.0"
     },
+    "overrides": {
+        "eslint-plugin-react-hooks": "~7.0.1"
+    },
     "license": "AGPL-3.0-only"
 }

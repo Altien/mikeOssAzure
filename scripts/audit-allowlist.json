@@ -1,0 +1,10 @@
+[
+    {
+        "ghsa": "GHSA-xcpc-8h2w-3j85",
+        "reason": "adm-zip 0.5.12 memory-exhaustion on a crafted ZIP, pulled into word-addin only by office-addin-debugging/office-addin-manifest (devDependencies used to sideload the add-in on a developer's machine). Never bundled by webpack, never part of the shipped task pane, and the only ZIPs it opens are the manifest bundles we produce ourselves. npm's only 'fix' is a downgrade to office-addin-debugging 4.6.7, outside the declared ^5.0.12 range. REMOVE WHEN: the office-addin-* chain ships adm-zip >=0.6.0 inside that range (the weekly dev-dep Dependabot bump will carry it)."
+    },
+    {
+        "ghsa": "GHSA-ph9p-34f9-6g65",
+        "reason": "tmp 0.0.33 path traversal via prefix/postfix, reachable in word-addin only through @inquirer/editor -> external-editor, i.e. the interactive prompts of @microsoft/teamsapp-cli under office-addin-debugging — a devDependency, and the prefixes are literals inside that CLI rather than anything this repo or a document supplies. Same downgrade-only 'fix' as adm-zip above. REMOVE WHEN: external-editor resolves tmp >0.2.5 (or the teamsapp-cli chain drops external-editor) inside office-addin-debugging's declared range."
+    }
+]

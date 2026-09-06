@@ -433,7 +433,7 @@ function readWorkflow(category, workflowDir, pack) {
   const metadata = frontmatter.metadata;
   const id = `builtin-${slug}`;
   const assetsDir = path.join(workflowDir, "assets");
-  const referenceFiles = fs.existsSync(assetsDir)
+  const assets = fs.existsSync(assetsDir)
     ? fs
         .readdirSync(assetsDir, { withFileTypes: true })
         .filter((entry) => entry.isFile() && !entry.name.startsWith("."))
@@ -533,7 +533,7 @@ function readWorkflow(category, workflowDir, pack) {
       skill_md: skillMd,
       source_skill_md: sourceSkillMd,
       columns_config: null,
-      reference_files: referenceFiles,
+      assets,
       pack,
     };
   }
@@ -562,7 +562,7 @@ function readWorkflow(category, workflowDir, pack) {
     skill_md: skillMd || null,
     source_skill_md: sourceSkillMd,
     columns_config: tableConfig.columns_config,
-    reference_files: referenceFiles,
+    assets,
     pack,
   };
 }
