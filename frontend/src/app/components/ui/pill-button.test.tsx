@@ -148,6 +148,52 @@ describe("PillButton", () => {
         expect(onClick).not.toHaveBeenCalled();
     });
 
+    it("replaces its icon with a spinner and disables itself while loading", async () => {
+        const onClick = vi.fn();
+        const user = userEvent.setup();
+        const { container } = render(
+            <PillButton tone="black" loading onClick={onClick}>
+                <svg data-testid="save-icon" aria-hidden="true" />
+                Saving...
+            </PillButton>,
+        );
+
+        const button = screen.getByRole("button", { name: "Saving..." });
+        const iconContainer = screen.getByTestId("save-icon").parentElement;
+
+        expect(button).toBeDisabled();
+        expect(button).toHaveAttribute("aria-busy", "true");
+        expect(button).toHaveAttribute("data-loading", "true");
+        expect(
+            container.querySelector('[data-slot="pill-button-spinner"]'),
+        ).toBeInTheDocument();
+        expect(iconContainer).toHaveClass("[&_svg]:hidden");
+
+        await user.click(button);
+        expect(onClick).not.toHaveBeenCalled();
+    });
+
+    it("renders the loading treatment when using asChild", () => {
+        const { container } = render(
+            <PillButton tone="blue" asChild loading>
+                <a href="/docs">
+                    <svg data-testid="docs-icon" aria-hidden="true" />
+                    Opening...
+                </a>
+            </PillButton>,
+        );
+
+        const link = screen.getByRole("link", { name: "Opening..." });
+        expect(link).toHaveAttribute("aria-busy", "true");
+        expect(link).toHaveAttribute("aria-disabled", "true");
+        expect(
+            container.querySelector('[data-slot="pill-button-spinner"]'),
+        ).toBeInTheDocument();
+        expect(screen.getByTestId("docs-icon").parentElement).toHaveClass(
+            "[&_svg]:hidden",
+        );
+    });
+
     it("renders as its child element via asChild", () => {
         render(
             <PillButton tone="blue" asChild>

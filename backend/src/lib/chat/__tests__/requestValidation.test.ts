@@ -7,12 +7,17 @@ import {
     parseOptionalDisplayedDoc,
     parseOptionalModel,
     parseOptionalProjectId,
-    parseOptionalReasoning,
+  parseOptionalReasoning,
 } from "../requestValidation";
 
+const ASK_RESPONSE_IDS = {
+  assistant_message_id: "assistant-1",
+  ask_event_id: "ask-1",
+};
+
 describe("chat request validation", () => {
-    it("normalizes valid messages and their nested metadata", () => {
-        expect(
+  it("normalizes valid messages and their nested metadata", () => {
+    expect(
             parseChatMessages([
                 {
                     role: " user ",
@@ -129,20 +134,13 @@ describe("chat request validation", () => {
 
     it("accepts every AI SDK reasoning level and rejects other values", () => {
         expect(parseOptionalReasoning(undefined)).toEqual({
-            ok: true,
-            value: undefined,
-        });
-        for (const level of [
-            "none",
-            "low",
-            "medium",
-            "high",
-            "xhigh",
-            "max",
-        ]) {
-            expect(parseOptionalReasoning(level)).toEqual({
-                ok: true,
-                value: level,
+      ok: true,
+      value: undefined,
+    });
+    for (const level of ["none", "low", "medium", "high", "xhigh", "max"]) {
+      expect(parseOptionalReasoning(level)).toEqual({
+        ok: true,
+        value: level,
             });
         }
         expect(parseOptionalReasoning(true)).toEqual({
@@ -213,12 +211,13 @@ describe("chat request validation", () => {
     });
 
     it("validates and normalizes ask-input responses", () => {
-        expect(
-            parseOptionalAskInputsResponse({
-                type: "ask_inputs_response",
-                responses: [
-                    {
-                        id: " choice-1 ",
+    expect(
+      parseOptionalAskInputsResponse({
+        type: "ask_inputs_response",
+        ...ASK_RESPONSE_IDS,
+        responses: [
+          {
+            id: " choice-1 ",
                         kind: "choice",
                         question: " Governing law? ",
                         answer: " New York ",
@@ -234,14 +233,27 @@ describe("chat request validation", () => {
                         question: " Registered address? ",
                         answer: " 1 Legal Plaza\nSingapore 048583 ",
                     },
+                    {
+                        id: " clauses ",
+                        kind: "multi_choice",
+                        question: " Optional clauses? ",
+                        answers: [" Non-solicitation ", " Audit rights "],
+                    },
+                    {
+                        id: " remedies ",
+                        kind: "multi_choice",
+                        question: " Remedies? ",
+                        skipped: true,
+                    },
                 ],
             }),
-        ).toEqual({
-            ok: true,
-            value: {
-                responses: [
-                    {
-                        id: "choice-1",
+    ).toEqual({
+      ok: true,
+      value: {
+        ...ASK_RESPONSE_IDS,
+        responses: [
+          {
+            id: "choice-1",
                         kind: "choice",
                         question: "Governing law?",
                         answer: "New York",
@@ -257,26 +269,56 @@ describe("chat request validation", () => {
                         question: "Registered address?",
                         answer: "1 Legal Plaza\nSingapore 048583",
                     },
+                    {
+                        id: "clauses",
+                        kind: "multi_choice",
+                        question: "Optional clauses?",
+                        answers: ["Non-solicitation", "Audit rights"],
+                    },
+                    {
+                        id: "remedies",
+                        kind: "multi_choice",
+                        question: "Remedies?",
+                        skipped: true,
+                    },
                 ],
             },
         });
     });
 
-    it.each([
-        ["answer", "ask_inputs_response must be an object"],
-        [
-            { responses: [] },
-            "ask_inputs_response.responses must be a non-empty array",
-        ],
-        [
-            { responses: [{ id: "choice-1", kind: "other" }] },
-            'ask_inputs_response.responses[0].kind must be "choice", "text", or "documents"',
-        ],
-        [
-            {
-                responses: [
-                    {
-                        id: "choice-1",
+  it.each([
+    ["answer", "ask_inputs_response must be an object"],
+    [
+      { ...ASK_RESPONSE_IDS, responses: [] },
+      "ask_inputs_response.responses must be a non-empty array",
+    ],
+    [
+      {
+        ...ASK_RESPONSE_IDS,
+        responses: [{ id: "choice-1", kind: "other" }],
+      },
+      'ask_inputs_response.responses[0].kind must be "choice", "multi_choice", "text", or "documents"',
+    ],
+    [
+      {
+        ...ASK_RESPONSE_IDS,
+        responses: [
+          {
+            id: "clauses",
+                        kind: "multi_choice",
+                        question: "Optional clauses?",
+                        answers: [],
+                    },
+                ],
+            },
+            "ask_inputs_response.responses[0].answers must contain at least one selection unless skipped",
+    ],
+    [
+      {
+        ...ASK_RESPONSE_IDS,
+        responses: [
+          {
+            id: "choice-1",
                         kind: "choice",
                         question: "Question",
                         answer: " ",
@@ -284,12 +326,13 @@ describe("chat request validation", () => {
                 ],
             },
             "ask_inputs_response.responses[0].answer must be a non-empty string unless skipped",
-        ],
-        [
-            {
-                responses: [
-                    {
-                        id: "text-1",
+    ],
+    [
+      {
+        ...ASK_RESPONSE_IDS,
+        responses: [
+          {
+            id: "text-1",
                         kind: "text",
                         question: "Address?",
                         answer: "a".repeat(5_001),
@@ -297,12 +340,13 @@ describe("chat request validation", () => {
                 ],
             },
             "ask_inputs_response.responses[0].answer must be at most 5000 characters",
-        ],
-        [
-            {
-                responses: [
-                    {
-                        id: "docs-1",
+    ],
+    [
+      {
+        ...ASK_RESPONSE_IDS,
+        responses: [
+          {
+            id: "docs-1",
                         kind: "documents",
                         filenames: ["valid.pdf", 42],
                     },

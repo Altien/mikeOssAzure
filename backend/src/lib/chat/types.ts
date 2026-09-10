@@ -150,6 +150,15 @@ export type AskInputItem =
     }
   | {
       id: string;
+      kind: "multi_choice";
+      question: string;
+      options: AskInputOption[];
+      allow_other: boolean;
+      other_label: string;
+      response_prefix?: string;
+    }
+  | {
+      id: string;
       kind: "text";
       question: string;
       response_prefix?: string;
@@ -163,6 +172,8 @@ export type AskInputItem =
 
 export type AskInputsEvent = {
   type: "ask_inputs";
+  /** Stable identity for this particular prompt within its assistant message. */
+  event_id: string;
   items: AskInputItem[];
 };
 
@@ -172,6 +183,13 @@ export type AskInputResponseItem =
       kind: "choice";
       question: string;
       answer?: string;
+      skipped?: boolean;
+    }
+  | {
+      id: string;
+      kind: "multi_choice";
+      question: string;
+      answers?: string[];
       skipped?: boolean;
     }
   | {
@@ -189,6 +207,10 @@ export type AskInputResponseItem =
     };
 
 export type AskInputsResponseRequest = {
+  /** Durable assistant row that contains the unanswered ask_inputs event. */
+  assistant_message_id: string;
+  /** The exact ask_inputs event being answered. */
+  ask_event_id: string;
   responses: AskInputResponseItem[];
 };
 

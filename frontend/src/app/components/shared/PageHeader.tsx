@@ -121,13 +121,15 @@ export function PageHeader({
             className={cn(
                 "flex items-center justify-between",
                 "mx-4 md:mx-8",
-                "min-h-[76px] pb-5 pt-4.5",
+                "min-h-[76px] pb-5 pt-4",
                 shrink && "shrink-0",
             )}
         >
             {headerContent}
             {hasActions && (
-                <div className="ml-4 hidden shrink-0 items-center gap-3 md:flex">
+                // Pinned to the top rather than centred, so the buttons line up
+                // with the sidebar's first control however tall the title grows.
+                <div className="ml-4 mt-0.5 hidden shrink-0 items-center gap-3 self-start md:flex">
                     <PageHeaderActionGroups
                         groupedActionItems={groupedActionItems}
                         actionsDisabled={actionsDisabled}

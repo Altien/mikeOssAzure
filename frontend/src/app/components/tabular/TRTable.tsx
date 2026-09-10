@@ -37,6 +37,10 @@ const SKELETON_ROWS = 5;
 const COL_W = "w-[300px] shrink-0";
 const DOC_COL_W = "w-[332px] shrink-0";
 const TR_STICKY_CELL_CLASS = "table-sticky-cell";
+// The review grid keeps the wider page gutter. Its first column is a fixed
+// 332px cell rather than a checkbox aligned to the page header, so the
+// narrower gutter the other tables use would buy it nothing.
+const TR_GUTTER_CLASS = "md:mx-8";
 
 // Pixel widths matching the CSS constants above
 const DOC_COL_W_PX = 332;
@@ -186,6 +190,7 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
         return (
             <TableScrollArea
                 preserveGridBorder
+                className={TR_GUTTER_CLASS}
                 header={
                     <div
                         className="flex h-10 shrink-0"
@@ -243,6 +248,7 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
         return (
             <TableScrollArea
                 preserveGridBorder
+                className={TR_GUTTER_CLASS}
                 header={
                     <div className="shrink-0 flex h-10 items-center border-b border-gray-200">
                         <div
@@ -292,6 +298,7 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
     return (
         <TableScrollArea
             preserveGridBorder
+            className={TR_GUTTER_CLASS}
             scrollRef={scrollContainerRef}
             onScroll={handleRowsScroll}
             header={

@@ -471,6 +471,7 @@ export function OrganizationSettingsModal({
               size="sm"
               className="mt-3"
               disabled={deleting}
+              loading={deleting}
               onClick={() => setConfirmDelete(true)}
             >
               <Trash2 className="h-3.5 w-3.5" />

@@ -510,7 +510,7 @@ export function ProjectsOverview() {
                 </TabPillButton>
                 {actionsOpen && (
                     <div
-                        className={`absolute right-0 top-full z-50 mt-1 w-36 overflow-hidden rounded-lg ${LIQUID_GLASS_FLOAT_CLASS} backdrop-blur-2xl`}
+                        className={`absolute right-0 top-full z-[120] mt-1 w-36 overflow-hidden rounded-lg ${LIQUID_GLASS_FLOAT_CLASS} backdrop-blur-2xl`}
                     >
                         <button
                             onClick={requestDeleteSelected}

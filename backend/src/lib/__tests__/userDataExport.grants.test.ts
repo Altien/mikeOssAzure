@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildUserAccountExport } from "../userDataExport";
+
+import {
+    buildProjectExportManifest,
+    buildUserAccountExport,
+} from "../userDataExport";
 
 type Row = Record<string, unknown>;
 
@@ -93,5 +97,111 @@ describe("account export: shared projects", () => {
         const shared = (exported as any).shared_access.projects as Row[];
         expect(shared.map((p) => p.id)).toEqual(["granted-p"]);
         expect(reads.filter((r) => r.startsWith("projects."))).toEqual([]);
+    });
+});
+
+describe("memory exports", () => {
+    const markdown = "# Memory\n\n- Prefers concise drafts.\n";
+    const hash =
+        "6adb5e098c8e2d456cd117d73fbdb23cdf1b50f3bebb5f96e2e02acde6d24c83";
+
+    it("includes the app memory file's Markdown body", async () => {
+        const { db } = makeDb({
+            memory_files: [
+                {
+                    id: "memory-user",
+                    scope: "user",
+                    user_id: "u1",
+                    enabled: true,
+                    epoch: 2,
+                    revision: 1,
+                    content: markdown,
+                    content_sha256: hash,
+                    size_bytes: new TextEncoder().encode(markdown).byteLength,
+                    last_source: "manual",
+                    updated_by: "u1",
+                    status: "idle",
+                    created_at: "2026-09-05T00:00:00Z",
+                    updated_at: "2026-09-05T00:01:00Z",
+                },
+            ],
+        });
+
+        const exported = await buildUserAccountExport(
+            db,
+            "u1",
+            "u1@example.com",
+        );
+
+        expect(exported.memory).toMatchObject({
+            enabled: true,
+            revision: 1,
+            markdown,
+            content_sha256: hash,
+            source: "manual",
+            updated_by: "u1",
+        });
+    });
+
+    it("refuses to export a body that does not match its digest", async () => {
+        const { db } = makeDb({
+            memory_files: [
+                {
+                    id: "memory-user",
+                    scope: "user",
+                    user_id: "u1",
+                    enabled: true,
+                    epoch: 0,
+                    revision: 1,
+                    content: "# Tampered",
+                    content_sha256: hash,
+                    size_bytes: 10,
+                    status: "idle",
+                },
+            ],
+        });
+
+        await expect(
+            buildUserAccountExport(db, "u1", "u1@example.com"),
+        ).rejects.toThrow(/checksum mismatch/i);
+    });
+
+    it("includes project memory in the signed project manifest", async () => {
+        const { db } = makeDb({
+            projects: [
+                {
+                    id: "p1",
+                    name: "Matter",
+                    cm_number: null,
+                    created_at: "2026-09-05T00:00:00Z",
+                },
+            ],
+            documents: [],
+            memory_files: [
+                {
+                    id: "memory-project",
+                    scope: "project",
+                    project_id: "p1",
+                    enabled: true,
+                    epoch: 0,
+                    revision: 1,
+                    content: markdown,
+                    content_sha256: hash,
+                    size_bytes: new TextEncoder().encode(markdown).byteLength,
+                    last_source: "curator",
+                    updated_by: "u1",
+                    status: "idle",
+                },
+            ],
+        });
+
+        const manifest = await buildProjectExportManifest(db, "p1");
+
+        expect(manifest.memory).toMatchObject({
+            enabled: true,
+            markdown,
+            source: "curator",
+        });
+        expect(manifest.digest.value).toMatch(/^[0-9a-f]{64}$/);
     });
 });

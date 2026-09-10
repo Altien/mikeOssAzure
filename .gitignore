@@ -27,3 +27,6 @@ tmp/
 .current-issue.md
 .implementation-plan.md
 .implement-config
+
+# Local review artifact; it is a nested repository, not application source.
+/pr-267-analysis-site/

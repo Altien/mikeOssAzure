@@ -10,6 +10,9 @@ export type UserModelSettings = {
     /** Explicit title override stored in Dev's fast_model; null derives from chat model. */
     title_model: string | null;
     tabular_model: string | null;
+    /** Explicit override for asynchronous memory curation. */
+    memory_curator_model: string | null;
+    /** Cross-surface fallback used only when a chat has no usable model. */
     last_selected_chat_model: string | null;
     last_selected_reasoning_level: ReasoningLevel | null;
     legal_research_us: boolean;
@@ -44,13 +47,21 @@ export async function getUserModelSettings(
     const client = db ?? createServerSupabase();
     const [profileResult, api_keys, routerModels] = await Promise.all([
         client.from("user_profiles")
-            .select("fast_model, tabular_model, last_selected_chat_model, last_selected_reasoning_level, legal_research_us, display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas")
+            .select("fast_model, tabular_model, memory_curator_model, last_selected_chat_model, last_selected_reasoning_level, legal_research_us, display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas")
             .eq("user_id", userId).single(),
         getOrganisationApiKeys(),
         getAllUserRouterModels(userId, client),
     ]);
     let data = profileResult.data;
-    if (profileResult.error?.code === "42703") {
+    let profileError = profileResult.error;
+    if (profileError?.code === "42703" && profileError.message?.includes("memory_curator_model")) {
+        const previous = await client.from("user_profiles")
+            .select("fast_model, tabular_model, last_selected_chat_model, last_selected_reasoning_level, legal_research_us, display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas")
+            .eq("user_id", userId).single();
+        data = previous.error ? null : { ...previous.data, memory_curator_model: null } as typeof data;
+        profileError = previous.error;
+    }
+    if (profileError?.code === "42703") {
         const withoutReasoning = await client.from("user_profiles")
             .select("fast_model, tabular_model, last_selected_chat_model, legal_research_us, display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas")
             .eq("user_id", userId).single();
@@ -74,8 +85,8 @@ export async function getUserModelSettings(
         } else {
             throw new Error(`Failed to read user model settings: ${withoutReasoning.error.message}`);
         }
-    } else if (profileResult.error) {
-        throw new Error(`Failed to read user model settings: ${profileResult.error.message}`);
+    } else if (profileError) {
+        throw new Error(`Failed to read user model settings: ${profileError.message}`);
     }
     const optional = (value: string | null | undefined) =>
         normalizeOptionalModelPreference(value, routerModels);
@@ -84,6 +95,7 @@ export async function getUserModelSettings(
         fast_model: titleOverride ?? fallbackTitleModel(api_keys, routerModels),
         title_model: titleOverride,
         tabular_model: optional(data?.tabular_model),
+        memory_curator_model: optional(data?.memory_curator_model),
         last_selected_chat_model: optional(data?.last_selected_chat_model),
         last_selected_reasoning_level: normalizeReasoningLevel(data?.last_selected_reasoning_level),
         legal_research_us: data?.legal_research_us !== false,

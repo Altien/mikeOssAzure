@@ -41,12 +41,34 @@ export type ContentAccessGrant = {
 };
 
 export type ContentGrantListResult =
-    | { ok: true; grants: ContentAccessGrant[] }
-    | { ok: false; detail: string };
+  | { ok: true; grants: ContentAccessGrant[] }
+  | { ok: false; detail: string };
+
+/**
+ * Whether a standalone resource has any collaborator. Creator provenance is
+ * deliberately irrelevant: once a grant exists, every persisted response has
+ * a shared audience even while the creator is the active actor.
+ */
+export async function hasDirectContentGrants(
+  db: Db,
+  kind: ContentGrantKind,
+  resourceId: string,
+): Promise<boolean> {
+  const config = GRANT_CONFIG[kind];
+  const { data, error } = await db
+    .from(config.table)
+    .select("id")
+    .eq(config.resourceColumn, resourceId)
+    .limit(1);
+  if (error) {
+    throw new Error(`Failed to resolve ${config.label} audience`);
+  }
+  return (data ?? []).length > 0;
+}
 
 export async function listContentGrants(
-    db: Db,
-    kind: ContentGrantKind,
+  db: Db,
+  kind: ContentGrantKind,
     resourceId: string,
 ): Promise<ContentGrantListResult> {
     const config = GRANT_CONFIG[kind];

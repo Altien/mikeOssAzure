@@ -5,6 +5,7 @@ import {
     type ReactElement,
     type ReactNode,
 } from "react";
+import { Loader2 } from "lucide-react";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 import {
@@ -23,6 +24,7 @@ export type PillButtonUIProps = Omit<
     className?: string;
     tone: PillButtonUITone;
     size?: PillButtonUISize;
+    loading?: boolean;
 };
 
 const toneClasses: Record<PillButtonUITone, string> = {
@@ -37,6 +39,13 @@ const sizeClasses: Record<PillButtonUISize, string> = {
     "icon-xs": "h-6 w-6 p-0 text-[11px] leading-none",
     sm: "h-7 px-3 text-xs leading-none has-[svg]:pl-2 has-[img]:pl-2",
     normal: "h-8 px-4 text-sm leading-none has-[svg]:pl-3 has-[img]:pl-3",
+};
+
+const spinnerSizeClasses: Record<PillButtonUISize, string> = {
+    xs: "h-3 w-3",
+    "icon-xs": "h-3 w-3",
+    sm: "h-3.5 w-3.5",
+    normal: "h-4 w-4",
 };
 
 export function pillButtonUIClassName({
@@ -64,13 +73,55 @@ export function PillButtonUI({
     size = "sm",
     type = "button",
     className,
+    children,
+    loading = false,
+    disabled,
+    "aria-busy": ariaBusy,
     ...props
 }: PillButtonUIProps): ReactElement {
     return (
         <button
             type={type}
             className={pillButtonUIClassName({ tone, size, className })}
+            disabled={disabled || loading}
+            aria-busy={loading ? true : ariaBusy}
+            data-loading={loading || undefined}
             {...props}
-        />
+        >
+            <PillButtonContentUI loading={loading} size={size}>
+                {children}
+            </PillButtonContentUI>
+        </button>
+    );
+}
+
+export function PillButtonContentUI({
+    children,
+    loading,
+    size,
+}: {
+    children: ReactNode;
+    loading: boolean;
+    size: PillButtonUISize;
+}) {
+    return (
+        <>
+            {loading && (
+                <Loader2
+                    data-slot="pill-button-spinner"
+                    aria-hidden="true"
+                    className={`${spinnerSizeClasses[size]} shrink-0 animate-spin`}
+                />
+            )}
+            <span
+                className={
+                    loading
+                        ? "contents [&_img]:hidden [&_svg]:hidden"
+                        : "contents"
+                }
+            >
+                {children}
+            </span>
+        </>
     );
 }

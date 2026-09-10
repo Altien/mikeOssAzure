@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import {
+    Brain,
     CornerDownRight,
     Loader2,
     Pencil,
@@ -24,7 +25,10 @@ import {
     tableTreeCellStyle,
 } from "@/app/components/shared/TablePrimitive";
 
-export type ProjectWorkspaceSection = "documents" | "assistant" | "reviews";
+export type ProjectWorkspaceSection =
+    | "documents"
+    | "assistant"
+    | "reviews";
 
 export type ProjectContextMenu = {
     x: number;
@@ -61,7 +65,9 @@ export function DocIcon({
     fileType: string | null;
     muted?: boolean;
 }) {
-    return <FileTypeIcon fileType={fileType} className="h-4 w-4" muted={muted} />;
+    return (
+        <FileTypeIcon fileType={fileType} className="h-3.5 w-3.5" muted={muted} />
+    );
 }
 
 export function DocVersionHistory({
@@ -368,6 +374,7 @@ export function ProjectPageHeader({
     onBackToProjects,
     onProjectRoot,
     onOpenDetails,
+    onOpenMemory,
     onDeleteProject,
     onSearchChange,
     onOpenAccess,
@@ -394,6 +401,7 @@ export function ProjectPageHeader({
     onBackToProjects: () => void;
     onProjectRoot: () => void;
     onOpenDetails: () => void;
+    onOpenMemory: () => void;
     onDeleteProject: () => void;
     onSearchChange: (search: string) => void;
     onOpenAccess: () => void;
@@ -407,7 +415,7 @@ export function ProjectPageHeader({
         onClick: () => void;
     }>;
 }) {
-    const sectionAction: PageHeaderAction =
+    const sectionAction: PageHeaderAction | null =
         activeSection === "documents"
             ? {
                   type: "custom",
@@ -431,7 +439,8 @@ export function ProjectPageHeader({
                     label: <span className="hidden sm:inline">Chat</span>,
                     title: "Create chat",
                 }
-              : {
+              : activeSection === "reviews"
+                ? {
                     onClick: onNewReview,
                     disabled: creatingReview || !roleKnown,
                     icon: creatingReview ? (
@@ -441,7 +450,8 @@ export function ProjectPageHeader({
                     ),
                     label: <span className="hidden sm:inline">Review</span>,
                     title: "Create review",
-                };
+                  }
+                : null;
 
     return (
         <PageHeader
@@ -494,6 +504,12 @@ export function ProjectPageHeader({
                                             : "View details",
                                         icon: Pencil,
                                         onSelect: onOpenDetails,
+                                        disabled: !roleKnown,
+                                    },
+                                    {
+                                        label: "Memory",
+                                        icon: Brain,
+                                        onSelect: onOpenMemory,
                                         disabled: !roleKnown,
                                     },
                                     {

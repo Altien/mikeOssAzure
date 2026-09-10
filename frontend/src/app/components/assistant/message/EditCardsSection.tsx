@@ -1,5 +1,4 @@
 import { useState, type ReactNode } from "react";
-import { Loader2 } from "lucide-react";
 import { EditCardsSectionUI } from "@/shared/ui/EditCardsSectionUI";
 import { GLASS_CARD_SURFACE_CLASS } from "@/app/components/ui/glass-card";
 import { PillButton } from "@/app/components/ui/pill-button";
@@ -138,36 +137,18 @@ function BulkEditActions({
                 size="sm"
                 onClick={() => handleAll("accept")}
                 disabled={!!busy}
+                loading={busy === "accept"}
             >
-                {busy === "accept" ? (
-                    <>
-                        <Loader2
-                            aria-hidden="true"
-                            className="h-3 w-3 animate-spin"
-                        />
-                        Accepting all...
-                    </>
-                ) : (
-                    "Accept all"
-                )}
+                {busy === "accept" ? "Accepting all..." : "Accept all"}
             </PillButton>
             <PillButton
                 tone="white"
                 size="sm"
                 onClick={() => handleAll("reject")}
                 disabled={!!busy}
+                loading={busy === "reject"}
             >
-                {busy === "reject" ? (
-                    <>
-                        <Loader2
-                            aria-hidden="true"
-                            className="h-3 w-3 animate-spin"
-                        />
-                        Rejecting all...
-                    </>
-                ) : (
-                    "Reject all"
-                )}
+                {busy === "reject" ? "Rejecting all..." : "Reject all"}
             </PillButton>
             {progress && (
                 <span className="text-xs font-sans text-gray-500">

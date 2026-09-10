@@ -4,11 +4,8 @@ import React, { useId, useSyncExternalStore } from "react";
 
 const DEGREES = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330];
 const STOP_TRANSITION = "stop-color 220ms ease, stop-opacity 220ms ease";
-const FLOOD_TRANSITION = "flood-color 220ms ease, flood-opacity 220ms ease";
 
 type IconPalette = {
-    shadowColor: string;
-    shadowOpacity: number;
     fillStops: [string, string, string, string];
     fillOpacities: [number, number, number, number];
     specularStops: [number, number, number, number];
@@ -19,8 +16,6 @@ type IconPalette = {
 };
 
 const DEFAULT_PALETTE: IconPalette = {
-    shadowColor: "#000000",
-    shadowOpacity: 0.3,
     fillStops: ["#0a0a0a", "#151515", "#080808", "#111111"],
     fillOpacities: [0.9, 0.8, 0.85, 0.9],
     specularStops: [0.5, 0.2, 0, 0],
@@ -31,8 +26,6 @@ const DEFAULT_PALETTE: IconPalette = {
 };
 
 const DONE_PALETTE: IconPalette = {
-    shadowColor: "#166534",
-    shadowOpacity: 0.18,
     fillStops: ["#4ade80", "#86efac", "#22c55e", "#bbf7d0"],
     fillOpacities: [0.95, 0.88, 0.9, 0.94],
     specularStops: [0.68, 0.32, 0.03, 0],
@@ -43,8 +36,6 @@ const DONE_PALETTE: IconPalette = {
 };
 
 const ERROR_PALETTE: IconPalette = {
-    shadowColor: "#991b1b",
-    shadowOpacity: 0.18,
     fillStops: ["#f87171", "#fca5a5", "#ef4444", "#fecaca"],
     fillOpacities: [0.95, 0.88, 0.9, 0.94],
     specularStops: [0.68, 0.32, 0.03, 0],
@@ -58,8 +49,6 @@ const ERROR_PALETTE: IconPalette = {
 // depth cues (inner shading, hairline border) darkened instead of lightened
 // so overlapping blades stay readable against a dark background.
 const WHITE_PALETTE: IconPalette = {
-    shadowColor: "#000000",
-    shadowOpacity: 0.45,
     fillStops: ["#ffffff", "#eef2f7", "#f8fafc", "#ffffff"],
     fillOpacities: [0.95, 0.85, 0.9, 0.95],
     specularStops: [0.7, 0.3, 0, 0],
@@ -120,11 +109,7 @@ function Blades({ ids }: { ids: Record<string, string> }) {
     return (
         <g transform="translate(250, 250)">
             {DEGREES.map((deg) => (
-                <g
-                    key={deg}
-                    transform={`rotate(${deg})`}
-                    filter={`url(#${ids.shadow})`}
-                >
+                <g key={deg} transform={`rotate(${deg})`}>
                     <use
                         href={`#${ids.blade}`}
                         fill={`url(#${ids.glassFill})`}
@@ -176,7 +161,6 @@ export function MikeIcon({
             ? WHITE_PALETTE
             : DEFAULT_PALETTE;
     const m = {
-        shadow: `${id}-m-shadow`,
         glassFill: `${id}-m-glassFill`,
         specular: `${id}-m-specular`,
         glassBorder: `${id}-m-glassBorder`,
@@ -201,22 +185,6 @@ export function MikeIcon({
                 style={{ display: "block" }}
             >
                 <defs>
-                    <filter
-                        id={m.shadow}
-                        x="-20%"
-                        y="-20%"
-                        width="140%"
-                        height="140%"
-                    >
-                        <feDropShadow
-                            dx="0"
-                            dy="1.5"
-                            stdDeviation="3"
-                            floodColor={palette.shadowColor}
-                            floodOpacity={palette.shadowOpacity}
-                            style={{ transition: FLOOD_TRANSITION }}
-                        />
-                    </filter>
                     <linearGradient
                         id={m.glassFill}
                         x1="0%"

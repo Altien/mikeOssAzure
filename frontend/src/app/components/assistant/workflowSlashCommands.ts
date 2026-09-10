@@ -1,14 +1,18 @@
 import type { Workflow } from "../shared/types";
-import { workflowSlashCommandFromTitle } from "@/shared/ui/WorkflowSlashCommandUI";
+import {
+    slashCommandQueryFromValue,
+    withoutSlashCommand,
+    workflowSlashCommandFromTitle,
+} from "@/shared/ui/WorkflowSlashCommandUI";
+
+export { withoutSlashCommand };
 
 export function workflowSlashCommand(workflow: Workflow): string | null {
     return workflowSlashCommandFromTitle(workflow.metadata.title);
 }
 
 export function slashCommandQuery(value: string): string | null {
-    const trimmed = value.trim();
-    if (!/^\/\S*$/.test(trimmed)) return null;
-    return trimmed.toLowerCase();
+    return slashCommandQueryFromValue(value);
 }
 
 export function matchingSlashWorkflows(

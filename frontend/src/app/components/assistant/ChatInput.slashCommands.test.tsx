@@ -174,6 +174,30 @@ describe("ChatInput workflow slash commands", () => {
         );
     });
 
+    it("offers a command typed mid-message and keeps the rest of the draft", async () => {
+        const onSubmit = vi.fn();
+        const user = userEvent.setup();
+        render(
+            <ChatInput
+                onSubmit={onSubmit}
+                onCancel={vi.fn()}
+                isLoading={false}
+            />,
+        );
+
+        const input = screen.getByRole("combobox");
+        await user.type(input, "review this using /cont");
+        await screen.findByRole("option", {
+            name: "/contract-intake Contract Intake",
+        });
+        await user.keyboard("{Enter}");
+
+        expect(onSubmit).not.toHaveBeenCalled();
+        // The command goes; everything typed before it stays.
+        expect(input).toHaveValue("review this using ");
+        expect(screen.getByText("Contract Intake")).toBeInTheDocument();
+    });
+
     it("replaces an existing draft with an explicitly supplied workflow prompt", async () => {
         const ref = createRef<ChatInputHandle>();
         const user = userEvent.setup();

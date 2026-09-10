@@ -17,7 +17,12 @@ import { createServerSupabase } from "../supabase";
 import { deleteFile } from "../storage";
 import { enqueueAppJobDelivery } from "../queue/appJobsQueue";
 import { redisEnabled } from "./driver";
-import type { Db, DbJob, DbJobHandlers } from "./types";
+import {
+    DbJobDeferredError,
+    type Db,
+    type DbJob,
+    type DbJobHandlers,
+} from "./types";
 
 /**
  * Poll cadence depends on the driver: with Redis configured, BullMQ delivers
@@ -37,6 +42,7 @@ const STALE_SECONDS = 600;
 const DONE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const FAILED_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const SWEEP_EVERY_MS = 60 * 60 * 1000;
+const RETRY_UNTIL_SUCCESS_KINDS = new Set(["storage.cleanup"]);
 
 /**
  * Exponential backoff for retries: 30s, 90s, 270s, ... capped at 30 min.
@@ -115,6 +121,7 @@ export async function processClaimedJob(
         return data === true;
     };
 
+    const retryUntilSuccess = RETRY_UNTIL_SUCCESS_KINDS.has(job.kind);
     const handler = handlers[job.kind];
     if (!handler) {
         clearInterval(heartbeat);
@@ -124,6 +131,7 @@ export async function processClaimedJob(
     }
 
     try {
+        if (!handler) throw new Error(`unknown job kind: ${job.kind}`);
         const result = await handler(db, job);
         clearInterval(heartbeat);
         if (!await finish("done", null, result ?? null))
@@ -132,8 +140,12 @@ export async function processClaimedJob(
         clearInterval(heartbeat);
         const message =
             err instanceof Error ? err.message : String(err ?? "unknown");
-        const spent = job.attempts >= job.max_attempts;
-        const delayMs = retryDelayMs(job.attempts);
+        const deferred = err instanceof DbJobDeferredError;
+        const spent = !deferred && !retryUntilSuccess && job.attempts >= job.max_attempts;
+        const deferredAt = deferred ? Date.parse(err.runAt) : Number.NaN;
+        const delayMs = deferred
+            ? Math.max(1_000, (Number.isFinite(deferredAt) ? deferredAt : Date.now() + 60_000) - Date.now())
+            : retryDelayMs(job.attempts);
         const owned = await finish(
             spent ? "failed" : "pending", message, null,
             spent ? null : new Date(Date.now() + delayMs).toISOString(),
@@ -174,9 +186,11 @@ export async function processClaimedJob(
             }
         }
         console.error(
-            spent
-                ? "[dbq] job permanently failed"
-                : "[dbq] job failed; will retry",
+            deferred
+                ? "[dbq] job deferred"
+                : spent
+                  ? "[dbq] job permanently failed"
+                  : "[dbq] job failed; will retry",
             { id: job.id, kind: job.kind, attempts: job.attempts, message },
         );
     }

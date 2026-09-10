@@ -38,6 +38,13 @@ vi.mock("../../auditExport", async (importOriginal) => {
     };
 });
 
+const buildMemoryArchive = vi.fn(async (..._a: unknown[]) =>
+    Buffer.from("memory-zip"),
+);
+vi.mock("../../memory/archive", () => ({
+    buildMemoryArchive: (...a: unknown[]) => buildMemoryArchive(...a),
+}));
+
 const ACTIVE_VERSION = {
     id: "v1",
     storage_path: "docs/d1/v1.docx",
@@ -51,7 +58,8 @@ const ACTIVE_VERSION = {
 };
 
 const ensureDocAccess = vi.fn(async (..._a: unknown[]) => ({ ok: true }));
-vi.mock("../../access", () => ({
+vi.mock("../../access", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../../access")>()),
     ensureDocAccess: (...a: unknown[]) => ensureDocAccess(...a),
 }));
 
@@ -72,6 +80,7 @@ const deleteFile = vi.fn(async () => {});
 const listFiles = vi.fn(async () => [] as string[]);
 const downloadFile = vi.fn(async (..._a: unknown[]) => new Uint8Array([1, 2, 3]));
 vi.mock("../../storage", () => ({
+    assertStorageConfigured: vi.fn(),
     uploadFile: (...a: unknown[]) => uploadFile(...a),
     deleteFile: (...a: unknown[]) => deleteFile(...a),
     listFiles: (...a: unknown[]) => listFiles(...a),
@@ -184,6 +193,7 @@ beforeEach(() => {
     buildAuditCsv
         .mockReset()
         .mockResolvedValue("created_at,user\n2026-01-01,a@b.test");
+    buildMemoryArchive.mockReset().mockResolvedValue(Buffer.from("memory-zip"));
     ensureDocAccess.mockReset().mockResolvedValue({ ok: true });
     loadActiveVersion.mockReset().mockResolvedValue(ACTIVE_VERSION);
 });
@@ -238,10 +248,16 @@ describe("handleAccountDelete", () => {
             JOB("account.delete", { userId: "u1", userEmail: "u@x.test", provider: "supabase" }),
         );
         expect(deleteUserAccountData).toHaveBeenCalledWith(db, "u1", "u@x.test");
-        // Two purge deletes (payload->>userId and payload->base->>userId),
-        // both excluding the running job's own row.
-        expect(db.deletes).toHaveLength(2);
+        // Three purge deletes (direct user, audit base, and memory actor),
+        // all excluding the running job's own row.
+        expect(db.deletes).toHaveLength(3);
         for (const d of db.deletes) expect(d["neq:id"]).toBe("job-1");
+        expect(db.deletes).toContainEqual(
+            expect.objectContaining({
+                kind: "memory.consolidate",
+                "payload->>actorUserId": "u1",
+            }),
+        );
     });
 
     // documents.user_id references auth.users ON DELETE CASCADE, and
@@ -398,6 +414,34 @@ describe("handleExportBuild", () => {
                 JOB("export.build", { userId: "u1", type: "everything" }),
             ),
         ).rejects.toThrow(/malformed payload/);
+    });
+
+    it("builds and audits the memory ZIP", async () => {
+        const db = makeDb();
+        const out = await handleExportBuild(
+            db as never,
+            JOB("export.build", {
+                userId: "u1",
+                userEmail: "u@x.test",
+                type: "memory-zip",
+            }),
+        );
+
+        expect(buildMemoryArchive).toHaveBeenCalledWith(
+            db,
+            "u1",
+            "u@x.test",
+        );
+        const [path, , contentType] = uploadFile.mock.calls[0];
+        expect(path).toBe(
+            "exports/u1/job-1-mike-memory-export.zip",
+        );
+        expect(contentType).toBe("application/zip");
+        expect(out.filename).toBe("mike-memory-export.zip");
+        expect(recordAudit).toHaveBeenCalledWith(
+            db,
+            expect.objectContaining({ action: "export.memory" }),
+        );
     });
 
     it("builds the history CSV from the job's stored filters", async () => {

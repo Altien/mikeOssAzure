@@ -194,7 +194,7 @@ export const TOOLS = [
     function: {
       name: "ask_inputs",
       description:
-        "Ask the user for one or more decisions, open-ended answers, clarifications, or document uploads before continuing. Use a text item when the user should type a free-form answer and there are no useful suggested options. Use this when guessing would materially affect the answer or when required documents have not been attached. Put all needed questions and document requests in one items array. After calling ask_inputs, do not continue the substantive task until the user responds in a later message.",
+        "Ask the user for one or more decisions, open-ended answers, clarifications, or document uploads before continuing. Use choice when exactly one option should be selected, multi_choice when one or more options may be selected, and text when the user should type a free-form answer and there are no useful suggested options. Use this when guessing would materially affect the answer or when required documents have not been attached. Put all needed questions and document requests in one items array. After calling ask_inputs, do not continue the substantive task until the user responds in a later message. If that response marks an input as skipped, do not ask for that input again; when drafting or editing a document, insert a descriptive placeholder in square brackets wherever the skipped value is required.",
       parameters: {
         type: "object",
         properties: {
@@ -203,7 +203,7 @@ export const TOOLS = [
             minItems: 1,
             maxItems: 12,
             description:
-              "The list of user inputs needed before continuing. Use choice items when useful options exist, text items for open-ended answers such as a name or address, and documents items for required uploads.",
+              "The list of user inputs needed before continuing. Use choice for exactly one selection, multi_choice for one or more selections, text for open-ended answers such as a name or address, and documents for required uploads.",
             items: {
               type: "object",
               properties: {
@@ -214,17 +214,17 @@ export const TOOLS = [
                 },
                 kind: {
                   type: "string",
-                  enum: ["choice", "text", "documents"],
+                  enum: ["choice", "multi_choice", "text", "documents"],
                 },
                 question: {
                   type: "string",
                   description:
-                    "For choice and text items: the concise question to show to the user.",
+                    "For choice, multi_choice, and text items: the concise question to show to the user.",
                 },
                 options: {
                   type: "array",
                   description:
-                    "For choice items only: selectable choices to show. Each choice has a single user-facing value, which is also sent back if selected.",
+                    "For choice and multi_choice items: selectable options to show. Each option has a single user-facing value, which is also sent back if selected.",
                   minItems: 1,
                   maxItems: 8,
                   items: {
@@ -241,12 +241,12 @@ export const TOOLS = [
                 allow_other: {
                   type: "boolean",
                   description:
-                    "For choice items only: whether to show an Other option with a text field. Defaults to true.",
+                    "For choice and multi_choice items: whether to show an Other option with a text field. Defaults to true.",
                 },
                 other_label: {
                   type: "string",
                   description:
-                    "For choice items only: label for the free-text option. Defaults to Other.",
+                    "For choice and multi_choice items: label for the free-text option. Defaults to Other.",
                 },
                 document_types: {
                   type: "array",

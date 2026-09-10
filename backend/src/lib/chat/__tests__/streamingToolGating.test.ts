@@ -80,6 +80,55 @@ beforeEach(() => {
 });
 
 describe("runLLMStream document-mutation gating", () => {
+  it("treats an SDK-wrapped ask-input pause as a successful turn", async () => {
+    const askInputsEvent = {
+      type: "ask_inputs" as const,
+      items: [
+        {
+          id: "choice-1",
+          kind: "choice" as const,
+          question: "Continue?",
+          options: [{ value: "Yes" }],
+          allow_other: false,
+          other_label: "Other",
+        },
+      ],
+    };
+    runToolCalls.mockResolvedValueOnce({
+      toolResults: [],
+      docsRead: [],
+      docsFound: [],
+      docsCreated: [],
+      docsReplicated: [],
+      workflowsApplied: [],
+      docsEdited: [],
+      askInputsEvents: [askInputsEvent],
+      courtlistenerEvents: [],
+      caseCitationEvents: [],
+      mcpEvents: [],
+    } as never);
+    streamChatWithTools.mockImplementationOnce(
+      async (params: { runTools?: RunToolsFn }) => {
+        try {
+          await params.runTools?.([
+            { id: "call-a", name: "ask_inputs", input: {} },
+          ]);
+        } catch (error) {
+          // AI SDK reports a rejected tool execution as a fresh stream error.
+          throw new Error(error instanceof Error ? error.message : "wrapped");
+        }
+        return { fullText: "" };
+      },
+    );
+
+    const result = await runLLMStream(baseParams());
+
+    expect(result.events).toEqual([askInputsEvent]);
+    expect(result.events).not.toContainEqual(
+      expect.objectContaining({ type: "error" }),
+    );
+  });
+
   it("advertises the writers by default", async () => {
     await runLLMStream(baseParams());
     const names = advertisedToolNames();

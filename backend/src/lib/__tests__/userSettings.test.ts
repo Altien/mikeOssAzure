@@ -82,12 +82,16 @@ describe("getUserModelSettings router-model allowlist", () => {
             profileDb({
                 fast_model: "openrouter/allowed/model",
                 tabular_model: "openrouter/allowed/model",
+                memory_curator_model: "openrouter/allowed/model",
                 legal_research_us: true,
             }),
         );
 
         expect(settings.fast_model).toBe("openrouter/allowed/model");
         expect(settings.tabular_model).toBe("openrouter/allowed/model");
+        expect(settings.memory_curator_model).toBe(
+            "openrouter/allowed/model",
+        );
     });
 
     it("clears stored router preferences outside the saved selection", async () => {
@@ -96,12 +100,14 @@ describe("getUserModelSettings router-model allowlist", () => {
             profileDb({
                 fast_model: "openrouter/pricy/frontier-model",
                 tabular_model: "vercel/pricy/frontier-model",
+                memory_curator_model: "openrouter/pricy/frontier-model",
                 legal_research_us: true,
             }),
         );
 
         expect(settings.title_model).toBeNull();
         expect(settings.tabular_model).toBeNull();
+        expect(settings.memory_curator_model).toBeNull();
     });
 
     it("keeps first-party preferences untouched", async () => {
@@ -110,12 +116,14 @@ describe("getUserModelSettings router-model allowlist", () => {
             profileDb({
                 fast_model: "claude-haiku-4-5",
                 tabular_model: "claude-sonnet-5",
+                memory_curator_model: "gpt-5.4-mini",
                 legal_research_us: true,
             }),
         );
 
         expect(settings.fast_model).toBe("claude-haiku-4-5");
         expect(settings.tabular_model).toBe("claude-sonnet-5");
+        expect(settings.memory_curator_model).toBe("gpt-5.4-mini");
     });
 });
 
@@ -137,6 +145,36 @@ function retryingProfileDb(
 }
 
 describe("getUserModelSettings on an un-migrated database", () => {
+    it("retries without the memory curator column during rollout", async () => {
+        const settings = await getUserModelSettings(
+            "user-1",
+            retryingProfileDb(
+                {
+                    data: null,
+                    error: {
+                        code: "42703",
+                        message:
+                            "column user_profiles.memory_curator_model does not exist",
+                    },
+                },
+                {
+                    data: {
+                        title_model: "claude-haiku-4-5",
+                        tabular_model: "claude-sonnet-5",
+                        last_selected_chat_model: "claude-sonnet-5",
+                        last_selected_reasoning_level: "high",
+                        legal_research_us: true,
+                    },
+                    error: null,
+                },
+            ),
+        );
+
+        expect(settings.memory_curator_model).toBeNull();
+        expect(settings.last_selected_reasoning_level).toBe("high");
+        expect(settings.last_selected_chat_model).toBe("claude-sonnet-5");
+    });
+
     it("retries without the onboarding columns and keeps saved settings", async () => {
         const settings = await getUserModelSettings(
             "user-1",

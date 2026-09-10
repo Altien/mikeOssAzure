@@ -584,6 +584,9 @@ export function AskInputsBlock({
                         const responseText = (() => {
                             if (!itemResponse) return null;
                             if (itemResponse.skipped) return "Skipped";
+                            if (itemResponse.kind === "multi_choice") {
+                                return itemResponse.answers?.join(", ") ?? "";
+                            }
                             if (itemResponse.kind !== "documents") {
                                 return itemResponse.answer ?? "";
                             }

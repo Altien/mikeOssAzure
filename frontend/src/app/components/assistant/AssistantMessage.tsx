@@ -154,19 +154,18 @@ export function AssistantMessage({
         onEditResolved?.(args);
     };
 
-    const eventErrorMessages = (events ?? [])
-        .map(eventErrorMessage)
-        .filter((message): message is string => !!message);
-    const topLevelErrorMessage =
-        errorMessage ??
-        (
-            (events ?? []).find((event) => event.type === "error") as
-                | Extract<AssistantEvent, { type: "error" }>
-                | undefined
-        )?.message ??
-        null;
+    // Only a failed response turns the mark red: an explicit error event, or
+    // the caller telling us the turn produced nothing / was interrupted. A
+    // tool call that failed mid-turn still reports itself — its own block
+    // keeps a red dot and its message — but the model usually recovers and
+    // answers, so it must not brand the whole response an error.
+    const errorEvent = (events ?? []).find(
+        (event) => event.type === "error",
+    ) as Extract<AssistantEvent, { type: "error" }> | undefined;
     const effectiveErrorMessage =
-        topLevelErrorMessage ?? eventErrorMessages[0] ?? null;
+        errorMessage ??
+        (errorEvent ? eventErrorMessage(errorEvent) : null) ??
+        null;
     const hasError = isError || !!effectiveErrorMessage;
     const status: StatusState = hasError
         ? "error"
@@ -323,6 +322,18 @@ export function AssistantMessage({
             } else {
                 if (!current)
                     current = { kind: "pre", events: [], indices: [] };
+                const previous = current.events.at(-1);
+                if (e.type === "reasoning" && previous?.type === "reasoning") {
+                    // The model emits a fresh reasoning event per pass, but a
+                    // run of them is one continuous thought: separate blocks
+                    // read as separate thoughts and stack up the timeline.
+                    current.events[current.events.length - 1] = {
+                        ...previous,
+                        text: `${previous.text}\n\n${e.text}`.trim(),
+                        isStreaming: e.isStreaming,
+                    };
+                    return;
+                }
                 current.events.push(e);
                 current.indices.push(i);
             }
@@ -998,9 +1009,9 @@ export function AssistantMessage({
                     </div>
                 ) : null}
 
-                {topLevelErrorMessage && (
+                {effectiveErrorMessage && (
                     <p className="mt-2 text-base font-serif leading-7 text-red-700">
-                        {topLevelErrorMessage}
+                        {effectiveErrorMessage}
                     </p>
                 )}
 

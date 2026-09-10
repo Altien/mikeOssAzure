@@ -166,12 +166,10 @@ export function AddUserInput({
                         onMouseDown={(event) => event.preventDefault()}
                         onClick={() => void commitUser()}
                         disabled={busy || checking}
+                        loading={busy || checking}
                         title={submitLabel}
                         className="shrink-0"
                     >
-                        {(busy || checking) && (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                        )}
                         Add
                     </PillButton>
                 ) : null}

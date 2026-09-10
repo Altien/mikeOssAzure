@@ -1,7 +1,6 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Loader2 } from "lucide-react";
 import { PillButtonUI } from "./PillButtonUI";
 
 export type EditCardUIBusyAction =
@@ -38,15 +37,6 @@ export interface EditCardUIProps {
     onAccept?: () => void;
     onReject?: () => void;
     onAcceptAndApply?: () => void;
-}
-
-function BusyLabel({ children }: { children: ReactNode }) {
-    return (
-        <>
-            <Loader2 aria-hidden="true" className="h-3 w-3 animate-spin" />
-            <span>{children}</span>
-        </>
-    );
 }
 
 /**
@@ -159,11 +149,10 @@ export function EditCardUI({
                             disabled={
                                 controlsDisabled || !onAcceptAndApply
                             }
+                            loading={busyAction === "accept-and-apply"}
                         >
                             {busyAction === "accept-and-apply" ? (
-                                <BusyLabel>
-                                    Accepting &amp; applying...
-                                </BusyLabel>
+                                "Accepting & applying..."
                             ) : (
                                 "Accept & apply"
                             )}
@@ -174,9 +163,10 @@ export function EditCardUI({
                             tone="blue"
                             onClick={onApply}
                             disabled={controlsDisabled || !onApply}
+                            loading={busyAction === "apply"}
                         >
                             {busyAction === "apply" ? (
-                                <BusyLabel>Applying...</BusyLabel>
+                                "Applying..."
                             ) : (
                                 "Apply"
                             )}
@@ -187,9 +177,10 @@ export function EditCardUI({
                             tone="blue"
                             onClick={onAccept}
                             disabled={controlsDisabled || resolved}
+                            loading={busyAction === "accept"}
                         >
                             {busyAction === "accept" ? (
-                                <BusyLabel>Accepting...</BusyLabel>
+                                "Accepting..."
                             ) : status === "accepted" ? (
                                 "Accepted"
                             ) : (
@@ -202,9 +193,10 @@ export function EditCardUI({
                             tone="white"
                             onClick={onReject}
                             disabled={controlsDisabled || resolved}
+                            loading={busyAction === "reject"}
                         >
                             {busyAction === "reject" ? (
-                                <BusyLabel>Rejecting...</BusyLabel>
+                                "Rejecting..."
                             ) : status === "rejected" ? (
                                 "Rejected"
                             ) : (
@@ -217,6 +209,7 @@ export function EditCardUI({
                             tone="black"
                             onClick={onView}
                             disabled={controlsDisabled || resolved}
+                            loading={busyAction === "view"}
                             title={
                                 resolved
                                     ? "This change has been resolved and is no longer in the document."

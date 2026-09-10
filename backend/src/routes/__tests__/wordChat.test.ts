@@ -7,6 +7,7 @@ type QueryResult = { data: unknown; error: QueryError };
 type RecordedQuery = {
   table: string;
   filters: { column: string; value: unknown }[];
+  payload?: unknown;
 };
 
 const { dbState, recordedQueries } = vi.hoisted(() => ({
@@ -357,5 +358,129 @@ describe("POST /api/word-chat/tool-result", () => {
     expect(response.status).toBe(404);
     submitClientToolResult(TOOL_CALL_ID, "someone-else", {});
     await pending;
+  });
+});
+
+describe("POST /word-chat — local storage", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    recordedQueries.length = 0;
+    resetDbState();
+    runLLMStream.mockResolvedValue({
+      events: [{ type: "content", text: "Response" }],
+      citations: [],
+    });
+  });
+
+  it("does not schedule memory consolidation without a durable transcript", async () => {
+    const res = await request(app)
+      .post("/word-chat")
+      .set(...AUTH)
+      .send({
+        messages: [{ role: "user", content: "Revise this clause" }],
+        document_id: DOCUMENT_ID,
+        document_name: "Contract.docx",
+        storage: "local",
+        model: "gemini-3-flash-preview",
+      });
+
+    expect(res.status).toBe(200);
+    expect(runLLMStream).toHaveBeenCalledTimes(1);
+    expect(beginMemoryConversationTurn).not.toHaveBeenCalled();
+    expect(scheduleMemoryConsolidation).not.toHaveBeenCalled();
+  });
+
+  it("schedules memory after a durable cloud turn", async () => {
+    const chatLib = await import("../../lib/chat");
+    dbState.chatDetail = {
+      data: { id: CHAT_ID, title: null, user_id: "u1" },
+      error: null,
+    };
+
+    const res = await request(app)
+      .post("/word-chat")
+      .set(...AUTH)
+      .send({
+        messages: [{ role: "user", content: "Revise this clause" }],
+        document_id: DOCUMENT_ID,
+        document_name: "Contract.docx",
+        storage: "cloud",
+        model: "gemini-3-flash-preview",
+      });
+
+    expect(res.status).toBe(200);
+    expect(beginMemoryConversationTurn).toHaveBeenCalledWith({
+      db: expect.anything(),
+      surface: "word",
+      conversationId: CHAT_ID,
+      actorUserId: "u1",
+    });
+    const userInsert = recordedQueries.find(
+      ({ table, payload }) =>
+        table === "word_chat_messages" &&
+        (payload as { role?: unknown } | undefined)?.role === "user",
+    );
+    const assistantInsert = recordedQueries.find(
+      ({ table, payload }) =>
+        table === "word_chat_messages" &&
+        (payload as { role?: unknown } | undefined)?.role === "assistant",
+    );
+    const inputMessageId = (
+      userInsert?.payload as { id?: string } | undefined
+    )?.id;
+    expect(inputMessageId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    expect(assistantInsert?.payload).toMatchObject({
+      author_user_id: "u1",
+      memory_input_message_id: inputMessageId,
+    });
+    expect(
+      beginMemoryConversationTurn.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      vi.mocked(chatLib.buildDocContext).mock.invocationCallOrder[0],
+    );
+    expect(scheduleMemoryConsolidation).toHaveBeenCalledWith({
+      db: expect.anything(),
+      surface: "word",
+      conversationId: CHAT_ID,
+      actorUserId: "u1",
+      projectId: null,
+      turnId: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      ),
+      turn: { activityId: "activity-1" },
+    });
+    expect(releaseMemoryConversationTurn).not.toHaveBeenCalled();
+  });
+
+  it("releases the cloud turn lease when the model fails", async () => {
+    dbState.chatDetail = {
+      data: { id: CHAT_ID, title: null, user_id: "u1" },
+      error: null,
+    };
+    runLLMStream.mockRejectedValueOnce(new Error("provider failed"));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const res = await request(app)
+      .post("/word-chat")
+      .set(...AUTH)
+      .send({
+        messages: [{ role: "user", content: "Revise this clause" }],
+        document_id: DOCUMENT_ID,
+        document_name: "Contract.docx",
+        storage: "cloud",
+        model: "gemini-3-flash-preview",
+      });
+
+    expect(res.status).toBe(200);
+    expect(releaseMemoryConversationTurn).toHaveBeenCalledWith({
+      db: expect.anything(),
+      surface: "word",
+      conversationId: CHAT_ID,
+      turn: { activityId: "activity-1" },
+    });
+    expect(scheduleMemoryConsolidation).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 });

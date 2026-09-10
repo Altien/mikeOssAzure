@@ -4,6 +4,7 @@ import {
     exactSlashWorkflow,
     matchingSlashWorkflows,
     slashCommandQuery,
+    withoutSlashCommand,
     workflowSlashCommand,
 } from "./workflowSlashCommands";
 
@@ -69,9 +70,23 @@ describe("workflow slash commands", () => {
         expect(workflowSlashCommand(titledWorkflow)).toBeNull();
     });
 
-    it("recognizes a slash command without arguments", () => {
+    it("recognizes a command being typed anywhere in the draft", () => {
         expect(slashCommandQuery("/contract")).toBe("/contract");
+        // A command can start mid-message, as long as it starts a word.
+        expect(slashCommandQuery("please run /contract")).toBe("/contract");
+        expect(slashCommandQuery("please run\n/contract")).toBe("/contract");
+        // Not a command: mid-word, already finished, or followed by prose.
+        expect(slashCommandQuery("and/or")).toBeNull();
+        expect(slashCommandQuery("/contract ")).toBeNull();
         expect(slashCommandQuery("/contract run this")).toBeNull();
+    });
+
+    it("removes only the command when a workflow is chosen", () => {
+        expect(withoutSlashCommand("/contract")).toBe("");
+        expect(withoutSlashCommand("please run /contract")).toBe("please run ");
+        expect(withoutSlashCommand("nothing to strip")).toBe(
+            "nothing to strip",
+        );
     });
 
     it("matches workflows by trigger prefix", () => {

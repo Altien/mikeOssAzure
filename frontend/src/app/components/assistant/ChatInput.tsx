@@ -11,7 +11,6 @@ import {
 import {
     ArrowRight,
     Check,
-    Library,
     Loader2,
     Square,
     Waypoints,
@@ -27,6 +26,7 @@ import {
     exactSlashWorkflow,
     matchingSlashWorkflows,
     slashCommandQuery,
+    withoutSlashCommand,
     workflowSlashCommand,
 } from "./workflowSlashCommands";
 import { ApiKeyMissingPopup } from "../popups/ApiKeyMissingPopup";
@@ -165,6 +165,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     const [docSelectorInitialTab, setDocSelectorInitialTab] =
         useState<DirectoryTab>("files");
     const [workflowModalOpen, setWorkflowModalOpen] = useState(false);
+    // Set when the modal is opened from a pill, so it lands on that workflow
+    // instead of the picker's default listing.
+    const [workflowModalInitialId, setWorkflowModalInitialId] = useState<
+        string | undefined
+    >(undefined);
     const [apiKeyModalProvider, setApiKeyModalProvider] =
         useState<ModelProvider | null>(null);
     const [noModelsWarning, setNoModelsWarning] =
@@ -496,7 +501,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
             id: workflow.id,
             title: workflow.metadata.title,
         });
-        setValue("");
+        setValue((current) => withoutSlashCommand(current));
         setSlashMenuDismissed(true);
         if (textareaRef.current) {
             textareaRef.current.style.height = "auto";
@@ -507,7 +512,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     const handleSubmit = () => {
         const query = value.trim();
         if (!canSend || slashCommandsLoading) return;
-        const slashWorkflow = exactSlashWorkflow(slashWorkflows ?? [], query);
+        const slashWorkflow = slashQuery
+            ? exactSlashWorkflow(slashWorkflows ?? [], slashQuery)
+            : undefined;
         if (slashWorkflow) {
             selectSlashWorkflow(slashWorkflow);
             return;
@@ -578,10 +585,22 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                         <div className="flex flex-wrap gap-1.5 px-2 pt-2">
                             {selectedWorkflow && (
                                 <div className="inline-flex items-center gap-1 pl-2.5 pr-1 py-0.5 rounded-full text-xs bg-blue-600 text-white border border-white/20 shadow backdrop-blur-sm">
-                                    <Library className="h-2.5 w-2.5 shrink-0" />
-                                    <span className="max-w-[140px] truncate">
-                                        {selectedWorkflow.title}
-                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setWorkflowModalInitialId(
+                                                selectedWorkflow.id,
+                                            );
+                                            setWorkflowModalOpen(true);
+                                        }}
+                                        aria-label={`Open workflow ${selectedWorkflow.title}`}
+                                        className="inline-flex min-w-0 items-center gap-1 rounded-full transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                                    >
+                                        <Waypoints className="h-2.5 w-2.5 shrink-0" />
+                                        <span className="max-w-[140px] truncate">
+                                            {selectedWorkflow.title}
+                                        </span>
+                                    </button>
                                     <button
                                         type="button"
                                         onClick={() =>
@@ -714,7 +733,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                             {!hideWorkflowButton && canSend && (
                                 <button
                                     type="button"
-                                    onClick={() => setWorkflowModalOpen(true)}
+                                    onClick={() => {
+                                        setWorkflowModalInitialId(undefined);
+                                        setWorkflowModalOpen(true);
+                                    }}
                                     aria-label="Open workflows"
                                     className={cn(
                                         "flex items-center gap-1.5 rounded-lg px-2 h-8 text-sm transition-colors",
@@ -819,6 +841,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                 }}
                 projectName={projectName}
                 projectCmNumber={projectCmNumber}
+                initialWorkflowId={workflowModalInitialId}
             />
             <ApiKeyMissingPopup
                 open={apiKeyModalProvider !== null}

@@ -32,6 +32,10 @@ import { sourceDocumentsRouter } from "./routes/sourceDocuments";
 import { helpRouter } from "./routes/help";
 import { diagRouter } from "./routes/diag";
 import { uploadSessionsRouter } from "./routes/uploadSessions";
+import {
+  projectMemoryRouter,
+  userMemoryRouter,
+} from "./routes/memory";
 import { manifestPublicKey } from "./lib/manifestSigning";
 import { safeErrorLog } from "./lib/safeError";
 import { authorityTraceRouter } from "./altien/authorityTrace/router";
@@ -345,6 +349,8 @@ export function buildApp(): express.Express {
 
   app.use("/api/chat", chatRouter);
   app.use("/api/word-chat", wordChatRouter);
+  app.use("/api/user/memory", userMemoryRouter);
+  app.use("/api/projects/:projectId/memory", projectMemoryRouter);
   app.use("/api/projects", projectsRouter);
   app.use("/api/orgs", orgsRouter);
   app.use("/api/projects/:projectId/chat", projectChatRouter);

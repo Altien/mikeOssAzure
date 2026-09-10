@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2 } from "lucide-react";
 import { GoogleIconUI } from "@/shared/ui/GoogleIconUI";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { startGoogleOAuth } from "@/app/lib/authApi";
@@ -45,13 +44,10 @@ export function GoogleAuthButton({
             size="normal"
             className="w-full"
             disabled={disabled || loading}
+            loading={loading}
             onClick={() => void handleGoogleAuth()}
         >
-            {loading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-                <GoogleIconUI className="h-4 w-4" />
-            )}
+            <GoogleIconUI className="h-4 w-4" />
             {loading ? "Continuing…" : "Continue with Google"}
         </PillButton>
     );

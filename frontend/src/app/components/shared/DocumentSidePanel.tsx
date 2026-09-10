@@ -957,6 +957,7 @@ export function DocumentSidePanel({
                             size="normal"
                             onClick={requestDeleteDocument}
                             disabled={deletingDocument}
+                            loading={deletingDocument}
                             className={cn(
                                 !canDelete &&
                                     "cursor-not-allowed opacity-45 active:scale-100",
@@ -967,11 +968,7 @@ export function DocumentSidePanel({
                                     : "Only the person who uploaded this document can delete it"
                             }
                         >
-                            {deletingDocument ? (
-                                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-                            ) : (
-                                <Trash2 className="h-3.5 w-3.5 shrink-0" />
-                            )}
+                            <Trash2 className="h-3.5 w-3.5 shrink-0" />
                             Delete
                         </PillButton>
                                 <PillButton
@@ -981,12 +978,9 @@ export function DocumentSidePanel({
                                         fileInputRef.current?.click()
                                     }
                                     disabled={uploading}
+                                    loading={uploading}
                                 >
-                            {uploading ? (
-                                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-                            ) : (
-                                <Upload className="h-3.5 w-3.5 shrink-0" />
-                                    )}
+                                    <Upload className="h-3.5 w-3.5 shrink-0" />
                                     Upload new version
                                 </PillButton>
                             </>

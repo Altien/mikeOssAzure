@@ -203,6 +203,28 @@ describe("table surface", () => {
         expect(overlay.parentElement).toHaveClass("relative");
     });
 
+    it("keeps the sticky header and rows in the same scroll viewport", () => {
+        render(
+            <TableScrollArea header={<div>Header</div>}>
+                <div>Rows</div>
+            </TableScrollArea>,
+        );
+
+        const rows = screen.getByText("Rows");
+        const header = screen.getByText("Header");
+        const scrollViewport = rows.parentElement;
+
+        expect(scrollViewport).toHaveClass("overflow-auto");
+        expect(scrollViewport).toContainElement(header);
+        expect(header.parentElement).toHaveClass(
+            "table-sticky-header",
+            "sticky",
+            "top-0",
+            "w-max",
+            "min-w-full",
+        );
+    });
+
     it("marks sticky columns for an opaque app-background fallback", () => {
         render(<TableStickyCell>Sticky</TableStickyCell>);
 

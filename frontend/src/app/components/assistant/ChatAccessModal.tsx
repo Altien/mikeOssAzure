@@ -45,7 +45,8 @@ export function ChatAccessModal({ open, chat, onClose }: Props) {
             })
             .catch(() => {
                 // The people roster remains useful if the management-only
-                // access request fails. Controls stay disabled until it succeeds.
+                // access request fails, and sharing still works: only the
+                // existing grant list is missing, so it stays empty.
             });
         return () => {
             cancelled = true;
@@ -75,7 +76,12 @@ export function ChatAccessModal({ open, chat, onClose }: Props) {
                     chat.project_id ??
                     null,
                 ownerLabel: "Owners",
-                canManage: canManage && access !== null,
+                // Role-derived, so the Share Access label and input are there
+                // the moment the modal opens. Waiting for the access payload
+                // blanked them out mid-fetch and then popped them in; every
+                // other resource passes its capability straight through, and
+                // the roster below carries its own loading state.
+                canManage,
                 onGrant: async (email, role) => {
                     await grantChatAccess(chat.id, email, role);
                     await refreshAccess();

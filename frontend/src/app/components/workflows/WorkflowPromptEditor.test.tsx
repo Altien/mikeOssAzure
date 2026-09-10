@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => {
       state: { selection: { from: 4, to: 9 } },
       storage: { markdown: { getMarkdown: () => "Prompt" } },
       commands: { setContent: vi.fn() },
+      setEditable: vi.fn(),
       chain: vi.fn(() => chain),
       isActive: vi.fn(() => false),
     },
@@ -56,15 +57,15 @@ describe("WorkflowPromptEditor table picker", () => {
     mocks.editor.chain.mockReturnValue(mocks.chain);
   });
 
-  it("selects a grid size and inserts at the saved editor selection", async () => {
+  it("preserves the workflow surface while using the shared editor", async () => {
     const user = userEvent.setup();
     const { container } = render(
       <WorkflowPromptEditor value="Prompt" onChange={vi.fn()} />,
     );
 
     expect(container.firstElementChild).toHaveClass(
-      "workflow-prompt-editor-surface",
       "rounded-2xl",
+      "liquid-glass-flat",
     );
 
     await user.click(screen.getByRole("button", { name: "Insert table" }));

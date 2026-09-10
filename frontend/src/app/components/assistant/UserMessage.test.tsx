@@ -25,4 +25,27 @@ describe("UserMessage", () => {
         );
         expect(onFileClick).toHaveBeenCalledWith(file);
     });
+
+    it("reveals the workflow behind the pill", async () => {
+        const user = userEvent.setup();
+        const onWorkflowClick = vi.fn();
+        render(
+            <UserMessage
+                content="Run the diligence review"
+                workflow={{ id: "wf-1", title: "Diligence review" }}
+                onWorkflowClick={onWorkflowClick}
+            />,
+        );
+
+        await user.click(
+            screen.getByRole("button", {
+                name: "Open workflow Diligence review",
+            }),
+        );
+
+        expect(onWorkflowClick).toHaveBeenCalledWith({
+            id: "wf-1",
+            title: "Diligence review",
+        });
+    });
 });

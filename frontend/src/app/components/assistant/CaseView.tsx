@@ -169,7 +169,7 @@ export function CaseView({
     return (
         <div className="flex min-h-0 flex-1 flex-col">
             {!visibleLoading && !visibleError && subdocuments.length > 1 && (
-                <div className="document-tab-divider relative px-1">
+                <div className="relative px-1">
                     <div className="relative z-10 flex items-end gap-1 overflow-hidden px-2 pt-1">
                         {subdocuments.map((subdocument) => {
                             const isActive =

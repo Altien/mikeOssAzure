@@ -108,6 +108,22 @@ describe("ChatAccessModal", () => {
         expect(getChatAccess).toHaveBeenCalledTimes(2);
     });
 
+    it("offers the share field while the access request is still in flight", () => {
+        getChatAccess.mockReturnValue(new Promise(() => {}));
+
+        render(
+            <ChatAccessModal
+                open
+                chat={chat({ is_owner: true })}
+                onClose={vi.fn()}
+            />,
+        );
+
+        // Owners share from the moment the modal opens; the roster below is
+        // what waits, not the Share Access label and input.
+        expect(screen.getByTestId("can-manage")).toHaveTextContent("true");
+    });
+
     it("keeps shared editors read-only without requesting owner-only data", () => {
         render(
             <ChatAccessModal

@@ -50,6 +50,7 @@ import {
     roleFromLoaded,
 } from "@/app/lib/permissions";
 import { ProjectDetailsModal } from "./ProjectDetailsModal";
+import { ProjectMemoryModal } from "./ProjectMemoryModal";
 import {
     ProjectPageHeader,
     type ProjectWorkspaceSection,
@@ -188,6 +189,7 @@ export function ProjectWorkspaceProvider({
     // project page would otherwise pay for a roster nobody looked at.
     const [grants, setGrants] = useState<ProjectGrant[] | null>(null);
     const [projectDetailsOpen, setProjectDetailsOpen] = useState(false);
+    const [projectMemoryOpen, setProjectMemoryOpen] = useState(false);
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<OwnerGate | null>(
         null,
     );
@@ -311,6 +313,14 @@ export function ProjectWorkspaceProvider({
         projectChatsPromiseRef.current = promise;
         return promise;
     }, [projectChats, projectId]);
+
+    // The memory dialog owns its own reads and writes; this keeps the loaded
+    // project row agreeing with them.
+    const syncProjectMemoryEnabled = useCallback((enabled: boolean) => {
+        setProject((current) =>
+            current ? { ...current, memory_enabled: enabled } : current,
+        );
+    }, []);
 
     const prefetchProjectSections = useCallback(() => {
         void ensureProjectChats();
@@ -594,6 +604,7 @@ export function ProjectWorkspaceProvider({
                     onBackToProjects={() => router.push("/projects")}
                     onProjectRoot={openProjectRoot}
                     onOpenDetails={() => setProjectDetailsOpen(true)}
+                    onOpenMemory={() => setProjectMemoryOpen(true)}
                     onDeleteProject={requestProjectDelete}
                     onSearchChange={setSearch}
                     onOpenAccess={() => setAccessModalOpen(true)}
@@ -628,6 +639,18 @@ export function ProjectWorkspaceProvider({
                         project?.admin_contacts,
                     )}
                     onClose={() => setOwnerOnlyAction(null)}
+                />
+
+                <ProjectMemoryModal
+                    key={projectId}
+                    open={projectMemoryOpen}
+                    onClose={() => setProjectMemoryOpen(false)}
+                    projectId={projectId}
+                    projectName={project?.name ?? null}
+                    projectLoading={projectLoading}
+                    canEdit={canDo("content.edit")}
+                    canManage={canDo("access.manage")}
+                    onMemoryEnabledChange={syncProjectMemoryEnabled}
                 />
 
                 <ProjectDetailsModal
@@ -728,11 +751,11 @@ export function ProjectSectionToolbar({
             active={activeSection}
             onChange={(next) => {
                 const href =
-                    next === "documents"
-                        ? `/projects/${projectId}`
-                        : next === "assistant"
-                          ? `/projects/${projectId}/assistant`
-                          : `/projects/${projectId}/tabular-reviews`;
+                    next === "assistant"
+                        ? `/projects/${projectId}/assistant`
+                        : next === "reviews"
+                          ? `/projects/${projectId}/tabular-reviews`
+                          : `/projects/${projectId}`;
                 router.push(href);
             }}
             leading={

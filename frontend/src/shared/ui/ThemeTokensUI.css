@@ -4,7 +4,6 @@
     --document-tab-active-background: var(--app-surface, #fdfdfe);
     --document-tab-inactive-background: #f3f4f6;
     --document-tab-strip-background: rgba(229, 231, 235, 0.8);
-    --document-tab-outline: #e5e7eb;
     --document-tab-active-text: #1f2937;
     --document-tab-inactive-text: #4b5563;
 
@@ -44,7 +43,6 @@
     --document-tab-active-background: var(--app-surface, #131922);
     --document-tab-inactive-background: var(--app-surface-hover, #19212c);
     --document-tab-strip-background: rgba(34, 44, 56, 0.84);
-    --document-tab-outline: rgba(255, 255, 255, 0.1);
     --document-tab-active-text: #f3f4f6;
     --document-tab-inactive-text: #9ca3af;
 
@@ -78,11 +76,6 @@
     --spreadsheet-header-selected: rgba(71, 85, 105, 0.58);
     --spreadsheet-highlight-background: rgba(96, 165, 250, 0.24);
     --spreadsheet-highlight-outline: #60a5fa;
-}
-
-.document-tab-divider,
-.document-tab-strip {
-    box-shadow: inset 0 -1px 0 var(--document-tab-outline);
 }
 
 .document-tab-strip {
@@ -119,9 +112,6 @@
 .document-tab[data-active="true"] {
     color: var(--document-tab-active-text);
     background-color: var(--document-tab-active-background);
-    filter: drop-shadow(0 -1px 0 var(--document-tab-outline))
-        drop-shadow(-1px 0 0 var(--document-tab-outline))
-        drop-shadow(1px 0 0 var(--document-tab-outline));
 }
 
 .document-tab[data-active="true"]::before {
@@ -189,6 +179,14 @@
 
 .content-bottom-fade {
     background: linear-gradient(to bottom, transparent, var(--content-fade-color));
+}
+
+.assistant-chat-input-fade {
+    background: linear-gradient(
+        to bottom,
+        transparent,
+        color-mix(in srgb, var(--app-background) 85%, transparent)
+    );
 }
 
 .assistant-chat-message-fade {

@@ -32,6 +32,7 @@ const project = {
     name: "Matter",
     cm_number: "CM-123",
     practice: "Litigation",
+    memory_enabled: true,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
 } satisfies Project;

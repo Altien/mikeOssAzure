@@ -247,6 +247,22 @@ export async function checkProjectAccess(
     return { ok: true, isCreator, orgRole: null, projectRole, project: proj };
 }
 
+/** A personal project is private only while it has no direct grants. */
+export async function projectHasSharedAudience(
+    db: Db,
+    projectId: string,
+    orgId: string | null | undefined,
+): Promise<boolean> {
+    if (orgId) return true;
+    const { data, error } = await db
+        .from("project_access_grants")
+        .select("id")
+        .eq("project_id", projectId)
+        .limit(1);
+    if (error) throw new Error("Failed to resolve project audience");
+    return (data ?? []).length > 0;
+}
+
 type ResourceAccess =
     | {
           ok: true;

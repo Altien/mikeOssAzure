@@ -1,8 +1,14 @@
 import { createServerSupabase } from "./supabase";
-import { deleteFile, extractedTextKey, listFiles } from "./storage";
+import {
+    assertStorageConfigured,
+    deleteFile,
+    extractedTextKey,
+    listFiles,
+} from "./storage";
 import { enqueueStorageCleanup } from "./dbq/enqueue";
 import { removeGrantsForEmail } from "./projectAccess";
 import { removeContentGrantsForEmail } from "./contentAccess";
+import { chunkArray } from "./arrays";
 
 type Db = ReturnType<typeof createServerSupabase>;
 
@@ -10,14 +16,6 @@ const DELETE_BATCH_SIZE = 500;
 
 function uniqueStrings(values: Array<string | null | undefined>): string[] {
     return [...new Set(values.filter((value): value is string => !!value))];
-}
-
-function chunks<T>(values: T[], size = DELETE_BATCH_SIZE): T[][] {
-    const result: T[][] = [];
-    for (let i = 0; i < values.length; i += size) {
-        result.push(values.slice(i, i + size));
-    }
-    return result;
 }
 
 async function throwIfError<T extends { message?: string } | null>(
@@ -28,7 +26,7 @@ async function throwIfError<T extends { message?: string } | null>(
 }
 
 async function deleteByIds(db: Db, table: string, ids: string[]) {
-    for (const batch of chunks(ids)) {
+    for (const batch of chunkArray(ids, DELETE_BATCH_SIZE)) {
         const { error } = await (db as any).from(table).delete().in("id", batch);
         await throwIfError(error, `Failed to delete ${table}`);
     }
@@ -40,12 +38,48 @@ async function deleteWhereIn(
     column: string,
     values: string[],
 ) {
-    for (const batch of chunks(values)) {
+    for (const batch of chunkArray(values, DELETE_BATCH_SIZE)) {
         const { error } = await (db as any)
             .from(table)
             .delete()
             .in(column, batch);
         await throwIfError(error, `Failed to delete ${table}`);
+    }
+}
+
+/**
+ * Fence and purge scoped memory before its owner row cascades away. The
+ * database function empties the body under the file's row lock and advances
+ * its epoch in the same transaction, so a curator job that is already in
+ * flight cannot write learned content back onto a deleted owner.
+ */
+async function wipeMemoryForOwners(
+    db: Db,
+    scope: "user" | "project",
+    ownerIds: string[],
+) {
+    const uniqueOwnerIds = uniqueStrings(ownerIds);
+    if (uniqueOwnerIds.length === 0) return;
+    const ownerColumn = scope === "user" ? "user_id" : "project_id";
+
+    for (const ownerBatch of chunkArray(uniqueOwnerIds, DELETE_BATCH_SIZE)) {
+        const { data, error } = await db
+            .from("memory_files")
+            .select("id")
+            .eq("scope", scope)
+            .in(ownerColumn, ownerBatch);
+        await throwIfError(error, `Failed to load ${scope} memory files`);
+
+        for (const row of (data ?? []) as { id?: unknown }[]) {
+            if (typeof row.id !== "string" || !row.id) continue;
+            const result = await db.rpc("wipe_memory_file", {
+                p_memory_file_id: row.id,
+                p_enabled: false,
+                p_updated_by: null,
+                p_source: "wipe",
+            });
+            await throwIfError(result.error, `Failed to purge ${scope} memory`);
+        }
     }
 }
 
@@ -136,7 +170,7 @@ async function orgProjectIdsHoldingUserContent(
     if (unique.length === 0) return [];
 
     const orgProjectIds: string[] = [];
-    for (const batch of chunks(unique)) {
+    for (const batch of chunkArray(unique, DELETE_BATCH_SIZE)) {
         const { data, error } = await db
             .from("projects")
             .select("id, org_id")
@@ -213,7 +247,7 @@ async function getDocumentIdsForAccountDeletion(
         candidates.map((row) => row.workflow_id ?? null),
     );
     const survivingWorkflowIds = new Set<string>();
-    for (const batch of chunks(workflowIds)) {
+    for (const batch of chunkArray(workflowIds, DELETE_BATCH_SIZE)) {
         const { data: workflowRows, error: workflowError } = await db
             .from("workflows")
             .select("id, org_id")
@@ -263,7 +297,7 @@ async function detachOrgProjectContent(
 ) {
     if (orgProjectIds.length > 0) {
         for (const table of PROJECT_CONTENT_TABLES) {
-            for (const batch of chunks(orgProjectIds)) {
+            for (const batch of chunkArray(orgProjectIds, DELETE_BATCH_SIZE)) {
                 const { error } = await (db as any)
                     .from(table)
                     .update({ user_id: null })
@@ -276,7 +310,7 @@ async function detachOrgProjectContent(
         // above deliberately includes colleagues' projects — that is how
         // their content gets kept — and blanking `user_id` there would erase
         // a living colleague's authorship of a project they still own.
-        for (const batch of chunks(orgProjectIds)) {
+        for (const batch of chunkArray(orgProjectIds, DELETE_BATCH_SIZE)) {
             const { error } = await db
                 .from("projects")
                 .update({ user_id: null })
@@ -352,7 +386,7 @@ async function detachChildrenOfSurvivingContent(db: Db, userId: string) {
         // A parent survives when it is org-owned — either detached moments
         // ago (user_id now null) or created by somebody still present.
         const survivors: string[] = [];
-        for (const batch of chunks(parentIds)) {
+        for (const batch of chunkArray(parentIds, DELETE_BATCH_SIZE)) {
             const { data: parents, error: parentError } = await (db as any)
                 .from(parent)
                 .select("id, org_id")
@@ -373,7 +407,10 @@ async function detachChildrenOfSurvivingContent(db: Db, userId: string) {
         }
         if (survivors.length === 0) continue;
 
-        for (const batch of chunks(uniqueStrings(survivors))) {
+        for (const batch of chunkArray(
+            uniqueStrings(survivors),
+            DELETE_BATCH_SIZE,
+        )) {
             const { error: detachError } = await (db as any)
                 .from(table)
                 .update({ user_id: null })
@@ -402,7 +439,7 @@ async function collectDocumentVersionPaths(
 ): Promise<string[]> {
     const paths = new Set<string>();
 
-    for (const batch of chunks(documentIds)) {
+    for (const batch of chunkArray(documentIds, DELETE_BATCH_SIZE)) {
         const { data, error } = await db
             .from("document_versions")
             .select("id, storage_path, pdf_storage_path")
@@ -437,7 +474,7 @@ async function collectDocumentVersionPaths(
 
 async function claimedStoragePaths(db: Db, paths: string[]): Promise<Set<string>> {
     const claimed = new Set<string>();
-    for (const batch of chunks(paths)) {
+    for (const batch of chunkArray(paths, DELETE_BATCH_SIZE)) {
         const [originals, pdfs] = await Promise.all([
             db.from("document_versions").select("storage_path, pdf_storage_path").in("storage_path", batch),
             db.from("document_versions").select("storage_path, pdf_storage_path").in("pdf_storage_path", batch),
@@ -462,7 +499,7 @@ async function deleteOrphanedUserStorage(db: Db, userId: string) {
 }
 
 async function stageAccountStoragePaths(db: Db, userId: string, paths: string[]) {
-    for (const batch of chunks(paths)) {
+    for (const batch of chunkArray(paths, DELETE_BATCH_SIZE)) {
         if (batch.length === 0) continue;
         const { error } = await db.from("account_erasure_storage_paths").upsert(
             batch.map((storage_path) => ({ user_id: userId, storage_path })),
@@ -660,6 +697,10 @@ export async function deleteUserOrganizations(
 }
 
 export async function deleteAllUserChats(db: Db, userId: string) {
+    // Conversation BEFORE DELETE triggers fence in-flight curator promotion
+    // in the same transaction, including Word chats removed by document
+    // cascades. No pre-enumeration is needed, so new children cannot slip
+    // between a scan and deletion.
     const [assistantChats, tabularChats, wordDocuments] = await Promise.all([
         db.from("chats").delete().eq("user_id", userId),
         db.from("tabular_review_chats").delete().eq("user_id", userId),
@@ -683,24 +724,8 @@ export async function deleteAllUserTabularReviews(db: Db, userId: string) {
     );
     if (reviewIds.length === 0) return 0;
 
-    const { data: reviewChats, error: reviewChatsError } = await db
-        .from("tabular_review_chats")
-        .select("id")
-        .in("review_id", reviewIds);
-    await throwIfError(reviewChatsError, "Failed to load tabular review chats");
-
-    const reviewChatIds = uniqueStrings(
-        ((reviewChats ?? []) as { id: string | null }[]).map((row) => row.id),
-    );
-
-    await deleteWhereIn(
-        db,
-        "tabular_review_chat_messages",
-        "chat_id",
-        reviewChatIds,
-    );
-    await deleteWhereIn(db, "tabular_review_chats", "review_id", reviewIds);
-    await deleteWhereIn(db, "tabular_cells", "review_id", reviewIds);
+    // The parent delete is atomic. Its FK cascades fire the conversation
+    // fence trigger for every child chat, including one created concurrently.
     await deleteByIds(db, "tabular_reviews", reviewIds);
 
     return reviewIds.length;
@@ -715,82 +740,31 @@ export async function deleteAllUserTabularReviews(db: Db, userId: string) {
 export async function deleteProjectsByIds(db: Db, projectIds: string[]) {
     const ownedProjectIds = uniqueStrings(projectIds);
     if (ownedProjectIds.length === 0) return 0;
+    const queueDisabled = process.env.DB_JOBS_ENABLED === "false";
+    if (queueDisabled) assertStorageConfigured();
 
-    const [projectDocs, projectChats, projectReviews, projectFolders] =
-        await Promise.all([
-            db.from("documents").select("id").in("project_id", ownedProjectIds),
-            db.from("chats").select("id").in("project_id", ownedProjectIds),
-            db
-                .from("tabular_reviews")
-                .select("id")
-                .in("project_id", ownedProjectIds),
-            db
-                .from("project_subfolders")
-                .select("id")
-                .in("project_id", ownedProjectIds),
-        ]);
+    const projectDocs = await db
+        .from("documents")
+        .select("id")
+        .in("project_id", ownedProjectIds);
 
     await throwIfError(projectDocs.error, "Failed to load project documents");
-    await throwIfError(projectChats.error, "Failed to load project chats");
-    await throwIfError(
-        projectReviews.error,
-        "Failed to load project tabular reviews",
-    );
-    await throwIfError(projectFolders.error, "Failed to load project folders");
 
     const documentIds = uniqueStrings(
         ((projectDocs.data ?? []) as { id: string | null }[]).map(
             (row) => row.id,
         ),
     );
-    const chatIds = uniqueStrings(
-        ((projectChats.data ?? []) as { id: string | null }[]).map(
-            (row) => row.id,
-        ),
-    );
-    const reviewIds = uniqueStrings(
-        ((projectReviews.data ?? []) as { id: string | null }[]).map(
-            (row) => row.id,
-        ),
-    );
-    const folderIds = uniqueStrings(
-        ((projectFolders.data ?? []) as { id: string | null }[]).map(
-            (row) => row.id,
-        ),
-    );
-
-    const { data: reviewChats, error: reviewChatsError } =
-        reviewIds.length > 0
-            ? await db
-                  .from("tabular_review_chats")
-                  .select("id")
-                  .in("review_id", reviewIds)
-            : { data: [], error: null };
-    await throwIfError(reviewChatsError, "Failed to load project review chats");
-
-    const reviewChatIds = uniqueStrings(
-        ((reviewChats ?? []) as { id: string | null }[]).map((row) => row.id),
-    );
-
     // Collect the storage keys BEFORE the version rows go away, but delete
     // the files AFTER the rows via the durable storage.cleanup job: if any
     // row delete below fails, no file has been touched; if the process dies
     // after them, the queued job still removes the files (the old inline
     // Promise.all died with the request and leaked on any storage error).
     const storagePaths = await collectDocumentVersionPaths(db, documentIds);
-    await deleteWhereIn(
-        db,
-        "tabular_review_chat_messages",
-        "chat_id",
-        reviewChatIds,
-    );
-    await deleteWhereIn(db, "tabular_review_chats", "review_id", reviewIds);
-    await deleteWhereIn(db, "tabular_cells", "review_id", reviewIds);
-    await deleteByIds(db, "tabular_reviews", reviewIds);
-    await deleteWhereIn(db, "chat_messages", "chat_id", chatIds);
-    await deleteByIds(db, "chats", chatIds);
-    await deleteByIds(db, "documents", documentIds);
-    await deleteByIds(db, "project_subfolders", folderIds);
+    // One parent DELETE owns all relational cascades. Conversation triggers
+    // fence curator promotion for every child; the memory_files trigger also
+    // records current versions and in-flight candidate paths in durable,
+    // delayed cleanup jobs inside this same transaction.
     await deleteByIds(db, "projects", ownedProjectIds);
     // Only now, with every row that pointed at them gone, do the bytes go.
 
@@ -840,7 +814,7 @@ export async function deleteUserProjects(
     );
 
     if (orgProjectIds.length > 0) {
-        for (const batch of chunks(orgProjectIds)) {
+        for (const batch of chunkArray(orgProjectIds, DELETE_BATCH_SIZE)) {
             const { error } = await db
                 .from("projects")
                 .update({ user_id: null })
@@ -857,6 +831,7 @@ export async function deleteUserAccountData(
     userId: string,
     userEmail?: string | null,
 ) {
+    if (process.env.DB_JOBS_ENABLED === "false") assertStorageConfigured();
     const { personal: personalProjectIds, org: createdOrgProjectIds } =
         await partitionOwnedProjects(db, userId);
     // Retention follows the organization's projects, not this user's. Their
@@ -928,7 +903,6 @@ export async function deleteUserAccountData(
         // Audit rows carry the user's id, email, chat/document titles and prompt
         // excerpts, so account erasure must remove them as well.
         db.from("audit_events").delete().eq("user_id", userId),
-        db.from("projects").delete().eq("user_id", userId),
         db.from("quick_actions").delete().eq("user_id", userId),
         db.from("user_api_keys").delete().eq("user_id", userId),
         db.from("user_mcp_tool_audit_logs").delete().eq("user_id", userId),
@@ -955,6 +929,20 @@ export async function deleteUserAccountData(
     // application profile. Its FK cascade removes only a sole-member row for
     // an organization that still owns content, after creator attribution has
     // been detached above; ordinary departures keep the last-admin guard.
+    // `wipe_memory_file` empties the body under the file's row lock and bumps
+    // its epoch, fencing any curator job still in flight. Organization project
+    // memory is deliberately excluded: it belongs to the surviving project,
+    // not its departing author.
+    await wipeMemoryForOwners(db, "user", [userId]);
+    // This helper atomically fences every remaining project/review chat before
+    // deleting the project and destructively purges its scoped memory.
+    await deleteProjectsByIds(db, personalProjectIds);
+
+    // The outbox below keeps version keys retryable after metadata deletion.
+
+    // Organizations use ON DELETE SET NULL on content (not CASCADE), so the
+    // content deletions above never touch the user's org memberships — settle
+    // those (and hand off administration where needed) here.
     await deleteUserOrganizations(db, userId, userEmail);
 
     // The tombstone in account_erasure_requests remains, but all mutable

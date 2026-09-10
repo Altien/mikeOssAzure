@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Loader2 } from "lucide-react";
+import { Check } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import { TableToolbar } from "@/app/components/shared/TableToolbar";
@@ -208,13 +208,10 @@ export function OrganizationsOverview() {
                       tone="black"
                       size="sm"
                       disabled={answeringId === invitation.id}
+                      loading={answeringId === invitation.id}
                       onClick={() => void answer(invitation, true)}
                     >
-                      {answeringId === invitation.id ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Check className="h-3.5 w-3.5" />
-                      )}
+                      <Check className="h-3.5 w-3.5" />
                       Accept
                     </PillButton>
                     <PillButton

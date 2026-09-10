@@ -10,6 +10,7 @@ import {
     failedUploadMessage,
     grantProjectAccess,
     listOrgs,
+    setProjectMemoryEnabled,
     uploadProjectDocuments,
 } from "@/app/lib/mikeApi";
 import { FileDirectory } from "../shared/FileDirectory";
@@ -19,6 +20,7 @@ import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { Modal } from "../modals/Modal";
 import { FieldLabel, FormTextInput } from "../ui/form-field";
 import { ModalSelect } from "../modals/ModalSelect";
+import { ToggleSwitch } from "../ui/toggle-switch";
 import { ProjectPracticeField } from "./ProjectPracticeField";
 import { userFacingApiError } from "@/app/lib/userFacingError";
 import {
@@ -46,6 +48,8 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
     const [orgOverrides, setOrgOverrides] = useState<PendingOrgOverride[]>([]);
     const [orgs, setOrgs] = useState<Org[]>([]);
     const [orgId, setOrgId] = useState<string>(PERSONAL_WORKSPACE);
+    const [memoryEnabled, setMemoryEnabled] = useState(true);
+    const memoryEditedRef = useRef(false);
     const [selectedDocuments, setSelectedDocuments] = useState<Document[]>([]);
     const [pendingFiles, setPendingFiles] = useState<File[]>([]);
     const [loading, setLoading] = useState(false);
@@ -64,6 +68,7 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
     const { profile } = useUserProfile();
     const preferredPractice =
         profile?.practiceAreas.find((area) => area.trim())?.trim() ?? "";
+    const projectMemoryDefault = profile?.projectMemoryDefault !== false;
     const ownEmail = user?.email?.trim().toLowerCase() ?? null;
     const formId = "new-project-modal-form";
 
@@ -92,6 +97,17 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
         if (!preferredPractice || practiceEditedRef.current) return;
         setPractice(preferredPractice);
     }, [open, preferredPractice]);
+
+    // The account's saved default seeds this project's memory setting, until
+    // the creator says otherwise for this one project.
+    useEffect(() => {
+        if (!open) {
+            memoryEditedRef.current = false;
+            return;
+        }
+        if (memoryEditedRef.current) return;
+        setMemoryEnabled(projectMemoryDefault);
+    }, [open, projectMemoryDefault]);
 
     if (!open) return null;
 
@@ -125,25 +141,40 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
 
     async function createProjectFromDocuments() {
         if (!name.trim() || loading || step !== "documents") return;
-        if (pendingProject) {
-            finishCreation(pendingProject);
-            return;
-        }
         setLoading(true);
         setError("");
         try {
+            if (pendingProject) {
+                let project = pendingProject;
+                if (project.memory_enabled !== memoryEnabled) {
+                    await setProjectMemoryEnabled(project.id, memoryEnabled);
+                    project = { ...project, memory_enabled: memoryEnabled };
+                }
+                finishCreation(project);
+                return;
+            }
             // Create, then grant each recipient through the role-aware access
             // endpoint, which also supports recipients without an account.
-            const project =
-                createdProjectRef.current ??
-                (await createProject(
+            let project = createdProjectRef.current;
+            if (!project) {
+                project = await createProject(
                     name.trim(),
                     cmNumber.trim() || undefined,
                     practice.trim() && practice.trim() !== "Other"
                         ? practice.trim()
                         : undefined,
                     orgId !== PERSONAL_WORKSPACE ? orgId : undefined,
-                ));
+                    memoryEnabled,
+                );
+            } else if (project.memory_enabled !== memoryEnabled) {
+                // A failed grant or attachment leaves the newly created
+                // project available for retry. If the user goes Back and
+                // changes the memory choice, persist that choice before
+                // retrying anything else; changing only the optimistic row
+                // would violate an explicit opt-out.
+                await setProjectMemoryEnabled(project.id, memoryEnabled);
+                project = { ...project, memory_enabled: memoryEnabled };
+            }
             createdProjectRef.current = project;
 
             const linkResults = await Promise.all(
@@ -254,6 +285,7 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                           : ("private" as const),
                 organization_name:
                     orgs.find((org) => org.id === orgId)?.name ?? null,
+                memory_enabled: memoryEnabled,
                 ...(orgId === PERSONAL_WORKSPACE && recipients.length > 0
                     ? { direct_grant_count: recipients.length }
                     : {}),
@@ -295,6 +327,7 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
         setSelectedDocuments([]);
         setPendingFiles([]);
         setOrgId(PERSONAL_WORKSPACE);
+        setMemoryEnabled(true);
         setError("");
     }
 
@@ -463,6 +496,20 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                                     })),
                                 ]}
                             />
+                        </div>
+
+                        <div>
+                            <FieldLabel as="p">Project memory</FieldLabel>
+                            <ToggleSwitch
+                                checked={memoryEnabled}
+                                onCheckedChange={(enabled) => {
+                                    memoryEditedRef.current = true;
+                                    setMemoryEnabled(enabled);
+                                }}
+                                aria-label="Enable project memory"
+                            >
+                                Let Mike remember shared project context
+                            </ToggleSwitch>
                         </div>
                     </div>
                 ) : step === "access" ? (

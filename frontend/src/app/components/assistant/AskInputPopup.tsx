@@ -14,6 +14,10 @@ import {
 
 type AskInputsEvent = Extract<AssistantEvent, { type: "ask_inputs" }>;
 type AskInputItem = AskInputsEvent["items"][number];
+type OptionAskInputItem = Extract<
+    AskInputItem,
+    { kind: "choice" | "multi_choice" }
+>;
 type AskInputsResponse = Extract<
     AssistantEvent,
     { type: "ask_inputs_response" }
@@ -23,10 +27,12 @@ const OPEN_TEXT_MAX_LENGTH = 5_000;
 
 export function AskInputPopup({
     event,
+    assistantMessageId,
     onSubmit,
     onDismiss,
 }: {
     event: AskInputsEvent;
+    assistantMessageId: string;
     onSubmit?: (
         response: AskInputsResponse,
         content: string,
@@ -35,6 +41,9 @@ export function AskInputPopup({
     onDismiss?: () => void;
 }) {
     const [answers, setAnswers] = useState<Record<string, string>>({});
+    const [multiAnswers, setMultiAnswers] = useState<Record<string, string[]>>(
+        {},
+    );
     const [otherOpen, setOtherOpen] = useState<Record<string, boolean>>({});
     const [otherValues, setOtherValues] = useState<Record<string, string>>({});
     const [docsByInput, setDocsByInput] = useState<
@@ -77,12 +86,19 @@ export function AskInputPopup({
 
     const itemAnswered = useCallback(
         (item: AskInputItem) => {
+            if (item.kind === "multi_choice") {
+                return (
+                    (multiAnswers[item.id]?.length ?? 0) > 0 ||
+                    (!!otherOpen[item.id] &&
+                        !!otherValues[item.id]?.trim())
+                );
+            }
             if (item.kind !== "documents") {
                 return !!answers[item.id]?.trim();
             }
             return docsForItem(item.id).length > 0;
         },
-        [answers, docsForItem],
+        [answers, docsForItem, multiAnswers, otherOpen, otherValues],
     );
 
     const itemResolved = useCallback(
@@ -182,6 +198,25 @@ export function AskInputPopup({
         setOtherOpen((prev) => ({ ...prev, [item.id]: false }));
     };
 
+    const toggleMultiAnswer = (
+        item: Extract<AskInputItem, { kind: "multi_choice" }>,
+        answer: string,
+    ) => {
+        const trimmed = answer.trim();
+        if (!trimmed || submitted) return;
+        clearConfirmation(item.id);
+        setSkippedFor(item.id, false);
+        setMultiAnswers((prev) => {
+            const current = prev[item.id] ?? [];
+            return {
+                ...prev,
+                [item.id]: current.includes(trimmed)
+                    ? current.filter((value) => value !== trimmed)
+                    : [...current, trimmed],
+            };
+        });
+    };
+
     const allResolved =
         event.items.length > 0 && event.items.every(itemResolved);
     const canSubmit = !submitted && allResolved && !!onSubmit;
@@ -204,6 +239,21 @@ export function AskInputPopup({
                     skipped: true,
                 };
             }
+            if (item.kind === "multi_choice") {
+                const selected = multiAnswers[item.id] ?? [];
+                const other = otherOpen[item.id]
+                    ? otherValues[item.id]?.trim()
+                    : "";
+                return {
+                    id: item.id,
+                    kind: "multi_choice" as const,
+                    question: item.question,
+                    answers:
+                        other && !selected.includes(other)
+                            ? [...selected, other]
+                            : selected,
+                };
+            }
             if (item.kind !== "documents") {
                 return {
                     id: item.id,
@@ -218,7 +268,12 @@ export function AskInputPopup({
                 filenames: docsForItem(item.id).map((doc) => doc.filename),
             };
         });
-        return { type: "ask_inputs_response", responses };
+        return {
+            type: "ask_inputs_response",
+            assistant_message_id: assistantMessageId,
+            ask_event_id: event.event_id,
+            responses,
+        };
     };
 
     const responseFiles = (response: AskInputsResponse) => {
@@ -257,6 +312,11 @@ export function AskInputPopup({
 
     const buildContent = (response: AskInputsResponse) => {
         const lines = response.responses.map((item, index) => {
+            if (item.kind === "multi_choice") {
+                if (item.skipped)
+                    return `${index + 1}. Skipped: ${item.question}`;
+                return `${index + 1}. ${item.question}\n${item.answers?.join(", ") ?? ""}`;
+            }
             if (item.kind !== "documents") {
                 if (item.skipped)
                     return `${index + 1}. Skipped: ${item.question}`;
@@ -372,15 +432,27 @@ export function AskInputPopup({
                                 </div>
 
                                 <div className="pt-3">
-                                    {activeItem.kind === "choice" ? (
+                                    {activeItem.kind === "choice" ||
+                                    activeItem.kind === "multi_choice" ? (
                                         <OptionInput
                                             item={activeItem}
                                             disabled={
                                                 submitted ||
                                                 skipped.has(activeItem.id)
                                             }
-                                            selectedAnswer={
-                                                answers[activeItem.id] ?? null
+                                            selectedAnswers={
+                                                activeItem.kind ===
+                                                "multi_choice"
+                                                    ? (multiAnswers[
+                                                          activeItem.id
+                                                      ] ?? [])
+                                                    : answers[activeItem.id]
+                                                      ? [
+                                                            answers[
+                                                                activeItem.id
+                                                            ],
+                                                        ]
+                                                      : []
                                             }
                                             otherOpen={
                                                 !!otherOpen[activeItem.id]
@@ -388,25 +460,47 @@ export function AskInputPopup({
                                             otherValue={
                                                 otherValues[activeItem.id] ?? ""
                                             }
-                                            onAnswer={(answer) =>
-                                                chooseAnswer(activeItem, answer)
-                                            }
+                                            onAnswer={(answer) => {
+                                                if (
+                                                    activeItem.kind ===
+                                                    "multi_choice"
+                                                ) {
+                                                    toggleMultiAnswer(
+                                                        activeItem,
+                                                        answer,
+                                                    );
+                                                } else {
+                                                    chooseAnswer(
+                                                        activeItem,
+                                                        answer,
+                                                    );
+                                                }
+                                            }}
                                             onOtherOpen={() => {
                                                 clearConfirmation(
                                                     activeItem.id,
+                                                );
+                                                setSkippedFor(
+                                                    activeItem.id,
+                                                    false,
                                                 );
                                                 setOtherOpen((prev) => ({
                                                     ...prev,
                                                     [activeItem.id]: true,
                                                 }));
-                                                setAnswers((prev) => ({
-                                                    ...prev,
-                                                    [activeItem.id]: (
-                                                        otherValues[
-                                                            activeItem.id
-                                                        ] ?? ""
-                                                    ).trim(),
-                                                }));
+                                                if (
+                                                    activeItem.kind ===
+                                                    "choice"
+                                                ) {
+                                                    setAnswers((prev) => ({
+                                                        ...prev,
+                                                        [activeItem.id]: (
+                                                            otherValues[
+                                                                activeItem.id
+                                                            ] ?? ""
+                                                        ).trim(),
+                                                    }));
+                                                }
                                             }}
                                             onOtherValue={(value) => {
                                                 clearConfirmation(
@@ -416,11 +510,16 @@ export function AskInputPopup({
                                                     ...prev,
                                                     [activeItem.id]: value,
                                                 }));
-                                                setAnswers((prev) => ({
-                                                    ...prev,
-                                                    [activeItem.id]:
-                                                        value.trim(),
-                                                }));
+                                                if (
+                                                    activeItem.kind ===
+                                                    "choice"
+                                                ) {
+                                                    setAnswers((prev) => ({
+                                                        ...prev,
+                                                        [activeItem.id]:
+                                                            value.trim(),
+                                                    }));
+                                                }
                                                 if (value.trim())
                                                     setSkippedFor(
                                                         activeItem.id,
@@ -598,16 +697,16 @@ function OpenTextInput({
 function OptionInput({
     item,
     disabled,
-    selectedAnswer,
+    selectedAnswers,
     otherOpen,
     otherValue,
     onAnswer,
     onOtherOpen,
     onOtherValue,
 }: {
-    item: Extract<AskInputItem, { kind: "choice" }>;
+    item: OptionAskInputItem;
     disabled?: boolean;
-    selectedAnswer: string | null;
+    selectedAnswers: string[];
     otherOpen: boolean;
     otherValue: string;
     onAnswer: (answer: string) => void;
@@ -618,12 +717,15 @@ function OptionInput({
         <div className="mt-2 grid gap-1.5">
             {item.options.map((option, idx) => {
                 const answer = option.value.trim();
-                const isSelected = !otherOpen && selectedAnswer === answer;
+                const isSelected =
+                    selectedAnswers.includes(answer) &&
+                    (item.kind === "multi_choice" || !otherOpen);
                 return (
                     <button
                         key={`${item.id}-${option.value}-${idx}`}
                         type="button"
                         disabled={disabled}
+                        aria-pressed={isSelected}
                         onClick={() => onAnswer(answer)}
                         className={`w-full rounded-lg px-3 py-2 text-left transition-colors ${
                             isSelected

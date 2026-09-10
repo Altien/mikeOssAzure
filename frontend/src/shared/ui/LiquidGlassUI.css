@@ -36,7 +36,7 @@
     --liquid-glass-translucent-background-action-hover: rgba(255, 255, 255, 0.45);
     --liquid-glass-translucent-border: rgba(255, 255, 255, 0.65);
     --liquid-glass-shadow-translucent:
-        0 4px 10px rgba(15, 23, 42, 0.12),
+        0 4px 10px rgba(15, 23, 42, 0.09),
         inset 0 1px 0 rgba(255, 255, 255, 0.85),
         inset 0 -6px 14px rgba(255, 255, 255, 0.18);
     --liquid-glass-shadow-translucent-action:
@@ -76,8 +76,8 @@
     --liquid-glass-translucent-background-action-hover: rgba(31, 41, 54, 0.78);
     --liquid-glass-translucent-border: rgba(148, 163, 184, 0.2);
     --liquid-glass-shadow-translucent:
-        0 8px 22px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.08),
-        inset 0 -6px 14px rgba(0, 0, 0, 0.24);
+        0 8px 22px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.08),
+        inset 0 -6px 14px rgba(0, 0, 0, 0.18);
     --liquid-glass-shadow-translucent-action:
         0 8px 22px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.07),
         inset 0 -8px 18px rgba(0, 0, 0, 0.24);

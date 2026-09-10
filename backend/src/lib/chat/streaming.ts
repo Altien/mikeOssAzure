@@ -56,13 +56,20 @@ import {
   ExternalSourceCache,
 } from "../../altien/externalSources/cache";
 import { verifyCitations } from "./verifyCitations";
+import { buildMemoryTurn } from "../memory/prompt";
 
 export type AssistantEvent =
   | { type: "reasoning"; text: string }
   | AskInputsEvent
   | {
       type: "ask_inputs_response";
+      assistant_message_id: string;
+      ask_event_id: string;
       responses: AskInputResponseItem[];
+      /** User who supplied this continuation, for scoped-memory attribution. */
+      author_user_id?: string;
+      /** Immutable evidence time used by memory wipe/enable cutoffs. */
+      recorded_at?: string;
     }
   | {
       type: "doc_read";
@@ -212,6 +219,23 @@ class AssistantStreamAskInputsPause extends Error {
   }
 }
 
+function isAskInputsPause(error: unknown): boolean {
+  if (error instanceof AssistantStreamAskInputsPause) return true;
+  if (!error || typeof error !== "object") return false;
+  const record = error as {
+    name?: unknown;
+    message?: unknown;
+    cause?: unknown;
+  };
+  if (
+    record.name === "AssistantStreamAskInputsPause" ||
+    record.message === "Waiting for user input."
+  ) {
+    return true;
+  }
+  return record.cause !== error && isAskInputsPause(record.cause);
+}
+
 export function isAbortError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const record = error as { name?: unknown; message?: unknown };
@@ -269,6 +293,12 @@ export async function runLLMStream(params: {
   signal?: AbortSignal;
   /** Let a route persist the completed turn before it signals stream success. */
   emitDone?: boolean;
+  /** Add read-only app/project memory as an earliest untrusted reference turn. */
+  includeMemory?: boolean;
+  /** Memory scope is independent from generated-document destination. */
+  memoryProjectId?: string | null;
+  /** Tell the memory policy whether other people can see the persisted turn. */
+  memorySharedAudience?: boolean;
   /**
    * If set, generate_docx will attach created docs to this project so
    * they appear in the project sidebar. Leave null for general chats —
@@ -306,6 +336,9 @@ export async function runLLMStream(params: {
     apiKeys,
     signal,
     projectId,
+    includeMemory = false,
+    memoryProjectId,
+    memorySharedAudience = false,
     nonce,
   } = params;
   const write = (chunk: string) =>
@@ -342,14 +375,25 @@ export async function runLLMStream(params: {
   // Extract system prompt; pass remaining turns to the adapter as
   // plain user/assistant messages.
   const rawMsgs = apiMessages as { role: string; content: string | null }[];
-  const systemPrompt =
+  const baseSystemPrompt =
     rawMsgs[0]?.role === "system" ? (rawMsgs[0].content ?? "") : "";
+  const memory = await buildMemoryTurn({
+    db,
+    userId,
+    systemPrompt: baseSystemPrompt,
+    include: includeMemory,
+    projectId: memoryProjectId,
+    sharedAudience: memorySharedAudience,
+  });
+  const systemPrompt = memory.systemPrompt;
   const chatMessages: LlmMessage[] = rawMsgs
     .filter((m) => m.role !== "system")
     .map((m) => ({
       role: m.role === "assistant" ? "assistant" : "user",
       content: m.content ?? "",
     }));
+  // Before every real turn: see MemoryTurn for why it goes there.
+  if (memory.message) chatMessages.unshift(memory.message);
 
   const events: AssistantEvent[] = [];
   // One assistant turn produces at most one document_versions row per
@@ -752,7 +796,7 @@ export async function runLLMStream(params: {
       },
     });
   } catch (err) {
-    if (err instanceof AssistantStreamAskInputsPause) {
+    if (isAskInputsPause(err)) {
       // The ask_inputs event has already been emitted and persisted in `events`.
       // Stop this assistant turn here so the model does not add redundant
       // prose telling the user to answer the picker or attach documents.

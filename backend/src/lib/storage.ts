@@ -458,6 +458,10 @@ function requireProvider(op: string): StorageProvider {
   throw new Error(`Storage is not configured (cannot ${op}): ${reason}`);
 }
 
+export function assertStorageConfigured(): void {
+  requireProvider("clean up stored files");
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 //
 // These signatures are the stable contract. Callers never import the provider

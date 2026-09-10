@@ -1,6 +1,10 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { AskInputsBlock, DocDownloadBlock } from "./EventBlocks";
+import {
+    AskInputsBlock,
+    CourtListenerBlock,
+    DocDownloadBlock,
+} from "./EventBlocks";
 
 describe("DocDownloadBlock", () => {
     it("shows the file icon without a file-type label", () => {
@@ -28,6 +32,7 @@ describe("AskInputsBlock", () => {
             <AskInputsBlock
                 event={{
                     type: "ask_inputs",
+                    event_id: "ask-1",
                     items: [
                         {
                             id: "address",
@@ -38,6 +43,8 @@ describe("AskInputsBlock", () => {
                 }}
                 response={{
                     type: "ask_inputs_response",
+                    assistant_message_id: "assistant-1",
+                    ask_event_id: "ask-1",
                     responses: [
                         {
                             id: "address",
@@ -69,5 +76,57 @@ describe("AskInputsBlock", () => {
         expect(
             screen.queryByText("What is the registered address?"),
         ).not.toBeInTheDocument();
+    });
+});
+
+describe("event line consistency", () => {
+    it("uses one chevron direction and always reports expansion", () => {
+        const { container, unmount } = render(
+            <AskInputsBlock
+                event={{
+                    type: "ask_inputs",
+                    event_id: "ask-1",
+                    items: [
+                        {
+                            id: "venue",
+                            kind: "text",
+                            question: "Which venue?",
+                        },
+                    ],
+                }}
+            />,
+        );
+
+        // Unanswered blocks open by default: chevron down, nothing rotated.
+        const toggle = screen.getByRole("button", { name: "Asking for input" });
+        expect(toggle).toHaveAttribute("aria-expanded", "true");
+        expect(container.querySelector("svg.-rotate-90")).toBeNull();
+
+        // Closed points right — the direction every other block uses.
+        fireEvent.click(toggle);
+        expect(toggle).toHaveAttribute("aria-expanded", "false");
+        expect(container.querySelector("svg.-rotate-90")).not.toBeNull();
+        unmount();
+
+        const research = render(
+            <CourtListenerBlock
+                label="Searched case law"
+                items={[
+                    {
+                        caseName: "Donoghue v Stevenson",
+                        citation: "[1932] AC 562",
+                        url: "https://x.test",
+                    },
+                ]}
+            />,
+        );
+        const search = screen.getByRole("button", {
+            name: /Searched case law/,
+        });
+        // This one used to ship without any expansion state at all.
+        expect(search).toHaveAttribute("aria-expanded", "false");
+        expect(
+            research.container.querySelector("svg.-rotate-90"),
+        ).not.toBeNull();
     });
 });

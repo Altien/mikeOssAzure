@@ -4,10 +4,7 @@ import {
   type AskInputsResponseRequest,
   type ChatMessage,
 } from "./types";
-import {
-  REASONING_LEVELS,
-  type ReasoningLevel,
-} from "../llm/types";
+import { REASONING_LEVELS, type ReasoningLevel } from "../llm/types";
 
 type ValidationResult<T> =
   | { ok: true; value: T }
@@ -298,6 +295,16 @@ export function parseOptionalAskInputsResponse(
       detail: "ask_inputs_response must be an object",
     };
   }
+  const assistantMessageId = parseNonEmptyString(
+    value.assistant_message_id,
+    "ask_inputs_response.assistant_message_id must be a non-empty string",
+  );
+  if (!assistantMessageId.ok) return assistantMessageId;
+  const askEventId = parseNonEmptyString(
+    value.ask_event_id,
+    "ask_inputs_response.ask_event_id must be a non-empty string",
+  );
+  if (!askEventId.ok) return askEventId;
   if (!Array.isArray(value.responses) || value.responses.length === 0) {
     return {
       ok: false,
@@ -317,12 +324,13 @@ export function parseOptionalAskInputsResponse(
     if (!id.ok) return id;
     if (
       response.kind !== "choice" &&
+      response.kind !== "multi_choice" &&
       response.kind !== "text" &&
       response.kind !== "documents"
     ) {
       return {
         ok: false,
-        detail: `${field}.kind must be "choice", "text", or "documents"`,
+        detail: `${field}.kind must be "choice", "multi_choice", "text", or "documents"`,
       };
     }
     if (
@@ -332,12 +340,50 @@ export function parseOptionalAskInputsResponse(
       return { ok: false, detail: `${field}.skipped must be a boolean` };
     }
 
-    if (response.kind === "choice" || response.kind === "text") {
+    if (
+      response.kind === "choice" ||
+      response.kind === "multi_choice" ||
+      response.kind === "text"
+    ) {
       const question = parseNonEmptyString(
         response.question,
         `${field}.question must be a non-empty string`,
       );
       if (!question.ok) return question;
+      if (response.kind === "multi_choice") {
+        if (response.skipped === true && response.answers === undefined) {
+          continue;
+        }
+        if (!Array.isArray(response.answers)) {
+          return { ok: false, detail: `${field}.answers must be an array` };
+        }
+        if (response.answers.length > 9) {
+          return {
+            ok: false,
+            detail: `${field}.answers must contain at most 9 selections`,
+          };
+        }
+        for (const [answerIndex, answer] of response.answers.entries()) {
+          const parsedAnswer = parseNonEmptyString(
+            answer,
+            `${field}.answers[${answerIndex}] must be a non-empty string`,
+          );
+          if (!parsedAnswer.ok) return parsedAnswer;
+          if (answer.length > 1_000) {
+            return {
+              ok: false,
+              detail: `${field}.answers[${answerIndex}] must be at most 1000 characters`,
+            };
+          }
+        }
+        if (response.skipped !== true && response.answers.length === 0) {
+          return {
+            ok: false,
+            detail: `${field}.answers must contain at least one selection unless skipped`,
+          };
+        }
+        continue;
+      }
       if (
         response.answer !== undefined &&
         typeof response.answer !== "string"

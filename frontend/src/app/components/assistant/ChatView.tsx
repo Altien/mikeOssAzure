@@ -789,8 +789,10 @@ export function ChatView({
                     return null;
                 }
                 if (event.type === "ask_inputs") {
+                    if (!message.id) return null;
                     return {
-                        key: `${messageIndex}-${eventIndex}`,
+                        key: `${message.id}:${event.event_id}`,
+                        assistantMessageId: message.id,
                         event,
                     };
                 }
@@ -828,7 +830,7 @@ export function ChatView({
                 {/* Scrollable messages */}
                 <div
                     ref={messagesContainerRef}
-                    className="assistant-chat-message-fade flex-1 w-full overflow-y-auto"
+                    className="flex-1 w-full overflow-y-auto"
                     style={{ scrollbarGutter: "stable both-edges" }}
                 >
                     <div
@@ -881,6 +883,12 @@ export function ChatView({
                                                 content={msg.content ?? ""}
                                                 files={msg.files}
                                                 workflow={msg.workflow}
+                                                onWorkflowClick={(wf) => {
+                                                    setWorkflowModalInitialId(
+                                                        wf.id,
+                                                    );
+                                                    setWorkflowModalOpen(true);
+                                                }}
                                                 onFileClick={(file) => {
                                                     if (!file.document_id)
                                                         return;
@@ -977,6 +985,12 @@ export function ChatView({
                     </div>
                 </div>
 
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10">
+                    <div className="mx-auto h-28 w-full max-w-4xl px-4 md:px-6">
+                        <div className="assistant-chat-input-fade h-full w-full" />
+                    </div>
+                </div>
+
                 {/* Scroll to bottom button */}
                 {showScrollButton && (
                     <div
@@ -1013,6 +1027,9 @@ export function ChatView({
                                 <AskInputPopup
                                     key={activeInput.key}
                                     event={activeInput.event}
+                                    assistantMessageId={
+                                        activeInput.assistantMessageId
+                                    }
                                     onSubmit={(response, content, files) => {
                                         setHiddenAskInputKeys((prev) => {
                                             const next = new Set(prev);

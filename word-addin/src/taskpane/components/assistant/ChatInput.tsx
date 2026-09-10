@@ -39,7 +39,11 @@ import type {
 } from "../../lib/wordChatTypes";
 import { isModelAvailable, missingModelProvider } from "../../lib/modelCatalog";
 import { loadWithRetry } from "../../lib/composerPreflight";
-import { workflowSlashCommandFromTitle } from "@mike/workflow-slash-command-ui";
+import {
+  slashCommandQueryFromValue,
+  withoutSlashCommand,
+  workflowSlashCommandFromTitle,
+} from "@mike/workflow-slash-command-ui";
 import {
   WORD_WORKFLOW_SLASH_MENU_ID,
   WorkflowSlashMenu,
@@ -153,10 +157,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
       chatReasoningLevel === undefined ||
       !modelSettingsResolved;
 
-    const slashQuery = (() => {
-      const trimmed = input.trim();
-      return /^\/\S*$/.test(trimmed) ? trimmed.toLowerCase() : null;
-    })();
+    const slashQuery = slashCommandQueryFromValue(input);
     const matchingSlashWorkflows = (slashWorkflows ?? []).filter((workflow) =>
       workflowSlashCommandFromTitle(workflow.metadata.title)?.startsWith(
         slashQuery ?? "",
@@ -382,18 +383,20 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
         id: workflow.id,
         title: workflow.metadata.title,
       });
-      setInput("");
+      setInput((current) => withoutSlashCommand(current));
       setSlashMenuDismissed(true);
     };
 
     const submit = (): void => {
       const content = input.trim();
       if (slashCommandsLoading) return;
-      const exactSlashWorkflow = (slashWorkflows ?? []).find(
-        (workflow) =>
-          workflowSlashCommandFromTitle(workflow.metadata.title) ===
-          content.toLowerCase(),
-      );
+      const exactSlashWorkflow = slashQuery
+        ? (slashWorkflows ?? []).find(
+            (workflow) =>
+              workflowSlashCommandFromTitle(workflow.metadata.title) ===
+              slashQuery,
+          )
+        : undefined;
       if (exactSlashWorkflow) {
         selectSlashWorkflow(exactSlashWorkflow);
         return;

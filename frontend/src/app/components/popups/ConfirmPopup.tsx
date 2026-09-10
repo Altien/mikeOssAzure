@@ -2,7 +2,7 @@
 
 import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
-import { Loader2, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { cn } from "@/app/lib/utils";
 import { LIQUID_GLASS_FLOAT_CLASS } from "@/shared/ui/LiquidGlassUI";
@@ -44,17 +44,9 @@ export function ConfirmPopup({
   const isDangerAction = confirmVariant === "danger";
   const resolvedConfirmLabel =
     confirmStatus === "loading" ? (
-      <span className="inline-flex h-full items-center gap-1.5">
-        <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
-        {progressiveLabel(normalizedConfirmLabel)}
-      </span>
+      progressiveLabel(normalizedConfirmLabel)
     ) : confirmStatus === "complete" ? (
       completedLabel(normalizedConfirmLabel)
-    ) : isDangerAction ? (
-      <span className="inline-flex h-full items-center gap-1.5">
-        <Trash2 className="h-3 w-3 shrink-0" />
-        {confirmLabel}
-      </span>
     ) : (
       confirmLabel
     );
@@ -84,8 +76,11 @@ export function ConfirmPopup({
             size="sm"
             onClick={onConfirm}
             disabled={resolvedConfirmDisabled}
-            aria-busy={confirmBusy}
+            loading={confirmBusy}
           >
+            {isDangerAction && confirmStatus !== "complete" && (
+              <Trash2 className="h-3 w-3 shrink-0" />
+            )}
             {resolvedConfirmLabel}
           </PillButton>
         </div>

@@ -19,7 +19,11 @@ interface ProjectDetailsModalProps {
     project: Project | null;
     canEdit: boolean;
     onClose: () => void;
-    onSave: (values: { name: string; cmNumber: string; practice: string }) => Promise<void>;
+    onSave: (values: {
+        name: string;
+        cmNumber: string;
+        practice: string;
+    }) => Promise<void>;
     onShareProject?: () => void;
 }
 
@@ -38,15 +42,25 @@ export function ProjectDetailsModal({
     const [saving, setSaving] = useState(false);
     const [saved, setSaved] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const projectId = project?.id ?? null;
+    const projectName = project?.name ?? "";
+    const projectCmNumber = project?.cm_number ?? "";
+    const projectPractice = project?.practice ?? "";
 
     useEffect(() => {
-        if (!open || !project) return;
-        setNameDraft(project.name);
-        setCmDraft(project.cm_number ?? "");
-        setPracticeDraft(project.practice ?? "");
+        if (!open || !projectId) return;
+        setNameDraft(projectName);
+        setCmDraft(projectCmNumber);
+        setPracticeDraft(projectPractice);
         setSaved(false);
         setError(null);
-    }, [open, project]);
+    }, [
+        open,
+        projectId,
+        projectName,
+        projectCmNumber,
+        projectPractice,
+    ]);
 
     useEffect(() => {
         if (!open) return;
@@ -107,7 +121,7 @@ export function ProjectDetailsModal({
             secondaryAction={
                 onShareProject
                     ? {
-                          label: "Share Project",
+                          label: "Share",
                           icon: <Users className="h-4 w-4" />,
                           onClick: onShareProject,
                       }
