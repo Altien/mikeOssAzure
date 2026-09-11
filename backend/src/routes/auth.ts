@@ -16,13 +16,28 @@ import { requireTrustedOrigin } from "../middleware/trustedOrigin";
 import { upsertUserProfile } from "../lib/userSettings";
 import {
   createSupabaseAuthClient, exchangeSupabaseOAuth, publicSupabaseUser,
-  startSupabaseOAuth, startSupabaseRecovery, supabaseCredential, supabaseExpiresAt, createCredentialClient,
+  startSupabaseOAuth, startSupabaseSSO, startSupabaseRecovery, supabaseCredential, supabaseExpiresAt, createCredentialClient,
 } from "../lib/auth/providers/supabaseSession";
+import { ssoConfiguration, ssoDomainSchema } from "../lib/ssoConfig";
 import { readServerSession } from "../lib/serverSession";
 
 export const authRouter = Router();
 authRouter.use(requireTrustedOrigin);
 const OAUTH_NONCE_COOKIE = "mike-oauth-browser";
+
+authRouter.get("/config", async (_req, res) => {
+  // The SSO presentation is only valid for the configured Supabase provider.
+  // Entra and local never probe GoTrue configuration.
+  if ((await authProvider()) !== "supabase") {
+    res.json({ ssoEnabled: false, ssoButtonLabel: "Single sign-on", ssoDomainRequired: false });
+    return;
+  }
+  try {
+    const config = ssoConfiguration();
+    res.json({ ssoEnabled: config.enabled, ssoButtonLabel: config.buttonLabel,
+      ssoDomainRequired: config.enabled && !config.defaultDomain });
+  } catch { res.status(503).json({ detail: "SSO configuration is unavailable" }); }
+});
 
 async function authProvider(): Promise<string> {
   return (await getConfig("auth-provider").catch(() => process.env.AUTH_PROVIDER || "supabase")) || "supabase";
@@ -347,7 +362,20 @@ authRouter.post("/signup", async (req, res) => {
 });
 
 authRouter.post("/oauth", async (req, res) => {
-  if ((await authProvider()) !== "supabase" || req.body?.provider !== "google") { res.status(404).end(); return; }
+  if ((await authProvider()) !== "supabase" || !["google", "sso"].includes(req.body?.provider)) { res.status(404).end(); return; }
+  const sso = req.body.provider === "sso";
+  let ssoDomain: string | null = null;
+  if (sso) {
+    let config: ReturnType<typeof ssoConfiguration>;
+    try { config = ssoConfiguration(); }
+    catch { res.status(503).json({ detail: "SSO configuration is unavailable" }); return; }
+    if (!config.enabled) { res.status(403).json({ code: "sso_disabled", detail: "Single sign-on is not enabled" }); return; }
+    const parsed = req.body.domain === undefined ? null : ssoDomainSchema.safeParse(req.body.domain);
+    if (parsed && !parsed.success) { res.status(400).json({ code: "invalid_request", detail: "Invalid SSO domain" }); return; }
+    ssoDomain = parsed?.data ?? config.defaultDomain;
+    if (!ssoDomain) { res.status(400).json({ code: "sso_domain_required", detail: "Enter your organization's domain" }); return; }
+    if (config.allowedDomains && !config.allowedDomains.includes(ssoDomain)) { res.status(400).json({ code: "sso_domain_not_allowed", detail: "Single sign-on is not available for this domain" }); return; }
+  }
   const requestId = typeof req.body?.handoffRequestId === "string" ? req.body.handoffRequestId : "";
   const word = !!requestId;
   const wordOrigin = req.get("origin") || "";
@@ -358,22 +386,26 @@ authRouter.post("/oauth", async (req, res) => {
     const nonce = randomBytes(32).toString("base64url");
     const stateToken = randomBytes(32).toString("base64url");
     const publicOrigin = word ? wordOrigin : await backendPublicOrigin(req);
-    const callback = new URL("/api/auth/oauth-callback/google", publicOrigin);
+    const callback = new URL(`/api/auth/oauth-callback/${sso ? "sso" : "google"}`, publicOrigin);
     callback.searchParams.set("state", stateToken);
-    const { url, verifierState } = await startSupabaseOAuth(callback.toString());
+    const { url, verifierState } = sso
+      ? await startSupabaseSSO(ssoDomain!, callback.toString())
+      : await startSupabaseOAuth(callback.toString());
     await createOAuthState({
-      provider: "google", browserNonce: nonce, codeVerifier: verifierState,
+      provider: sso ? "sso" : "google", browserNonce: nonce, codeVerifier: verifierState,
       returnUrl: safeReturnUrl(req.body?.next), targetOrigin: word ? wordOrigin : frontendOrigin().origin,
       ...(word ? { requestId } : {}),
     }, stateToken);
     res.cookie(OAUTH_NONCE_COOKIE, nonce, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/api/auth", maxAge: 10 * 60_000 });
     res.setHeader("Cache-Control", "private, no-store");
     res.json({ url });
-  } catch { res.status(503).json({ detail: "Google sign-in is unavailable" }); }
+  } catch { res.status(503).json({ detail: sso ? "SSO sign-in is unavailable" : "Google sign-in is unavailable" }); }
 });
 
-authRouter.get("/oauth-callback/google", async (req, res) => {
+authRouter.get("/oauth-callback/:provider", async (req, res) => {
   if ((await authProvider()) !== "supabase") { res.status(404).end(); return; }
+  const provider = req.params.provider;
+  if (provider !== "google" && provider !== "sso") { res.status(404).end(); return; }
   const code = typeof req.query.code === "string" ? req.query.code : "";
   const stateToken = typeof req.query.state === "string" ? req.query.state : "";
   const nonce = req.cookies?.[OAUTH_NONCE_COOKIE];
@@ -382,7 +414,7 @@ authRouter.get("/oauth-callback/google", async (req, res) => {
   if (!code || typeof nonce !== "string") { res.status(400).json({ detail: "Invalid Google callback" }); return; }
   try {
     const state = await consumeOAuthState(stateToken, nonce);
-    if (!state || state.provider !== "google") { res.status(400).json({ detail: "Invalid or expired Google state" }); return; }
+    if (!state || state.provider !== provider) { res.status(400).json({ detail: "Invalid or expired OAuth state" }); return; }
     const { user, session } = await exchangeSupabaseOAuth(code, state.codeVerifier);
     const credential = supabaseCredential(session);
     if (!(await admit(req, res, credential))) return;
@@ -395,7 +427,7 @@ authRouter.get("/oauth-callback/google", async (req, res) => {
     }
     await createServerSession(req, res, credential, supabaseExpiresAt(session));
     res.redirect(state.returnUrl);
-  } catch { res.status(503).json({ detail: "Unable to complete Google sign-in" }); }
+  } catch { res.status(503).json({ detail: "Unable to complete sign-in" }); }
 });
 
 authRouter.post("/password-reset", async (req, res) => {

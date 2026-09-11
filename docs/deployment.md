@@ -41,4 +41,11 @@ queue schema before reporting readiness; a failed initialization exits.
 
 ### Optional Supabase authentication recovery
 
+For deployments that explicitly select Supabase authentication, SAML SSO can
+be enabled with `SSO_ENABLED=true` after configuring the domain provider in
+GoTrue. `SSO_ALLOWED_DOMAINS` and `SSO_DEFAULT_DOMAIN` accept exact DNS domains.
+The backend starts SSO with a one-use, browser-bound PKCE state and exchanges
+the callback server-side before issuing the normal HttpOnly session cookie.
+Entra and local authentication do not use this GoTrue configuration.
+
 When runtime `/config` selects Supabase authentication, confirmation and password recovery use the frontend `/auth/callback` URL. Allow that exact URL in Supabase Auth, configure SMTP and the Site URL, and use a minimum password length of 10. Recovery responses intentionally do not reveal whether an account exists. Secure email changes require both addresses to confirm; expired links must be requested again. Entra and local deployments continue using their configured identity flow. These routes do not provision Supabase Auth or its database triggers in the Azure database.

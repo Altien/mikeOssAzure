@@ -67,6 +67,14 @@ export async function startSupabaseOAuth(redirectTo: string) {
   return { url: result.data.url, verifierState: JSON.stringify(Object.fromEntries(storage)) };
 }
 
+export async function startSupabaseSSO(domain: string, redirectTo: string) {
+  const storage = new Map<string, string>();
+  const auth = client(storage);
+  const result = await auth.auth.signInWithSSO({ domain, options: { redirectTo, skipBrowserRedirect: true } });
+  if (result.error || !result.data.url) throw new Error("SSO sign-in is unavailable");
+  return { url: result.data.url, verifierState: JSON.stringify(Object.fromEntries(storage)) };
+}
+
 export async function startSupabaseRecovery(email: string, redirectTo: string) {
   const storage = new Map<string, string>();
   const auth = client(storage);

@@ -15,6 +15,7 @@ import {
     authInputClassName,
 } from "@/app/components/auth/authStyles";
 import { AuthDivider } from "@/app/components/auth/AuthDivider";
+import { SsoAuthButton } from "@/app/components/auth/SsoAuthButton";
 import { GoogleAuthButton } from "@/app/components/auth/GoogleAuthButton";
 import { FieldLabel } from "@/app/components/ui/form-field";
 import { knownErrorCodeMessage } from "@/app/lib/userFacingError";
@@ -153,6 +154,11 @@ export default function LoginPage() {
                         >Sign in with Microsoft</PillButton>}
                         {config.authProvider === "supabase" && <><AuthDivider />
                         <GoogleAuthButton
+                            onError={setError}
+                            disabled={loading}
+                            onLoadingChange={setLoading}
+                        />
+                        <SsoAuthButton
                             onError={setError}
                             disabled={loading}
                             onLoadingChange={setLoading}
