@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@azure/msal-browser": "^4.30.0",
-    "@radix-ui/react-dropdown-menu": "^2.1.16",
+    "@radix-ui/react-dropdown-menu": "^2.1.24",
     "@supabase/supabase-js": "^2.112.3",
     "@tiptap/core": "3.31.3",
     "@tiptap/extension-table": "3.31.3",
@@ -27,9 +27,9 @@
     "@tiptap/react": "3.31.3",
     "@tiptap/starter-kit": "3.31.3",
     "clsx": "^2.1.1",
-    "lucide-react": "^0.553.0",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
+    "lucide-react": "^1.41.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.4.0",
@@ -58,5 +58,6 @@
     "webpack-cli": "^7.2.3",
     "webpack-dev-server": "^6.0.0"
   },
-  "packageManager": "pnpm@11.1.2"
+  "packageManager": "pnpm@11.1.2",
+  "overrides": {}
 }
