@@ -91,6 +91,8 @@ export function contentTypeForDocumentType(fileType: string | null | undefined) 
       return "application/pdf";
     case "docx":
       return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    case "doc":
+      return "application/msword";
     case "xlsx":
       return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
     case "xlsm":

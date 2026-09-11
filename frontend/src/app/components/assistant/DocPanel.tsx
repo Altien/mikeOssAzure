@@ -3,8 +3,7 @@
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, ExternalLink, Loader2 } from "lucide-react";
-import { getBrowserAccessToken, bounceIfUnauthorized } from "@/app/lib/auth-token";
-import { authenticatedFetch } from "@/app/lib/authEvents";
+import { getDocumentFile } from "@/app/lib/mikeApi";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { PdfView } from "../shared/views/PdfView";
 import { DocxView } from "../shared/views/DocxView";
@@ -466,26 +465,12 @@ function DownloadButton({
         if (busy || isReloading) return;
         setBusy(true);
         try {
-            // Upstream divergence (OSS-6, auth-fetch): token from auth-token
-            // (Entra/local/Supabase), `/api` prefix and a 401 bounce,
-            // instead of supabase.auth.getSession().
-            const token = await getBrowserAccessToken();
-            const apiBase =
-                (process.env.NEXT_PUBLIC_API_BASE_URL ??
-                    "http://localhost:3001") + "/api";
-            const qs = versionId
-                ? `?version_id=${encodeURIComponent(versionId)}`
-                : "";
-            const resp = await authenticatedFetch(
-                `${apiBase}/single-documents/${documentId}/docx${qs}`,
-            );
-            bounceIfUnauthorized(resp);
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const blob = await resp.blob();
+            const { blob, filename: resolvedFilename } =
+                await getDocumentFile(documentId, versionId);
             const blobUrl = URL.createObjectURL(blob);
             const a = document.createElement("a");
             a.href = blobUrl;
-            a.download = filename;
+            a.download = resolvedFilename || filename;
             document.body.appendChild(a);
             a.click();
             a.remove();

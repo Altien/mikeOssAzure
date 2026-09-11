@@ -223,10 +223,10 @@ documentsRouter.get("/:documentId/display", requireAuth, async (req, res) => {
 });
 
 // GET /single-documents/:documentId/file
-// Downloads active-version or `?version_id` source bytes for browser editors.
-// this bypasses R2 (avoids the browser CORS problem on signed URLs) so the frontend
-// docx-preview viewer can load tracked-change documents directly. Unlike /display,
-// this never substitutes a generated PDF rendition for an Office document.
+// Streams the active version's source bytes, or a specific version selected
+// with ?version_id=. Unlike /display, this never substitutes a generated PDF
+// rendition. Proxying through the API also lets browser viewers and editors
+// fetch the file without depending on cross-origin access to signed R2 URLs.
 documentsRouter.get("/:documentId/file", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
@@ -249,8 +249,8 @@ documentsRouter.get("/:documentId/file", requireAuth, async (req, res) => {
   const active = await loadActiveVersion(documentId, db, versionIdParam);
   if (!active)
     return void res.status(404).json({ detail: "No file available" });
-  const raw = await downloadFile(active.storage_path);
-  if (!raw)
+  const metadata = await headFile(active.storage_path);
+  if (!metadata)
     return void res.status(404).json({ detail: "Document bytes not available" });
 
   const filename = downloadFilenameForVersion(
@@ -259,8 +259,17 @@ documentsRouter.get("/:documentId/file", requireAuth, async (req, res) => {
     active.source === "assistant_edit",
   );
   res.setHeader("Content-Type", contentTypeForDocumentType(active.file_type));
+  res.setHeader("Content-Length", metadata.size);
   res.setHeader("Content-Disposition", buildContentDisposition("inline", filename));
-  res.send(Buffer.from(raw));
+  const source = createFileReadStream(active.storage_path);
+  try {
+    await pipeline(source, res);
+  } catch (error) {
+    source.destroy();
+    if (!res.headersSent && !res.destroyed) {
+      return void sendInternalError(res, error);
+    }
+  }
 });
 
 // POST /single-documents/download-zip
@@ -552,18 +561,6 @@ documentsRouter.get("/:documentId/url", requireAuth, async (req, res) => {
     // (docx-preview) without a follow-up round-trip.
     has_pdf_rendition: !!active.pdf_storage_path,
   });
-});
-
-// GET /single-documents/:documentId/docx
-// Permanent compatibility redirect for old docx-preview callers. /file owns
-// source-byte downloads and query parameters, including ?version_id=.
-documentsRouter.get("/:documentId/docx", (req, res) => {
-  const queryIndex = req.originalUrl.indexOf("?");
-  const query = queryIndex >= 0 ? req.originalUrl.slice(queryIndex) : "";
-  res.redirect(
-    301,
-    `${req.baseUrl}/${encodeURIComponent(req.params.documentId)}/file${query}`,
-  );
 });
 
 // GET /single-documents/:documentId/versions

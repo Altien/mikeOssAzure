@@ -85,7 +85,7 @@ describe("contentTypeForDocumentType", () => {
         const expected: Record<string, string> = {
             pdf: "application/pdf",
             docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            doc: "application/octet-stream", // legacy .doc has no dedicated mapping
+            doc: "application/msword",
             xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             xlsm: "application/vnd.ms-excel.sheet.macroEnabled.12",
             xls: "application/vnd.ms-excel",

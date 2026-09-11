@@ -2029,12 +2029,26 @@ export async function downloadResolvedDocument(
     setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
 }
 
+function documentFilePath(
+    documentId: string,
+    versionId?: string | null,
+): string {
+    const qs = versionId ? `?version_id=${encodeURIComponent(versionId)}` : "";
+    return `/single-documents/${encodeURIComponent(documentId)}/file${qs}`;
+}
+
+export function getDocumentFileUrl(
+    documentId: string,
+    versionId?: string | null,
+): string {
+    return `${API_BASE}${documentFilePath(documentId, versionId)}`;
+}
+
 export async function getDocumentFile(
     documentId: string,
     versionId?: string | null,
 ): Promise<{ blob: Blob; filename: string | null }> {
-    const qs = versionId ? `?version_id=${encodeURIComponent(versionId)}` : "";
-    return apiBlobRequest(`/single-documents/${documentId}/file${qs}`);
+    return apiBlobRequest(documentFilePath(documentId, versionId));
 }
 
 export async function downloadDocumentsZip(

@@ -1,14 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import {
-    getBrowserAccessToken,
-    bounceIfUnauthorized,
-} from "@/app/lib/auth-token";
+import { getDocumentFileUrl } from "@/app/lib/mikeApi";
+import { authenticatedFetch } from "@/app/lib/authEvents";
 
 export interface FetchDocxResult {
     bytes: ArrayBuffer | null;
-    downloadUrl: string | null;
     loading: boolean;
     error: string | null;
 }
@@ -48,7 +45,6 @@ export function useFetchDocxBytes(
     const [bytes, setBytes] = useState<ArrayBuffer | null>(
         initialKey ? (bytesCache.get(initialKey) ?? null) : null,
     );
-    const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -56,26 +52,16 @@ export function useFetchDocxBytes(
         if (!documentId) {
             // eslint-disable-next-line react-hooks/set-state-in-effect -- clear stale bytes when documentId is removed, within the fetch effect
             setBytes(null);
-            setDownloadUrl(null);
             return;
         }
 
         const key = cacheKey(documentId, versionId, refetchKey, sourceUrl);
-        // Upstream divergence (OSS-6, auth-fetch): `/api` prefix, token from
-        // auth-token and a 401 bounce, instead of supabase.auth.getSession().
-        const apiBase =
-            (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") +
-            "/api";
-        const qs = versionId
-            ? `?version_id=${encodeURIComponent(versionId)}`
-            : "";
-        const url = sourceUrl ?? `${apiBase}/single-documents/${documentId}/docx${qs}`;
+        const url = sourceUrl ?? getDocumentFileUrl(documentId, versionId);
 
         // Cache hit: reuse bytes synchronously, no network, no spinner.
         const cached = bytesCache.get(key);
         if (cached) {
             setBytes(cached);
-            setDownloadUrl(url);
             setLoading(false);
             setError(null);
             return;
@@ -88,14 +74,9 @@ export function useFetchDocxBytes(
         const pending =
             inFlight.get(key) ??
             (async () => {
-                const token = await getBrowserAccessToken();
-                // Stream bytes through the backend (avoids CORS on R2
-                // signed URLs).
-                const bin = await fetch(url, {
-                    credentials: "include",
-                    headers: token ? { Authorization: `Bearer ${token}` } : {},
-                });
-                bounceIfUnauthorized(bin);
+                // The private source bytes are streamed through the same-origin
+                // authenticated API, including Word/web cookie sessions.
+                const bin = await authenticatedFetch(url);
                 if (!bin.ok) throw new Error(`HTTP ${bin.status}`);
                 const buf = await bin.arrayBuffer();
                 bytesCache.set(key, buf);
@@ -107,7 +88,6 @@ export function useFetchDocxBytes(
             .then((buf) => {
                 if (cancelled) return;
                 setBytes(buf);
-                setDownloadUrl(url);
             })
             .catch(() => {
                 if (cancelled) return;
@@ -125,7 +105,7 @@ export function useFetchDocxBytes(
         };
     }, [documentId, versionId, refetchKey, sourceUrl]);
 
-    return { bytes, downloadUrl, loading, error };
+    return { bytes, loading, error };
 }
 
 /**
