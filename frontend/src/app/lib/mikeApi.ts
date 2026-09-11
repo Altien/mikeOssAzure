@@ -2029,6 +2029,14 @@ export async function downloadResolvedDocument(
     setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
 }
 
+export async function getDocumentFile(
+    documentId: string,
+    versionId?: string | null,
+): Promise<{ blob: Blob; filename: string | null }> {
+    const qs = versionId ? `?version_id=${encodeURIComponent(versionId)}` : "";
+    return apiBlobRequest(`/single-documents/${documentId}/file${qs}`);
+}
+
 export async function downloadDocumentsZip(
     documentIds: string[],
     folderIds: string[] = [],
