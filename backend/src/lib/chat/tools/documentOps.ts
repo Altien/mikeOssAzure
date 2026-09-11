@@ -8,6 +8,7 @@ import { convertedPdfKey, docxToPdf } from "../../convert";
 import { enqueueConversion } from "../../queue/conversionQueue";
 import { enqueueDbJob, enqueueStorageCleanup } from "../../dbq/enqueue";
 import { createServerSupabase } from "../../supabase";
+import { profileAttributionName } from "../../userLookup";
 import {
   applyTrackedEdits,
   extractDocxBodyText,
@@ -1232,11 +1233,18 @@ export async function runEditDocument(params: {
   const current = await loadCurrentVersionBytes(documentId, db);
   if (!current) return { ok: false, error: "Could not load document bytes." };
 
+  const { data: authorProfile } = await db
+    .from("user_profiles")
+    .select("display_name, email")
+    .eq("user_id", userId)
+    .maybeSingle();
+  const author = profileAttributionName(authorProfile, "Mike");
+
   const {
     bytes: editedBytes,
     changes,
     errors,
-  } = await applyTrackedEdits(current.bytes, edits, { author: "Mike" });
+  } = await applyTrackedEdits(current.bytes, edits, { author });
 
   if (changes.length === 0) {
     return {
