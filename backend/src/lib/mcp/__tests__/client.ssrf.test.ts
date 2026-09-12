@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Agent } from "undici";
+import { Agent, fetch as undiciFetch } from "undici";
 
 // Mock DNS resolution so the SSRF guard is exercised deterministically without
 // touching the network. `lookupMock` is hoisted so the vi.mock factory can
@@ -8,6 +8,15 @@ const { lookupMock } = vi.hoisted(() => ({ lookupMock: vi.fn() }));
 vi.mock("dns/promises", () => ({
     default: { lookup: lookupMock },
 }));
+
+// Replace only `fetch` on the undici module: `guardedFetch` must call the
+// package's fetch (the one that shares a handler protocol with the package's
+// Agent), so that is where the spy has to sit. Everything else — the Agent
+// the dispatcher assertions check against — stays real.
+vi.mock("undici", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("undici")>();
+    return { ...actual, fetch: vi.fn() };
+});
 
 import {
     guardedFetch,
@@ -121,9 +130,14 @@ describe("validateRemoteMcpUrl", () => {
 });
 
 describe("guardedFetch", () => {
+    const fetchSpy = vi.mocked(undiciFetch);
+
+    beforeEach(() => {
+        fetchSpy.mockReset();
+    });
+
     it("throws and never calls fetch when the URL fails validation", async () => {
         resolvesTo("10.0.0.5");
-        const fetchSpy = vi.spyOn(globalThis, "fetch");
         await expect(
             guardedFetch("https://rebind.example.com/"),
         ).rejects.toThrow(/blocked network address/);
@@ -132,9 +146,11 @@ describe("guardedFetch", () => {
 
     it("reuses a pinned dispatcher and disables redirects for public hosts", async () => {
         resolvesTo("93.184.216.34");
-        const fetchSpy = vi
-            .spyOn(globalThis, "fetch")
-            .mockResolvedValue(new Response("ok", { status: 200 }));
+        fetchSpy.mockResolvedValue(
+            new Response("ok", { status: 200 }) as unknown as Awaited<
+                ReturnType<typeof undiciFetch>
+            >,
+        );
 
         const res = await guardedFetch("https://public.example.com/x", {
             method: "GET",
@@ -155,6 +171,35 @@ describe("guardedFetch", () => {
             dispatcher?: unknown;
         };
         expect(nextInit.dispatcher).toBe(init.dispatcher);
+    });
+
+    it("sends the request through the undici package's fetch, never the global one", async () => {
+        // Regression: Node's built-in fetch is undici pinned at the version
+        // Node shipped with (6.x on Node 22), while `guardedAgent` is built by
+        // the `undici` package (8.x). The dispatcher/handler protocol changed
+        // between those majors, so an 8.x Agent rejects the handler a 6.x
+        // fetch hands it (`UND_ERR_INVALID_ARG: invalid onRequestStart method
+        // undefined`) and every MCP request died as "fetch failed". Both
+        // halves must come from the same module.
+        resolvesTo("93.184.216.34");
+        const globalFetchSpy = vi
+            .spyOn(globalThis, "fetch")
+            .mockResolvedValue(new Response("global", { status: 200 }));
+        fetchSpy.mockResolvedValue(
+            new Response("undici", { status: 202 }) as unknown as Awaited<
+                ReturnType<typeof undiciFetch>
+            >,
+        );
+
+        const res = await guardedFetch(new URL("https://public.example.com/z"));
+
+        expect(res.status).toBe(202);
+        expect(globalFetchSpy).not.toHaveBeenCalled();
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        // The URL is passed as a string the package's fetch can parse itself;
+        // a global `Request`/`URL` instance would not be recognised by it.
+        expect(fetchSpy.mock.calls[0][0]).toBe("https://public.example.com/z");
+        globalFetchSpy.mockRestore();
     });
 });
 

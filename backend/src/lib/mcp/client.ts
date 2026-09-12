@@ -2,7 +2,7 @@ import crypto from "crypto";
 import dns from "dns/promises";
 import net from "net";
 import { getConfig } from "../config";
-import { Agent } from "undici";
+import { Agent, fetch as undiciFetch } from "undici";
 import { isBlockedIp } from "../privateIp";
 import { configuredApiPublicUrl } from "../runtimeConfig";
 import {
@@ -423,7 +423,7 @@ const guardedAgent = new Agent({
 export async function guardedFetch(
     input: Parameters<typeof fetch>[0],
     init?: Parameters<typeof fetch>[1],
-) {
+): Promise<Response> {
     const url =
         typeof input === "string"
             ? input
@@ -431,11 +431,32 @@ export async function guardedFetch(
               ? input.toString()
               : input.url;
     await validateRemoteMcpUrl(url);
-    return fetch(input, {
-        ...init,
+    // The request MUST go through the `undici` package's own `fetch`, not the
+    // global one. Node's built-in fetch is a copy of undici frozen at the
+    // version Node was built with (6.x on Node 22), while `guardedAgent` comes
+    // from the `undici` package in package.json (8.x). Dispatchers and the
+    // request handlers fetch hands them share a private protocol that changed
+    // between those majors: an 8.x Agent validates the handler it receives
+    // and rejects the 6.x shape with `UND_ERR_INVALID_ARG: invalid
+    // onRequestStart method undefined`, which surfaces to callers as the
+    // opaque "fetch failed" — on every MCP connector request, always. Taking
+    // both halves from the same module makes the pairing hold no matter how
+    // Node's bundled copy and the package version drift apart.
+    const requestInit: Record<string, unknown> =
+        typeof input === "string" || input instanceof URL
+            ? { ...init }
+            : {
+                  method: input.method,
+                  headers: input.headers,
+                  body: input.body,
+                  ...(input.body ? { duplex: "half" } : {}),
+                  ...init,
+              };
+    return undiciFetch(url, {
+        ...requestInit,
         redirect: "manual",
         dispatcher: guardedAgent,
-    } as RequestInit);
+    } as Parameters<typeof undiciFetch>[1]) as unknown as Promise<Response>;
 }
 
 /**
