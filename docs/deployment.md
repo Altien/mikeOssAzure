@@ -43,7 +43,8 @@ queue schema before reporting readiness; a failed initialization exits.
 
 For deployments that explicitly select Supabase authentication, SAML SSO can
 be enabled with `SSO_ENABLED=true` after configuring the domain provider in
-GoTrue. `SSO_ALLOWED_DOMAINS` and `SSO_DEFAULT_DOMAIN` accept exact DNS domains.
+GoTrue. The progressive SSO page accepts an email address and derives its
+domain; `SSO_ALLOWED_DOMAINS` accepts exact DNS domains.
 The backend starts SSO with a one-use, browser-bound PKCE state and exchanges
 the callback server-side before issuing the normal HttpOnly session cookie.
 Entra and local authentication do not use this GoTrue configuration.

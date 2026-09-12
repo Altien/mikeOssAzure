@@ -29,13 +29,12 @@ authRouter.get("/config", async (_req, res) => {
   // The SSO presentation is only valid for the configured Supabase provider.
   // Entra and local never probe GoTrue configuration.
   if ((await authProvider()) !== "supabase") {
-    res.json({ ssoEnabled: false, ssoButtonLabel: "Single sign-on", ssoDomainRequired: false });
+    res.json({ ssoEnabled: false });
     return;
   }
   try {
     const config = ssoConfiguration();
-    res.json({ ssoEnabled: config.enabled, ssoButtonLabel: config.buttonLabel,
-      ssoDomainRequired: config.enabled && !config.defaultDomain });
+    res.json({ ssoEnabled: config.enabled });
   } catch { res.status(503).json({ detail: "SSO configuration is unavailable" }); }
 });
 
@@ -370,10 +369,13 @@ authRouter.post("/oauth", async (req, res) => {
     try { config = ssoConfiguration(); }
     catch { res.status(503).json({ detail: "SSO configuration is unavailable" }); return; }
     if (!config.enabled) { res.status(403).json({ code: "sso_disabled", detail: "Single sign-on is not enabled" }); return; }
-    const parsed = req.body.domain === undefined ? null : ssoDomainSchema.safeParse(req.body.domain);
-    if (parsed && !parsed.success) { res.status(400).json({ code: "invalid_request", detail: "Invalid SSO domain" }); return; }
-    ssoDomain = parsed?.data ?? config.defaultDomain;
-    if (!ssoDomain) { res.status(400).json({ code: "sso_domain_required", detail: "Enter your organization's domain" }); return; }
+    const email = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    if (email.length > 320 || !/^[^\s@]+@[^\s@]+$/.test(email)) {
+      res.status(400).json({ code: "invalid_request", detail: "Enter a valid company email address" }); return;
+    }
+    const parsed = ssoDomainSchema.safeParse(email.split("@")[1]);
+    if (!parsed.success) { res.status(400).json({ code: "invalid_request", detail: "Enter a valid company email address" }); return; }
+    ssoDomain = parsed.data;
     if (config.allowedDomains && !config.allowedDomains.includes(ssoDomain)) { res.status(400).json({ code: "sso_domain_not_allowed", detail: "Single sign-on is not available for this domain" }); return; }
   }
   const requestId = typeof req.body?.handoffRequestId === "string" ? req.body.handoffRequestId : "";

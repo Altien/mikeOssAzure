@@ -158,11 +158,7 @@ export default function LoginPage() {
                             disabled={loading}
                             onLoadingChange={setLoading}
                         />
-                        <SsoAuthButton
-                            onError={setError}
-                            disabled={loading}
-                            onLoadingChange={setLoading}
-                        /></>}
+                        <SsoAuthButton disabled={loading} /></>}
                     </form>
                 </div>
                 {config.authProvider === "supabase" && <div className="text-center text-sm text-gray-500">
