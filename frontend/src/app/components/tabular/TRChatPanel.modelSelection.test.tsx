@@ -71,7 +71,6 @@ describe("TRChatPanel model selection", () => {
             <TRChatPanel
                 reviewId="review-1"
                 onCitationClick={vi.fn()}
-                onClose={vi.fn()}
             />,
         );
 

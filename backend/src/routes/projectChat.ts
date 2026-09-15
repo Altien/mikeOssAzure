@@ -509,6 +509,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         projectId,
         userId,
         db,
+        messages,
     );
     // Story 30: when the member scoped this skill run to particular project
     // documents, the unselected ones are removed from the context the tools

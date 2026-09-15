@@ -48,7 +48,9 @@ interface Props {
      * the same storage path (no new version row), so the hook has no other
      * signal that the file changed.
      */
-    refetchKey?: number;
+    refetchKey?: number | string;
+    /** Open workspace tabs retain bytes in the viewer instead of the shared cache. */
+    cacheBytes?: boolean;
     /**
      * Citation quotes to highlight in the rendered output. The first match
      * is scrolled into view. Page numbers are ignored — DOCX has no explicit
@@ -178,17 +180,13 @@ async function tagWIdsOnRenderedDom(
             container.querySelectorAll("ins, del"),
         ) as HTMLElement[];
         const ids = data.ids ?? [];
-        let tagged = 0;
-        let mismatched = 0;
         for (let i = 0; i < Math.min(domEls.length, ids.length); i++) {
             const el = domEls[i];
             const info = ids[i];
             if (el.tagName.toLowerCase() !== info.kind) {
-                mismatched++;
                 continue;
             }
             el.setAttribute("data-w-id", info.w_id);
-            tagged++;
         }
     } catch (e) {
         console.warn("[DocxView] tagWIdsOnRenderedDom failed", e);
@@ -208,6 +206,7 @@ export function DocxView({
     onReady,
     highlightEdit,
     refetchKey,
+    cacheBytes = true,
     quotes,
     quoteFocusKey,
     warning,
@@ -247,6 +246,7 @@ export function DocxView({
         versionId,
         refetchKey,
         displayUrl,
+        cacheBytes,
     );
 
     /**
@@ -449,7 +449,7 @@ export function DocxView({
             scrollRef.current,
             quotesRef.current,
         );
-    }, [quoteKey, quoteFocusKey]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [quoteKey, quoteFocusKey]);
 
     // Fire onScrollChange (rAF-throttled) so parents can persist scroll
     // per-tab. We still maintain lastScrollTopRef locally for same-mount
@@ -473,7 +473,7 @@ export function DocxView({
 
     return (
         <div
-            className={`relative flex flex-col flex-1 overflow-hidden bg-gray-100 ${rounded ? "rounded-lg" : ""}`}
+            className={`document-canvas relative flex flex-col flex-1 overflow-hidden ${rounded ? "rounded-lg" : ""}`}
         >
             {warning && (
                 <div className="absolute top-2 left-2 z-10 flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800 shadow-sm">
@@ -504,7 +504,11 @@ export function DocxView({
                         <p className="text-sm text-red-500">{error}</p>
                     </div>
                 )}
-                <div ref={containerRef} className="docx-view-container" />
+                <div
+                    ref={containerRef}
+                    className="docx-view-container"
+                    hidden={!!error}
+                />
             </div>
         </div>
     );
