@@ -1,0 +1,58 @@
+# The Dev fork has three independent pnpm lock trees and a static-export web
+# bundle. Every command below must exist and exit successfully; no optional
+# test scripts or npm lockfiles are used.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - run: corepack enable && corepack prepare pnpm@11.1.2 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run test:coverage
+      - run: pnpm run build
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - run: corepack enable && corepack prepare pnpm@11.1.2 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run test:coverage
+      - run: pnpm run lint
+      - run: pnpm run build
+
+  word-addin:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: word-addin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - run: corepack enable && corepack prepare pnpm@11.1.2 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
