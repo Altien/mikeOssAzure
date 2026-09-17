@@ -80,7 +80,7 @@
     "@types/express-serve-static-core": "^4.19.9",
     "@types/html-to-text": "9.0.4",
     "@types/multer": "^1.4.13",
-    "@types/node": "^26.5.0",
+    "@types/node": "^26.5.1",
     "@types/supertest": "^7.2.1",
     "@vitest/coverage-v8": "^5.0.0",
     "only-allow": "^1.2.1",
