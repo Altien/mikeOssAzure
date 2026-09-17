@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { SiteLogo } from "@/app/components/site-logo";
-import { PillButton } from "@/app/components/ui/pill-button";
+import { pillButtonUIClassName } from "@/shared/ui/PillButtonUI.styles";
 import { authGlassCardClassName } from "@/app/components/auth/authStyles";
 import { authErrorDescription, safeAuthNext } from "@/app/lib/authRedirects";
 import { getAuthSession } from "@/app/lib/authApi";
@@ -80,14 +80,16 @@ function AuthCallbackContent() {
                             <p className="mt-3 text-sm leading-relaxed text-gray-600">
                                 {displayedError}
                             </p>
-                            <PillButton
-                                asChild
-                                tone="black"
-                                size="normal"
-                                className="mt-6"
+                            <Link
+                                href="/login"
+                                className={pillButtonUIClassName({
+                                    tone: "black",
+                                    size: "normal",
+                                    className: "mt-6",
+                                })}
                             >
-                                <Link href="/login">Return to login</Link>
-                            </PillButton>
+                                Return to login
+                            </Link>
                         </>
                     ) : (
                         <>

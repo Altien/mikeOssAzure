@@ -1,10 +1,10 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { TabPillButton } from "./tab-pill-button";
+import { TabPillButtonUI } from "./TabPillButtonUI";
 
-describe("TabPillButton", () => {
+describe("TabPillButtonUI", () => {
     it("defaults to type=button", () => {
-        render(<TabPillButton>All</TabPillButton>);
+        render(<TabPillButtonUI>All</TabPillButtonUI>);
         expect(screen.getByRole("button", { name: "All" })).toHaveAttribute(
             "type",
             "button",
@@ -12,7 +12,7 @@ describe("TabPillButton", () => {
     });
 
     it("reports its selected state to assistive tech", () => {
-        render(<TabPillButton active>Mine</TabPillButton>);
+        render(<TabPillButtonUI active>Mine</TabPillButtonUI>);
         const button = screen.getByRole("button", { name: "Mine" });
         expect(button).toHaveAttribute(
             "aria-pressed",
@@ -27,14 +27,14 @@ describe("TabPillButton", () => {
     });
 
     it("omits aria-pressed when the button is not a toggle", () => {
-        render(<TabPillButton>Neutral</TabPillButton>);
+        render(<TabPillButtonUI>Neutral</TabPillButtonUI>);
         const button = screen.getByRole("button", { name: "Neutral" });
         expect(button).not.toHaveAttribute("aria-pressed");
         expect(button).toHaveClass("liquid-glass-hover");
     });
 
     it("has a visible keyboard focus ring", () => {
-        render(<TabPillButton active>Mine</TabPillButton>);
+        render(<TabPillButtonUI active>Mine</TabPillButtonUI>);
         expect(screen.getByRole("button", { name: "Mine" })).toHaveClass(
             "liquid-glass-subtle",
             "focus-visible:ring-2",

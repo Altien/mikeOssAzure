@@ -3,8 +3,8 @@
 import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
 import { AlertCircle, X } from "lucide-react";
-import { GlassIconButton } from "@/app/components/ui/glass-icon-button";
-import { PillButton } from "@/app/components/ui/pill-button";
+import { GlassIconButtonUI } from "@/shared/ui/GlassIconButtonUI";
+import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { cn } from "@/app/lib/utils";
 import { LIQUID_GLASS_FLOAT_CLASS } from "@/shared/ui/LiquidGlassUI";
 
@@ -75,35 +75,35 @@ export function WarningPopup({
                     {(primaryAction || secondaryAction) && (
                         <div className="mt-2 flex items-center justify-end gap-2">
                             {secondaryAction && (
-                                <PillButton
+                                <PillButtonUI
                                     tone="white"
                                     size="sm"
                                     onClick={secondaryAction.onClick}
                                     disabled={secondaryAction.disabled}
                                 >
                                     {secondaryAction.label}
-                                </PillButton>
+                                </PillButtonUI>
                             )}
                             {primaryAction && (
-                            <PillButton
+                            <PillButtonUI
                                 tone="black"
                                 size="sm"
                                 onClick={primaryAction.onClick}
                                 disabled={primaryAction.disabled}
                             >
                                 {primaryAction.label}
-                            </PillButton>
+                            </PillButtonUI>
                             )}
                         </div>
                     )}
                 </div>
-                <GlassIconButton
+                <GlassIconButtonUI
                     onClick={onClose}
                     className="absolute right-1.5 top-1.5 h-5 w-5"
                     aria-label="Dismiss warning"
                 >
                     <X className="h-3 w-3" />
-                </GlassIconButton>
+                </GlassIconButtonUI>
             </div>
         </div>,
         document.body,

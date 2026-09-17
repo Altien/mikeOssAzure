@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Download, Trash2 } from "lucide-react";
-import { PillButton } from "@/app/components/ui/pill-button";
+import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 // Upstream divergence (sync-log: 3a10943): upstream wraps these actions in
@@ -188,7 +188,7 @@ export default function PrivacyDataPage() {
                                 history as JSON.
                             </p>
                         </div>
-                        <PillButton
+                        <PillButtonUI
                             tone="black"
                             size="sm"
                             onClick={handleExportChatData}
@@ -199,7 +199,7 @@ export default function PrivacyDataPage() {
                                 <Download className="h-4 w-4 shrink-0" />
                             )}
                             {isExportingChats ? "Exporting..." : "Export"}
-                        </PillButton>
+                        </PillButtonUI>
                     </div>
                     <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
                         <div className="space-y-1">
@@ -211,7 +211,7 @@ export default function PrivacyDataPage() {
                                 review chat records as JSON.
                             </p>
                         </div>
-                        <PillButton
+                        <PillButtonUI
                             tone="black"
                             size="sm"
                             onClick={handleExportTabularReviewsData}
@@ -224,7 +224,7 @@ export default function PrivacyDataPage() {
                             {isExportingTabularReviews
                                 ? "Exporting..."
                                 : "Export"}
-                        </PillButton>
+                        </PillButtonUI>
                     </div>
                     <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
                         <div className="space-y-1">
@@ -236,7 +236,7 @@ export default function PrivacyDataPage() {
                                 metadata, workflows, and review data as JSON.
                             </p>
                         </div>
-                        <PillButton
+                        <PillButtonUI
                             tone="black"
                             size="sm"
                             onClick={handleExportAccountData}
@@ -247,7 +247,7 @@ export default function PrivacyDataPage() {
                                 <Download className="h-4 w-4 shrink-0" />
                             )}
                             {isExportingAccount ? "Exporting..." : "Export"}
-                        </PillButton>
+                        </PillButtonUI>
                     </div>
                 </SettingsSection>
             </section>
@@ -267,7 +267,7 @@ export default function PrivacyDataPage() {
                                 review chat history.
                             </p>
                         </div>
-                        <PillButton
+                        <PillButtonUI
                             tone="danger"
                             size="sm"
                             onClick={() => setPendingDeleteAction("chats")}
@@ -276,7 +276,7 @@ export default function PrivacyDataPage() {
                         >
                             <Trash2 className="h-4 w-4 shrink-0" />
                             Delete
-                        </PillButton>
+                        </PillButtonUI>
                     </div>
                     <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
                         <div className="space-y-1">
@@ -288,7 +288,7 @@ export default function PrivacyDataPage() {
                                 including cells and review chats.
                             </p>
                         </div>
-                        <PillButton
+                        <PillButtonUI
                             tone="danger"
                             size="sm"
                             onClick={() =>
@@ -299,7 +299,7 @@ export default function PrivacyDataPage() {
                         >
                             <Trash2 className="h-4 w-4 shrink-0" />
                             Delete
-                        </PillButton>
+                        </PillButtonUI>
                     </div>
                     <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
                         <div className="space-y-1">
@@ -311,7 +311,7 @@ export default function PrivacyDataPage() {
                                 including documents, chats, and tabular reviews.
                             </p>
                         </div>
-                        <PillButton
+                        <PillButtonUI
                             tone="danger"
                             size="sm"
                             onClick={() => setPendingDeleteAction("projects")}
@@ -320,7 +320,7 @@ export default function PrivacyDataPage() {
                         >
                             <Trash2 className="h-4 w-4 shrink-0" />
                             Delete
-                        </PillButton>
+                        </PillButtonUI>
                     </div>
                 </SettingsSection>
             </section>

@@ -1,14 +1,14 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { ToggleSwitch } from "./toggle-switch";
+import { ToggleSwitchUI } from "./ToggleSwitchUI";
 
-describe("ToggleSwitch", () => {
+describe("ToggleSwitchUI", () => {
     it("renders the checked styling and emits the next value", () => {
         const onCheckedChange = vi.fn();
         const { container } = render(
-            <ToggleSwitch checked onCheckedChange={onCheckedChange}>
+            <ToggleSwitchUI checked onCheckedChange={onCheckedChange}>
                 Group documents
-            </ToggleSwitch>,
+            </ToggleSwitchUI>,
         );
 
         const toggle = screen.getByRole("switch", {
@@ -29,17 +29,21 @@ describe("ToggleSwitch", () => {
         expect(onCheckedChange).toHaveBeenCalledWith(false);
     });
 
-    it("renders the off-state track without a dark outline", () => {
+    it("gives the off-state track a contrasting boundary", () => {
         const { container } = render(
-            <ToggleSwitch checked={false} onCheckedChange={() => {}}>
+            <ToggleSwitchUI checked={false} onCheckedChange={() => {}}>
                 Group documents
-            </ToggleSwitch>,
+            </ToggleSwitchUI>,
         );
 
         const track = container.querySelector(
             '[data-slot="toggle-switch-track"]',
         );
-        expect(track).toHaveClass("bg-gray-300");
-        expect(track).not.toHaveClass("ring-1", "ring-gray-400");
+        expect(track).toHaveClass(
+            "bg-gray-300",
+            "ring-1",
+            "ring-inset",
+            "ring-gray-500",
+        );
     });
 });

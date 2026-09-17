@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { login, loginLocal } from "@/app/lib/authApi";
 import { useConfig } from "@/app/contexts/ConfigContext";
 import { Input } from "@/app/components/ui/input";
-import { PillButton } from "@/app/components/ui/pill-button";
+import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import Link from "next/link";
 import { SiteLogo } from "@/app/components/site-logo";
 import { useAuth } from "@/app/contexts/AuthContext";
@@ -134,7 +134,7 @@ export default function LoginPage() {
                         )}
 
                         {config.authProvider !== "entra" && <div className="pt-2">
-                            <PillButton
+                            <PillButtonUI
                                 type="submit"
                                 tone="black"
                                 size="normal"
@@ -142,16 +142,16 @@ export default function LoginPage() {
                                 className="w-full"
                             >
                                 {loading ? "Logging in..." : "Log in"}
-                            </PillButton>
+                            </PillButtonUI>
                         </div>}
-                        {config.authProvider === "entra" && <PillButton
+                        {config.authProvider === "entra" && <PillButtonUI
                             type="button" tone="black" size="normal" className="w-full"
                             onClick={() => {
                                 const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
                                 const next = new URL("/onboarding/profile", window.location.origin).toString();
                                 window.location.assign(`${base}/api/auth/login-provider/microsoft?returnUrl=${encodeURIComponent(next)}`);
                             }}
-                        >Sign in with Microsoft</PillButton>}
+                        >Sign in with Microsoft</PillButtonUI>}
                         {config.authProvider === "supabase" && <><AuthDivider />
                         <GoogleAuthButton
                             onError={setError}

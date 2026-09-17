@@ -2,18 +2,18 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { PillButton } from "./pill-button";
+import { PillButtonUI } from "./PillButtonUI";
 
-describe("PillButton", () => {
+describe("PillButtonUI", () => {
     it("renders its children as a button by default", () => {
-        render(<PillButton tone="black">Save</PillButton>);
+        render(<PillButtonUI tone="black">Save</PillButtonUI>);
         expect(
             screen.getByRole("button", { name: "Save" }),
         ).toBeInTheDocument();
     });
 
     it("defaults to type=button", () => {
-        render(<PillButton tone="black">Save</PillButton>);
+        render(<PillButtonUI tone="black">Save</PillButtonUI>);
         expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
             "type",
             "button",
@@ -21,32 +21,21 @@ describe("PillButton", () => {
     });
 
     it("has a visible keyboard focus ring", () => {
-        render(<PillButton tone="black">Save</PillButton>);
+        render(<PillButtonUI tone="black">Save</PillButtonUI>);
         expect(screen.getByRole("button", { name: "Save" })).toHaveClass(
             "focus-visible:ring-2",
         );
     });
 
-    it("keeps the focus ring when rendered via asChild", () => {
-        render(
-            <PillButton tone="blue" asChild>
-                <a href="/docs">Docs</a>
-            </PillButton>,
-        );
-        expect(screen.getByRole("link", { name: "Docs" })).toHaveClass(
-            "focus-visible:ring-2",
-        );
-    });
-
     it("applies the tone class", () => {
-        render(<PillButton tone="danger">Delete</PillButton>);
+        render(<PillButtonUI tone="danger">Delete</PillButtonUI>);
         expect(screen.getByRole("button", { name: "Delete" })).toHaveClass(
             "bg-red-600/90",
         );
     });
 
     it("uses the flat liquid surface for the white tone", () => {
-        render(<PillButton tone="white">Cancel</PillButton>);
+        render(<PillButtonUI tone="white">Cancel</PillButtonUI>);
 
         const button = screen.getByRole("button", { name: "Cancel" });
         expect(button).toHaveClass(
@@ -58,9 +47,9 @@ describe("PillButton", () => {
 
     it("applies the normal size class when requested", () => {
         render(
-            <PillButton tone="blue" size="normal">
+            <PillButtonUI tone="blue" size="normal">
                 Continue
-            </PillButton>,
+            </PillButtonUI>,
         );
         expect(screen.getByRole("button", { name: "Continue" })).toHaveClass(
             "text-sm",
@@ -68,7 +57,7 @@ describe("PillButton", () => {
     });
 
     it("defaults to the sm size class", () => {
-        render(<PillButton tone="blue">Next</PillButton>);
+        render(<PillButtonUI tone="blue">Next</PillButtonUI>);
         expect(screen.getByRole("button", { name: "Next" })).toHaveClass(
             "text-xs",
         );
@@ -82,10 +71,10 @@ describe("PillButton", () => {
         "reduces left padding by one when the %s size includes an icon",
         (size, horizontalPadding, iconLeftPadding) => {
             render(
-                <PillButton tone="blue" size={size}>
+                <PillButtonUI tone="blue" size={size}>
                     <svg aria-hidden="true" />
                     Continue
-                </PillButton>,
+                </PillButtonUI>,
             );
 
             expect(
@@ -96,9 +85,9 @@ describe("PillButton", () => {
 
     it("uses the icon-xs size for compact icon-only buttons", () => {
         render(
-            <PillButton tone="white" size="icon-xs" aria-label="Download">
+            <PillButtonUI tone="white" size="icon-xs" aria-label="Download">
                 <svg aria-hidden="true" />
-            </PillButton>,
+            </PillButtonUI>,
         );
 
         expect(screen.getByRole("button", { name: "Download" })).toHaveClass(
@@ -110,9 +99,9 @@ describe("PillButton", () => {
 
     it("keeps symmetric padding when no icon is included", () => {
         render(
-            <PillButton tone="blue" size="normal">
+            <PillButtonUI tone="blue" size="normal">
                 Continue
-            </PillButton>,
+            </PillButtonUI>,
         );
 
         const button = screen.getByRole("button", { name: "Continue" });
@@ -124,9 +113,9 @@ describe("PillButton", () => {
         const onClick = vi.fn();
         const user = userEvent.setup();
         render(
-            <PillButton tone="white" onClick={onClick}>
+            <PillButtonUI tone="white" onClick={onClick}>
                 Click me
-            </PillButton>,
+            </PillButtonUI>,
         );
 
         await user.click(screen.getByRole("button", { name: "Click me" }));
@@ -138,9 +127,9 @@ describe("PillButton", () => {
         const onClick = vi.fn();
         const user = userEvent.setup();
         render(
-            <PillButton tone="black" disabled onClick={onClick}>
+            <PillButtonUI tone="black" disabled onClick={onClick}>
                 Disabled
-            </PillButton>,
+            </PillButtonUI>,
         );
 
         await user.click(screen.getByRole("button", { name: "Disabled" }));
@@ -152,10 +141,10 @@ describe("PillButton", () => {
         const onClick = vi.fn();
         const user = userEvent.setup();
         const { container } = render(
-            <PillButton tone="black" loading onClick={onClick}>
+            <PillButtonUI tone="black" loading onClick={onClick}>
                 <svg data-testid="save-icon" aria-hidden="true" />
                 Saving...
-            </PillButton>,
+            </PillButtonUI>,
         );
 
         const button = screen.getByRole("button", { name: "Saving..." });
@@ -173,40 +162,4 @@ describe("PillButton", () => {
         expect(onClick).not.toHaveBeenCalled();
     });
 
-    it("renders the loading treatment when using asChild", () => {
-        const { container } = render(
-            <PillButton tone="blue" asChild loading>
-                <a href="/docs">
-                    <svg data-testid="docs-icon" aria-hidden="true" />
-                    Opening...
-                </a>
-            </PillButton>,
-        );
-
-        const link = screen.getByRole("link", { name: "Opening..." });
-        expect(link).toHaveAttribute("aria-busy", "true");
-        expect(link).toHaveAttribute("aria-disabled", "true");
-        expect(
-            container.querySelector('[data-slot="pill-button-spinner"]'),
-        ).toBeInTheDocument();
-        expect(screen.getByTestId("docs-icon").parentElement).toHaveClass(
-            "[&_svg]:hidden",
-        );
-    });
-
-    it("renders as its child element via asChild", () => {
-        render(
-            <PillButton tone="blue" asChild>
-                <a href="/docs">Docs</a>
-            </PillButton>,
-        );
-
-        const link = screen.getByRole("link", { name: "Docs" });
-        expect(link).toBeInTheDocument();
-        expect(link).toHaveAttribute("href", "/docs");
-        // asChild drops the intrinsic button type onto the child.
-        expect(link).not.toHaveAttribute("type");
-        // Pill styling still lands on the rendered child.
-        expect(link).toHaveClass("rounded-full");
-    });
 });

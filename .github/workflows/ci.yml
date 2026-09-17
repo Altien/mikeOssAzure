@@ -42,6 +42,7 @@ jobs:
       - run: pnpm run test:coverage
       - run: pnpm run lint
       - run: pnpm run build
+      - run: pnpm run catalog:build
 
   word-addin:
     runs-on: ubuntu-latest
