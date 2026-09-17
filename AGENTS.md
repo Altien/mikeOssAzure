@@ -1,5 +1,29 @@
 # Agent Guidance
 
+## Backend Structure
+
+Read `docs/backend-architecture.md` before adding or moving backend code.
+`backend/src/app.ts` mounts one router per domain. HTTP parsing and response
+mapping live in `backend/src/modules/<domain>/*.routes.ts`; data access and
+domain logic live behind exactly one named `*.service.ts` facade per module.
+Workers and other modules import that facade. `lib/` and `middleware/` never
+import modules, and `backend/src/routes/` is retired. Keep `buildApp()` free of
+startup side effects; required auth and document-lifecycle probes complete
+before the API listens or a worker claims jobs.
+
+`backend/src/__tests__/architecture.test.ts` enforces these boundaries.
+Document-version mutations belong to the documents module and use its
+lifecycle facade. Queue job handlers live in their domains and are composed
+in `backend/src/jobs/registry.ts`. Shared API/event types live in
+`packages/contracts/`. Preserve Dev's Entra/local session policy, Key Vault
+credential precedence, private Blob transport, text user IDs, and claim-token
+fences while applying this structure.
+
+Database changes use the next numbered `backend/migrations/NNNN_*.sql` file.
+The same numbered history initializes fresh and existing private PostgreSQL
+databases. Use `web_anon`, `authenticated`, and `service_role` grants with
+explicit signatures; this deployment has no Supabase auth schema or RLS.
+
 ## Shared UI guidance
 
 Read `docs/design-system.md` for non-trivial UI changes. Prefer existing

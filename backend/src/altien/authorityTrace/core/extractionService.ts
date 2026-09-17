@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { DocIndex } from "../../../lib/chat/types";
+import type { DocIndex } from "../../../modules/chat/chat.service";
 import {
   downloadFile,
   uploadFile,
   versionStorageKey,
 } from "../../../lib/storage";
 import { createServerSupabase } from "../../../lib/supabase";
+import { createDocumentVersion } from "../../../modules/documents/documents.service";
 import {
   extractDocxForVerification,
   extractPdfForVerification,
@@ -173,9 +174,7 @@ export async function extractDocumentForVerification(
   if (extractedDocumentError) {
     throw new Error(extractedDocumentError.message);
   }
-  const { error: extractedVersionError } = await db
-    .from("document_versions")
-    .insert({
+  const { error: extractedVersionError } = await createDocumentVersion(db, {
       id: extractedVersionId,
       document_id: extractedDocumentId,
       storage_path: storagePath,
@@ -186,7 +185,7 @@ export async function extractDocumentForVerification(
       file_type: "md",
       size_bytes: markdownBytes.byteLength,
       page_count: extraction.pageCount,
-    });
+  });
   if (extractedVersionError) throw new Error(extractedVersionError.message);
   const { error: currentVersionError } = await db
     .from("documents")

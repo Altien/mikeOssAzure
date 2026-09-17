@@ -1,0 +1,294 @@
+// Tracked-change (assistant edit) operations: listing change ids embedded in
+// the active DOCX and accepting / rejecting an individual edit.
+
+import { downloadFile, uploadFile } from "../../lib/storage";
+import {
+    extractTrackedChangeIds,
+    resolveTrackedChange,
+} from "../../lib/docxTrackedChanges";
+import { buildDownloadUrl } from "../../lib/downloadTokens";
+import { contentSha256, loadActiveVersion } from "../../lib/documentVersions";
+import { ensureDocAccess } from "../../lib/access";
+import { can } from "../../lib/permissions";
+import { downloadFilenameForVersion, type Db } from "./documents.shared";
+import { ensureDocumentAccess } from "./documents.access";
+import { updateDocumentVersion } from "./documents.lifecycle";
+// devLog comes from lib/chat/types (a leaf file — importing the whole chat
+// barrel here just for a logger would be a heavy dependency edge).
+import { devLog } from "../../lib/log";
+
+// ---------------------------------------------------------------------------
+// Tracked-change ids
+// ---------------------------------------------------------------------------
+
+export async function getTrackedChangeIds(
+    documentId: string,
+    userId: string,
+    userEmail: string | undefined,
+    versionIdParam: string | null,
+    db: Db,
+): Promise<{ ok: true; ids: unknown } | { ok: false; detail: string }> {
+    const access = await ensureDocumentAccess(documentId, userId, userEmail, db);
+    if (!access.ok) return { ok: false, detail: "Document not found" };
+
+    const active = await loadActiveVersion(documentId, db, versionIdParam);
+    if (!active) return { ok: false, detail: "No file available" };
+
+    const raw = await downloadFile(active.storage_path);
+    if (!raw) return { ok: false, detail: "Document bytes not available" };
+
+    const ids = await extractTrackedChangeIds(Buffer.from(raw));
+    return { ok: true, ids };
+}
+
+// ---------------------------------------------------------------------------
+// Accept / reject a tracked-change edit
+// ---------------------------------------------------------------------------
+
+export async function resolveEdit(
+    mode: "accept" | "reject",
+    documentId: string,
+    editId: string,
+    userId: string,
+    userEmail: string | undefined,
+    db: Db,
+): Promise<
+    | { ok: true; body: Record<string, unknown> }
+    | { ok: false; detail: string; error?: unknown }
+> {
+    devLog(`[edit-resolution] incoming ${mode}`, {
+        userId,
+        documentId,
+        editId,
+    });
+
+    const { data: edit, error: editErr } = await db
+        .from("document_edits")
+        .select("id, document_id, change_id, del_w_id, ins_w_id, status")
+        .eq("id", editId)
+        .eq("document_id", documentId)
+        .single();
+    devLog(`[edit-resolution] fetched edit row`, { edit, editErr });
+    if (!edit) {
+        devLog(`[edit-resolution] edit not found, returning 404`);
+        return { ok: false, detail: "Edit not found" };
+    }
+    // Idempotent: if the edit is already resolved, return the current doc
+    // state so stale UI (e.g. an old chat reloaded in a new session) can
+    // reconcile without throwing.
+    if (edit.status !== "pending") {
+        devLog(`[edit-resolution] edit already resolved`, {
+            editId,
+            status: edit.status,
+        });
+        const { data: doc } = await db
+            .from("documents")
+            .select("current_version_id, user_id, project_id, org_id, workflow_id")
+            .eq("id", documentId)
+            .single();
+        if (!doc) {
+            devLog(`[edit-resolution] doc not found for resolved edit`);
+            return { ok: false, detail: "Document not found" };
+        }
+        const accessResolved = await ensureDocAccess(doc, userId, userEmail, db);
+        if (!accessResolved.ok) {
+            devLog(`[edit-resolution] doc access denied for resolved edit`);
+            return { ok: false, detail: "Document not found" };
+        }
+        const activeForResolved = await loadActiveVersion(documentId, db);
+        const payload = {
+            ok: true,
+            already_resolved: true,
+            status: edit.status,
+            version_id: doc.current_version_id ?? null,
+            download_url: activeForResolved
+                ? buildDownloadUrl(
+                      activeForResolved.storage_path,
+                      downloadFilenameForVersion(
+                          activeForResolved.filename,
+                          activeForResolved.version_number,
+                          activeForResolved.source === "assistant_edit",
+                      ),
+                  )
+                : null,
+            remaining_pending: 0,
+        };
+        devLog(`[edit-resolution] returning already-resolved payload`, payload);
+        return { ok: true, body: payload };
+    }
+
+    const { data: doc, error: docErr } = await db
+        .from("documents")
+        .select("id, current_version_id, user_id, project_id, org_id, workflow_id")
+        .eq("id", documentId)
+        .single();
+    devLog(`[edit-resolution] fetched doc`, { doc, docErr });
+    if (!doc) return { ok: false, detail: "Document not found" };
+    const access = await ensureDocAccess(doc, userId, userEmail, db);
+    // Resolving an edit rewrites the version's bytes, so read access is not
+    // enough — a viewer-only workflow share is refused like a stranger.
+    if (!access.ok || !can(access.projectRole, "content.edit"))
+        return { ok: false, detail: "Document not found" };
+
+    const active = await loadActiveVersion(documentId, db);
+    const latestPath = active?.storage_path ?? null;
+    devLog(`[edit-resolution] resolved latestPath`, {
+        latestPath,
+        current_version_id: doc.current_version_id,
+    });
+    if (!latestPath) return { ok: false, detail: "No file to edit" };
+
+    const raw = await downloadFile(latestPath);
+    devLog(`[edit-resolution] downloaded bytes`, {
+        byteLength: raw?.byteLength ?? 0,
+    });
+    if (!raw) return { ok: false, detail: "Document bytes not available" };
+
+    const wIds = [edit.del_w_id, edit.ins_w_id].filter(
+        (v): v is string => typeof v === "string" && v.length > 0,
+    );
+    const { bytes: resolvedBytes, found } = await resolveTrackedChange(
+        Buffer.from(raw),
+        wIds,
+        mode,
+    );
+    devLog(`[edit-resolution] resolveTrackedChange result`, {
+        mode,
+        change_id: edit.change_id,
+        wIds,
+        found,
+        resolvedByteLength: resolvedBytes?.byteLength ?? 0,
+    });
+    if (!found) {
+        devLog(
+            `[edit-resolution] change_id not found in docx — updating status only`,
+        );
+        // Still update DB status so the UI reflects the decision — the change
+        // may have been auto-consumed by a previous accept/reject pass.
+        const { error: updErr } = await db
+            .from("document_edits")
+            .update({ status: mode === "accept" ? "accepted" : "rejected", resolved_at: new Date().toISOString() })
+            .eq("id", editId);
+        devLog(`[edit-resolution] status-only update`, { updErr });
+        const payload = {
+            ok: true,
+            version_id: doc.current_version_id,
+            download_url: buildDownloadUrl(
+                latestPath,
+                downloadFilenameForVersion(
+                    active?.filename,
+                    active?.version_number ?? null,
+                    active?.source === "assistant_edit",
+                ),
+            ),
+            remaining_pending: 0,
+        };
+        devLog(`[edit-resolution] returning not-found payload`, payload);
+        return { ok: true, body: payload };
+    }
+
+    // Overwrite bytes in place at the current version's storage path —
+    // accept/reject mutates the existing version rather than spawning a
+    // new row. This keeps document_versions lean (one row per assistant
+    // edit, not one per accept/reject click) and avoids the N-versions-
+    // per-doc churn as users resolve pending changes.
+    const ab = resolvedBytes.buffer.slice(
+        resolvedBytes.byteOffset,
+        resolvedBytes.byteOffset + resolvedBytes.byteLength,
+    ) as ArrayBuffer;
+
+    // Clear the hash before the bytes change, and set it again after. The
+    // stored object and the hash live in different systems, so they cannot be
+    // written atomically; ordering it this way means a crash between the two
+    // leaves the version UNHASHED, which the manifest reports as unverifiable
+    // (true). The other order can leave the old hash attesting to content the
+    // version no longer holds, which is the one thing the manifest must never
+    // do — and a process kill returns no error object to compensate on.
+    //
+    // The same pre-write retires the PDF rendition: the bytes are about to
+    // change, so any rendition this version carried would no longer match
+    // them (served by /display, copied onto replicas by replicate_document).
+    // Both retirements ride on this one write, so the cleanup trigger fires
+    // once for them, and it goes through the lifecycle helper so the inline
+    // capture/complete pair still removes the rendition when DB_JOBS_ENABLED
+    // is false and no runner will ever drain the trigger's row.
+    const { error: clearErr } = await updateDocumentVersion(
+        db,
+        documentId,
+        doc.current_version_id as string,
+        { content_sha256: null, pdf_storage_path: null },
+    );
+    if (clearErr) {
+        // Nothing has been written to storage yet, so the version is intact;
+        // refuse rather than rewrite bytes the row could not be made to match.
+        devLog(`[edit-resolution] pre-write clear failed; leaving bytes alone`, {
+            clearErr,
+        });
+        // Not a missing edit: the database refused the write. Carry the
+        // cause so the route answers 500 (a retrying client should retry)
+        // instead of the 404 every other failure here maps to.
+        return { ok: false, detail: "Failed to resolve edit", error: clearErr };
+    }
+
+    devLog(`[edit-resolution] overwriting bytes in place`, {
+        latestPath,
+        byteLength: ab.byteLength,
+    });
+    await uploadFile(
+        latestPath,
+        ab,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    );
+
+    // Record the hash of the bytes that are now in storage. This second write
+    // changes only content_sha256, so the trigger re-queues the extracted-text
+    // cache key it already queued above — an idempotent object delete, and
+    // still one row fewer than the three this click used to produce. If it
+    // fails, the version simply stays unhashed: unverifiable, and true.
+    const { error: versionErr } = await updateDocumentVersion(
+        db,
+        documentId,
+        doc.current_version_id as string,
+        { content_sha256: contentSha256(ab) },
+    );
+    if (versionErr) {
+        devLog(`[edit-resolution] hash write failed; version stays unhashed`, {
+            versionErr,
+        });
+    }
+
+    const { error: statusErr } = await db
+        .from("document_edits")
+        .update({
+            status: mode === "accept" ? "accepted" : "rejected",
+            resolved_at: new Date().toISOString(),
+        })
+        .eq("id", editId);
+    devLog(`[edit-resolution] updated document_edits status`, {
+        editId,
+        newStatus: mode === "accept" ? "accepted" : "rejected",
+        statusErr,
+    });
+    const { count: remainingPending } = await db
+        .from("document_edits")
+        .select("id", { count: "exact", head: true })
+        .eq("document_id", documentId)
+        .eq("status", "pending");
+    devLog(`[edit-resolution] remaining pending count`, { remainingPending });
+
+    const payload = {
+        ok: true,
+        version_id: doc.current_version_id,
+        download_url: buildDownloadUrl(
+            latestPath,
+            downloadFilenameForVersion(
+                active?.filename,
+                active?.version_number ?? null,
+                active?.source === "assistant_edit",
+            ),
+        ),
+        remaining_pending: remainingPending ?? 0,
+    };
+    devLog(`[edit-resolution] returning success payload`, payload);
+    return { ok: true, body: payload };
+}

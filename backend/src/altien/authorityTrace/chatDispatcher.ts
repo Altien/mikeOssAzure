@@ -1,5 +1,5 @@
 import type { createServerSupabase } from "../../lib/supabase";
-import type { DocIndex, ToolCall } from "../../lib/chat/types";
+import type { DocIndex, ToolCall } from "../../modules/chat/chat.service";
 import {
   ExternalSourceCache,
 } from "../externalSources/cache";

@@ -8,6 +8,7 @@ import {
     TableStickyCell,
     TableScrollArea,
     TablePrimaryCell,
+    TableRow,
     rowActionSelectionIds,
     selectionAnchorAfterRowSelection,
     selectionRangeIds,
@@ -259,5 +260,35 @@ describe("table tree indentation", () => {
                 name: "Select Nested workflow",
             }).parentElement?.parentElement,
         ).toHaveStyle({ paddingLeft: "37px" });
+    });
+});
+
+describe("clickable table rows", () => {
+    // A row is a click shortcut for opening its item, not a control of its
+    // own: it already contains a real checkbox and a real row-actions button.
+    // Giving the row role="button" + tabIndex would add a third tab stop per
+    // row (90 on a 30-row page), announce the whole row as one unnamed button
+    // nesting those two controls, and make Space open the row instead of
+    // paging the list. Live A/B: .claude/pr295-evidence/fr-02-row-tabstops-pr.log.
+    it("leaves a clickable row out of the tab order and the a11y tree", async () => {
+        const onClick = vi.fn();
+        render(
+            <TableRow onClick={onClick} data-testid="row">
+                <TablePrimaryCell
+                    label="Lease agreement"
+                    selected={false}
+                    onSelectionChange={vi.fn()}
+                />
+            </TableRow>,
+        );
+
+        const row = screen.getByTestId("row");
+        expect(row).not.toHaveAttribute("role");
+        expect(row).not.toHaveAttribute("tabindex");
+        expect(screen.queryByRole("button")).not.toBeInTheDocument();
+
+        // The click target itself is untouched.
+        await userEvent.click(row);
+        expect(onClick).toHaveBeenCalledTimes(1);
     });
 });

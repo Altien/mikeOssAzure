@@ -5,11 +5,9 @@
 // (lib/dbq/handlers.ts), which runs in a worker where importing an Express
 // router would drag in the whole HTTP surface.
 
-import type { createServerSupabase } from "./supabase";
-import { normalizeDisplayName } from "./userLookup";
 import { listAccessibleProjectIds } from "./access";
-
-type Db = ReturnType<typeof createServerSupabase>;
+import { normalizeDisplayName } from "./userLookup";
+import type { Db } from "./supabase";
 
 /** One CSV export is a single flat page; this caps the artifact size. */
 export const AUDIT_EXPORT_LIMIT = 2000;
@@ -129,7 +127,13 @@ export async function queryEvents(
     q: AuditQuery,
     resolveDisplayNames = true,
 ) {
-    const projectIds = await accessibleProjectIds(db, userId, email);
+    // Shared with the chat/document listings: one definition of "projects this
+    // user can see" for everything that scopes a collection query. The private
+    // copy that used to live here had drifted from it — it counted every
+    // project the caller owns including organization ones without running the
+    // organization access check, and it never admitted an organization project
+    // the caller can reach through their membership.
+    const projectIds = await listAccessibleProjectIds(userId, email, db);
     let query = db
         .from("audit_events")
         .select(

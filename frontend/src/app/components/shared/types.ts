@@ -1,3 +1,4 @@
+import type { AssistantEvent as WireAssistantEvent } from "@mike/contracts";
 // Shared TypeScript types for Mike AI legal assistant
 // Upstream divergence (OSS-6, dev-only authority trace): the one dev
 // addition to this otherwise-verbatim file is the AuthorityTraceAssistantEvent
@@ -12,12 +13,12 @@ import type {
   SourceDocumentQuote,
   SourceDocumentType,
   SourceSubdocument,
-} from "../../../../../backend/src/lib/sourceDocuments";
+} from "@mike/contracts";
 import type {
   AskInputItem as SharedAskInputItem,
   AskInputResponseItem as SharedAskInputResponseItem,
   AskInputsEvent as SharedAskInputsEvent,
-} from "../../../../../backend/src/lib/chat/types";
+} from "@mike/contracts";
 
 export interface Folder {
   id: string;
@@ -202,6 +203,10 @@ export type AskInputsResponseEvent = {
   responses: AskInputResponseItem[];
 };
 
+type WireActivity<T extends WireAssistantEvent["type"]> = Extract<
+  WireAssistantEvent,
+  { type: T }
+>;
 export type AssistantEvent =
     | AuthorityTraceAssistantEvent
     | { type: "reasoning"; text: string; isStreaming?: boolean }
@@ -604,29 +609,6 @@ function formatCellLocator(sheet?: string, cell?: string): string {
   return cell ?? sheet ?? "";
 }
 
-/**
- * Reader-friendly cell locator, e.g. "Sheet1, cell B7" (or "cells B7:C9" for a
- * range). Unlike `formatCellLocator`, this avoids the Excel `!` notation, which
- * reads poorly in prose. Used for the single-quote detail shown to the reader;
- * the machine-style `Sheet1!B7` form is kept where locators are joined together.
- */
-function formatCellLocatorReadable(sheet?: string, cell?: string): string {
-  if (!cell) return sheet ?? "";
-  const cellWord = cell.includes(":") ? "cells" : "cell";
-  const cellPart = `${cellWord} ${cell}`;
-  return sheet ? `${sheet}, ${cellPart}` : cellPart;
-}
-
-/** `{sheet, cell}` locators for a citation's quotes (spreadsheet sources). */
-export function getCitationCells(
-  a: Citation,
-): { sheet?: string; cell?: string }[] {
-  if (a.kind === "case") return [];
-  return getDocumentCitationQuotes(a)
-    .filter((q) => q.cell || q.sheet)
-    .map((q) => ({ sheet: q.sheet, cell: q.cell }));
-}
-
 export function expandDocumentQuoteEntry(entry: {
   page?: number | string;
   quote: string;
@@ -652,9 +634,7 @@ export function expandDocumentQuoteEntry(entry: {
   return [{ page: pageNum, quote: entry.quote }];
 }
 
-export function getDocumentCitationQuotes(
-  a: Citation,
-): DocumentCitationQuote[] {
+function getDocumentCitationQuotes(a: Citation): DocumentCitationQuote[] {
   if (a.kind === "case") return [];
   if (Array.isArray(a.quotes) && a.quotes.length) {
     return a.quotes.filter((entry) => entry.quote.trim().length > 0);
@@ -699,23 +679,11 @@ export function formatCitationPage(a: Citation): string {
   return `Page ${a.page}`;
 }
 
-/** Locator label for a single quote — "Page 3" for docs, "Sheet1, cell B7" for cells. */
-export function formatCitationQuotePage(
-  a: Citation,
-  page: number | string,
-  quote?: DocumentCitationQuote,
-): string {
-  if (a.kind !== "case" && isSpreadsheetFilename(a.filename)) {
-    return formatCellLocatorReadable(quote?.sheet, quote?.cell);
-  }
-  return `Page ${page}`;
-}
-
 /**
  * Reader-friendly version of a single raw quote: replaces [[PAGE_BREAK]] with
  * "...". Spreadsheet quotes now carry plain cell values, so no stripping.
  */
-export function cleanCitationQuoteText(_a: Citation, rawQuote: string): string {
+function cleanCitationQuoteText(rawQuote: string): string {
   return rawQuote.replaceAll(PAGE_BREAK_SENTINEL, "...");
 }
 
@@ -727,7 +695,7 @@ export function displayCitationQuote(a: Citation): string {
       .join(" / ");
   }
   return getDocumentCitationQuotes(a)
-    .map((q) => cleanCitationQuoteText(a, q.quote))
+    .map((q) => cleanCitationQuoteText(q.quote))
     .filter(Boolean)
     .join(" / ");
 }

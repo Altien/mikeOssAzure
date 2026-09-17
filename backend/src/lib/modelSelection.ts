@@ -14,7 +14,7 @@ import {
     type RouterModelSelections,
 } from "./routerModels";
 import { resolveRequestedModel } from "./routerModels";
-import { createServerSupabase } from "./supabase";
+import { createServerSupabase, type Db } from "./supabase";
 import { UserFacingError } from "./safeError";
 
 export const MODEL_REQUIRED_DETAIL =
@@ -108,7 +108,7 @@ export async function resolveEffectiveChatModel(args: {
     lastSelectedModel?: string | null;
     apiKeys: UserApiKeys;
     userId: string;
-    db: ReturnType<typeof createServerSupabase>;
+    db: Db;
 }): Promise<EffectiveChatModelResult> {
     const requestedText = args.requested?.trim() ?? "";
     if (requestedText) {

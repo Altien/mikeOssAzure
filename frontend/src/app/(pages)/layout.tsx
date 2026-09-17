@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, useEffect } from "react";
+import { useCallback, useMemo, useState, useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { PanelLeft } from "lucide-react";
 import { useAuth } from "@/app/contexts/AuthContext";
@@ -41,6 +41,12 @@ export default function MikeLayout({
         return true;
     });
 
+    // Persist what is actually on screen. The mount initializer above reads
+    // this key back but `isSidebarOpen` starts open on desktop regardless, so
+    // storing anything else leaves the restored preference disagreeing with
+    // the rendered sidebar and the first toggle click is spent re-syncing
+    // them. Remembering a collapsed sidebar across reloads needs the mount
+    // path to apply the stored value too — a separate change.
     useEffect(() => {
         if (typeof window !== "undefined" && window.innerWidth >= 768) {
             localStorage.setItem("sidebarOpen", isSidebarOpen.toString());
@@ -75,6 +81,24 @@ export default function MikeLayout({
         [],
     );
 
+    const setSidebarOpen = useCallback((open: boolean) => {
+        const isSmall =
+            typeof window !== "undefined" && window.innerWidth < 768;
+        if (isSmall) {
+            if (!open) setIsSidebarOpen(false);
+            return;
+        }
+        setIsSidebarOpen(open);
+        setIsSidebarOpenDesktop(open);
+    }, []);
+
+    const pageChromeValue = useMemo(
+        () => ({ mobileActionsContainer }),
+        [mobileActionsContainer],
+    );
+
+    const sidebarValue = useMemo(() => ({ setSidebarOpen }), [setSidebarOpen]);
+
     useEffect(() => {
         if (!authLoading && !isAuthenticated) {
             router.push("/login");
@@ -89,22 +113,8 @@ export default function MikeLayout({
 
     return (
         <ChatHistoryProvider>
-            <PageChromeContext.Provider value={{ mobileActionsContainer }}>
-                <SidebarContext.Provider
-                    value={{
-                        setSidebarOpen: (open) => {
-                            const isSmall =
-                                typeof window !== "undefined" &&
-                                window.innerWidth < 768;
-                            if (isSmall) {
-                                if (!open) setIsSidebarOpen(false);
-                                return;
-                            }
-                            setIsSidebarOpen(open);
-                            setIsSidebarOpenDesktop(open);
-                        },
-                    }}
-                >
+            <PageChromeContext.Provider value={pageChromeValue}>
+                <SidebarContext.Provider value={sidebarValue}>
                     <div className="h-dvh flex flex-col bg-app-background">
                         <div className="flex-1 flex min-w-0 overflow-visible">
                             <AppSidebar

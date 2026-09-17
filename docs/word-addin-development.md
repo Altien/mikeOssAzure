@@ -220,6 +220,10 @@ Upstream's hermetic Playwright suite (`e2e/`) and live Word-on-the-web demo reco
 
 ---
 
+Files with no add-in-specific behavior are not vendored at all: they are
+aliased straight at the web source (`@mike/*` in `webpack.config.js` and
+`tsconfig.json`), so there is nothing to keep in sync.
+
 ## Troubleshooting
 
 **Word shows "The content is blocked because it isn't signed by a valid security certificate" — including when it worked before**

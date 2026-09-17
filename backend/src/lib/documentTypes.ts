@@ -107,3 +107,8 @@ export function contentTypeForDocumentType(fileType: string | null | undefined) 
       return "application/octet-stream";
   }
 }
+
+/** Lowercased filename extension, or an empty string when absent. */
+export function documentSuffix(filename: string): string {
+  return filename.includes(".") ? filename.split(".").pop()!.toLowerCase() : "";
+}

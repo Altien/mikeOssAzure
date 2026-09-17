@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { completeText, type UserApiKeys } from "../../lib/llm";
 import { createServerSupabase } from "../../lib/supabase";
+import { createDocumentVersion } from "../../modules/documents/documents.service";
 import {
   deleteFile,
   downloadFile,
@@ -244,9 +245,7 @@ export function createDatabaseExternalSourcePersistence(args: {
       if (documentError) throw new Error(documentError.message);
       documentInserted = true;
 
-      const { error: versionError } = await db
-        .from("document_versions")
-        .insert({
+      const { error: versionError } = await createDocumentVersion(db, {
           id: documentVersionId,
           document_id: documentId,
           storage_path: storagePath,
@@ -256,7 +255,7 @@ export function createDatabaseExternalSourcePersistence(args: {
           filename: safeFilename(source.title),
           file_type: "txt",
           size_bytes: bytes.byteLength,
-        });
+      });
       if (versionError) throw new Error(versionError.message);
 
       const { error: readyError } = await db

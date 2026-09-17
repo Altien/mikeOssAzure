@@ -1,6 +1,6 @@
 import { downloadFile } from "../../../lib/storage";
 import { createServerSupabase } from "../../../lib/supabase";
-import type { DocIndex } from "../../../lib/chat/types";
+import type { DocIndex } from "../../../modules/chat/chat.service";
 import {
   verificationReportSchema,
   verificationProposalSchema,

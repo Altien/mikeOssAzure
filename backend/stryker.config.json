@@ -8,16 +8,12 @@
   "mutate": [
     "src/lib/access.ts",
     "src/lib/downloadTokens.ts",
-    "src/lib/chat/citations.ts",
+    "src/modules/chat/engine/citations.ts",
     "src/lib/privateIp.ts",
-    "src/lib/chat/verifyCitations.ts"
+    "src/modules/chat/engine/verifyCitations.ts"
   ],
   "coverageAnalysis": "perTest",
-  "reporters": [
-    "html",
-    "clear-text",
-    "progress"
-  ],
+  "reporters": ["html", "clear-text", "progress"],
   "htmlReporter": {
     "fileName": "reports/mutation/mutation.html"
   },

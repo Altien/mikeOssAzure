@@ -1,8 +1,7 @@
 import { createServerSupabase } from "./supabase";
 import { UserFacingError } from "./safeError";
+import type { Db } from "./supabase";
 import { resolveModel } from "./llm/models";
-
-type Db = ReturnType<typeof createServerSupabase>;
 
 export type RouterSlug = "openrouter" | "vercel" | "opencode-go";
 

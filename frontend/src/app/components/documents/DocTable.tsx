@@ -31,6 +31,7 @@ import {
     type UploadOutcome,
     type UploadProgress,
     type UploadProgressStatus,
+    MikeApiError,
 } from "@/app/lib/mikeApi";
 import { runUserExport } from "@/app/lib/asyncExport";
 import type {
@@ -1327,6 +1328,17 @@ export function DocTable({
         } catch (e) {
             console.error("renameDocument failed", e);
             setDocuments((prev) => (previous ? prev.map((d) => (d.id === docId ? previous : d)) : prev));
+            // The backend refuses to rename a document that has no file yet
+            // (nothing to carry the name); say so instead of snapping back
+            // silently. Anything else gets the generic fallback.
+            setCollectionActionWarning(
+                e instanceof MikeApiError && e.status === 404
+                    ? "This document has no file yet, so it can't be renamed."
+                    : userFacingApiError(
+                          e,
+                          "This document could not be renamed. Please try again.",
+                      ),
+            );
         }
     }
 

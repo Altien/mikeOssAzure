@@ -1,7 +1,7 @@
 import {
   PROJECT_EXTRA_TOOLS,
   TOOLS,
-} from "../../lib/chat/tools/toolSchemas";
+} from "../../modules/chat/chat.service";
 import { createHash } from "node:crypto";
 import {
   completeText,

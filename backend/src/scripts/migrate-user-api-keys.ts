@@ -11,7 +11,7 @@
 // surrounding sequence.
 
 import { createServerSupabase } from "../lib/supabase";
-import { setUserApiKey } from "../lib/userApiKeys";
+import { setUserApiKey } from "../modules/user/user.service";
 
 type LegacyRow = {
     user_id: string;

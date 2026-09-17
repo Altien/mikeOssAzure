@@ -21,7 +21,7 @@ import {
   resolveCapabilityContractWithLlm,
 } from "../altien/skills/capabilities";
 import { skillAnalysisModel } from "../altien/skills/settings";
-import { getUserModelSettings } from "../lib/userSettings";
+import { getUserModelSettings } from "../modules/user/user.service";
 
 const db = createServerSupabase();
 

@@ -66,3 +66,7 @@ export async function resolveProviderSecret(
     }
     return "";
 }
+
+export async function resolveVercelApiKey(): Promise<string> {
+    return resolveProviderSecret("ai-gateway-api-key", ["vercel-ai-gateway-api-key"]);
+}

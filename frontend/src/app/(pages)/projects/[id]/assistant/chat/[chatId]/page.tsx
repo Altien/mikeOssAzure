@@ -593,6 +593,7 @@ export default function ProjectAssistantChatPage() {
         ].join("|");
     }, [messages]);
 
+
     useEffect(() => {
         void refreshProject();
     }, [projectMutationSignature, refreshProject]);
@@ -1381,7 +1382,21 @@ export default function ProjectAssistantChatPage() {
     };
 
     const handleDeleteDoc = async (docId: string) => {
-        await deleteDocument(docId);
+        try {
+            await deleteDocument(docId);
+        } catch (err) {
+            // The explorer fires this as `void onDeleteDoc(...)`, so a
+            // rejection here would be an unhandled promise and a silent
+            // no-op for the user. Say what happened, keep the row.
+            console.error("Delete failed:", err);
+            setDocumentDropError(
+                userFacingApiError(
+                    err,
+                    "This file could not be deleted. Please try again.",
+                ),
+            );
+            return;
+        }
         setProject((prev) =>
             prev
                 ? {

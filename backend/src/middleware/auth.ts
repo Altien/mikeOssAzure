@@ -3,7 +3,7 @@ import { validateSupabaseToken } from "../lib/auth/providers/supabase.js";
 import { validateLocalToken } from "../lib/auth/providers/local.js";
 import { validateEntraToken } from "../lib/auth/providers/entra.js";
 import { tenantAccess } from "./tenantAccess.js";
-import { upsertUserProfile } from "../lib/userSettings.js";
+import { upsertUserProfile } from "../lib/userLookup.js";
 import { createServerSupabase } from "../lib/supabase.js";
 import { getConfig } from "../lib/config.js";
 import { readServerSession, refreshServerSession } from "../lib/serverSession.js";

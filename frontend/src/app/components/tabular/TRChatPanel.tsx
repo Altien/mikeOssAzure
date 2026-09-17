@@ -35,6 +35,7 @@ import {
     EventBlock,
     ReasoningBlock,
 } from "../assistant/message/EventBlocks";
+import { readSseFrames } from "@/app/lib/sse";
 import {
     LIQUID_GLASS_FLAT_CLASS,
     LIQUID_GLASS_HOVER_CLASS,
@@ -520,6 +521,10 @@ export function TRChatPanel({
     const messagesContainerRef = useRef<HTMLDivElement>(null);
     const latestUserMessageRef = useRef<HTMLDivElement>(null);
     const abortRef = useRef<AbortController | null>(null);
+    // Bumped whenever the message list stops belonging to the running stream
+    // (new chat, loaded chat, new submit, unmount). The stream loop checks it
+    // before writing, so an orphaned stream can't repaint someone else's chat.
+    const streamGenerationRef = useRef(0);
     const hasScrolledRef = useRef(false);
     const scrollLatestUserToTop = useCallback((behavior: ScrollBehavior) => {
         const container = messagesContainerRef.current;
@@ -694,6 +699,22 @@ export function TRChatPanel({
         }
     }
 
+    // Detach whatever is still streaming from the message list: stop the
+    // 16ms drip timer and retire the generation so the in-flight loop stops
+    // writing into a list it no longer owns. Deliberately does NOT abort —
+    // the backend reads a closed socket as a cancellation and persists a
+    // truncated "Cancelled by user." answer, so closing the panel or
+    // switching chats must let the request run to completion. Only
+    // handleCancel (the Stop control) aborts.
+    function detachActiveStream() {
+        streamGenerationRef.current += 1;
+        stopDrip();
+    }
+
+    // This panel is conditionally mounted, so without a cleanup the drip
+    // interval survives it.
+    useEffect(() => detachActiveStream, []); // eslint-disable-line react-hooks/exhaustive-deps
+
     function updateLastContentEvent(
         prev: TRMessage[],
         text: string,
@@ -842,6 +863,7 @@ export function TRChatPanel({
     // ---- chat actions ----
 
     function handleNewChat() {
+        detachActiveStream();
         setCurrentChatId(null);
         setCurrentChatTitle(null);
         setCurrentChatModel(null);
@@ -852,6 +874,9 @@ export function TRChatPanel({
     async function handleDeleteChat(chatId: string) {
         setChats((prev) => prev.filter((c) => c.id !== chatId));
         if (chatId === currentChatId) {
+            // Same exit as New chat / Load chat: retire the in-flight stream's
+            // generation so its late events cannot land in the emptied list.
+            detachActiveStream();
             setCurrentChatId(null);
             setCurrentChatTitle(null);
             setCurrentChatModel(null);
@@ -878,6 +903,7 @@ export function TRChatPanel({
     }
 
     async function handleLoadChat(chatId: string) {
+        detachActiveStream();
         const chat = chats.find((c) => c.id === chatId);
         setCurrentChatId(chatId);
         setCurrentChatTitle(chat?.title ?? null);
@@ -925,7 +951,8 @@ export function TRChatPanel({
             scrollLatestUserToTop("smooth");
         }, 50);
 
-        stopDrip();
+        detachActiveStream();
+        const gen = streamGenerationRef.current;
         dripTargetRef.current = "";
         dripDisplayLenRef.current = 0;
         eventsRef.current = [];
@@ -943,27 +970,18 @@ export function TRChatPanel({
                 message.model,
                 message.reasoning,
             );
-            if (!response.body) throw new Error("No response body");
+            for await (const frame of readSseFrames(response, {
+                signal: controller.signal,
+            })) {
+                // Another chat owns the message list now — stop writing,
+                // but keep draining: breaking out cancels the reader, which
+                // closes the socket and makes the server persist a
+                // truncated answer.
+                if (streamGenerationRef.current !== gen) continue;
 
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = "";
+                const data = frame as Record<string, unknown>;
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split("\n");
-                buffer = lines.pop() ?? "";
-
-                for (const line of lines) {
-                    if (!line.startsWith("data:")) continue;
-                    const dataStr = line.slice(5).trim();
-                    if (dataStr === "[DONE]") continue;
-
-                    try {
-                        const data = JSON.parse(dataStr);
-
+                try {
                         if (data.type === "chat_id") {
                             const newId = data.chatId as string;
                             setCurrentChatId(newId);
@@ -1453,11 +1471,12 @@ export function TRChatPanel({
                             });
                             continue;
                         }
-                    } catch {
-                        /* skip malformed */
-                    }
+                } catch (err) {
+                    console.warn("[TRChatPanel] failed to handle SSE event:", data, err);
                 }
             }
+
+            if (streamGenerationRef.current !== gen) return;
 
             flushDrip();
             clearStreamingPlaceholders();
@@ -1473,6 +1492,10 @@ export function TRChatPanel({
                 return updated;
             });
         } catch (err: unknown) {
+            // Superseded stream: the list it would repaint is someone
+            // else's now.
+            if (streamGenerationRef.current !== gen) return;
+
             const isAbort = err instanceof Error && err.name === "AbortError";
             stopDrip();
             clearStreamingPlaceholders();
@@ -1510,7 +1533,7 @@ export function TRChatPanel({
             });
         } finally {
             setIsLoading(false);
-            abortRef.current = null;
+            if (abortRef.current === controller) abortRef.current = null;
         }
     }
 

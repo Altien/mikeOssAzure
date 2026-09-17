@@ -20,8 +20,7 @@ import type {
   StreamChatResult,
   UserApiKeys,
 } from "./types";
-import { resolveSecret, resolveProviderSecret } from "../envSecrets";
-import { resolveVercelApiKey } from "../userApiKeys";
+import { resolveSecret, resolveProviderSecret, resolveVercelApiKey } from "../envSecrets";
 import { REASONING_LEVELS } from "./types";
 
 const OPENROUTER_BASE_URL =
@@ -54,7 +53,8 @@ const ROUTER_LABELS: Record<RouterProvider, string> = {
 };
 
 async function requiredKey(label: string, secretName: string, override?: string | null): Promise<string> {
-  const key = override?.trim() || await resolveSecret(secretName);
+  const aliases = secretName === "anthropic-api-key" ? ["claude-api-key"] : [];
+  const key = override?.trim() || await resolveProviderSecret(secretName, aliases);
   if (!key) throw new Error(`${label} is not configured for this organisation. Ask an administrator to set the ${secretName} Key Vault secret in /install.`);
   return key;
 }

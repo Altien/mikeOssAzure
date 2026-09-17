@@ -205,6 +205,48 @@ describe("usePaginatedTabularReviews", () => {
         expect(result.current.getReviewOwnerId("row-0")).toBe("user-1");
     });
 
+    it("clears selectingAll when the search changes while the ids request is in flight", async () => {
+        // 30 rows + 1 over-fetch row, so hasMore is true and select-all has
+        // to go to the network.
+        listTabularReviewsMock.mockResolvedValue(
+            Array.from({ length: 31 }, (_, index) => review(`row-${index}`)),
+        );
+        let resolveIds!: (rows: { id: string; user_id: string }[]) => void;
+        listTabularReviewIdsMock.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    resolveIds = resolve;
+                }),
+        );
+
+        const { result, rerender } = renderHook(
+            ({ search }) => usePaginatedTabularReviews({ search }),
+            { initialProps: { search: "" } },
+        );
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        let pending!: Promise<void>;
+        act(() => {
+            pending = result.current.selectAllMatching();
+        });
+        expect(result.current.selectingAll).toBe(true);
+
+        // The user keeps typing: the list query is re-issued (and the list
+        // request version bumps) while the ids request is still open.
+        rerender({ search: "lease" });
+        await waitFor(() => expect(result.current.loading).toBe(false));
+
+        await act(async () => {
+            resolveIds([{ id: "stale", user_id: "user-1" }]);
+            await pending;
+        });
+
+        // The checkbox is usable again...
+        expect(result.current.selectingAll).toBe(false);
+        // ...and the ids fetched for the previous query were not applied.
+        expect(result.current.selectedReviewIds).toEqual([]);
+    });
+
     it("selects already-loaded reviews without a network request once everything is loaded", async () => {
         listTabularReviewsMock.mockResolvedValueOnce([
             review("one"),

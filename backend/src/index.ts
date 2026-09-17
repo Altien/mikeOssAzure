@@ -10,6 +10,7 @@ import { initDownloadSigningSecret } from "./lib/downloadTokens";
 import { initManifestSigningKey, manifestPublicKey } from "./lib/manifestSigning";
 import { checkSchemaVersion } from "./lib/schemaCheck";
 import { initServerSessionKeys } from "./lib/serverSession";
+import { enforceDocumentLifecycleMigration } from "./lib/dbq/lifecycleGuard";
 import { startAllWorkers, stopAllWorkers } from "./workerRuntime";
 
 const PORT = process.env.PORT ?? 3001;
@@ -65,6 +66,7 @@ async function start(): Promise<void> {
   await initServerSessionKeys();
   await initDownloadSigningSecret();
   await initManifestSigningKey();
+  await enforceDocumentLifecycleMigration();
   const signingKey = manifestPublicKey();
   if (signingKey) console.log(`Export manifests signed with key ${signingKey.key_id}`);
 

@@ -1,5 +1,5 @@
-import type { ToolCall } from "../../lib/chat/types";
-import { findTextMatches } from "../../lib/chat/tools/documentOps";
+import type { ToolCall } from "../../modules/chat/chat.service";
+import { findTextMatches } from "../../modules/chat/chat.service";
 import {
   registerVerificationArtifact,
   type VerificationArtifactStore,

@@ -5,6 +5,7 @@ import React, {
     useContext,
     useCallback,
     useEffect,
+    useMemo,
     useRef,
     useState,
     ReactNode,
@@ -204,7 +205,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
     }, [broadcastAuthState, fetchAndApplySession]);
 
-    const signOut = async () => {
+    const signOut = useCallback(async () => {
         const generation = ++authGeneration.current;
         try {
             const result = await logout("local");
@@ -218,46 +219,61 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 setAuthError("Unable to sign out. Please try again.");
             throw error;
         }
-    };
+    }, [broadcastAuthState]);
 
-    const signInLocal = async (email: string) => {
+    const signInLocal = useCallback(async (email: string) => {
         const generation = ++authGeneration.current;
         await loginLocal(email);
         if (generation !== authGeneration.current) return;
         await fetchAndApplySession();
         broadcastAuthState("signed-in");
-    };
+    }, [broadcastAuthState, fetchAndApplySession]);
 
-    const updateEmail = async (email: string) => {
+    const updateEmail = useCallback(async (email: string) => {
         const { user: nextUser } = await updateAuthEmail(
             email,
             "/settings?emailChange=processed",
         );
         setUser(nextUser);
         return nextUser;
-    };
+    }, []);
 
-    const setPassword = async (password: string, nonce?: string) => {
+    const setPassword = useCallback(async (password: string, nonce?: string) => {
         const { user: nextUser } = await updateAuthPassword(password, false, nonce);
         setUser(nextUser);
-    };
+    }, []);
+
+    // A fresh object here re-renders every consumer of this context on every
+    // provider render, sign-in state change or not. Each callback above is
+    // itself memoized, so this only changes when user/authLoading/authError do.
+    const value = useMemo<AuthContextType>(
+        () => ({
+            user,
+            isAuthenticated: !!user,
+            authLoading,
+            authError,
+            signOut,
+            signInLocal,
+            getAccessToken: async () => null,
+            updateEmail,
+            setPassword,
+            refreshSession,
+            retrySession: refreshSession,
+        }),
+        [
+            user,
+            authLoading,
+            authError,
+            signOut,
+            signInLocal,
+            updateEmail,
+            setPassword,
+            refreshSession,
+        ],
+    );
 
     return (
-        <AuthContext.Provider
-            value={{
-                user,
-                isAuthenticated: !!user,
-                authLoading,
-                authError,
-                signOut,
-                signInLocal,
-                getAccessToken: async () => null,
-                updateEmail,
-                setPassword,
-                refreshSession,
-                retrySession: refreshSession,
-            }}
-        >
+        <AuthContext.Provider value={value}>
             {children}
         </AuthContext.Provider>
     );

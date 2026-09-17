@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { streamChat, streamProjectChat } from "@/app/lib/mikeApi";
 import { assistantHistoryContent } from "@/app/lib/assistantHistoryContent";
+import { readSseFrames } from "@/app/lib/sse";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { isPanelDocument } from "@/app/components/shared/types";
 import type {
@@ -436,53 +437,35 @@ export function useAssistantChat({
         throw new Error(`Chat request failed with status ${response.status}`);
       }
 
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error("No response body");
+      // One shared reader (lib/sse.ts) owns the wire format: CRLF, the
+      // decoder flush for a body that closes without a trailing newline, and
+      // [DONE]. Leaving this loop cancels the underlying reader.
+      for await (const frame of readSseFrames(response, {
+        signal: controller.signal,
+      })) {
+        // A newer turn — or another thread — owns eventsRef and the message
+        // list now, so this stream must stop writing to them.
+        if (!isCurrentRequest()) return null;
 
-      const decoder = new TextDecoder();
-      let buffer = "";
+        const data = frame as Record<string, unknown>;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (!isCurrentRequest()) {
-          await reader.cancel().catch(() => {});
-          return null;
-        }
-        if (done) {
-          // Flush any bytes still held by TextDecoder. A response is allowed
-          // to close without a final newline, so the remaining buffer must be
-          // parsed as the last SSE record instead of being discarded.
-          buffer += decoder.decode();
-        } else {
-          buffer += decoder.decode(value, { stream: true });
-        }
-        const lines = buffer.split("\n");
-        buffer = done ? "" : lines.pop() || "";
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || !trimmed.startsWith("data:")) continue;
-
-          const dataStr = trimmed.slice(5).trim();
-          if (dataStr === "[DONE]") continue;
-
-          try {
-            const data = JSON.parse(dataStr);
-
+        try {
             if (data.type === "chat_id") {
+              const streamed = data.chatId as string;
               const isNewChatId =
-                data.chatId !== chatId && data.chatId !== streamedChatId;
-              streamedChatId = data.chatId;
-              setChatId(data.chatId);
-              setCurrentChatId(data.chatId);
+                streamed !== chatId && streamed !== streamedChatId;
+              streamedChatId = streamed;
+              setChatId(streamed);
+              setCurrentChatId(streamed);
               if (isNewChatId && onChatCreated) {
-                adoptedThreadKeyRef.current = `${projectId ?? ""}:${data.chatId}`;
-                onChatCreated(data.chatId);
+                adoptedThreadKeyRef.current = `${projectId ?? ""}:${streamed}`;
+                onChatCreated(streamed);
               }
-              if (typeof data.assistantMessageId === "string") {
+              const assistantMessageId = data.assistantMessageId;
+              if (typeof assistantMessageId === "string") {
                 updateLatestAssistantMessage((message) => ({
                   ...message,
-                  id: data.assistantMessageId,
+                  id: assistantMessageId,
                 }));
               }
               continue;
@@ -1370,17 +1353,12 @@ export function useAssistantChat({
               }));
               continue;
             }
-          } catch (e) {
-            console.warn(
-              "[useAssistantChat] failed to parse SSE line:",
-              trimmed,
-              e,
-            );
-          }
+        } catch (e) {
+          console.warn("[useAssistantChat] failed to handle SSE event:", data, e);
         }
-
-        if (done) break;
       }
+
+      if (!isCurrentRequest()) return null;
 
       finalizeStreamingReasoning();
       setIsResponseLoading(false);

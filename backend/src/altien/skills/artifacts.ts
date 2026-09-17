@@ -2,7 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { deleteFile, downloadFile, uploadFile } from "../../lib/storage";
 import { createServerSupabase } from "../../lib/supabase";
-import { getUserModelSettings } from "../../lib/userSettings";
+import { createDocumentVersions } from "../../modules/documents/documents.service";
+import { getUserModelSettings } from "../../modules/user/user.service";
 import { planSkillRename, type AdaptationFile } from "./adaptation";
 import { hashActionPayload } from "./actions";
 import { skillAnalysisModel } from "./settings";
@@ -184,9 +185,7 @@ async function persistTree(args: {
       file_type: file.mediaType,
       size_bytes: file.bytes.byteLength,
     }));
-    const insertedVersions = await args.db
-      .from("document_versions")
-      .insert(versions);
+    const insertedVersions = await createDocumentVersions(args.db, versions);
     throwOnDbError(insertedVersions);
     for (const version of versions) {
       const activated = await args.db

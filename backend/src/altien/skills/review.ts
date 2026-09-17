@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { downloadFile } from "../../lib/storage";
 import { createServerSupabase } from "../../lib/supabase";
-import { getUserModelSettings } from "../../lib/userSettings";
+import { getUserModelSettings } from "../../modules/user/user.service";
 import {
   analyseSkillInstructions,
   type SkillAnalysisArtifact,

@@ -69,6 +69,11 @@ export function usePaginatedWorkflows(options: {
     const [selectingAllRequest, setSelectingAllRequest] = useState(false);
     const [retryVersion, setRetryVersion] = useState(0);
     const requestVersionRef = useRef(0);
+    // Select-all owns its own counter. requestVersionRef tracks the list
+    // query, and a search/scope/sort change bumps it while an ids request is
+    // still in flight — gating the "done" flag on that version left the
+    // header checkbox disabled until the next full reload.
+    const selectAllRequestRef = useRef(0);
     const loadingMoreRef = useRef(false);
     const loadMoreControllerRef = useRef<AbortController | null>(null);
 
@@ -323,6 +328,7 @@ export function usePaginatedWorkflows(options: {
         }
 
         const requestVersion = requestVersionRef.current;
+        const selectAllRequest = ++selectAllRequestRef.current;
         setSelectingAllRequest(true);
         try {
             const rows = await listWorkflowIds({
@@ -344,8 +350,26 @@ export function usePaginatedWorkflows(options: {
         setSelectedWorkflowIds(
           Array.from(new Set([...additionalIds, ...rows.map((row) => row.id)])),
         );
+        } catch (error) {
+            // Call sites fire this with `void`, so without a catch a failed
+            // id fetch is an unhandled rejection and the checkbox just
+            // silently does nothing. Surface it the way loadMore does.
+            if (requestVersion === requestVersionRef.current) {
+                console.error(
+                    "[workflows] failed to select all matching",
+                    error,
+                );
+                setLoadMoreError(
+                    paginationError(error, "Unable to select all workflows"),
+                );
+            }
         } finally {
-            setSelectingAllRequest(false);
+            // Clear for the request that set the flag, whatever the list
+            // query has moved on to meanwhile. A newer select-all owns the
+            // flag instead.
+            if (selectAllRequest === selectAllRequestRef.current) {
+                setSelectingAllRequest(false);
+            }
         }
     },
     [

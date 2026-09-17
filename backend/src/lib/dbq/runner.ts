@@ -14,6 +14,7 @@
 // backend replicas partition the work safely.
 
 import { createServerSupabase } from "../supabase";
+import { jobErrorMessage } from "./jobError";
 import { deleteFile } from "../storage";
 import { enqueueAppJobDelivery } from "../queue/appJobsQueue";
 import { redisEnabled } from "./driver";
@@ -36,13 +37,18 @@ function pollMs(): number {
     return redisEnabled() ? 60_000 : 5_000;
 }
 const CLAIM_BATCH = 5;
-/** A "running" job whose claim is older than this is presumed crashed. */
-const STALE_SECONDS = 600;
+/**
+ * A "running" job whose claim is older than this is presumed crashed.
+ * Exported because a handler that claims sibling rows of its own kind (the
+ * document.cleanup coalescer) has to use the same stale threshold this loop
+ * does, or the two disagree about who owns a row.
+ */
+export const STALE_SECONDS = 600;
 /** Retention: how long finished rows are kept for inspection. */
 const DONE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const FAILED_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const SWEEP_EVERY_MS = 60 * 60 * 1000;
-const RETRY_UNTIL_SUCCESS_KINDS = new Set(["storage.cleanup"]);
+const RETRY_UNTIL_SUCCESS_KINDS = new Set(["storage.cleanup", "document.cleanup"]);
 
 /**
  * Exponential backoff for retries: 30s, 90s, 270s, ... capped at 30 min.
@@ -62,7 +68,7 @@ export function retryDelayMs(attempts: number): number {
  * contained: the row still lands in "failed" for inspection.
  */
 export type DbJobFailureHook = (db: Db, job: DbJob) => Promise<void>;
-export const DB_JOB_FAILURE_HOOKS: Record<string, DbJobFailureHook> = {};
+
 
 /**
  * Run one claimed job through its handler and persist the outcome:
@@ -76,6 +82,7 @@ export async function processClaimedJob(
     db: Db,
     handlers: DbJobHandlers,
     job: DbJob,
+    failureHooks: Readonly<Record<string, DbJobFailureHook>> = {},
 ): Promise<void> {
     // A UUID is stable across PostgREST/JavaScript timestamp precision loss.
     // SQL renews lease_expires_at and finishes only this claim token.
@@ -145,8 +152,11 @@ export async function processClaimedJob(
             console.warn("[dbq] claim lost before completion", { id: job.id });
     } catch (err) {
         clearInterval(heartbeat);
-        const message =
-            err instanceof Error ? err.message : String(err ?? "unknown");
+        const message = jobErrorMessage(err);
+        // Destructive memory operations remove version metadata only after a
+        // cleanup job owns the object path. That job is the last durable
+        // pointer, so storage cleanup must retry until success rather than
+        // becoming a finite-attempt failed row that a later sweep can erase.
         const deferred = err instanceof DbJobDeferredError;
         const spent = !deferred && !retryUntilSuccess && job.attempts >= job.max_attempts;
         const deferredAt = deferred ? Date.parse(err.runAt) : Number.NaN;
@@ -169,7 +179,7 @@ export async function processClaimedJob(
             return;
         }
         if (spent) {
-            const hook = DB_JOB_FAILURE_HOOKS[job.kind];
+            const hook = failureHooks[job.kind];
             if (hook) {
                 try {
                     await hook(db, job);
@@ -214,6 +224,7 @@ export async function processClaimedJob(
 export async function runDbJobTick(
     db: Db,
     handlers: DbJobHandlers,
+    failureHooks: Readonly<Record<string, DbJobFailureHook>> = {},
 ): Promise<number> {
     const { data, error } = await db.rpc("claim_db_jobs", {
         p_limit: CLAIM_BATCH,
@@ -229,7 +240,7 @@ export async function runDbJobTick(
     // allSettled defensively: processClaimedJob handles its own errors, but
     // one job's unexpected rejection must never abandon the rest of a batch.
     const outcomes = await Promise.allSettled(
-        jobs.map((job) => processClaimedJob(db, handlers, job)),
+        jobs.map((job) => processClaimedJob(db, handlers, job, failureHooks)),
     );
     for (const [index, outcome] of outcomes.entries()) {
         if (outcome.status === "rejected") {
@@ -308,6 +319,7 @@ export async function runDbJobRetentionSweep(
         .eq("status", "failed")
         .neq("kind", "storage.cleanup")
         .neq("kind", "account.delete")
+        .neq("kind", "document.cleanup")
         .lt("finished_at", failedCutoff);
 }
 
@@ -323,7 +335,7 @@ export function dbJobsEnabled(): boolean {
  * Start the poll loop (idempotent). Ticks never overlap: a tick that is
  * still running when the next interval fires simply skips that interval.
  */
-export function startDbJobRunner(handlers: DbJobHandlers): void {
+export function startDbJobRunner(handlers: DbJobHandlers, failureHooks: Readonly<Record<string, DbJobFailureHook>> = {}): void {
     if (!dbJobsEnabled()) {
         console.log("[dbq] disabled via DB_JOBS_ENABLED=false");
         return;
@@ -333,7 +345,7 @@ export function startDbJobRunner(handlers: DbJobHandlers): void {
 
     const tick = () => {
         if (inFlight) return;
-        inFlight = runDbJobTick(db, handlers)
+        inFlight = runDbJobTick(db, handlers, failureHooks)
             .catch((err) => console.error("[dbq] tick failed", err))
             .finally(() => {
                 inFlight = null;

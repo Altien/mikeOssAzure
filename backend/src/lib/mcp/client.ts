@@ -501,10 +501,6 @@ export function base64Url(buffer: Buffer) {
         .replace(/=+$/g, "");
 }
 
-function sha256Base64Url(value: string) {
-    return base64Url(crypto.createHash("sha256").update(value).digest());
-}
-
 export function stateHash(state: string) {
     return crypto.createHash("sha256").update(state).digest("hex");
 }

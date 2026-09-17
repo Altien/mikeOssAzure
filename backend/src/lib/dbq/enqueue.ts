@@ -105,6 +105,47 @@ export async function liveDbJobExists(
 }
 
 /**
+ * Ask BullMQ to pick up cleanup rows the document_versions trigger inserted.
+ *
+ * Those rows are written by a database trigger inside the deleting
+ * transaction, so no application code holds their ids to deliver them the way
+ * enqueueDbJob does for the rows it inserts itself. Without this the only
+ * collector is the poller — which idles at 60s precisely because Redis
+ * deployments expect delivery to be instant — and a bulk delete's bytes stay
+ * live for hours.
+ *
+ * Delivering a handful is enough: handleDocumentCleanup coalesces the rest of
+ * the backlog into the run this triggers. Claims are idempotent (a duplicate
+ * delivery matches zero rows), so over-delivering is harmless, and the whole
+ * thing is best-effort: a failure just means the poll backstop runs them.
+ */
+export async function requestDocumentCleanupDelivery(
+    db: Db,
+    limit = 5,
+): Promise<number> {
+    if (process.env.DB_JOBS_ENABLED === "false") return 0;
+    if (!redisEnabled()) return 0;
+    try {
+        const { data, error } = await db
+            .from("db_jobs")
+            .select("id")
+            .eq("kind", "document.cleanup")
+            .eq("status", "pending")
+            .limit(limit);
+        if (error) throw error;
+        const ids = (data ?? []).map((row) => row.id as string);
+        await Promise.all(ids.map((id) => enqueueAppJobDelivery(id)));
+        return ids.length;
+    } catch (err) {
+        console.error(
+            "[dbq] document.cleanup delivery failed; poll backstop will run it:",
+            err instanceof Error ? err.message : err,
+        );
+        return 0;
+    }
+}
+
+/**
  * Durably delete storage objects. An unavailable queue is an error: an inline
  * best-effort fallback could report success while permanently leaking bytes.
  */

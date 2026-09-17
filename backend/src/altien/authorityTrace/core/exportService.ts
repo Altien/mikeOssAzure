@@ -3,6 +3,7 @@ import { checkProjectAccess } from "../../../lib/access";
 import { buildDownloadUrl } from "../../../lib/downloadTokens";
 import { uploadFile, versionStorageKey } from "../../../lib/storage";
 import { createServerSupabase } from "../../../lib/supabase";
+import { createDocumentVersion } from "../../../modules/documents/documents.service";
 import { buildReviewHtml } from "./htmlExports";
 import { getAuthorityTraceWorkspace } from "./reviewService";
 import { getCitationVerificationRun } from "./service";
@@ -154,7 +155,7 @@ export async function exportCitationReview(
     status: "ready",
   });
   if (documentError) throw new Error(documentError.message);
-  const { error: versionError } = await db.from("document_versions").insert({
+  const { error: versionError } = await createDocumentVersion(db, {
     id: versionId,
     document_id: documentId,
     storage_path: storagePath,

@@ -6,6 +6,7 @@ import {
   uploadFile,
 } from "../../lib/storage";
 import { createServerSupabase } from "../../lib/supabase";
+import { createDocumentVersions } from "../../modules/documents/documents.service";
 import { briefEligibleRequirements } from "./artifacts";
 import type {
   DiscoveredSkill,
@@ -521,9 +522,7 @@ export async function storeSkillSnapshot(args: {
         size_bytes: item.file.byteSize,
       })),
     ];
-    const insertedVersions = await db
-      .from("document_versions")
-      .insert(versionRows);
+    const insertedVersions = await createDocumentVersions(db, versionRows);
     throwOnDbError(insertedVersions, "Failed to create skill DMS versions.");
     for (const row of versionRows) {
       const updated = await db
