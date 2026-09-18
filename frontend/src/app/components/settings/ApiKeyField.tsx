@@ -6,6 +6,9 @@ import { FieldLabel } from "@/app/components/ui/form-field";
 import { SettingsTextInput } from "@/app/components/settings/SettingsTextInput";
 import { settingsGlassIconButtonClassName } from "@/app/(pages)/settings/settingsStyles";
 
+// The server returns only status, never a saved credential.
+const SAVED_KEY_MASK = "x".repeat(24);
+
 // Upstream divergence (sync-log: 3a10943): upstream gates save/remove behind
 // MfaVerificationPopup (Supabase-auth TOTP step-up). Dev has no app-level MFA
 // (Entra enforces it at the IdP), so save/remove run directly.
@@ -14,7 +17,7 @@ export function ApiKeyField({
     description,
     placeholder,
     hasSavedKey,
-    isServerConfigured,
+    isServerConfigured = false,
     onSave,
     onRemove,
 }: {
@@ -22,12 +25,13 @@ export function ApiKeyField({
     description?: string;
     placeholder: string;
     hasSavedKey: boolean;
-    isServerConfigured: boolean;
+    isServerConfigured?: boolean;
     onSave: (value: string) => Promise<boolean>;
     onRemove: () => Promise<boolean>;
 }) {
     const [value, setValue] = useState("");
     const [reveal, setReveal] = useState(false);
+    const [isEditing, setIsEditing] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [saved, setSaved] = useState(false);
 
@@ -36,6 +40,7 @@ export function ApiKeyField({
     }, [hasSavedKey]);
 
     const dirty = value.trim().length > 0;
+    const showMask = hasSavedKey && !isEditing && !dirty;
 
     const handleSave = async () => {
         setIsSaving(true);
@@ -76,8 +81,12 @@ export function ApiKeyField({
             <div className="space-y-2">
                 <div className="relative flex-1">
                     <SettingsTextInput
-                        type={reveal ? "text" : "password"}
-                        value={value}
+                        aria-label={label}
+                        type={reveal && !showMask ? "text" : "password"}
+                        value={showMask ? SAVED_KEY_MASK : value}
+                        readOnly={showMask}
+                        onFocus={() => setIsEditing(true)}
+                        onBlur={() => setIsEditing(false)}
                         onChange={(event) => setValue(event.target.value)}
                         placeholder={
                             isServerConfigured
