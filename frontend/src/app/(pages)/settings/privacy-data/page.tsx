@@ -5,6 +5,7 @@ import { Download, Trash2 } from "lucide-react";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
+import { WarningPopup } from "@/app/components/popups/WarningPopup";
 // Upstream divergence (sync-log: 3a10943): upstream wraps these actions in
 // a Supabase Auth MFA step-up flow (MfaVerificationPopup +
 // needsMfaVerification + isMfaRequiredError retries). Dev did not adopt
@@ -62,6 +63,7 @@ export default function PrivacyDataPage() {
     const [isExportingChats, setIsExportingChats] = useState(false);
     const [isExportingTabularReviews, setIsExportingTabularReviews] =
         useState(false);
+    const [warningMessage, setWarningMessage] = useState<string | null>(null);
 
     const downloadBlob = (blob: Blob, filename: string) => {
         const url = URL.createObjectURL(blob);
@@ -111,7 +113,7 @@ export default function PrivacyDataPage() {
             await runAsyncExport("account", "mike-account-export.json");
         } catch (error) {
             devLog("[privacy-data] export account failed", { error });
-            alert("Failed to export account data. Please try again.");
+            setWarningMessage("Failed to export account data. Please try again.");
         } finally {
             setIsExportingAccount(false);
         }
@@ -124,7 +126,7 @@ export default function PrivacyDataPage() {
             await runAsyncExport("chats", "mike-chat-export.json");
         } catch (error) {
             devLog("[privacy-data] export chats failed", { error });
-            alert("Failed to export chats. Please try again.");
+            setWarningMessage("Failed to export chats. Please try again.");
         } finally {
             setIsExportingChats(false);
         }
@@ -137,7 +139,7 @@ export default function PrivacyDataPage() {
             await runAsyncExport("tabular-reviews", "mike-tabular-reviews-export.json");
         } catch (error) {
             devLog("[privacy-data] export tabular reviews failed", { error });
-            alert("Failed to export tabular reviews. Please try again.");
+            setWarningMessage("Failed to export tabular reviews. Please try again.");
         } finally {
             setIsExportingTabularReviews(false);
         }
@@ -161,7 +163,7 @@ export default function PrivacyDataPage() {
             setPendingDeleteAction(null);
         } catch (error) {
             devLog("[privacy-data] delete failed", { action, error });
-            alert("Failed to delete data. Please try again.");
+            setWarningMessage("Failed to delete data. Please try again.");
         } finally {
             setDeletingAction(null);
         }
@@ -340,6 +342,12 @@ export default function PrivacyDataPage() {
                     if (!pendingDeleteAction) return;
                     void handleDeleteData(pendingDeleteAction);
                 }}
+            />
+            <WarningPopup
+                open={!!warningMessage}
+                title="Request failed"
+                message={warningMessage}
+                onClose={() => setWarningMessage(null)}
             />
         </div>
     );
