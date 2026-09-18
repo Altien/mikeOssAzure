@@ -895,10 +895,14 @@ export async function getApiKeyStatus(): Promise<ApiKeyStatus> {
     return apiRequest<ApiKeyStatus>("/user/api-keys");
 }
 
-// Upstream divergence (sync-log: fe942475): NOT SUPPORTED — upstream's
-// getOllamaModels (GET /models/ollama, local Ollama models) is omitted.
-// Dev's backend does not serve local models (see providerForModel in
-// backend/src/lib/llm/models.ts). Do not re-add during conflict resolution.
+export interface ConfiguredModelOption {
+    id: string;
+    label: string;
+    group: "Configured";
+    location: "cloud" | "local";
+    source: "Configured";
+}
+
 export interface RouterCatalogModel {
     id: string;
     label: string;
@@ -908,6 +912,13 @@ export interface RouterCatalogModel {
         variesByProvider?: boolean;
         tiered?: boolean;
     };
+}
+
+export async function getConfiguredModels(): Promise<ConfiguredModelOption[]> {
+    const { models } = await apiRequest<{ models: ConfiguredModelOption[] }>(
+        "/models/configured",
+    );
+    return models;
 }
 
 export async function getOpenRouterModels(): Promise<RouterCatalogModel[]> {

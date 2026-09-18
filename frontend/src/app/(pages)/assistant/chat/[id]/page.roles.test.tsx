@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Grant-reachable chats appear in the global sidebar since the parity
@@ -34,13 +34,16 @@ vi.mock("@/app/hooks/useAssistantChat", () => ({
 vi.mock("@/app/components/assistant/ChatView", () => ({
     ChatView: ({
         canSend,
+        accessResolved,
         chat,
     }: {
         canSend?: boolean;
+        accessResolved?: boolean;
         chat?: { access_role?: string } | null;
     }) => (
         <>
             <span data-testid="can-send">{String(canSend)}</span>
+            <span data-testid="access-resolved">{String(accessResolved)}</span>
             <span data-testid="chat-role">{chat?.access_role ?? "unknown"}</span>
         </>
     ),
@@ -74,6 +77,31 @@ describe("global chat page composer gating", () => {
             expect(screen.getByTestId("can-send")).toHaveTextContent("false"),
         );
         expect(screen.getByTestId("chat-role")).toHaveTextContent("viewer");
+    });
+
+    it("holds the composer back until the served standing lands", async () => {
+        let resolveChat!: (detail: ReturnType<typeof chatDetail>) => void;
+        getChat.mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    resolveChat = resolve;
+                }),
+        );
+        render(<AssistantChatPage />);
+
+        // Unknown, not denied: `canSend` is false here, so rendering the
+        // composer would show an editor the read-only placeholder.
+        expect(screen.getByTestId("can-send")).toHaveTextContent("false");
+        expect(screen.getByTestId("access-resolved")).toHaveTextContent(
+            "false",
+        );
+
+        await act(async () => {
+            resolveChat(chatDetail("editor"));
+        });
+
+        expect(screen.getByTestId("access-resolved")).toHaveTextContent("true");
+        expect(screen.getByTestId("can-send")).toHaveTextContent("true");
     });
 
     it("keeps the composer live for a role the server lets write", async () => {

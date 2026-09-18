@@ -10,7 +10,7 @@ import {
 } from "@/shared/ui/ModelToggleUI";
 import { isModelAvailable } from "@/app/lib/modelAvailability";
 import type { ApiKeyState } from "@/app/lib/mikeApi";
-// Dev (92a54c23): runtime Azure discovery and organisation availability survive shared UI extraction.
+import { useConfiguredModels } from "@/app/hooks/useConfiguredModels";
 import { useAoaiDeployments } from "@/altien/models/aoaiDeployments";
 
 export type ModelOption = ModelToggleOption;
@@ -230,6 +230,18 @@ export function openCodeGoModelOptions(models: string[]): ModelOption[] {
   }));
 }
 
+/** Deployment declarations override any static or router entry with the same id. */
+export function mergeConfiguredModelOptions(
+  configured: readonly ModelOption[],
+  other: readonly ModelOption[],
+): ModelOption[] {
+  const configuredIds = new Set(configured.map((model) => model.id));
+  return [
+    ...other.filter((model) => !configuredIds.has(model.id)),
+    ...configured,
+  ];
+}
+
 export function ModelToggle({
   value,
   onChange,
@@ -245,7 +257,8 @@ export function ModelToggle({
   onReasoningChange,
 }: Props) {
   const { modelOptions: extraModels } = useAoaiDeployments();
-  const models = [
+  const configuredModels = useConfiguredModels();
+  const models = mergeConfiguredModelOptions(configuredModels, [
     ...MODELS,
     ...openRouterModelOptions(openRouterModels),
     ...vercelModelOptions(vercelModels),
@@ -253,10 +266,11 @@ export function ModelToggle({
     ...extraModels.map((model) => ({
       ...model,
       label: modelDisplayName(model.id),
-      source: "Local",
+      source: "Azure OpenAI",
     })),
-  ];
+  ]);
   const availableModels = models.filter((model) => {
+    if (model.source === "Configured") return true;
     if (model.group === "Local") return true;
     if (apiKeysLoading) return false; // nothing offered until known
     if (!apiKeys) return true; // unknown after a failed load → fail open

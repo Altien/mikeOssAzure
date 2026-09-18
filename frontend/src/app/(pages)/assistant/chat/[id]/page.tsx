@@ -34,6 +34,13 @@ export default function AssistantChatPage() {
     const [canSend, setCanSend] = useState<boolean>(
         initialMessages.length > 0,
     );
+    // Until the served role lands, the standing is unknown rather than
+    // denied. Keep the composer off the page for that window so a caller who
+    // does have edit access never reads the read-only placeholder; arriving
+    // from "new chat" already knows the answer.
+    const [accessResolved, setAccessResolved] = useState<boolean>(
+        initialMessages.length > 0,
+    );
     const [chat, setChat] = useState<Chat | null>(null);
     const [chatModel, setChatModel] = useState<string | null | undefined>(
         initialMessages.length > 0
@@ -66,6 +73,7 @@ export default function AssistantChatPage() {
                 setChatModel(chat.model ?? null);
                 setChatReasoningLevel(chat.reasoning_level ?? null);
                 setCanSend(can(roleFrom(chat), "content.edit"));
+                setAccessResolved(true);
                 if (loaded.length > 0) {
                     setMessages(loaded);
                 } else {
@@ -100,6 +108,7 @@ export default function AssistantChatPage() {
             handleChat={handleChat}
             cancel={cancel}
             canSend={canSend}
+            accessResolved={accessResolved}
         />
     );
 }

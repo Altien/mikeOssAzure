@@ -12,6 +12,9 @@ vi.mock("@/app/lib/mikeApi", () => ({
 vi.mock("@/app/contexts/UserProfileContext", () => ({
     useUserProfile: vi.fn(),
 }));
+vi.mock("@/app/hooks/useConfiguredModels", () => ({
+    useConfiguredModels: () => [],
+}));
 
 vi.mock("@/app/lib/modelAvailability", () => ({
     getModelProvider: vi.fn(),

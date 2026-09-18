@@ -58,6 +58,20 @@ describe("useSelectedModel", () => {
         expect(result.current[0]).toBe("claude-fable-5");
     });
 
+    it("accepts a deployment-configured model id", () => {
+        const { result } = renderHook(() =>
+            useSelectedModel({
+                chatModel: "local-qwen",
+                configuredModelIds: ["local-qwen"],
+                apiKeys: keys,
+            }),
+        );
+
+        expect(result.current[0]).toBe("local-qwen");
+        act(() => result.current[1]("local-qwen"));
+        expect(result.current[0]).toBe("local-qwen");
+    });
+
     it("uses a chat router model while it remains in the saved list", () => {
         const { result } = renderHook(() =>
             useSelectedModel({

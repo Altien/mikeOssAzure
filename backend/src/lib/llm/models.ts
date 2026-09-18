@@ -1,3 +1,4 @@
+import { getConfiguredModel } from "./registry";
 import { REASONING_LEVELS, type Provider, type ReasoningLevel } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -149,6 +150,10 @@ const ALL_MODELS = new Set<string>([
 // behaviour during conflict resolution; do not re-enable this upstream feature
 // until the complete feature is intentionally adopted.
 export function providerForModel(model: string): Provider {
+    // Deployment-declared models win over the prefix rules so an operator can
+    // name a self-hosted endpoint whatever they like.
+    const configured = getConfiguredModel(model);
+    if (configured) return configured.provider;
     if (model.startsWith("openrouter/")) return "openrouter";
     if (model.startsWith("vercel/")) return "vercel";
     if (model.startsWith("opencode-go/")) return "opencode-go";
@@ -164,7 +169,7 @@ export function isAllowedModelId(id: string): boolean {
     // Static models are listed in ALL_MODELS; AOAI ids are accepted by
     // prefix because deployment names are user-defined and only known
     // at runtime via deployment discovery.
-    return ALL_MODELS.has(id) || /^opencode-go\/[^\s]+$/.test(id) || id.startsWith(AZURE_OPENAI_PREFIX) || /^(?:openrouter|vercel)\/[^\s/]+\/[^\s]+$/.test(id);
+    return ALL_MODELS.has(id) || getConfiguredModel(id) !== null || /^opencode-go\/[^\s]+$/.test(id) || id.startsWith(AZURE_OPENAI_PREFIX) || /^(?:openrouter|vercel)\/[^\s/]+\/[^\s]+$/.test(id);
 }
 
 // Renamed/retired static ids → their current equivalents. Stored preferences

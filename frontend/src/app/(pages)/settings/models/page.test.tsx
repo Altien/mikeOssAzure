@@ -9,6 +9,9 @@ const { updateModelPreference } = vi.hoisted(() => ({
 vi.mock("@/app/hooks/useOllamaModels", () => ({
     useOllamaModels: () => [],
 }));
+vi.mock("@/app/hooks/useConfiguredModels", () => ({
+    useConfiguredModels: () => [],
+}));
 
 vi.mock("@/app/contexts/UserProfileContext", () => ({
     useUserProfile: () => ({

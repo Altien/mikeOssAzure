@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
     Plus,
@@ -86,6 +86,7 @@ import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
 import { LIQUID_GLASS_FLOAT_CLASS } from "@/shared/ui/LiquidGlassUI";
 import { ModelToggle, type NoModelsReason } from "../assistant/ModelToggle";
 import { SUPPORTED_DOCUMENT_ACCEPT } from "@/app/lib/documentUploadValidation";
+import { useConfiguredModels } from "@/app/hooks/useConfiguredModels";
 
 interface Props {
     reviewId: string;
@@ -93,6 +94,11 @@ interface Props {
 }
 
 export function TRView({ reviewId, projectId }: Props) {
+    const configuredModels = useConfiguredModels();
+    const configuredModelIds = useMemo(
+        () => configuredModels.map((model) => model.id),
+        [configuredModels],
+    );
     const { setSidebarOpen } = useSidebar();
     const [review, setReview] = useState<TabularReview | null>(null);
     const [project, setProject] = useState<Project | null>(null);
@@ -458,7 +464,10 @@ export function TRView({ reviewId, projectId }: Props) {
             setModelRequiredWarning(true);
             return;
         }
-        if (apiKeys && !isModelAvailable(tabularModel, apiKeys)) {
+        if (
+            apiKeys &&
+            !isModelAvailable(tabularModel, apiKeys, configuredModelIds)
+        ) {
             setApiKeyModalProvider(getModelProvider(tabularModel));
             return;
         }
@@ -626,7 +635,10 @@ export function TRView({ reviewId, projectId }: Props) {
         // If columns changed since last save, update the review first
         if (columns.length === 0) return;
 
-        if (apiKeys && !isModelAvailable(tabularModel, apiKeys)) {
+        if (
+            apiKeys &&
+            !isModelAvailable(tabularModel, apiKeys, configuredModelIds)
+        ) {
             setApiKeyModalProvider(getModelProvider(tabularModel));
             return;
         }

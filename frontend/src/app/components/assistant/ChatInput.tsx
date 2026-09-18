@@ -7,6 +7,7 @@ import {
     useRef,
     forwardRef,
     useImperativeHandle,
+    useMemo,
 } from "react";
 import {
     ArrowRight,
@@ -67,6 +68,7 @@ import {
     partitionSupportedDocumentFiles,
 } from "@/app/lib/documentUploadValidation";
 import { userFacingApiError } from "@/app/lib/userFacingError";
+import { useConfiguredModels } from "@/app/hooks/useConfiguredModels";
 
 export interface ChatInputHandle {
     addDoc: (doc: Document) => void;
@@ -142,6 +144,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         persistChatModelSelection,
         persistChatReasoningSelection,
     } = useUserProfile();
+    const configuredModels = useConfiguredModels();
+    const configuredModelIds = useMemo(
+        () => configuredModels.map((model) => model.id),
+        [configuredModels],
+    );
     // A degraded profile is the local fallback, whose router lists are empty
     // because the truth is UNKNOWN. Passing them on would let one dropped
     // /user/profile request rewrite the saved composer selection to the
@@ -160,6 +167,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                   }
                 : null,
         apiKeys: apiKeysDegraded ? undefined : profile?.apiKeys,
+        configuredModelIds,
     });
     // Degraded profile → key availability is UNKNOWN; undefined here makes
     // every key gate (submit check + model toggle) fail open instead of
@@ -483,7 +491,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
             setModelRequiredWarning(true);
             return;
         }
-        if (apiKeys && !isModelAvailable(model, apiKeys)) {
+        if (
+            apiKeys &&
+            !isModelAvailable(model, apiKeys, configuredModelIds)
+        ) {
             setApiKeyModalProvider(getModelProvider(model));
             return;
         }

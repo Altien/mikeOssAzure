@@ -10,6 +10,11 @@ import {
     type Provider,
     type UserApiKeys,
 } from "../../lib/llm";
+import {
+    apiKeyForConfiguredModel,
+    configuredModelRequiresApiKey,
+    getConfiguredModel,
+} from "../../lib/llm/registry";
 import { getUserModelSettings } from "../user/user.service";
 import { resolveRequestedModel } from "../../lib/routerModels";
 import { TABULAR_MODEL_REQUIRED_DETAIL } from "../../lib/modelSelection";
@@ -100,10 +105,11 @@ function providerLabel(provider: Provider): string {
     if (provider === "openrouter") return "OpenRouter";
     if (provider === "vercel") return "Vercel AI Gateway";
     if (provider === "opencode-go") return "OpenCode Go";
+    if (provider === "openai-compatible") return "Configured endpoint";
     return "Gemini";
 }
 
-const SERVER_KEY_SECRETS: Record<Exclude<Provider, "azureOpenai">, string> = {
+const SERVER_KEY_SECRETS: Record<Exclude<Provider, "azureOpenai" | "openai-compatible">, string> = {
     claude: "anthropic-api-key",
     gemini: "gemini-api-key",
     openai: "openai-api-key",
@@ -124,6 +130,12 @@ export async function missingModelApiKey(
     apiKeys: UserApiKeys,
 ): Promise<MissingApiKey | null> {
     const provider = providerForModel(model);
+    if (provider === "openai-compatible") {
+        const configured = getConfiguredModel(model);
+        if (!configured || !configuredModelRequiresApiKey(configured) ||
+            (await apiKeyForConfiguredModel(configured, apiKeys))) return null;
+        return { provider, model, detail: `${configured.label || model} is not configured for this organisation. Ask an administrator to set its credential in /install or select another model.` };
+    }
     if (provider === "azureOpenai") {
         const configured = apiKeys.azureOpenai;
         if (configured?.endpoint?.trim() && configured.apiKey?.trim() && configured.deployment?.trim()) return null;

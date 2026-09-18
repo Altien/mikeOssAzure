@@ -97,6 +97,7 @@ export const MODEL_TOGGLE_GROUPS: readonly ModelToggleGroup[] = [
   "DeepSeek",
   "Xiaomi",
   "Mistral AI",
+  "Configured",
   "Local",
   "Kimi",
   "Azure OpenAI",
@@ -248,7 +249,7 @@ export function ModelToggleUI({
         sideOffset={modalInput ? 4 : 8}
         className={`flex max-h-[min(320px,60vh)] flex-col overflow-hidden rounded-2xl text-gray-700 ${modalInput ? "w-[var(--radix-dropdown-menu-trigger-width)]" : "w-56"}`}
       >
-        <div className="min-h-0 flex-1 space-y-1 overflow-y-auto">
+        <div className="-mr-1.5 min-h-0 flex-1 space-y-1 overflow-y-auto pr-1.5">
           {availableGroups.map(({ group, items }) => {
             const expanded = expandedGroup === group;
             return (
@@ -274,6 +275,10 @@ export function ModelToggleUI({
                       className={`${itemClassName} ${model.id === value ? "text-gray-900" : ""}`}
                       onSelect={() => onChange(model.id)}
                     >
+                      <span
+                        aria-hidden="true"
+                        className="h-1 w-1 shrink-0 rounded-full bg-gray-400/80"
+                      />
                       <span className="flex-1">{model.label}</span>
                       {model.source &&
                         (routeCounts.get(

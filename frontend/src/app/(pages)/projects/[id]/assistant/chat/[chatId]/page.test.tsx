@@ -74,7 +74,7 @@ vi.mock("@/app/contexts/ChatHistoryContext", () => ({
     }),
 }));
 vi.mock("@/app/contexts/AuthContext", () => ({
-    useAuth: () => ({ user: { id: "u1" } }),
+    useAuth: () => ({ user: { id: "u1" }, authLoading: false }),
 }));
 vi.mock("@/app/contexts/UserProfileContext", () => ({
     useUserProfile: () => ({ profile: { displayName: "User" } }),
@@ -413,6 +413,81 @@ describe("document viewer drops", () => {
 });
 
 describe("project chat workspace lifecycle", () => {
+    it("hides the composer until the chat and project access both resolve", async () => {
+        let resolveChat!: (loaded: {
+            chat: Record<string, unknown>;
+            messages: Message[];
+        }) => void;
+        state.getChat.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    resolveChat = resolve;
+                }),
+        );
+        let resolveProject!: (
+            project: Awaited<ReturnType<typeof getProject>>,
+        ) => void;
+        vi.mocked(getProject).mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    resolveProject = resolve;
+                }),
+        );
+
+        await act(async () => {
+            render(
+                <Suspense fallback="Loading">
+                    <ProjectAssistantChatPage />
+                </Suspense>,
+            );
+        });
+
+        expect(
+            screen.queryByRole("button", { name: "Send question" }),
+        ).toBeNull();
+
+        await act(async () => {
+            resolveChat({
+                chat: {
+                    id: "c1",
+                    project_id: "p1",
+                    title: "Existing chat",
+                    user_id: "u2",
+                    created_at: "2026-09-15T00:00:00Z",
+                },
+                messages: [],
+            });
+        });
+
+        // The chat is here but the project role is not, so the composer must
+        // stay away rather than guess with the read-only placeholder.
+        expect(
+            screen.queryByRole("button", { name: "Send question" }),
+        ).toBeNull();
+
+        await act(async () => {
+            resolveProject({
+                id: "p1",
+                name: "Matter",
+                access_role: "owner",
+                user_id: "u1",
+                cm_number: null,
+                practice: null,
+                memory_enabled: false,
+                created_at: "2026-09-15T00:00:00Z",
+                updated_at: "2026-09-15T00:00:00Z",
+                documents: [],
+                folders: [],
+            });
+        });
+
+        await waitFor(() =>
+            expect(
+                screen.getByRole("button", { name: "Send question" }),
+            ).toBeEnabled(),
+        );
+    });
+
     it("updates the URL before the first response arrives while preserving the workspace and live stream", async () => {
         let stream!: ReadableStreamDefaultController<Uint8Array>;
         const encoder = new TextEncoder();

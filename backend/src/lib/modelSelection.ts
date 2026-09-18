@@ -10,6 +10,11 @@ import {
     type ReasoningLevel,
 } from "./llm";
 import {
+    apiKeyForConfiguredModel,
+    configuredModelRequiresApiKey,
+    getConfiguredModel,
+} from "./llm/registry";
+import {
     isRouterModelSelected,
     type RouterModelSelections,
 } from "./routerModels";
@@ -71,11 +76,17 @@ export function normalizeOptionalModelPreference(
 }
 
 /** Whether a resolved model can actually run with the user's current keys. */
-export function hasApiKeyForModel(
+export async function hasApiKeyForModel(
     model: string,
     apiKeys: UserApiKeys,
-): boolean {
+): Promise<boolean> {
     const provider = providerForModel(model);
+    if (provider === "openai-compatible") {
+        const configured = getConfiguredModel(model);
+        return configured !== null &&
+            (!configuredModelRequiresApiKey(configured) ||
+                (await apiKeyForConfiguredModel(configured, apiKeys)) !== null);
+    }
     if (provider === "azureOpenai") {
         return !!apiKeys.azureOpenai?.endpoint?.trim() &&
             !!apiKeys.azureOpenai?.apiKey?.trim() &&
@@ -129,7 +140,7 @@ export async function resolveEffectiveChatModel(args: {
                 args.db,
                 "throw",
             );
-            if (!hasApiKeyForModel(model, args.apiKeys)) {
+            if (!(await hasApiKeyForModel(model, args.apiKeys))) {
                 return {
                     ok: false,
                     status: 422,
@@ -165,7 +176,7 @@ export async function resolveEffectiveChatModel(args: {
             args.db,
             "fallback",
         );
-        if (selected && hasApiKeyForModel(selected, args.apiKeys)) {
+        if (selected && (await hasApiKeyForModel(selected, args.apiKeys))) {
             return { ok: true, model: selected, source: candidate.source };
         }
     }
@@ -207,6 +218,7 @@ export function titleModelForChat(
             return OPENAI_LOW_MODELS[0];
         case "kimi":
         case "azureOpenai":
+        case "openai-compatible":
         case "openrouter":
         case "vercel":
         case "opencode-go":

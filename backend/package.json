@@ -57,6 +57,7 @@
     "helmet": "^8.1.0",
     "html-to-text": "10.0.1",
     "ioredis": "^6.0.0",
+    "jsonrepair": "^3.15.0",
     "jszip": "^3.10.2",
     "libreoffice-convert": "^1.6.0",
     "mammoth": "^1.9.0",

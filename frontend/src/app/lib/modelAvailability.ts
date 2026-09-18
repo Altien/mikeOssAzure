@@ -26,7 +26,7 @@ export type ModelProvider =
 
 export function getModelProvider(
     modelId: string,
-    extraModels?: ModelOption[],
+    extraModels?: readonly ModelOption[],
 ): ModelProvider | null {
     if (modelId.startsWith("ollama/")) return "ollama"; // dynamic, not in the static list
     if (modelId.startsWith("openrouter/")) return "openrouter";
@@ -43,8 +43,18 @@ export function getModelProvider(
 export function isModelAvailable(
     modelId: string,
     apiKeys: ApiKeyState,
-    extraModels?: ModelOption[],
+    discoveredModels?: readonly ModelOption[] | readonly string[],
 ): boolean {
+    // Registry IDs arrive as strings; Azure discovery supplies model options.
+    // Both lists are authenticated server results, and the backend remains
+    // authoritative when a credential or deployment changes.
+    const configuredIds = discoveredModels &&
+        (discoveredModels.length === 0 || typeof discoveredModels[0] === "string")
+        ? discoveredModels as readonly string[] : [];
+    if (configuredIds.includes(modelId)) return true;
+    const extraModels = discoveredModels && discoveredModels.length > 0 &&
+        typeof discoveredModels[0] !== "string"
+        ? discoveredModels as readonly ModelOption[] : undefined;
     const provider = getModelProvider(modelId, extraModels);
     if (!provider) return false;
     if (provider === "azureOpenai" && extraModels) {

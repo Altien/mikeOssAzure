@@ -18,6 +18,7 @@ import {
     MODELS,
     SETTINGS_MODELS,
     canonicalModelId,
+    mergeConfiguredModelOptions,
     openCodeGoModelOptions,
     openRouterModelOptions,
     vercelModelOptions,
@@ -29,12 +30,14 @@ import { FieldLabel } from "@/app/components/ui/form-field";
 import { SETTINGS_CONTROL_CLASS } from "@/app/components/settings/SettingsTextInput";
 import { SettingsSection } from "../SettingsSection";
 import { useAoaiDeployments, type AoaiDeployment } from "@/altien/models/aoaiDeployments";
+import { useConfiguredModels } from "@/app/hooks/useConfiguredModels";
 
 type ModelPreferenceField = "titleModel" | "tabularModel";
 
 export default function ModelPreferencesPage() {
     const { profile, updateModelPreference } = useUserProfile();
     const aoai = useAoaiDeployments();
+    const configuredModels = useConfiguredModels();
     const [savingField, setSavingField] = useState<ModelPreferenceField | null>(
         null,
     );
@@ -105,13 +108,13 @@ export default function ModelPreferencesPage() {
                                     profile?.titleModel ??
                                     "",
                             )}
-                            options={[
+                            options={mergeConfiguredModelOptions(configuredModels, [
                                 ...SETTINGS_MODELS,
                                 ...selectedOpenRouterOptions,
                                 ...selectedVercelOptions,
                                 ...selectedOpenCodeGoOptions,
                                 ...aoai.modelOptions,
-                            ]}
+                            ])}
                             apiKeys={profile?.apiKeys}
                             isSaving={savingField === "titleModel"}
                             isSaved={savedField === "titleModel"}
@@ -133,13 +136,13 @@ export default function ModelPreferencesPage() {
                                     profile?.tabularModel ??
                                     "",
                             )}
-                            options={[
+                            options={mergeConfiguredModelOptions(configuredModels, [
                                 ...MODELS,
                                 ...selectedOpenRouterOptions,
                                 ...selectedVercelOptions,
                                 ...selectedOpenCodeGoOptions,
                                 ...aoai.modelOptions,
-                            ]}
+                            ])}
                             apiKeys={profile?.apiKeys}
                             isSaving={savingField === "tabularModel"}
                             isSaved={savedField === "tabularModel"}
@@ -244,6 +247,7 @@ function ModelPreferenceDropdown({
 }) {
     const [isOpen, setIsOpen] = useState(false);
     const availableOptions = options.filter((model) => {
+        if (model.source === "Configured") return true;
         if (model.group === "Local") return true;
         return apiKeys ? isModelAvailable(model.id, apiKeys) : false;
     });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Document, Workflow } from "../shared/types";
 import { createTabularReview, listWorkflows } from "@/app/lib/mikeApi";
 import { useRouter } from "next/navigation";
@@ -22,6 +22,7 @@ import {
 import { NoModelsWarningPopup } from "../popups/NoModelsWarningPopup";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { isModelAvailable } from "@/app/lib/modelAvailability";
+import { useConfiguredModels } from "@/app/hooks/useConfiguredModels";
 
 interface Props {
     workflow: Workflow | null;
@@ -95,6 +96,11 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
     const { profile, loading: profileLoading, apiKeysDegraded } =
         useUserProfile();
     const apiKeys = apiKeysDegraded ? undefined : profile?.apiKeys;
+    const configuredModels = useConfiguredModels();
+    const configuredModelIds = useMemo(
+        () => configuredModels.map((model) => model.id),
+        [configuredModels],
+    );
 
     const router = useRouter();
     const { saveChat, setNewChatMessages } = useChatHistoryContext();
@@ -151,11 +157,12 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
             );
         if (
             routerSelectionValid &&
-            (!apiKeys || isModelAvailable(defaultModel, apiKeys))
+            (!apiKeys ||
+                isModelAvailable(defaultModel, apiKeys, configuredModelIds))
         ) {
             setSelectedModel((current) => current || defaultModel);
         }
-    }, [apiKeys, profile, screen, selected, workflow]);
+    }, [apiKeys, configuredModelIds, profile, screen, selected, workflow]);
 
     // Reset configure state on back
     useEffect(() => {

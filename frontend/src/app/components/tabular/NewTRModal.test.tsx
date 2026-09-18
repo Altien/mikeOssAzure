@@ -58,6 +58,9 @@ vi.mock("@/app/contexts/AuthContext", () => ({
 vi.mock("@/app/hooks/useOllamaModels", () => ({
     useOllamaModels: () => [],
 }));
+vi.mock("@/app/hooks/useConfiguredModels", () => ({
+    useConfiguredModels: () => [],
+}));
 
 vi.mock("next/navigation", () => ({
     useRouter: () => ({ push: vi.fn() }),

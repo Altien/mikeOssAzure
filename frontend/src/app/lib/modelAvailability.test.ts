@@ -98,6 +98,12 @@ describe("isModelAvailable", () => {
         ).toBe(false);
     });
 
+    it("accepts an authenticated configured model catalog id", () => {
+        expect(
+            isModelAvailable("local-qwen", keys({}), ["local-qwen"]),
+        ).toBe(true);
+    });
+
     it("is true for ollama models even with no keys configured", () => {
         expect(isModelAvailable("ollama/llama3.2", keys({}))).toBe(true);
     });

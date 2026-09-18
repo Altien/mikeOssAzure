@@ -1,12 +1,37 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
-import { ModelToggle, underlyingProviderGroup } from "./ModelToggle";
-import type { ApiKeyState } from "@/app/lib/mikeApi";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+    mergeConfiguredModelOptions,
+    ModelToggle,
+    underlyingProviderGroup,
+} from "./ModelToggle";
+import type {
+    ApiKeyState,
+    ConfiguredModelOption,
+} from "@/app/lib/mikeApi";
+
+const { configuredModels } = vi.hoisted(() => ({
+    configuredModels: [] as ConfiguredModelOption[],
+}));
 
 vi.mock("@/app/hooks/useOllamaModels", () => ({
     useOllamaModels: () => [],
 }));
+vi.mock("@/app/hooks/useConfiguredModels", () => ({
+    useConfiguredModels: () => configuredModels,
+}));
+
+beforeEach(() => configuredModels.splice(0));
+
+it("lets deployment configuration override a duplicate catalog id", () => {
+    expect(
+        mergeConfiguredModelOptions(
+            [{ id: "same", label: "Configured", group: "Configured" }],
+            [{ id: "same", label: "Static", group: "OpenAI" }],
+        ),
+    ).toEqual([{ id: "same", label: "Configured", group: "Configured" }]);
+});
 
 function keys(configured: Partial<Record<keyof ApiKeyState, boolean>>) {
     const providers = [
@@ -184,9 +209,61 @@ describe("ModelToggle responsive trigger", () => {
         expect(selectedRow).toHaveAttribute("data-selected", "true");
         expect(selectedRow?.className).not.toContain("shadow-[inset_");
     });
+
+    it("shows a dot on model rows but not provider rows", async () => {
+        render(
+            <ModelToggle
+                value="gemini-3-flash-preview"
+                onChange={vi.fn()}
+                apiKeys={keys({ gemini: true })}
+            />,
+        );
+
+        await userEvent.click(
+            screen.getByRole("button", { name: "Choose model" }),
+        );
+
+        const modelRow = screen
+            .getAllByText("Gemini 3 Flash")
+            .find((element) => element.closest('[role="menuitem"]'))
+            ?.closest('[role="menuitem"]');
+        const providerRow = screen
+            .getByText("Google")
+            .closest('[role="menuitem"]');
+
+        expect(modelRow?.querySelector("span.rounded-full")).toBeInTheDocument();
+        expect(
+            providerRow?.querySelector("span.rounded-full"),
+        ).not.toBeInTheDocument();
+    });
 });
 
 describe("ModelToggle availability states", () => {
+    it("offers an authenticated deployment-configured model", async () => {
+        configuredModels.push({
+            id: "local-qwen",
+            label: "Local Qwen",
+            group: "Configured",
+            location: "local",
+            source: "Configured",
+        });
+        render(
+            <ModelToggle
+                value="local-qwen"
+                onChange={vi.fn()}
+                apiKeys={keys({})}
+            />,
+        );
+
+        expect(
+            screen.getByRole("button", { name: "Choose model" }),
+        ).toHaveTextContent("Local Qwen");
+        await userEvent.click(
+            screen.getByRole("button", { name: "Choose model" }),
+        );
+        expect(screen.getByText("Configured")).toBeInTheDocument();
+    });
+
     it("renders a neutral disabled trigger while keys are loading", () => {
         render(
             <ModelToggle

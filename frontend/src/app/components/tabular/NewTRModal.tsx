@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Upload } from "lucide-react";
 import type { Document, Folder, Project, Workflow } from "../shared/types";
 import {
@@ -31,6 +31,7 @@ import {
     CreateAccessStep,
     type PendingDirectGrant,
 } from "../modals/CreateAccessStep";
+import { useConfiguredModels } from "@/app/hooks/useConfiguredModels";
 
 const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
@@ -85,6 +86,11 @@ export function NewTRModal({
         useUserProfile();
     const { user } = useAuth();
     const apiKeys = apiKeysDegraded ? undefined : profile?.apiKeys;
+    const configuredModels = useConfiguredModels();
+    const configuredModelIds = useMemo(
+        () => configuredModels.map((model) => model.id),
+        [configuredModels],
+    );
 
     // Project-scoped docs fetched for the "under project" toggle. In project
     // mode the list comes from the fixedProjectDocs prop instead, so this only
@@ -175,11 +181,12 @@ export function NewTRModal({
                 defaultModel.slice(router.length + 1),
             );
         const providerAvailable =
-            !apiKeys || isModelAvailable(defaultModel, apiKeys);
+            !apiKeys ||
+            isModelAvailable(defaultModel, apiKeys, configuredModelIds);
         if (routerSelectionValid && providerAvailable) {
             setSelectedModel((current) => current || defaultModel);
         }
-    }, [apiKeys, open, profile]);
+    }, [apiKeys, configuredModelIds, open, profile]);
 
     // Preselect every project document once, as soon as they're available —
     // which may be after the modal opened, since the parent's list is empty

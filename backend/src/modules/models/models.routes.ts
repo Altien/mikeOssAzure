@@ -8,10 +8,11 @@
 
 import { Router, type Response } from "express";
 import { requireAuth } from "../../middleware/auth";
-import { routerErrorHandler } from "../../middleware/asyncRoute";
+import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase, type Db } from "../../lib/supabase";
 import { sendInternalError } from "../../lib/httpError";
 import {
+    listConfiguredModels,
     listOpenCodeGoModels,
     listOpenRouterModels,
     listVercelModels,
@@ -51,6 +52,13 @@ async function sendCatalog(
         sendInternalError(res, error);
     }
 }
+
+// GET /models/configured
+modelsRouter.get("/configured", requireAuth, asyncRoute(async (_req, res) => {
+    const userId = res.locals.userId as string;
+    const models = await listConfiguredModels(createServerSupabase(), userId);
+    res.json({ models });
+}));
 
 // GET /models/openrouter
 modelsRouter.get("/openrouter", requireAuth, (_req, res) =>

@@ -309,3 +309,39 @@ it("suspends inactive spreadsheet tabs in the assistant side panel", async () =>
     expect(first).toHaveAttribute("data-active", "false");
     expect(first.closest('[aria-hidden="true"]')).toHaveAttribute("inert");
 });
+
+describe("ChatView composer gating", () => {
+    const view = (accessResolved: boolean) => (
+        <PageChromeContext.Provider value={{ mobileActionsContainer: null }}>
+            <ChatView
+                chatId="chat-1"
+                chat={activeChat}
+                messages={[]}
+                isResponseLoading={false}
+                handleChat={vi.fn().mockResolvedValue("chat-1")}
+                cancel={vi.fn()}
+                canSend={false}
+                accessResolved={accessResolved}
+            />
+        </PageChromeContext.Provider>
+    );
+
+    it("renders no composer until the caller's standing is known", () => {
+        const { rerender } = render(view(false));
+        expect(
+            screen.queryByRole("button", { name: "Open Budget.xlsx" }),
+        ).toBeNull();
+
+        rerender(view(true));
+        expect(
+            screen.getByRole("button", { name: "Open Budget.xlsx" }),
+        ).toBeInTheDocument();
+    });
+
+    it("renders the composer by default for callers that know the standing", () => {
+        renderView();
+        expect(
+            screen.getByRole("button", { name: "Open Budget.xlsx" }),
+        ).toBeInTheDocument();
+    });
+});

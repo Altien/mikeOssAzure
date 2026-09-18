@@ -12,6 +12,7 @@
 
 import type { Db } from "../../lib/supabase";
 import { isSupportedOpenCodeGoModel } from "../../lib/llm/models";
+import { configuredEndpointSummaries } from "../../lib/llm/registry";
 import { getOrganisationApiKeys } from "../user/user.service";
 
 export type CatalogPricing = {
@@ -27,6 +28,14 @@ export type CatalogModel = {
     pricing?: CatalogPricing;
 };
 
+
+export type ConfiguredCatalogModel = {
+    id: string;
+    label: string;
+    group: "Configured";
+    location: "cloud" | "local";
+    source: "Configured";
+};
 
 export type CatalogFailure =
     | { ok: false; kind: "missing_api_key"; code: string; detail: string }
@@ -82,6 +91,31 @@ async function upstreamFailure(
             `${provider} model catalog request failed (${response.status})${detail ? `: ${detail}` : ""}`,
         ),
     };
+}
+
+/**
+ * Secret-free configured endpoint catalog, filtered to available models.
+ * Credentials are deployment-owned; the user id and db are retained for the
+ * module service interface but never used to read a personal key row.
+ */
+export async function listConfiguredModels(
+    _db: Db,
+    _userId: string,
+): Promise<ConfiguredCatalogModel[]> {
+    const apiKeys = await getOrganisationApiKeys();
+    return (await configuredEndpointSummaries(apiKeys)).flatMap((model) =>
+        model.available
+            ? [
+                  {
+                      id: model.id,
+                      label: model.label,
+                      group: "Configured",
+                      location: model.location,
+                      source: "Configured" as const,
+                  },
+              ]
+            : [],
+    );
 }
 
 /**

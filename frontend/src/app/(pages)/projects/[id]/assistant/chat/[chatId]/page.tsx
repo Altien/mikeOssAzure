@@ -293,13 +293,14 @@ export default function ProjectAssistantChatPage() {
     const router = useRouter();
 
     const { setSidebarOpen } = useSidebar();
-    const { user } = useAuth();
+    const { user, authLoading } = useAuth();
     const { profile } = useUserProfile();
     const username =
         profile?.displayName?.trim() || user?.email?.split("@")[0] || "there";
     const explorerDownload = useExplorerDownload();
 
     const [project, setProject] = useState<Project | null>(null);
+    const [projectLoaded, setProjectLoaded] = useState(false);
     const [activeChatId, setActiveChatId] = useState(routeChatId);
     const activeChatIdRef = useRef(activeChatId);
     useLayoutEffect(() => {
@@ -452,22 +453,21 @@ export default function ProjectAssistantChatPage() {
     // Server ladder: writing to a project chat needs content.edit on the
     // project, except that the chat's own creator may always continue it.
     //
-    // While the project is still loading the role is unknown, and unknown is
-    // not a licence. `!project ||` made it one: for the whole load window a
-    // viewer's composer was live and their upload button enabled, and the
-    // refusal only arrived from the server afterwards. The composer now stays
-    // closed until we know — the read-only placeholder is the same one a
-    // viewer sees, so the transition on a load is a placeholder swap rather
-    // than a control appearing that was never theirs.
+    // While the project, chat owner, or session is loading, access is unknown,
+    // and unknown is neither a licence nor a refusal. Treating it as a licence
+    // left a viewer typing into a live composer for the whole load window;
+    // treating it as a refusal flashed the read-only placeholder at people who
+    // do have edit access. So the composer is not rendered at all until all
+    // three inputs resolve — the message shimmer stands in for the whole
+    // surface, and what appears afterwards is already correct.
     const projectRole = roleFromLoaded(project);
     const canEditContent = can(projectRole, "content.edit");
     const canManageProject = can(projectRole, "access.manage");
     // The chat's own creator keeps writing to it whatever their project role,
     // because the server puts a row's creator at the top of that row's ladder.
-    // That exception is knowable without the project, so it still applies
-    // during the load window.
     const canSendChat =
         canEditContent || (!!chatOwnerId && chatOwnerId === user?.id);
+    const composerReady = chatLoaded && projectLoaded && !authLoading;
     const pendingInitialUserMessageRef = useRef<Message | null>(
         initialMessages.length === 1 && initialMessages[0].role === "user"
             ? initialMessages[0]
@@ -521,6 +521,11 @@ export default function ProjectAssistantChatPage() {
         } catch {
             // Keep the current workspace usable when a background check fails.
         } finally {
+            // Settled either way: a failed fetch leaves the role unknown, and
+            // the composer should come back read-only rather than stay hidden.
+            if (generation === projectRequestGeneration.current) {
+                setProjectLoaded(true);
+            }
             if (documentIdToRefresh) {
                 setTabs((current) =>
                     current.map((tab) =>
@@ -2007,41 +2012,43 @@ export default function ProjectAssistantChatPage() {
                 )}
 
                 {/* ChatInput */}
-                <div className="absolute bottom-3 left-3 right-3 z-30">
-                    <div className="pointer-events-none absolute -bottom-3 inset-x-0 z-0 h-7 bg-app-surface" />
-                    <div className="relative z-20 w-full">
-                        <ChatInputPrompt
-                            messages={messages}
-                            chatKey={activeChatId}
-                            canSend={canSendChat && chatLoaded}
-                            onSubmit={(response, content, files) => {
-                                void handleSubmit(
-                                    { role: "user", content, files },
-                                    { askInputsResponse: response },
-                                );
-                            }}
-                            onCancel={cancel}
-                        >
-                            <ChatInput
-                                key={`${activeChatId || "new"}:${composerResetKey}`}
-                                ref={chatInputRef}
-                                onSubmit={handleSubmit}
-                                onCancel={cancel}
-                                isLoading={isResponseLoading}
+                {composerReady && (
+                    <div className="absolute bottom-3 left-3 right-3 z-30">
+                        <div className="pointer-events-none absolute -bottom-3 inset-x-0 z-0 h-7 bg-app-surface" />
+                        <div className="relative z-20 w-full">
+                            <ChatInputPrompt
+                                messages={messages}
                                 chatKey={activeChatId}
-                                chatModel={chatModel}
-                                chatReasoningLevel={chatReasoningLevel}
                                 canSend={canSendChat}
-                                enableGlobalFileDrop={false}
-                                dropUploadsToProject={false}
-                                projectId={projectId}
-                                onDocumentClick={handleDocClick}
-                                projectName={project?.name}
-                                projectCmNumber={project?.cm_number}
-                            />
-                        </ChatInputPrompt>
+                                onSubmit={(response, content, files) => {
+                                    void handleSubmit(
+                                        { role: "user", content, files },
+                                        { askInputsResponse: response },
+                                    );
+                                }}
+                                onCancel={cancel}
+                            >
+                                <ChatInput
+                                    key={`${activeChatId || "new"}:${composerResetKey}`}
+                                    ref={chatInputRef}
+                                    onSubmit={handleSubmit}
+                                    onCancel={cancel}
+                                    isLoading={isResponseLoading}
+                                    chatKey={activeChatId}
+                                    chatModel={chatModel}
+                                    chatReasoningLevel={chatReasoningLevel}
+                                    canSend={canSendChat}
+                                    enableGlobalFileDrop={false}
+                                    dropUploadsToProject={false}
+                                    projectId={projectId}
+                                    onDocumentClick={handleDocClick}
+                                    projectName={project?.name}
+                                    projectCmNumber={project?.cm_number}
+                                />
+                            </ChatInputPrompt>
+                        </div>
                     </div>
-                </div>
+                )}
             </div>
             {project && (
                 <AddDocumentsModal

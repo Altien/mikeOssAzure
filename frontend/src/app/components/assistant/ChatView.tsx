@@ -71,6 +71,14 @@ interface Props {
      * read-only caller gets the disabled composer instead of a 403 on send.
      */
     canSend?: boolean;
+    /**
+     * Whether `canSend` is known yet. While the served standing is still in
+     * flight, access is unknown — neither a licence nor a refusal — so the
+     * composer is not rendered at all rather than flashing the read-only
+     * placeholder at a caller who does have edit access. Surfaces that know
+     * the standing at mount leave this alone.
+     */
+    accessResolved?: boolean;
     /** Shares document previews with the initial composer before a chat exists. */
     onInitialSubmit?: (message: Message) => void;
 }
@@ -101,6 +109,7 @@ export function ChatView({
     handleChat,
     cancel,
     canSend,
+    accessResolved = true,
     onInitialSubmit,
 }: Props) {
     const router = useRouter();
@@ -572,7 +581,9 @@ export function ChatView({
         observer.observe(el);
         update();
         return () => observer.disconnect();
-    }, []);
+        // Re-runs when the composer mounts: it is absent until access
+        // resolves, and the scroll button is positioned from its height.
+    }, [accessResolved]);
 
     useEffect(() => {
         if (latestUserMessageRef.current) {
@@ -590,7 +601,7 @@ export function ChatView({
                 `calc(100dvh - ${headerHeight + messageGap * 3 + userMessageHeight + paddingBottom + addedHeaderClearance}px)`,
             );
         }
-    }, [messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [messages.length]);
 
     const updateScrollButton = useCallback(() => {
         const c = messagesContainerRef.current;
@@ -668,7 +679,7 @@ export function ChatView({
                 setMessagesVisible(true);
             }
         }
-    }, [messages]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [messages]);
 
     useEffect(() => {
         if (panelMounted && window.innerWidth < 768) {
@@ -999,46 +1010,48 @@ export function ChatView({
                         )}
 
                         {/* Chat input */}
-                        <div className="absolute bottom-3 left-0 right-0 w-full z-30">
-                            <div className="pointer-events-none absolute -bottom-3 left-0 right-0 z-0">
-                                <div className="mx-auto h-7 w-full max-w-4xl px-4 md:px-6">
-                                    <div className="h-full rounded-t-[20px] bg-app-background" />
+                        {accessResolved && (
+                            <div className="absolute bottom-3 left-0 right-0 w-full z-30">
+                                <div className="pointer-events-none absolute -bottom-3 left-0 right-0 z-0">
+                                    <div className="mx-auto h-7 w-full max-w-4xl px-4 md:px-6">
+                                        <div className="h-full rounded-t-[20px] bg-app-background" />
+                                    </div>
                                 </div>
-                            </div>
-                            <div
-                                ref={measuredInputRef}
-                                className="relative z-20 w-full max-w-4xl mx-auto px-4 md:px-6"
-                            >
-                                <div className="w-full rounded-t-[20px] bg-transparent">
-                                    <ChatInputPrompt
-                                        messages={messages}
-                                        chatKey={chatId}
-                                        canSend={canSend}
-                                        onSubmit={(response, content, files) => {
-                                            void handleChat(
-                                                { role: "user", content, files },
-                                                { askInputsResponse: response },
-                                            );
-                                        }}
-                                        onCancel={cancel}
-                                    >
-                                        <ChatInput
-                                            ref={chatInputRef}
-                                            canSend={canSend}
-                                            onSubmit={handleChat}
-                                            onCancel={cancel}
-                                            isLoading={isResponseLoading}
+                                <div
+                                    ref={measuredInputRef}
+                                    className="relative z-20 w-full max-w-4xl mx-auto px-4 md:px-6"
+                                >
+                                    <div className="w-full rounded-t-[20px] bg-transparent">
+                                        <ChatInputPrompt
+                                            messages={messages}
                                             chatKey={chatId}
-                                            chatModel={chatModel}
-                                            chatReasoningLevel={chatReasoningLevel}
-                                            onDocumentClick={
-                                                handleAttachedDocumentClick
-                                            }
-                                        />
-                                    </ChatInputPrompt>
+                                            canSend={canSend}
+                                            onSubmit={(response, content, files) => {
+                                                void handleChat(
+                                                    { role: "user", content, files },
+                                                    { askInputsResponse: response },
+                                                );
+                                            }}
+                                            onCancel={cancel}
+                                        >
+                                            <ChatInput
+                                                ref={chatInputRef}
+                                                canSend={canSend}
+                                                onSubmit={handleChat}
+                                                onCancel={cancel}
+                                                isLoading={isResponseLoading}
+                                                chatKey={chatId}
+                                                chatModel={chatModel}
+                                                chatReasoningLevel={chatReasoningLevel}
+                                                onDocumentClick={
+                                                    handleAttachedDocumentClick
+                                                }
+                                            />
+                                        </ChatInputPrompt>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
+                        )}
                     </>
                 )}
             </div>
