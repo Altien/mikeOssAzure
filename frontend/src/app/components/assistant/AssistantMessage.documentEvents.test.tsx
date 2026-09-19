@@ -59,15 +59,18 @@ describe("AssistantMessage document events", () => {
             },
         ];
 
-        const { container } = render(
+        render(
             <AssistantMessage
                 events={events}
                 onOpenDocument={onOpenDocument}
             />,
         );
 
+        const editedButton = screen.getByRole("button", {
+            name: "edited.docx",
+        });
         expect(
-            container.querySelector(
+            editedButton.querySelector(
                 'img[src*="/icons/file-types/word.svg"]',
             ),
         ).toBeInTheDocument();
@@ -85,9 +88,7 @@ describe("AssistantMessage document events", () => {
         fireEvent.click(
             screen.getByRole("button", { name: "copy-two.docx" }),
         );
-        fireEvent.click(
-            screen.getByRole("button", { name: "edited.docx" }),
-        );
+        fireEvent.click(editedButton);
 
         expect(onOpenDocument.mock.calls).toEqual([
             [

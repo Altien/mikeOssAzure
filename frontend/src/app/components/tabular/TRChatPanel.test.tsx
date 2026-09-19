@@ -6,19 +6,50 @@ import {
     getTabularChats,
     getTabularChatMessages,
     renameTabularChat,
+    streamTabularChat,
     type TRChat,
 } from "@/app/lib/mikeApi";
 import { TRChatPanel } from "./TRChatPanel";
 
+vi.mock("next/navigation", () => ({
+    useRouter: () => ({ push: vi.fn() }),
+}));
 vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
     ...(await importOriginal<typeof import("@/app/lib/mikeApi")>()),
     getTabularChats: vi.fn(),
     getTabularChatMessages: vi.fn(),
     deleteTabularChat: vi.fn(),
     renameTabularChat: vi.fn(),
+    streamTabularChat: vi.fn(),
 }));
 vi.mock("../assistant/ChatInput", () => ({
-    ChatInput: () => <div>Chat input</div>,
+    ChatInput: ({
+        onSubmit,
+        canSend = true,
+    }: {
+        onSubmit: (message: {
+            role: "user";
+            content: string;
+            model: string;
+            reasoning: "medium";
+        }) => void;
+        canSend?: boolean;
+    }) => (
+        <button
+            type="button"
+            disabled={!canSend}
+            onClick={() =>
+                onSubmit({
+                    role: "user",
+                    content: "Review this table",
+                    model: "claude-opus-4-7",
+                    reasoning: "medium",
+                })
+            }
+        >
+            Send test message
+        </button>
+    ),
 }));
 
 describe("TRChatPanel header", () => {
@@ -204,6 +235,36 @@ describe("TRChatPanel header", () => {
             screen.getByText(
                 "This chat’s messages could not be loaded. Please try again.",
             ),
+        ).toBeInTheDocument();
+    });
+
+    it("opens the rejected-key popup for a tabular chat stream error", async () => {
+        vi.mocked(streamTabularChat).mockResolvedValue(
+            new Response(
+                'data: {"type":"error","message":"The Anthropic (Claude) API key was rejected.","safe_to_display":true,"code":"invalid_api_key"}\n\ndata: [DONE]\n\n',
+                { headers: { "Content-Type": "text/event-stream" } },
+            ),
+        );
+        const user = userEvent.setup();
+
+        const { container } = render(
+            <TRChatPanel reviewId="review-1" onCitationClick={vi.fn()} />,
+        );
+        const viewport = container.querySelector<HTMLDivElement>(
+            ".tr-chat-message-fades",
+        )!;
+        viewport.scrollTo = vi.fn();
+        await user.click(
+            screen.getByRole("button", { name: "Send test message" }),
+        );
+
+        const alert = await screen.findByRole("alert");
+        expect(within(alert).getByText("API key rejected")).toBeInTheDocument();
+        expect(alert).toHaveTextContent(
+            /The Anthropic \(Claude\) API key was rejected/,
+        );
+        expect(
+            within(alert).getByRole("button", { name: "Go to settings" }),
         ).toBeInTheDocument();
     });
 

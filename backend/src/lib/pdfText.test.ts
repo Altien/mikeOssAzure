@@ -115,6 +115,81 @@ describe("extractPdfText layout reconstruction", () => {
     },
   );
 
+  it("reads down each column of a two-column page", async () => {
+    // The counterpart to the table above, and the regression this exists for:
+    // a table row reads across, but a two-column page reads down. Grouping by
+    // baseline alone glued the left column's line to the right column's, so a
+    // quote spanning two lines of one column was not contiguous in the
+    // extracted text and failed citation verification outright.
+    const left = [
+      "The defendant contends that the statute of",
+      "limitations had expired before the complaint",
+      "was filed, and that the tolling agreement is",
+      "unenforceable for want of consideration.",
+    ];
+    const right = [
+      "We disagree. The record shows the parties",
+      "exchanged mutual promises to forbear suit,",
+      "which this court has long held sufficient to",
+      "support a tolling agreement.",
+    ];
+    // `item` reports 6pt per character, so the widest left line ends 18pt
+    // short of the right column: a gutter, not a word gap.
+    const rightX = 72 + Math.max(...left.map((l) => l.length * 6)) + 18;
+    withPdf([
+      [
+        ...left.map((line, i) => item(line, 72, 700 - i * 14)),
+        ...right.map((line, i) => item(line, rightX, 700 - i * 14)),
+      ],
+    ]);
+
+    // Each column's lines stay contiguous. The right column keeps the indent
+    // its x position implies, which whitespace-normalized quote matching
+    // collapses.
+    const indent = " ".repeat(24);
+    await expect(extractPdfText(new ArrayBuffer(8))).resolves.toBe(
+      [
+        "[Page 1]",
+        ...left,
+        "",
+        ...right.map((line) => indent + line),
+      ].join("\n"),
+    );
+  });
+
+  it("keeps a full-width heading above the columns it introduces", async () => {
+    // A heading spanning both columns breaks the gutter, so requiring one
+    // unbroken over the whole page would find no columns at all on exactly
+    // the pages that have them.
+    // Three lines a side: a column is a block of text, so a candidate gutter
+    // supported by only a row or two is not taken as one.
+    const left = [
+      "Left line one aaaaaaaaaa",
+      "Left line two aaaaaaaaaa",
+      "Left line three aaaaaaaa",
+    ];
+    const right = [
+      "Right line one bbbbbbbbb",
+      "Right line two bbbbbbbbb",
+      "Right line three bbbbbbb",
+    ];
+    const rightX = 72 + 24 * 6 + 18;
+    withPdf([
+      [
+        item("OPINION OF THE COURT", 72, 730),
+        ...left.map((line, i) => item(line, 72, 700 - i * 14)),
+        ...right.map((line, i) => item(line, rightX, 700 - i * 14)),
+      ],
+    ]);
+
+    const text = await extractPdfText(new ArrayBuffer(8));
+    expect(text.indexOf("OPINION OF THE COURT")).toBeLessThan(
+      text.indexOf("Left line one"),
+    );
+    expect(text).toContain(`${left[0]}\n${left[1]}`);
+    expect(text.indexOf(left[1])).toBeLessThan(text.indexOf(right[0]));
+  });
+
   it("groups near-equal baselines and sorts fragments by X", async () => {
     withPdf([
       [

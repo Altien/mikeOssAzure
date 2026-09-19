@@ -110,4 +110,47 @@ describe("CitationQuotesSection", () => {
             screen.queryByText(/Example v Example/),
         ).not.toBeInTheDocument();
     });
+    const singleQuoteDocument = {
+        document_id: "document-1",
+        title: "agreement.docx",
+        type: "docx" as const,
+        metadata: [],
+        quotes: [
+            {
+                quote: "Matched source quote",
+                verification: { verified: true },
+                target: { page: 2 },
+            },
+        ],
+    };
+
+    it("dismisses the section through the close control", () => {
+        const onClose = vi.fn();
+        render(
+            <CitationQuotesSection
+                document={singleQuoteDocument}
+                onClose={onClose}
+            />,
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: "Close citation" }));
+        expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("omits the close control when the section cannot be dismissed", () => {
+        render(<CitationQuotesSection document={singleQuoteDocument} />);
+
+        expect(
+            screen.queryByRole("button", { name: "Close citation" }),
+        ).not.toBeInTheDocument();
+    });
+
+    it("renders Cite as a white pill button", () => {
+        render(<CitationQuotesSection document={singleQuoteDocument} />);
+
+        expect(screen.getByRole("button", { name: "Cite" })).toHaveClass(
+            "liquid-glass-flat",
+            "rounded-full",
+        );
+    });
 });

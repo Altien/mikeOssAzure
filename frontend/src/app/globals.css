@@ -499,25 +499,52 @@
 
 /* PDF text layer */
 .pdf-text-layer {
+    --text-scale-factor: calc(
+        var(--total-scale-factor) * var(--min-font-size, 1)
+    );
+    --min-font-size-inv: calc(1 / var(--min-font-size, 1));
     overflow: hidden;
     opacity: 1;
     line-height: 1;
-    user-select: none;
-    pointer-events: none;
+    /* The layer sits over the rendered canvas and holds the page's real text,
+       so it has to receive pointer events for the user to select and copy. */
+    caret-color: CanvasText;
 }
 
-.pdf-text-layer > span {
+.pdf-text-layer .markedContent {
+    display: contents;
+}
+
+.pdf-text-layer .pdf-text-item {
+    --font-height: 0;
+    --scale-x: 1;
+    --rotate: 0deg;
     color: transparent;
     position: absolute;
     white-space: pre;
     cursor: text;
+    user-select: text;
     transform-origin: 0% 0%;
+    z-index: 1;
+    font-size: calc(var(--text-scale-factor) * var(--font-height));
+    transform: rotate(var(--rotate)) scaleX(var(--scale-x))
+        scale(var(--min-font-size-inv));
 }
 
 .pdf-text-layer .pdf-text-highlight {
     background-color: var(--pdf-highlight-background);
     border-radius: 2px;
     position: static;
+}
+
+/* The glyphs in this layer are transparent stand-ins for the ones painted on
+   the canvas below. Selection has to stay translucent so the real text still
+   reads through it, and the text itself has to stay transparent: the browser's
+   default selection foreground would paint these invisible glyphs opaque and
+   double them on top of the page. */
+.pdf-text-layer ::selection {
+    background-color: var(--pdf-selection-background);
+    color: transparent;
 }
 
 .docx-view-container span.docx-text-highlight,

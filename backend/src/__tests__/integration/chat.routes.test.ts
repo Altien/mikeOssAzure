@@ -563,6 +563,71 @@ describe("POST /chat — streaming endpoint", () => {
         expect(res.text).toContain("[DONE]");
     });
 
+    it("forwards a rejected API key as a fixable error, not a retry prompt", async () => {
+        // "Please try again" sends the user to retry something that cannot
+        // succeed until they change the key, so the engine's verdict that this
+        // failure is safe to show has to survive onto the wire.
+        const { AssistantStreamError } = await import(
+            "../../modules/chat/engine/index.js"
+        );
+        const message =
+            "Your Anthropic (Claude) API key was rejected. Check the key in Settings \u2192 Bring Your Own Keys and try again.";
+        runLLMStream.mockImplementation(async () => {
+            throw new AssistantStreamError(message, "", [
+                {
+                    type: "error",
+                    message,
+                    safe_to_display: true,
+                    code: "invalid_api_key",
+                },
+            ]);
+        });
+
+        const res = await request(app)
+            .post("/chat")
+            .set("Authorization", "Bearer test")
+            .send(VALID_BODY);
+
+        expect(res.status).toBe(200);
+        expect(res.text).toContain('"type":"error"');
+        expect(res.text).toContain("was rejected");
+        expect(res.text).toContain('"safe_to_display":true');
+        expect(res.text).toContain('"code":"invalid_api_key"');
+        expect(res.text).not.toContain("could not be completed");
+        expect(res.text).toContain("[DONE]");
+    });
+
+    it("keeps an unexplained failure generic and uncoded", async () => {
+        // Only errors the engine marked safe may reach the user; anything else
+        // still collapses to the generic message with no actionable code.
+        const { AssistantStreamError } = await import(
+            "../../modules/chat/engine/index.js"
+        );
+        runLLMStream.mockImplementation(async () => {
+            throw new AssistantStreamError(
+                "The response could not be completed. Please try again.",
+                "",
+                [
+                    {
+                        type: "error",
+                        message:
+                            "The response could not be completed. Please try again.",
+                    },
+                ],
+            );
+        });
+
+        const res = await request(app)
+            .post("/chat")
+            .set("Authorization", "Bearer test")
+            .send(VALID_BODY);
+
+        expect(res.status).toBe(200);
+        expect(res.text).toContain("could not be completed");
+        expect(res.text).not.toContain('"code"');
+        expect(res.text).not.toContain('"safe_to_display":true');
+    });
+
     it("persists an ask-input pause without reporting an empty response", async () => {
         const askInputsEvent = {
             type: "ask_inputs" as const,

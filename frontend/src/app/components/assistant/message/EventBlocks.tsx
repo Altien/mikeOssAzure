@@ -744,6 +744,9 @@ export function DocEditBlock({
         <DocEditBlockUI
             label={label}
             filename={filename}
+            fileIcon={
+                <FileTypeIcon fileType={filename} className="h-3.5 w-3.5" />
+            }
             onClick={onClick}
             showConnector={showConnector}
             isStreaming={isStreaming}

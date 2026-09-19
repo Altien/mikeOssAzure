@@ -148,6 +148,8 @@ interface Props {
      */
     isReloading?: boolean;
     onViewClick?: (ann: EditAnnotation) => void;
+    /** Renders the dismiss control. Omit where the card cannot be closed. */
+    onClose?: () => void;
     /**
      * Fires immediately when the user clicks Accept or Reject, before the
      * backend round-trip. Parents use this to show an in-progress spinner
@@ -190,6 +192,7 @@ export function EditCard({
     resolvedStatus,
     isReloading,
     onViewClick,
+    onClose,
     onResolveStart,
     onResolved,
     onError,
@@ -274,6 +277,7 @@ export function EditCard({
             className={`${RESPONSE_GLASS_SURFACE} p-2`}
             actionsDisabled={!!isReloading}
             busyAction={busyAction ?? undefined}
+            onClose={onClose}
             onAccept={() => handle("accept")}
             onReject={() => handle("reject")}
             onView={

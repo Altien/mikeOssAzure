@@ -37,6 +37,7 @@ import { enqueueExtraction } from "../../lib/queue/extractionQueue";
 import {
     runProgressChannel,
     type CellUpdate,
+    type RunProgressUpdate,
 } from "../../lib/queue/runProgress";
 import { type UserApiKeys } from "../../lib/llm";
 import { extractRowColumns, finalizeCell } from "./tabular.extractRow";
@@ -222,7 +223,11 @@ async function tailTabularRun(args: {
         write(update);
         if (pending.size === 0) finish();
     };
-    const onUpdate = (update: CellUpdate) => {
+    const onUpdate = (update: RunProgressUpdate) => {
+        if (update.type === "error") {
+            write(update);
+            return;
+        }
         const key = cellKey(update.row_id, update.column_index);
         if (update.status === "generating") {
             if (pending.has(key)) write(update); // spinner feedback; still pending
@@ -246,7 +251,7 @@ async function tailTabularRun(args: {
             await sub.subscribe(runProgressChannel(reviewId));
             sub.on("message", (_channel, message) => {
                 try {
-                    onUpdate(JSON.parse(message) as CellUpdate);
+                    onUpdate(JSON.parse(message) as RunProgressUpdate);
                 } catch {
                     /* ignore malformed frame */
                 }
@@ -571,6 +576,7 @@ export async function streamTabularGenerateSync(args: {
     apiKeys: UserApiKeys;
     generationId: string;
     abortSignal: AbortSignal;
+    onError?: (error: unknown) => void;
 }): Promise<boolean> {
     const {
         res,
@@ -583,6 +589,7 @@ export async function streamTabularGenerateSync(args: {
         apiKeys,
         generationId,
         abortSignal,
+        onError,
     } = args;
 
     const write = (line: string) => {
@@ -620,7 +627,7 @@ export async function streamTabularGenerateSync(args: {
         // this run's generation id) and announces each transition through the
         // sink, which here writes SSE frames. It never decides the terminal
         // state of a column the model skipped; it reports those in `missing`.
-        const { missing } = await extractRowColumns({
+        const { missing, error } = await extractRowColumns({
             db,
             reviewId,
             row,
@@ -637,6 +644,8 @@ export async function streamTabularGenerateSync(args: {
                     cellFrame(rowId, columnIndex, result, "done"),
             },
         });
+
+        if (error) onError?.(error);
 
         // Stopped cells return to pending; genuine missing model output is
         // still an error. Completed cells remain untouched.

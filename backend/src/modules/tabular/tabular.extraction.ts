@@ -1,13 +1,14 @@
 // extraction body — implementation behind the module facade.
 import { type ExtractionJobData } from "../../lib/queue/extractionQueue";
-import { publishCellUpdate as defaultPublish, type CellUpdate } from "../../lib/queue/runProgress";
+import { publishCellUpdate as defaultPublish, type RunProgressUpdate } from "../../lib/queue/runProgress";
+import { assistantStreamErrorPayload } from "../chat/chat.service";
 import { extractRowColumns, finalizeCell, finishGenerationIfIdle, loadReviewRow, renewGeneration, validateSelectedModel, TABULAR_GENERATION_HEARTBEAT_MS, type Column } from "./tabular.service";
 import { createServerSupabase, type Db } from "../../lib/supabase";
 
 export interface ExtractionDeps {
     db: Db;
     /** Publish a progress frame (injectable so the job is unit-testable). */
-    publish: (reviewId: string, update: CellUpdate) => Promise<void>;
+    publish: (reviewId: string, update: RunProgressUpdate) => Promise<void>;
 }
 
 function defaultDeps(): ExtractionDeps {
@@ -136,7 +137,7 @@ export async function runExtractionJob(
         // 5. Run the shared extraction core; publish transitions over Redis so a
         //    tailing /generate request sees them live. Every cell write is
         //    stamped with — and, once terminal, guarded by — this generation.
-        const { processed, missing } = await extractRowColumns({
+        const { processed, missing, error } = await extractRowColumns({
             db,
             reviewId,
             row,
@@ -164,6 +165,12 @@ export async function runExtractionJob(
                     }),
             },
         });
+        if (error) {
+            const payload = assistantStreamErrorPayload(error);
+            if (payload.code === "invalid_api_key") {
+                await publish(reviewId, { type: "error", ...payload });
+            }
+        }
         if (processed.length === 0) {
             settled = true;
             return;

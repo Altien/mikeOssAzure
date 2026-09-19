@@ -15,6 +15,7 @@ import { enqueueChatTurnAudit } from "../../lib/audit";
 import {
     appendAssistantEventsToMessage,
     AssistantStreamError,
+    assistantStreamErrorPayload,
     ASSISTANT_ERROR_MESSAGE,
     buildCancelledAssistantMessage,
     extractCitations,
@@ -366,7 +367,8 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                 return;
             }
             console.error("[project-chat/stream] error:", err);
-            const message = ASSISTANT_ERROR_MESSAGE;
+            const errorPayload = assistantStreamErrorPayload(err);
+            const message = errorPayload.message;
             const errorEvents =
                 err instanceof AssistantStreamError
                     ? stripTransientAssistantEvents(err.events)
@@ -408,7 +410,9 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                 );
             }
             try {
-                write(`data: ${JSON.stringify({ type: "error", message })}\n\n`);
+                write(
+                    `data: ${JSON.stringify({ type: "error", ...errorPayload })}\n\n`,
+                );
                 write("data: [DONE]\n\n");
             } catch {
                 /* ignore */

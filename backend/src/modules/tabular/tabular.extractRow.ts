@@ -50,6 +50,8 @@ export interface ExtractRowResult {
     received: Set<number>;
     /** Processed columns the model did NOT return — caller decides the policy. */
     missing: number[];
+    /** Stream failure, after any partial column results were persisted. */
+    error?: unknown;
 }
 
 /**
@@ -86,9 +88,9 @@ export async function finalizeCell(
  * Extract every not-yet-`done` column for one row.
  *
  * Idempotent: columns already `done` with content are skipped, so a re-run only
- * touches outstanding columns. `queryTabularAllColumns` swallows its own LLM/
- * stream errors (surfacing them as unreturned columns), so this function does
- * not throw on model failure — it reports `missing` instead.
+ * touches outstanding columns. Model failures do not throw from this function:
+ * partial results are retained, outstanding columns are reported through
+ * `missing`, and the original error is returned for an actionable stream event.
  *
  * `abortSignal` stops the run. Aborting BEFORE any cell has been marked
  * "generating" leaves the grid exactly as it was found (nothing processed,
@@ -184,6 +186,7 @@ export async function extractRowColumns(args: {
 
     // One LLM call for all outstanding columns; persist + announce each result.
     const received = new Set<number>();
+    let error: unknown;
     try {
         await queryTabularAllColumns(
             model,
@@ -211,6 +214,7 @@ export async function extractRowColumns(args: {
             abortSignal,
         );
     } catch (err) {
+        error = err;
         // An abort re-thrown by the stream is the caller stopping us, not a
         // failure worth logging; the unreturned columns are reported below.
         if (!abortSignal?.aborted) {
@@ -224,5 +228,5 @@ export async function extractRowColumns(args: {
     const missing = processed
         .filter((c) => !received.has(c.index))
         .map((c) => c.index);
-    return { processed, received, missing };
+    return { processed, received, missing, ...(error ? { error } : {}) };
 }

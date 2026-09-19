@@ -357,7 +357,18 @@ export type AssistantEvent =
       occurrence: "all" | null;
       reason: string | null;
     }
-  | { type: "error"; message: string; safe_to_display?: boolean };
+  | {
+      type: "error";
+      message: string;
+      safe_to_display?: boolean;
+      /**
+       * Machine-readable cause, when the client can offer a specific remedy.
+       * "invalid_api_key": the provider rejected the caller's key.
+       */
+      code?: AssistantErrorCode;
+    };
+
+export type AssistantErrorCode = "invalid_api_key";
 
 export type WordEditApplyMode = "direct" | "approval";
 

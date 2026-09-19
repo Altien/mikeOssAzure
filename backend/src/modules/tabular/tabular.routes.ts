@@ -20,6 +20,7 @@ import { sendInternalError } from "../../lib/httpError";
 import { sendServiceFailure } from "../../lib/serviceResult";
 import {
     AssistantStreamError,
+    assistantStreamErrorPayload,
     ASSISTANT_ERROR_MESSAGE,
     buildCancelledAssistantMessage,
     isAbortError,
@@ -482,6 +483,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, asyncRoute(async (req, re
             return;
         }
 
+        let sentGenerationError = false;
         const completed = await streamTabularGenerateSync({
             res,
             db,
@@ -493,6 +495,15 @@ tabularRouter.post("/:reviewId/generate", requireAuth, asyncRoute(async (req, re
             apiKeys: api_keys,
             generationId,
             abortSignal: generationAbort.signal,
+            onError: (error) => {
+                if (sentGenerationError) return;
+                const payload = assistantStreamErrorPayload(error);
+                if (payload.code !== "invalid_api_key") return;
+                sentGenerationError = true;
+                write(
+                    `data: ${JSON.stringify({ type: "error", ...payload })}\n\n`,
+                );
+            },
         });
 
         if (completed) {
@@ -848,7 +859,8 @@ tabularRouter.post("/:reviewId/chat", requireAuth, asyncRoute(async (req, res) =
             return;
         }
         console.error("[tabular/chat] error", err);
-        const message = ASSISTANT_ERROR_MESSAGE;
+        const errorPayload = assistantStreamErrorPayload(err);
+        const message = errorPayload.message;
         const errorEvents =
             err instanceof AssistantStreamError
                 ? stripTransientAssistantEvents(err.events)
@@ -879,7 +891,9 @@ tabularRouter.post("/:reviewId/chat", requireAuth, asyncRoute(async (req, res) =
             }
         }
         try {
-            write(`data: ${JSON.stringify({ type: "error", message })}\n\n`);
+            write(
+                `data: ${JSON.stringify({ type: "error", ...errorPayload })}\n\n`,
+            );
             write("data: [DONE]\n\n");
         } catch {
             /* ignore */

@@ -1,7 +1,9 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { X } from "lucide-react";
 import { PillButtonUI } from "./PillButtonUI";
+import { TextSlabUI } from "./TextSlabUI";
 
 export type EditCardUIBusyAction =
     | "view"
@@ -37,6 +39,8 @@ export interface EditCardUIProps {
     onAccept?: () => void;
     onReject?: () => void;
     onAcceptAndApply?: () => void;
+    /** Renders the dismiss control. Omit where the card cannot be closed. */
+    onClose?: () => void;
 }
 
 /**
@@ -57,6 +61,7 @@ export function EditCardUI({
     className = "",
     actionsDisabled = false,
     busyAction,
+    onClose,
     onView,
     onApply,
     onAccept,
@@ -86,7 +91,7 @@ export function EditCardUI({
             data-edit-status={status}
             aria-busy={ariaBusy || busyAction !== undefined || undefined}
         >
-            {(changeNumber !== undefined || reason) && (
+            {(changeNumber !== undefined || reason || onClose) && (
                 <div className="mb-2 flex items-start gap-2">
                     {changeNumber !== undefined && (
                         <span
@@ -102,11 +107,25 @@ export function EditCardUI({
                             {reason}
                         </p>
                     )}
+                    {onClose && (
+                        <PillButtonUI
+                            tone="white"
+                            size="icon-xs"
+                            aria-label="Close tracked change"
+                            title="Close tracked change"
+                            onClick={onClose}
+                            // Matches CitationPillUI and the change-number
+                            // badge beside it.
+                            className="ml-auto h-4 w-4"
+                        >
+                            <X aria-hidden="true" className="h-2.5 w-2.5" />
+                        </PillButtonUI>
+                    )}
                 </div>
             )}
 
             {(hasEditText || previewContent !== undefined) && (
-                <div className="rounded-lg bg-gray-100/70 px-2 py-2 font-sans text-xs leading-relaxed">
+                <TextSlabUI className="font-sans text-xs leading-relaxed">
                     {previewContent !== undefined ? (
                         previewContent
                     ) : (
@@ -124,7 +143,7 @@ export function EditCardUI({
                             )}
                         </>
                     )}
-                </div>
+                </TextSlabUI>
             )}
 
             {locationHint && (

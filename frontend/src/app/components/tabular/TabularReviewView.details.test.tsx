@@ -4,10 +4,23 @@ import {
     getProject,
     getTabularReview,
     listProjects,
+    streamTabularGeneration,
     updateTabularReview,
 } from "@/app/lib/mikeApi";
 import type { TabularReview } from "@/app/components/shared/types";
 import { TRView } from "./TabularReviewView";
+
+const { apiKeyState } = vi.hoisted(() => ({
+    apiKeyState: {
+        claude: { configured: true, source: "user" },
+        gemini: { configured: false, source: null },
+        openai: { configured: false, source: null },
+        openrouter: { configured: false, source: null },
+        vercel: { configured: false, source: null },
+        "opencode-go": { configured: false, source: null },
+        courtlistener: { configured: false, source: null },
+    },
+}));
 
 // The grid, side panels and chat are out of scope. This file pins the ONE
 // question the details dialog has to answer consistently: which role may
@@ -35,7 +48,10 @@ vi.mock("@/app/contexts/AuthContext", () => ({
     useAuth: () => ({ user: { id: "me", email: "me@firm.test" } }),
 }));
 vi.mock("@/app/contexts/UserProfileContext", () => ({
-    useUserProfile: () => ({ profile: { apiKeys: {} }, apiKeysDegraded: false }),
+    useUserProfile: () => ({
+        profile: { apiKeys: apiKeyState },
+        apiKeysDegraded: false,
+    }),
 }));
 vi.mock("@/app/contexts/SidebarContext", () => ({
     useSidebar: () => ({ setSidebarOpen: vi.fn() }),
@@ -44,6 +60,13 @@ vi.mock("@/app/hooks/useConfiguredModels", () => ({
     useConfiguredModels: () => [],
 }));
 vi.mock("../assistant/ModelToggle", () => ({
+    SETTINGS_MODELS: [
+        {
+            id: "claude-sonnet-5",
+            label: "Claude Sonnet 5",
+            group: "Anthropic",
+        },
+    ],
     ModelToggle: ({
         onChange,
     }: {
@@ -59,7 +82,23 @@ vi.mock("./AddColumnModal", () => ({ AddColumnModal: () => null }));
 vi.mock("./TRWorkflowModal", () => ({ TRWorkflowModal: () => null }));
 vi.mock("../modals/AddDocumentsModal", () => ({ AddDocumentsModal: () => null }));
 vi.mock("../modals/AccessModal", () => ({ AccessModal: () => null }));
-vi.mock("../popups/ApiKeyMissingPopup", () => ({ ApiKeyMissingPopup: () => null }));
+vi.mock("../popups/ApiKeyMissingPopup", () => ({
+    ApiKeyMissingPopup: ({
+        open,
+        title,
+        message,
+    }: {
+        open: boolean;
+        title?: string;
+        message?: string;
+    }) =>
+        open ? (
+            <div>
+                <span>{title}</span>
+                <span>{message}</span>
+            </div>
+        ) : null,
+}));
 vi.mock("./TabularReviewDetailsModal", () => ({
     TabularReviewDetailsModal: ({
         open,
@@ -133,6 +172,48 @@ describe("TabularReviewView details gate", () => {
             removeEventListener: vi.fn(),
             dispatchEvent: vi.fn(),
         }));
+    });
+
+    it("shows the rejected-key warning when review generation reports it", async () => {
+        vi.mocked(getTabularReview).mockResolvedValue({
+            review: review({
+                access_role: "editor",
+                model: "claude-sonnet-5",
+                columns_config: [
+                    { index: 0, name: "Term", prompt: "Find it" },
+                ],
+            }),
+            cells: [],
+            rows: [
+                {
+                    id: "row-1",
+                    review_id: "r1",
+                    label: "Contract.pdf",
+                    row_type: "document",
+                    folder_id: null,
+                    library_folder_id: null,
+                    document_id: "doc-1",
+                    sort_index: 0,
+                    source_document_ids: ["doc-1"],
+                },
+            ],
+            documents: [],
+        });
+        vi.mocked(streamTabularGeneration).mockResolvedValue(
+            new Response(
+                'data: {"type":"error","message":"The Anthropic API key was rejected.","safe_to_display":true,"code":"invalid_api_key"}\n\ndata: [DONE]\n\n',
+                { status: 200 },
+            ),
+        );
+
+        render(<TRView reviewId="r1" />);
+
+        fireEvent.click(await screen.findByTitle("Run review"));
+
+        expect(await screen.findByText("API key rejected")).toBeInTheDocument();
+        expect(
+            screen.getByText(/Anthropic \(Claude\) API key was rejected/),
+        ).toBeInTheDocument();
     });
 
     it("lets a member open and save details, matching the server's PATCH", async () => {

@@ -47,6 +47,12 @@ import { buildTabularChatHistory } from "@/app/lib/tabularChatHistory";
 import { CitationPillUI } from "@/shared/ui/CitationPillUI";
 import { subscribeToTabularChatSettingsUpdates } from "@/app/lib/tabularChatSettingsEvents";
 import { WarningPopup } from "../popups/WarningPopup";
+import { ApiKeyMissingPopup } from "../popups/ApiKeyMissingPopup";
+import {
+    getModelProvider,
+    providerLabel,
+    type ModelProvider,
+} from "@/app/lib/modelAvailability";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -467,6 +473,9 @@ export function TRChatPanel({
     const [isLoading, setIsLoading] = useState(false);
     const [isLoadingMessages, setIsLoadingMessages] = useState(false);
     const [messageLoadWarning, setMessageLoadWarning] = useState(false);
+    const [rejectedApiKey, setRejectedApiKey] = useState<{
+        provider: ModelProvider | null;
+    } | null>(null);
     const [minHeight, setMinHeight] = useState("0px");
     const [messagesVisible, setMessagesVisible] = useState(false);
     const [panelWidth, setPanelWidth] = useState(380);
@@ -1453,6 +1462,31 @@ export function TRChatPanel({
                             continue;
                         }
 
+                        if (data.type === "error") {
+                            if (data.code === "invalid_api_key") {
+                                setRejectedApiKey({
+                                    provider: getModelProvider(message.model),
+                                });
+                            }
+                            clearStreamingPlaceholders();
+                            pushEvent({
+                                type: "error",
+                                message:
+                                    data.safe_to_display === true &&
+                                    typeof data.message === "string" &&
+                                    data.message.trim()
+                                        ? data.message.trim()
+                                        : "An error occurred. Please try again.",
+                                ...(data.safe_to_display === true
+                                    ? { safe_to_display: true }
+                                    : {}),
+                                ...(data.code === "invalid_api_key"
+                                    ? { code: "invalid_api_key" as const }
+                                    : {}),
+                            });
+                            continue;
+                        }
+
                         if (data.type === "citations") {
                             // End-of-stream signal — scrub any lingering
                             // placeholders so they don't persist into the
@@ -1739,6 +1773,17 @@ export function TRChatPanel({
                 title="Chat unavailable"
                 message="This chat’s messages could not be loaded. Please try again."
                 onClose={() => setMessageLoadWarning(false)}
+            />
+            <ApiKeyMissingPopup
+                open={rejectedApiKey !== null}
+                provider={rejectedApiKey?.provider ?? null}
+                title="API key rejected"
+                message={`${
+                    rejectedApiKey?.provider
+                        ? `The ${providerLabel(rejectedApiKey.provider)} API key`
+                        : "That API key"
+                } was rejected. If it is your own key, check it in Settings; otherwise contact your administrator.`}
+                onClose={() => setRejectedApiKey(null)}
             />
         </div>
     );

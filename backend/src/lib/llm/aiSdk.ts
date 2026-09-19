@@ -11,6 +11,7 @@ import type {
   StreamChatResult,
 } from "./types";
 import { createRawLlmStreamRecorder, logRawLlmStream } from "./rawStreamLog";
+import { asInvalidApiKeyError } from "./apiKeyErrors";
 
 const MAX_OUTPUT_TOKENS = 16_384;
 
@@ -251,6 +252,19 @@ function errorMessage(error: unknown, label: string): string {
   return `${label} stream failed.`;
 }
 
+/**
+ * Convert a provider failure into the error we throw.
+ *
+ * A rejected API key becomes an `InvalidApiKeyError` so the user is told to
+ * fix their key rather than to "try again". Classification has to happen here,
+ * before the error is flattened into a plain `Error`: the status code and
+ * response body that identify it live on the AI SDK's `APICallError` and do
+ * not survive that conversion.
+ */
+function streamFailure(error: unknown, label: string): Error {
+  return asInvalidApiKeyError(error, label) ?? new Error(errorMessage(error, label));
+}
+
 function usesCourtlistenerTool(
   steps: Array<{ toolCalls: Array<{ toolName: string }> }>,
 ) {
@@ -351,10 +365,13 @@ export async function streamAiSdk(
           params.callbacks?.onToolCallStart?.(call);
           break;
         }
+        // A tool's own failure is not the model provider's: a search tool
+        // answering 401 says nothing about our LLM key, so this path keeps the
+        // plain message rather than blaming the user's credentials.
         case "tool-error":
           throw new Error(errorMessage(part.error, config.label));
         case "error":
-          throw new Error(errorMessage(part.error, config.label));
+          throw streamFailure(part.error, config.label);
         case "abort": {
           const error = new Error(part.reason || "Stream aborted.");
           error.name = "AbortError";
@@ -371,7 +388,9 @@ export async function streamAiSdk(
     return { fullText };
   } catch (error) {
     await rawStreamRecorder?.flush("error", error);
-    throw error;
+    // Some providers reject the key before the stream opens, so the failure
+    // arrives as a throw from the SDK rather than as an "error" stream part.
+    throw asInvalidApiKeyError(error, config.label) ?? error;
   }
 }
 

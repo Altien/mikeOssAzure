@@ -50,9 +50,21 @@ export function clearHighlights(textDivs: HTMLElement[]) {
     }
 }
 
+/**
+ * Wrap the part of the text layer matching `quote` in a highlight span.
+ *
+ * `order` lists indices into `textDivs` in reading order, as produced by
+ * `computeReadingOrder`. It matters because the backend reorders PDF text
+ * items into reading order before the model ever sees them, so a quote's
+ * characters are contiguous in *that* order — not in `textDivs`, which is in
+ * the content stream's drawing order. On a table drawn column by column the
+ * two disagree, and a quote reading across a row would never be found. Omit
+ * it to match in drawing order.
+ */
 export async function highlightQuote(
     textDivs: HTMLElement[],
     quote: string,
+    order?: readonly number[],
 ): Promise<boolean> {
     clearHighlights(textDivs);
 
@@ -62,19 +74,23 @@ export async function highlightQuote(
         .map((s) => onlyLetters(s))
         .filter((s) => s.length > 0);
 
-    // Build the stripped full text and track each div's start position within it.
-    // Also keep original div texts for display.
-    const divOrigTexts: string[] = []; // original text for innerHTML slicing
-    const divStripped: string[] = []; // letters-only version for matching
-    const divStartInFull: number[] = []; // start index in fullStripped
+    // Build the stripped full text and track each div's start position within
+    // it, keeping the original div texts for display. These are indexed by
+    // position in `textDivs` but filled and scanned in reading order. Divs
+    // missing from `order` (empty spans, which the extractor drops before
+    // clustering) keep their defaults and simply never match.
+    const divOrigTexts: string[] = new Array(textDivs.length).fill("");
+    const divStripped: string[] = new Array(textDivs.length).fill("");
+    const divStartInFull: number[] = new Array(textDivs.length).fill(0);
+    const readingOrder = order ?? textDivs.map((_, index) => index);
     let fullStripped = "";
 
-    for (let i = 0; i < textDivs.length; i++) {
-        const orig = textDivs[i].textContent ?? "";
-        divOrigTexts.push(orig);
+    for (const i of readingOrder) {
+        const orig = textDivs[i]?.textContent ?? "";
+        divOrigTexts[i] = orig;
         const stripped = onlyLetters(orig);
-        divStripped.push(stripped);
-        divStartInFull.push(fullStripped.length);
+        divStripped[i] = stripped;
+        divStartInFull[i] = fullStripped.length;
         fullStripped += stripped;
     }
 
@@ -89,7 +105,7 @@ export async function highlightQuote(
         }
         const matchEnd = matchPos + segment.length;
 
-        for (let i = 0; i < textDivs.length; i++) {
+        for (const i of readingOrder) {
             const divStart = divStartInFull[i];
             const divEnd = divStart + divStripped[i].length;
             if (matchPos >= divEnd || matchEnd <= divStart) continue;

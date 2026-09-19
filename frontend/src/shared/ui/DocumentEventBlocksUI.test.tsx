@@ -52,6 +52,8 @@ describe("DocumentEventBlocksUI", () => {
         render(
             <DocEditBlockUI
                 label="Couldn’t apply tracked change"
+                filename="agreement.docx"
+                fileIcon={<span data-testid="edit-file-icon" />}
                 detail="Selection moved"
                 dotColor="red"
                 labelTone="error"
@@ -61,6 +63,8 @@ describe("DocumentEventBlocksUI", () => {
         expect(screen.getByText("Couldn’t apply tracked change")).toHaveClass(
             "text-red-500",
         );
+        expect(screen.getByTestId("edit-file-icon")).toBeVisible();
+        expect(screen.getByText("agreement.docx")).toBeVisible();
         expect(screen.getByText("Selection moved")).toBeVisible();
     });
 });

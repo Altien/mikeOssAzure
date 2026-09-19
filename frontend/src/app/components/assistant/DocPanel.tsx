@@ -70,6 +70,13 @@ interface Props {
     active?: boolean;
     warning?: string | null;
     onWarningDismiss?: () => void;
+    /**
+     * Dismisses the citation quote / tracked change shown above the viewer,
+     * leaving the document itself open. The host owns this because the mode
+     * comes from the tab: hiding the section locally would strand the user if
+     * they reopened the same citation, which produces no prop change.
+     */
+    onCloseAnnotation?: () => void;
     initialScrollTop?: number | null;
     onScrollChange?: (scrollTop: number) => void;
 }
@@ -83,6 +90,7 @@ export function DocPanel({
     active = true,
     warning,
     onWarningDismiss,
+    onCloseAnnotation,
     initialScrollTop,
     onScrollChange,
 }: Props) {
@@ -202,6 +210,7 @@ export function DocPanel({
                             documentQuoteId(documentId, index),
                         );
                     }}
+                    onClose={onCloseAnnotation}
                 />
             )}
 
@@ -217,6 +226,7 @@ export function DocPanel({
                         onViewClick={() =>
                             setEditFocusKey((current) => current + 1)
                         }
+                        onClose={onCloseAnnotation}
                     />
                 </div>
             )}

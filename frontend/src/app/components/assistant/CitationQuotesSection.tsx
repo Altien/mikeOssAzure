@@ -1,8 +1,10 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
-import { CiteButton } from "@/app/components/ui/cite-button";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Check, X } from "lucide-react";
+import { QuoteIcon } from "@radix-ui/react-icons";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
+import { TextSlabUI } from "@/shared/ui/TextSlabUI";
 import type { PanelDocument, PanelDocumentQuote } from "../shared/types";
 import {
     CitationVerificationBadge,
@@ -11,10 +13,6 @@ import {
 } from "./message/citationVerification";
 import { ContextNumberBadge } from "./ContextNumberBadge";
 import { RESPONSE_GLASS_SURFACE } from "./message/messageStyles";
-import {
-    LIQUID_GLASS_HOVER_CLASS,
-    LIQUID_GLASS_SUBTLE_CLASS,
-} from "@/shared/ui/LiquidGlassUI";
 
 export type CitationQuoteSectionItem = {
     id: string;
@@ -23,8 +21,6 @@ export type CitationQuoteSectionItem = {
     verificationState?: CitationVerificationDisplayState;
 };
 
-const QUOTE_CARD_SURFACE = "rounded-2xl bg-gray-100";
-
 interface CommonProps {
     error?: string | null;
     isLoading?: boolean;
@@ -32,6 +28,8 @@ interface CommonProps {
     citationRef?: number;
     onSelect?: (quote: CitationQuoteSectionItem, index: number) => void;
     onIndexChange?: (index: number) => void;
+    /** Renders the dismiss control. Omit where the section cannot be closed. */
+    onClose?: () => void;
 }
 
 type Props = CommonProps &
@@ -93,6 +91,7 @@ export function CitationQuotesSection({
     citationRef,
     onSelect,
     onIndexChange,
+    onClose,
 }: Props) {
     const quotes = useMemo(
         () =>
@@ -151,8 +150,22 @@ export function CitationQuotesSection({
                                 })}
                             </div>
                         )}
-                        {currentQuote?.verificationState === "unverified" && (
-                            <CitationVerificationBadge state="unverified" />
+                        {onClose && (
+                            <PillButtonUI
+                                tone="white"
+                                size="icon-xs"
+                                aria-label="Close citation"
+                                title="Close citation"
+                                onClick={onClose}
+                                // Matches CitationPillUI and the quote index
+                                // pills beside it.
+                                className="h-4 w-4"
+                            >
+                                <X
+                                    aria-hidden="true"
+                                    className="h-2.5 w-2.5"
+                                />
+                            </PillButtonUI>
                         )}
                     </div>
                 </div>
@@ -185,12 +198,12 @@ export function CitationQuotesSection({
 
 function RelevantQuoteSkeleton() {
     return (
-        <div className={`animate-pulse px-3 py-2 ${QUOTE_CARD_SURFACE}`}>
+        <TextSlabUI className="animate-pulse">
             <div className="h-3 w-28 rounded bg-gray-200" />
             <div className="mt-2.5 h-3 w-full rounded bg-gray-200" />
             <div className="mt-2 h-3 w-11/12 rounded bg-gray-200" />
             <div className="mt-2 h-3 w-2/3 rounded bg-gray-200" />
-        </div>
+        </TextSlabUI>
     );
 }
 
@@ -202,7 +215,7 @@ function RelevantQuoteMessage({
     tone?: "neutral" | "error";
 }) {
     return (
-        <div className={`px-3 py-2 ${QUOTE_CARD_SURFACE}`}>
+        <TextSlabUI>
             <p
                 className={`font-serif text-sm leading-6 ${
                     tone === "error" ? "text-red-700" : "text-gray-600"
@@ -210,7 +223,7 @@ function RelevantQuoteMessage({
             >
                 {children}
             </p>
-        </div>
+        </TextSlabUI>
     );
 }
 
@@ -230,13 +243,7 @@ function QuoteItem({
 
     return (
         <div>
-            <div
-                className={`w-full rounded-xl px-3 py-2 text-left ${
-                    isSelected
-                        ? "citation-quote-selected"
-                        : "bg-gray-100"
-                }`}
-            >
+            <TextSlabUI selected={isSelected} className="w-full text-left">
                 <div>
                     <p
                         className={`font-serif text-sm leading-6 ${
@@ -259,14 +266,16 @@ function QuoteItem({
                         )}
                     </p>
                 </div>
-            </div>
+            </TextSlabUI>
             <div className="mt-2 flex items-center justify-between gap-2">
-                <CiteButton
-                    quoteText={quote.quote}
-                    quoteLabel={quoteLabel}
-                    className={`h-6 rounded-full px-2 text-gray-600 ${LIQUID_GLASS_SUBTLE_CLASS} ${LIQUID_GLASS_HOVER_CLASS}`}
-                    showText
-                />
+                {isUnverified ? (
+                    <CitationVerificationBadge state="unverified" />
+                ) : (
+                    <CiteQuoteButton
+                        quoteText={quote.quote}
+                        quoteLabel={quoteLabel}
+                    />
+                )}
                 <PillButtonUI
                     tone="black"
                     size="sm"
@@ -277,5 +286,59 @@ function QuoteItem({
                 </PillButtonUI>
             </div>
         </div>
+    );
+}
+
+/**
+ * Copies the quote and its locator to the clipboard, confirming inline for a
+ * couple of seconds. Only this section cites a quote, so it lives here rather
+ * than in a primitive.
+ */
+function CiteQuoteButton({
+    quoteText,
+    quoteLabel,
+}: {
+    quoteText: string;
+    quoteLabel: string;
+}) {
+    const [isCopied, setIsCopied] = useState(false);
+    const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    useEffect(
+        () => () => {
+            if (resetTimer.current) clearTimeout(resetTimer.current);
+        },
+        [],
+    );
+
+    const handleClick = async () => {
+        try {
+            const label = quoteLabel ? ` (${quoteLabel})` : "";
+            await navigator.clipboard.writeText(
+                `"${quoteText.replace(/"/g, "'")}"${label}`,
+            );
+            setIsCopied(true);
+            if (resetTimer.current) clearTimeout(resetTimer.current);
+            resetTimer.current = setTimeout(() => setIsCopied(false), 2000);
+        } catch (err) {
+            console.error("Failed to copy citation:", err);
+        }
+    };
+
+    return (
+        <PillButtonUI
+            tone="white"
+            size="sm"
+            onClick={handleClick}
+            title="Copy Quote and Citation"
+        >
+            {isCopied ? (
+                <Check aria-hidden="true" className="h-3 w-3 text-green-600" />
+            ) : (
+                <QuoteIcon aria-hidden="true" className="h-3 w-3" />
+            )}
+            {/* The visible label is the accessible name; do not override it. */}
+            <span role="status">{isCopied ? "Copied" : "Cite"}</span>
+        </PillButtonUI>
     );
 }

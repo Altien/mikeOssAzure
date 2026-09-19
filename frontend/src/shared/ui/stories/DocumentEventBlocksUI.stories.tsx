@@ -26,6 +26,7 @@ export const Timeline = () => (
         <DocEditBlockUI
             label="Edited"
             filename="Services Agreement.docx"
+            fileIcon={<FileText aria-hidden="true" className="h-3.5 w-3.5" />}
             detail="Updated the notice period"
         />
     </div>
@@ -37,6 +38,7 @@ export const StreamingAndError = () => (
         <DocEditBlockUI
             label="Edit failed"
             filename="Disclosure Schedule.docx"
+            fileIcon={<FileText aria-hidden="true" className="h-3.5 w-3.5" />}
             detail="The clause could not be located"
             dotColor="red"
             labelTone="error"

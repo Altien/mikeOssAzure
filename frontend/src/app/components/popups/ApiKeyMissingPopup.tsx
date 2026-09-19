@@ -11,9 +11,17 @@ interface Props {
     provider: ModelProvider | null;
     /** Optional override for the body sentence. */
     message?: string;
+    /** Optional override for the heading — e.g. a rejected key, not a missing one. */
+    title?: string;
 }
 
-export function ApiKeyMissingPopup({ open, onClose, provider, message }: Props) {
+export function ApiKeyMissingPopup({
+    open,
+    onClose,
+    provider,
+    message,
+    title,
+}: Props) {
     const router = useRouter();
     if (!open) return null;
 
@@ -35,7 +43,7 @@ export function ApiKeyMissingPopup({ open, onClose, provider, message }: Props) 
         <WarningPopup
             open={open}
             onClose={onClose}
-            title="API key required"
+            title={title ?? "API key required"}
             message={body}
             icon={
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-600" />

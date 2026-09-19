@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { CellUpdate } from "../../lib/queue/runProgress";
+import type { RunProgressUpdate } from "../../lib/queue/runProgress";
 
 vi.mock("../../lib/supabase", () => ({
     createServerSupabase: vi.fn(),
@@ -35,6 +35,7 @@ import {
 } from "../extractionWorker";
 import type { Job } from "bullmq";
 import type { ExtractionJobData } from "../../lib/queue/extractionQueue";
+import { AssistantStreamError } from "../../modules/chat/chat.service";
 
 type Call = {
     table: string;
@@ -593,7 +594,7 @@ describe("markExtractionFailed", () => {
         // Typed with publishCellUpdate's signature: this case reads the
         // published update back off mock.calls, which needs a real arg tuple.
         const publish =
-            vi.fn<(reviewId: string, update: CellUpdate) => Promise<void>>(
+            vi.fn<(reviewId: string, update: RunProgressUpdate) => Promise<void>>(
                 async () => {},
             );
         const db = makeDb({
@@ -638,7 +639,10 @@ describe("markExtractionFailed", () => {
             generation_id: "gen-1",
         });
         expect(publish).toHaveBeenCalledTimes(1);
-        expect(publish.mock.calls[0][1].column_index).toBe(1);
+        expect(publish).toHaveBeenCalledWith(
+            "rev-1",
+            expect.objectContaining({ type: "cell_update", column_index: 1 }),
+        );
     });
 
     it("still finalizes an unstamped cell when the job carries no generation", async () => {
@@ -804,6 +808,44 @@ describe("generation lease", () => {
         expect(db.rpcs.map((r) => r.name)).not.toContain(
             "finish_tabular_review_generation",
         );
+    });
+
+    it("publishes a rejected-key error for the generation stream", async () => {
+        const publish = vi.fn(async () => {});
+        const db = makeDb({
+            tabular_reviews: {
+                select: {
+                    data: { columns_config: COLUMNS, model: "claude-test" },
+                },
+            },
+            tabular_cells: {
+                select: { data: [] },
+            },
+        });
+        queryTabularAllColumns.mockRejectedValue(
+            new AssistantStreamError("rejected", "", [
+                {
+                    type: "error",
+                    message: "The Anthropic API key was rejected.",
+                    safe_to_display: true,
+                    code: "invalid_api_key",
+                },
+            ]),
+        );
+
+        await expect(
+            runExtractionJob(
+                { ...DATA, generationId: "gen-1" },
+                { db: db as never, publish },
+            ),
+        ).rejects.toThrow(/incomplete extraction/);
+
+        expect(publish).toHaveBeenCalledWith("rev-1", {
+            type: "error",
+            message: "The Anthropic API key was rejected.",
+            safe_to_display: true,
+            code: "invalid_api_key",
+        });
     });
 
     it("takes no lease action when the job carries no generation id", async () => {

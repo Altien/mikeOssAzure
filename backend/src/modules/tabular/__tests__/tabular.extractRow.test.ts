@@ -169,6 +169,25 @@ describe("extractRowColumns", () => {
         // pre-existing cells → update (not insert) to mark generating
         expect(db.calls.filter((c) => c.op === "insert")).toHaveLength(0);
     });
+
+    it("returns the stream error alongside missing columns", async () => {
+        const streamError = new Error("provider rejected credential");
+        queryTabularAllColumns.mockRejectedValue(streamError);
+
+        const out = await extractRowColumns({
+            db: makeDb() as never,
+            reviewId: "rev-1",
+            row: ROW,
+            columns: COLUMNS,
+            existingByColumn: new Map(),
+            model: "m",
+            apiKeys: {},
+            sink: sinkSpy(),
+        });
+
+        expect(out.error).toBe(streamError);
+        expect(out.missing).toEqual([0, 1]);
+    });
 });
 
 describe("extractRowColumns generation isolation", () => {

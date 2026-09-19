@@ -9,6 +9,8 @@ export default function AssistantPage() {
     const router = useRouter();
     const {
         messages,
+        rejectedApiKey,
+        dismissInvalidApiKey,
         isResponseLoading,
         handleChat,
         handleNewChat,
@@ -32,6 +34,8 @@ export default function AssistantPage() {
             chatModel={messages[0]?.model ?? null}
             chatReasoningLevel={messages[0]?.reasoning ?? null}
             messages={messages}
+            rejectedApiKey={rejectedApiKey}
+            onDismissInvalidApiKey={dismissInvalidApiKey}
             isResponseLoading={isResponseLoading}
             handleChat={handleChat}
             cancel={cancel}

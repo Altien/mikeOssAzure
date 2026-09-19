@@ -179,11 +179,11 @@ Rules:
         }
     };
 
-    // An aborted stream is not a failure to log — it is the caller stopping the
-    // run (client disconnect, or the generation lease being lost). Re-thrown
-    // after the buffered lines drain so the caller can tell "stopped" apart
-    // from "the model just didn't answer".
-    let abortError: unknown;
+    // Preserve any partial lines before re-throwing the stream failure. An abort
+    // is not logged because it is the caller stopping the run; provider failures
+    // return to the row orchestrator so the generation stream can surface an
+    // actionable error such as a rejected API key.
+    let streamError: unknown;
     try {
         await streamChatWithTools({
             model,
@@ -208,16 +208,15 @@ Rules:
             },
         });
     } catch (err) {
-        if (abortSignal?.aborted) {
-            abortError = err;
-        } else {
+        streamError = err;
+        if (!abortSignal?.aborted) {
             console.error("[queryTabularAllColumns] stream failed", err);
         }
     }
 
     if (contentBuffer.trim()) pending.push(processLine(contentBuffer));
     await Promise.all(pending);
-    if (abortError) throw abortError;
+    if (streamError) throw streamError;
 }
 
 // ---------------------------------------------------------------------------

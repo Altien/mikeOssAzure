@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { EditCardsSectionUI } from "@/shared/ui/EditCardsSectionUI";
-import { GLASS_CARD_SURFACE_CLASS } from "@/shared/ui/GlassCardUI";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
+import { RESPONSE_GLASS_SURFACE } from "./messageStyles";
 import { resolveDocumentEdit } from "@/app/lib/mikeApi";
 import type { EditAnnotation } from "../../shared/types";
 import { applyOptimisticResolution } from "../EditCard";
@@ -229,7 +229,7 @@ export function EditCardsSection({
     return (
         <EditCardsSectionUI
             summary={summary}
-            className={`${GLASS_CARD_SURFACE_CLASS} overflow-hidden`}
+            className={`${RESPONSE_GLASS_SURFACE} overflow-hidden`}
             actions={
                 pending.length > 0 ? (
                     <BulkEditActions

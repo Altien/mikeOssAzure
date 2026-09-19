@@ -25,6 +25,15 @@ export interface CellUpdate {
     status: "generating" | "done" | "error";
 }
 
+export interface GenerationErrorUpdate {
+    type: "error";
+    message: string;
+    safe_to_display?: true;
+    code?: "invalid_api_key";
+}
+
+export type RunProgressUpdate = CellUpdate | GenerationErrorUpdate;
+
 /**
  * Publish one cell update for a review. Best-effort: a publish failure must not
  * fail the extraction (the DB write is what matters), so errors are swallowed.
@@ -33,7 +42,7 @@ export interface CellUpdate {
  */
 export async function publishCellUpdate(
     reviewId: string,
-    update: CellUpdate,
+    update: RunProgressUpdate,
 ): Promise<void> {
     // Postgres driver: no pub/sub channel exists — the tailing views resolve
     // every cell through their DB-poll backstops, so silently skipping the

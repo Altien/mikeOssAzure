@@ -204,7 +204,7 @@ treatment because chat messages visibly pass underneath it.
 
 Compose the material classes through the established primitives and constants:
 
-- `GLASS_CARD_SURFACE_CLASS` / `GlassCardUI` — cards
+- `GlassCardUI` — cards
 - `LIQUID_FLOAT_PANEL_SURFACE_CLASS`,
   `LIQUID_SUBTLE_PANEL_SURFACE_CLASS`, and `LIQUID_TABLE_SURFACE_CLASS` in
   `components/ui/liquid-surface.ts` — panels and tables
@@ -219,9 +219,9 @@ Compose the material classes through the established primitives and constants:
 | `TabPillButtonUI` | `shared/ui` | Segmented filter/tab pills. Pass `active` to get `aria-pressed`. |
 | `GlassIconButtonUI` | `shared/ui` | Circular glass icon button — modal close, panel dismiss. Requires `aria-label`. |
 | `GlassCardUI` | `shared/ui` | Canonical liquid-glass card surface. |
+| `TextSlabUI` | `shared/ui` | Inset slab holding quoted or proposed text inside a card — citation quotes, tracked-change diffs, and their loading/empty states. Owns shape, padding, and fill; the caller owns typography. |
 | `ToggleSwitchUI` | `shared/ui` | `role="switch"` toggle with an optional text label. |
 | `CitationPillUI` | `shared/ui` | Canonical numbered citation control for web, tabular review, and Word. Uses neutral gray by default, red for verification errors, and blue for the selected state. |
-| `cite-button` | `components/ui` | Copy-quote-and-citation control. |
 | `input`, `form-field` | `components/ui` | shadcn input; `FormTextInput` (glass/minimal variants) and `FieldLabel` for app forms. |
 | `search-bar` | `components/ui` | Search input with clear button. Pass `label` for a meaningful accessible name. |
 | `dropdown-menu` | `components/ui` | Radix/shadcn menu primitives. |
@@ -268,8 +268,8 @@ These are the rules the primitives already follow. Match them in new work.
   ring for this reason.
 - **Icon-only controls need a name.** `GlassIconButtonUI` requires `aria-label` in
   its type. When a control has a *visible* label, do not override it with a
-  different `aria-label` (WCAG 2.5.3) — `cite-button` only sets one when its text
-  is hidden.
+  different `aria-label` (WCAG 2.5.3). Name an icon-only control, and let a
+  control with visible text be named by that text.
 - **`type="button"` on every non-submit button.** Anything inside a `<form>`
   defaults to submitting.
 - **State goes in ARIA, not only in color.** `ToggleSwitchUI` uses

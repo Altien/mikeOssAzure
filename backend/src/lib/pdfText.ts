@@ -10,6 +10,7 @@ export const STANDARD_FONT_DATA_URL = (() => {
 })();
 
 import { docxToPdf } from "./convert";
+import { orderTextItemLines } from "./pdfTextOrder";
 
 type PdfTextItem = {
   str?: string;
@@ -161,27 +162,9 @@ function layoutPageText(items: PdfTextItem[]): string {
   }
   if (!clean.length) return "";
 
-  // Cluster by baseline before sorting each row by X. Content streams can
-  // emit whole columns at a time, and hasEOL can end just one column's text.
-  clean.sort((a, b) => b.y - a.y || a.x - b.x);
-  const lines: Item[][] = [];
-  let cur: Item[] = [];
-  let curY: number | null = null;
-  let curH = 0;
-  for (const it of clean) {
-    if (curY === null || Math.abs(it.y - curY) > Math.max(2, curH * 0.5)) {
-      cur = [];
-      lines.push(cur);
-      // Keep a fixed anchor so small baseline differences cannot chain
-      // together and accidentally merge successive rows.
-      curY = it.y;
-      curH = it.h;
-    }
-    cur.push(it);
-  }
-
-  // Rows are already top-to-bottom (PDF y grows upward).
-  for (const line of lines) line.sort((a, b) => a.x - b.x);
+  const lines: Item[][] = orderTextItemLines(clean).map((line) =>
+    line.map((index) => clean[index]),
+  );
 
   const marginX = Math.min(...lines.map((line) => line[0]?.x ?? 0));
 

@@ -13,6 +13,7 @@ import {
     highlightQuote,
     STANDARD_FONT_DATA_URL,
 } from "./highlightQuote";
+import { orderTextItemLines, type TextItemGeometry } from "./pdfTextOrder";
 import { LIQUID_GLASS_TRANSLUCENT_CLASS } from "@/shared/ui/LiquidGlassUI";
 
 interface Props {
@@ -42,7 +43,18 @@ type RenderedPage = {
     wrapper: HTMLDivElement;
     canvas: HTMLCanvasElement;
     textDivs: HTMLElement[];
+    /** Indices into `textDivs` in reading order; undefined falls back to drawing order. */
+    readingOrder: number[] | undefined;
 };
+
+type PdfTextStreamItem = {
+    str?: string;
+    transform?: number[];
+    width?: number;
+    height?: number;
+};
+
+type CollectedTextItem = { str: string; geometry: TextItemGeometry };
 
 /**
  * ResizeObserver's content box shrinks when an overflow scrollbar appears.
@@ -58,6 +70,131 @@ export function getObservedPanelWidth(entry: ResizeObserverEntry): number {
         ? borderBoxSize[0]
         : borderBoxSize;
     return Math.round(borderBox?.inlineSize ?? entry.contentRect.width);
+}
+
+/**
+ * PDF.js 6 exposes text geometry through CSS custom properties instead of
+ * writing font size and transforms directly onto each text span. Keep our
+ * custom text layer aligned with that contract without importing the full
+ * stock PDF viewer stylesheet.
+ *
+ * `--scale-round-*` matter as much as the scale factors. Constructing a
+ * `TextLayer` overwrites the container's width and height with
+ * `round(down, var(--total-scale-factor) * <page>px, var(--scale-round-x))`,
+ * and PDF.js 6 writes that `var()` with no fallback. Leaving the property
+ * undefined makes the declaration invalid at computed-value time, so the
+ * container falls back to `width: auto` and — since every text span is
+ * absolutely positioned — collapses to 0x0. Text spans are placed with
+ * percentage offsets, so they would all pile up at the origin and get clipped
+ * by the layer's `overflow: hidden`, hiding every citation highlight. The
+ * stock viewer stylesheet declares these on `.page`; we declare them here.
+ */
+export function configurePdfTextLayer(
+    container: HTMLElement,
+    scale: number,
+    textDivs: HTMLElement[] = [],
+) {
+    container.style.setProperty("--scale-factor", String(scale));
+    container.style.setProperty("--total-scale-factor", String(scale));
+    container.style.setProperty("--scale-round-x", "1px");
+    container.style.setProperty("--scale-round-y", "1px");
+    for (const textDiv of textDivs) {
+        textDiv.classList.add("pdf-text-item");
+    }
+}
+
+/**
+ * Read a page's text-content stream for item geometry.
+ *
+ * `TextLayer` consumes the stream and exposes only DOM spans, which carry no
+ * usable coordinates, so the caller tees the stream and passes the second
+ * branch here. Reading the same stream guarantees the same item sequence,
+ * which is what keeps the result index-aligned with `textLayer.textDivs`.
+ *
+ * The x/y/width/height derivation mirrors the extractor's in
+ * `backend/src/lib/pdfText.ts`, so both sides cluster on identical numbers.
+ * Width matters as much as the rest: column detection reads it to tell a
+ * page gutter from the whitespace inside a table.
+ */
+async function collectTextItemGeometry(
+    stream: ReadableStream<{ items: PdfTextStreamItem[] }>,
+): Promise<CollectedTextItem[]> {
+    const collected: CollectedTextItem[] = [];
+    const reader = stream.getReader();
+    try {
+        for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            for (const item of value?.items ?? []) {
+                // TextLayer creates one span per item carrying a `str`, and
+                // skips marked-content boundaries, which carry none.
+                if (item.str === undefined) continue;
+                const transform = Array.isArray(item.transform)
+                    ? item.transform
+                    : [];
+                const scaleY =
+                    typeof transform[3] === "number" ? transform[3] : 0;
+                collected.push({
+                    str: item.str,
+                    geometry: {
+                        x: typeof transform[4] === "number" ? transform[4] : 0,
+                        y: typeof transform[5] === "number" ? transform[5] : 0,
+                        w: typeof item.width === "number" ? item.width : 0,
+                        h:
+                            Math.abs(scaleY) ||
+                            (typeof item.height === "number"
+                                ? item.height
+                                : 0) ||
+                            10,
+                    },
+                });
+            }
+        }
+    } catch (error) {
+        // Zooming or navigating mid-render cancels the stream. Returning what
+        // was collected lets computeReadingOrder see the length mismatch and
+        // fall back to drawing order. Rejecting instead would surface as an
+        // unhandled rejection, because a stale render returns before the
+        // caller ever awaits this promise.
+        console.warn("PDF text geometry read did not complete", error);
+    } finally {
+        reader.releaseLock();
+    }
+    return collected;
+}
+
+/**
+ * Order `textDivs` the way the backend extractor orders the same items, so a
+ * quote taken from the extracted text can be found in the rendered text layer.
+ *
+ * Returns undefined when the collected items are not index-aligned with
+ * `textDivs`, which would make any ordering meaningless; callers then fall
+ * back to drawing order, i.e. the behavior before reading order existed.
+ */
+export function computeReadingOrder(
+    textDivs: HTMLElement[],
+    collected: CollectedTextItem[],
+): number[] | undefined {
+    if (collected.length !== textDivs.length) {
+        console.warn(
+            `PDF text items (${collected.length}) are not aligned with text layer spans (${textDivs.length}); matching citations in drawing order.`,
+        );
+        return undefined;
+    }
+
+    // The extractor drops empty items before clustering, so they must not
+    // influence line grouping here either. They hold no text to match anyway.
+    const divIndices: number[] = [];
+    const geometry: TextItemGeometry[] = [];
+    for (let i = 0; i < collected.length; i++) {
+        if (collected[i].str === "") continue;
+        divIndices.push(i);
+        geometry.push(collected[i].geometry);
+    }
+
+    return orderTextItemLines(geometry)
+        .flat()
+        .map((index) => divIndices[index]);
 }
 
 export function PdfView({
@@ -180,6 +317,7 @@ export function PdfView({
                         const found = await highlightQuote(
                             target.textDivs,
                             entry.quote,
+                            target.readingOrder,
                         );
                         if (found) hitPage = entry.page;
                     }
@@ -195,6 +333,7 @@ export function PdfView({
                         const found = await highlightQuote(
                             p.textDivs,
                             entry.quote,
+                            p.readingOrder,
                         );
                         if (found) {
                             hitPage = i + 1;
@@ -351,17 +490,33 @@ export function PdfView({
                 textLayerDiv.style.top = "0";
                 textLayerDiv.style.width = `${viewport.width}px`;
                 textLayerDiv.style.height = `${viewport.height}px`;
-                textLayerDiv.style.setProperty("--scale-factor", String(scale));
+                configurePdfTextLayer(textLayerDiv, scale);
                 wrapper.appendChild(textLayerDiv);
 
+                // One branch renders the layer, the other yields the item
+                // geometry the layer discards. Both must be consumed or the
+                // tee stalls on backpressure.
+                const [layerStream, geometryStream] = (
+                    page.streamTextContent() as ReadableStream<{
+                        items: PdfTextStreamItem[];
+                    }>
+                ).tee();
+                const geometry = collectTextItemGeometry(geometryStream);
+
                 const textLayer = new lib.TextLayer({
-                    textContentSource: page.streamTextContent(),
+                    textContentSource: layerStream,
                     container: textLayerDiv,
                     viewport,
                 });
                 await textLayer.render();
                 if (isStale()) return;
                 const textDivs = textLayer.textDivs;
+                configurePdfTextLayer(textLayerDiv, scale, textDivs);
+                const readingOrder = computeReadingOrder(
+                    textDivs,
+                    await geometry,
+                );
+                if (isStale()) return;
 
                 renderedPagesRef.current.push({
                     page,
@@ -369,6 +524,7 @@ export function PdfView({
                     wrapper,
                     canvas,
                     textDivs,
+                    readingOrder,
                 });
             }
 

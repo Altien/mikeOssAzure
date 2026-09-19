@@ -114,4 +114,33 @@ describe("EditCardUI", () => {
         ).toBeDisabled();
         expect(container.firstChild).toHaveAttribute("aria-busy", "true");
     });
+    it("dismisses the card through the close control", async () => {
+        const user = userEvent.setup();
+        const onClose = vi.fn();
+
+        render(<EditCardUI reason="Use the defined term." onClose={onClose} />);
+
+        await user.click(
+            screen.getByRole("button", { name: "Close tracked change" }),
+        );
+        expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("renders the close control even without a number or reason", () => {
+        const onClose = vi.fn();
+
+        render(<EditCardUI originalText="old" onClose={onClose} />);
+
+        expect(
+            screen.getByRole("button", { name: "Close tracked change" }),
+        ).toBeInTheDocument();
+    });
+
+    it("omits the close control when the card cannot be dismissed", () => {
+        render(<EditCardUI reason="Use the defined term." changeNumber={2} />);
+
+        expect(
+            screen.queryByRole("button", { name: "Close tracked change" }),
+        ).not.toBeInTheDocument();
+    });
 });

@@ -345,3 +345,89 @@ describe("ChatView composer gating", () => {
         ).toBeInTheDocument();
     });
 });
+
+describe("rejected API key", () => {
+    function renderWithRejectedKey(model: string | null) {
+        const onDismiss = vi.fn();
+        render(
+            <PageChromeContext.Provider
+                value={{ mobileActionsContainer: null }}
+            >
+                <ChatView
+                    chatId="chat-1"
+                    chat={activeChat}
+                    messages={[]}
+                    isResponseLoading={false}
+                    handleChat={vi.fn().mockResolvedValue("chat-1")}
+                    cancel={vi.fn()}
+                    rejectedApiKey={{ model }}
+                    onDismissInvalidApiKey={onDismiss}
+                />
+            </PageChromeContext.Provider>,
+        );
+        return { onDismiss };
+    }
+
+    it("warns that the key was rejected and names the provider", () => {
+        // Retrying cannot help, so the popup has to point at the key rather
+        // than repeat the generic try-again error.
+        renderWithRejectedKey("claude-opus-4-7");
+
+        const alert = screen.getByRole("alert");
+        expect(within(alert).getByText("API key rejected")).toBeInTheDocument();
+        expect(alert).toHaveTextContent(
+            /The Anthropic \(Claude\) API key was rejected/,
+        );
+        expect(
+            within(alert).getByRole("button", { name: "Go to settings" }),
+        ).toBeInTheDocument();
+    });
+
+    it("falls back to neutral wording for an unrecognized model", () => {
+        renderWithRejectedKey("some-unlisted-model");
+
+        expect(screen.getByRole("alert")).toHaveTextContent(
+            /That API key was rejected/,
+        );
+    });
+
+    it("still warns when the send carried no model", () => {
+        // An ask-inputs response submits without a model, so the popup cannot
+        // depend on having one — it just loses the provider's name.
+        renderWithRejectedKey(null);
+
+        expect(screen.getByRole("alert")).toHaveTextContent(
+            /That API key was rejected/,
+        );
+    });
+
+    it("stays hidden while no key has been rejected", () => {
+        render(
+            <PageChromeContext.Provider
+                value={{ mobileActionsContainer: null }}
+            >
+                <ChatView
+                    chatId="chat-1"
+                    chat={activeChat}
+                    messages={[]}
+                    isResponseLoading={false}
+                    handleChat={vi.fn().mockResolvedValue("chat-1")}
+                    cancel={vi.fn()}
+                    rejectedApiKey={null}
+                    onDismissInvalidApiKey={vi.fn()}
+                />
+            </PageChromeContext.Provider>,
+        );
+
+        expect(screen.queryByText("API key rejected")).not.toBeInTheDocument();
+    });
+
+    it("reports dismissal so the same failure does not reopen it", () => {
+        const { onDismiss } = renderWithRejectedKey("claude-opus-4-7");
+
+        fireEvent.click(
+            screen.getByRole("button", { name: "Dismiss warning" }),
+        );
+        expect(onDismiss).toHaveBeenCalledTimes(1);
+    });
+});

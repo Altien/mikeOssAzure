@@ -177,6 +177,11 @@ interface Props {
         message: string;
     }) => void;
     onWarningDismiss?: (tabId: string) => void;
+    /**
+     * Drops a tab back to a plain document view, dismissing the citation quote
+     * or tracked change shown above the viewer.
+     */
+    onCloseAnnotation?: (tabId: string) => void;
     onScrollChange?: (tabId: string, scrollTop: number) => void;
 }
 
@@ -209,6 +214,7 @@ export function AssistantSidePanel({
     onEditResolved,
     onEditError,
     onWarningDismiss,
+    onCloseAnnotation,
     onScrollChange,
 }: Props) {
     const panelRef = useRef<HTMLDivElement>(null);
@@ -564,6 +570,12 @@ export function AssistantSidePanel({
                                 warning={tab.warning ?? null}
                                 onWarningDismiss={() =>
                                     onWarningDismiss?.(tab.id)
+                                }
+                                onCloseAnnotation={
+                                    tab.kind !== "document" &&
+                                    onCloseAnnotation
+                                        ? () => onCloseAnnotation(tab.id)
+                                        : undefined
                                 }
                                 initialScrollTop={tab.initialScrollTop ?? null}
                                 onScrollChange={(scrollTop) =>

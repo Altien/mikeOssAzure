@@ -89,6 +89,12 @@ export function useAssistantChat({
 
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [isResponseLoading, setIsResponseLoading] = useState(false);
+  // An object, not a bare model id: an ask-inputs response submits without a
+  // model, and a null id has to still open the popup — the id only decides
+  // whether the provider can be named.
+  const [rejectedApiKey, setRejectedApiKey] = useState<{
+    model: string | null;
+  } | null>(null);
   const [isLoadingCitations, setIsLoadingCitations] = useState(false);
   const [chatId, setChatId] = useState<string | undefined>(initialChatId);
 
@@ -491,6 +497,12 @@ export function useAssistantChat({
                 data.message,
                 safeToDisplay,
               );
+              // A rejected key cannot be fixed by retrying, so raise it as a
+              // signal the surface can turn into "go fix your key" rather than
+              // leaving it as one more line of failed-response text.
+              if (data.code === "invalid_api_key") {
+                setRejectedApiKey({ model: model ?? null });
+              }
               clearStreamingPlaceholders();
               finalizeStreamingContent();
               finalizeStreamingReasoning();
@@ -500,6 +512,9 @@ export function useAssistantChat({
                   type: "error",
                   message,
                   ...(safeToDisplay ? { safe_to_display: true } : {}),
+                  ...(data.code === "invalid_api_key"
+                    ? { code: "invalid_api_key" as const }
+                    : {}),
                 },
               ];
               const snapshot = [...eventsRef.current];
@@ -1433,6 +1448,13 @@ export function useAssistantChat({
 
   return {
     messages,
+    /**
+     * Set when a provider rejected our API key on the last send. `model` is
+     * the model we asked for, or null when the send carried none. Retrying
+     * cannot help, so surfaces use this to point at the key instead.
+     */
+    rejectedApiKey,
+    dismissInvalidApiKey: () => setRejectedApiKey(null),
     isResponseLoading,
     setIsResponseLoading,
     isLoadingCitations,

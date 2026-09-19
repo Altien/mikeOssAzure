@@ -29,6 +29,21 @@ export const ProposedChange = () => (
     </Frame>
 );
 
+export const Dismissable = () => (
+    <Frame>
+        <EditCardUI
+            changeNumber={1}
+            reason="Clarifies when either party may terminate the agreement."
+            replacementText="Either party may terminate on thirty days’ written notice."
+            originalText="Either party may terminate with notice."
+            onAccept={() => undefined}
+            onReject={() => undefined}
+            onView={() => undefined}
+            onClose={() => undefined}
+        />
+    </Frame>
+);
+
 export const Applying = () => (
     <Frame>
         <EditCardUI
