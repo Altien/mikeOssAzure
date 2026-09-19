@@ -1925,7 +1925,6 @@ export function TRView({ reviewId, projectId }: Props) {
 
             <ApiKeyMissingPopup
                 open={apiKeyWarning !== null}
-                provider={apiKeyWarning?.provider ?? null}
                 title={
                     apiKeyWarning?.kind === "rejected"
                         ? "API key rejected"

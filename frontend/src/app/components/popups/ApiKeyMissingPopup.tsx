@@ -2,13 +2,11 @@
 
 import { useRouter } from "next/navigation";
 import { AlertTriangle } from "lucide-react";
-import { providerLabel, type ModelProvider } from "@/app/lib/modelAvailability";
 import { WarningPopup } from "../popups/WarningPopup";
 
 interface Props {
     open: boolean;
     onClose: () => void;
-    provider: ModelProvider | null;
     /** Optional override for the body sentence. */
     message?: string;
     /** Optional override for the heading — e.g. a rejected key, not a missing one. */
@@ -18,21 +16,15 @@ interface Props {
 export function ApiKeyMissingPopup({
     open,
     onClose,
-    provider,
     message,
     title,
 }: Props) {
     const router = useRouter();
     if (!open) return null;
 
-    // Upstream divergence (OSS-6, §2.3 items 3/5 — org Key Vault keys):
-    // users cannot add personal keys in dev, so the popup points at the
-    // organisation setup (/install) instead of account settings.
-    const providerName = provider ? providerLabel(provider) : "this provider";
     const body =
         message ??
-        `${providerName} is not configured for this organisation. ` +
-            "Ask an administrator to open /install and configure the organisation credential.";
+        "No models are configured for this organisation. Ask an administrator to configure an organisation credential in setup.";
 
     const handleGoToSettings = () => {
         onClose();

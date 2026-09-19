@@ -884,7 +884,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
             />
             <ApiKeyMissingPopup
                 open={apiKeyModalProvider !== null}
-                provider={apiKeyModalProvider}
                 onClose={() => setApiKeyModalProvider(null)}
             />
             <NoModelsWarningPopup

@@ -2129,7 +2129,6 @@ export default function ProjectAssistantChatPage() {
             )}
             <ApiKeyMissingPopup
                 open={rejectedApiKey !== null}
-                provider={rejectedKeyProvider}
                 title="API key rejected"
                 message={`${
                     rejectedKeyProvider

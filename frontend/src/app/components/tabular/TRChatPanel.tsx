@@ -1783,7 +1783,6 @@ export function TRChatPanel({
             />
             <ApiKeyMissingPopup
                 open={rejectedApiKey !== null}
-                provider={rejectedApiKey?.provider ?? null}
                 title="API key rejected"
                 message={`${
                     rejectedApiKey?.provider
