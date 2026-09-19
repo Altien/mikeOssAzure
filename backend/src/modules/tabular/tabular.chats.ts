@@ -512,29 +512,37 @@ export async function prepareTabularChat(
     // may read it, while only a project editor may curate it.
     let readableMemoryProjectId: string | null = null;
     let writableMemoryProjectId: string | null = null;
-    let memorySharedAudience =
-        !reviewAccess.isCreator ||
-        (await hasDirectContentGrants(db, "tabular_review", review.id));
-    if (review.project_id) {
-        const projectAccess = await checkProjectAccess(
-            review.project_id,
-            userId,
-            userEmail,
-            db,
-        );
-        if (projectAccess.ok) {
-            readableMemoryProjectId = review.project_id;
-            memorySharedAudience =
-                memorySharedAudience ||
-                (await projectHasSharedAudience(
-                    db,
-                    review.project_id,
-                    projectAccess.project.org_id,
-                ));
-            if (can(projectAccess.projectRole, "content.edit")) {
-                writableMemoryProjectId = review.project_id;
+    // Memory bookkeeping never decides whether the user gets an answer: a
+    // database error in either audience check is reported as a normal
+    // internal failure instead of escaping as a rejected promise.
+    let memorySharedAudience = false;
+    try {
+        memorySharedAudience =
+            !reviewAccess.isCreator ||
+            (await hasDirectContentGrants(db, "tabular_review", review.id));
+        if (review.project_id) {
+            const projectAccess = await checkProjectAccess(
+                review.project_id,
+                userId,
+                userEmail,
+                db,
+            );
+            if (projectAccess.ok) {
+                readableMemoryProjectId = review.project_id;
+                memorySharedAudience =
+                    memorySharedAudience ||
+                    (await projectHasSharedAudience(
+                        db,
+                        review.project_id,
+                        projectAccess.project.org_id,
+                    ));
+                if (can(projectAccess.projectRole, "content.edit")) {
+                    writableMemoryProjectId = review.project_id;
+                }
             }
         }
+    } catch (audienceError) {
+        return internalFailure(audienceError);
     }
 
     // Fetch all cells and logical review rows for this review.
@@ -662,16 +670,15 @@ export async function prepareTabularChat(
     }
 
     if (chatId) {
-        try {
-            memoryTurn = await beginMemoryConversationTurn({
-                db,
-                surface: "tabular",
-                conversationId: chatId,
-                actorUserId: userId,
-            });
-        } catch (turnError) {
-            return internalFailure(turnError);
-        }
+        // Fail open: the lease is only a checkpoint marker, and
+        // beginMemoryConversationTurn now returns null instead of throwing
+        // when the RPC fails, so this turn simply is not a checkpoint.
+        memoryTurn = await beginMemoryConversationTurn({
+            db,
+            surface: "tabular",
+            conversationId: chatId,
+            actorUserId: userId,
+        });
     }
 
     const apiMessages = buildTabularMessages(

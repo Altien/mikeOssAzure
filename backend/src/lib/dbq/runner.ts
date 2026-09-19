@@ -321,6 +321,15 @@ export async function runDbJobRetentionSweep(
         .neq("kind", "account.delete")
         .neq("kind", "document.cleanup")
         .lt("finished_at", failedCutoff);
+
+    // 3. Curator receipts. memory_consolidation_results rows exist so a
+    //    retried memory.consolidate job applies each scope once; they are
+    //    useless after the job row itself has been swept, and nothing else
+    //    deletes them.
+    await db
+        .from("memory_consolidation_results")
+        .delete()
+        .lt("created_at", doneCutoff);
 }
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;

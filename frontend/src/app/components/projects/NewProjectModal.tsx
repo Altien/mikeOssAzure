@@ -332,7 +332,7 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
         setSelectedDocuments([]);
         setPendingFiles([]);
         setOrgId(PERSONAL_WORKSPACE);
-        setMemoryEnabled(true);
+        setMemoryEnabled(projectMemoryDefault);
         setError("");
         setOrganizationLoadWarning(false);
     }

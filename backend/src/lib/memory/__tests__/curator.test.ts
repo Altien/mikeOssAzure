@@ -12,6 +12,7 @@ import {
 } from "../../../modules/memory/memory.curator";
 import {
   MemoryRevisionConflictError,
+  MemoryValidationError,
   type MemoryFileRow,
 } from "../files";
 
@@ -39,6 +40,31 @@ describe("memory curator model selection", () => {
         chatModel: "gpt-5.6-sol",
       }),
     ).toBe("gpt-5.6-sol");
+  });
+
+  it("ignores a preferred model the actor holds no key for", () => {
+    // A stale preference or a deployment-wide override for another provider
+    // must not fail every curator run for this user; the verified chat
+    // model is the safe choice.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(
+        memoryCuratorModelForChat({
+          chatModel: "gpt-5.6-sol",
+          memoryCuratorModel: "claude-haiku-4-5",
+          apiKeys: { openai: "sk-test" },
+        }),
+      ).toBe("gpt-5.6-sol");
+      expect(
+        memoryCuratorModelForChat({
+          chatModel: "gpt-5.6-sol",
+          environmentOverride: "claude-haiku-4-5",
+          apiKeys: { openai: "sk-test", claude: "sk-ant" },
+        }),
+      ).toBe("claude-haiku-4-5");
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
@@ -521,6 +547,57 @@ describe("scope-bound memory curator tool", () => {
     expect(svc.write).not.toHaveBeenCalled();
   });
 
+  it("hands a rejected body back to the model instead of failing the job", async () => {
+    // Validation failures are the model's mistake. The job must not burn a
+    // retry (and a fresh model call) on them: the tool result carries the
+    // reason so the same run can correct itself.
+    const svc = services({
+      write: vi
+        .fn()
+        .mockRejectedValueOnce(
+          new MemoryValidationError("content contains executable HTML"),
+        )
+        .mockResolvedValueOnce({
+          applied: true,
+          current: { revision: 2 },
+        } as never),
+    });
+    const seen: string[] = [];
+    svc.stream = vi.fn(async (params: StreamChatParams) => {
+      const first = await params.runTools?.([
+        {
+          id: "call-1",
+          name: "write_memory_file",
+          input: {
+            expectedRevision: 1,
+            markdown: "<script>alert(1)</script>",
+            changeSummary: "Bad",
+          },
+        },
+      ]);
+      seen.push(first?.[0]?.content ?? "");
+      await params.runTools?.([
+        {
+          id: "call-2",
+          name: "write_memory_file",
+          input: {
+            expectedRevision: 1,
+            markdown: "# Clean",
+            changeSummary: "Fixed",
+          },
+        },
+      ]);
+      return { fullText: "" };
+    });
+    const result = await runMemoryCuratorScope(args(), svc);
+    expect(JSON.parse(seen[0]!)).toEqual({
+      ok: false,
+      error: "invalid_memory_write",
+      detail: "content contains executable HTML",
+    });
+    expect(result).toEqual({ outcome: "updated", revision: 2 });
+  });
+
   it("retries a concurrent edit so the next run rebases on latest memory", async () => {
     const svc = services({
       write: vi.fn(async () => {
@@ -575,5 +652,73 @@ describe("shared project inactivity debounce", () => {
         latestGeneration: 9,
       }),
     ).toBe(true);
+  });
+});
+
+describe("memory.consolidate deferral cost", () => {
+  // An active conversation defers its curator job once a quiet window for as
+  // long as it stays active. Claiming the job first meant every one of those
+  // deferrals paid for a status write and two file-status refreshes, then
+  // undid all of it. The gate has to run first: three reads, no writes.
+  function deferringDb() {
+    const rpc = vi.fn(async () => ({ data: true, error: null }));
+    const tables: string[] = [];
+    const future = new Date(Date.now() + 5 * 60_000).toISOString();
+    const rows: Record<string, unknown> = {
+      memory_consolidation_states: {
+        id: "state-1",
+        surface: "chat",
+        conversation_id: "conv-1",
+        actor_user_id: "u1",
+        project_id: null,
+        generation: 2,
+        processed_generation: 1,
+        latest_turn_id: "turn-1",
+      },
+      memory_conversation_activity: {
+        generation: 5,
+        quiet_until: future,
+        deleted_at: null,
+      },
+      memory_conversation_turn_leases: { expires_at: future },
+    };
+    function from(table: string) {
+      tables.push(table);
+      const q: Record<string, unknown> = {};
+      for (const m of ["select", "eq", "gt", "lt", "order", "limit", "update", "in"])
+        q[m] = vi.fn(() => q);
+      q.maybeSingle = vi.fn(async () => ({
+        data: rows[table] ?? null,
+        error: null,
+      }));
+      q.then = (resolve: (v: unknown) => unknown) =>
+        Promise.resolve({ data: [], error: null }).then(resolve);
+      return q;
+    }
+    return { db: { from: vi.fn(from), rpc }, rpc, tables };
+  }
+
+  it("defers without claiming the job or rewriting any file status", async () => {
+    const { db, rpc, tables } = deferringDb();
+    const { handleMemoryConsolidation } = await import("../../../modules/memory/memory.curator.js");
+    const { DbJobDeferredError } = await import("../../dbq/types.js");
+
+    await expect(
+      handleMemoryConsolidation(db as never, {
+        id: "job-1",
+        kind: "memory.consolidate",
+        payload: {
+          stateId: "state-1",
+          generation: 2,
+          conversationGeneration: 5,
+          appEpoch: 1,
+          actorUserId: "u1",
+        },
+      } as never),
+    ).rejects.toBeInstanceOf(DbJobDeferredError);
+
+    // No set_memory_consolidation_status claim, and no memory_files writes.
+    expect(rpc).not.toHaveBeenCalled();
+    expect(tables).not.toContain("memory_files");
   });
 });

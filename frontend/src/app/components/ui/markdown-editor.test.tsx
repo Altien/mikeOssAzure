@@ -1,6 +1,7 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useState } from "react";
 import { MarkdownEditor } from "./markdown-editor";
 
 const mocks = vi.hoisted(() => {
@@ -20,9 +21,13 @@ const mocks = vi.hoisted(() => {
     useEditor: vi.fn(),
     editor: {
       isDestroyed: false,
-      state: { selection: { from: 4, to: 9 } },
+      isFocused: true,
+      state: {
+        selection: { from: 4, to: 9 },
+        doc: { content: { size: 32 } },
+      },
       storage: { markdown: { getMarkdown: (): string => "Prompt" } },
-      commands: { setContent: vi.fn() },
+      commands: { setContent: vi.fn(), setTextSelection: vi.fn() },
       setEditable: vi.fn(),
       chain: vi.fn(() => chain),
       isActive: vi.fn(() => false),
@@ -50,6 +55,17 @@ vi.mock("tiptap-markdown", () => ({
   Markdown: { configure: vi.fn(() => ({})) },
 }));
 
+async function flushAnimationFrames() {
+  for (let i = 0; i < 3; i += 1) {
+    await act(
+      async () =>
+        new Promise<void>((resolve) =>
+          window.requestAnimationFrame(() => resolve()),
+        ),
+    );
+  }
+}
+
 describe("MarkdownEditor", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -60,6 +76,8 @@ describe("MarkdownEditor", () => {
     mocks.editor.chain.mockReturnValue(mocks.chain);
     mocks.useEditor.mockReturnValue(mocks.editor);
     mocks.editor.storage.markdown.getMarkdown = () => "Prompt";
+    mocks.editor.isFocused = true;
+    mocks.editor.state.selection = { from: 4, to: 9 };
   });
 
   it("selects a grid size and inserts at the saved editor selection", async () => {
@@ -212,6 +230,92 @@ describe("MarkdownEditor", () => {
         }),
       ).toHaveValue("Latest value"),
     );
+  });
+
+  it("does not flag the user's own raw edits as lossy Markdown", async () => {
+    // In raw mode the rich document is deliberately stale, so comparing a
+    // keystroke against it would show the hint on every character typed.
+    mocks.editor.storage.markdown.getMarkdown = () => "Prompt";
+    const user = userEvent.setup();
+    function Harness() {
+      const [value, setValue] = useState("Prompt");
+      return (
+        <MarkdownEditor
+          value={value}
+          onChange={setValue}
+          ariaLabel="Memory document"
+        />
+      );
+    }
+    render(<Harness />);
+    await user.click(
+      screen.getByRole("button", { name: "Show raw Markdown" }),
+    );
+    const raw = screen.getByRole("textbox", {
+      name: "Memory document (raw Markdown)",
+    });
+    await user.type(raw, " edited");
+    expect(raw).toHaveValue("Prompt edited");
+    // The sync effect defers its verdict to an animation frame, so a bare
+    // queryByText would pass simply by looking too early.
+    await flushAnimationFrames();
+    expect(screen.queryByText("Raw view preserves this Markdown")).toBeNull();
+  });
+
+  it("restores the caret when an external value replaces the document", async () => {
+    // Replacing the document collapses the selection to the start. A poll
+    // that adopted a curator update, or the server's normalisation of what
+    // was just saved, threw the user's caret to the top of the file.
+    mocks.editor.storage.markdown.getMarkdown = () => "Prompt";
+    const { rerender } = render(
+      <MarkdownEditor value="Prompt" ariaLabel="Memory document" />,
+    );
+    mocks.editor.commands.setTextSelection.mockClear();
+
+    rerender(
+      <MarkdownEditor value="Prompt from the server" ariaLabel="Memory document" />,
+    );
+
+    await waitFor(() =>
+      expect(mocks.editor.commands.setContent).toHaveBeenCalledWith(
+        "Prompt from the server",
+        { emitUpdate: false },
+      ),
+    );
+    expect(mocks.editor.commands.setTextSelection).toHaveBeenCalledWith({
+      from: 4,
+      to: 9,
+    });
+  });
+
+  it("leaves the caret alone when the editor does not hold focus", async () => {
+    mocks.editor.isFocused = false;
+    const { rerender } = render(
+      <MarkdownEditor value="Prompt" ariaLabel="Memory document" />,
+    );
+    mocks.editor.commands.setTextSelection.mockClear();
+
+    rerender(
+      <MarkdownEditor value="Prompt elsewhere" ariaLabel="Memory document" />,
+    );
+
+    await waitFor(() =>
+      expect(mocks.editor.commands.setContent).toHaveBeenCalled(),
+    );
+    expect(mocks.editor.commands.setTextSelection).not.toHaveBeenCalled();
+  });
+
+  it("gives the raw Markdown view the whole editing area", async () => {
+    // `h-full` on the textarea resolves to "auto" inside a flex item with no
+    // explicit height, which rendered a curated file two rows tall.
+    const user = userEvent.setup();
+    render(<MarkdownEditor value="Prompt" ariaLabel="Memory document" />);
+    await user.click(screen.getByRole("button", { name: "Show raw Markdown" }));
+    const raw = screen.getByRole("textbox", {
+      name: "Memory document (raw Markdown)",
+    });
+    expect(raw.className).toContain("flex-1");
+    expect(raw.parentElement?.className).toContain("flex-col");
   });
 
   it("keeps lossy Markdown in raw mode instead of rewriting it", async () => {

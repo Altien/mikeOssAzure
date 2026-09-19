@@ -237,6 +237,27 @@ describe("NewProjectModal sharing", () => {
     );
   });
 
+  it("resets to the account default, not to on, after a project is created", async () => {
+    // resetForm hard-coded `true`, so the next project started from this
+    // still-open modal silently opted into project memory against the
+    // account's saved default.
+    useUserProfile.mockReturnValue({
+      profile: { practiceAreas: [], projectMemoryDefault: false },
+    });
+    const user = userEvent.setup({ delay: null });
+    renderModal();
+
+    await user.type(screen.getByPlaceholderText("Add project name"), "P");
+    await submit(user);
+    await waitFor(() => expect(createProject).toHaveBeenCalled());
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("switch", { name: "Enable project memory" }),
+      ).not.toBeChecked(),
+    );
+  });
+
   it("honours an explicit project-memory opt-out", async () => {
     const user = userEvent.setup({ delay: null });
     renderModal();

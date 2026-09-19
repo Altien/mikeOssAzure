@@ -146,10 +146,18 @@ export async function prepareChatStream(
             };
         }
         resolvedProjectId = existingProjectId;
-        memorySharedAudience =
-            !!existing.org_id ||
-            existing.user_id !== userId ||
-            (await hasDirectContentGrants(db, "chat", existing.id));
+        // A database error in the audience check must not escape as a
+        // rejected promise: memory bookkeeping never decides whether the
+        // user gets an answer, and an unhandled rejection here used to
+        // leave the request open with no response and no log.
+        try {
+            memorySharedAudience =
+                !!existing.org_id ||
+                existing.user_id !== userId ||
+                (await hasDirectContentGrants(db, "chat", existing.id));
+        } catch (error) {
+            return { ok: false, internal: true, error };
+        }
         chatTitle = existing.title;
         chatModel = existing.model;
         chatReasoningLevel = existing.reasoning_level;
@@ -168,13 +176,17 @@ export async function prepareChatStream(
                 can(projectAccess.projectRole, "content.edit");
             allowDocumentMutation = canCurateProjectMemory;
             if (projectAccess.ok) {
-                memorySharedAudience =
-                    memorySharedAudience ||
-                    (await projectHasSharedAudience(
-                        db,
-                        existingProjectId,
-                        projectAccess.project.org_id,
-                    ));
+                try {
+                    memorySharedAudience =
+                        memorySharedAudience ||
+                        (await projectHasSharedAudience(
+                            db,
+                            existingProjectId,
+                            projectAccess.project.org_id,
+                        ));
+                } catch (error) {
+                    return { ok: false, internal: true, error };
+                }
             }
         }
     }
@@ -226,13 +238,17 @@ export async function prepareChatStream(
         });
         if (!resolvedOrg.ok)
             return { ok: false, internal: true, error: resolvedOrg.detail };
-        memorySharedAudience = resolvedProjectId
-            ? await projectHasSharedAudience(
-                  db,
-                  resolvedProjectId,
-                  resolvedOrg.orgId,
-              )
-            : false;
+        try {
+            memorySharedAudience = resolvedProjectId
+                ? await projectHasSharedAudience(
+                      db,
+                      resolvedProjectId,
+                      resolvedOrg.orgId,
+                  )
+                : false;
+        } catch (error) {
+            return { ok: false, internal: true, error };
+        }
         const { data: newChat, error } = await db
             .from("chats")
             .insert({
@@ -318,16 +334,16 @@ export async function prepareChatStream(
     }
 
     if (args.askInputsResponse || lastUser) {
-        try {
-            memoryTurn = await beginMemoryConversationTurn({
-                db,
-                surface: "chat",
-                conversationId: chatId,
-                actorUserId: userId,
-            });
-        } catch (error) {
-            return { ok: false, internal: true, error };
-        }
+        // The lease is optional bookkeeping: it only stops an older curator
+        // from committing mid-turn. beginMemoryConversationTurn now fails
+        // open, so a lease failure skips this turn's checkpoint instead of
+        // 500ing a request whose user message is already persisted.
+        memoryTurn = await beginMemoryConversationTurn({
+            db,
+            surface: "chat",
+            conversationId: chatId,
+            actorUserId: userId,
+        });
     }
 
     // From here on a throw (document context, workflow store) would strand
@@ -346,7 +362,7 @@ export async function prepareChatStream(
         }));
         // Generate the nonce before enriching prior events so document filenames
         // and workflow titles replayed from earlier turns are fenced as well.
-        const nonce = generateSpotlightNonce();
+        const nonce = generateSpotlightNonce(chatId);
         const enrichedMessages = await enrichWithPriorEvents(
             messages,
             chatId,

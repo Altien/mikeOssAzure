@@ -615,6 +615,7 @@ chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                 apiKeys,
                 signal: stream.signal,
                 projectId: resolvedProjectId,
+                conversationId: chatId,
                 includeMemory: true,
                 memoryProjectId: canReadProjectMemory
                     ? resolvedProjectId

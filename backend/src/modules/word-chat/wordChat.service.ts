@@ -13,7 +13,6 @@
 
 import { randomUUID } from "node:crypto";
 import type { Db } from "../../lib/supabase";
-import { INTERNAL_ERROR_MESSAGE } from "../../lib/httpError";
 import {
   beginMemoryConversationTurn,
   releaseMemoryConversationTurn,
@@ -721,25 +720,16 @@ export async function prepareWordChatStream(
   if (lastUser && persistChat) {
     // Reserve the memory curator's turn before any model call so a crash
     // mid-stream still releases it (the route's finally block does that).
-    try {
-      memoryTurn = await beginMemoryConversationTurn({
-        db,
-        surface: "word",
-        conversationId: chatId,
-        actorUserId: userId,
-      });
-    } catch (activityError) {
-      // Hand the cause to the route so it answers through sendInternalError:
-      // the client gets the `internal_error` code and a request_id it can
-      // quote, and the structured [http/internal-error] log carries the
-      // cause — the same shape every other 500 in the API has.
-      return {
-        ok: false,
-        status: 500,
-        detail: INTERNAL_ERROR_MESSAGE,
-        error: activityError,
-      };
-    }
+    // Fail open: the lease is only a checkpoint marker, and
+    // beginMemoryConversationTurn now returns null instead of throwing when
+    // the RPC fails, so a lease failure skips this turn's checkpoint rather
+    // than 500ing a request whose user message is already persisted.
+    memoryTurn = await beginMemoryConversationTurn({
+      db,
+      surface: "word",
+      conversationId: chatId,
+      actorUserId: userId,
+    });
   }
 
   // From here on a throw (document context, workflow store) would strand the
@@ -777,7 +767,7 @@ export async function prepareWordChatStream(
         filename: info.filename,
       })),
     ];
-    const nonce = generateSpotlightNonce();
+    const nonce = generateSpotlightNonce(persistChat ? chatId : null);
     const enrichedMessages = await enrichWithPriorEvents(
       messages,
       persistChat ? chatId : null,

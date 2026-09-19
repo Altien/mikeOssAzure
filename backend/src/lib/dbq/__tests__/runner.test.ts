@@ -401,4 +401,18 @@ describe("runDbJobRetentionSweep", () => {
         );
         expect(failedPurge?.["neq:kind"]).toEqual(["storage.cleanup", "account.delete"]);
     });
+
+    // memory_consolidation_results rows exist only so a retried
+    // memory.consolidate job applies each scope once. Nothing else deletes
+    // them, so without this step the table grew without bound for the life of
+    // the deployment.
+    it("prunes curator receipts once their job row is old enough to sweep", async () => {
+        const db = makeDb();
+        await runDbJobRetentionSweep(db as never);
+        const receiptPurge = db.deletes.find(
+            (d) => d.table === "memory_consolidation_results",
+        );
+        expect(receiptPurge).toBeDefined();
+        expect(receiptPurge?.["lt:created_at"]).toEqual(expect.any(String));
+    });
 });

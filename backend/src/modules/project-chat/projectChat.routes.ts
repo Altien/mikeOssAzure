@@ -225,6 +225,7 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                 apiKeys,
                 signal: stream.signal,
                 projectId,
+                conversationId: chatId,
                 includeMemory: true,
                 memoryProjectId: projectId,
                 memorySharedAudience,

@@ -2127,7 +2127,7 @@ export default function ProjectAssistantChatPage() {
                 canManage={canManageProject}
                 onMemoryEnabledChange={(enabled) =>
                     setProject((current) =>
-                        current
+                        current && current.memory_enabled !== enabled
                             ? { ...current, memory_enabled: enabled }
                             : current,
                     )

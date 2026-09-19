@@ -172,11 +172,19 @@ export async function prepareProjectChatStream(
     );
     if (!projectAccess.ok)
         return { ok: false, status: 404, detail: "Project not found" };
-    let memorySharedAudience = await projectHasSharedAudience(
-        db,
-        projectId,
-        projectAccess.project.org_id,
-    );
+    // Memory bookkeeping never decides whether the user gets an answer: a
+    // database error in the audience check is reported as a normal internal
+    // failure instead of escaping as a rejected promise.
+    let memorySharedAudience = false;
+    try {
+        memorySharedAudience = await projectHasSharedAudience(
+            db,
+            projectId,
+            projectAccess.project.org_id,
+        );
+    } catch (error) {
+        return { ok: false, internal: true, error };
+    }
 
     // Two different questions, deliberately answered by two different
     // derivations:
@@ -247,9 +255,13 @@ export async function prepareProjectChatStream(
             // No verdict at all means no write. `can(null, …)` is false, so
             // an unreadable chat cannot be written through this door either.
             writeRole = chatAccess.ok ? chatAccess.projectRole : null;
-            memorySharedAudience =
-                memorySharedAudience ||
-                (await hasDirectContentGrants(db, "chat", existing!.id));
+            try {
+                memorySharedAudience =
+                    memorySharedAudience ||
+                    (await hasDirectContentGrants(db, "chat", existing!.id));
+            } catch (error) {
+                return { ok: false, internal: true, error };
+            }
         }
     }
 
@@ -373,16 +385,15 @@ export async function prepareProjectChatStream(
     }
 
     if (args.askInputsResponse || lastUser) {
-        try {
-            memoryTurn = await beginMemoryConversationTurn({
-                db,
-                surface: "chat",
-                conversationId: chatId,
-                actorUserId: userId,
-            });
-        } catch (error) {
-            return { ok: false, internal: true, error };
-        }
+        // Fail open: the lease is only a checkpoint marker, and
+        // beginMemoryConversationTurn now returns null instead of throwing
+        // when the RPC fails, so this turn simply is not a checkpoint.
+        memoryTurn = await beginMemoryConversationTurn({
+            db,
+            surface: "chat",
+            conversationId: chatId,
+            actorUserId: userId,
+        });
     }
 
     // From here on a throw (document context, workflow store) would strand
@@ -408,7 +419,7 @@ export async function prepareProjectChatStream(
         );
         // Generate the nonce before adding request metadata or prior events so
         // every document filename is fenced wherever it enters the prompt.
-        const nonce = generateSpotlightNonce();
+        const nonce = generateSpotlightNonce(chatId);
         const documentPromptRef = (
             documentId: string,
             requestFilename: string,

@@ -63,6 +63,13 @@ let supabaseState: {
     tables: Record<string, QueryResult | QueryResult[]>;
     updates: Record<string, unknown[]>;
     inserts: Record<string, unknown[]>;
+    // Every column list a route asked for, per table, in order. The
+    // deploy-before-migrate cascade is only correct if each retry tier drops
+    // the columns its tier is missing, which is invisible from the result.
+    selects: Record<string, string[]>;
+    // Columns a pre-migration database does not have: any select naming one
+    // fails with 42703, exactly as Postgres would, however many tiers ask.
+    missingColumns: string[];
     adminGetUserById: QueryResult;
     adminDeleteUser: { error: unknown };
 };
@@ -72,6 +79,8 @@ function resetSupabaseState() {
         tables: {},
         updates: {},
         inserts: {},
+        selects: {},
+        missingColumns: [],
         adminGetUserById: {
             data: { user: { id: "u1", factors: [] } },
             error: null,
@@ -116,6 +125,27 @@ function makeQuery(table: string) {
         "contains",
     ];
     for (const m of chain) q[m] = vi.fn(() => q);
+    let missing: string | null = null;
+    q.select = vi.fn((columns?: unknown) => {
+        if (typeof columns === "string") {
+            (supabaseState.selects[table] ??= []).push(columns);
+            missing =
+                supabaseState.missingColumns.find((column) =>
+                    columns.split(/,\s*/).includes(column),
+                ) ?? null;
+        }
+        return q;
+    });
+    const missingColumnResult = (): QueryResult | null =>
+        missing
+            ? {
+                  data: null,
+                  error: {
+                      code: "42703",
+                      message: `column user_profiles.${missing} does not exist`,
+                  },
+              }
+            : null;
     // Record update payloads so tests can assert what a route WROTE (the
     // per-table result stub only models what queries return).
     q.update = vi.fn((payload: unknown) => {
@@ -126,12 +156,20 @@ function makeQuery(table: string) {
         (supabaseState.inserts[table] ??= []).push(payload);
         return q;
     });
-    q.single = vi.fn(() => Promise.resolve(resultForTable(table)));
-    q.maybeSingle = vi.fn(() => Promise.resolve(resultForTable(table)));
+    q.single = vi.fn(() =>
+        Promise.resolve(missingColumnResult() ?? resultForTable(table)),
+    );
+    q.maybeSingle = vi.fn(() =>
+        Promise.resolve(missingColumnResult() ?? resultForTable(table)),
+    );
     q.then = (
         resolve: (v: unknown) => unknown,
         reject?: (e: unknown) => unknown,
-    ) => Promise.resolve(resultForTable(table)).then(resolve, reject);
+    ) =>
+        Promise.resolve(missingColumnResult() ?? resultForTable(table)).then(
+            resolve,
+            reject,
+        );
     return q;
 }
 
@@ -381,6 +419,46 @@ describe("user.routes", () => {
             expect(res.body.titleModel).toBe("gpt-5.4-mini");
             expect(res.body.memoryCuratorModel).toBeNull();
             expect(res.body.projectMemoryDefault).toBe(true);
+        });
+
+        it("drops project_memory_default from the retry, not just memory_curator_model", async () => {
+            // Both columns arrive in the SAME migration (#451). A database
+            // that has the new code but not the migration rejects every select
+            // naming either one. A retry tier that still names
+            // project_memory_default therefore fails with the identical 42703
+            // and the cascade falls further than it should, dropping
+            // preference columns the database actually has.
+            const preMigrationRow = profileRow({ title_model: "gpt-5.4-mini" });
+            delete (preMigrationRow as Record<string, unknown>)
+                .memory_curator_model;
+            delete (preMigrationRow as Record<string, unknown>)
+                .project_memory_default;
+            supabaseState.missingColumns = [
+                "memory_curator_model",
+                "project_memory_default",
+            ];
+            supabaseState.tables.user_profiles = {
+                data: preMigrationRow,
+                error: null,
+            };
+
+            const res = await request(app)
+                .get("/user/profile")
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            const selects = supabaseState.selects.user_profiles ?? [];
+            // Exactly one retry: the full select, then the tier that drops
+            // both columns of that migration and nothing else.
+            expect(selects).toHaveLength(2);
+            expect(selects[0]).toContain("project_memory_default");
+            expect(selects[1]).not.toContain("project_memory_default");
+            expect(selects[1]).not.toContain("memory_curator_model");
+            // The tier keeps every other preference the database does have.
+            expect(selects[1]).toContain("last_selected_reasoning_level");
+            expect(selects[1]).toContain("dark_mode");
+            expect(res.body.titleModel).toBe("gpt-5.4-mini");
+            expect(res.body.memoryCuratorModel).toBeNull();
         });
 
         it("keeps saved preferences on a database without the onboarding migration", async () => {
