@@ -22,6 +22,7 @@ import {
     ensureReviewAccess,
     filterAccessibleDocumentIds,
 } from "../../lib/access";
+import { can } from "../../lib/permissions";
 import { failure, internalFailure } from "../../lib/serviceResult";
 import { loadReviewRows, type ReviewRow } from "./tabular.rows";
 import {
@@ -33,6 +34,7 @@ import {
     type ModelValidationFailure,
     type TabularFailure,
     type TabularResult,
+    REVIEW_EDIT_FORBIDDEN,
 } from "./tabular.shared";
 
 // ---------------------------------------------------------------------------
@@ -53,6 +55,7 @@ export async function prepareTabularGenerate(
 ): Promise<
     | { ok: true; data: PreparedGenerate }
     | { ok: false; kind: "not_found" }
+    | { ok: false; kind: "forbidden" }
     | { ok: false; kind: "no_columns" }
     | ({ ok: false; kind: "model" } & Omit<ModelValidationFailure, "ok">)
 > {
@@ -66,6 +69,13 @@ export async function prepareTabularGenerate(
     if (reviewError || !review) return { ok: false, kind: "not_found" };
     const access = await ensureReviewAccess(review, userId, userEmail, db);
     if (!access.ok) return { ok: false, kind: "not_found" };
+    // GENERATION IS A WRITE. It claims the review's generation lease, calls a
+    // paid model with the caller's keys, persists a cell per column per row
+    // and stamps an audit event in the caller's name. `access.ok` alone let a
+    // review VIEWER do all of that — read-only access is not permission to
+    // rewrite the review's contents.
+    if (!can(access.projectRole, "content.edit"))
+        return { ok: false, kind: "forbidden" };
 
     const columns: Column[] = review.columns_config ?? [];
     if (columns.length === 0) return { ok: false, kind: "no_columns" };
@@ -214,6 +224,12 @@ export function preparedGenerateFailure(
 ): TabularFailure {
     if (prepared.kind === "not_found")
         return failure("not_found", "Review not found");
+    // Same gate as the POST the stream resumes: the reconnect stream exists
+    // to rejoin a run this caller was entitled to start, and a Viewer never
+    // was. They read the finished cells through the review itself, not
+    // through the generation channel.
+    if (prepared.kind === "forbidden")
+        return failure("forbidden", REVIEW_EDIT_FORBIDDEN);
     if (prepared.kind === "no_columns")
         return failure("validation", "No columns configured");
     return statusFailure(prepared.status, prepared.body);

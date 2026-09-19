@@ -42,6 +42,12 @@ const TABULAR_DIRECTORY_TABS = ["files", "projects"] as const;
 interface Props {
     open: boolean;
     onClose: () => void;
+    /**
+     * Creates the review. Resolving with a string means the review itself was
+     * created but part of the request was not honoured — the dialog stays open
+     * and shows that message, and pressing Create again retries the remainder
+     * against the same review rather than making a second one.
+     */
     onAdd: (
         title: string,
         projectId: string | undefined,
@@ -50,7 +56,7 @@ interface Props {
         documentGrouping: "document" | "folder" | undefined,
         model: string,
         accessAssignments: { email: string; role: AccessAssignmentRole }[],
-    ) => Promise<void> | void;
+    ) => Promise<string | void> | void;
     projects?: Project[];
     /** When provided, skip the project/directory picker and show only these docs */
     projectDocs?: Document[];
@@ -106,6 +112,13 @@ export function NewTRModal({
     const [groupBySubfolder, setGroupBySubfolder] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [creating, setCreating] = useState(false);
+    // The review already exists, because a first attempt created it and then
+    // failed on the grants. The page holds that row and the retry reuses it,
+    // so the earlier steps no longer describe anything this dialog can still
+    // change: switching Personal → a project on the second attempt left the
+    // review where it was created and applied the new scope's assignments to
+    // it. Back retires once this is true.
+    const [reviewExists, setReviewExists] = useState(false);
     const [uploadError, setUploadError] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const creatingRef = useRef(false);
@@ -202,8 +215,18 @@ export function NewTRModal({
 
     if (!open) return null;
 
+    // Dismissal — Escape, the backdrop and the close button all arrive here.
+    // A create in flight owns the dialog: leaving now would strand the only
+    // account of what happened to it. The success path calls `handleClose`
+    // directly, which is why the guard lives here and not there.
+    function handleDismiss() {
+        if (creatingRef.current) return;
+        handleClose();
+    }
+
     function handleClose() {
         setStep("details");
+        setReviewExists(false);
         setTitle("");
         setUnderProject(false);
         setSelectedProjectId("");
@@ -242,6 +265,7 @@ export function NewTRModal({
         if (creatingRef.current) return;
         creatingRef.current = true;
         setCreating(true);
+        setUploadError(null);
         const selectedWorkflow = workflows.find(
             (w) => w.id === selectedWorkflowId,
         );
@@ -252,7 +276,7 @@ export function NewTRModal({
               : undefined;
         const assignments = effectiveProjectId ? [] : directGrants;
         try {
-            await onAdd(
+            const partialFailure = await onAdd(
                 title.trim(),
                 effectiveProjectId,
                 selectedDocuments.length > 0
@@ -263,6 +287,14 @@ export function NewTRModal({
                 selectedModel,
                 assignments,
             );
+            if (partialFailure) {
+                // The review exists. Report what did not happen and stay open;
+                // closing here would hide the only account of it, and the
+                // generic create failure would be a lie.
+                setUploadError(partialFailure);
+                setReviewExists(true);
+                return;
+            }
             handleClose();
         } catch (error) {
             setUploadError(
@@ -402,7 +434,7 @@ export function NewTRModal({
     return (
         <Modal
             open={open}
-            onClose={handleClose}
+            onClose={handleDismiss}
             breadcrumbs={[
                 ...breadcrumbs,
                 step === "details"
@@ -421,7 +453,14 @@ export function NewTRModal({
                               <Upload className="h-3.5 w-3.5" />
                           ),
                           onClick: () => fileInputRef.current?.click(),
-                          disabled: uploading,
+                          // Once the review exists a retry reuses it and
+                          // never re-reads the document set, so anything
+                          // uploaded or ticked here on the second attempt was
+                          // dropped without a word. Freeze both.
+                          disabled: uploading || reviewExists,
+                          title: reviewExists
+                              ? "The review has been created — add documents from the review itself."
+                              : undefined,
                       }
                     : step === "access"
                       ? {
@@ -437,7 +476,10 @@ export function NewTRModal({
                     ? {
                           label: "Back",
                           onClick: () => setStep("access"),
-                          disabled: uploading,
+                          disabled: uploading || reviewExists,
+                          title: reviewExists
+                              ? "The review has been created — its details and access can be changed from the review itself."
+                              : undefined,
                       }
                     : step === "access"
                       ? {
@@ -608,6 +650,13 @@ export function NewTRModal({
                     />
                 ) : (
                     <div className="flex min-h-0 flex-1 flex-col">
+                        {reviewExists && (
+                            <p className="mb-3 text-sm text-gray-500">
+                                The review has been created, so its documents
+                                can no longer be changed here. Add documents
+                                from the review once access has been granted.
+                            </p>
+                        )}
                         {showDirectory && (
                             <FileDirectory
                                 documents={directoryDocuments}
@@ -615,6 +664,7 @@ export function NewTRModal({
                                 loading={directoryLoading}
                                 selectedDocuments={selectedDocuments}
                                 onChange={setSelectedDocuments}
+                                selectionDisabled={reviewExists}
                                 showTabs={!isProjectMode && !underProject}
                                 tabs={TABULAR_DIRECTORY_TABS}
                             />

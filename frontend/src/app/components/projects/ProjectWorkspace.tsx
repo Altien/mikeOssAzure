@@ -643,6 +643,10 @@ export function ProjectWorkspaceProvider({
                         resource={project}
                         fetchAccess={getProjectPeople}
                         currentUserEmail={user?.email ?? null}
+                        // Both identifiers: a roster row without an email
+                        // would otherwise offer the caller a Remove that locks
+                        // them out of their own project.
+                        currentUserId={user?.id ?? null}
                         breadcrumb={[
                             "Projects",
                             project.name +

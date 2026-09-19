@@ -23,6 +23,7 @@ import { ModalSelect } from "../modals/ModalSelect";
 import { ToggleSwitchUI } from "@/shared/ui/ToggleSwitchUI";
 import { ProjectPracticeField } from "./ProjectPracticeField";
 import { userFacingApiError } from "@/app/lib/userFacingError";
+import { createSecureUuid } from "@/shared/lib/secureUuid";
 import {
     CreateAccessStep,
     type PendingDirectGrant,
@@ -34,7 +35,12 @@ const PERSONAL_WORKSPACE = "__personal__";
 
 interface Props {
     open: boolean;
-    onClose: () => void;
+    /**
+     * Dismissal. `createdWithoutHandover` is true when the project exists but
+     * a later step failed, so it never reached `onCreated` — the caller has to
+     * refetch or the new project stays invisible until a reload.
+     */
+    onClose: (createdWithoutHandover?: boolean) => void;
     onCreated: (project: Project) => void;
 }
 
@@ -60,6 +66,13 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
     // A project created with only some of its files attached. The modal holds
     // it until the user has read which files are missing.
     const [pendingProject, setPendingProject] = useState<Project | null>(null);
+    // Mirrors `createdProjectRef` for rendering: a ref does not re-render, and
+    // the wizard has to change shape the moment the project is real. Back
+    // still works — a failed grant or attachment is retried from the step it
+    // failed on — but the fields that identify the project (name, CM number,
+    // practice, workspace) lock, because a retry reuses the project already
+    // created and would ignore any edit made to them.
+    const [projectExists, setProjectExists] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const practiceEditedRef = useRef(false);
     // The project is created before its grants are written and its documents
@@ -67,6 +80,21 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
     // reuses the project the user already has instead of creating a second
     // one.
     const createdProjectRef = useRef<Project | null>(null);
+    // Attachment work already done against that project. A retry after a
+    // failed step must not re-upload a file or re-link a document that landed
+    // on the first attempt, or the project ends up with duplicates.
+    //
+    // Keyed by the File itself, not by its name. A name is neither unique nor
+    // stable: two files called `contract.pdf` from different folders are two
+    // uploads, and the server trims the name it stores, so ` notes.docx `
+    // came back as `notes.docx`, never matched the pending file, and was
+    // uploaded again on every retry. The identity of the object the user
+    // picked is the only thing that answers "have I already sent this one?".
+    const uploadedFilesRef = useRef<Set<File>>(new Set());
+    // The id each file is uploaded under, so an outcome can be traced back to
+    // the File that produced it even when two of them share a name.
+    const uploadClientIdsRef = useRef<Map<File, string>>(new Map());
+    const linkedDocumentIdsRef = useRef<Set<string>>(new Set());
     const { user } = useAuth();
     const { profile } = useUserProfile();
     const preferredPractice =
@@ -82,11 +110,14 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
     useEffect(() => {
         if (!open) return;
         let cancelled = false;
+        setOrganizationLoadWarning(false);
         listOrgs()
             .then((rows) => {
                 if (!cancelled) setOrgs(rows);
             })
             .catch(() => {
+                // Silently showing only "No organization" would look like the
+                // caller belongs to no firm, so say the list failed instead.
                 if (!cancelled) setOrganizationLoadWarning(true);
             });
         return () => {
@@ -120,10 +151,23 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
         const files = Array.from(e.target.files ?? []);
         e.target.value = "";
         if (!files.length) return;
+        // Deduplicated by identity, not by name. The old name test silently
+        // dropped the second of two files called `contract.pdf` — a normal
+        // thing to attach from two different folders — and the user was never
+        // told one of their picks had not been taken.
         setPendingFiles((prev) => [
             ...prev,
-            ...files.filter((f) => !prev.some((p) => p.name === f.name)),
+            ...files.filter((file) => !prev.includes(file)),
         ]);
+    }
+
+    /** A stable per-file upload id, so outcomes map back to their File. */
+    function uploadClientId(file: File): string {
+        const existing = uploadClientIdsRef.current.get(file);
+        if (existing) return existing;
+        const clientId = createSecureUuid();
+        uploadClientIdsRef.current.set(file, clientId);
+        return clientId;
     }
 
     function finishCreation(project: Project) {
@@ -181,59 +225,12 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                 project = { ...project, memory_enabled: memoryEnabled };
             }
             createdProjectRef.current = project;
+            setProjectExists(true);
 
-            const linkResults = await Promise.all(
-                selectedDocuments.map((document) =>
-                    addDocumentToProject(project.id, document.id).then(
-                        () => true,
-                        () => false,
-                    ),
-                ),
-            );
-            const linkedCount = linkResults.filter(Boolean).length;
-            const failedLinkNames = selectedDocuments
-                .filter((_, index) => !linkResults[index])
-                .map((document) => document.filename);
-
-            let uploadedCount = 0;
-            let uploadFailure: string | null = null;
-            if (pendingFiles.length > 0) {
-                try {
-                    const outcomes = await uploadProjectDocuments(
-                        project.id,
-                        pendingFiles.map((file) => ({ file })),
-                    );
-                    uploadedCount = outcomes.filter(
-                        (outcome) => outcome.status === "completed",
-                    ).length;
-                    if (uploadedCount < outcomes.length) {
-                        uploadFailure = failedUploadMessage(outcomes);
-                    }
-                } catch (uploadError) {
-                    // Aborts, session-creation failures, and batch validation
-                    // still throw; everything else comes back as outcomes.
-                    uploadFailure =
-                        uploadError instanceof UploadBatchError
-                            ? failedUploadMessage(uploadError.outcomes)
-                            : userFacingApiError(
-                                  uploadError,
-                                  "The attached files could not be uploaded. Please try again.",
-                              );
-                }
-            }
-
-            const attachedCount = linkedCount + uploadedCount;
-            const requestedCount =
-                selectedDocuments.length + pendingFiles.length;
-            const failureMessage = [
-                uploadFailure,
-                failedLinkNames.length > 0
-                    ? `${failedLinkNames.join(", ")} could not be added to the project.`
-                    : null,
-            ]
-                .filter(Boolean)
-                .join(" ");
-
+            // Grants run before the attachment work: a refusal here stops the
+            // submit, and anything already uploaded or linked would otherwise
+            // have to be redone on the retry — which duplicated documents.
+            //
             // Sequential: these are a handful of addresses, and one refusal
             // should be reported with its own message rather than lost in a
             // race. The endpoint upserts, so a retry after a partial failure
@@ -261,15 +258,123 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                 // navigating away from the only place that knows the sharing
                 // did not happen. Pressing Create again retries the grants
                 // against the same project.
+                // Say what happened to the documents too. The submit stops
+                // here, so nothing the user attached has been sent yet — and
+                // an error that mentions only the sharing reads as though the
+                // files went in, which is the opposite of the truth.
+                const stillPending =
+                    selectedDocuments.filter(
+                        (document) =>
+                            !linkedDocumentIdsRef.current.has(document.id),
+                    ).length +
+                    pendingFiles.filter(
+                        (file) => !uploadedFilesRef.current.has(file),
+                    ).length;
                 setError(
                     `Project created, but access was not granted to ${grantFailures
                         .map((failure) => failure.email)
-                        .join(", ")}: ${grantFailures[0].detail}`,
+                        .join(", ")}: ${grantFailures[0].detail}${
+                        stillPending > 0
+                            ? ` The ${stillPending} selected ${
+                                  stillPending === 1 ? "file is" : "files are"
+                              } still pending and will be attached when you try again.`
+                            : ""
+                    }`,
                 );
                 // Stay open on THIS dialog: createdProjectRef holds the
                 // project, so pressing Create again retries only the grants.
                 return;
             }
+
+            // Only documents this modal has not already linked: a retry after
+            // a later failure must not add the same document twice.
+            const documentsToLink = selectedDocuments.filter(
+                (document) => !linkedDocumentIdsRef.current.has(document.id),
+            );
+            const linkResults = await Promise.all(
+                documentsToLink.map((document) =>
+                    addDocumentToProject(project.id, document.id).then(
+                        () => true,
+                        () => false,
+                    ),
+                ),
+            );
+            documentsToLink.forEach((document, index) => {
+                if (linkResults[index])
+                    linkedDocumentIdsRef.current.add(document.id);
+            });
+            const failedLinkNames = documentsToLink
+                .filter((_, index) => !linkResults[index])
+                .map((document) => document.filename);
+
+            // Same for uploads, tracked by File identity through the client id
+            // each one is sent under — the outcome's `filename` is the
+            // server's trimmed version and cannot be trusted to match.
+            const filesToUpload = pendingFiles.filter(
+                (file) => !uploadedFilesRef.current.has(file),
+            );
+            const uploadInputs = filesToUpload.map((file) => ({
+                file,
+                clientId: uploadClientId(file),
+            }));
+            const fileByClientId = new Map(
+                uploadInputs.map((input) => [input.clientId, input.file]),
+            );
+            const recordCompletedUploads = (
+                outcomes: { clientId: string; status: string }[],
+            ) => {
+                for (const outcome of outcomes) {
+                    const file = fileByClientId.get(outcome.clientId);
+                    if (outcome.status === "completed" && file)
+                        uploadedFilesRef.current.add(file);
+                }
+            };
+            let uploadFailure: string | null = null;
+            if (uploadInputs.length > 0) {
+                try {
+                    const outcomes = await uploadProjectDocuments(
+                        project.id,
+                        uploadInputs,
+                    );
+                    recordCompletedUploads(outcomes);
+                    if (
+                        outcomes.some(
+                            (outcome) => outcome.status !== "completed",
+                        )
+                    ) {
+                        uploadFailure = failedUploadMessage(outcomes);
+                    }
+                } catch (uploadError) {
+                    // Aborts, session-creation failures, and batch validation
+                    // still throw; everything else comes back as outcomes.
+                    if (uploadError instanceof UploadBatchError) {
+                        recordCompletedUploads(uploadError.outcomes);
+                    }
+                    uploadFailure =
+                        uploadError instanceof UploadBatchError
+                            ? failedUploadMessage(uploadError.outcomes)
+                            : userFacingApiError(
+                                  uploadError,
+                                  "The attached files could not be uploaded. Please try again.",
+                              );
+                }
+            }
+
+            // Counted across attempts, not just this one, so a retry reports
+            // the project's real document count.
+            const attachedCount =
+                linkedDocumentIdsRef.current.size +
+                uploadedFilesRef.current.size;
+            const requestedCount =
+                selectedDocuments.length + pendingFiles.length;
+            const failureMessage = [
+                uploadFailure,
+                failedLinkNames.length > 0
+                    ? `${failedLinkNames.join(", ")} could not be added to the project.`
+                    : null,
+            ]
+                .filter(Boolean)
+                .join(" ");
 
             // POST /projects returns a bare row with no role fields, and
             // the list's fail-closed roleFrom() reads "no role fields" as
@@ -321,6 +426,10 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
 
     function resetForm() {
         createdProjectRef.current = null;
+        setProjectExists(false);
+        uploadedFilesRef.current = new Set();
+        uploadClientIdsRef.current = new Map();
+        linkedDocumentIdsRef.current = new Set();
         setPendingProject(null);
         setStep("details");
         setName("");
@@ -338,8 +447,15 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
     }
 
     function handleClose() {
+        // Escape and the backdrop reach this too: dismissing a create that is
+        // still in flight would leave the outcome unreportable.
+        if (loading) return;
+        // The project exists but never reached onCreated, so the caller's list
+        // does not have it. Say so on the way out instead of leaving the row
+        // invisible until a reload.
+        const createdWithoutHandover = createdProjectRef.current !== null;
         resetForm();
-        onClose();
+        onClose(createdWithoutHandover);
     }
 
     return (
@@ -379,6 +495,12 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                     ? {
                           label: "Back",
                           onClick: () => setStep("access"),
+                          // Back stays open once the project exists: a retry
+                          // persists a changed memory choice before anything
+                          // else, so the details step still describes
+                          // something that can change. The one field it no
+                          // longer describes is the workspace, which is locked
+                          // below rather than retiring the whole step.
                           disabled: loading,
                       }
                     : step === "access"
@@ -446,6 +568,13 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                                 onChange={(e) => setName(e.target.value)}
                                 placeholder="Add project name"
                                 variant="minimal"
+                                // Once the project EXISTS the retry reuses
+                                // `createdProjectRef` and never reads these
+                                // fields again, so an edit made here on the
+                                // second attempt was silently discarded. The
+                                // fields that identify the project lock with
+                                // the workspace selector below.
+                                disabled={projectExists}
                                 autoFocus
                             />
                         </div>
@@ -462,6 +591,7 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                                 placeholder="Add a CM number..."
                                 variant="minimal"
                                 className="text-xl text-gray-600"
+                                disabled={projectExists}
                             />
                         </div>
 
@@ -476,6 +606,7 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                                     practiceEditedRef.current = true;
                                     setPractice(value);
                                 }}
+                                disabled={projectExists}
                             />
                         </div>
 
@@ -486,6 +617,14 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                             <ModalSelect
                                 id="new-project-org"
                                 value={orgId}
+                                // Once the project EXISTS the retry reuses
+                                // `createdProjectRef`, so a switch from
+                                // Personal to an organization on the second
+                                // attempt left the project where it was first
+                                // created and applied the new organization's
+                                // overrides to it. The workspace is the one
+                                // choice a retry cannot honour.
+                                disabled={projectExists}
                                 onChange={(value) => {
                                     setOrgId(value);
                                     setSharedUsers([]);
@@ -502,6 +641,14 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                                     })),
                                 ]}
                             />
+                            {projectExists && (
+                                <p className="mt-2 text-sm text-gray-500">
+                                    The project has been created, so its name,
+                                    CM number, practice and workspace can no
+                                    longer be changed here. Edit them from the
+                                    project once this finishes.
+                                </p>
+                            )}
                         </div>
 
                         <div>

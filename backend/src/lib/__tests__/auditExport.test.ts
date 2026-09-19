@@ -15,13 +15,15 @@ function makeDb(events: Record<string, unknown>[], error?: { message: string }) 
             select: () => b,
             or: () => b,
             eq: () => b,
+            // The project scope resolves through lib/access now, which also
+            // composes .is()/.in() and .maybeSingle(). Every table still
+            // answers "no rows", so the caller sees no accessible projects.
+            is: () => b,
+            in: () => b,
+            maybeSingle: () => Promise.resolve({ data: null, error: null }),
             ilike: () => b,
             gte: () => b,
             lte: () => b,
-            // lib/access scopes the personal-project lookup with
-            // .is("org_id", null); the generic builder answers every table.
-            is: () => b,
-            in: () => b,
             order: () => b,
             range: (from: number, to: number) => {
                 ranges.push([from, to]);
@@ -77,7 +79,10 @@ describe("buildAuditCsv", () => {
     it("always reads page 1 — the export is one flat window", async () => {
         const { db, ranges } = makeDb([]);
         await buildAuditCsv(db, "u1", undefined, { ...query, page: 7 });
-        expect(ranges).toEqual([[0, AUDIT_EXPORT_LIMIT - 1]]);
+        // The accessible-project scan pages from 0 as well; what matters is
+        // that the EVENTS read is one flat window and nothing starts later.
+        expect(ranges).toContainEqual([0, 999]);
+        expect(ranges.every(([from]) => from === 0)).toBe(true);
     });
 
     it("throws on a query error so the export job retries", async () => {
@@ -106,14 +111,18 @@ function makeProfileDb(
             select: () => b,
             or: () => b,
             eq: () => b,
+            // See makeDb: the project scope's .is() chain runs first and
+            // finds nothing, so only the profile lookup below matters here.
+            is: () => b,
+            maybeSingle: () => Promise.resolve({ data: null, error: null }),
             ilike: () => b,
             gte: () => b,
             lte: () => b,
-            // lib/access scopes the personal-project lookup with
-            // .is("org_id", null); the generic builder answers every table.
-            is: () => b,
             order: () => b,
-            in: () => {
+            in: (column: string) => {
+                // Only the profile lookup filters on user_id; every other
+                // `.in()` (project ids for the events read) keeps chaining.
+                if (column !== "user_id") return b;
                 profilesQueried = true;
                 return Promise.resolve({ data: profiles, error: null });
             },
@@ -208,4 +217,234 @@ describe("audit CSV user column", () => {
             "2026-08-10T08:30:00.000Z,lawyer@example.com,document.edited,completed,Share purchase agreement,project,p1,gpt-5",
         ]);
     });
+});
+
+// Applies filters and ordered inclusive ranges before imposing the same row
+// cap as PostgREST. Counts describe the full matching set, not the capped page.
+function makePagedAuditDb(
+    events: Record<string, unknown>[],
+    options: { projectIds?: string[]; maxRows?: number; failAt?: number } = {},
+) {
+    const projectIds = options.projectIds ?? ["project"];
+    const ranges: [number, number][] = [];
+    return {
+        ranges,
+        db: {
+            from(table: string) {
+                let rows: Record<string, unknown>[] =
+                    table === "audit_events"
+                        ? [...events]
+                        : table === "projects"
+                          ? projectIds.map((id) => ({
+                                id,
+                                user_id: "u1",
+                                org_id: null,
+                            }))
+                          : [];
+                const ordering: { column: string; ascending: boolean }[] = [];
+                const builder = {
+                    select: () => builder,
+                    eq(column: string, value: unknown) {
+                        rows = rows.filter((row) => row[column] === value);
+                        return builder;
+                    },
+                    is(column: string, value: unknown) {
+                        return builder.eq(column, value);
+                    },
+                    in(column: string, values: unknown[]) {
+                        rows = rows.filter((row) =>
+                            values.includes(row[column]),
+                        );
+                        return builder;
+                    },
+                    or() {
+                        rows = rows.filter((row) => row.user_id !== "u1");
+                        return builder;
+                    },
+                    order(
+                        column: string,
+                        { ascending }: { ascending: boolean },
+                    ) {
+                        ordering.push({ column, ascending });
+                        return builder;
+                    },
+                    range(from: number, to: number) {
+                        if (table === "audit_events") ranges.push([from, to]);
+                        if (table === "audit_events" && from === options.failAt)
+                            return Promise.resolve({
+                                data: null,
+                                error: { message: "page failed" },
+                                count: null,
+                            });
+                        const sorted = [...rows].sort((a, b) => {
+                            for (const { column, ascending } of ordering) {
+                                const left = a[column];
+                                const right = b[column];
+                                if (left === right) continue;
+                                if (left == null) return 1;
+                                if (right == null) return -1;
+                                return (
+                                    (left < right ? -1 : 1) *
+                                    (ascending ? 1 : -1)
+                                );
+                            }
+                            return 0;
+                        });
+                        return Promise.resolve({
+                            data: sorted.slice(
+                                from,
+                                Math.min(
+                                    to + 1,
+                                    from + (options.maxRows ?? 1000),
+                                ),
+                            ),
+                            error: null,
+                            count: rows.length,
+                        });
+                    },
+                    then(resolve: (result: unknown) => unknown) {
+                        return Promise.resolve({
+                            data: rows,
+                            error: null,
+                        }).then(resolve);
+                    },
+                };
+                return builder;
+            },
+        } as never,
+    };
+}
+
+const eventRows = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+        id: String(index).padStart(5, "0"),
+        created_at: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+        user_id: "u1",
+        user_email: "u1@example.com",
+        project_id: "project",
+    }));
+const PAGE_QUERY = { ...query, sortDirection: "asc" as const, limit: 50 };
+
+describe("audit pagination across capped partitions", () => {
+    it("returns page 21 after a partition exceeds the 1,000-row response cap", async () => {
+        const { db, ranges } = makePagedAuditDb(eventRows(1050));
+        const result = await queryEvents(
+            db,
+            "u1",
+            undefined,
+            { ...PAGE_QUERY, page: 21 },
+            false,
+        );
+        expect(result.count).toBe(1050);
+        expect(result.data?.map((row) => row.id)).toEqual(
+            eventRows(1050)
+                .slice(1000)
+                .map((row) => row.id),
+        );
+        expect(ranges).toContainEqual([1000, 1049]);
+    });
+
+    it("merges later pages from multiple project chunks and counts each event once", async () => {
+        const events = eventRows(2200).map((event, index) => ({
+            ...event,
+            user_id: index % 2 ? null : "colleague",
+            project_id: index % 2 ? "p200" : "p000",
+        }));
+        const { db } = makePagedAuditDb(events, {
+            projectIds: Array.from(
+                { length: 201 },
+                (_, i) => `p${String(i).padStart(3, "0")}`,
+            ),
+        });
+        const result = await queryEvents(
+            db,
+            "u1",
+            undefined,
+            { ...PAGE_QUERY, page: 43 },
+            false,
+        );
+        expect(result.count).toBe(2200);
+        expect(result.data?.map((row) => row.id)).toEqual(
+            events.slice(2100, 2150).map((row) => row.id),
+        );
+    });
+
+    it.each([true, false])(
+        "exports 2,000 rows under the cap (accessible project: %s)",
+        async (hasProject) => {
+            const { db } = makePagedAuditDb(eventRows(2100), {
+                projectIds: hasProject ? ["project"] : [],
+                maxRows: 500,
+            });
+            const csv = await buildAuditCsv(db, "u1", undefined, query);
+            expect(csv.split("\n")).toHaveLength(AUDIT_EXPORT_LIMIT + 1);
+        },
+    );
+
+    it("returns a later partition-page failure instead of partial audit history", async () => {
+        const { db } = makePagedAuditDb(eventRows(1050), { failAt: 1000 });
+        const result = await queryEvents(
+            db,
+            "u1",
+            undefined,
+            { ...PAGE_QUERY, page: 21 },
+            false,
+        );
+        expect(result.error?.message).toBe("page failed");
+        expect(result.data).toBeNull();
+    });
+
+    it("preserves the 10,000-row merge window and exact total", async () => {
+        const { db } = makePagedAuditDb(eventRows(10050));
+        const last = await queryEvents(
+            db,
+            "u1",
+            undefined,
+            { ...PAGE_QUERY, page: 200 },
+            false,
+        );
+        expect(last.data).toHaveLength(50);
+        const beyond = await queryEvents(
+            db,
+            "u1",
+            undefined,
+            { ...PAGE_QUERY, page: 201 },
+            false,
+        );
+        expect(beyond.data).toEqual([]);
+        expect(beyond.count).toBe(10050);
+    });
+});
+
+describe("audit pagination with tied sort values", () => {
+    it.each(["asc", "desc"] as const)(
+        "uses the same ID tie-break on every %s page",
+        async (sortDirection) => {
+            const events = eventRows(100).reverse();
+            const { db } = makePagedAuditDb(events);
+            const sortedQuery = {
+                ...PAGE_QUERY,
+                sortBy: "user_email" as const,
+                sortDirection,
+            };
+            const first = await queryEvents(
+                db,
+                "u1",
+                undefined,
+                { ...sortedQuery, page: 1 },
+                false,
+            );
+            const second = await queryEvents(
+                db,
+                "u1",
+                undefined,
+                { ...sortedQuery, page: 2 },
+                false,
+            );
+            const actual = [...(first.data ?? []), ...(second.data ?? [])].map(
+                (row) => row.id,
+            );
+            expect(actual).toEqual(eventRows(100).map((row) => row.id));
+        },
+    );
 });

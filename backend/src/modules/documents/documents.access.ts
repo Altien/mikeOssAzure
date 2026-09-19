@@ -5,8 +5,8 @@ import {
     attachActiveVersionPaths,
     attachLatestVersionNumbers,
 } from "../../lib/documentVersions";
-import { ensureDocAccess } from "../../lib/access";
-import type { ProjectRole } from "../../lib/permissions";
+import { creatorScopedAllowed, ensureDocAccess } from "../../lib/access";
+import { can, type ProjectRole } from "../../lib/permissions";
 import { deleteDocumentAndVersionFiles, type Db } from "./documents.shared";
 
 type DocRow = {
@@ -122,18 +122,38 @@ export async function getDocument(
 // Delete document
 // ---------------------------------------------------------------------------
 
+// Scoped by the same rule as DELETE .../versions/:versionId, not by
+// `user_id = me`: that older scope meant an org admin could not remove a
+// colleague's document from a matter the firm owns, and — once account
+// deletion started blanking documents.user_id instead of destroying org
+// content — that NOBODY could remove a departed colleague's document.
 export async function deleteDocument(
     documentId: string,
     userId: string,
     db: Db,
-): Promise<{ ok: true } | { ok: false; error?: unknown }> {
-    const { data: doc, error } = await db
+    userEmail?: string,
+): Promise<
+    | { ok: true }
+    | { ok: false; kind?: undefined; error?: unknown }
+    | { ok: false; kind: "forbidden"; detail: string; error?: undefined }
+> {
+    const { data: doc } = await db
         .from("documents")
-        .select("id")
+        .select("id, user_id, project_id, org_id, workflow_id")
         .eq("id", documentId)
-        .eq("user_id", userId)
         .single();
-    if (error || !doc) return { ok: false };
+    if (!doc) return { ok: false };
+    const access = await ensureDocAccess(doc as DocRow, userId, userEmail, db);
+    if (!access.ok) return { ok: false };
+    if (
+        !creatorScopedAllowed(access, (doc as DocRow).user_id) &&
+        !((doc as DocRow).workflow_id && can(access.projectRole, "content.edit"))
+    )
+        return {
+            ok: false,
+            kind: "forbidden",
+            detail: "You do not have permission to delete this document.",
+        };
 
     const result = await deleteDocumentAndVersionFiles(db, documentId);
     if (result.error) return { ok: false, error: result.error };

@@ -22,15 +22,31 @@ beforeEach(() => {
 const actor = { userId: "actor", projectId: "p", folderId: "root" };
 
 describe("folder callers retain their scope and failure policies", () => {
+  // The gate still runs first; what changed is the ANSWER. A Viewer can see
+  // the project, so they are refused by name (403) instead of being told the
+  // matter is missing; `forbidden` (404) is now reserved for a caller
+  // checkProjectAccess itself refuses.
   it("keeps project permissions ahead of all folder operations", async () => {
     mocks.access.mockResolvedValue({ ok: true, projectRole: "viewer" });
     const fake = scriptedDb([]);
+    const refusal = {
+      ok: false,
+      kind: "role_forbidden",
+      detail: "You do not have permission to organize documents in this project.",
+    };
     expect(
       await updateProjectFolder(fake.db, {
         ...actor,
         body: { parent_folder_id: "parent" },
       }),
-    ).toEqual({ ok: false, kind: "forbidden" });
+    ).toEqual(refusal);
+    expect(await deleteProjectFolder(fake.db, actor)).toEqual(refusal);
+    fake.done();
+  });
+
+  it("hides the project entirely from a caller with no access", async () => {
+    mocks.access.mockResolvedValue({ ok: false });
+    const fake = scriptedDb([]);
     expect(await deleteProjectFolder(fake.db, actor)).toEqual({
       ok: false,
       kind: "forbidden",

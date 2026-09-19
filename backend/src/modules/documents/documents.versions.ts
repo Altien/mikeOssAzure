@@ -20,7 +20,7 @@ import { docxToPdf } from "../../lib/convert";
 import { enqueueConversion } from "../../lib/queue/conversionQueue";
 import { contentSha256, loadActiveVersion } from "../../lib/documentVersions";
 import { creatorScopedAllowed } from "../../lib/access";
-import { can } from "../../lib/permissions";
+import { can, DOCUMENT_EDIT_FORBIDDEN } from "../../lib/permissions";
 import {
     documentSuffix,
     shouldConvertToPdf,
@@ -87,6 +87,7 @@ export async function createVersionFromDocument(
           ok: false;
           kind:
               | "target_not_found"
+              | "target_forbidden"
               | "source_not_found"
               | "source_not_owner"
               | "source_no_active"
@@ -114,11 +115,19 @@ export async function createVersionFromDocument(
     );
     // Adding a version mutates the target, so read access is not enough:
     // a viewer-only workflow share must not be able to write into it.
-    if (!targetAccess.ok || !can(targetAccess.projectRole, "content.edit"))
+    if (!targetAccess.ok)
         return {
             ok: false,
             kind: "target_not_found",
             detail: "Document not found",
+        };
+    // Same split as the version routes: a Viewer who can open the target is
+    // refused with the reason, not told the document vanished.
+    if (!can(targetAccess.projectRole, "content.edit"))
+        return {
+            ok: false,
+            kind: "target_forbidden",
+            detail: DOCUMENT_EDIT_FORBIDDEN,
         };
     const targetDoc = targetAccess.doc;
 
@@ -316,7 +325,10 @@ export async function renameVersion(
         userEmail: string | undefined;
     },
     db: Db,
-): Promise<{ ok: true; version: unknown } | { ok: false; detail: string }> {
+): Promise<
+    | { ok: true; version: unknown }
+    | { ok: false; detail: string; status?: number }
+> {
     const { documentId, versionId, rawFilename, userId, userEmail } = params;
 
     const access = await ensureDocumentAccess(
@@ -325,10 +337,11 @@ export async function renameVersion(
         userEmail,
         db,
     );
-    // A rename is a write: viewer-only shares are rejected the same way a
-    // missing document is.
-    if (!access.ok || !can(access.projectRole, "content.edit"))
-        return { ok: false, detail: "Document not found" };
+    // A document a Viewer can open has not disappeared — say so, instead of
+    // reporting the read-only tier as a missing row.
+    if (!access.ok) return { ok: false, detail: "Document not found" };
+    if (!can(access.projectRole, "content.edit"))
+        return { ok: false, status: 403, detail: DOCUMENT_EDIT_FORBIDDEN };
 
     const filename =
         typeof rawFilename === "string" && rawFilename.trim()
@@ -365,7 +378,11 @@ export async function deleteVersion(
     | { ok: true; payload: Record<string, unknown> }
     | {
           ok: false;
-          kind: "doc_not_found" | "version_not_found" | "only_version";
+          kind:
+              | "doc_not_found"
+              | "version_not_found"
+              | "only_version"
+              | "version_forbidden";
           detail: string;
       }
     // Every DB failure on this path is an opaque internal error — the route
@@ -384,18 +401,25 @@ export async function deleteVersion(
     // Deleting a version is creator-scoped (with the admin heir once the
     // creator's account is gone). Workflow documents are the exception: an
     // editor on the workflow share manages its versions too.
-    if (
-        !access.ok ||
-        (!creatorScopedAllowed(access, access.doc.user_id) &&
-            !(
-                access.doc.workflow_id &&
-                can(access.projectRole, "content.edit")
-            ))
-    )
+    //
+    // Same split as the whole-document DELETE: a caller with no verdict is
+    // told the row does not exist, and a caller who can open the document but
+    // not delete this version is REFUSED by name. Collapsing both into 404
+    // told a Viewer their version had vanished.
+    if (!access.ok)
         return {
             ok: false,
             kind: "doc_not_found",
             detail: "Document not found",
+        };
+    if (
+        !creatorScopedAllowed(access, access.doc.user_id) &&
+        !(access.doc.workflow_id && can(access.projectRole, "content.edit"))
+    )
+        return {
+            ok: false,
+            kind: "version_forbidden",
+            detail: "You do not have permission to delete this version.",
         };
     const keys = await captureInlineDocumentCleanup(db, {
         versionIds: [versionId],

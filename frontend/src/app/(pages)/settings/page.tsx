@@ -13,10 +13,11 @@ import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 // Upstream divergence (sync-log: 3a10943; OSS-6): upstream gates account
 // deletion and email changes behind MfaVerificationPopup (Supabase-auth
-// TOTP step-up). Dev has no app-level MFA — Entra enforces MFA at sign-in
-// via Conditional Access — so the popup and its retry paths are omitted.
+// TOTP step-up). Dev has no app-level MFA â€” Entra enforces MFA at sign-in
+// via Conditional Access â€” so the popup and its retry paths are omitted.
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { deleteAccount } from "@/app/lib/mikeApi";
+import { userFacingApiError } from "@/app/lib/userFacingError";
 import { SettingsSection } from "./SettingsSection";
 
 const isDev = process.env.NODE_ENV !== "production";
@@ -53,6 +54,7 @@ export default function SettingsPage() {
         emailEditable && user?.createdWithGoogle === true && profile?.passwordSet !== true;
     const [deleteConfirm, setDeleteConfirm] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
+    const [deleteError, setDeleteError] = useState<string | null>(null);
 
     const handleLogout = async () => {
         await signOut();
@@ -100,6 +102,7 @@ export default function SettingsPage() {
     const handleDeleteAccount = async () => {
         devLog("[account] delete account requested");
         setIsDeleting(true);
+        setDeleteError(null);
         try {
             await deleteAccount();
             await signOut();
@@ -108,7 +111,7 @@ export default function SettingsPage() {
             setIsDeleting(false);
             devLog("[account] delete account failed", { error });
             setDeleteConfirm(false);
-            alert("Failed to delete account. Please try again.");
+            setDeleteError(userFacingApiError(error, "Your account could not be deleted. Please try again."));
         }
     };
 
@@ -156,7 +159,7 @@ export default function SettingsPage() {
                 setEmailWarning({
                     title: "Email change unavailable",
                     message:
-                        "You can’t change your email this often. Please wait before trying again.",
+                        "You canâ€™t change your email this often. Please wait before trying again.",
                 });
                 return;
             }
@@ -438,6 +441,12 @@ export default function SettingsPage() {
                     setDeleteConfirm(false);
                 }}
                 onConfirm={() => void handleDeleteAccount()}
+            />
+            <WarningPopup
+                open={deleteError !== null}
+                title="Account deletion failed"
+                message={deleteError}
+                onClose={() => setDeleteError(null)}
             />
             <WarningPopup
                 open={!!emailWarning}

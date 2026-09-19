@@ -23,6 +23,42 @@ catalogue usable; do not bypass the job during deployment.
 The frontend is statically exported and reads public identity/API configuration at runtime. Follow the deployment runbook for routing its assets and the backend /config endpoint; do not replace this with a Next.js production server or bake secrets into browser bundles.
 
 Store model credentials in Key Vault with local environment fallback. Azure OpenAI requires its deployment, endpoint, API version, and API key; managed identity access to Key Vault does not imply managed identity authentication to model inference. OpenRouter uses openrouter-api-key; Vercel AI Gateway accepts ai-gateway-api-key or the legacy vercel-ai-gateway-api-key alias.
+### After the organization-access upgrade: `tabular_review_legacy_shares`
+
+`0084_organization_legacy_sharing_backfill.sql` converts the old roleless
+`shared_with` arrays into real access grants. One shape has nowhere to go: a
+tabular review that lives INSIDE a project now inherits access from that
+project, so a share on the review alone cannot be reproduced without handing
+the recipient the whole matter. That migration dropped
+`tabular_reviews.shared_with` without recording those recipients.
+
+`0093_organization_access_followup.sql` creates
+`public.tabular_review_legacy_shares` as the place those `(review, project,
+email)` triples belong, and backfills it only if the `shared_with` column
+still exists when it runs. On a deployment that already applied
+`the original import` the column is gone, so the table lands EMPTY: the recipients
+are recoverable only from a pre-upgrade backup. To recover them, restore the
+old `shared_with` values into a scratch column named `shared_with` on
+`tabular_reviews`, re-run `0093` (it is safe to re-run), then drop the
+scratch column. Fresh installs create the table empty and nothing writes it
+at runtime. The table carries no foreign keys, so the record survives the
+review or project being deleted. It is `service_role`-only; read it with the
+service key:
+
+```sql
+select l.email, l.project_id, l.tabular_review_id, l.archived_at
+from public.tabular_review_legacy_shares l
+order by l.archived_at desc;
+```
+
+Each row is a person who could see that review before the upgrade and cannot
+now. For each one, decide deliberately: grant them access to the project (or
+add them to the organization) if they should still have it, and otherwise do
+nothing. The table is a record, not a queue â€” nothing reads it, and rows may
+be deleted once every recipient has been dealt with.
+
+Apply the workflow catalog migration before deploying the matching backend
+release, then run the dedicated ingestion job from the built backend artifact:
 
 User credential settings are read-only. Model and router selections remain user preferences. For the Word add-in, configure its public HTTPS origin and CORS and Entra redirect URIs as described in [Word deployment](word-addin-development.md#production-build).
 

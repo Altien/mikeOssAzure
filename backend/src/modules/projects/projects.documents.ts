@@ -16,10 +16,11 @@ import {
 } from "../../lib/storage";
 import { convertedPdfKey } from "../../lib/convert";
 import { checkProjectAccess, resolveContentOrgId } from "../../lib/access";
-import { can } from "../../lib/permissions";
+import { can, DOCS_ORGANIZE_FORBIDDEN } from "../../lib/permissions";
 import { contentTypeForDocumentType } from "../../lib/documentTypes";
 import {
   type Db,
+  type RoleForbidden,
   attachDocumentOwnerLabels,
 } from "./projects.shared";
 
@@ -126,6 +127,7 @@ export async function getProjectDirectoryLevel(
 export type AssignOrCopyResult =
   | { ok: true; status: 200 | 201; doc: unknown }
   | { ok: false; kind: "forbidden" }
+  | RoleForbidden
   | { ok: false; kind: "doc_not_found" }
   | { ok: false; kind: "update_failed" }
   | { ok: false; kind: "no_active_version" }
@@ -145,8 +147,9 @@ export async function assignOrCopyDocument(
   const { projectId, documentId, userId, userEmail } = args;
 
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
-  if (!access.ok || !can(access.projectRole, "docs.organize"))
-    return { ok: false, kind: "forbidden" };
+  if (!access.ok) return { ok: false, kind: "forbidden" };
+  if (!can(access.projectRole, "docs.organize"))
+    return { ok: false, kind: "role_forbidden", detail: DOCS_ORGANIZE_FORBIDDEN };
 
   // Adding-by-id pulls a doc into the project — only the doc's owner
   // is allowed to do that, so other people's standalone docs can't be
@@ -297,6 +300,7 @@ export async function assignOrCopyDocument(
 export type RenameDocumentResult =
   | { ok: true; doc: Record<string, unknown> }
   | { ok: false; kind: "forbidden" }
+  | RoleForbidden
   | { ok: false; kind: "doc_not_found" }
   | { ok: false; kind: "db_error"; error: unknown }
   | { ok: false; kind: "validation"; detail: string };
@@ -318,7 +322,12 @@ export async function renameProjectDocument(
   if (!result.ok) {
     if (result.kind === "error")
       return { ok: false, kind: "db_error", error: result.error };
-    if (result.kind === "forbidden") return { ok: false, kind: "forbidden" };
+    // renameDocument answers not_found when checkProjectAccess refuses and
+    // forbidden when the caller can see the project but may not organize it.
+    if (result.kind === "not_found" && result.detail === "Project not found")
+      return { ok: false, kind: "forbidden" };
+    if (result.kind === "forbidden")
+      return { ok: false, kind: "role_forbidden", detail: result.detail };
     if (result.kind === "validation")
       return { ok: false, kind: "validation", detail: result.detail };
     return { ok: false, kind: "doc_not_found" };

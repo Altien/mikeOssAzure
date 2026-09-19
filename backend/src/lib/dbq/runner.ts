@@ -1,10 +1,10 @@
 // The DB-queue runner: polls public.db_jobs, executes handlers, applies the
 // retry/backoff state machine, and sweeps old rows.
 //
-// Runs BY DEFAULT in every deployment — the whole point of this queue is
+// Runs BY DEFAULT in every deployment â€” the whole point of this queue is
 // durability without new infrastructure, so unlike the Redis workers there is
 // no opt-in flag; DB_JOBS_ENABLED=false exists only as an operational escape
-// hatch — and it is honored on BOTH sides. The runner stops, and producers
+// hatch â€” and it is honored on BOTH sides. The runner stops, and producers
 // stop acknowledging work nothing will run: account deletion and async
 // exports answer 503. "Enqueue anyway and let it wait" was the old reading,
 // and it could acknowledge erasure that never happened. Split worker
@@ -63,7 +63,7 @@ export function retryDelayMs(attempts: number): number {
 /**
  * Domain cleanup to run when a kind's job fails PERMANENTLY (attempts
  * exhausted). The generic state machine only flips the db_jobs row to
- * "failed" — kinds whose failure must also flip domain state (a document to
+ * "failed" â€” kinds whose failure must also flip domain state (a document to
  * "error", a row's cells to "error") register a hook here. Hook errors are
  * contained: the row still lands in "failed" for inspection.
  */
@@ -71,10 +71,29 @@ export type DbJobFailureHook = (db: Db, job: DbJob) => Promise<void>;
 
 
 /**
+ * "Retrying cannot fix this." A handler throws it when the job is refused by
+ * a rule, not defeated by a transient fault â€” and the state machine skips
+ * straight to `failed`, the same way an unknown kind does.
+ *
+ * The retry budget is for flaky networks and busy databases. Spending 20
+ * attempts over hours on a job the domain will refuse identically every time
+ * (account deletion for the only admin of an organization that still has
+ * members) buries the real reason under a wall of repeats and leaves the
+ * user's request in limbo far longer than it needs to be.
+ */
+export class NonRetryableJobError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "NonRetryableJobError";
+    }
+}
+
+/**
  * Run one claimed job through its handler and persist the outcome:
  *   handler resolves        -> done (+ optional result)
  *   handler throws, retries -> pending again with run_at pushed back
  *   handler throws, spent   -> failed (terminal, kept for inspection)
+ *   handler throws NonRetryableJobError -> failed immediately
  *   unknown kind            -> failed immediately (retrying can't fix it)
  * Exported for unit tests; the poll loop below is just claim + fan-in.
  */
@@ -157,8 +176,14 @@ export async function processClaimedJob(
         // cleanup job owns the object path. That job is the last durable
         // pointer, so storage cleanup must retry until success rather than
         // becoming a finite-attempt failed row that a later sweep can erase.
+        // A NonRetryableJobError is the handler saying the job can never
+        // succeed, which wins over both the retry budget and retry-until-success.
         const deferred = err instanceof DbJobDeferredError;
-        const spent = !deferred && !retryUntilSuccess && job.attempts >= job.max_attempts;
+        const spent =
+            err instanceof NonRetryableJobError ||
+            (!deferred &&
+                job.attempts >= job.max_attempts &&
+                !retryUntilSuccess);
         const deferredAt = deferred ? Date.parse(err.runAt) : Number.NaN;
         const delayMs = deferred
             ? Math.max(1_000, (Number.isFinite(deferredAt) ? deferredAt : Date.now() + 60_000) - Date.now())
@@ -193,7 +218,7 @@ export async function processClaimedJob(
             }
         } else if (redisEnabled()) {
             // Redeliver the retry at its backoff time so it doesn't wait for
-            // the (slow, backstop-cadence) poller. Best-effort — the poller
+            // the (slow, backstop-cadence) poller. Best-effort â€” the poller
             // covers a failed redelivery.
             try {
                 await enqueueAppJobDelivery(job.id, {
@@ -232,7 +257,7 @@ export async function runDbJobTick(
     });
     if (error) {
         // Table/function missing (migration not applied yet) or transient DB
-        // trouble: log and try again next tick — never crash the server.
+        // trouble: log and try again next tick â€” never crash the server.
         console.error("[dbq] claim failed", error.message);
         return 0;
     }
@@ -255,7 +280,7 @@ export async function runDbJobTick(
 
 /**
  * Retention sweep. Export artifacts get their storage object removed before
- * the row goes (the row's result is the only pointer to the file — deleting
+ * the row goes (the row's result is the only pointer to the file â€” deleting
  * it first would leak the object forever).
  */
 export async function runDbJobRetentionSweep(
@@ -269,7 +294,7 @@ export async function runDbJobRetentionSweep(
     const exportRetentionMs =
         opts?.exportRetentionMs ?? 24 * 60 * 60 * 1000;
 
-    // 1. Expire export artifacts (their download links stop working here —
+    // 1. Expire export artifacts (their download links stop working here â€”
     //    documented as a 24h availability window).
     const exportCutoff = new Date(Date.now() - exportRetentionMs).toISOString();
     const { data: expired } = await db
@@ -296,12 +321,12 @@ export async function runDbJobRetentionSweep(
         await db.from("db_jobs").delete().eq("id", row.id);
     }
 
-    // 2. Drop old finished rows — EXCEPT export.build. Step 1 is the only
+    // 2. Drop old finished rows â€” EXCEPT export.build. Step 1 is the only
     //    deleter of done export rows because it removes the storage object
     //    before the row: a row it kept after a failed file delete is retry
     //    state, and this generic purge sweeping it at the 7-day boundary
     //    would erase the only pointer to the artifact and leak a full copy
-    //    of the user's data — the exact leak the docstring above promises
+    //    of the user's data â€” the exact leak the docstring above promises
     //    not to commit.
     const doneCutoff = new Date(Date.now() - DONE_RETENTION_MS).toISOString();
     await db

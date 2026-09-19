@@ -61,11 +61,23 @@ export async function createProject(
     projectName: string,
     filePath?: string,
 ) {
-    /* Creation is a navigation + modal wizard + (optionally) a file upload; the
-       per-test `{ timeout }` option passed to test() is silently ignored by
-       Playwright (that object only accepts tag/annotation), so raise the budget
-       here, where the slow work happens, for every caller. */
-    test.setTimeout(60_000);
+    /* Creation is a navigation + a three-step wizard + (optionally) a file
+       upload; the per-test `{ timeout }` option passed to test() is silently
+       ignored by Playwright (that object only accepts tag/annotation), so
+       raise the budget here, where the slow work happens.
+
+       Only ever raise it: callers such as critical-path already set a larger
+       budget for a flow that continues into a live LLM turn, and lowering it
+       here would cut that flow short. `timeout: 0` means "no timeout" and is
+       left alone. `test.info()` throws outside a running test, and this
+       helper's whole point is being callable from anywhere. */
+    const budget = filePath ? 90_000 : 60_000;
+    try {
+        const current = test.info().timeout;
+        if (current !== 0 && current < budget) test.setTimeout(budget);
+    } catch {
+        // Not inside a test: the caller owns its own timeout.
+    }
 
     await page.goto("/projects");
     await expect(page).toHaveURL(/\/projects/, { timeout: 10_000 });

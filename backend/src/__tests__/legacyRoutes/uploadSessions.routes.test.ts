@@ -182,3 +182,205 @@ describe("upload session routes", () => {
     expect(mocks.rpc).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// validateDestinationAccess â€” the version-upload destination.
+//
+// This branch collapsed "you cannot see this document" and "you may see it
+// but not write to it" into the same 404, so a Viewer who tried to add a
+// version was told their document had disappeared â€” while it went on
+// rendering in the list behind the dialog. The project branch above already
+// splits the two; this one now does too.
+// ---------------------------------------------------------------------------
+
+const DOCUMENT_ID = "33333333-3333-4333-8333-333333333333";
+const VERSION_ID = "44444444-4444-4444-8444-444444444444";
+
+function versionManifest(
+  purpose: "document_version_create" | "document_version_replace",
+) {
+  return {
+    purpose,
+    destination:
+      purpose === "document_version_replace"
+        ? { document_id: DOCUMENT_ID, version_id: VERSION_ID }
+        : { document_id: DOCUMENT_ID },
+    files: [
+      {
+        client_id: "client-0",
+        filename: "contract.pdf",
+        size_bytes: 1234,
+      },
+    ],
+  };
+}
+
+describe("upload session destination access", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.rpc.mockResolvedValue({ error: null });
+    mocks.getSignedUploadUrl.mockResolvedValue("https://upload.example/signed");
+    mocks.documentRow = {
+      data: {
+        id: DOCUMENT_ID,
+        // A colleague's document in a shared matter.
+        user_id: "22222222-2222-4222-8222-222222222222",
+        project_id: "p1",
+        org_id: "o1",
+        workflow_id: null,
+      },
+      error: null,
+    };
+  });
+
+  it("refuses a viewer by name instead of hiding the document", async () => {
+    mocks.ensureDocAccess.mockResolvedValue({
+      ok: true,
+      isCreator: false,
+      orgRole: "member",
+      projectRole: "viewer",
+    });
+
+    const response = await request(app)
+      .post("/upload-sessions")
+      .send(versionManifest("document_version_create"));
+
+    expect(response.status).toBe(403);
+    expect(response.body.detail).toBe(
+      "You do not have permission to edit content in this project.",
+    );
+    // No session was reserved and no upload URL was minted.
+    expect(mocks.rpc).not.toHaveBeenCalled();
+    expect(mocks.getSignedUploadUrl).not.toHaveBeenCalled();
+  });
+
+  it("keeps 404 for a caller with no verdict at all", async () => {
+    // A non-member must not be able to tell an existing document from a
+    // missing one, so this half of the split stays a 404.
+    mocks.ensureDocAccess.mockResolvedValue({ ok: false });
+
+    const response = await request(app)
+      .post("/upload-sessions")
+      .send(versionManifest("document_version_create"));
+
+    expect(response.status).toBe(404);
+    expect(response.body.detail).toBe("Document not found");
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+
+  it("names the narrower rule when an editor may write but not replace", async () => {
+    // Replacing a version is creator-scoped; editing content is not. Two
+    // different refusals, so they say two different things.
+    mocks.ensureDocAccess.mockResolvedValue({
+      ok: true,
+      isCreator: false,
+      orgRole: "member",
+      projectRole: "editor",
+    });
+
+    const response = await request(app)
+      .post("/upload-sessions")
+      .send(versionManifest("document_version_replace"));
+
+    expect(response.status).toBe(403);
+    expect(response.body.detail).toBe(
+      "You do not have permission to replace this version.",
+    );
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+
+  it("lets an editor open a version-create session", async () => {
+    mocks.ensureDocAccess.mockResolvedValue({
+      ok: true,
+      isCreator: false,
+      orgRole: "member",
+      projectRole: "editor",
+    });
+
+    const response = await request(app)
+      .post("/upload-sessions")
+      .send(versionManifest("document_version_create"));
+
+    expect(response.status).toBe(201);
+    expect(mocks.rpc).toHaveBeenCalledOnce();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateDestinationAccess â€” the workflow destination.
+//
+// The workflow branch was the last one to answer "Workflow not found or not
+// editable" to BOTH a stranger and a Viewer. The Viewer can open the workflow
+// (it is on their screen), so the refusal now says why instead.
+// ---------------------------------------------------------------------------
+
+const WORKFLOW_ID = "55555555-5555-4555-8555-555555555555";
+
+function workflowManifest() {
+  return {
+    purpose: "document_create",
+    destination: { scope: "workflow", workflow_id: WORKFLOW_ID },
+    files: [
+      { client_id: "client-0", filename: "contract.pdf", size_bytes: 1234 },
+    ],
+  };
+}
+
+describe("upload session workflow destination", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.rpc.mockResolvedValue({ error: null });
+    mocks.getSignedUploadUrl.mockResolvedValue("https://upload.example/signed");
+    // The one-row read answers the `workflows` lookup here.
+    mocks.documentRow = {
+      data: { id: WORKFLOW_ID, type: "assistant" },
+      error: null,
+    };
+  });
+
+  it("refuses a workflow viewer by name instead of hiding the workflow", async () => {
+    mocks.checkWorkflowAccess.mockResolvedValue({
+      ok: true,
+      isCreator: false,
+      orgRole: null,
+      projectRole: "viewer",
+    });
+
+    const response = await request(app)
+      .post("/upload-sessions")
+      .send(workflowManifest());
+
+    expect(response.status).toBe(403);
+    expect(response.body.detail).toBe(
+      "You do not have permission to add documents to this workflow.",
+    );
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+
+  it("keeps 404 for a caller with no verdict on the workflow", async () => {
+    mocks.checkWorkflowAccess.mockResolvedValue({ ok: false });
+
+    const response = await request(app)
+      .post("/upload-sessions")
+      .send(workflowManifest());
+
+    expect(response.status).toBe(404);
+    expect(response.body.detail).toBe("Workflow not found or not editable");
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+
+  it("lets a workflow editor open a session", async () => {
+    mocks.checkWorkflowAccess.mockResolvedValue({
+      ok: true,
+      isCreator: false,
+      orgRole: null,
+      projectRole: "editor",
+    });
+
+    const response = await request(app)
+      .post("/upload-sessions")
+      .send(workflowManifest());
+
+    expect(response.status).toBe(201);
+  });
+});

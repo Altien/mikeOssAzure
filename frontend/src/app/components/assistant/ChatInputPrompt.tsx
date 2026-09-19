@@ -43,7 +43,12 @@ export function ChatInputPrompt({
 }: {
     messages: Message[];
     chatKey: string | null | undefined;
-    canSend?: boolean;
+    /**
+     * Tri-state, like ChatInput's: `null` means "not known yet". Only `true`
+     * may raise an ask-input prompt, so an unresolved role behaves like a
+     * refusal instead of prompting somebody who may turn out to be a viewer.
+     */
+    canSend?: boolean | null;
     onSubmit: NonNullable<Parameters<typeof AskInputPopup>[0]["onSubmit"]>;
     onCancel: () => void;
     children: ReactNode;

@@ -55,6 +55,14 @@ export type TabularFailure = ServiceFailure | TabularStatusFailure;
 
 export type TabularResult<T> = { ok: true; data: T } | TabularFailure;
 
+/**
+ * "Not found" is for reviews the caller cannot see at all. A Viewer who can
+ * open a review but not change it gets a refusal that names the reason, so
+ * the UI stops telling people their review disappeared.
+ */
+export const REVIEW_EDIT_FORBIDDEN =
+    "You do not have permission to edit content in this review.";
+
 export function statusFailure(
     status: number,
     body: Record<string, unknown>,

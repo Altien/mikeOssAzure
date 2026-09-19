@@ -31,6 +31,7 @@ import {
     deleteMcpConnector,
     deletePrivateMemories,
     deleteUserAccount,
+    describeAccountDeletionBlockers,
     deleteUserChats,
     deleteUserProjectsData,
     deleteUserTabularReviews,
@@ -167,7 +168,7 @@ userRouter.get("/lookup", requireAuth, asyncRoute(async (req, res) => {
 }));
 
 // ---------------------------------------------------------------------------
-// Organization invitations — the recipient's side
+// Organization invitations â€” the recipient's side
 // ---------------------------------------------------------------------------
 //
 // These live on /user rather than /orgs because the caller is not (yet) a
@@ -176,7 +177,7 @@ userRouter.get("/lookup", requireAuth, asyncRoute(async (req, res) => {
 // by the authenticated account's email, which is what lets an invitation sent
 // before signup be claimed the moment the account exists.
 
-// GET /user/invitations — live invitations addressed to the caller's email.
+// GET /user/invitations â€” live invitations addressed to the caller's email.
 userRouter.get("/invitations", requireAuth, asyncRoute(async (_req, res) => {
     const userEmail = res.locals.userEmail as string | undefined;
     const db = createServerSupabase();
@@ -185,7 +186,7 @@ userRouter.get("/invitations", requireAuth, asyncRoute(async (_req, res) => {
     res.json(result.invitations);
 }));
 
-// POST /user/invitations/:invitationId/accept — join the organization.
+// POST /user/invitations/:invitationId/accept â€” join the organization.
 userRouter.post(
     "/invitations/:invitationId/accept",
     requireAuth,
@@ -524,7 +525,7 @@ userRouter.get("/mcp-connectors/oauth/callback", asyncRoute(async (req, res) => 
             );
     } catch (err) {
         // The popup only ever shows a fixed, sanitized string. The operator
-        // gets both the raw message and the concise diagnostic — the SDK
+        // gets both the raw message and the concise diagnostic â€” the SDK
         // embeds entire server response bodies, including HTML error pages,
         // in its messages, so the concise form is what is actually readable.
         console.error("[user/mcp-connectors] oauth callback failed", {
@@ -572,7 +573,7 @@ userRouter.post(
             // browser treats every 401 from this API as "your Mike session is
             // gone" and logs the user out (frontend authenticatedFetch). This
             // is the UPSTREAM server wanting authorization, and the Mike
-            // session is fine — 409 says "the connector is not in a state
+            // session is fine â€” 409 says "the connector is not in a state
             // where tools can be listed"; the client keys on `code`.
             if (result.kind === "oauth_required")
                 return void res.status(409).json({
@@ -623,7 +624,15 @@ userRouter.delete(
         const token = res.locals.token as string | undefined;
         const db = createServerSupabase();
         const result = await deleteUserAccount(db, userId, userEmail, token);
-        if (!result.ok) return void sendInternalError(res, result.error);
+        if (!result.ok) {
+            if ("kind" in result && result.kind === "org_successor_required")
+                return void res.status(409).json({
+                    code: "org_successor_required",
+                    detail: describeAccountDeletionBlockers(result.blockers),
+                    organizations: result.blockers,
+                });
+            return void sendInternalError(res, result.error);
+        }
         res.status(202).json({ status: "scheduled" });
     }),
 );
@@ -761,7 +770,7 @@ userRouter.get(
 // Async exports (durable): POST creates a DB-queue job that builds the
 // export off the request thread; GET polls it; the download endpoint streams
 // the finished artifact. The synchronous GET /user/*/export routes above
-// still work (curl users, older clients) — the frontend uses this flow so a
+// still work (curl users, older clients) â€” the frontend uses this flow so a
 // large export can neither time out the request nor die with a dropped tab.
 // Artifacts expire after 24 hours (the runner's retention sweep deletes the
 // file and the job row).
@@ -784,7 +793,7 @@ userRouter.post(
             return void res.status(400).json({ detail: parsed.detail });
 
         // Nothing on this process will ever drain db_jobs, so a 202 would be
-        // a receipt for work that cannot happen — and worse than useless: the
+        // a receipt for work that cannot happen â€” and worse than useless: the
         // pending row holds the (user, type) dedupe key forever, so the user
         // could never successfully start that export again, even after an
         // operator turns the runner back on. Refuse instead. The synchronous
@@ -806,7 +815,7 @@ userRouter.post(
     }),
 );
 
-// GET /user/exports/:exportId — poll until status is "done", then fetch
+// GET /user/exports/:exportId â€” poll until status is "done", then fetch
 // GET /user/exports/:exportId/download.
 userRouter.get(
     "/exports/:exportId",
@@ -825,7 +834,7 @@ userRouter.get(
     }),
 );
 
-// GET /user/exports/:exportId/download — stream the finished artifact.
+// GET /user/exports/:exportId/download â€” stream the finished artifact.
 // Authenticated + ownership-checked on every request (unlike /download/:token,
 // which only serves paths backed by a document_versions row and would 404 on
 // an export artifact); artifacts expire after 24h.

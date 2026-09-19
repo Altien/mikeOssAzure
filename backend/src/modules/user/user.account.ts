@@ -1,6 +1,6 @@
-// Account / data deletion (destructive — exact call args + ordering preserved).
+// Account / data deletion (destructive â€” exact call args + ordering preserved).
 //
-// Service layer behind user.routes.ts — see user.shared.ts for the module's
+// Service layer behind user.routes.ts â€” see user.shared.ts for the module's
 // contract. The userDataCleanup helpers + auth-admin deleteUser call are
 // invoked with identical args and ordering.
 
@@ -10,16 +10,55 @@ import {
     deleteAllUserChats,
     deleteAllUserTabularReviews,
     deleteUserProjects,
+    listOrgsBlockingAccountDeletion,
+    type AccountDeletionOrgBlocker,
 } from "./user.dataCleanup";
 import { type Db, errorMessage } from "./user.shared";
+
+/**
+ * Turn the sole-admin blockers into instructions the user can actually act
+ * on. The two reasons need DIFFERENT actions â€” appointing a successor fixes
+ * an org that still has members, and does nothing for an org whose only
+ * problem is that it still owns matters â€” so a single "make another member
+ * an admin" sentence sent the second group off to look for members who do
+ * not exist. A mixed batch gets both sentences, each naming its own orgs.
+ */
+export function describeAccountDeletionBlockers(
+    blockers: AccountDeletionOrgBlocker[],
+): string {
+    const named = (reason: AccountDeletionOrgBlocker["reason"]) =>
+        blockers
+            .filter((blocker) => blocker.reason === reason)
+            .map((blocker) => blocker.name)
+            .join(", ");
+    const sentences: string[] = [];
+    const withMembers = named("members");
+    if (withMembers)
+        sentences.push(
+            `You are the only admin of ${withMembers}. Make another member an admin, or delete the organization, before deleting your account.`,
+        );
+    const withContent = named("content");
+    if (withContent)
+        sentences.push(
+            `You are the only admin of ${withContent}, which still owns content. Delete or move the organization's projects, workflows, documents and reviews, or delete the organization, before deleting your account.`,
+        );
+    return sentences.join(" ");
+}
 
 export async function deleteUserAccount(
     db: Db,
     userId: string,
     userEmail: string | undefined,
     _token: string | undefined,
-): Promise<{ ok: true } | { ok: false; error: unknown }> {
+): Promise<
+    | { ok: true }
+    | { ok: false; kind: "org_successor_required"; blockers: AccountDeletionOrgBlocker[] }
+    | { ok: false; error: unknown; kind?: undefined }
+> {
     try {
+        const blockers = await listOrgsBlockingAccountDeletion(db, userId);
+        if (blockers.length > 0)
+            return { ok: false, kind: "org_successor_required", blockers };
         // One database transaction tombstones the identity, revokes app
         // sessions, and queues the durable erasure job. Provider identities
         // are only removed by the worker when the provider owns one.

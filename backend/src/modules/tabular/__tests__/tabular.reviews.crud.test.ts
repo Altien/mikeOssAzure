@@ -241,10 +241,12 @@ describe("createTabularReview", () => {
             model: "claude-sonnet-5",
             project_id: "proj-1",
         });
+        // A Viewer can open the project, so "not found" would be a lie; the
+        // read-only tier gets a refusal that names itself.
         expect(result).toMatchObject({
             ok: false,
-            kind: "not_found",
-            detail: "Project not found",
+            kind: "forbidden",
+            detail: "You do not have permission to write in this project.",
         });
     });
 

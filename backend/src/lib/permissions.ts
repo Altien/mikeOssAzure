@@ -87,3 +87,22 @@ export function can(
     if (!isProjectRole(role)) return false;
     return ROLE_RANK[role] >= REQUIRED_RANK[capability];
 }
+
+/**
+ * A project the caller can open but not write to is not a missing project.
+ * Collapsing "you cannot see this" and "your role is read-only" into one 404
+ * told a Viewer their matter had vanished, so every write gate answers 404
+ * only when checkProjectAccess itself refuses, and 403 with this intentional
+ * message when the role is simply too low. Lives in lib/ because both the
+ * projects and documents modules gate on it.
+ */
+export const DOCS_ORGANIZE_FORBIDDEN =
+  "You do not have permission to organize documents in this project.";
+
+/**
+ * "Not found" is for rows the caller cannot see at all. A Viewer who can open
+ * a document but not change it gets a refusal that names the reason, so the
+ * UI stops telling people their document disappeared.
+ */
+export const DOCUMENT_EDIT_FORBIDDEN =
+  "You do not have permission to edit content in this project.";

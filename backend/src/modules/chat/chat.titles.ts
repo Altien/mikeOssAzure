@@ -57,6 +57,7 @@ export async function generateChatTitle(
           code: string;
           detail: string;
       }
+    | { ok: false; kind: "write"; error: unknown }
     | { ok: false; kind: "error" }
 > {
     try {
@@ -84,7 +85,10 @@ export async function generateChatTitle(
             apiKeys: settings.api_keys,
         });
 
-        await updateChatTitle(db, { chatId: args.chatId, title });
+        // Read the write. An ignored error answered 200 with the new title,
+        // so the sidebar renamed the chat and reverted on the next reload.
+        const saved = await updateChatTitle(db, { chatId: args.chatId, title });
+        if (!saved.ok) return { ok: false, kind: "write", error: saved.error };
 
         return { ok: true, title };
     } catch (err) {

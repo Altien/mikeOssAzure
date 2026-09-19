@@ -108,7 +108,15 @@ export async function copyDocumentsToWorkflowAssets(
 
   const { data: sourceDocuments, error: documentsError } = await db
     .from("documents")
-    .select("id, user_id, project_id, workflow_id, current_version_id")
+    // org_id and workflow_id are part of the VERDICT, not decoration:
+    // ensureDocAccess falls through project -> workflow -> org, so a
+    // document selected without them looks container-less and is refused.
+    // Omitting org_id made every organization-library file unattachable —
+    // "One or more files could not be found" for a file the caller is
+    // looking straight at.
+    .select(
+      "id, user_id, project_id, org_id, workflow_id, current_version_id",
+    )
     .in("id", documentIds);
   if (documentsError) {
     return { ok: false, kind: "db_error", error: documentsError };

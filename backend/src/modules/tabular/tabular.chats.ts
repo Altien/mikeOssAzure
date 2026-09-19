@@ -47,6 +47,7 @@ import {
     statusFailure,
     type Db,
     type TabularResult,
+    REVIEW_EDIT_FORBIDDEN,
 } from "./tabular.shared";
 
 // ---------------------------------------------------------------------------
@@ -504,8 +505,11 @@ export async function prepareTabularChat(
         .single();
     if (error || !review) return failure("not_found", "Review not found");
     const reviewAccess = await ensureReviewAccess(review, userId, userEmail, db);
-    if (!reviewAccess.ok || !can(reviewAccess.projectRole, "content.edit"))
-        return failure("not_found", "Review not found");
+    // A viewer can open this review — saying it does not exist is a lie the
+    // UI then repeats. Only a caller with no verdict at all gets the 404.
+    if (!reviewAccess.ok) return failure("not_found", "Review not found");
+    if (!can(reviewAccess.projectRole, "content.edit"))
+        return failure("forbidden", REVIEW_EDIT_FORBIDDEN);
 
     // A direct review grant does not grant access to the containing project.
     // Keep project memory behind the project's own capability verdict: view

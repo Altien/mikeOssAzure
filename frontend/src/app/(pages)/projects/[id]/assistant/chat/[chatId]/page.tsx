@@ -100,7 +100,7 @@ import {
     removeDeletedDocumentTabs,
 } from "@/app/lib/folderDeleteState";
 import { usePathParams } from "@/app/lib/usePathParams";
-// Upstream divergence (OSS-6, §2.3 item 7): dev's skill runtime (bound-skill
+// Upstream divergence (OSS-6, Â§2.3 item 7): dev's skill runtime (bound-skill
 // chip + explicit upgrade banner) and Authority Trace tab, hooked in from
 // src/altien. Each hook-in site below is marked "Dev (OSS-6)".
 import {
@@ -319,11 +319,14 @@ export default function ProjectAssistantChatPage() {
     } | null>(null);
     const editingChatTitle =
         chatTitleEdit?.chatId === activeChatId ? chatTitleEdit : null;
-    const [chatOwnerId, setChatOwnerId] = useState<string | null>(null);
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
     const [editorGateAction, setEditorGateAction] = useState<string | null>(
         null,
     );
+    const [chatActionError, setChatActionError] = useState<{
+        title: string;
+        message: string;
+    } | null>(null);
     const [chatLoaded, setChatLoaded] = useState(false);
     const [deletingChat, setDeletingChat] = useState(false);
     const [composerResetKey, setComposerResetKey] = useState(0);
@@ -419,7 +422,6 @@ export default function ProjectAssistantChatPage() {
     const adoptCreatedChat = useCallback(
         (chatId: string) => {
             createdChatIdRef.current = chatId;
-            setChatOwnerId(user?.id ?? null);
             setActiveChatId(chatId);
             window.history.pushState(
                 null,
@@ -427,7 +429,7 @@ export default function ProjectAssistantChatPage() {
                 `/projects/${projectId}/assistant/chat/${chatId}`,
             );
         },
-        [projectId, user?.id],
+        [projectId],
     );
     const {
         messages,
@@ -462,23 +464,43 @@ export default function ProjectAssistantChatPage() {
     }, [chats, projectChats, projectId]);
 
     // Server ladder: writing to a project chat needs content.edit on the
-    // project, except that the chat's own creator may always continue it.
+    // project.
     //
     // While the project, chat owner, or session is loading, access is unknown,
     // and unknown is neither a licence nor a refusal. Treating it as a licence
     // left a viewer typing into a live composer for the whole load window;
     // treating it as a refusal flashed the read-only placeholder at people who
     // do have edit access. So the composer is not rendered at all until all
-    // three inputs resolve — the message shimmer stands in for the whole
+    // three inputs resolve â€” the message shimmer stands in for the whole
     // surface, and what appears afterwards is already correct.
     const projectRole = roleFromLoaded(project);
     const canEditContent = can(projectRole, "content.edit");
     const canManageProject = can(projectRole, "access.manage");
-    // The chat's own creator keeps writing to it whatever their project role,
-    // because the server puts a row's creator at the top of that row's ladder.
-    const canSendChat =
-        canEditContent || (!!chatOwnerId && chatOwnerId === user?.id);
+    // There is no creator exception on a PROJECT chat. The server derives the
+    // caller's whole standing here from the project role
+    // (ensureSharedRowAccess): content.edit to write or rename, and
+    // container.delete to delete. Adding "â€¦or I started this thread" to the
+    // client made all three gates disagree with the server in both
+    // directions â€” an editor who created the chat was offered a Delete that
+    // came back 403, and a viewer demoted after starting a thread kept a live
+    // composer on it. The ladder is the only answer this page asks for.
+    //
+    // Three answers, not two â€” the same tri-state the standalone chat page
+    // adopted. `can(null, â€¦)` is false, and false here is a SENTENCE: the
+    // composer reads "Viewing only â€” sending needs edit access". A project
+    // owner opening their own chat cold saw that accusation for the length of
+    // GET /projects/:id. `null` keeps the composer closed while we wait
+    // without asserting anything about who the reader is.
+    const canSendChat = projectRole === null ? null : canEditContent;
+    const canDeleteChat = can(projectRole, "container.delete");
     const composerReady = chatLoaded && projectLoaded && !authLoading;
+    // Rename and Delete are offered by the header menu, whose handlers return
+    // in silence while the role is unknown â€” deliberately, since accusing
+    // somebody before the payload lands is a guess, but a menu item that
+    // quietly does nothing when clicked is indistinguishable from a broken
+    // one. Disable them for that window, the way the upload button already
+    // does with `!canEditContent`.
+    const roleKnown = projectRole !== null;
     const pendingInitialUserMessageRef = useRef<Message | null>(
         initialMessages.length === 1 && initialMessages[0].role === "user"
             ? initialMessages[0]
@@ -569,8 +591,8 @@ export default function ProjectAssistantChatPage() {
         };
     }, [projectId]);
 
-    // Whenever the assistant mutates project documents — creating a new
-    // doc, creating a new version via edit_document, or replicating a doc —
+    // Whenever the assistant mutates project documents â€” creating a new
+    // doc, creating a new version via edit_document, or replicating a doc â€”
     // refresh the project so the explorer picks up the new/changed files
     // without a manual reload. Keyed by completed mutation events only, so
     // we refetch once the backend has finished persisting the change.
@@ -635,7 +657,6 @@ export default function ProjectAssistantChatPage() {
         let cancelled = false;
         setChatLoaded(false);
         setChatTitle(null);
-        setChatOwnerId(null);
         setChatModel(undefined);
         setChatReasoningLevel(undefined);
         setMessages([]);
@@ -722,7 +743,7 @@ export default function ProjectAssistantChatPage() {
         if (isResponseLoading) return scrollLatestUserToTop();
     }, [isResponseLoading, scrollLatestUserToTop]);
 
-    // ── Tabs ──────────────────────────────────────────────────────────────────
+    // â”€â”€ Tabs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     function openTab(
         docId: string,
         filename: string,
@@ -780,7 +801,7 @@ export default function ProjectAssistantChatPage() {
         setSelectedDocId(docId);
     }
 
-    // ── Handlers ──────────────────────────────────────────────────────────────
+    // â”€â”€ Handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const handleSubmit = useCallback(
         (message: Message, options?: Parameters<typeof handleChat>[1]) => {
             if (!activeTab) return handleChat(message, options);
@@ -872,7 +893,7 @@ export default function ProjectAssistantChatPage() {
         if (doc) chatInputRef.current?.addDoc(doc);
     };
 
-    // ── Chat actions ──────────────────────────────────────────────────────────
+    // â”€â”€ Chat actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     function navigateToChat(nextChatId: string) {
         if (nextChatId === activeChatId) return;
         cancel();
@@ -901,14 +922,27 @@ export default function ProjectAssistantChatPage() {
 
     async function handleDeleteChat() {
         if (!activeChatId) return;
-        if (chatOwnerId && user?.id && chatOwnerId !== user.id) {
-            setOwnerOnlyAction("delete this chat");
+        if (!canDeleteChat) {
+            // Only accuse somebody of lacking a role once we know they do:
+            // `projectRole` is null for the whole load window, and a refusal
+            // popup raised then is a guess.
+            if (projectRole) setOwnerOnlyAction("delete this chat");
             return;
         }
         setDeletingChat(true);
         try {
             await deleteChat(activeChatId);
             router.push(`/projects/${projectId}/assistant`);
+        } catch (error) {
+            // Without this the refusal was an unhandled rejection and the
+            // page just sat there, indistinguishable from a slow delete.
+            setChatActionError({
+                title: "Chat not deleted",
+                message: userFacingApiError(
+                    error,
+                    "The chat could not be deleted. Please try again.",
+                ),
+            });
         } finally {
             setDeletingChat(false);
         }
@@ -916,8 +950,8 @@ export default function ProjectAssistantChatPage() {
 
     async function handleRenameChat(nextTitle?: string) {
         if (!activeChatId) return;
-        if (chatOwnerId && user?.id && chatOwnerId !== user.id) {
-            setOwnerOnlyAction("rename this chat");
+        if (!canEditContent) {
+            if (projectRole) setEditorGateAction("rename this chat");
             return;
         }
         if (nextTitle === undefined) {
@@ -939,7 +973,11 @@ export default function ProjectAssistantChatPage() {
         );
         try {
             await renameChatInHistory(activeChatId, trimmed);
-        } catch {
+        } catch (error) {
+            // ChatHistoryContext rethrows so the calling surface can speak.
+            // Unhandled, the header title stayed changed while the switcher
+            // row snapped back â€” the user saw two different titles and no
+            // reason for either.
             if (activeChatIdRef.current === activeChatId) {
                 setChatTitle((current) =>
                     current === trimmed ? previousTitle : current,
@@ -952,10 +990,17 @@ export default function ProjectAssistantChatPage() {
                         : chat,
                 ),
             );
+            setChatActionError({
+                title: "Chat not renamed",
+                message: userFacingApiError(
+                    error,
+                    "The chat could not be renamed. Please try again.",
+                ),
+            });
         }
     }
 
-    // ── Upload ────────────────────────────────────────────────────────────────
+    // â”€â”€ Upload â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     function addUploadedDocuments(documents: Document[]) {
         if (documents.length === 0) return;
         setProject((current) => {
@@ -1184,7 +1229,7 @@ export default function ProjectAssistantChatPage() {
         }
     };
 
-    // ── Folder handlers ───────────────────────────────────────────────────────
+    // â”€â”€ Folder handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const handleCreateFolder = async (
         parentId: string | null,
         name: string,
@@ -1432,7 +1477,7 @@ export default function ProjectAssistantChatPage() {
         }
     };
 
-    // ── Resize handlers ───────────────────────────────────────────────────────
+    // â”€â”€ Resize handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const onExplorerDividerDrag = useCallback((dx: number) => {
         setPanelWidths((current) => {
             const requestedWidth = Math.max(
@@ -1675,7 +1720,7 @@ export default function ProjectAssistantChatPage() {
                                     e.stopPropagation();
                                     await handleMoveFolder(folderId, null);
                                 }
-                                // External file drops are not stopped — they bubble to handleExplorerFileDrop
+                                // External file drops are not stopped â€” they bubble to handleExplorerFileDrop
                             }}
                         >
                             {explorerDragOver && (
@@ -1892,7 +1937,10 @@ export default function ProjectAssistantChatPage() {
                                         label: "Rename",
                                         icon: Pencil,
                                         onSelect: () => void handleRenameChat(),
-                                        disabled: !chatLoaded || !activeChatId,
+                                        disabled:
+                                            !chatLoaded ||
+                                            !activeChatId ||
+                                            !roleKnown,
                                     },
                                     {
                                         label: "Memory",
@@ -1910,7 +1958,8 @@ export default function ProjectAssistantChatPage() {
                                         disabled:
                                             deletingChat ||
                                             !chatLoaded ||
-                                            !activeChatId,
+                                            !activeChatId ||
+                                            !roleKnown,
                                         variant: "danger" as const,
                                     },
                                 ].filter((item) =>
@@ -2151,6 +2200,12 @@ export default function ProjectAssistantChatPage() {
                 requiredRole="editor"
                 contacts={project?.admin_contacts}
                 onClose={() => setEditorGateAction(null)}
+            />
+            <WarningPopup
+                open={!!chatActionError}
+                title={chatActionError?.title}
+                message={chatActionError?.message}
+                onClose={() => setChatActionError(null)}
             />
             <ConfirmPopup
                 open={!!pendingDeleteFolder}

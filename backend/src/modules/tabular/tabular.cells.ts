@@ -192,8 +192,9 @@ export async function regenerateTabularCell(
         .single();
     if (reviewError || !review) return failure("not_found", "Review not found");
     const access = await ensureReviewAccess(review, userId, userEmail, db);
-    if (!access.ok || !can(access.projectRole, "content.edit"))
-        return failure("not_found", "Review not found");
+    if (!access.ok) return failure("not_found", "Review not found");
+    if (!can(access.projectRole, "content.edit"))
+        return failure("forbidden", "Only a review editor can regenerate cells");
     if (isReviewGenerationRunning(review)) return RUNNING_CONFLICT;
 
     const column = (

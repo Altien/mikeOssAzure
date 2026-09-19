@@ -481,6 +481,8 @@ workflowsRouter.delete("/:workflowId/shares/:shareId", requireAuth, asyncRoute(a
   if (!result.ok) {
     if (result.kind === "db_error")
       return void sendInternalError(res, result.error);
+    if (result.kind === "share_not_found")
+      return void res.status(404).json({ detail: result.detail });
     return void res.status(404).json({ detail: "Workflow not found" });
   }
   res.status(204).send();

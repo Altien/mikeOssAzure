@@ -38,14 +38,22 @@ export async function validateAccessibleProjectId(
 ): Promise<{ ok: true } | { ok: false; status: number; detail: string }> {
     if (!args.projectId) return { ok: true };
     // Creating a chat under a project contributes content to it: member+.
+    // A Viewer can see the project, so answering 404 would claim it does not
+    // exist; the refusal is 403 and names the reason instead.
     const access = await checkProjectAccess(
         args.projectId,
         args.userId,
         args.userEmail,
         db,
     );
-    if (!access.ok || !can(access.projectRole, "content.edit"))
+    if (!access.ok)
         return { ok: false, status: 404, detail: "Project not found" };
+    if (!can(access.projectRole, "content.edit"))
+        return {
+            ok: false,
+            status: 403,
+            detail: "You do not have permission to write in this project.",
+        };
     return { ok: true };
 }
 

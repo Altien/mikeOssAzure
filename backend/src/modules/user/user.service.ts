@@ -120,6 +120,8 @@ export { handleExportBuild } from "./user.exportJobs";
 export { handleMcpRefreshToken, MCP_TOKEN_REFRESH_WINDOW_MS } from "./user.mcpJobs";
 export { EXPORT_TYPES, MAX_ZIP_EXPORT_DOCUMENTS, type ExportType } from "./user.exportContracts";
 
-export { deleteUserOrganizations, deleteAllUserChats, deleteAllUserTabularReviews, deleteProjectsByIds, deleteUserProjects, deleteUserAccountData } from "./user.dataCleanup";
+export { deleteUserOrganizations, deleteAllUserChats, deleteAllUserTabularReviews, deleteProjectsByIds, deleteUserProjects, deleteUserAccountData, listOrgsBlockingAccountDeletion } from "./user.dataCleanup";
+export type { AccountDeletionOrgBlocker } from "./user.dataCleanup";
+export { describeAccountDeletionBlockers } from "./user.account";
 
 export { userExportFilename, buildUserChatsExport, buildUserTabularReviewsExport, projectManifestFilename, buildProjectExportManifest, buildUserAccountExport } from "./user.dataExport";

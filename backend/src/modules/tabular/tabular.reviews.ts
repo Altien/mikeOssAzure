@@ -445,8 +445,14 @@ export async function createTabularReview(
             userEmail,
             db,
         );
-        if (!access.ok || !can(access.projectRole, "content.edit"))
-            return failure("not_found", "Project not found");
+        // A Viewer can open the project, so "not found" would be a lie; the
+        // read-only tier gets a refusal that names itself.
+        if (!access.ok) return failure("not_found", "Project not found");
+        if (!can(access.projectRole, "content.edit"))
+            return failure(
+                "forbidden",
+                "You do not have permission to write in this project.",
+            );
     }
     const allowedDocumentIds = Array.isArray(document_ids)
         ? await filterAccessibleDocumentIds(document_ids, userId, userEmail, db)

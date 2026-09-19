@@ -37,7 +37,7 @@ vi.mock("@/app/components/assistant/ChatView", () => ({
         accessResolved,
         chat,
     }: {
-        canSend?: boolean;
+        canSend?: boolean | null;
         accessResolved?: boolean;
         chat?: { access_role?: string } | null;
     }) => (
@@ -111,5 +111,42 @@ describe("global chat page composer gating", () => {
             expect(screen.getByTestId("can-send")).toHaveTextContent("true"),
         );
         expect(screen.getByTestId("chat-role")).toHaveTextContent("editor");
+    });
+
+    it("says 'not known yet' rather than 'viewing only' while getChat is in flight", async () => {
+        // Every cold load starts with no initialMessages, so `canSend` opens
+        // at FALSE — and a chat's own owner used to be told "Viewing only —
+        // sending needs edit access" until the fetch landed. `accessResolved`
+        // is the answer to that: false means "not known yet", and ChatView
+        // keeps the composer off the page rather than showing the refusal.
+        let settle!: (value: ReturnType<typeof chatDetail>) => void;
+        getChat.mockReturnValue(
+            new Promise((resolve) => {
+                settle = resolve;
+            }),
+        );
+
+        render(<AssistantChatPage />);
+
+        expect(screen.getByTestId("access-resolved")).toHaveTextContent(
+            "false",
+        );
+
+        await act(async () => {
+            settle(chatDetail("owner"));
+        });
+        await waitFor(() =>
+            expect(screen.getByTestId("can-send")).toHaveTextContent("true"),
+        );
+        expect(screen.getByTestId("access-resolved")).toHaveTextContent("true");
+    });
+
+    it("stays fail-closed when getChat never answers", async () => {
+        getChat.mockRejectedValue(new Error("boom"));
+        render(<AssistantChatPage />);
+
+        await waitFor(() => expect(getChat).toHaveBeenCalled());
+        // null, not true: an unknown standing is never a licence.
+        expect(screen.getByTestId("can-send")).not.toHaveTextContent("true");
     });
 });

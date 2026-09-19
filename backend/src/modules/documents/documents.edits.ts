@@ -9,7 +9,7 @@ import {
 import { buildDownloadUrl } from "../../lib/downloadTokens";
 import { contentSha256, loadActiveVersion } from "../../lib/documentVersions";
 import { ensureDocAccess } from "../../lib/access";
-import { can } from "../../lib/permissions";
+import { can, DOCUMENT_EDIT_FORBIDDEN } from "../../lib/permissions";
 import { downloadFilenameForVersion, type Db } from "./documents.shared";
 import { ensureDocumentAccess } from "./documents.access";
 import { updateDocumentVersion } from "./documents.lifecycle";
@@ -54,7 +54,7 @@ export async function resolveEdit(
     db: Db,
 ): Promise<
     | { ok: true; body: Record<string, unknown> }
-    | { ok: false; detail: string; error?: unknown }
+    | { ok: false; detail: string; status?: number; error?: unknown }
 > {
     devLog(`[edit-resolution] incoming ${mode}`, {
         userId,
@@ -126,9 +126,11 @@ export async function resolveEdit(
     if (!doc) return { ok: false, detail: "Document not found" };
     const access = await ensureDocAccess(doc, userId, userEmail, db);
     // Resolving an edit rewrites the version's bytes, so read access is not
-    // enough — a viewer-only workflow share is refused like a stranger.
-    if (!access.ok || !can(access.projectRole, "content.edit"))
-        return { ok: false, detail: "Document not found" };
+    // enough. A stranger still gets 404; a Viewer who can open the document
+    // is told why instead of being told it is missing.
+    if (!access.ok) return { ok: false, detail: "Document not found" };
+    if (!can(access.projectRole, "content.edit"))
+        return { ok: false, status: 403, detail: DOCUMENT_EDIT_FORBIDDEN };
 
     const active = await loadActiveVersion(documentId, db);
     const latestPath = active?.storage_path ?? null;

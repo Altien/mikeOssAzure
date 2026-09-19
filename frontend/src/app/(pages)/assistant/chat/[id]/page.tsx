@@ -38,6 +38,13 @@ export default function AssistantChatPage() {
     // parity change, so a project VIEWER can land on this page — dropping
     // the served role handed them a live composer whose sends 403. Arriving
     // via "new chat" means the caller just created the thread: creator.
+    //
+    // Fail-closed until the served standing lands: `false` on every cold
+    // load, which used to read "Viewing only — sending needs edit access" at
+    // a chat's own owner. `accessResolved` below is what keeps that false
+    // from being shown as an accusation — the composer is not rendered at
+    // all until the answer arrives. A failed getChat leaves it false and
+    // redirects.
     const [canSend, setCanSend] = useState<boolean>(
         initialMessages.length > 0,
     );

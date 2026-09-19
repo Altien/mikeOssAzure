@@ -400,6 +400,9 @@ chatRouter.post("/:chatId/generate-title", requireAuth, asyncRoute(async (req, r
             return void res
                 .status(result.status)
                 .json({ code: result.code, detail: result.detail });
+        // A title that could not be stored is not a renamed chat.
+        if (result.kind === "write")
+            return void sendInternalError(res, result.error);
         return void res
             .status(500)
             .json({ detail: "Failed to generate title" });
@@ -691,12 +694,25 @@ chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
 
             if (!chatTitle && lastUser?.content) {
                 const title = lastUser.content.slice(0, 120);
-                await updateChatTitle(db, { chatId, title });
-                chatTitle = title;
-                if (shouldGenerateTitle && !stream.signal.aborted) {
-                    write(
-                        `data: ${JSON.stringify({ type: "chat_title", chatId, title })}\n\n`,
-                    );
+                // The SSE response is already streaming, so a failure here
+                // cannot become an HTTP error — but it must not be announced
+                // either: an ignored error pushed a chat_title frame the
+                // client rendered and the next reload undid. Log it and leave
+                // the chat untitled.
+                const saved = await updateChatTitle(db, { chatId, title });
+                if (!saved.ok) {
+                    console.error("[chat/stream] failed to save chat title", {
+                        chatId,
+                        message: (saved.error as { message?: string } | null)
+                            ?.message,
+                    });
+                } else {
+                    chatTitle = title;
+                    if (shouldGenerateTitle && !stream.signal.aborted) {
+                        write(
+                            `data: ${JSON.stringify({ type: "chat_title", chatId, title })}\n\n`,
+                        );
+                    }
                 }
             }
 

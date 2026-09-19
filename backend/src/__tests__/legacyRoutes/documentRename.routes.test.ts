@@ -139,8 +139,26 @@ describe.each(paths)("rename response compatibility: %s", (path) => {
     fake.done();
   });
 });
-it("keeps unauthorized project renames concealed as 404", async () => {
+// A Viewer can OPEN the project, so 404 was a lie the UI then repeated
+// ("this matter no longer exists"). The refusal names the missing permission
+// instead; only a caller checkProjectAccess itself refuses still gets 404.
+it("refuses a viewer's project rename by name, not as a missing project", async () => {
   state.access.mockResolvedValue({ ok: true, projectRole: "viewer" });
+  const fake = scriptedDb([]);
+  state.db = fake.db;
+  const response = await request(app)
+    .patch(paths[0])
+    .set("Authorization", "Bearer test")
+    .send({ filename: "new" });
+  expect(response.status).toBe(403);
+  expect(response.body).toEqual({
+    detail: "You do not have permission to organize documents in this project.",
+  });
+  fake.done();
+});
+
+it("keeps 404 when the caller has no project access at all", async () => {
+  state.access.mockResolvedValue({ ok: false });
   const fake = scriptedDb([]);
   state.db = fake.db;
   const response = await request(app)

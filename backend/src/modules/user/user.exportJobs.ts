@@ -92,9 +92,17 @@ async function buildDocumentsZipExport(
         throw new Error(`[export.build] malformed payload on job ${job.id}`);
     }
 
+    // org_id and workflow_id are part of the verdict, not decoration:
+    // ensureDocAccess resolves a workflow asset through its workflow and an
+    // org document through its org. Selecting only project_id/user_id made
+    // both branches unreachable, so an org colleague's document and every
+    // detached document were silently dropped from the zip. The sync route
+    // already selects the full set.
     const { data: rawDocs, error } = await db
         .from("documents")
-        .select("id, current_version_id, user_id, project_id")
+        .select(
+            "id, current_version_id, user_id, project_id, org_id, workflow_id",
+        )
         .in("id", documentIds as string[]);
     if (error) throw new Error(`[export.build] ${error.message}`);
 
@@ -105,6 +113,8 @@ async function buildDocumentsZipExport(
         id: string;
         user_id: string;
         project_id: string | null;
+        org_id?: string | null;
+        workflow_id?: string | null;
     }[]) {
         // Access is re-checked HERE, not at enqueue time: the payload's ids
         // are stale by definition (a share can be revoked while the job

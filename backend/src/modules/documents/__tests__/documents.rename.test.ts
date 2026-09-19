@@ -107,16 +107,22 @@ describe("shared document rename", () => {
     },
   );
 
-  it.each(["viewer", null])(
+  // The two refusals are no longer the same answer: a read-only role is
+  // `forbidden` (403, naming the permission) and no verdict at all stays
+  // `not_found` (404), so a Viewer is never told their matter vanished.
+  it.each([
+    ["viewer", "forbidden"],
+    [null, "not_found"],
+  ] as const)(
     "refuses insufficient project access (%s) before touching documents",
-    async (role) => {
+    async (role, kind) => {
       access.mockResolvedValue(
         role ? { ok: true, projectRole: role } : { ok: false },
       );
       const fake = scriptedDb([]);
       expect(await renameDocument(fake.db, args)).toMatchObject({
         ok: false,
-        kind: "forbidden",
+        kind,
       });
       expect(access).toHaveBeenCalledWith(
         "project",

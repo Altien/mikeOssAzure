@@ -1,9 +1,11 @@
 import { captureInlineDocumentCleanup, completeInlineDocumentCleanup } from "../documents/documents.service";
 import { type Db } from "../../lib/supabase";
 import { assertStorageConfigured, deleteFile, listFiles, extractedTextKey } from "../../lib/storage";
+import { NonRetryableJobError } from "../../lib/dbq/runner";
 import { removeGrantsForEmail } from "../../lib/projectAccess";
 import { removeContentGrantsForEmail } from "../../lib/contentAccess";
 import { chunkArray } from "../../lib/arrays";
+import { ORG_CONTENT_TABLES } from "../../lib/orgs";
 
 const DELETE_BATCH_SIZE = 500;
 
@@ -107,20 +109,30 @@ const PROJECT_CONTENT_TABLES = [
 ] as const;
 
 /**
- * Every table with its own `org_id` column — the full inventory of what an
- * organization can directly own. An org may only be deleted when a probe of
- * ALL of these comes back empty; anything less fires the ON DELETE SET NULL
- * foreign keys on rows the org still owned.
+ * Does this organization still directly own anything?
+ *
+ * The inventory lives in lib/orgs.ts so this and the `deleteOrg` API path
+ * answer the identical question. Every org_id foreign key is ON DELETE
+ * RESTRICT, so an org that owns content cannot be deleted at all â€” the probe
+ * is how we say so deliberately instead of surfacing a constraint violation.
  */
-const ORG_CONTENT_TABLES = [
-    "projects",
-    "documents",
-    "workflows",
-    "tabular_reviews",
-] as const;
+async function orgOwnsContent(db: Db, orgId: string): Promise<boolean> {
+    for (const table of ORG_CONTENT_TABLES) {
+        const { data, error } = await (db as any)
+            .from(table)
+            .select("id")
+            .eq("org_id", orgId)
+            .limit(1);
+        // A transient read error must never read as "this org holds nothing":
+        // that is the difference between tidying up and deleting a firm.
+        await throwIfError(error, `Failed to load org ${table}`);
+        if (((data ?? []) as unknown[]).length > 0) return true;
+    }
+    return false;
+}
 
 /**
- * Every organization-owned project this user left content in — including
+ * Every organization-owned project this user left content in â€” including
  * projects somebody else created.
  *
  * The distinction matters more than it looks. A departing associate's
@@ -187,7 +199,7 @@ async function orgProjectIdsHoldingUserContent(
 
 /**
  * Documents that must go when this account is erased: the ones they uploaded
- * plus everything sitting in a personal project of theirs — MINUS anything
+ * plus everything sitting in a personal project of theirs â€” MINUS anything
  * the organization owns, which stays behind.
  *
  * A document is the organization's if it lives in an org project or carries
@@ -235,7 +247,7 @@ async function getDocumentIdsForAccountDeletion(
     // A workflow asset (documents.workflow_id) belongs to its workflow. When
     // the workflow is organization-owned it survives this deletion, and an
     // asset stripped from a surviving workflow is a workflow that silently
-    // stopped working — so those documents are kept (and detached) too.
+    // stopped working â€” so those documents are kept (and detached) too.
     const workflowIds = uniqueStrings(
         candidates.map((row) => row.workflow_id ?? null),
     );
@@ -279,7 +291,7 @@ async function getDocumentIdsForAccountDeletion(
 
 /**
  * Re-anchor the content the departing user left inside organization projects.
- * Their rows survive with `user_id = NULL` — the content belongs to the
+ * Their rows survive with `user_id = NULL` â€” the content belongs to the
  * organization, and their nullable profile FKs will not take them when the
  * application profile is deleted.
  */
@@ -300,8 +312,8 @@ async function detachOrgProjectContent(
             }
         }
         // Only the projects this user actually created change hands. The set
-        // above deliberately includes colleagues' projects — that is how
-        // their content gets kept — and blanking `user_id` there would erase
+        // above deliberately includes colleagues' projects â€” that is how
+        // their content gets kept â€” and blanking `user_id` there would erase
         // a living colleague's authorship of a project they still own.
         for (const batch of chunkArray(orgProjectIds, DELETE_BATCH_SIZE)) {
             const { error } = await db
@@ -376,7 +388,7 @@ async function detachChildrenOfSurvivingContent(db: Db, userId: string) {
         );
         if (parentIds.length === 0) continue;
 
-        // A parent survives when it is org-owned — either detached moments
+        // A parent survives when it is org-owned â€” either detached moments
         // ago (user_id now null) or created by somebody still present.
         const survivors: string[] = [];
         for (const batch of chunkArray(parentIds, DELETE_BATCH_SIZE)) {
@@ -417,13 +429,13 @@ async function detachChildrenOfSurvivingContent(db: Db, userId: string) {
 // Storage bytes and the rows that point at them must die in a strict
 // order: rows first, bytes second. These two halves used to be one
 // function that ran BEFORE any row was deleted, which put the whole
-// cleanup in the wrong order — none of it is transactional, so a failure
+// cleanup in the wrong order â€” none of it is transactional, so a failure
 // after the files were gone left a live account (or a live project) full
 // of documents whose every version 404s. Failing the other way round is
 // recoverable: rows gone, bytes still there, and the bytes are exactly
 // what the claim-filtered orphan sweep exists to reclaim.
 //
-// The paths must still be COLLECTED before the rows go —
+// The paths must still be COLLECTED before the rows go â€”
 // document_versions cascades away with its documents row, taking the
 // only record of what to delete with it.
 async function collectDocumentVersionPaths(
@@ -517,7 +529,7 @@ async function deleteStagedAccountStorage(db: Db, userId: string) {
 }
 
 /**
- * Purge the account's export artifacts (`exports/<userId>/…`). Each object
+ * Purge the account's export artifacts (`exports/<userId>/â€¦`). Each object
  * here is a complete copy of the account's data, and once account deletion
  * purges the user's db_jobs rows this listing is the last enumeration of
  * those objects anywhere. So unlike the orphan sweep above, failures MUST
@@ -552,6 +564,110 @@ async function deleteUserExportArtifacts(userId: string) {
     }
 }
 
+/** One organization that stands between a user and deleting their account. */
+export type AccountDeletionOrgBlocker = {
+    org_id: string;
+    name: string;
+    /**
+     * "members" â€” other people are still in the org and would be left with
+     * nobody able to administer it (or, worse, with an arbitrary successor).
+     * "content" â€” nobody else is left, but the org still owns matters, so it
+     * cannot be deleted either.
+     */
+    reason: "members" | "content";
+};
+
+/**
+ * The organizations that make this account undeletable, and why.
+ *
+ * PRODUCT DECISION: an account that is the SOLE ADMIN of an organization
+ * which still has other members, or still owns content, cannot be deleted.
+ * The user must appoint another admin or delete the organization first.
+ *
+ * Both of the alternatives were implemented here before, and both were wrong:
+ *
+ *  - Auto-promoting "the earliest remaining member" hands a firm's matters to
+ *    whoever happened to join first, with no audit row and no consent. Worse,
+ *    the cleanup_org_admin_access_overrides trigger then deletes that
+ *    member's `deny` overrides â€” so a person deliberately walled off from a
+ *    matter becomes its owner as a side effect of somebody else closing their
+ *    account.
+ *  - Leaving the membership row "for the auth.users cascade" produced an
+ *    organization with zero members: invisible in every listing, undeletable
+ *    (its content FKs are ON DELETE RESTRICT), and holding content nobody can
+ *    reach. In practice the cascade did not even get that far â€” the
+ *    org_member_protect_resource_ownership trigger refuses to remove a member
+ *    who still owns the org's projects, so the durable account.delete job
+ *    failed forever while the user, whose sessions were revoked and who had
+ *    been sent to the login page, could simply log back in.
+ *
+ * Refusing up front is the only outcome that leaves the database, the
+ * organization and the user in a state each of them agrees with.
+ */
+export async function listOrgsBlockingAccountDeletion(
+    db: Db,
+    userId: string,
+): Promise<AccountDeletionOrgBlocker[]> {
+    const { data: memberships, error: membershipError } = await db
+        .from("org_members")
+        .select("id, org_id, role")
+        .eq("user_id", userId);
+    await throwIfError(membershipError, "Failed to load org memberships");
+
+    const blockers: AccountDeletionOrgBlocker[] = [];
+    for (const m of (memberships ?? []) as {
+        id: string;
+        org_id: string;
+        role: string;
+    }[]) {
+        if (m.role !== "admin") continue;
+
+        const { data: otherAdmins, error: otherAdminsError } = await db
+            .from("org_members")
+            .select("id")
+            .eq("org_id", m.org_id)
+            .eq("role", "admin")
+            .neq("id", m.id)
+            .limit(1);
+        await throwIfError(otherAdminsError, "Failed to load org admins");
+        // Somebody else can administer it: leaving is unremarkable.
+        if (((otherAdmins ?? []) as unknown[]).length > 0) continue;
+
+        const { data: otherMembers, error: otherMembersError } = await db
+            .from("org_members")
+            .select("id")
+            .eq("org_id", m.org_id)
+            .neq("id", m.id)
+            .limit(1);
+        await throwIfError(
+            otherMembersError,
+            "Failed to load remaining org members",
+        );
+        const hasOtherMembers = ((otherMembers ?? []) as unknown[]).length > 0;
+        if (!hasOtherMembers && !(await orgOwnsContent(db, m.org_id))) {
+            // Nobody and nothing left: deleteUserOrganizations deletes the
+            // whole org, so this one blocks nothing.
+            continue;
+        }
+
+        const { data: org, error: orgError } = await db
+            .from("organizations")
+            .select("id, name")
+            .eq("id", m.org_id)
+            .maybeSingle();
+        await throwIfError(orgError, "Failed to load organization");
+        blockers.push({
+            org_id: m.org_id,
+            name:
+                typeof (org as { name?: unknown } | null)?.name === "string"
+                    ? ((org as { name: string }).name)
+                    : "your organization",
+            reason: hasOtherMembers ? "members" : "content",
+        });
+    }
+    return blockers;
+}
+
 /**
  * Tear down a user's organization footprint on account deletion.
  *
@@ -560,16 +676,16 @@ async function deleteUserExportArtifacts(userId: string) {
  * people or content in it:
  *
  *  - The departing user's membership row is removed.
- *  - If they were the org's sole admin, the earliest remaining member is
- *    promoted so the org is never stranded without anyone able to administer
- *    it. The promotion happens BEFORE the removal, both to avoid a window
- *    where the org has no admin and because the
- *    org_members_protect_last_admin trigger would otherwise reject the
- *    delete outright.
- *  - An org left with no members at all is deleted only when it also holds no
- *    projects. An org whose last member leaves but whose matters live on is
- *    kept: deleting it would take the firm's content with it, which is
- *    exactly the outcome this model exists to prevent.
+ *  - A sole admin whose org still has members or content is REFUSED â€” see
+ *    listOrgsBlockingAccountDeletion for why neither auto-promotion nor
+ *    "leave it to the cascade" is an acceptable alternative. The route
+ *    answers 409 long before this runs, and deleteUserAccountData re-asks
+ *    the same question as its FIRST act, before a single row is destroyed.
+ *    The throw here is the last line of defence for a caller that reached
+ *    this function on its own, so by the time it fires the caller's content
+ *    is already gone â€” which is exactly why the check above it exists.
+ *  - An org left with no members and no content at all is deleted, which is
+ *    what closing a personal workspace should do.
  *  - Any invitations the user sent lose their inviter reference through the
  *    FK's ON DELETE SET NULL; invitations addressed TO them are cancelled.
  */
@@ -595,76 +711,47 @@ export async function deleteUserOrganizations(
                 .select("id")
                 .eq("org_id", m.org_id)
                 .eq("role", "admin")
-                .neq("id", m.id);
+                .neq("id", m.id)
+                .limit(1);
             await throwIfError(otherAdminsError, "Failed to load org admins");
             if (((otherAdmins ?? []) as unknown[]).length === 0) {
-                const { data: remaining, error: remainingError } = await db
-                    .from("org_members")
-                    .select("id")
-                    .eq("org_id", m.org_id)
-                    .neq("id", m.id)
-                    .order("created_at", { ascending: true })
-                    .limit(1);
+                const { data: otherMembers, error: otherMembersError } =
+                    await db
+                        .from("org_members")
+                        .select("id")
+                        .eq("org_id", m.org_id)
+                        .neq("id", m.id)
+                        .limit(1);
                 await throwIfError(
-                    remainingError,
+                    otherMembersError,
                     "Failed to load remaining org members",
                 );
-                const heir = ((remaining ?? []) as { id: string }[])[0];
-                if (heir) {
-                    const { error: promoteError } = await db
-                        .from("org_members")
-                        .update({ role: "admin" })
-                        .eq("id", heir.id);
-                    await throwIfError(
-                        promoteError,
-                        "Failed to hand off org administration",
+                const hasOtherMembers =
+                    ((otherMembers ?? []) as unknown[]).length > 0;
+
+                if (hasOtherMembers || (await orgOwnsContent(db, m.org_id))) {
+                    // Unreachable through the API â€” routes/user.ts refuses
+                    // this account with a 409 before enqueueing anything, and
+                    // deleteUserAccountData re-checks before it destroys a
+                    // single row. Reaching it means the org changed underneath
+                    // a request that was already in flight, so stop here
+                    // rather than improvise a successor.
+                    //
+                    // NonRetryableJobError, not Error: an organization does
+                    // not acquire a second admin because the queue asked
+                    // twenty more times over the next few hours. A plain
+                    // Error burned the whole retry budget re-deriving the
+                    // same refusal and buried the reason under the repeats.
+                    throw new NonRetryableJobError(
+                        `Cannot delete this account while it is the only admin of organization ${m.org_id}`,
                     );
-                } else {
-                    // "The org owns nothing" must be judged against every
-                    // table that carries its own org_id — documents,
-                    // workflows and tabular reviews are filed under an org
-                    // independently of any project, and this very cleanup
-                    // detaches (keeps) them a few steps earlier. Probing
-                    // projects alone deleted an org that still owned
-                    // detached workflows; the ON DELETE SET NULL FK then
-                    // blanked their org_id, leaving rows with no creator
-                    // and no org — reachable by no access branch, listed
-                    // nowhere, deletable by nothing.
-                    let orgOwnsContent = false;
-                    for (const table of ORG_CONTENT_TABLES) {
-                        const { data: rows, error: rowsError } = await db
-                            .from(table)
-                            .select("id")
-                            .eq("org_id", m.org_id)
-                            .limit(1);
-                        await throwIfError(
-                            rowsError,
-                            `Failed to load org ${table}`,
-                        );
-                        if (((rows ?? []) as unknown[]).length > 0) {
-                            orgOwnsContent = true;
-                            break;
-                        }
-                    }
-                    if (!orgOwnsContent) {
-                        await deleteByIds(db, "organizations", [m.org_id]);
-                        continue; // cascade removed the membership row
-                    }
-                    // Sole admin, sole member, and the org keeps its content
-                    // — so neither escape route below applies: there is
-                    // nobody to promote and the organization must survive.
-                    //
-                    // Deleting the membership row HERE is what the
-                    // org_members_protect_last_admin trigger exists to refuse.
-                    // The organization and the member's application profile
-                    // are still present, so the last-admin guard rejects an
-                    // ordinary membership delete.
-                    //
-                    // The profile FK cascades this membership after creator
-                    // attribution has been detached; the trigger permits
-                    // precisely that profile-deletion cascade.
-                    continue;
                 }
+
+                // Nobody and nothing left: the org goes with the account, and
+                // the ON DELETE CASCADE from organizations takes the
+                // membership row with it.
+                await deleteByIds(db, "organizations", [m.org_id]);
+                continue;
             }
         }
 
@@ -726,7 +813,7 @@ export async function deleteAllUserTabularReviews(db: Db, userId: string) {
 
 /**
  * Delete projects (and everything inside them) by id, with no ownership
- * filter. Callers must have authorised the delete themselves — routes do that
+ * filter. Callers must have authorised the delete themselves â€” routes do that
  * through the `container.delete` capability, and an organization project may
  * have no creator left to scope by anyway.
  */
@@ -742,14 +829,14 @@ export async function deleteProjectsByIds(db: Db, projectIds: string[]) {
 }
 
 /**
- * Remove the projects a user created — but only the personal ones.
+ * Remove the projects a user created â€” but only the personal ones.
  *
  * A project that belongs to an organization is the organization's, not the
  * creator's: the firm's other admins are still administering it and its
  * matter documents are still live. Those projects are DETACHED instead
- * (user_id → NULL, which the nullable FK now permits) so they survive their
+ * (user_id â†’ NULL, which the nullable FK now permits) so they survive their
  * creator's departure with their contents intact. Only `org_id IS NULL`
- * projects — the genuinely personal ones — are destroyed.
+ * projects â€” the genuinely personal ones â€” are destroyed.
  *
  * The return value counts destroyed projects, so a caller deleting a single
  * org project sees 0 and can report "nothing was removed" accurately.
@@ -799,7 +886,23 @@ export async function deleteUserAccountData(
     userId: string,
     userEmail?: string | null,
 ) {
+    // REFUSAL BEFORE DESTRUCTION â€” and this must be the first statement in
+    // the function. The same question used to be asked by
+    // deleteUserOrganizations at the very END of the cascade, by which point
+    // the account's documents, storage objects and audit rows were already
+    // gone: the refusal was real, but it arrived after the data it was meant
+    // to protect had been destroyed, and the failed job could never undo it.
+    // Ask while nothing has been touched, so a refusal costs nothing.
+    const blockers = await listOrgsBlockingAccountDeletion(db, userId);
+    if (blockers.length > 0) {
+        throw new NonRetryableJobError(
+            `Cannot delete this account while it is the only admin of ${blockers
+                .map((blocker) => `${blocker.org_id} (${blocker.reason})`)
+                .join(", ")}`,
+        );
+    }
     if (process.env.DB_JOBS_ENABLED === "false") assertStorageConfigured();
+
     const { personal: personalProjectIds, org: createdOrgProjectIds } =
         await partitionOwnedProjects(db, userId);
     // Retention follows the organization's projects, not this user's. Their
@@ -850,7 +953,7 @@ export async function deleteUserAccountData(
         db.from("chats").delete().eq("user_id", userId),
         db.from("word_documents").delete().eq("user_id", userId),
         db.from("project_subfolders").delete().eq("user_id", userId),
-        // Upstream divergence (sync-log: f0b90ab): UPSTREAM OMISSION — the
+        // Upstream divergence (sync-log: f0b90ab): UPSTREAM OMISSION â€” the
         // adopted Library feature added library_folders but did not add them
         // to account deletion. KEEP DEV'S DELETE during conflict resolution;
         // otherwise account deletion leaves user-owned folder names/rows
@@ -908,9 +1011,10 @@ export async function deleteUserAccountData(
 
     // The outbox below keeps version keys retryable after metadata deletion.
 
-    // Organizations use ON DELETE SET NULL on content (not CASCADE), so the
-    // content deletions above never touch the user's org memberships — settle
-    // those (and hand off administration where needed) here.
+    // An organization's content is held by ON DELETE RESTRICT foreign keys â€”
+    // deleting an org that still owns anything is refused outright, never
+    // silently detached â€” so none of the content deletions above touch the
+    // user's org memberships. Settle those here.
     await deleteUserOrganizations(db, userId, userEmail);
 
     // The tombstone in account_erasure_requests remains, but all mutable

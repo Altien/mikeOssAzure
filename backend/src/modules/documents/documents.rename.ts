@@ -2,7 +2,7 @@
 // to BOTH document queries; an id alone never authorizes a mutation.
 import type { Db } from "../../lib/supabase";
 import { checkProjectAccess } from "../../lib/access";
-import { can } from "../../lib/permissions";
+import { can, DOCS_ORGANIZE_FORBIDDEN } from "../../lib/permissions";
 import {
   failure,
   internalFailure,
@@ -57,8 +57,11 @@ export async function renameDocument(
       args.userEmail,
       db,
     );
-    if (!access.ok || !can(access.projectRole, "docs.organize"))
-      return failure("forbidden", "Project not found");
+    // 404 only when the caller cannot see the project at all; a Viewer who
+    // can open it is told why instead of being told it vanished.
+    if (!access.ok) return failure("not_found", "Project not found");
+    if (!can(access.projectRole, "docs.organize"))
+      return failure("forbidden", DOCS_ORGANIZE_FORBIDDEN);
   }
   const { data } = await scopedDocumentQuery(db, args).single();
   // The query builder handles both select and update operations.

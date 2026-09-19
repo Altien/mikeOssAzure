@@ -215,6 +215,9 @@ describe("version deletion caller policy", () => {
       });
     },
   );
+  // These callers CAN open the document — they are refused by name
+  // (`version_forbidden` → 403), not told the row does not exist. Only a
+  // caller with no verdict at all still gets `doc_not_found`.
   it.each([
     ["viewer", "workflow"],
     ["editor", null],
@@ -226,10 +229,19 @@ describe("version deletion caller policy", () => {
       const fake = db();
       expect(
         await deleteVersion("target", "v", "actor", undefined, fake.db),
-      ).toMatchObject({ ok: false, kind: "doc_not_found" });
+      ).toMatchObject({ ok: false, kind: "version_forbidden" });
       expect(fake.rpc).not.toHaveBeenCalled();
     },
   );
+
+  it("still hides the document from a caller with no verdict at all", async () => {
+    mocks.access.mockResolvedValue({ ok: false });
+    const fake = db();
+    expect(
+      await deleteVersion("target", "v", "actor", undefined, fake.db),
+    ).toMatchObject({ ok: false, kind: "doc_not_found" });
+    expect(fake.rpc).not.toHaveBeenCalled();
+  });
   it.each(["only_version", "version_not_found", "doc_not_found"])(
     "maps transaction result %s without claiming deletion",
     async (kind) => {

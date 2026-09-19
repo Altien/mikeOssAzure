@@ -24,6 +24,13 @@ import {
   type UploadOutcome,
 } from "./uploads.shared";
 
+/**
+ * "Not found" is for workflows the caller cannot see at all. A Viewer who can
+ * open a workflow but not change it gets a refusal that names the reason.
+ */
+const WORKFLOW_EDIT_FORBIDDEN =
+  "You do not have permission to add documents to this workflow.";
+
 export async function validateDestinationAccess(
   manifest: ParsedUploadSessionRequest,
   userId: string,
@@ -51,20 +58,26 @@ export async function validateDestinationAccess(
         userEmail,
         db,
       );
-      if (
-        workflowAccess.ok &&
-        can(workflowAccess.projectRole, "content.edit")
-      )
-        return { ok: true };
-      return failure(404, { detail: "Workflow not found or not editable" });
+      // Same split as the project branch below: a workflow the caller cannot
+      // see is "not found"; a workflow they can open but not edit is refused
+      // with the reason, so a Viewer is not told it vanished.
+      if (!workflowAccess.ok)
+        return failure(404, { detail: "Workflow not found or not editable" });
+      if (!can(workflowAccess.projectRole, "content.edit"))
+        return failure(403, { detail: WORKFLOW_EDIT_FORBIDDEN });
+      return { ok: true };
     }
     if (destination.scope === "project") {
       const projectId = destination.project_id as string;
       const access = await checkProjectAccess(projectId, userId, userEmail, db);
       // Uploading into a project is content work: a viewer can open the
-      // project but must not be able to open an upload session into it.
-      if (!access.ok || !can(access.projectRole, "content.edit"))
-        return failure(404, { detail: "Project not found" });
+      // project but must not be able to open an upload session into it. That
+      // viewer is refused, not told the project vanished.
+      if (!access.ok) return failure(404, { detail: "Project not found" });
+      if (!can(access.projectRole, "content.edit"))
+        return failure(403, {
+          detail: "You do not have permission to write in this project.",
+        });
       const folderIds = Array.from(
         new Set(
           [
@@ -131,13 +144,19 @@ export async function validateDestinationAccess(
       access.ok &&
       (creatorScopedAllowed(access, document.user_id) ||
         (Boolean(document.workflow_id) && canEditContent));
-    if (
-      !access.ok ||
-      !canEditContent ||
-      (manifest.purpose === "document_version_replace" && !canReplace)
-    ) {
-      return failure(404, { detail: "Document not found" });
-    }
+    // Split, the way the project branch above already splits: no verdict at
+    // all is a 404, and a caller who can open the document but not write to
+    // it is refused by name. Collapsing both into 404 told every Viewer
+    // their document had disappeared the moment they tried to upload.
+    if (!access.ok) return failure(404, { detail: "Document not found" });
+    if (!canEditContent)
+      return failure(403, {
+        detail: "You do not have permission to edit content in this project.",
+      });
+    if (manifest.purpose === "document_version_replace" && !canReplace)
+      return failure(403, {
+        detail: "You do not have permission to replace this version.",
+      });
     if (manifest.purpose === "document_version_create") return { ok: true };
 
     const { data: version, error: versionError } = await db
@@ -178,10 +197,11 @@ export async function validateDestinationAccess(
     userEmail,
     db,
   );
-  const canEdit =
-    workflowAccess.ok && can(workflowAccess.projectRole, "content.edit");
-  if (!canEdit) {
+  if (!workflowAccess.ok) {
     return failure(404, { detail: "Workflow not found or not editable" });
+  }
+  if (!can(workflowAccess.projectRole, "content.edit")) {
+    return failure(403, { detail: WORKFLOW_EDIT_FORBIDDEN });
   }
   if (workflow.type === "tabular") {
     return failure(400, {

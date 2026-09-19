@@ -10,6 +10,12 @@ import type { Db } from "../../lib/supabase";
 export type { Db };
 import { deleteCollectionDocuments } from "../documents/documents.service";
 
+/**
+ * Service result arm for "you can see this project, but your role may not do
+ * that". Routes map it to 403 with the detail verbatim; `forbidden` stays 404.
+ */
+export type RoleForbidden = { ok: false; kind: "role_forbidden"; detail: string };
+
 export function normalizeOptionalString(value: unknown) {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
