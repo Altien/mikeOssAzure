@@ -11,6 +11,13 @@ const nextConfig: NextConfig = {
     // demand generateStaticParams; `next build`/`pnpm bundle` still export.
     output: process.env.NODE_ENV === "production" ? "export" : undefined,
     reactCompiler: true,
+    typescript: {
+        // `next build` type-checks this program instead of tsconfig.json. It
+        // excludes test files, so the static export never depends on test
+        // fixtures or sibling apps. Tests are type-checked by `pnpm run
+        // typecheck` (tsc over tsconfig.json) in CI instead.
+        tsconfigPath: "tsconfig.build.json",
+    },
     turbopack: {
         root: __dirname,
     },

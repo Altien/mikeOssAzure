@@ -48,6 +48,7 @@ jobs:
       - run: corepack enable && corepack prepare pnpm@11.1.2 --activate
       - run: pnpm install --frozen-lockfile
       - run: pnpm run test:coverage
+      - run: pnpm run typecheck
       - run: pnpm run lint
       - run: pnpm run build
       - run: pnpm run catalog:build
@@ -67,3 +68,6 @@ jobs:
       - run: corepack enable && corepack prepare pnpm@11.1.2 --activate
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
+      - name: Build the Word image from the restricted context
+        working-directory: .
+        run: docker build -f word-addin/Dockerfile .

@@ -8,6 +8,7 @@
     "bundle": "next build && node scripts/bundle-to-backend.mjs",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
