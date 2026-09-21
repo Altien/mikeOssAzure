@@ -21,6 +21,7 @@ import {
     buildCancelledAssistantMessage,
     extractCitations,
     isAbortError,
+    isMeaningfulTextlessAssistantOutput,
     runLLMStream,
     stripTransientAssistantEvents,
     parseChatMessages,
@@ -640,11 +641,10 @@ chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
             // (observed via OpenRouter). Silence reads as a hung composer, so
             // surface it — unless tools produced visible artifacts, which carry
             // their own completion signal.
-            if (
-                !fullText?.trim() &&
-                !events?.some((event) => event.type === "ask_inputs") &&
-                (!events || events.every((event) => !("error" in event)))
-            ) {
+            const hasToolOutput = events?.some(
+                isMeaningfulTextlessAssistantOutput,
+            );
+            if (!fullText?.trim() && !hasToolOutput) {
                 write(
                     `data: ${JSON.stringify({
                         type: "error",

@@ -427,6 +427,42 @@ export function stripTransientAssistantEvents(events: AssistantEvent[]) {
   return events.filter((event) => event.type !== "case_opinions");
 }
 
+// Every AssistantEvent type must be classified here. Adding a new wire event
+// therefore produces a type error until its textless-turn behavior is chosen
+// deliberately, instead of silently dropping an otherwise useful response.
+const COMPLETES_TEXTLESS_TURN = {
+  reasoning: false,
+  ask_inputs: true,
+  ask_inputs_response: false,
+  doc_read: false,
+  doc_find: false,
+  doc_created: true,
+  doc_download: true,
+  doc_replicated: true,
+  workflow_applied: true,
+  doc_edited: true,
+  case_citation: false,
+  courtlistener_search_case_law: false,
+  courtlistener_get_cases: false,
+  courtlistener_find_in_case: false,
+  courtlistener_read_case: false,
+  courtlistener_verify_citations: false,
+  mcp_tool_call: false,
+  case_opinions: false,
+  content: false,
+  word_edit_block: false,
+  error: true,
+} satisfies Record<AssistantEvent["type"], boolean>;
+
+/** Whether an event alone makes an otherwise textless assistant turn useful. */
+export function isMeaningfulTextlessAssistantOutput(
+  event: AssistantEvent,
+): boolean {
+  // Preserve the existing convention: a failed research or MCP activity is
+  // visible output even though its successful form is only intermediate work.
+  return "error" in event || COMPLETES_TEXTLESS_TURN[event.type];
+}
+
 function cleanAskInputResponseId(value: unknown) {
   const id = typeof value === "string" ? value.trim() : "";
   return id.slice(0, 80);
