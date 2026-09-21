@@ -268,6 +268,78 @@ describe("TRChatPanel header", () => {
         ).toBeInTheDocument();
     });
 
+    it("shows loading in place of the icon and marks a detached completed chat green", async () => {
+        const encoder = new TextEncoder();
+        let streamController!: ReadableStreamDefaultController<Uint8Array>;
+        vi.mocked(streamTabularChat).mockResolvedValue(
+            new Response(
+                new ReadableStream<Uint8Array>({
+                    start(controller) {
+                        streamController = controller;
+                    },
+                }),
+                { headers: { "Content-Type": "text/event-stream" } },
+            ),
+        );
+        const user = userEvent.setup();
+        const { container } = render(
+            <TRChatPanel
+                reviewId="review-1"
+                initialChatId="chat-1"
+                onCitationClick={vi.fn()}
+            />,
+        );
+        container.querySelector<HTMLDivElement>(
+            ".tr-chat-message-fades",
+        )!.scrollTo = vi.fn();
+        await screen.findByRole("button", { name: "Current draft" });
+
+        await user.click(
+            screen.getByRole("button", { name: "Send test message" }),
+        );
+        await user.click(screen.getByRole("button", { name: "Current draft" }));
+        const loadingRow = screen.getByRole("menuitem", {
+            name: /Current draft/,
+        });
+        expect(
+            within(loadingRow).getByRole("status", {
+                name: "Current draft response loading",
+            }),
+        ).toBeVisible();
+        expect(loadingRow.querySelector("time")).not.toBeNull();
+
+        await user.click(
+            screen.getByRole("menuitem", { name: /Earlier advice/ }),
+        );
+        await waitFor(() =>
+            expect(getTabularChatMessages).toHaveBeenCalledWith(
+                "review-1",
+                "chat-2",
+            ),
+        );
+        act(() => {
+            streamController.enqueue(
+                encoder.encode(
+                    'data: {"type":"content_delta","text":"Done"}\n\n',
+                ),
+            );
+            streamController.enqueue(encoder.encode("data: [DONE]\n\n"));
+            streamController.close();
+        });
+
+        await user.click(
+            screen.getByRole("button", { name: "Earlier advice" }),
+        );
+        const completedRow = await screen.findByRole("menuitem", {
+            name: /Current draft/,
+        });
+        await waitFor(() =>
+            expect(
+                completedRow.querySelector("img[aria-hidden='true']"),
+            ).toHaveClass("hue-rotate-[285deg]"),
+        );
+    });
+
     it("renames the active chat inline and keeps its actions beside New chat", async () => {
         const user = userEvent.setup();
         render(

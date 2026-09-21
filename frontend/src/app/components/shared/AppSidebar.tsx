@@ -39,10 +39,7 @@ import { listProjectSummaries } from "@/app/lib/mikeApi";
 import type { Project } from "@/app/components/shared/types";
 import { cn } from "@/app/lib/utils";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
-import {
-    hasAssistantTurn,
-    subscribeAssistantTurns,
-} from "@/app/lib/assistantTurns";
+import { useAssistantHistoryStatuses } from "@/app/hooks/useAssistantHistoryStatuses";
 import {
     LIQUID_GLASS_FLOAT_CLASS,
     LIQUID_GLASS_SELECTED_CLASS,
@@ -70,24 +67,6 @@ const recentProjectsCache = new Map<
     string,
     { projects: Project[]; hasMore: boolean }
 >();
-
-type AssistantHistoryStatus = "loading" | "complete";
-
-function withAssistantHistoryStatus(
-    current: Record<string, AssistantHistoryStatus>,
-    chatId: string,
-    status?: AssistantHistoryStatus,
-) {
-    if (status) {
-        return current[chatId] === status
-            ? current
-            : { ...current, [chatId]: status };
-    }
-    if (!(chatId in current)) return current;
-    const next = { ...current };
-    delete next[chatId];
-    return next;
-}
 
 function isNearScrollEnd(element: HTMLDivElement) {
     return (
@@ -118,11 +97,14 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
         );
         return projectChatMatch?.[1] ?? null;
     }, [pathname]);
-    const routeChatIdRef = useRef(routeChatId);
-    routeChatIdRef.current = routeChatId;
-    const [assistantHistoryStatuses, setAssistantHistoryStatuses] = useState<
-        Record<string, AssistantHistoryStatus>
-    >({});
+    const chatIds = useMemo(
+        () => (chats ?? []).map((chat) => chat.id),
+        [chats],
+    );
+    const {
+        statuses: assistantHistoryStatuses,
+        clearStatus: clearAssistantHistoryStatus,
+    } = useAssistantHistoryStatuses({ activeChatId: routeChatId, chatIds });
     const [shouldAnimate, setShouldAnimate] = useState(false);
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const [projectsCollapsed, setProjectsCollapsed] = useState(false);
@@ -139,51 +121,6 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
         recentProjects ??
         (userId ? recentProjectsCache.get(userId)?.projects : undefined) ??
         null;
-
-    useEffect(
-        () =>
-            subscribeAssistantTurns((chatId, change, turn) => {
-                setAssistantHistoryStatuses((current) =>
-                    withAssistantHistoryStatus(
-                        current,
-                        chatId,
-                        change === "begin"
-                            ? "loading"
-                            : chatId === routeChatIdRef.current ||
-                                turn.assistant.error
-                              ? undefined
-                              : "complete",
-                    ),
-                );
-            }),
-        [],
-    );
-
-    useEffect(() => {
-        setAssistantHistoryStatuses((current) => {
-            let next = current;
-            if (routeChatId) {
-                next = withAssistantHistoryStatus(
-                    next,
-                    routeChatId,
-                    hasAssistantTurn(routeChatId) ? "loading" : undefined,
-                );
-            }
-            for (const chat of chats ?? []) {
-                if (
-                    chat.id !== routeChatId &&
-                    hasAssistantTurn(chat.id)
-                ) {
-                    next = withAssistantHistoryStatus(
-                        next,
-                        chat.id,
-                        "loading",
-                    );
-                }
-            }
-            return next;
-        });
-    }, [chats, routeChatId]);
 
     useEffect(() => {
         if (!userId) {
@@ -580,7 +517,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                     </div>
                                 ) : chats.length === 0 ? (
                                     <div
-                                        className={`text-xs text-gray-500 py-2 px-5 ${
+                                        className={`text-xs text-gray-500 py-2 px-4 ${
                                             shouldAnimate
                                                 ? "sidebar-fade-in-2"
                                                 : ""
@@ -614,13 +551,8 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                                         ]
                                                     }
                                                     onSelect={() => {
-                                                        setAssistantHistoryStatuses(
-                                                            (current) =>
-                                                                withAssistantHistoryStatus(
-                                                                    current,
-                                                                    chat.id,
-                                                                    undefined,
-                                                                ),
+                                                        clearAssistantHistoryStatus(
+                                                            chat.id,
                                                         );
                                                         setCurrentChatId(
                                                             chat.id,

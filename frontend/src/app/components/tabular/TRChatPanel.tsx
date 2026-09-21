@@ -36,16 +36,14 @@ import {
     ReasoningBlock,
 } from "../assistant/message/EventBlocks";
 import { readSseFrames } from "@/app/lib/sse";
-import {
-    LIQUID_GLASS_FLAT_CLASS,
-    LIQUID_GLASS_HOVER_CLASS,
-} from "@/app/components/ui/liquid-surface";
+import { LIQUID_GLASS_FLAT_CLASS } from "@/app/components/ui/liquid-surface";
 import { ChatPanelHeader } from "../shared/ChatPanelHeader";
 import { HeaderActionsMenu } from "../shared/HeaderActionsMenu";
 import { cn } from "@/app/lib/utils";
 import { buildTabularChatHistory } from "@/app/lib/tabularChatHistory";
 import { CitationPillUI } from "@/shared/ui/CitationPillUI";
 import { subscribeToTabularChatSettingsUpdates } from "@/app/lib/tabularChatSettingsEvents";
+import { sortChatsByActivity, touchChatActivity } from "@/app/lib/chatActivity";
 import { WarningPopup } from "../popups/WarningPopup";
 import { ApiKeyMissingPopup } from "../popups/ApiKeyMissingPopup";
 import {
@@ -465,6 +463,13 @@ export function TRChatPanel({
     const [currentChatId, setCurrentChatId] = useState<string | null>(
         initialChatId ?? null,
     );
+    const currentChatIdRef = useRef(currentChatId);
+    useLayoutEffect(() => {
+        currentChatIdRef.current = currentChatId;
+    }, [currentChatId]);
+    const [chatResponseStatuses, setChatResponseStatuses] = useState<
+        Record<string, "loading" | "complete">
+    >({});
     const [currentChatTitle, setCurrentChatTitle] = useState<string | null>(
         null,
     );
@@ -569,7 +574,7 @@ export function TRChatPanel({
     useEffect(() => {
         getTabularChats(reviewId)
             .then((loadedChats) => {
-                setChats(loadedChats);
+                setChats(sortChatsByActivity(loadedChats));
                 if (!initialChatId) return;
                 const initialChat = loadedChats.find(
                     (chat) => chat.id === initialChatId,
@@ -596,21 +601,24 @@ export function TRChatPanel({
             subscribeToTabularChatSettingsUpdates((update) => {
                 if (update.reviewId !== reviewId) return;
                 setChats((current) =>
-                    current.map((chat) =>
-                        chat.id === update.chatId
-                            ? {
-                                  ...chat,
-                                  ...(update.model !== undefined
-                                      ? { model: update.model }
-                                      : {}),
-                                  ...(update.reasoningLevel !== undefined
-                                      ? {
-                                            reasoning_level:
-                                                update.reasoningLevel,
-                                        }
-                                      : {}),
-                              }
-                            : chat,
+                    touchChatActivity(
+                        current.map((chat) =>
+                            chat.id === update.chatId
+                                ? {
+                                      ...chat,
+                                      ...(update.model !== undefined
+                                          ? { model: update.model }
+                                          : {}),
+                                      ...(update.reasoningLevel !== undefined
+                                          ? {
+                                                reasoning_level:
+                                                    update.reasoningLevel,
+                                            }
+                                          : {}),
+                                  }
+                                : chat,
+                        ),
+                        update.chatId,
                     ),
                 );
                 if (update.chatId !== currentChatId) return;
@@ -882,6 +890,8 @@ export function TRChatPanel({
 
     function handleNewChat() {
         detachActiveStream();
+        setIsLoading(false);
+        currentChatIdRef.current = null;
         setCurrentChatId(null);
         setCurrentChatTitle(null);
         setCurrentChatModel(null);
@@ -895,6 +905,8 @@ export function TRChatPanel({
             // Same exit as New chat / Load chat: retire the in-flight stream's
             // generation so its late events cannot land in the emptied list.
             detachActiveStream();
+            setIsLoading(false);
+            currentChatIdRef.current = null;
             setCurrentChatId(null);
             setCurrentChatTitle(null);
             setCurrentChatModel(null);
@@ -910,7 +922,10 @@ export function TRChatPanel({
 
     async function handleRenameChat(chatId: string, title: string) {
         setChats((prev) =>
-            prev.map((c) => (c.id === chatId ? { ...c, title } : c)),
+            touchChatActivity(
+                prev.map((c) => (c.id === chatId ? { ...c, title } : c)),
+                chatId,
+            ),
         );
         if (chatId === currentChatId) setCurrentChatTitle(title);
         try {
@@ -922,6 +937,14 @@ export function TRChatPanel({
 
     async function handleLoadChat(chatId: string) {
         detachActiveStream();
+        setIsLoading(false);
+        currentChatIdRef.current = chatId;
+        setChatResponseStatuses((current) => {
+            if (current[chatId] !== "complete") return current;
+            const next = { ...current };
+            delete next[chatId];
+            return next;
+        });
         const chat = chats.find((c) => c.id === chatId);
         setCurrentChatId(chatId);
         setCurrentChatTitle(chat?.title ?? null);
@@ -977,6 +1000,15 @@ export function TRChatPanel({
 
         const controller = new AbortController();
         abortRef.current = controller;
+        let streamChatId = currentChatId;
+        let streamHadError = false;
+        if (streamChatId) {
+            setChatResponseStatuses((current) => ({
+                ...current,
+                [streamChatId!]: "loading",
+            }));
+            setChats((current) => touchChatActivity(current, streamChatId!));
+        }
 
         try {
             const response = await streamTabularChat(
@@ -991,47 +1023,58 @@ export function TRChatPanel({
             for await (const frame of readSseFrames(response, {
                 signal: controller.signal,
             })) {
+                const data = frame as Record<string, unknown>;
+
+                if (data.type === "chat_id") {
+                    const newId = data.chatId as string;
+                    streamChatId = newId;
+                    setChatResponseStatuses((current) => ({
+                        ...current,
+                        [newId]: "loading",
+                    }));
+                    setChats((prev) => {
+                        const now = new Date().toISOString();
+                        const next = prev.some((chat) => chat.id === newId)
+                            ? prev
+                            : [
+                                  {
+                                      id: newId,
+                                      title: null,
+                                      model: message.model ?? null,
+                                      reasoning_level:
+                                          message.reasoning ?? null,
+                                      created_at: now,
+                                      updated_at: now,
+                                  },
+                                  ...prev,
+                              ];
+                        return touchChatActivity(next, newId, now);
+                    });
+                    if (streamGenerationRef.current !== gen) continue;
+                    currentChatIdRef.current = newId;
+                    setCurrentChatId(newId);
+                    continue;
+                }
+                if (data.type === "error") streamHadError = true;
+
                 // Another chat owns the message list now — stop writing,
                 // but keep draining: breaking out cancels the reader, which
                 // closes the socket and makes the server persist a
                 // truncated answer.
                 if (streamGenerationRef.current !== gen) continue;
 
-                const data = frame as Record<string, unknown>;
-
                 try {
-                        if (data.type === "chat_id") {
-                            const newId = data.chatId as string;
-                            setCurrentChatId(newId);
-                            setChats((prev) =>
-                                prev.some((c) => c.id === newId)
-                                    ? prev
-                                    : [
-                                          {
-                                              id: newId,
-                                              title: null,
-                                              model: message.model ?? null,
-                                              reasoning_level:
-                                                  message.reasoning ?? null,
-                                              created_at:
-                                                  new Date().toISOString(),
-                                              updated_at:
-                                                  new Date().toISOString(),
-                                          },
-                                          ...prev,
-                                      ],
-                            );
-                            continue;
-                        }
-
                         if (data.type === "chat_title") {
                             const { chatId, title } = data as {
                                 chatId: string;
                                 title: string;
                             };
                             setChats((prev) =>
-                                prev.map((c) =>
-                                    c.id === chatId ? { ...c, title } : c,
+                                touchChatActivity(
+                                    prev.map((c) =>
+                                        c.id === chatId ? { ...c, title } : c,
+                                    ),
+                                    chatId,
                                 ),
                             );
                             setCurrentChatTitle(title);
@@ -1519,6 +1562,24 @@ export function TRChatPanel({
                 }
             }
 
+            if (streamChatId) {
+                setChats((current) =>
+                    touchChatActivity(current, streamChatId!),
+                );
+                setChatResponseStatuses((current) => {
+                    if (
+                        streamHadError ||
+                        currentChatIdRef.current === streamChatId
+                    ) {
+                        if (!(streamChatId! in current)) return current;
+                        const next = { ...current };
+                        delete next[streamChatId!];
+                        return next;
+                    }
+                    return { ...current, [streamChatId!]: "complete" };
+                });
+            }
+
             if (streamGenerationRef.current !== gen) return;
 
             flushDrip();
@@ -1535,6 +1596,14 @@ export function TRChatPanel({
                 return updated;
             });
         } catch (err: unknown) {
+            if (streamChatId) {
+                setChatResponseStatuses((current) => {
+                    if (!(streamChatId! in current)) return current;
+                    const next = { ...current };
+                    delete next[streamChatId!];
+                    return next;
+                });
+            }
             // Superseded stream: the list it would repaint is someone
             // else's now.
             if (streamGenerationRef.current !== gen) return;
@@ -1575,7 +1644,7 @@ export function TRChatPanel({
                 return updated;
             });
         } finally {
-            setIsLoading(false);
+            if (streamGenerationRef.current === gen) setIsLoading(false);
             if (abortRef.current === controller) abortRef.current = null;
         }
     }
@@ -1628,6 +1697,7 @@ export function TRChatPanel({
                     currentChatId={currentChatId ?? ""}
                     currentTitle={currentChatTitle}
                     loading={isLoadingChats}
+                    responseStatuses={chatResponseStatuses}
                     newChatDisabled={!canSend || isLoading}
                     onLoad={(chatId) => void handleLoadChat(chatId)}
                     onNewChat={handleNewChat}

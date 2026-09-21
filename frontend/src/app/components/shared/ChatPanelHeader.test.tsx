@@ -80,13 +80,13 @@ describe("ChatPanelHeader", () => {
         );
         expect(screen.queryByRole("menu")).toBeNull();
         rerender(<ChatPanelHeader {...props} />);
-        expect(screen.getByRole("button", { name: "Current draft" })).toHaveAttribute(
-            "aria-expanded", "false",
-        );
+        expect(
+            screen.getByRole("button", { name: "Current draft" }),
+        ).toHaveAttribute("aria-expanded", "false");
         expect(screen.queryByRole("menu")).toBeNull();
     });
 
-    it("shows compact creation times alongside titles and omits unavailable timestamps", () => {
+    it("shows compact activity times alongside titles and omits unavailable timestamps", () => {
         const now = Date.parse("2026-09-15T12:00:00Z");
         const clock = vi.spyOn(Date, "now").mockReturnValue(now);
         const { unmount } = render(
@@ -136,7 +136,7 @@ describe("ChatPanelHeader", () => {
                 const time = within(row).getByText(elapsed);
                 expect(time.tagName).toBe("TIME");
                 expect(time).toHaveAttribute("datetime");
-                expect(time).toHaveAccessibleName(/^Created /);
+                expect(time).toHaveAccessibleName(/^Updated /);
                 expect(within(row).getByText(title)).toHaveClass("truncate");
             }
             expect(
@@ -345,8 +345,9 @@ describe("ChatPanelHeader", () => {
         expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     });
 
-    it("filters chat history without showing the active chat", async () => {
+    it("shows the active chat and filters chat history", async () => {
         const user = userEvent.setup();
+        const onLoad = vi.fn();
         render(
             <ChatPanelHeader
                 chats={[
@@ -357,15 +358,22 @@ describe("ChatPanelHeader", () => {
                 currentChatId="chat-1"
                 currentTitle="Current draft"
                 actions={null}
-                onLoad={vi.fn()}
+                onLoad={onLoad}
                 onNewChat={vi.fn()}
             />,
         );
 
         await user.click(screen.getByRole("button", { name: "Current draft" }));
         expect(
-            screen.queryByRole("menuitem", { name: "Current draft" }),
-        ).toBeNull();
+            screen.getByRole("menuitem", { name: "Current draft" }),
+        ).toHaveAttribute("aria-current", "page");
+        await user.click(
+            screen.getByRole("menuitem", { name: "Current draft" }),
+        );
+        expect(onLoad).not.toHaveBeenCalled();
+        expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+
+        await user.click(screen.getByRole("button", { name: "Current draft" }));
 
         await user.type(screen.getByRole("searchbox"), "witness");
         expect(
@@ -374,5 +382,84 @@ describe("ChatPanelHeader", () => {
         expect(
             screen.getByRole("menuitem", { name: "Witness notes" }),
         ).toBeVisible();
+    });
+
+    it("orders rows by last update and includes a chat icon on every row", () => {
+        render(
+            <ChatPanelHeader
+                chats={[
+                    {
+                        id: "newer-created",
+                        title: "Newer created",
+                        created_at: "2026-09-20T12:00:00Z",
+                        updated_at: "2026-09-20T12:00:00Z",
+                    },
+                    {
+                        id: "recently-active",
+                        title: "Recently active",
+                        created_at: "2026-09-10T12:00:00Z",
+                        updated_at: "2026-09-21T12:00:00Z",
+                    },
+                ]}
+                currentChatId="newer-created"
+                currentTitle="Newer created"
+                actions={null}
+                onLoad={vi.fn()}
+                onNewChat={vi.fn()}
+            />,
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: "Newer created" }));
+        const rows = screen.getAllByRole("menuitem");
+        expect(rows.map((row) => row.textContent)).toEqual([
+            expect.stringContaining("Recently active"),
+            expect.stringContaining("Newer created"),
+        ]);
+        for (const row of rows) {
+            expect(row.querySelector("img[aria-hidden='true']")).not.toBeNull();
+        }
+    });
+
+    it("replaces a loading chat's icon with a spinner and keeps its activity time", () => {
+        render(
+            <ChatPanelHeader
+                chats={[
+                    {
+                        id: "loading",
+                        title: "Loading chat",
+                        updated_at: "2026-09-21T12:00:00Z",
+                    },
+                    {
+                        id: "complete",
+                        title: "Complete chat",
+                        updated_at: "2026-09-20T12:00:00Z",
+                    },
+                ]}
+                currentChatId="loading"
+                currentTitle="Loading chat"
+                responseStatuses={{ loading: "loading", complete: "complete" }}
+                actions={null}
+                onLoad={vi.fn()}
+                onNewChat={vi.fn()}
+            />,
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: "Loading chat" }));
+        const loadingRow = screen.getByRole("menuitem", {
+            name: /Loading chat/,
+        });
+        expect(
+            within(loadingRow).getByRole("status", {
+                name: "Loading chat response loading",
+            }),
+        ).toBeVisible();
+        expect(loadingRow.querySelector("time")).not.toBeNull();
+
+        const completedRow = screen.getByRole("menuitem", {
+            name: /Complete chat/,
+        });
+        expect(
+            completedRow.querySelector("img[aria-hidden='true']"),
+        ).toHaveClass("hue-rotate-[285deg]");
     });
 });

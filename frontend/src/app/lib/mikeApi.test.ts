@@ -503,10 +503,15 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
         );
 
         fetchMock.mockResolvedValue(jsonResponse([]));
-    await listChats({ limit: 5, offset: 10 });
-    expect(lastFetchCall().url).toBe(
-      "http://localhost:3001/api/chat?limit=5&offset=10",
-    );
+        await listChats({
+            limit: 5,
+            offset: 10,
+            beforeUpdatedAt: "2026-09-21T12:00:00.000Z",
+            beforeId: "chat-5",
+        });
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/api/chat?limit=5&offset=10&before_updated_at=2026-09-21T12%3A00%3A00.000Z&before_id=chat-5",
+        );
     });
 });
 

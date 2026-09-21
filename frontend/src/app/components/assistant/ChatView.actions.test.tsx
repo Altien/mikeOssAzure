@@ -206,7 +206,7 @@ describe("ChatView header actions", () => {
 
         await waitFor(() =>
             expect(screen.getByTestId("assistant-message")).toHaveStyle({
-                minHeight: "calc(100dvh - 256px)",
+                minHeight: "calc(100dvh - 224px)",
             }),
         );
     });

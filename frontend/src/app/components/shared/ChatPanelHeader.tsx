@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, Plus, Search } from "lucide-react";
+import { ChevronDown, Loader2, Plus, Search } from "lucide-react";
 import type { Chat } from "@/app/components/shared/types";
+import { ChatSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import { FormTextInput } from "@/app/components/ui/form-field";
 import {
     LiquidDropdownButton,
@@ -10,20 +11,24 @@ import {
 } from "@/app/components/ui/liquid-dropdown";
 import {
     LIQUID_GLASS_HOVER_CLASS,
+    LIQUID_GLASS_SELECTED_CLASS,
     LIQUID_GLASS_SUBTLE_CLASS,
 } from "@/app/components/ui/liquid-surface";
 import { cn } from "@/app/lib/utils";
 import { formatElapsedTime } from "@/app/lib/formatElapsedTime";
+import { chatActivityAt, sortChatsByActivity } from "@/app/lib/chatActivity";
 
 const HEADER_PILL_CLASS = `flex shrink-0 items-center gap-1 rounded-full px-1 py-0.5 ${LIQUID_GLASS_SUBTLE_CLASS} backdrop-blur-xl`;
 const HEADER_PILL_BUTTON_CLASS = `flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-gray-500 transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 ${LIQUID_GLASS_HOVER_CLASS}`;
 
 interface ChatPanelHeaderProps {
-    chats: (Pick<Chat, "id" | "title"> & Partial<Pick<Chat, "created_at">>)[];
+    chats: (Pick<Chat, "id" | "title"> &
+        Partial<Pick<Chat, "created_at" | "updated_at">>)[];
     currentChatId: string;
     currentTitle: string | null;
     titleAdornment?: ReactNode;
     loading?: boolean;
+    responseStatuses?: Record<string, "loading" | "complete">;
     newChatDisabled?: boolean;
     actions: ReactNode;
     onLoad: (chatId: string) => void;
@@ -42,6 +47,7 @@ export function ChatPanelHeader({
     currentTitle,
     titleAdornment,
     loading = false,
+    responseStatuses = {},
     newChatDisabled = false,
     actions,
     onLoad,
@@ -54,14 +60,13 @@ export function ChatPanelHeader({
     const historyRef = useRef<HTMLDivElement>(null);
     const titleInputRef = useRef<HTMLInputElement>(null);
     const editingTitle = !!titleEdit;
-    const [previousEditingTitle, setPreviousEditingTitle] = useState(editingTitle);
+    const [previousEditingTitle, setPreviousEditingTitle] =
+        useState(editingTitle);
     if (previousEditingTitle !== editingTitle) {
         setPreviousEditingTitle(editingTitle);
         if (editingTitle) setHistoryOpen(false);
     }
-    const filteredChats = chats
-        .filter((chat) => chat.id !== currentChatId)
-        .filter((chat) =>
+    const filteredChats = sortChatsByActivity(chats).filter((chat) =>
             (chat.title ?? "New Chat")
                 .toLowerCase()
                 .includes(query.trim().toLowerCase()),
@@ -70,7 +75,10 @@ export function ChatPanelHeader({
     useEffect(() => {
         if (!editingTitle) return;
         // Wait for the actions menu to release its focus trap before focusing.
-        const timer = window.setTimeout(() => titleInputRef.current?.focus(), 0);
+        const timer = window.setTimeout(
+            () => titleInputRef.current?.focus(),
+            0,
+        );
         return () => window.clearTimeout(timer);
     }, [editingTitle]);
 
@@ -98,6 +106,7 @@ export function ChatPanelHeader({
     function loadChat(chatId: string) {
         setHistoryOpen(false);
         setQuery("");
+        if (chatId === currentChatId) return;
         onLoad(chatId);
     }
 
@@ -187,40 +196,69 @@ export function ChatPanelHeader({
                                 </p>
                             ) : filteredChats.length === 0 ? (
                                 <p className="px-2 py-1.5 text-xs text-gray-400">
-                                    {chats.length <= 1
-                                        ? "No previous chats."
+                                    {chats.length === 0
+                                        ? "No chats yet."
                                         : "No matches."}
                                 </p>
                             ) : (
                                 filteredChats.map((chat) => {
+                                    const activityAt = chatActivityAt(chat);
                                     const elapsed = formatElapsedTime(
-                                        chat.created_at,
+                                        activityAt,
                                         now,
                                     );
-                                    const createdLabel =
-                                        elapsed && chat.created_at
-                                            ? `Created ${new Date(chat.created_at).toLocaleString()}`
+                                    const updatedLabel =
+                                        elapsed && activityAt
+                                            ? `Updated ${new Date(activityAt).toLocaleString()}`
                                             : undefined;
+                                    const responseStatus =
+                                        responseStatuses[chat.id];
+                                    const isCurrent = chat.id === currentChatId;
                                     return (
                                         <LiquidDropdownButton
                                             key={chat.id}
                                             role="menuitem"
+                                            aria-current={
+                                                isCurrent ? "page" : undefined
+                                            }
                                             onClick={() => loadChat(chat.id)}
-                                            className="flex w-full min-w-0 items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left"
+                                            className={cn(
+                                                "flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left",
+                                                isCurrent &&
+                                                    LIQUID_GLASS_SELECTED_CLASS,
+                                            )}
                                         >
+                                            {responseStatus === "loading" ? (
+                                                <Loader2
+                                                    role="status"
+                                                    aria-label={`${chat.title ?? "New Chat"} response loading`}
+                                                    className="h-3.5 w-3.5 shrink-0 animate-spin text-blue-600 motion-reduce:animate-none"
+                                                />
+                                            ) : (
+                                                <ChatSkeuoIcon
+                                                    aria-hidden="true"
+                                                    tone={
+                                                        responseStatus ===
+                                                        "complete"
+                                                            ? "green"
+                                                            : "blue"
+                                                    }
+                                                    className="h-3.5 w-3.5 shrink-0"
+                                                />
+                                            )}
                                             <span className="min-w-0 flex-1 truncate">
                                                 {chat.title ?? "New Chat"}
                                             </span>
-                                            {elapsed && (
+                                            {elapsed ? (
                                                 <time
-                                                    dateTime={chat.created_at}
-                                                    title={createdLabel}
-                                                    aria-label={createdLabel}
+                                                    dateTime={activityAt}
+                                                    title={updatedLabel}
+                                                    aria-label={updatedLabel}
                                                     className="shrink-0 text-xs tabular-nums text-muted-foreground"
                                                 >
                                                     {elapsed}
                                                 </time>
-                                            )}
+                                            ) : null}
                                         </LiquidDropdownButton>
                                     );
                                 })

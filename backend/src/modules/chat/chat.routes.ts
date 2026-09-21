@@ -81,8 +81,35 @@ chatRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
         Number.isFinite(requestedOffset) && requestedOffset > 0
             ? requestedOffset
             : 0;
+    const beforeUpdatedAt =
+        typeof req.query.before_updated_at === "string"
+            ? req.query.before_updated_at
+            : null;
+    const beforeId =
+        typeof req.query.before_id === "string" ? req.query.before_id : null;
+    if ((beforeUpdatedAt === null) !== (beforeId === null)) {
+        return void res.status(400).json({
+            detail: "before_updated_at and before_id must be provided together",
+        });
+    }
+    if (
+        beforeUpdatedAt !== null &&
+        (!Number.isFinite(Date.parse(beforeUpdatedAt)) ||
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+                beforeId!,
+            ))
+    ) {
+        return void res.status(400).json({ detail: "Invalid chat cursor" });
+    }
 
-    const result = await listChats(db, { userId, userEmail, limit, offset });
+    const result = await listChats(db, {
+        userId,
+        userEmail,
+        limit,
+        offset,
+        beforeUpdatedAt,
+        beforeId,
+    });
     if (!result.ok) return void sendInternalError(res, result.error);
     res.json(result.data);
 }));

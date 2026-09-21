@@ -2128,10 +2128,15 @@ export async function createChat(payload?: {
 export async function listChats(options?: {
     limit?: number;
     offset?: number;
+    beforeUpdatedAt?: string;
+    beforeId?: string;
 }): Promise<Chat[]> {
     const params = new URLSearchParams();
     if (options?.limit) params.set("limit", String(options.limit));
     if (options?.offset) params.set("offset", String(options.offset));
+    if (options?.beforeUpdatedAt)
+        params.set("before_updated_at", options.beforeUpdatedAt);
+    if (options?.beforeId) params.set("before_id", options.beforeId);
     const query = params.toString();
     return apiRequest<Chat[]>(`/chat${query ? `?${query}` : ""}`);
 }

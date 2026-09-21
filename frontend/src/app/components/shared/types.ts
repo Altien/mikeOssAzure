@@ -162,6 +162,7 @@ export interface Chat {
   model?: string | null;
   reasoning_level?: Message["reasoning"] | null;
   created_at: string;
+  updated_at?: string;
   /** Provenance only: "I started this thread". Authorization reads
    *  access_role — an admin's standing on a colleague's chat is there. */
   is_owner?: boolean;

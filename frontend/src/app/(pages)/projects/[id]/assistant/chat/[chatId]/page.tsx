@@ -36,6 +36,12 @@ import {
     resolveProjectFolderPath,
 } from "@/app/lib/mikeApi";
 import { loadAssistantChat } from "@/app/lib/assistantTurns";
+import {
+    chatActivityAt,
+    sortChatsByActivity,
+    touchChatActivity,
+} from "@/app/lib/chatActivity";
+import { useAssistantHistoryStatuses } from "@/app/hooks/useAssistantHistoryStatuses";
 import { useAssistantChat } from "@/app/hooks/useAssistantChat";
 import { useAssistantMessageLayout } from "@/app/hooks/useAssistantMessageLayout";
 import { useProjectPicker } from "@/app/hooks/useProjectPicker";
@@ -371,6 +377,7 @@ export default function ProjectAssistantChatPage() {
     const [activeQuotes, setActiveQuotes] = useState<CitationQuote[] | null>(
         null,
     );
+    const [activeCitation, setActiveCitation] = useState<Citation | null>(null);
     const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
     const [editScrollTarget, setEditScrollTarget] =
         useState<EditScrollTarget | null>(null);
@@ -453,16 +460,37 @@ export default function ProjectAssistantChatPage() {
         : null;
     const availableProjectChats = useMemo(() => {
         const byId = new Map<string, Chat>();
-        for (const chat of chats ?? []) {
-            if (chat.project_id === projectId) byId.set(chat.id, chat);
-        }
         for (const chat of projectChats ?? []) byId.set(chat.id, chat);
-        return Array.from(byId.values()).sort(
-            (a, b) =>
-                (Date.parse(b.created_at ?? "") || 0) -
-                (Date.parse(a.created_at ?? "") || 0),
-        );
+        for (const chat of chats ?? []) {
+            if (chat.project_id !== projectId) continue;
+            const existing = byId.get(chat.id);
+            if (
+                !existing ||
+                Date.parse(chatActivityAt(chat) ?? "") >=
+                    Date.parse(chatActivityAt(existing) ?? "")
+            ) {
+                byId.set(chat.id, chat);
+        }
+        }
+        return sortChatsByActivity(Array.from(byId.values()));
     }, [chats, projectChats, projectId]);
+    const projectChatIds = useMemo(
+        () => availableProjectChats.map((chat) => chat.id),
+        [availableProjectChats],
+    );
+    const touchProjectChat = useCallback((chatId: string) => {
+        setProjectChats((current) =>
+            current ? touchChatActivity(current, chatId) : current,
+        );
+    }, []);
+    const {
+        statuses: projectHistoryStatuses,
+        clearStatus: clearProjectHistoryStatus,
+    } = useAssistantHistoryStatuses({
+        activeChatId: activeChatId || null,
+        chatIds: projectChatIds,
+        onActivity: touchProjectChat,
+    });
 
     // Server ladder: writing to a project chat needs content.edit on the
     // project.
@@ -537,6 +565,7 @@ export default function ProjectAssistantChatPage() {
     useEffect(() => {
         if (activeTabId) return;
         setActiveQuotes(null);
+        setActiveCitation(null);
         setEditScrollTarget(null);
     }, [activeTabId]);
 
@@ -631,7 +660,6 @@ export default function ProjectAssistantChatPage() {
             `edited=${Array.from(edited).sort().join(",")}`,
         ].join("|");
     }, [messages]);
-
 
     useEffect(() => {
         void refreshProject();
@@ -781,6 +809,7 @@ export default function ProjectAssistantChatPage() {
         });
         setActiveTabId(docId);
         setActiveQuotes(quotes && quotes.length ? quotes : null);
+        setActiveCitation(null);
         setSelectedDocId(docId);
     }
 
@@ -790,6 +819,7 @@ export default function ProjectAssistantChatPage() {
             const fallback = idx < 0 ? null : tabs[idx + 1] ?? tabs[idx - 1] ?? null;
             setActiveTabId(fallback?.documentId ?? null);
             setActiveQuotes(null);
+            setActiveCitation(null);
             setSelectedDocId(fallback?.documentId ?? null);
         }
         setTabs((prev) => prev.filter((tab) => tab.documentId !== docId));
@@ -798,6 +828,7 @@ export default function ProjectAssistantChatPage() {
     function switchTab(docId: string) {
         setActiveTabId(docId);
         setActiveQuotes(null);
+        setActiveCitation(null);
         setSelectedDocId(docId);
     }
 
@@ -827,6 +858,7 @@ export default function ProjectAssistantChatPage() {
             citation.filename,
             expandCitationToEntries(citation),
         );
+        setActiveCitation(citation);
     };
 
     const handleOpenDocument = (args: {
@@ -895,6 +927,7 @@ export default function ProjectAssistantChatPage() {
 
     // â”€â”€ Chat actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     function navigateToChat(nextChatId: string) {
+        clearProjectHistoryStatus(nextChatId);
         if (nextChatId === activeChatId) return;
         // Leaving a thread is not Stop: detach so the answer still finishes
         // and is persisted server-side, instead of being cut to
@@ -968,10 +1001,18 @@ export default function ProjectAssistantChatPage() {
         const trimmed = nextTitle.trim();
         if (!trimmed || trimmed === chatTitle) return;
         const previousTitle = chatTitle;
+        const previousUpdatedAt = projectChats?.find(
+            (chat) => chat.id === activeChatId,
+        )?.updated_at;
         setChatTitle(trimmed);
         setProjectChats((current) =>
-            (current ?? []).map((chat) =>
-                chat.id === activeChatId ? { ...chat, title: trimmed } : chat,
+            touchChatActivity(
+                (current ?? []).map((chat) =>
+                    chat.id === activeChatId
+                        ? { ...chat, title: trimmed }
+                        : chat,
+                ),
+                activeChatId,
             ),
         );
         try {
@@ -987,10 +1028,16 @@ export default function ProjectAssistantChatPage() {
                 );
             }
             setProjectChats((current) =>
-                (current ?? []).map((chat) =>
-                    chat.id === activeChatId && chat.title === trimmed
-                        ? { ...chat, title: previousTitle }
-                        : chat,
+                sortChatsByActivity(
+                    (current ?? []).map((chat) =>
+                        chat.id === activeChatId && chat.title === trimmed
+                            ? {
+                                  ...chat,
+                                  title: previousTitle,
+                                  updated_at: previousUpdatedAt,
+                              }
+                            : chat,
+                    ),
                 ),
             );
             setChatActionError({
@@ -1475,6 +1522,7 @@ export default function ProjectAssistantChatPage() {
         if (activeTabId === docId) {
             setActiveTabId(null);
             setActiveQuotes(null);
+            setActiveCitation(null);
             setSelectedDocId(null);
             setEditScrollTarget(null);
         }
@@ -1909,6 +1957,7 @@ export default function ProjectAssistantChatPage() {
                         currentTitle={chatTitle}
                         titleAdornment={<ChatSkillChip binding={skillRuntime.binding} />}
                         loading={projectChats === null}
+                        responseStatuses={projectHistoryStatuses}
                         newChatDisabled={!canEditContent}
                         onLoad={navigateToChat}
                         onNewChat={handleNewChat}
@@ -2056,6 +2105,7 @@ export default function ProjectAssistantChatPage() {
                                         isError={!!msg.error}
                                         citations={msg.citations}
                                         citationStatus={msg.citationStatus}
+                                        activeCitation={activeCitation}
                                         onCitationClick={handleCitationClick}
                                         minHeight={
                                             i === lastAssistantIdx

@@ -33,6 +33,8 @@ export async function listChats(
         userEmail: string | undefined;
         limit: number | null;
         offset: number;
+        beforeUpdatedAt: string | null;
+        beforeId: string | null;
     },
 ): Promise<{ ok: true; data: unknown[] } | { ok: false; error: unknown }> {
     const { data, error } = await db.rpc("get_chats_overview", {
@@ -40,6 +42,8 @@ export async function listChats(
         p_user_email: args.userEmail?.trim().toLowerCase() ?? null,
         p_limit: args.limit,
         p_offset: args.offset,
+        p_before_updated_at: args.beforeUpdatedAt,
+        p_before_id: args.beforeId,
     });
     if (error) return { ok: false, error };
     return { ok: true, data: data ?? [] };

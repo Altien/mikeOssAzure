@@ -19,6 +19,8 @@ import {
 } from "@/app/lib/mikeApi";
 import type { Chat, Message } from "@/app/components/shared/types";
 import type { ProjectRole } from "@/app/lib/permissions";
+import { subscribeAssistantTurns } from "@/app/lib/assistantTurns";
+import { sortChatsByActivity, touchChatActivity } from "@/app/lib/chatActivity";
 
 interface ChatHistoryContextType {
     chats: Chat[] | null;
@@ -36,7 +38,11 @@ interface ChatHistoryContextType {
     updateChatTitle: (chatId: string, title: string) => void;
     newChatMessages: Message[] | null;
     setNewChatMessages: (messages: Message[] | null) => void;
-  replaceChatId: (oldChatId: string, newChatId: string, title?: string) => void;
+    replaceChatId: (
+        oldChatId: string,
+        newChatId: string,
+        title?: string,
+    ) => void;
     deleteChat: (chatId: string) => Promise<void>;
 }
 
@@ -47,12 +53,20 @@ const ChatHistoryContext = createContext<ChatHistoryContextType | undefined>(
 const INITIAL_CHAT_LIMIT = 20;
 const CHAT_PAGE_SIZE = 10;
 
+type ChatCursor = { updatedAt: string; id: string };
+
+function cursorFor(chat: Chat | undefined): ChatCursor | null {
+    const updatedAt = chat?.updated_at || chat?.created_at;
+    return chat && updatedAt ? { updatedAt, id: chat.id } : null;
+}
+
 export function ChatHistoryProvider({ children }: { children: ReactNode }) {
     const { user } = useAuth();
     const [chats, setChats] = useState<Chat[] | null>(null);
     const [hasMoreChats, setHasMoreChats] = useState(false);
-  const [loadingMoreChats, setLoadingMoreChats] = useState(false);
-  const loadingMoreChatsRef = useRef(false);
+    const [loadingMoreChats, setLoadingMoreChats] = useState(false);
+    const loadingMoreChatsRef = useRef(false);
+    const nextChatCursorRef = useRef<ChatCursor | null>(null);
     const [currentChatId, setCurrentChatId] = useState<string | null>(null);
     const [newChatMessages, setNewChatMessages] = useState<Message[] | null>(
         null,
@@ -66,21 +80,25 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
         }
 
         try {
-      const data = await listChats({ limit: INITIAL_CHAT_LIMIT + 1 });
-      setChats(data.slice(0, INITIAL_CHAT_LIMIT));
-      setHasMoreChats(data.length > INITIAL_CHAT_LIMIT);
+            const data = await listChats({ limit: INITIAL_CHAT_LIMIT + 1 });
+            const page = data.slice(0, INITIAL_CHAT_LIMIT);
+            setChats(sortChatsByActivity(page));
+            nextChatCursorRef.current = cursorFor(page.at(-1));
+            setHasMoreChats(data.length > INITIAL_CHAT_LIMIT);
         } catch {
             setChats([]);
+            nextChatCursorRef.current = null;
             setHasMoreChats(false);
         }
-  }, [user]);
+    }, [user]);
 
     useEffect(() => {
         if (!user) {
             setChats([]);
             setHasMoreChats(false);
-      setLoadingMoreChats(false);
-      loadingMoreChatsRef.current = false;
+            setLoadingMoreChats(false);
+            loadingMoreChatsRef.current = false;
+            nextChatCursorRef.current = null;
             setCurrentChatId(null);
             return;
         }
@@ -88,39 +106,58 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
         void loadChats();
     }, [user, loadChats]);
 
-  const loadMoreChats = useCallback(async () => {
-    if (
-      !user ||
-      !hasMoreChats ||
-      loadingMoreChatsRef.current ||
-      chats === null
-    ) {
-      return;
-    }
+    const loadMoreChats = useCallback(async () => {
+        if (
+            !user ||
+            !hasMoreChats ||
+            loadingMoreChatsRef.current ||
+            chats === null
+        ) {
+            return;
+        }
 
-    loadingMoreChatsRef.current = true;
-    setLoadingMoreChats(true);
-    try {
-      const data = await listChats({
-        limit: CHAT_PAGE_SIZE + 1,
-        offset: chats.length,
-      });
-      const page = data.slice(0, CHAT_PAGE_SIZE);
-      setChats((current) => {
-        const existing = new Set((current ?? []).map((chat) => chat.id));
-        return [
-          ...(current ?? []),
-          ...page.filter((chat) => !existing.has(chat.id)),
-        ];
-      });
-      setHasMoreChats(data.length > CHAT_PAGE_SIZE);
-    } catch {
-      // Preserve the current page and allow another scroll to retry.
-    } finally {
-      loadingMoreChatsRef.current = false;
-      setLoadingMoreChats(false);
-    }
-  }, [chats, hasMoreChats, user]);
+        loadingMoreChatsRef.current = true;
+        setLoadingMoreChats(true);
+        try {
+            const cursor = nextChatCursorRef.current;
+            if (!cursor) {
+                setHasMoreChats(false);
+                return;
+            }
+            const data = await listChats({
+                limit: CHAT_PAGE_SIZE + 1,
+                beforeUpdatedAt: cursor.updatedAt,
+                beforeId: cursor.id,
+            });
+            const page = data.slice(0, CHAT_PAGE_SIZE);
+            nextChatCursorRef.current = cursorFor(page.at(-1));
+            setChats((current) => {
+                const existing = new Set(
+                    (current ?? []).map((chat) => chat.id),
+                );
+                return sortChatsByActivity([
+                    ...(current ?? []),
+                    ...page.filter((chat) => !existing.has(chat.id)),
+                ]);
+            });
+            setHasMoreChats(data.length > CHAT_PAGE_SIZE);
+        } catch {
+            // Preserve the current page and allow another scroll to retry.
+        } finally {
+            loadingMoreChatsRef.current = false;
+            setLoadingMoreChats(false);
+        }
+    }, [chats, hasMoreChats, user]);
+
+    useEffect(
+        () =>
+            subscribeAssistantTurns((chatId) => {
+                setChats((current) =>
+                    current ? touchChatActivity(current, chatId) : current,
+                );
+            }),
+        [],
+    );
 
     const replaceChatId = useCallback(
         (oldChatId: string, newChatId: string, title?: string) => {
@@ -187,10 +224,13 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
                     user_id: user?.id ?? "",
                     title: null,
                     created_at: now,
+                    updated_at: now,
                     is_owner: role === "owner",
                     access_role: role,
                 };
-                setChats((prev) => [newChat, ...(prev ?? [])]);
+                setChats((prev) =>
+                    sortChatsByActivity([newChat, ...(prev ?? [])]),
+                );
                 return id;
             } catch {
                 return null;
@@ -202,7 +242,12 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
     const renameChatFn = useCallback(
         async (chatId: string, title: string) => {
             setChats((prev) =>
-        (prev ?? []).map((c) => (c.id === chatId ? { ...c, title } : c)),
+                touchChatActivity(
+                    (prev ?? []).map((c) =>
+                        c.id === chatId ? { ...c, title } : c,
+                    ),
+                    chatId,
+                ),
             );
             try {
                 await renameChat(chatId, title);
@@ -221,8 +266,11 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
 
     const updateChatTitle = useCallback((chatId: string, title: string) => {
         setChats((prev) =>
-            (prev ?? []).map((chat) =>
-                chat.id === chatId ? { ...chat, title } : chat,
+            touchChatActivity(
+                (prev ?? []).map((chat) =>
+                    chat.id === chatId ? { ...chat, title } : chat,
+                ),
+                chatId,
             ),
         );
     }, []);

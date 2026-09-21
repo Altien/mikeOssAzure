@@ -734,7 +734,7 @@ export function ChatView({
             const paddingBottom = DEFAULT_ASSISTANT_BOTTOM_PADDING;
             const userMessageHeight = latestUserMessageRef.current.offsetHeight;
             setMinHeight(
-                `calc(100dvh - ${headerHeight + messageGap * 3 + userMessageHeight + paddingBottom + addedHeaderClearance}px)`,
+                `calc(100dvh - ${headerHeight + messageGap * 2 + userMessageHeight + paddingBottom + addedHeaderClearance}px)`,
             );
         }
     }, [messages.length]);

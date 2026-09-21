@@ -2,24 +2,24 @@
   <title id="ideTitle">Integrated Drafting Environment</title>
   <defs>
     <linearGradient id="ideSide" x1="0" y1="0" x2="0.35" y2="1">
-      <stop offset="0" stop-color="#ADB5C3"/>
-      <stop offset="0.42" stop-color="#A2A9B7"/>
+      <stop offset="0" stop-color="#8D95A4"/>
+      <stop offset="0.42" stop-color="#8B93A2"/>
       <stop offset="0.72" stop-color="#868E9E"/>
       <stop offset="1" stop-color="#656D7D"/>
     </linearGradient>
     <linearGradient id="ideMid" x1="0" y1="0" x2="0.35" y2="1">
-      <stop offset="0" stop-color="#BEC5D1"/>
-      <stop offset="0.42" stop-color="#B0B7C4"/>
+      <stop offset="0" stop-color="#9CA3B1"/>
+      <stop offset="0.42" stop-color="#999FAE"/>
       <stop offset="0.72" stop-color="#949CAB"/>
       <stop offset="1" stop-color="#717988"/>
     </linearGradient>
     <linearGradient id="ideRim" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.72"/>
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.32"/>
       <stop offset="0.45" stop-color="#FFFFFF" stop-opacity="0.14"/>
       <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.42"/>
     </linearGradient>
     <linearGradient id="ideSheen" x1="0" y1="0" x2="0.25" y2="1">
-      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.42"/>
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.16"/>
       <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
     </linearGradient>
     <clipPath id="ideClipLeft"><rect x="24" y="36" width="48" height="168" rx="16"/></clipPath>

@@ -9,6 +9,7 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
     AssistantEvent,
+    Citation,
     Document,
     Message,
 } from "@/app/components/shared/types";
@@ -31,12 +32,14 @@ const state = vi.hoisted(() => ({
         project_id: string;
         title: string;
         created_at: string;
+        updated_at?: string;
     }>,
     chats: [] as Array<{
         id: string;
         project_id: string;
         title: string;
         created_at: string;
+        updated_at?: string;
     }>,
 }));
 vi.mock("next/navigation", () => ({
@@ -132,7 +135,12 @@ vi.mock("@/app/components/assistant/ChatInput", () => ({
             <button
                 disabled={!canSend || !!chatLoading || isLoading}
                 onClick={() =>
-                    onSubmit({ role: "user", content: "First question", model: "gpt-5.6-sol", reasoning: "xhigh" })
+                    onSubmit({
+                        role: "user",
+                        content: "First question",
+                        model: "gpt-5.6-sol",
+                        reasoning: "xhigh",
+                    })
                 }
                 data-can-send={String(canSend)}
                 data-chat-loading={String(!!chatLoading)}
@@ -152,12 +160,31 @@ vi.mock("@/app/components/assistant/UserMessage", () => ({
     UserMessage: ({ content }: { content: string }) => <p>{content}</p>,
 }));
 vi.mock("@/app/components/assistant/AssistantMessage", () => ({
-    AssistantMessage: ({ events }: { events: AssistantEvent[] }) => (
-        <p>
+    AssistantMessage: ({
+        events,
+        citations,
+        activeCitation,
+        onCitationClick,
+    }: {
+        events: AssistantEvent[];
+        citations?: Citation[];
+        activeCitation?: Citation | null;
+        onCitationClick?: (citation: Citation) => void;
+    }) => (
+        <div>
             {events
                 ?.map((event) => ("text" in event ? event.text : ""))
                 .join("")}
-        </p>
+            {citations?.[0] && (
+                <button
+                    type="button"
+                    data-active={String(activeCitation === citations[0])}
+                    onClick={() => onCitationClick?.(citations[0])}
+                >
+                    Citation pill {citations[0].ref}
+                </button>
+            )}
+        </div>
     ),
 }));
 vi.mock("@/app/components/shared/views/DocxView", () => ({
@@ -223,23 +250,34 @@ describe("closing document tabs", () => {
             filename: "Notes.docx",
             file_type: "docx",
         });
-        fireEvent.drop(screen.getByRole("region", { name: "Document viewer" }), {
-            dataTransfer: {
-                types: ["application/mike-doc"],
-                getData: () => "notes",
+        fireEvent.drop(
+            screen.getByRole("region", { name: "Document viewer" }),
+            {
+                dataTransfer: {
+                    types: ["application/mike-doc"],
+                    getData: () => "notes",
+                },
             },
-        });
+        );
         await screen.findByRole("tab", { name: /Notes.docx/ });
         fireEvent.click(screen.getByRole("tab", { name: /Budget.xlsx/ }));
-        fireEvent.click(screen.getByRole("button", { name: "Close Budget.xlsx" }));
+        fireEvent.click(
+            screen.getByRole("button", { name: "Close Budget.xlsx" }),
+        );
         expect(screen.getByRole("tab", { name: /Notes.docx/ })).toHaveAttribute(
-            "aria-selected", "true",
+            "aria-selected",
+            "true",
         );
-        fireEvent.click(screen.getByRole("button", { name: "Close Notes.docx" }));
+        fireEvent.click(
+            screen.getByRole("button", { name: "Close Notes.docx" }),
+        );
         expect(screen.getByRole("tab", { name: /Draft.docx/ })).toHaveAttribute(
-            "aria-selected", "true",
+            "aria-selected",
+            "true",
         );
-        fireEvent.click(screen.getByRole("button", { name: "Close Draft.docx" }));
+        fireEvent.click(
+            screen.getByRole("button", { name: "Close Draft.docx" }),
+        );
         expect(screen.queryAllByRole("tab")).toHaveLength(0);
         expect(screen.queryByText("Draft viewer")).toBeNull();
     });
@@ -250,10 +288,12 @@ describe("closing document tabs", () => {
         fireEvent.click(
             screen.getByRole("button", { name: "Open attached Excel" }),
         );
-        fireEvent.click(screen.getByRole("button", { name: "Close Draft.docx" }));
-        expect(screen.getByRole("tab", { name: /Budget.xlsx/ })).toHaveAttribute(
-            "aria-selected", "true",
+        fireEvent.click(
+            screen.getByRole("button", { name: "Close Draft.docx" }),
         );
+        expect(
+            screen.getByRole("tab", { name: /Budget.xlsx/ }),
+        ).toHaveAttribute("aria-selected", "true");
         expect(screen.getByTestId("excel-viewer")).toBeVisible();
     });
 });
@@ -417,6 +457,55 @@ describe("document viewer drops", () => {
 });
 
 describe("project chat workspace lifecycle", () => {
+    it("marks the selected citation pill active until a regular document view opens", async () => {
+        const citation: Citation = {
+            type: "citation_data",
+            ref: 1,
+            doc_id: "doc1",
+            document_id: "doc1",
+            filename: "Draft.docx",
+            page: 1,
+            quote: "Relevant language",
+        };
+        state.getChat.mockResolvedValueOnce({
+            chat: {
+                id: "c1",
+                project_id: "p1",
+                title: "Existing chat",
+                user_id: "u1",
+                created_at: "2026-09-15T00:00:00Z",
+            },
+            messages: [
+                {
+                    role: "assistant",
+                    content: "Answer",
+                    events: [{ type: "content", text: "Answer" }],
+                    citations: [citation],
+                },
+            ],
+        });
+
+        await act(async () => {
+            render(
+                <Suspense fallback="Loading">
+                    <ProjectAssistantChatPage
+                        params={Promise.resolve({ id: "p1", chatId: "c1" })}
+                    />
+                </Suspense>,
+            );
+        });
+
+        const pill = await screen.findByRole("button", {
+            name: "Citation pill 1",
+        });
+        expect(pill).toHaveAttribute("data-active", "false");
+        fireEvent.click(pill);
+        expect(pill).toHaveAttribute("data-active", "true");
+
+        fireEvent.click(screen.getByRole("button", { name: "Open draft" }));
+        expect(pill).toHaveAttribute("data-active", "false");
+    });
+
     it("hides the composer until the chat and project access both resolve", async () => {
         let resolveChat!: (loaded: {
             chat: Record<string, unknown>;
@@ -496,11 +585,13 @@ describe("project chat workspace lifecycle", () => {
         let stream!: ReadableStreamDefaultController<Uint8Array>;
         const encoder = new TextEncoder();
         state.streamProjectChat.mockResolvedValue(
-            new Response(new ReadableStream<Uint8Array>({
-                start(controller) {
-                    stream = controller;
-                },
-            })),
+            new Response(
+                new ReadableStream<Uint8Array>({
+                    start(controller) {
+                        stream = controller;
+                    },
+                }),
+            ),
         );
         await renderWorkspace();
         fireEvent.click(screen.getByRole("button", { name: "Open draft" }));
@@ -510,7 +601,11 @@ describe("project chat workspace lifecycle", () => {
         fireEvent.click(screen.getByRole("button", { name: "Send question" }));
         await waitFor(() => expect(state.streamProjectChat).toHaveBeenCalled());
         act(() => {
-            stream.enqueue(encoder.encode('data: {"type":"chat_id","chatId":"created-chat"}\n\n'));
+            stream.enqueue(
+                encoder.encode(
+                    'data: {"type":"chat_id","chatId":"created-chat"}\n\n',
+                ),
+            );
         });
         await waitFor(() =>
             expect(
@@ -518,9 +613,17 @@ describe("project chat workspace lifecycle", () => {
             ).toHaveAttribute("data-chat-key", "created-chat"),
         );
         expect(screen.queryByText("First answer")).not.toBeInTheDocument();
-        await waitFor(() => expect(screen.getByRole("button", { name: "Send question" })).toHaveAttribute("data-chat-model", "gpt-5.6-sol"));
-        expect(screen.getByRole("button", { name: "Send question" })).toHaveAttribute("data-chat-reasoning", "xhigh");
-        expect(screen.getByRole("button", { name: "Send question" })).toBeDisabled();
+        await waitFor(() =>
+            expect(
+                screen.getByRole("button", { name: "Send question" }),
+            ).toHaveAttribute("data-chat-model", "gpt-5.6-sol"),
+        );
+        expect(
+            screen.getByRole("button", { name: "Send question" }),
+        ).toHaveAttribute("data-chat-reasoning", "xhigh");
+        expect(
+            screen.getByRole("button", { name: "Send question" }),
+        ).toBeDisabled();
         expect(screen.getByText("First question")).toBeVisible();
         expect(screen.getByRole("tabpanel", { name: "Draft.docx" })).toBe(
             panel,
@@ -533,29 +636,52 @@ describe("project chat workspace lifecycle", () => {
             "/projects/p1/assistant/chat/created-chat",
         );
         act(() => {
-            stream.enqueue(encoder.encode('data: {"type":"content_delta","text":"First answer"}\n\n'));
+            stream.enqueue(
+                encoder.encode(
+                    'data: {"type":"content_delta","text":"First answer"}\n\n',
+                ),
+            );
         });
-        await waitFor(() => expect(screen.getByText("First answer")).toBeVisible());
-        expect(screen.getByRole("button", { name: "Send question" })).toBeDisabled();
+        await waitFor(() =>
+            expect(screen.getByText("First answer")).toBeVisible(),
+        );
+        expect(
+            screen.getByRole("button", { name: "Send question" }),
+        ).toBeDisabled();
         act(() => stream.close());
-        await waitFor(() => expect(screen.getByRole("button", { name: "Send question" })).not.toBeDisabled());
-        expect(screen.getByRole("tabpanel", { name: "Draft.docx" })).toBe(panel);
+        await waitFor(() =>
+            expect(
+                screen.getByRole("button", { name: "Send question" }),
+            ).not.toBeDisabled(),
+        );
+        expect(screen.getByRole("tabpanel", { name: "Draft.docx" })).toBe(
+            panel,
+        );
         expect(state.getChat).not.toHaveBeenCalled();
     });
 
-    it("lists project chats newest first after merging both history sources", async () => {
+    it("lists project chats by latest activity after merging both history sources", async () => {
         state.chats = [
             {
                 id: "older",
                 project_id: "p1",
                 title: "Older",
                 created_at: "2026-09-10T00:00:00Z",
+                updated_at: "2026-09-20T00:00:00Z",
             },
             {
                 id: "newer",
                 project_id: "p1",
                 title: "Newer",
                 created_at: "2026-09-14T00:00:00Z",
+                updated_at: "2026-09-14T00:00:00Z",
+            },
+            {
+                id: "latest",
+                project_id: "p1",
+                title: "Stale latest",
+                created_at: "2026-09-15T00:00:00Z",
+                updated_at: "2026-09-13T00:00:00Z",
             },
         ];
         state.projectChats = [
@@ -564,16 +690,18 @@ describe("project chat workspace lifecycle", () => {
                 project_id: "p1",
                 title: "Latest",
                 created_at: "2026-09-15T00:00:00Z",
+                updated_at: "2026-09-15T00:00:00Z",
             },
         ];
         await renderWorkspace();
         fireEvent.click(screen.getByRole("button", { name: "New Chat" }));
         const rows = await screen.findAllByRole("menuitem");
         expect(rows.map((row) => row.textContent)).toEqual([
+            expect.stringContaining("Older"),
             expect.stringContaining("Latest"),
             expect.stringContaining("Newer"),
-            expect.stringContaining("Older"),
         ]);
+        expect(screen.queryByText("Stale latest")).not.toBeInTheDocument();
     });
 });
 
@@ -663,8 +791,19 @@ describe("leaving a project chat mid-stream", () => {
         fireEvent.click(screen.getByRole("button", { name: "Send question" }));
         await waitFor(() => expect(state.streamProjectChat).toHaveBeenCalled());
         await body.send('data: {"type":"chat_id","chatId":"created-chat"}\n\n');
-        await body.send('data: {"type":"content_delta","text":"First answer"}\n\n');
-        await waitFor(() => expect(screen.getByText("First answer")).toBeVisible());
+        await body.send(
+            'data: {"type":"content_delta","text":"First answer"}\n\n',
+        );
+        await waitFor(() =>
+            expect(screen.getByText("First answer")).toBeVisible(),
+        );
+        state.chats.push({
+            id: "created-chat",
+            project_id: "p1",
+            title: "Original thread",
+            created_at: "2026-09-14T00:00:00Z",
+            updated_at: "2026-09-14T00:00:00Z",
+        });
 
         fireEvent.click(screen.getByRole("button", { name: "New Chat" }));
         fireEvent.click(
@@ -682,14 +821,24 @@ describe("leaving a project chat mid-stream", () => {
         // cancelled, so the server finishes and persists the whole answer.
         expect(requestSignal().aborted).toBe(false);
         expect(body.state.cancelled).toBe(false);
-        await body.send('data: {"type":"content_delta","text":" and the rest"}\n\n');
+        await body.send(
+            'data: {"type":"content_delta","text":" and the rest"}\n\n',
+        );
         await body.close();
         expect(body.state.cancelled).toBe(false);
+        fireEvent.click(screen.getByRole("button", { name: "Other thread" }));
+        const completedRow = (await screen.findAllByRole("menuitem")).find(
+            (row) => row.textContent?.includes("Original thread"),
+        )!;
+        await waitFor(() =>
+            expect(
+                completedRow.querySelector("img[aria-hidden='true']"),
+            ).toHaveClass("hue-rotate-[285deg]"),
+        );
         // ...and nothing from it lands in the thread now on screen.
         expect(screen.queryByText(/and the rest/)).not.toBeInTheDocument();
         expect(screen.queryByText(/Cancelled by user/)).not.toBeInTheDocument();
     });
-
 
     it("shows the answer streaming when returning before a detached turn finishes", async () => {
         const body = controllableStream();
@@ -697,17 +846,34 @@ describe("leaving a project chat mid-stream", () => {
         await renderWorkspace();
         fireEvent.click(screen.getByRole("button", { name: "Send question" }));
         await waitFor(() => expect(state.streamProjectChat).toHaveBeenCalled());
-        await body.send('data: {"type":"chat_id","chatId":"created-chat","assistantMessageId":"answer-1"}\n\n');
-        await body.send('data: {"type":"content_delta","text":"First answer"}\n\n');
+        await body.send(
+            'data: {"type":"chat_id","chatId":"created-chat","assistantMessageId":"answer-1"}\n\n',
+        );
+        await body.send(
+            'data: {"type":"content_delta","text":"First answer"}\n\n',
+        );
         await screen.findByText("First answer");
-        state.chats.push({ id: "created-chat", project_id: "p1", title: "Original thread", created_at: "2026-09-14T00:00:00Z" });
+        state.chats.push({
+            id: "created-chat",
+            project_id: "p1",
+            title: "Original thread",
+            created_at: "2026-09-14T00:00:00Z",
+        });
         fireEvent.click(screen.getByRole("button", { name: "New Chat" }));
-        fireEvent.click((await screen.findAllByRole("menuitem")).find((row) => row.textContent?.includes("Other thread"))!);
-        await waitFor(() => expect(state.getChat).toHaveBeenCalledWith("other"));
+        fireEvent.click(
+            (await screen.findAllByRole("menuitem")).find((row) =>
+                row.textContent?.includes("Other thread"),
+            )!,
+        );
+        await waitFor(() =>
+            expect(state.getChat).toHaveBeenCalledWith("other"),
+        );
         await screen.findByRole("button", { name: "Send question" });
         expect(screen.queryByText(/First answer/)).not.toBeInTheDocument();
         // The answer keeps arriving while nobody is looking at its thread.
-        await body.send('data: {"type":"content_delta","text":" continues"}\n\n');
+        await body.send(
+            'data: {"type":"content_delta","text":" continues"}\n\n',
+        );
 
         // What the server holds for that thread right now: the question is
         // stored, the assistant row is hidden until it has content.
@@ -715,18 +881,38 @@ describe("leaving a project chat mid-stream", () => {
         let finishHistory!: (value: unknown) => void;
         state.getChat.mockImplementation((id: string) =>
             id === "created-chat"
-                ? new Promise((resolve) => { finishHistory = resolve; })
+                ? new Promise((resolve) => {
+                      finishHistory = resolve;
+                  })
                 : Promise.resolve(otherHistory),
         );
         fireEvent.click(screen.getByRole("button", { name: "Other thread" }));
-        fireEvent.click((await screen.findAllByRole("menuitem")).find((row) => row.textContent?.includes("Original thread"))!);
-        await waitFor(() => expect(window.location.pathname).toBe("/projects/p1/assistant/chat/created-chat"));
+        fireEvent.click(
+            (await screen.findAllByRole("menuitem")).find((row) =>
+                row.textContent?.includes("Original thread"),
+            )!,
+        );
+        await waitFor(() =>
+            expect(window.location.pathname).toBe(
+                "/projects/p1/assistant/chat/created-chat",
+            ),
+        );
         // The history is requested at once instead of after the stream ends.
-        await waitFor(() => expect(state.getChat).toHaveBeenCalledWith("created-chat"));
+        await waitFor(() =>
+            expect(state.getChat).toHaveBeenCalledWith("created-chat"),
+        );
         await act(async () =>
             finishHistory({
-                chat: { id: "created-chat", title: "New Chat", user_id: "u1", model: null, reasoning_level: null },
-                messages: [{ id: "u1", role: "user", content: "First question" }],
+                chat: {
+                    id: "created-chat",
+                    title: "New Chat",
+                    user_id: "u1",
+                    model: null,
+                    reasoning_level: null,
+                },
+                messages: [
+                    { id: "u1", role: "user", content: "First question" },
+                ],
             }),
         );
         // The transcript shows the stored question once and the answer as far
@@ -739,11 +925,21 @@ describe("leaving a project chat mid-stream", () => {
         expect(send).toHaveAttribute("data-chat-loading", "false");
         expect(send).toHaveAttribute("data-can-send", "true");
         // ...and the rest of the answer streams into the returned thread.
-        await body.send('data: {"type":"content_delta","text":" and the rest"}\n\n');
-        expect(await screen.findByText("First answer continues and the rest")).toBeVisible();
+        await body.send(
+            'data: {"type":"content_delta","text":" and the rest"}\n\n',
+        );
+        expect(
+            await screen.findByText("First answer continues and the rest"),
+        ).toBeVisible();
         await body.close();
-        await waitFor(() => expect(screen.getByRole("button", { name: "Send question" })).toBeEnabled());
-        expect(screen.getByText("First answer continues and the rest")).toBeVisible();
+        await waitFor(() =>
+            expect(
+                screen.getByRole("button", { name: "Send question" }),
+            ).toBeEnabled(),
+        );
+        expect(
+            screen.getByText("First answer continues and the rest"),
+        ).toBeVisible();
         expect(screen.getAllByText("First question")).toHaveLength(1);
         expect(requestSignal().aborted).toBe(false);
         expect(body.state.cancelled).toBe(false);
@@ -755,17 +951,25 @@ describe("leaving a project chat mid-stream", () => {
         fireEvent.click(screen.getByRole("button", { name: "Send question" }));
         await waitFor(() => expect(state.streamProjectChat).toHaveBeenCalled());
         await body.send('data: {"type":"chat_id","chatId":"created-chat"}\n\n');
-        await body.send('data: {"type":"content_delta","text":"First answer"}\n\n');
-        await waitFor(() => expect(screen.getByText("First answer")).toBeVisible());
+        await body.send(
+            'data: {"type":"content_delta","text":"First answer"}\n\n',
+        );
+        await waitFor(() =>
+            expect(screen.getByText("First answer")).toBeVisible(),
+        );
 
         fireEvent.click(screen.getByRole("button", { name: "New chat" }));
         await waitFor(() =>
-            expect(window.location.pathname).toBe("/projects/p1/assistant/chat"),
+            expect(window.location.pathname).toBe(
+                "/projects/p1/assistant/chat",
+            ),
         );
 
         expect(requestSignal().aborted).toBe(false);
         expect(body.state.cancelled).toBe(false);
-        await body.send('data: {"type":"content_delta","text":" and the rest"}\n\n');
+        await body.send(
+            'data: {"type":"content_delta","text":" and the rest"}\n\n',
+        );
         await body.close();
         expect(body.state.cancelled).toBe(false);
         expect(screen.queryByText(/First answer/)).not.toBeInTheDocument();

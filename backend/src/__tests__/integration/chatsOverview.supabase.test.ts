@@ -76,8 +76,16 @@ maybeDescribe("get_chats_overview — role-aware grants", () => {
         strangerId = stranger.data.user.id;
 
         const orgs = await admin.from("organizations").insert([
-            { id: sharedOrgId, name: `shared-${suffix}`, created_by: strangerId },
-            { id: foreignOrgId, name: `foreign-${suffix}`, created_by: strangerId },
+            {
+                id: sharedOrgId,
+                name: `shared-${suffix}`,
+                created_by: strangerId,
+            },
+            {
+                id: foreignOrgId,
+                name: `foreign-${suffix}`,
+                created_by: strangerId,
+            },
         ]);
         if (orgs.error) throw orgs.error;
 
@@ -193,7 +201,10 @@ maybeDescribe("get_chats_overview — role-aware grants", () => {
                 grantedProjectId,
                 foreignOrgProjectId,
             ]);
-        await admin.from("organizations").delete().in("id", [sharedOrgId, foreignOrgId]);
+        await admin
+            .from("organizations")
+            .delete()
+            .in("id", [sharedOrgId, foreignOrgId]);
         if (callerId) await admin.auth.admin.deleteUser(callerId);
         if (strangerId) await admin.auth.admin.deleteUser(strangerId);
     });
@@ -235,6 +246,72 @@ maybeDescribe("get_chats_overview — role-aware grants", () => {
         expect(roleOf(chats.inSharedOrgProject)).toBe("editor"); // org member
         expect(roleOf(chats.inGrantedProject)).toBe("editor"); // grant role
         expect(roleOf(chats.sharedDirectly)).toBe("editor"); // chat grant
+    });
+
+    it("persists message activity and orders refreshed history by it", async () => {
+        const staleAt = "2000-01-01T00:00:00.000Z";
+        const stale = await admin
+            .from("chats")
+            .update({ updated_at: staleAt })
+            .eq("id", chats.inMyProject);
+        if (stale.error) throw stale.error;
+
+        const message = await admin.from("chat_messages").insert({
+            chat_id: chats.inMyProject,
+            author_user_id: callerId,
+            role: "user",
+            content: "Most recent message",
+        });
+        if (message.error) throw message.error;
+
+        const refreshed = await admin.rpc("get_chats_overview", {
+            p_user_id: callerId,
+            p_user_email: callerEmail,
+            p_limit: null,
+            p_offset: 0,
+        });
+
+        expect(refreshed.error).toBeNull();
+        const fixtureRows = (
+            refreshed.data as {
+                id: string;
+                created_at: string;
+                updated_at: string;
+            }[]
+        ).filter((row) => allChatIds.includes(row.id));
+        expect(fixtureRows[0]?.id).toBe(chats.inMyProject);
+        expect(Date.parse(fixtureRows[0]!.updated_at)).toBeGreaterThan(
+            Date.parse(staleAt),
+        );
+    });
+
+    it("pages with a stable activity cursor without repeating rows", async () => {
+        const first = await admin.rpc("get_chats_overview", {
+            p_user_id: callerId,
+            p_user_email: callerEmail,
+            p_limit: 2,
+            p_offset: 0,
+            p_before_updated_at: null,
+            p_before_id: null,
+        });
+        expect(first.error).toBeNull();
+        const firstRows = first.data as { id: string; updated_at: string }[];
+        expect(firstRows).toHaveLength(2);
+
+        const cursor = firstRows.at(-1)!;
+        const second = await admin.rpc("get_chats_overview", {
+            p_user_id: callerId,
+            p_user_email: callerEmail,
+            p_limit: 2,
+            p_offset: 0,
+            p_before_updated_at: cursor.updated_at,
+            p_before_id: cursor.id,
+        });
+        expect(second.error).toBeNull();
+        const secondRows = second.data as { id: string }[];
+        expect(secondRows).toHaveLength(2);
+        const firstIds = new Set(firstRows.map((row) => row.id));
+        expect(secondRows.some((row) => firstIds.has(row.id))).toBe(false);
     });
 
     it("clamps and applies paging", async () => {

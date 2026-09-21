@@ -2986,9 +2986,42 @@ describe("chat grants, deletion and roster", () => {
                     p_user_email: "u1@test.local",
                     p_limit: null,
                     p_offset: 0,
+                    p_before_updated_at: null,
+                    p_before_id: null,
                 },
             },
         ]);
+    });
+
+    it("passes a validated activity cursor to get_chats_overview", async () => {
+        mockedCreate.mockImplementation(() => makeRbacDb("member") as never);
+
+        const res = await request(app)
+            .get(
+                "/chat?before_updated_at=2026-09-21T12%3A00%3A00.000Z&before_id=6f783e59-35c4-4ddc-896a-94aa4d05a768",
+            )
+            .set("Authorization", "Bearer test");
+
+        expect(res.status).toBe(200);
+        expect(rbacRpcCalls[0]?.args).toMatchObject({
+            p_before_updated_at: "2026-09-21T12:00:00.000Z",
+            p_before_id: "6f783e59-35c4-4ddc-896a-94aa4d05a768",
+        });
+    });
+
+    it("rejects incomplete or malformed activity cursors", async () => {
+        mockedCreate.mockImplementation(() => makeRbacDb("member") as never);
+
+        const incomplete = await request(app)
+            .get("/chat?before_updated_at=2026-09-21T12%3A00%3A00.000Z")
+            .set("Authorization", "Bearer test");
+        const malformed = await request(app)
+            .get("/chat?before_updated_at=not-a-date&before_id=not-a-uuid")
+            .set("Authorization", "Bearer test");
+
+        expect(incomplete.status).toBe(400);
+        expect(malformed.status).toBe(400);
+        expect(rbacRpcCalls).toHaveLength(0);
     });
 
     describe("a standalone chat directly granted to the caller", () => {
