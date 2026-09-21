@@ -28,8 +28,20 @@ function AppSidebarIcon({
   );
 }
 
-export function ChatSkeuoIcon(props: IconProps) {
-  return <AppSidebarIcon name="features/chat" {...props} />;
+export function ChatSkeuoIcon({
+  className,
+  tone = "blue",
+  ...props
+}: IconProps & { tone?: "blue" | "green" }) {
+  return (
+    <AppSidebarIcon
+      name="features/chat"
+      className={[className, tone === "green" ? "hue-rotate-[285deg]" : ""]
+        .filter(Boolean)
+        .join(" ")}
+      {...props}
+    />
+  );
 }
 
 export function IdeSkeuoIcon(props: IconProps) {

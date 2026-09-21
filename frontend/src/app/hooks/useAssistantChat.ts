@@ -1,8 +1,27 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { useRouter } from "next/navigation";
 import { streamChat, streamProjectChat } from "@/app/lib/mikeApi";
+import {
+  beginAssistantTurn,
+  cancelAssistantTurn,
+  getAssistantTurn,
+  hasAssistantTurn,
+  subscribeAssistantTurns,
+  withLiveTurn,
+  type AssistantTurnHandle,
+  type LiveAssistantTurn,
+} from "@/app/lib/assistantTurns";
 import { assistantHistoryContent } from "@/app/lib/assistantHistoryContent";
 import { readSseFrames } from "@/app/lib/sse";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
@@ -71,6 +90,146 @@ function parseCourtlistenerCaseSearches(value: unknown) {
     .filter((item): item is NonNullable<typeof item> => !!item);
 }
 
+/**
+ * Builds one turn's assistant message from its stream.
+ *
+ * Everything here writes to the turn record, never to a hook's state. The
+ * hook that sent the request may have moved to another thread or unmounted
+ * by the time a frame arrives, and a hook that has come back to the thread
+ * renders the same record — so the record is the one place the answer lives
+ * while it streams.
+ */
+function createTurnEventSink(
+  turn: AssistantTurnHandle,
+  initialEvents: AssistantEvent[],
+) {
+  const eventsRef = { current: initialEvents };
+  const publish = () => {
+    const snapshot = [...eventsRef.current];
+    turn.update((message) => ({ ...message, events: snapshot }));
+  };
+
+  /**
+   * Finalize any in-flight streaming content event so the next
+   * content_delta starts a fresh block. Called
+   * before any non-content event is appended, so interleaved content /
+   * reasoning / tool events stay in chronological order — without the
+   * later content block inheriting the earlier block's accumulated text.
+   */
+  const finalizeStreamingContent = () => {
+    const events = eventsRef.current;
+    const last = events[events.length - 1];
+    if (last?.type === "content" && last.isStreaming) {
+      eventsRef.current = [
+        ...events.slice(0, -1),
+        { type: "content", text: last.text },
+      ];
+      publish();
+    }
+  };
+
+  // If the model transitions from reasoning into content/tool without a
+  // reasoning_block_end (or the events arrive out of order), the prior
+  // reasoning event would otherwise stay flagged isStreaming forever.
+  const finalizeStreamingReasoning = () => {
+    const events = eventsRef.current;
+    const last = events[events.length - 1];
+    if (last?.type !== "reasoning" || !last.isStreaming) return;
+    eventsRef.current = [
+      ...events.slice(0, -1),
+      { type: "reasoning", text: last.text },
+    ];
+    publish();
+  };
+
+  // Transient placeholder events (tool_call_start, thinking) fill the
+  // latency gap between real SSE events so the wrapper doesn't look stuck.
+  // Anytime a real event arrives, drop any streaming placeholder first.
+  const isStreamingPlaceholder = (e: AssistantEvent) =>
+    (e.type === "tool_call_start" || e.type === "thinking") && !!e.isStreaming;
+
+  const cancelStreamingEvents = (events: AssistantEvent[]) =>
+    events
+      .filter((event) => !isStreamingPlaceholder(event))
+      .map((event) => {
+        if (!("isStreaming" in event) || !event.isStreaming) return event;
+        const rest = { ...event };
+        delete (rest as { isStreaming?: boolean }).isStreaming;
+        return rest as AssistantEvent;
+      });
+
+  // Stop may reach the record twice: from the control itself and from the
+  // aborted request unwinding. The label goes on once.
+  let cancelled = false;
+  const appendCancellation = () => {
+    if (cancelled) return;
+    cancelled = true;
+    eventsRef.current = [
+      ...cancelStreamingEvents(eventsRef.current),
+      { type: "content" as const, text: "Cancelled by user." },
+    ];
+    publish();
+  };
+
+  const clearStreamingPlaceholders = () => {
+    const before = eventsRef.current;
+    const after = before.filter((e) => !isStreamingPlaceholder(e));
+    if (after.length === before.length) return;
+    eventsRef.current = after;
+    publish();
+  };
+
+  const pushThinkingPlaceholder = () => {
+    const events = eventsRef.current;
+    const last = events[events.length - 1];
+    // Don't stack placeholders back-to-back; one "Thinking…" line is plenty.
+    if (last && isStreamingPlaceholder(last)) return;
+    eventsRef.current = [
+      ...events,
+      { type: "thinking" as const, isStreaming: true },
+    ];
+    publish();
+  };
+
+  const pushEvent = (event: AssistantEvent) => {
+    finalizeStreamingContent();
+    finalizeStreamingReasoning();
+    // A real event, or a more specific placeholder such as
+    // tool_call_start, should replace any generic "Thinking..." line.
+    const next = eventsRef.current.filter((e) => !isStreamingPlaceholder(e));
+    eventsRef.current = [...next, event];
+    publish();
+  };
+
+  const updateMatchingEvent = (
+    predicate: (e: AssistantEvent) => boolean,
+    updater: (e: AssistantEvent) => AssistantEvent,
+  ) => {
+    const events = eventsRef.current;
+    const idx = [...events]
+      .map((_, i) => i)
+      .reverse()
+      .find((i) => predicate(events[i]));
+    if (idx === undefined) return false;
+    const newEvents = [...events];
+    newEvents[idx] = updater(events[idx]);
+    eventsRef.current = newEvents;
+    publish();
+    return true;
+  };
+
+  return {
+    eventsRef,
+    finalizeStreamingContent,
+    finalizeStreamingReasoning,
+    clearStreamingPlaceholders,
+    pushThinkingPlaceholder,
+    pushEvent,
+    updateMatchingEvent,
+    appendCancellation,
+  };
+}
+
 export function useAssistantChat({
   initialMessages = [],
   chatId: initialChatId,
@@ -87,7 +246,7 @@ export function useAssistantChat({
     updateChatTitle,
   } = useChatHistoryContext();
 
-  const [messages, setMessages] = useState<Message[]>(initialMessages);
+  const [messages, setRawMessages] = useState<Message[]>(initialMessages);
   const [isResponseLoading, setIsResponseLoading] = useState(false);
   // An object, not a bare model id: an ask-inputs response submits without a
   // model, and a null id has to still open the popup — the id only decides
@@ -99,12 +258,79 @@ export function useAssistantChat({
   const [chatId, setChatId] = useState<string | undefined>(initialChatId);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- the hook stays mounted while its host switches between existing threads
     setChatId(initialChatId);
   }, [initialChatId]);
 
+  const mountedRef = useRef(true);
+  useLayoutEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  const viewedChatId = initialChatId ?? chatId;
+  const pendingTurn = useSyncExternalStore(
+    subscribeAssistantTurns,
+    () => hasAssistantTurn(viewedChatId),
+    () => false,
+  );
   const abortControllerRef = useRef<AbortController | null>(null);
+  const registeredTurnRef = useRef<AssistantTurnHandle | null>(null);
   const requestGenerationRef = useRef(0);
+
+  // The turn this hook renders. While it streams, every change to its
+  // assistant message is mirrored into `messages`; whichever hook is looking
+  // at the thread — the one that sent the request, or one that came back to
+  // it — shows the same live answer. Once the turn has finished the record
+  // stays attached until the thread changes, so a history read that started
+  // before the answer was stored cannot erase it from the screen.
+  const attachedTurnRef = useRef<LiveAssistantTurn | null>(null);
+  const unsubscribeTurnRef = useRef<(() => void) | null>(null);
+  const attachToTurn = useCallback((live: LiveAssistantTurn | null) => {
+    if (live === attachedTurnRef.current) return;
+    unsubscribeTurnRef.current?.();
+    unsubscribeTurnRef.current = null;
+    attachedTurnRef.current = live;
+    if (!live) return;
+    const mirror = () => {
+      setRawMessages((prev) => withLiveTurn(prev, live));
+      setIsLoadingCitations(live.loadingCitations);
+      if (live.finished) {
+        unsubscribeTurnRef.current?.();
+        unsubscribeTurnRef.current = null;
+      }
+    };
+    unsubscribeTurnRef.current = live.subscribe(mirror);
+    mirror();
+  }, []);
+  // Hosts replace the transcript when a thread's history arrives. The turn
+  // in flight is laid over whatever they set, so the answer streaming into
+  // this thread is never displaced by a snapshot taken before it was stored.
+  const setMessages: Dispatch<SetStateAction<Message[]>> = useCallback(
+    (action) => {
+      setRawMessages((prev) =>
+        withLiveTurn(
+          typeof action === "function" ? action(prev) : action,
+          attachedTurnRef.current,
+        ),
+      );
+    },
+    [],
+  );
+  useEffect(() => {
+    const sync = () => {
+      const live = getAssistantTurn(viewedChatId);
+      if (live) attachToTurn(live);
+    };
+    sync();
+    const unsubscribe = subscribeAssistantTurns((id) => {
+      if (id === viewedChatId) sync();
+    });
+    return () => {
+      unsubscribe();
+      attachToTurn(null);
+    };
+  }, [viewedChatId, attachToTurn]);
 
   // Invalidate the previous request before a new thread can receive updates.
   //
@@ -125,176 +351,43 @@ export function useAssistantChat({
     adoptedThreadKeyRef.current = null;
     // A new chat receiving its persisted id is still the same live turn.
     if (isAdoptedThread) return;
+    // Detach — never abort. Aborting closes the socket, which the backend
+    // treats as Stop: it persists a truncated "Cancelled by user." answer in
+    // the thread the user just left. Retiring the generation is enough to
+    // keep the old turn from writing into the new thread; the request itself
+    // runs to completion and the server stores the whole answer.
     requestGenerationRef.current += 1;
-    abortControllerRef.current?.abort();
     abortControllerRef.current = null;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset request status when the host selects another thread
+    registeredTurnRef.current = null;
+    attachToTurn(null);
     setIsResponseLoading(false);
     setIsLoadingCitations(false);
-  }, [threadKey]);
-
-  const eventsRef = useRef<AssistantEvent[]>([]);
-
-  const updateLatestAssistantMessage = (
-    updater: (message: Message) => Message,
-  ) => {
-    const generation = requestGenerationRef.current;
-    setMessages((prev) => {
-      if (requestGenerationRef.current !== generation) return prev;
-      let assistantIndex = prev.length - 1;
-      while (assistantIndex >= 0 && prev[assistantIndex].role !== "assistant")
-        assistantIndex -= 1;
-      if (assistantIndex < 0) return prev;
-      const updated = [...prev];
-      updated[assistantIndex] = updater(updated[assistantIndex]);
-      return updated;
-    });
-  };
+  }, [threadKey, attachToTurn]);
 
   /**
-   * Finalize any in-flight streaming content event so the next
-   * content_delta starts a fresh block. Called
-   * before any non-content event is appended, so interleaved content /
-   * reasoning / tool events stay in chronological order — without the
-   * later content block inheriting the earlier block's accumulated text.
+   * Stop listening to the turn in flight without cancelling it. For leaving a
+   * thread (switching chats, starting a new one): the request keeps running,
+   * the turn record keeps collecting the answer for whoever views the thread
+   * next, and the server persists the complete answer. Only `cancel` — the
+   * Stop control — aborts the request.
    */
-  const finalizeStreamingContent = () => {
-    const events = eventsRef.current;
-    const last = events[events.length - 1];
-    if (last?.type === "content" && last.isStreaming) {
-      eventsRef.current = [
-        ...events.slice(0, -1),
-        { type: "content", text: last.text },
-      ];
-      const snapshot = [...eventsRef.current];
-      updateLatestAssistantMessage((message) => ({
-        ...message,
-        events: snapshot,
-      }));
-    }
-  };
-
-  // If the model transitions from reasoning into content/tool without a
-  // reasoning_block_end (or the events arrive out of order), the prior
-  // reasoning event would otherwise stay flagged isStreaming forever.
-  const finalizeStreamingReasoning = () => {
-    const events = eventsRef.current;
-    const last = events[events.length - 1];
-    if (last?.type !== "reasoning" || !last.isStreaming) return;
-    eventsRef.current = [
-      ...events.slice(0, -1),
-      { type: "reasoning", text: last.text },
-    ];
-    const snapshot = [...eventsRef.current];
-    updateLatestAssistantMessage((message) => ({
-      ...message,
-      events: snapshot,
-    }));
-  };
-
-  // Transient placeholder events (tool_call_start, thinking) fill the
-  // latency gap between real SSE events so the wrapper doesn't look stuck.
-  // Anytime a real event arrives, drop any streaming placeholder first.
-  const isStreamingPlaceholder = (e: AssistantEvent) =>
-    (e.type === "tool_call_start" || e.type === "thinking") && !!e.isStreaming;
-
-  const cancelStreamingEvents = (events: AssistantEvent[]) =>
-    events
-      .filter((event) => !isStreamingPlaceholder(event))
-      .map((event) => {
-        if (!("isStreaming" in event) || !event.isStreaming) return event;
-        const rest = { ...event };
-        delete (rest as { isStreaming?: boolean }).isStreaming;
-        return rest as AssistantEvent;
-      });
-
-  const appendCancellationEvent = (events: AssistantEvent[]) => {
-    const cancelledEvents = cancelStreamingEvents(events);
-    return [
-      ...cancelledEvents,
-      { type: "content" as const, text: "Cancelled by user." },
-    ];
-  };
-
-  const cancel = () => {
-    const controller = abortControllerRef.current;
-    if (!controller) return;
+  const detach = () => {
     requestGenerationRef.current += 1;
-    controller.abort();
     abortControllerRef.current = null;
-    const snapshot = appendCancellationEvent(eventsRef.current);
-    eventsRef.current = snapshot;
-    // Queue cancellation in this thread synchronously, before its host clears
-    // or replaces messages. The aborted request can no longer write afterward.
-    updateLatestAssistantMessage((message) => ({
-      ...message,
-      events: snapshot,
-    }));
+    registeredTurnRef.current = null;
+    attachToTurn(null);
     setIsResponseLoading(false);
     setIsLoadingCitations(false);
   };
 
-  const clearStreamingPlaceholders = () => {
-    const before = eventsRef.current;
-    const after = before.filter((e) => !isStreamingPlaceholder(e));
-    if (after.length === before.length) return;
-    eventsRef.current = after;
-    const snapshot = [...after];
-    updateLatestAssistantMessage((message) => ({
-      ...message,
-      events: snapshot,
-    }));
-  };
-
-  const pushThinkingPlaceholder = () => {
-    const events = eventsRef.current;
-    const last = events[events.length - 1];
-    // Don't stack placeholders back-to-back; one "Thinking…" line is plenty.
-    if (last && isStreamingPlaceholder(last)) return;
-    eventsRef.current = [
-      ...events,
-      { type: "thinking" as const, isStreaming: true },
-    ];
-    const snapshot = [...eventsRef.current];
-    updateLatestAssistantMessage((message) => ({
-      ...message,
-      events: snapshot,
-    }));
-  };
-
-  const pushEvent = (event: AssistantEvent) => {
-    finalizeStreamingContent();
-    finalizeStreamingReasoning();
-    // A real event, or a more specific placeholder such as
-    // tool_call_start, should replace any generic "Thinking..." line.
-    const next = eventsRef.current.filter((e) => !isStreamingPlaceholder(e));
-    eventsRef.current = [...next, event];
-    const snapshot = [...eventsRef.current];
-    updateLatestAssistantMessage((message) => ({
-      ...message,
-      events: snapshot,
-    }));
-  };
-
-  const updateMatchingEvent = (
-    predicate: (e: AssistantEvent) => boolean,
-    updater: (e: AssistantEvent) => AssistantEvent,
-  ) => {
-    const events = eventsRef.current;
-    const idx = [...events]
-      .map((_, i) => i)
-      .reverse()
-      .find((i) => predicate(events[i]));
-    if (idx === undefined) return false;
-    const newEvents = [...events];
-    newEvents[idx] = updater(events[idx]);
-    eventsRef.current = newEvents;
-    const snapshot = [...newEvents];
-    updateLatestAssistantMessage((message) => ({
-      ...message,
-      events: snapshot,
-    }));
-    return true;
+  /** Stop: this hook's own request, or the detached one streaming into the thread it views. */
+  const cancel = () => {
+    const own = registeredTurnRef.current;
+    if (own) {
+      own.cancel();
+      return;
+    }
+    cancelAssistantTurn(viewedChatId);
   };
 
   const handleChat = async (
@@ -307,7 +400,7 @@ export function useAssistantChat({
       >;
     },
   ): Promise<string | null> => {
-    if (!message.content.trim()) return null;
+    if (!message.content.trim() || hasAssistantTurn(chatId)) return null;
 
     setIsResponseLoading(true);
 
@@ -351,33 +444,61 @@ export function useAssistantChat({
         })()
       : apiMessagesForTurn;
 
-    setMessages(
+    // An ask-inputs answer continues the assistant message that asked;
+    // anything else starts a fresh one.
+    const continuedAssistant = optimisticResponseEvent
+      ? ([...displayMessages]
+          .reverse()
+          .find((item) => item.role === "assistant") ?? null)
+      : null;
+    const assistantPlaceholder: Message = continuedAssistant ?? {
+      role: "assistant",
+      content: "",
+      citations: [],
+      events: [],
+    };
+    setRawMessages(
       optimisticResponseEvent
         ? displayMessages
-        : [
-            ...displayMessages,
-            {
-              role: "assistant",
-              content: "",
-              citations: [],
-              events: [],
-            },
-          ],
+        : [...displayMessages, assistantPlaceholder],
     );
 
     let streamedChatId: string | null = null;
-
-    eventsRef.current = optimisticResponseEvent
-      ? ([...displayMessages]
-          .reverse()
-          .find((item) => item.role === "assistant")?.events ?? [])
-      : [];
 
     const generation = ++requestGenerationRef.current;
     abortControllerRef.current?.abort();
     const controller = new AbortController();
     abortControllerRef.current = controller;
-    const isCurrentRequest = () => requestGenerationRef.current === generation;
+    const isCurrentRequest = () =>
+      mountedRef.current && requestGenerationRef.current === generation;
+    // From here the turn record owns the assistant message; this hook, like
+    // any hook that comes back to the thread, renders it by attaching.
+    const turn = beginAssistantTurn(chatId, {
+      userMessage: optimisticResponseEvent ? null : message,
+      assistant: assistantPlaceholder,
+      cancel: () => {
+        controller.abort();
+        sink.appendCancellation();
+        turn.finish();
+        if (isCurrentRequest()) {
+          setIsResponseLoading(false);
+          setIsLoadingCitations(false);
+        }
+      },
+    });
+    const sink = createTurnEventSink(turn, assistantPlaceholder.events ?? []);
+    const {
+      eventsRef,
+      finalizeStreamingContent,
+      finalizeStreamingReasoning,
+      clearStreamingPlaceholders,
+      pushThinkingPlaceholder,
+      pushEvent,
+      updateMatchingEvent,
+    } = sink;
+    const updateLatestAssistantMessage = turn.update;
+    registeredTurnRef.current = turn;
+    attachToTurn(turn.turn);
 
     try {
       const apiMessages = apiMessagesForTurn.map((currentMessage) => ({
@@ -434,10 +555,6 @@ export function useAssistantChat({
             signal: controller.signal,
           }));
 
-      if (!isCurrentRequest()) {
-        await response.body?.cancel().catch(() => {});
-        return null;
-      }
       if (!response.ok) {
         await response.body?.cancel().catch(() => {});
         throw new Error(`Chat request failed with status ${response.status}`);
@@ -445,14 +562,20 @@ export function useAssistantChat({
 
       // One shared reader (lib/sse.ts) owns the wire format: CRLF, the
       // decoder flush for a body that closes without a trailing newline, and
-      // [DONE]. Leaving this loop cancels the underlying reader.
+      // [DONE]. Every frame is applied to the turn record whether or not this
+      // hook still renders the thread: the answer belongs to the thread, and
+      // whoever views it next attaches to the record. Only the hook's own
+      // state and navigation are gated on `isCurrentRequest()`.
+      //
+      // Leaving this loop early cancels the underlying reader; the backend
+      // reads the closed socket as a user cancellation (`res.on("close")` in
+      // the streaming route) and persists whatever text had arrived,
+      // labelled "Cancelled by user." So a detached turn keeps reading to
+      // the end. Stop is the one exit that still aborts: readSseFrames
+      // throws on its signal, and the socket is already closing.
       for await (const frame of readSseFrames(response, {
         signal: controller.signal,
       })) {
-        // A newer turn — or another thread — owns eventsRef and the message
-        // list now, so this stream must stop writing to them.
-        if (!isCurrentRequest()) return null;
-
         const data = frame as Record<string, unknown>;
 
         try {
@@ -461,18 +584,18 @@ export function useAssistantChat({
               const isNewChatId =
                 streamed !== chatId && streamed !== streamedChatId;
               streamedChatId = streamed;
+              turn.identify(
+                streamed,
+                typeof data.assistantMessageId === "string"
+                  ? data.assistantMessageId
+                  : undefined,
+              );
+              if (!isCurrentRequest()) continue;
               setChatId(streamed);
               setCurrentChatId(streamed);
               if (isNewChatId && onChatCreated) {
                 adoptedThreadKeyRef.current = `${projectId ?? ""}:${streamed}`;
                 onChatCreated(streamed);
-              }
-              const assistantMessageId = data.assistantMessageId;
-              if (typeof assistantMessageId === "string") {
-                updateLatestAssistantMessage((message) => ({
-                  ...message,
-                  id: assistantMessageId,
-                }));
               }
               continue;
             }
@@ -487,7 +610,7 @@ export function useAssistantChat({
             }
 
             if (data.type === "content_done") {
-              setIsLoadingCitations(true);
+              turn.setLoadingCitations(true);
               continue;
             }
 
@@ -500,7 +623,7 @@ export function useAssistantChat({
               // A rejected key cannot be fixed by retrying, so raise it as a
               // signal the surface can turn into "go fix your key" rather than
               // leaving it as one more line of failed-response text.
-              if (data.code === "invalid_api_key") {
+              if (data.code === "invalid_api_key" && isCurrentRequest()) {
                 setRejectedApiKey({ model: model ?? null });
               }
               clearStreamingPlaceholders();
@@ -523,8 +646,8 @@ export function useAssistantChat({
                 events: snapshot,
                 error: message,
               }));
-              setIsResponseLoading(false);
-              setIsLoadingCitations(false);
+              turn.setLoadingCitations(false);
+              if (isCurrentRequest()) setIsResponseLoading(false);
               continue;
             }
 
@@ -1373,9 +1496,9 @@ export function useAssistantChat({
         }
       }
 
+      finalizeStreamingReasoning();
       if (!isCurrentRequest()) return null;
 
-      finalizeStreamingReasoning();
       setIsResponseLoading(false);
       setIsLoadingCitations(false);
 
@@ -1401,16 +1524,13 @@ export function useAssistantChat({
 
       return streamedChatId || null;
     } catch (error: unknown) {
-      if (!isCurrentRequest()) return null;
+      // The record learns of the failure even when this hook no longer
+      // renders the thread: a reader attached to the turn must see the
+      // error, not a spinner.
       finalizeStreamingContent();
       if (error instanceof Error && error.name === "AbortError") {
         finalizeStreamingReasoning();
-        const snapshot = appendCancellationEvent(eventsRef.current);
-        eventsRef.current = snapshot;
-        updateLatestAssistantMessage((message) => ({
-          ...message,
-          events: snapshot,
-        }));
+        sink.appendCancellation();
       } else {
         updateLatestAssistantMessage((message) => ({
           ...message,
@@ -1418,10 +1538,13 @@ export function useAssistantChat({
         }));
       }
 
+      if (!isCurrentRequest()) return null;
       setIsResponseLoading(false);
       setIsLoadingCitations(false);
       return null;
     } finally {
+      turn.finish();
+      if (registeredTurnRef.current === turn) registeredTurnRef.current = null;
       if (abortControllerRef.current === controller) {
         abortControllerRef.current = null;
       }
@@ -1434,7 +1557,7 @@ export function useAssistantChat({
   ): Promise<string | null> => {
     if (!message.content.trim()) return null;
 
-    setMessages([message]);
+    setRawMessages([message]);
     setNewChatMessages([message]);
 
     const newChatId = await saveChat(projectId);
@@ -1455,18 +1578,19 @@ export function useAssistantChat({
      */
     rejectedApiKey,
     dismissInvalidApiKey: () => setRejectedApiKey(null),
-    isResponseLoading,
+    isResponseLoading: isResponseLoading || pendingTurn,
     setIsResponseLoading,
     isLoadingCitations,
     handleChat,
     handleNewChat,
     setMessages,
     cancel,
+    detach,
     resetChat: () => {
-      cancel();
+      detach();
       setChatId(undefined);
       setCurrentChatId(null);
-      setMessages([]);
+      setRawMessages([]);
     },
     chatId,
   };

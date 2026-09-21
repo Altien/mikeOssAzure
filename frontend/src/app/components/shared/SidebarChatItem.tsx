@@ -1,7 +1,15 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { MoreHorizontal, Pencil, Trash2, Check, X, Users } from "lucide-react";
+import {
+    MoreHorizontal,
+    Pencil,
+    Trash2,
+    Check,
+    X,
+    Users,
+    Loader2,
+} from "lucide-react";
 import {
     DropdownMenu,
     DropdownMenuTrigger,
@@ -30,9 +38,16 @@ interface Props {
     isActive: boolean;
     onSelect: () => void;
     projectName?: string;
+    responseStatus?: "loading" | "complete";
 }
 
-export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props) {
+export function SidebarChatItem({
+    chat,
+    isActive,
+    onSelect,
+    projectName,
+    responseStatus,
+}: Props) {
     const { renameChat, deleteChat } = useChatHistoryContext();
     const [isRenaming, setIsRenaming] = useState(false);
     const [shareOpen, setShareOpen] = useState(false);
@@ -61,6 +76,11 @@ export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props
     const rowLabel = [
         projectName ? `${projectName}: ${chatTitle}` : chatTitle,
         chat.is_owner === false ? "(Shared)" : null,
+        responseStatus === "loading"
+            ? "(Response loading)"
+            : responseStatus === "complete"
+              ? "(Response complete)"
+              : null,
     ]
         .filter(Boolean)
         .join(" ");
@@ -130,7 +150,22 @@ export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props
                 </div>
             ) : (
                 <>
-                    <ChatSkeuoIcon className="ml-2.5 h-3.5 w-3.5 shrink-0" />
+                    {responseStatus === "loading" ? (
+                        <Loader2
+                            role="status"
+                            aria-label={`${chatTitle} response loading`}
+                            className="ml-2.5 h-3.5 w-3.5 shrink-0 animate-spin text-blue-600 motion-reduce:animate-none"
+                        />
+                    ) : (
+                        <ChatSkeuoIcon
+                            tone={
+                                responseStatus === "complete"
+                                    ? "green"
+                                    : "blue"
+                            }
+                            className="ml-2.5 h-3.5 w-3.5 shrink-0"
+                        />
+                    )}
                     <button
                         type="button"
                         onClick={onSelect}

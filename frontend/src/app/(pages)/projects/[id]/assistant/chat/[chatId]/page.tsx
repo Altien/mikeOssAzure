@@ -23,7 +23,6 @@ import {
 import {
     deleteChat,
     deleteDocument,
-    getChat,
     getDocument,
     getProject,
     listProjectChats,
@@ -36,6 +35,7 @@ import {
     moveSubfolderToFolder,
     resolveProjectFolderPath,
 } from "@/app/lib/mikeApi";
+import { loadAssistantChat } from "@/app/lib/assistantTurns";
 import { useAssistantChat } from "@/app/hooks/useAssistantChat";
 import { useAssistantMessageLayout } from "@/app/hooks/useAssistantMessageLayout";
 import { useProjectPicker } from "@/app/hooks/useProjectPicker";
@@ -439,6 +439,7 @@ export default function ProjectAssistantChatPage() {
         handleChat,
         setMessages,
         cancel,
+        detach,
         resetChat,
     } = useAssistantChat({
         initialMessages,
@@ -669,7 +670,7 @@ export default function ProjectAssistantChatPage() {
             };
         }
 
-        getChat(activeChatId)
+        loadAssistantChat(activeChatId)
             .then(({ chat, messages: loaded, skillBinding }) => {
                 if (cancelled) return;
                 setChatTitle(chat.title);
@@ -736,11 +737,11 @@ export default function ProjectAssistantChatPage() {
         return scrollLatestUserToTop("auto", () => {
             hasInitialScrolled.current = true;
         });
-    }, [chatLoaded, messages.length, scrollLatestUserToTop]);
+    }, [activeChatId, chatLoaded, messages.length, scrollLatestUserToTop]);
 
     useEffect(() => {
-        if (isResponseLoading) return scrollLatestUserToTop();
-    }, [isResponseLoading, scrollLatestUserToTop]);
+        if (chatLoaded && isResponseLoading) return scrollLatestUserToTop();
+    }, [chatLoaded, isResponseLoading, scrollLatestUserToTop]);
 
     // â”€â”€ Tabs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     function openTab(
@@ -895,7 +896,10 @@ export default function ProjectAssistantChatPage() {
     // â”€â”€ Chat actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     function navigateToChat(nextChatId: string) {
         if (nextChatId === activeChatId) return;
-        cancel();
+        // Leaving a thread is not Stop: detach so the answer still finishes
+        // and is persisted server-side, instead of being cut to
+        // "Cancelled by user." in the chat the user just left.
+        detach();
         setActiveChatId(nextChatId);
         window.history.pushState(
             null,
@@ -2079,6 +2083,7 @@ export default function ProjectAssistantChatPage() {
                                 messages={messages}
                                 chatKey={activeChatId}
                                 canSend={canSendChat}
+                                chatLoading={!chatLoaded}
                                 onSubmit={(response, content, files) => {
                                     void handleSubmit(
                                         { role: "user", content, files },
@@ -2097,6 +2102,7 @@ export default function ProjectAssistantChatPage() {
                                     chatModel={chatModel}
                                     chatReasoningLevel={chatReasoningLevel}
                                     canSend={canSendChat}
+                                    chatLoading={!chatLoaded}
                                     enableGlobalFileDrop={false}
                                     dropUploadsToProject={false}
                                     projectId={projectId}

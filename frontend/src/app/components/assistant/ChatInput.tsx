@@ -4,10 +4,12 @@ import {
     useState,
     useCallback,
     useEffect,
+    useLayoutEffect,
     useRef,
     forwardRef,
     useImperativeHandle,
     useMemo,
+    type ForwardedRef,
 } from "react";
 import {
     ArrowRight,
@@ -100,6 +102,14 @@ interface Props {
      * loading state.
      */
     canSend?: boolean | null;
+    /**
+     * Whether this chat's history is still on its way. Kept apart from
+     * `canSend` on purpose: both close the composer, but only one of them is
+     * about permissions, and saying the wrong one is a lie to the reader.
+     * While an answer is still streaming into the thread `isLoading` is set
+     * too, and the composer says so.
+     */
+    chatLoading?: boolean;
     hideAddDocButton?: boolean;
     hideWorkflowButton?: boolean;
     projectName?: string;
@@ -116,12 +126,38 @@ interface Props {
     chatKey?: string | null;
 }
 
-export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
+/**
+ * What the closed composer tells the reader.
+ *
+ * Order matters. A reader without edit access is told about the grant even
+ * while the thread loads, because that is the reason that will still be true
+ * afterwards. Otherwise a load in progress explains itself — and when a
+ * response is running (a turn started before the reader left keeps
+ * `isLoading` set when they come back) it says which one, instead of
+ * inventing a permission problem.
+ */
+function placeholderFor({
+    canSend,
+    chatLoading,
+    isLoading,
+}: {
+    canSend: boolean | null;
+    chatLoading: boolean;
+    isLoading: boolean;
+}): string {
+    if (canSend === null) return "Loading…";
+    if (!canSend) return "Viewing only — sending needs edit access";
+    if (!chatLoading) return "How can I help?";
+    return isLoading ? "A response is still arriving…" : "Loading this chat…";
+}
+
+function ChatInputForChatImpl(
     {
         onSubmit,
         onCancel,
         isLoading,
         canSend = true,
+        chatLoading = false,
         hideAddDocButton,
         hideWorkflowButton,
         projectName,
@@ -135,8 +171,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         chatReasoningLevel,
         chatKey,
     }: Props,
-    ref,
+    ref: ForwardedRef<ChatInputHandle>,
 ) {
+    // Sending needs both a grant and a loaded thread; the placeholder below
+    // names whichever one is missing.
+    const composerOpen = canSend === true && !chatLoading;
     const [value, setValue] = useState("");
     const [attachedDocs, setAttachedDocs] = useState<Document[]>([]);
     const [selectedWorkflow, setSelectedWorkflow] = useState<{
@@ -214,6 +253,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
     const dragDepthRef = useRef(0);
     const settingsSaveRef = useRef<Promise<boolean>>(Promise.resolve(true));
+    // `ChatInput` keys this component by chat. Mark this generation inactive
+    // during the keyed unmount so upload callbacks from the previous thread
+    // cannot mutate its replacement or call outward with stale documents.
+    const uploadGenerationActiveRef = useRef(true);
+    useLayoutEffect(() => {
+        uploadGenerationActiveRef.current = true;
+        return () => {
+            uploadGenerationActiveRef.current = false;
+        };
+    }, []);
 
     const handleModelChange = useCallback(
         (nextModel: string) => {
@@ -314,10 +363,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
 
     const handleDroppedFiles = useCallback(
         async (files: File[]) => {
-            if (!canSend) {
-                setUploadWarning(
-                    "Only someone with edit access can add documents.",
-                );
+            if (!composerOpen) {
+                if (canSend === false) {
+                    setUploadWarning(
+                        "Only someone with edit access can add documents.",
+                    );
+                }
                 return;
             }
             const { supported, unsupported } =
@@ -336,6 +387,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                 })),
             );
             const addCompletedDocument = (document: Document) => {
+                if (!uploadGenerationActiveRef.current) return;
                 addAttachedDocuments([document]);
                 setDroppedDocuments((prev) => {
                     const existing = new Set(
@@ -348,6 +400,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                 });
             };
             const handleProgress = (progress: UploadProgress<Document>) => {
+                if (!uploadGenerationActiveRef.current) return;
                 if (
                     progress.status === "completed" ||
                     progress.status === "error"
@@ -371,6 +424,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                     : await uploadStandaloneDocuments(uploadInputs, {
                           onProgress: handleProgress,
                       });
+                if (!uploadGenerationActiveRef.current) return;
                 const uploaded = outcomes.flatMap((outcome) =>
                     outcome.status === "completed" && outcome.result
                         ? [outcome.result]
@@ -384,6 +438,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                     setUploadWarning(failedUploadMessage(outcomes));
                 }
             } catch (error) {
+                if (!uploadGenerationActiveRef.current) return;
                 setUploadWarning(
                     error instanceof UploadBatchError
                         ? failedUploadMessage(error.outcomes)
@@ -393,12 +448,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                           ),
                 );
             } finally {
-                setUploadingFiles([]);
+                if (uploadGenerationActiveRef.current) setUploadingFiles([]);
             }
         },
         [
             addAttachedDocuments,
             canSend,
+            composerOpen,
             dropUploadsToProject,
             onDocumentsUploaded,
             projectId,
@@ -436,7 +492,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     }));
 
     useEffect(() => {
-        if (!enableGlobalFileDrop) return;
+        if (!enableGlobalFileDrop || !composerOpen) return;
         const hasFiles = (dataTransfer: DataTransfer | null) =>
             !!dataTransfer && Array.from(dataTransfer.types).includes("Files");
 
@@ -477,7 +533,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
             window.removeEventListener("dragleave", handleDragLeave);
             window.removeEventListener("drop", handleDrop);
         };
-    }, [enableGlobalFileDrop, handleDroppedFiles]);
+    }, [composerOpen, enableGlobalFileDrop, handleDroppedFiles]);
 
     const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         setValue(e.target.value);
@@ -548,7 +604,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
 
     const handleSubmit = () => {
         const query = value.trim();
-        if (!canSend || slashCommandsLoading) return;
+        if (!composerOpen || slashCommandsLoading) return;
         const slashWorkflow = slashQuery
             ? exactSlashWorkflow(slashWorkflows ?? [], slashQuery)
             : undefined;
@@ -723,14 +779,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                         <textarea
                             ref={textareaRef}
                             rows={1}
-                            disabled={!canSend}
-                            placeholder={
-                                canSend === null
-                                    ? "Loading…"
-                                    : canSend
-                                      ? "How can I help?"
-                                      : "Viewing only — sending needs edit access"
-                            }
+                            disabled={!composerOpen}
+                            placeholder={placeholderFor({
+                                canSend,
+                                chatLoading,
+                                isLoading,
+                            })}
                             value={value}
                             onChange={handleChange}
                             onKeyDown={handleKeyDown}
@@ -757,7 +811,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                         className="flex items-center justify-between p-2.5"
                     >
                         <div className="flex items-center gap-1">
-                            {!hideAddDocButton && canSend && (
+                            {!hideAddDocButton && composerOpen && (
                                 <AddDocButton
                                     onBrowseAll={() => {
                                         setDocSelectorInitialTab("files");
@@ -769,7 +823,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                     hideLabel={compactControls}
                                 />
                             )}
-                            {!hideWorkflowButton && canSend && (
+                            {!hideWorkflowButton && composerOpen && (
                                 <button
                                     type="button"
                                     onClick={() => {
@@ -831,10 +885,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                 )}
                                 onClick={handleActionClick}
                                 disabled={
-                                    !canSend ||
-                                    (!isLoading &&
-                                        (!value.trim() ||
-                                            slashCommandsLoading))
+                                    !isLoading &&
+                                    (!composerOpen ||
+                                        !value.trim() ||
+                                        slashCommandsLoading)
                                 }
                             >
                                 {isLoading ? (
@@ -902,5 +956,25 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                 onWarningClose={() => setUploadWarning(null)}
             />
         </>
+    );
+}
+
+const ChatInputForChat = forwardRef<ChatInputHandle, Props>(ChatInputForChatImpl);
+
+/**
+ * Chat composer whose draft and asynchronous uploads belong to one chat key.
+ * Changing the key remounts the stateful implementation; its layout cleanup
+ * invalidates callbacks before the replacement composer can be displayed.
+ */
+export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
+    props,
+    ref,
+) {
+    return (
+        <ChatInputForChat
+            key={props.chatKey ?? "new-chat"}
+            {...props}
+            ref={ref}
+        />
     );
 });

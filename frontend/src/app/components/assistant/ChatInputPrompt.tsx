@@ -37,6 +37,7 @@ export function ChatInputPrompt({
     messages,
     chatKey,
     canSend = true,
+    chatLoading = false,
     onSubmit,
     onCancel,
     children,
@@ -49,6 +50,8 @@ export function ChatInputPrompt({
      * refusal instead of prompting somebody who may turn out to be a viewer.
      */
     canSend?: boolean | null;
+    /** The thread's history is still arriving; prompt nothing until it has. */
+    chatLoading?: boolean;
     onSubmit: NonNullable<Parameters<typeof AskInputPopup>[0]["onSubmit"]>;
     onCancel: () => void;
     children: ReactNode;
@@ -64,6 +67,7 @@ export function ChatInputPrompt({
     const activeInput = pendingInput(messages);
     if (
         !canSend ||
+        chatLoading ||
         !activeInput ||
         (hiddenInputs.chatKey === chatKey &&
             hiddenInputs.keys.has(activeInput.key))

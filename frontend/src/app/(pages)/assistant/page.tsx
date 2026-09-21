@@ -15,6 +15,7 @@ export default function AssistantPage() {
         handleChat,
         handleNewChat,
         cancel,
+        detach,
         chatId,
     } = useAssistantChat();
 
@@ -39,6 +40,7 @@ export default function AssistantPage() {
             isResponseLoading={isResponseLoading}
             handleChat={handleChat}
             cancel={cancel}
+            detach={detach}
         />
     );
 }
