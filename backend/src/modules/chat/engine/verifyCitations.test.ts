@@ -118,6 +118,48 @@ describe("verifyQuoteAgainstSource", () => {
     expect(v.verified).toBe(false);
   });
 
+  it("rejects cross-page segments in reverse document order", () => {
+    const source = "Page one ending. Page two beginning.";
+    const quote = "Page two beginning[[PAGE_BREAK]]Page one ending";
+    const v = verifyQuoteAgainstSource(source, quote);
+    expect(v.verified).toBe(false);
+  });
+
+  it("uses a later occurrence when repeated text satisfies the order", () => {
+    const source = "Repeated text. Page one ending. Repeated text.";
+    const quote = "Page one ending[[PAGE_BREAK]]Repeated text";
+    const v = verifyQuoteAgainstSource(source, quote);
+    expect(v.verified).toBe(true);
+  });
+
+  it("considers normalized and exact occurrences in source order", () => {
+    const source = "PAGE ONE ENDING. Page two beginning. Page one ending.";
+    const quote = "Page one ending[[PAGE_BREAK]]Page two beginning";
+    const v = verifyQuoteAgainstSource(source, quote);
+    expect(v.verified).toBe(true);
+  });
+
+  it("backtracks to a later occurrence that satisfies the gap bound", () => {
+    const source = `Repeated text.${"x".repeat(50_000)}Repeated text. Page two beginning.`;
+    const quote = "Repeated text[[PAGE_BREAK]]Page two beginning";
+    const v = verifyQuoteAgainstSource(source, quote);
+    expect(v.verified).toBe(true);
+  });
+
+  it("rejects cross-page segments separated by an unreasonable distance", () => {
+    const source = `Page one ending.${"x".repeat(50_000)}Page two beginning.`;
+    const quote = "Page one ending[[PAGE_BREAK]]Page two beginning";
+    const v = verifyQuoteAgainstSource(source, quote);
+    expect(v.verified).toBe(false);
+  });
+
+  it("orders the next page after the full preceding ellipsis span", () => {
+    const source = "Opening text. Next page text. Closing text.";
+    const quote = "Opening text...Closing text[[PAGE_BREAK]]Next page text";
+    const v = verifyQuoteAgainstSource(source, quote);
+    expect(v.verified).toBe(false);
+  });
+
   it.each(["...", "…"])(
     "ellipsis-separated quote using %s verifies each excerpt independently",
     (ellipsis) => {
