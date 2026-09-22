@@ -42,7 +42,8 @@ function importSpecifiers(file: string): string[] {
 const isTestOnly = (rel: string) =>
     /\.test\.tsx?$/.test(rel) ||
     /(^|\/)__tests__\//.test(rel) ||
-    /^vitest\.(config|setup)\.ts$/.test(rel);
+    rel === "vitest.config.mts" ||
+    rel === "vitest.setup.ts";
 
 describe("frontend build boundaries", () => {
     const build = loadProgram("tsconfig.build.json");
