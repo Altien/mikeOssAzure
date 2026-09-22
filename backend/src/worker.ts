@@ -16,11 +16,18 @@ import "./telemetry";
 import { installProcessGuards } from "./lib/processGuards";
 installProcessGuards();
 import { startAllWorkers, stopAllWorkers } from "./workerRuntime";
+import { flushSentry, reportError } from "./lib/observability/sentry";
+import { initSentry } from "./lib/observability/sentry";
+import { getKeyVaultConfig } from "./lib/config";
 
 // The Postgres poller unrefs its timers so an inline API can shut down
 // naturally. A standalone worker must retain a live event-loop reference.
 const keepAlive = setInterval(() => {}, 60_000);
-void startAllWorkers().then(() => {
+void getKeyVaultConfig("sentry-dsn").catch(() => "").then((dsn) => {
+    if (dsn) process.env.SENTRY_DSN = dsn;
+    initSentry("worker");
+    return startAllWorkers();
+}).then(() => {
     console.log("Mike worker process running");
 }).catch((error) => {
     console.error("Worker initialization failed", error);
@@ -41,9 +48,12 @@ async function shutdown(signal: string) {
     forceExit.unref();
     try {
         await stopAllWorkers();
+        await flushSentry();
         process.exit(0);
     } catch (err) {
+        reportError(err, { tags: { component: "worker-shutdown" } });
         console.error("Error during worker shutdown", err);
+        await flushSentry();
         process.exit(1);
     }
 }

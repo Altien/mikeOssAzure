@@ -140,7 +140,10 @@ export async function startAllWorkers(): Promise<void> {
                 if (documents || cells)
                     console.warn("[stale-sweep] flipped", { documents, cells });
             })
-            .catch((err) => console.error("[stale-sweep] failed", err));
+            .catch((err) => {
+                reportError(err, { tags: { component: "stale-sweep" } });
+                console.error("[stale-sweep] failed", err);
+            });
     initialSweep = setTimeout(runSweep, 30_000);
     initialSweep.unref();
     sweepTimer = setInterval(runSweep, SWEEP_INTERVAL_MS);
@@ -150,9 +153,10 @@ export async function startAllWorkers(): Promise<void> {
     // rather than inside whichever request first trips over the expiry. The
     // lazy refresh in lib/mcp/oauth.ts stays as the last line of defense.
     const runMcpRefresh = () =>
-        void runMcpTokenRefreshSweep().catch((err) =>
-            console.error("[mcp-refresh-sweep] failed", err),
-        );
+        void runMcpTokenRefreshSweep().catch((err) => {
+            reportError(err, { tags: { component: "mcp-refresh-sweep" } });
+            console.error("[mcp-refresh-sweep] failed", err);
+        });
     mcpRefreshTimer = setInterval(runMcpRefresh, MCP_REFRESH_SWEEP_INTERVAL_MS);
     mcpRefreshTimer.unref();
     started = true;

@@ -10,6 +10,7 @@ import { readServerSession, refreshServerSession } from "../lib/serverSession.js
 import { requestOriginIsTrusted } from "../lib/origins.js";
 import { renewEntraCredential } from "../lib/auth/providers/entraRefresh.js";
 import { renewSupabaseCredential } from "../lib/auth/providers/supabaseSession.js";
+import { setCurrentUser } from "../lib/observability/sentry";
 
 // Upstream divergence (sync-log: 3a10943): upstream added app-level MFA
 // enforcement here (enforceLoginMfaIfEnabled / requireMfaIfEnrolled) built
@@ -137,6 +138,7 @@ export async function requireAuth(
   res.locals.token = token;
   res.locals.principal = result.principal;
   res.locals.authSource = cookieSession ? "cookie" : "bearer";
+  setCurrentUser(result.principal.userId);
 
   try {
     await upsertUserProfile(

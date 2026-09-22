@@ -18,10 +18,12 @@ import {
     useState,
     type ReactNode,
 } from "react";
+import { initBrowserErrorReporting } from "../lib/errorReporting";
 
 export type AuthProvider = "supabase" | "local" | "entra";
 
 export interface RuntimeConfig {
+    sentryDsn?: string;
     authProvider: AuthProvider;
     demoMode: boolean;
     // OSS-6 (decisions 4, 7): server WORKFLOW_CONTRIBUTIONS_ENABLED, served at
@@ -101,6 +103,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
             .then((next) => {
                 if (cancelled) return;
                 setConfig(next);
+                if (next.sentryDsn) initBrowserErrorReporting(next.sentryDsn);
                 writeCachedProvider(next.authProvider);
             })
             .catch((err) => {

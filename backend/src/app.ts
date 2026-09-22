@@ -44,6 +44,7 @@ import { helpRouter } from "./modules/platform/help.routes";
 import { handleUnhandledError, protectInternalErrorResponses } from "./middleware/internalErrorResponse";
 import { configuredAllowedOrigins as configuredOrigins } from "./lib/origins";
 import { envInt } from "./lib/runtimeConfig";
+import { tagCurrentRequest } from "./lib/observability/sentry";
 
 // ── Rate-limit configuration (from upstream ba6f771) ───────────────────────
 
@@ -380,6 +381,12 @@ export function buildApp(): express.Express {
   app.use("/diag", diagRouter);
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
+
+  if (process.env.SENTRY_ENABLE_TEST_ROUTE === "true") {
+    app.get("/api/observability/sentry-test", () => {
+      throw new Error("Sentry backend test error");
+    });
+  }
 
   // The Ed25519 public key this deployment signs project export manifests
   // with, or null when no key is configured. Deliberately open: whoever checks

@@ -24,6 +24,7 @@ import {
 } from "@/app/lib/assistantTurns";
 import { assistantHistoryContent } from "@/app/lib/assistantHistoryContent";
 import { readSseFrames } from "@/app/lib/sse";
+import { reportError } from "@/app/lib/errorReporting";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { isPanelDocument } from "@/app/components/shared/types";
 import type {
@@ -1532,6 +1533,11 @@ export function useAssistantChat({
         finalizeStreamingReasoning();
         sink.appendCancellation();
       } else {
+        // The stream broke for a reason other than the user stopping it:
+        // the user sees a generic message, Sentry gets the real one.
+        reportError(error, {
+          tags: { component: "assistant-chat", project: Boolean(projectId) },
+        });
         updateLatestAssistantMessage((message) => ({
           ...message,
           error: "Sorry, something went wrong.",

@@ -19,12 +19,14 @@ import { pathToFileURL } from "node:url";
 
 import { recordAudit } from "../../lib/audit";
 import { convertedPdfKey, officeFileToPdf } from "../../lib/convert";
+import { reportError } from "../../lib/observability/sentry";
 import { shouldConvertToPdf } from "../../lib/documentTypes";
 import { uploadJobWallClockMs } from "../../lib/runtimeConfig";
 import {
   copyFile,
   createFileReadStream,
   deleteFile,
+  deleteFileBestEffort,
   StorageOperationError,
   uploadFileFromPath,
   versionStorageKey,
@@ -145,6 +147,20 @@ async function buildPdfRendition(args: {
     await uploadFileFromPath(key, pdfPath, "application/pdf");
     return key;
   } catch (error) {
+    // Non-fatal for the upload (the original stays usable) but a conversion
+    // that fails is either a LibreOffice regression or a malformed file we
+    // should know about — grouped by file type so a format-wide break is one
+    // issue with a count, not noise.
+    reportError(error, {
+      level: "warning",
+      tags: {
+        component: "upload-worker",
+        stage: "conversion",
+        file_type: args.fileType,
+      },
+      extra: { document_id: args.documentId },
+      fingerprint: ["upload-conversion-failed", args.fileType],
+    });
     console.error("[upload-worker] document conversion failed", {
       documentId: args.documentId,
       fileType: args.fileType,
@@ -488,6 +504,12 @@ function startUploadProcessingWorker(options: {
       await processUploadJob(db, jobId, workerId);
       schedule(0);
     } catch (error) {
+      // Nothing above this loop: an error here means claiming or the job
+      // wrapper itself broke, and without a report the worker just polls on.
+      reportError(error, {
+        tags: { component: "upload-worker", stage: "iteration" },
+        extra: { worker_id: workerId },
+      });
       console.error("[upload-worker] iteration failed", { workerId, error });
       schedule(UPLOAD_WORKER_POLL_MS);
     }

@@ -7,6 +7,7 @@ import {
 import { resolveRequestedModel } from "../../../lib/routerModels";
 import { UserFacingError, safeErrorLog } from "../../../lib/safeError";
 import { InvalidApiKeyError } from "../../../lib/llm/apiKeyErrors";
+import { reportError } from "../../../lib/observability/sentry";
 import type { Db } from "../../../lib/supabase";
 import { buildUserMcpTools, type McpToolEvent } from "../../../lib/mcpConnectors";
 import type { SourceDocument } from "../../../lib/sourceDocuments";
@@ -769,6 +770,15 @@ export async function runLLMStream(params: {
       flushPartialTurn();
       console.error("[chat/stream] model stream failed", safeErrorLog(err));
       const safeToDisplay = err instanceof UserFacingError;
+      // A UserFacingError is a deliberate, explained refusal (missing API
+      // key, model not allowed) — the user's configuration, not our bug.
+      // Everything else mid-stream is: the response already started, so the
+      // HTTP 500 path never sees it and this is the only report.
+      if (!safeToDisplay) {
+        reportError(err, {
+          tags: { component: "chat-stream" },
+        });
+      }
       const message = safeToDisplay ? err.message : ASSISTANT_ERROR_MESSAGE;
       events.push({
         type: "error",

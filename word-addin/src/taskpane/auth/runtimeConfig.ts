@@ -15,6 +15,7 @@
 export type AuthProvider = "supabase" | "local" | "entra";
 
 export interface RuntimeConfig {
+  wordSentryDsn?: string;
   authProvider: AuthProvider;
   backendOrigin: string;
   frontendOrigin: string;
@@ -54,6 +55,7 @@ export function loadRuntimeConfig(): Promise<RuntimeConfig> {
       authProvider?: unknown;
       backendOrigin?: unknown;
       frontendOrigin?: unknown;
+      wordSentryDsn?: unknown;
       entra?: { tenantId?: unknown; clientId?: unknown; apiScope?: unknown };
     };
     const provider = asString(body.authProvider);
@@ -63,6 +65,7 @@ export function loadRuntimeConfig(): Promise<RuntimeConfig> {
       authProvider,
       backendOrigin: asString(body.backendOrigin),
       frontendOrigin: asString(body.frontendOrigin),
+      wordSentryDsn: asString(body.wordSentryDsn),
       entra: {
         tenantId: asString(body.entra?.tenantId),
         clientId: asString(body.entra?.clientId),

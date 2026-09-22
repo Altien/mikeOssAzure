@@ -12,6 +12,9 @@ import { checkSchemaVersion } from "./lib/schemaCheck";
 import { initServerSessionKeys } from "./lib/serverSession";
 import { enforceDocumentLifecycleMigration } from "./lib/dbq/lifecycleGuard";
 import { startAllWorkers, stopAllWorkers } from "./workerRuntime";
+import { flushSentry, reportError } from "./lib/observability/sentry";
+import { initSentry } from "./lib/observability/sentry";
+import { getKeyVaultConfig } from "./lib/config";
 
 const PORT = process.env.PORT ?? 3001;
 const workersMode = process.env.WORKERS_MODE === "inline" || process.env.WORKERS_MODE === "none"
@@ -63,6 +66,9 @@ async function startThread(): Promise<ThreadWorker> {
 }
 
 async function start(): Promise<void> {
+  const telemetryDsn = await getKeyVaultConfig("sentry-dsn").catch(() => "");
+  if (telemetryDsn) process.env.SENTRY_DSN = telemetryDsn;
+  initSentry("api");
   await initServerSessionKeys();
   await initDownloadSigningSecret();
   await initManifestSigningKey();

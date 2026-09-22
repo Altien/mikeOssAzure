@@ -76,5 +76,7 @@ configRouter.get("/", async (_req, res) => {
         entra: { tenantId, clientId, apiScope },
         backendOrigin,
         frontendOrigin: process.env.FRONTEND_URL || "",
+        sentryDsn: process.env.SENTRY_FRONTEND_DSN || "",
+        wordSentryDsn: process.env.SENTRY_WORD_DSN || "",
     });
 });

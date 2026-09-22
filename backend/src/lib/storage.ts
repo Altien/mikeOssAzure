@@ -8,6 +8,7 @@ import {
   ListObjectsV2Command,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl as awsGetSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { bestEffort } from "./observability/sentry";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { Readable } from "node:stream";
@@ -528,6 +529,23 @@ export async function listFiles(prefix: string): Promise<string[]> {
 
 export async function deleteFile(key: string): Promise<void> {
   await requireProvider("delete").remove(key);
+}
+
+/**
+ * Delete an object the caller can live without but must not leak (a
+ * rollback, a cancelled upload's staging blob). A failure here is not the
+ * caller's failure, so instead of `.catch(() => {})` it is reported as a
+ * warning grouped by `stage`. The key never goes on the event: keys embed
+ * the user's original filename.
+ */
+export function deleteFileBestEffort(
+  key: string,
+  stage: string,
+): Promise<void | undefined> {
+  return bestEffort(deleteFile(key), {
+    what: `storage-delete:${stage}`,
+    tags: { component: "storage", stage },
+  });
 }
 
 export async function getSignedUrl(

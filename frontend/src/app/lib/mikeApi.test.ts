@@ -473,6 +473,33 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
             requestId: "req-public-123",
             message: "Something went wrong. Please try again.",
         });
+        expect(reportApiFailure).toHaveBeenCalledWith({
+            path: "/user/profile",
+            method: "GET",
+            status: 500,
+            code: "internal_error",
+            requestId: "req-public-123",
+            // The thrown error itself travels along so a later
+            // console.error(..., error) is not reported twice.
+            error: expect.any(MikeApiError),
+        });
+    });
+
+    it("reports a 5xx without a code and never reports a 4xx", async () => {
+        fetchMock.mockResolvedValueOnce(
+            jsonResponse({ detail: { nested: true } }, { status: 500 }),
+        );
+        await expect(getUserProfile()).rejects.toMatchObject({ status: 500 });
+        expect(reportApiFailure).toHaveBeenCalledWith(
+            expect.objectContaining({ status: 500, code: null }),
+        );
+
+        reportApiFailure.mockClear();
+        fetchMock.mockResolvedValueOnce(
+            jsonResponse({ detail: "nope" }, { status: 403 }),
+        );
+        await expect(getUserProfile()).rejects.toMatchObject({ status: 403 });
+        expect(reportApiFailure).not.toHaveBeenCalled();
     });
 
     it("does not expose non-JSON server error responses", async () => {
@@ -484,6 +511,43 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
             status: 502,
             message: "Something went wrong. Please try again.",
         });
+        expect(reportApiFailure).toHaveBeenCalledWith({
+            path: "/user/profile",
+            method: "GET",
+            status: 502,
+            requestId: null,
+            error: expect.any(MikeApiError),
+        });
+    });
+
+    it("reports the real HTTP method of a failed mutation", async () => {
+        fetchMock.mockResolvedValueOnce(
+            jsonResponse({ code: "internal_error", detail: "x" }, { status: 500 }),
+        );
+        await expect(createProject("Acme")).rejects.toMatchObject({ status: 500 });
+        expect(reportApiFailure).toHaveBeenCalledWith(
+            expect.objectContaining({ method: "POST", status: 500 }),
+        );
+    });
+
+    it("reports a transport failure once with the endpoint, then rethrows it unchanged", async () => {
+        const failure = new TypeError("Failed to fetch");
+        fetchMock.mockRejectedValueOnce(failure);
+
+        await expect(createProject("Acme")).rejects.toBe(failure);
+
+        expect(reportNetworkFailure).toHaveBeenCalledOnce();
+        expect(reportNetworkFailure).toHaveBeenCalledWith(failure, {
+            method: "POST",
+            url: "/api/projects",
+        });
+        expect(reportApiFailure).not.toHaveBeenCalled();
+    });
+
+    it("does not report a non-JSON 4xx", async () => {
+        fetchMock.mockResolvedValue(new Response("nope", { status: 404 }));
+        await expect(getUserProfile()).rejects.toMatchObject({ status: 404 });
+        expect(reportApiFailure).not.toHaveBeenCalled();
     });
 
     it("synthesizes a message when the error body is empty", async () => {
@@ -861,6 +925,51 @@ describe("mapTRMessages", () => {
 // incrementally. Parsing itself is covered in
 // src/app/hooks/useAssistantChat.sse.test.ts.
 // ---------------------------------------------------------------------------
+
+describe("API transport cancellation", () => {
+    it("preserves AbortError without reporting a network failure", async () => {
+        const error = new DOMException("The operation was aborted", "AbortError");
+        fetchMock.mockRejectedValueOnce(error);
+
+        await expect(streamChat({ messages: [] })).rejects.toBe(error);
+
+        expect(reportNetworkFailure).not.toHaveBeenCalled();
+    });
+
+    it.each([new Error("User stopped the response"), "navigation", null])(
+        "preserves a custom signal cancellation reason: %s",
+        async (reason) => {
+            const controller = new AbortController();
+            fetchMock.mockImplementationOnce(async () => {
+                controller.abort(reason);
+                throw controller.signal.reason;
+            });
+
+            await expect(streamChat({
+                messages: [],
+                signal: controller.signal,
+            })).rejects.toBe(reason);
+
+            expect(reportNetworkFailure).not.toHaveBeenCalled();
+        },
+    );
+
+    it("still reports a network failure when the signal is active", async () => {
+        const controller = new AbortController();
+        const error = new TypeError("Failed to fetch");
+        fetchMock.mockRejectedValueOnce(error);
+
+        await expect(streamChat({
+            messages: [],
+            signal: controller.signal,
+        })).rejects.toBe(error);
+
+        expect(reportNetworkFailure).toHaveBeenCalledExactlyOnceWith(error, {
+            method: "POST",
+            url: "/api/chat",
+        });
+    });
+});
 
 describe("streamChat", () => {
     it("POSTs with the SSE accept header and forwards the signal outside the body", async () => {
