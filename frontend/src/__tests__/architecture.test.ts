@@ -40,7 +40,7 @@ function importSpecifiers(file: string): string[] {
 }
 
 const isTestOnly = (rel: string) =>
-    /\.test\.tsx?$/.test(rel) ||
+    /\.(test|spec)\.tsx?$/.test(rel) ||
     /(^|\/)__tests__\//.test(rel) ||
     rel === "vitest.config.mts" ||
     rel === "vitest.setup.ts";
