@@ -412,6 +412,14 @@ function args(scope: "user" | "project" = "user") {
     file: file(scope),
     current: { content: "# Existing", revision: 1 },
     transcript: "User: Keep responses concise",
+    personalisation: {
+      displayName: "Alice Chen",
+      organisation: "Example Legal",
+      jurisdiction: "Singapore",
+      practiceSetting: "Law firm",
+      professionalTitle: "Partner",
+      practiceAreas: ["Disputes", "Transactions"],
+    },
     model: "openai:gpt-test",
     apiKeys: {},
     actorUserId: "actor",
@@ -490,6 +498,20 @@ describe("scope-bound memory curator tool", () => {
         tools: [MEMORY_CURATOR_WRITE_TOOL],
       }),
     );
+    const prompt = svc.stream.mock.calls[0]![0] as StreamChatParams;
+    expect(prompt.systemPrompt).toContain(
+      "Personalisation is the sole source of truth for profile facts",
+    );
+    expect(prompt.systemPrompt).toContain("display name");
+    expect(prompt.systemPrompt).toContain("professional title");
+    expect(prompt.systemPrompt).toContain(
+      "should be changed to remove it even when no new memory is added",
+    );
+    const evidence = JSON.stringify(prompt.messages);
+    expect(evidence).toContain("saved-personalisation");
+    expect(evidence).toContain("Alice Chen");
+    expect(evidence).toContain("Example Legal");
+    expect(evidence).toContain("Disputes");
     expect(svc.write).toHaveBeenCalledWith(
       expect.objectContaining({
         file: expect.objectContaining({ id: "memory-file", scope: "user" }),
@@ -545,6 +567,11 @@ describe("scope-bound memory curator tool", () => {
       reason: "access_revoked",
     });
     expect(svc.write).not.toHaveBeenCalled();
+    const prompt = svc.stream.mock.calls[0]![0] as StreamChatParams;
+    expect(JSON.stringify(prompt.messages)).not.toContain(
+      "saved-personalisation",
+    );
+    expect(JSON.stringify(prompt.messages)).not.toContain("Alice Chen");
   });
 
   it("hands a rejected body back to the model instead of failing the job", async () => {

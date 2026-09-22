@@ -12,6 +12,8 @@
 
 ## Features and clients
 
+- [MCP connectors](connectors.md) — hosted presets, custom servers, OAuth,
+  redirect URIs, and Slack/Google deployment setup
 - [Scoped memory](memory.md) — app and project Markdown memory, permissions,
   asynchronous learning, deletion, and operations
 - [CourtListener integration](courtlistener.md) — live US case-law tools and

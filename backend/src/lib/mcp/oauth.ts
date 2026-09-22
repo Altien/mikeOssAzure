@@ -263,13 +263,48 @@ export function providerAuthorizationParams(
 }
 
 export async function oauthClientConfigFor(serverUrl: string) {
-    const prefix = mcpOAuthProviderFor(serverUrl)?.envPrefix ?? "MCP_OAUTH";
-    const vaultName = (suffix: string) => `${prefix.replaceAll("_", "-")}-${suffix}`;
+    // Unknown/custom hosts must use their own dynamic registration or stored
+    // client; never hand them an organisation-wide OAuth client credential.
+    const prefix = mcpOAuthProviderFor(serverUrl)?.envPrefix;
+    const vaultName = (suffix: string) =>
+        prefix ? `${prefix.replaceAll("_", "-")}-${suffix}` : null;
     return {
-        clientId: await resolveProviderSecret(vaultName("CLIENT-ID"), ["MCP-OAUTH-CLIENT-ID"]),
-        clientSecret: await resolveProviderSecret(vaultName("CLIENT-SECRET"), ["MCP-OAUTH-CLIENT-SECRET"]),
-        scope: await resolveProviderSecret(vaultName("SCOPE"), ["MCP-OAUTH-DEFAULT-SCOPE"]),
+        clientId: vaultName("CLIENT-ID")
+            ? await resolveProviderSecret(vaultName("CLIENT-ID")!)
+            : undefined,
+        clientSecret: vaultName("CLIENT-SECRET")
+            ? await resolveProviderSecret(vaultName("CLIENT-SECRET")!)
+            : undefined,
+        scope: vaultName("SCOPE")
+            ? await resolveProviderSecret(vaultName("SCOPE")!, ["mcp-oauth-default-scope"])
+            : await resolveProviderSecret("mcp-oauth-default-scope"),
     };
+}
+
+function hasConfiguredCredential(value: string | undefined): value is string {
+    return typeof value === "string" && value.trim().length > 0;
+}
+
+/**
+ * Returns operator setup guidance when a known provider cannot use dynamic
+ * client registration and this deployment has no OAuth client configured.
+ * Creation calls this before inserting a connector; OAuth start repeats the
+ * check in case configuration changes between those requests.
+ */
+export async function mcpConnectorSetupInstructions(
+    serverUrl: string,
+): Promise<string | null> {
+    const provider = mcpOAuthProviderFor(serverUrl);
+    if (!provider?.setupInstructions) return null;
+    const env = await oauthClientConfigFor(serverUrl);
+    if (
+        hasConfiguredCredential(env.clientId) &&
+        (!provider.requiresClientSecret ||
+            hasConfiguredCredential(env.clientSecret))
+    ) {
+        return null;
+    }
+    return provider.setupInstructions();
 }
 
 async function registerOAuthClient(
@@ -781,15 +816,20 @@ export async function startUserMcpConnectorOAuth(
     // registration, so without a pre-configured OAuth client the SDK's normal
     // "no client? register one" fallback dead-ends deep inside the flow with a
     // message no operator can act on. Fail here instead, with the provider's
-    // exact setup instructions — including the redirect URI this deployment
-    // needs, so it can be copy-pasted into the provider's console form.
-    const providerQuirks = mcpOAuthProviderFor(connector.server_url);
-    if (!env.clientId && providerQuirks?.setupInstructions) {
+    // concise setup guidance. Deployment-specific steps live in the connector
+    // guide linked by the frontend warning.
+    const setupInstructions = await mcpConnectorSetupInstructions(
+        connector.server_url,
+    );
+    if (setupInstructions) {
         const stored = await loadOAuthToken(connector.id, db);
-        if (!stored?.client_id) {
-            throw new ConnectorSetupError(
-                providerQuirks.setupInstructions(redirectUri),
-            );
+        const provider = mcpOAuthProviderFor(connector.server_url);
+        if (
+            !stored?.client_id ||
+            (provider?.requiresClientSecret &&
+                !stored.encrypted_client_secret)
+        ) {
+            throw new ConnectorSetupError(setupInstructions);
         }
     }
     // Scope is intentionally left to the SDK when not explicitly configured: it

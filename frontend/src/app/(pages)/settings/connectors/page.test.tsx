@@ -5,10 +5,12 @@ import {
     MikeApiError,
     type McpConnectorSummary,
     createMcpConnector,
+    deleteMcpConnector,
     getMcpConnector,
     listMcpConnectors,
     refreshMcpConnectorTools,
     startMcpConnectorOAuth,
+    updateMcpConnector,
 } from "@/app/lib/mikeApi";
 
 // Replace only the network functions the OAuth popup flow drives; keep the real
@@ -19,9 +21,11 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => {
         ...actual,
         listMcpConnectors: vi.fn(),
         createMcpConnector: vi.fn(),
+        deleteMcpConnector: vi.fn(),
         refreshMcpConnectorTools: vi.fn(),
         startMcpConnectorOAuth: vi.fn(),
         getMcpConnector: vi.fn(),
+        updateMcpConnector: vi.fn(),
     };
 });
 
@@ -63,7 +67,9 @@ async function reachAuthStepAndFirstPoll() {
         await flushMicrotasks();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /add/i }));
+    fireEvent.click(
+        screen.getByRole("button", { name: "Add custom connector" }),
+    );
     fireEvent.change(screen.getByPlaceholderText("Connector label"), {
         target: { value: "Drive" },
     });
@@ -94,15 +100,12 @@ describe("ConnectorsPage OAuth poll cancellation", () => {
         vi.clearAllMocks();
         vi.useFakeTimers();
         vi.mocked(listMcpConnectors).mockResolvedValue([]);
-        vi.mocked(createMcpConnector).mockResolvedValue(makeSummary());
-        // Forces the OAuth popup branch of handleCreate.
-        vi.mocked(refreshMcpConnectorTools).mockRejectedValue(
-            new MikeApiError({
-                message: "oauth required",
-                status: 409,
-                code: "oauth_required",
-            }),
-        );
+        vi.mocked(createMcpConnector).mockResolvedValue({
+            connector: makeSummary(),
+            oauthRequired: true,
+        });
+        vi.mocked(deleteMcpConnector).mockResolvedValue(undefined);
+        vi.mocked(refreshMcpConnectorTools).mockResolvedValue(makeSummary());
         vi.mocked(startMcpConnectorOAuth).mockResolvedValue({
             authorizationUrl: "https://auth.example/authorize",
             alreadyAuthorized: false,
@@ -167,13 +170,32 @@ describe("ConnectorsPage OAuth poll cancellation", () => {
         // popup's fate, closing the consent window left the Refresh button
         // stuck busy for the full five-minute timeout.
         vi.mocked(listMcpConnectors).mockResolvedValue([makeSummary()]);
+        vi.mocked(refreshMcpConnectorTools).mockRejectedValueOnce(
+            new MikeApiError({
+                message: "Authorization required.",
+                status: 409,
+                code: "oauth_required",
+            }),
+        );
         render(<ConnectorsPage />);
         await act(async () => {
             await flushMicrotasks();
         });
 
+        // The card itself opens the modal: there is no per-card Details button.
+        expect(screen.queryByRole("button", { name: "Details" })).toBeNull();
+
         await act(async () => {
-            fireEvent.click(screen.getByRole("button", { name: "Details" }));
+            fireEvent.click(screen.getByText("Drive"));
+            await flushMicrotasks();
+        });
+
+        expect(document.querySelector("[data-connector-placeholder]")).toBeTruthy();
+
+        // A custom connector opens on Details; the tool list and its Refresh
+        // live behind the Tools tab.
+        await act(async () => {
+            fireEvent.click(screen.getByRole("button", { name: "Tools" }));
             await flushMicrotasks();
         });
 
@@ -209,28 +231,156 @@ describe("ConnectorsPage OAuth poll cancellation", () => {
         expect(screen.queryByText(/cancelled/i)).toBeNull();
     });
 
-    it("prefills the form when the Slack preset is clicked", async () => {
+    it("opens a preset-free custom connector form with modal inputs", async () => {
         render(<ConnectorsPage />);
         await act(async () => {
             await flushMicrotasks();
         });
 
-        fireEvent.click(screen.getByRole("button", { name: /add/i }));
         fireEvent.click(
-            screen.getByRole("button", { name: /slack mcp\.slack\.com/i }),
+            screen.getByRole("button", { name: "Add custom connector" }),
         );
 
+        expect(screen.getByText("New Custom Connector")).toBeTruthy();
         expect(
-            (screen.getByPlaceholderText("Connector label") as HTMLInputElement)
-                .value,
-        ).toBe("Slack");
+            screen.queryByRole("button", { name: /slack mcp\.slack\.com/i }),
+        ).toBeNull();
+        const nameInput = screen.getByPlaceholderText("Connector label");
+        const urlInput = screen.getByPlaceholderText(
+            "https://mcp.example.com/mcp",
+        );
+        expect((nameInput as HTMLInputElement).value).toBe("");
+        expect((urlInput as HTMLInputElement).value).toBe("");
+        expect(nameInput.className).toContain("liquid-glass-subtle");
+        expect(urlInput.className).toContain("liquid-glass-subtle");
+    });
+
+    it("surfaces custom connector failures in the warning popup", async () => {
+        vi.mocked(createMcpConnector).mockRejectedValueOnce(
+            new MikeApiError({
+                message: "The connector URL could not be reached.",
+                status: 400,
+                code: "invalid_connector",
+            }),
+        );
+
+        render(<ConnectorsPage />);
+        await act(async () => {
+            await flushMicrotasks();
+        });
+        fireEvent.click(
+            screen.getByRole("button", { name: "Add custom connector" }),
+        );
+        fireEvent.change(screen.getByPlaceholderText("Connector label"), {
+            target: { value: "Custom" },
+        });
+        fireEvent.change(
+            screen.getByPlaceholderText("https://mcp.example.com/mcp"),
+            { target: { value: "https://custom.example/mcp" } },
+        );
+
+        await act(async () => {
+            fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+            await flushMicrotasks();
+        });
+
+        const warning = screen.getByRole("alert");
+        expect(warning.textContent).toContain("Could not add connector");
+        expect(warning.textContent).toContain(
+            "The connector URL could not be reached.",
+        );
         expect(
-            (
-                screen.getByPlaceholderText(
-                    "https://mcp.example.com/mcp",
-                ) as HTMLInputElement
-            ).value,
-        ).toBe("https://mcp.slack.com/mcp");
+            screen.queryByRole("link", {
+                name: "Open connector setup guide",
+            }),
+        ).toBeNull();
+    });
+
+    it("keeps an incomplete connector visible when client cleanup fails", async () => {
+        const connector = makeSummary({
+            name: "Custom",
+            serverUrl: "https://custom.example/mcp",
+        });
+        vi.mocked(createMcpConnector).mockResolvedValueOnce({
+            connector,
+            oauthRequired: true,
+        });
+        vi.mocked(startMcpConnectorOAuth).mockRejectedValueOnce(
+            new Error("Authorization failed"),
+        );
+        vi.mocked(deleteMcpConnector).mockRejectedValueOnce(
+            new Error("Delete failed"),
+        );
+
+        render(<ConnectorsPage />);
+        await act(async () => {
+            await flushMicrotasks();
+        });
+        fireEvent.click(
+            screen.getByRole("button", { name: "Add custom connector" }),
+        );
+        fireEvent.change(screen.getByPlaceholderText("Connector label"), {
+            target: { value: "Custom" },
+        });
+        fireEvent.change(
+            screen.getByPlaceholderText("https://mcp.example.com/mcp"),
+            { target: { value: "https://custom.example/mcp" } },
+        );
+
+        await act(async () => {
+            fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+            await flushMicrotasks();
+        });
+
+        expect(screen.getByRole("alert").textContent).toContain(
+            "could not be removed",
+        );
+        expect(
+            screen.getByRole("switch", { name: "Custom connector" }),
+        ).toBeTruthy();
+    });
+
+    it("reloads Installed when backend cleanup leaves a connector behind", async () => {
+        const connector = makeSummary({
+            name: "Retained connector",
+            serverUrl: "https://retained.example/mcp",
+        });
+        vi.mocked(listMcpConnectors)
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([connector]);
+        vi.mocked(createMcpConnector).mockRejectedValueOnce(
+            new MikeApiError({
+                message:
+                    "Connector validation failed, and the incomplete connector could not be removed. Remove it from Installed before trying again.",
+                status: 409,
+                code: "connector_cleanup_failed",
+            }),
+        );
+
+        render(<ConnectorsPage />);
+        await act(async () => {
+            await flushMicrotasks();
+        });
+        fireEvent.click(
+            screen.getByRole("button", { name: "Add custom connector" }),
+        );
+        fireEvent.change(screen.getByPlaceholderText("Connector label"), {
+            target: { value: "Retained connector" },
+        });
+        fireEvent.change(
+            screen.getByPlaceholderText("https://mcp.example.com/mcp"),
+            { target: { value: "https://retained.example/mcp" } },
+        );
+
+        await act(async () => {
+            fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+            await flushMicrotasks();
+        });
+
+        expect(listMcpConnectors).toHaveBeenCalledTimes(2);
+        expect(
+            screen.getByRole("switch", { name: "Retained connector connector" }),
+        ).toBeTruthy();
     });
 });
 
@@ -240,6 +390,16 @@ describe("ConnectorsPage operator setup guidance", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.mocked(listMcpConnectors).mockResolvedValue([]);
+        vi.mocked(startMcpConnectorOAuth).mockResolvedValue({
+            authorizationUrl: null,
+            alreadyAuthorized: true,
+            callbackOrigin: "https://api.example",
+        });
+        vi.spyOn(window, "open").mockReturnValue({
+            location: { href: "" },
+            close: vi.fn(),
+            closed: false,
+        } as unknown as Window);
         vi.spyOn(window, "open").mockReturnValue({
             location: { href: "" },
             close: popupClose,
@@ -251,25 +411,12 @@ describe("ConnectorsPage operator setup guidance", () => {
         cleanup();
     });
 
-    it("hands a just-created connector that needs deployment setup to its details modal, with the instructions", async () => {
-        // Slack has no dynamic client registration: the connector row is
-        // created, the tool refresh says "oauth required", and the OAuth
-        // start is refused with connector_setup_required carrying the
-        // operator steps and this deployment's redirect URI. The Add modal
-        // must NOT stay open on its form (a second Connect would create a
-        // duplicate); the new connector's details open instead.
-        vi.mocked(createMcpConnector).mockResolvedValue(makeSummary());
-        vi.mocked(getMcpConnector).mockResolvedValue(makeSummary());
-        vi.mocked(refreshMcpConnectorTools).mockRejectedValue(
-            new MikeApiError({
-                message: "oauth required",
-                status: 409,
-                code: "oauth_required",
-            }),
-        );
+    it("shows provider setup guidance before a Slack connector is installed", async () => {
+        // The create endpoint performs this deployment check before inserting
+        // a row, so the client never refreshes tools or opens an OAuth popup.
         const instructions =
-            "Slack's MCP server needs a pre-configured OAuth client — add http://localhost:3000/api/user/mcp-connectors/oauth/callback as a redirect URL and set SLACK_MCP_OAUTH_CLIENT_ID.";
-        vi.mocked(startMcpConnectorOAuth).mockRejectedValue(
+            "Slack MCP requires administrator setup because Slack does not support dynamic client registration.";
+        vi.mocked(createMcpConnector).mockRejectedValue(
             new MikeApiError({
                 message: instructions,
                 status: 400,
@@ -281,31 +428,338 @@ describe("ConnectorsPage operator setup guidance", () => {
         await act(async () => {
             await flushMicrotasks();
         });
-        fireEvent.click(screen.getByRole("button", { name: /add/i }));
-        fireEvent.click(
-            screen.getByRole("button", { name: /slack mcp\.slack\.com/i }),
-        );
         await act(async () => {
-            fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+            fireEvent.click(
+                screen.getByRole("button", { name: "Add Slack connector" }),
+            );
             await flushMicrotasks();
         });
 
-        const notice = screen.getByRole("status");
-        expect(notice.textContent).toContain(
-            "This server needs a one-time setup by the administrator",
+        const notice = screen.getByRole("alert");
+        expect(notice.textContent).toContain("Could not add connector");
+        expect(notice.textContent).toContain("administrator setup");
+        expect(notice.textContent).not.toContain("localhost");
+        expect(
+            screen.getByRole("link", { name: "Open connector setup guide" }),
+        ).toHaveAttribute(
+            "href",
+            "https://github.com/open-legal-products/mike/blob/main/docs/connectors.md#slack",
         );
-        expect(notice.textContent).toContain("SLACK_MCP_OAUTH_CLIENT_ID");
-        expect(notice.textContent).toContain(
-            "http://localhost:3000/api/user/mcp-connectors/oauth/callback",
-        );
-        // The Add modal is gone (no "New MCP connector" breadcrumb, no red
-        // "Failed to add connector" line); the details modal is open.
+        expect(refreshMcpConnectorTools).not.toHaveBeenCalled();
+        expect(startMcpConnectorOAuth).not.toHaveBeenCalled();
+        expect(deleteMcpConnector).not.toHaveBeenCalled();
+        // Discover never opens the custom connector modal and no connector
+        // was inserted to appear in Installed.
         expect(screen.queryByText(/failed to add connector/i)).toBeNull();
-        expect(screen.queryByText("New MCP connector")).toBeNull();
-        expect(screen.getByRole("button", { name: /delete connector/i })).toBeTruthy();
-        // The about:blank window opened ahead of the start call must not be
-        // left behind: nothing will ever navigate it on this path.
-        expect(window.open).toHaveBeenCalledTimes(1);
-        expect(popupClose).toHaveBeenCalledTimes(1);
+        expect(screen.queryByText("New Custom Connector")).toBeNull();
+        expect(
+            screen.queryByRole("button", { name: /delete connector/i }),
+        ).toBeNull();
+        expect(window.open).not.toHaveBeenCalled();
+        expect(popupClose).not.toHaveBeenCalled();
+    });
+});
+
+describe("ConnectorsPage suggested connectors", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.useRealTimers();
+        vi.mocked(listMcpConnectors).mockResolvedValue([]);
+        vi.mocked(startMcpConnectorOAuth).mockResolvedValue({
+            authorizationUrl: null,
+            alreadyAuthorized: true,
+            callbackOrigin: "https://api.example",
+        });
+        vi.spyOn(window, "open").mockReturnValue({
+            location: { href: "" },
+            close: vi.fn(),
+            closed: false,
+        } as unknown as Window);
+    });
+
+    afterEach(() => {
+        cleanup();
+    });
+
+    it("adds the Notion preset with one click", async () => {
+        const notion = makeSummary({
+            id: "notion-1",
+            name: "Notion",
+            serverUrl: "https://mcp.notion.com/mcp",
+            authType: "none",
+        });
+        vi.mocked(createMcpConnector).mockResolvedValue({
+            connector: notion,
+            oauthRequired: true,
+        });
+        vi.mocked(refreshMcpConnectorTools).mockResolvedValue(notion);
+
+        render(<ConnectorsPage />);
+        await act(async () => {
+            await flushMicrotasks();
+        });
+
+        const configuredHeading = screen.getByRole("heading", {
+            name: "Installed",
+        });
+        const suggestedHeading = screen.getByRole("heading", {
+            name: "Discover",
+        });
+        expect(
+            configuredHeading.compareDocumentPosition(suggestedHeading) &
+                Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy();
+
+        await act(async () => {
+            fireEvent.click(
+                screen.getByRole("button", {
+                    name: "Add Notion connector",
+                }),
+            );
+            await flushMicrotasks();
+        });
+
+        expect(createMcpConnector).toHaveBeenCalledWith({
+            name: "Notion",
+            serverUrl: "https://mcp.notion.com/mcp",
+            bearerToken: null,
+        });
+        expect(startMcpConnectorOAuth).toHaveBeenCalledWith("notion-1");
+        expect(refreshMcpConnectorTools).toHaveBeenCalledTimes(1);
+        expect(screen.queryByText("Connector added")).toBeNull();
+        expect(
+            screen.getByRole("button", { name: "Notion connector added" }),
+        ).toBeDisabled();
+    });
+
+    it("adds the Airtable DCR preset with one click", async () => {
+        const airtable = makeSummary({
+            id: "airtable-1",
+            name: "Airtable",
+            serverUrl: "https://mcp.airtable.com/mcp",
+            authType: "oauth",
+        });
+        vi.mocked(createMcpConnector).mockResolvedValue({
+            connector: airtable,
+            oauthRequired: true,
+        });
+        vi.mocked(refreshMcpConnectorTools).mockResolvedValue(airtable);
+
+        render(<ConnectorsPage />);
+        await act(async () => {
+            await flushMicrotasks();
+        });
+
+        await act(async () => {
+            fireEvent.click(
+                screen.getByRole("button", {
+                    name: "Add Airtable connector",
+                }),
+            );
+            await flushMicrotasks();
+        });
+
+        expect(createMcpConnector).toHaveBeenCalledWith({
+            name: "Airtable",
+            serverUrl: "https://mcp.airtable.com/mcp",
+            bearerToken: null,
+        });
+        expect(startMcpConnectorOAuth).toHaveBeenCalledWith("airtable-1");
+        expect(refreshMcpConnectorTools).toHaveBeenCalledTimes(1);
+        expect(
+            screen.getByRole("button", { name: "Airtable connector added" }),
+        ).toBeDisabled();
+    });
+
+    it("adds the Linear DCR preset with one click", async () => {
+        const linear = makeSummary({
+            id: "linear-1",
+            name: "Linear",
+            serverUrl: "https://mcp.linear.app/mcp",
+            authType: "oauth",
+        });
+        vi.mocked(createMcpConnector).mockResolvedValue({
+            connector: linear,
+            oauthRequired: true,
+        });
+        vi.mocked(refreshMcpConnectorTools).mockResolvedValue({
+            ...linear,
+            oauthConnected: true,
+        });
+        vi.mocked(startMcpConnectorOAuth).mockResolvedValue({
+            authorizationUrl: null,
+            alreadyAuthorized: true,
+            callbackOrigin: "https://api.example",
+        });
+        const popupClose = vi.fn();
+        vi.spyOn(window, "open").mockReturnValue({
+            location: { href: "" },
+            close: popupClose,
+            closed: false,
+        } as unknown as Window);
+
+        render(<ConnectorsPage />);
+        await act(async () => {
+            await flushMicrotasks();
+        });
+
+        await act(async () => {
+            fireEvent.click(
+                screen.getByRole("button", {
+                    name: "Add Linear connector",
+                }),
+            );
+            await flushMicrotasks();
+        });
+
+        expect(createMcpConnector).toHaveBeenCalledWith({
+            name: "Linear",
+            serverUrl: "https://mcp.linear.app/mcp",
+            bearerToken: null,
+        });
+        expect(startMcpConnectorOAuth).toHaveBeenCalledWith("linear-1");
+        expect(popupClose).toHaveBeenCalled();
+        expect(screen.queryByText("New Custom Connector")).toBeNull();
+        expect(
+            screen.getByRole("button", { name: "Linear connector added" }),
+        ).toBeDisabled();
+    });
+
+    it("does not offer to add a preset that is already configured", async () => {
+        vi.mocked(listMcpConnectors).mockResolvedValue([
+            makeSummary({
+                name: "My Notion",
+                serverUrl: "https://mcp.notion.com/mcp/",
+            }),
+        ]);
+
+        render(<ConnectorsPage />);
+        await act(async () => {
+            await flushMicrotasks();
+        });
+
+        expect(
+            screen.getByRole("button", { name: "Notion connector added" }),
+        ).toBeDisabled();
+        expect(createMcpConnector).not.toHaveBeenCalled();
+        expect(
+            screen.getByRole("switch", { name: "My Notion connector" }),
+        ).toBeTruthy();
+        expect(screen.queryByText("Enabled")).toBeNull();
+        expect(screen.queryByText("Disabled")).toBeNull();
+
+        fireEvent.keyDown(
+            screen.getByRole("switch", { name: "My Notion connector" }),
+            { key: " " },
+        );
+        expect(getMcpConnector).not.toHaveBeenCalled();
+    });
+});
+
+describe("ConnectorsPage details autosave", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.useFakeTimers();
+        vi.mocked(listMcpConnectors).mockResolvedValue([makeSummary()]);
+        vi.mocked(getMcpConnector).mockResolvedValue(makeSummary());
+        vi.mocked(refreshMcpConnectorTools).mockResolvedValue(makeSummary());
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        cleanup();
+    });
+
+    async function openDetailsAndRename(name: string) {
+        render(<ConnectorsPage />);
+        await act(async () => {
+            await flushMicrotasks();
+        });
+        await act(async () => {
+            fireEvent.click(screen.getByText("Drive"));
+            await flushMicrotasks();
+        });
+        fireEvent.change(screen.getByPlaceholderText("Connector label"), {
+            target: { value: name },
+        });
+    }
+
+    it("commits a settled edit without a Save button", async () => {
+        vi.mocked(updateMcpConnector).mockResolvedValue(
+            makeSummary({
+                name: "Renamed",
+                serverUrl: "https://custom.example/mcp",
+            }),
+        );
+
+        await openDetailsAndRename("Renamed");
+
+        // The footer offers Delete only; the edit commits on its own.
+        expect(screen.queryByRole("button", { name: /^Save/ })).toBeNull();
+        expect(updateMcpConnector).not.toHaveBeenCalled();
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(1500);
+            await flushMicrotasks();
+        });
+
+        expect(updateMcpConnector).toHaveBeenCalledWith(
+            "connector-1",
+            expect.objectContaining({ name: "Renamed" }),
+        );
+    });
+
+    it("preserves edits made while an autosave request is in flight", async () => {
+        let resolveSave!: (connector: McpConnectorSummary) => void;
+        vi.mocked(updateMcpConnector).mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    resolveSave = resolve;
+                }),
+        );
+
+        await openDetailsAndRename("First edit");
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(1500);
+        });
+        expect(updateMcpConnector).toHaveBeenCalledTimes(1);
+
+        fireEvent.change(screen.getByPlaceholderText("Connector label"), {
+            target: { value: "Newer edit" },
+        });
+        await act(async () => {
+            resolveSave(makeSummary({ name: "First edit" }));
+            await flushMicrotasks();
+        });
+
+        expect(
+            (screen.getByPlaceholderText("Connector label") as HTMLInputElement)
+                .value,
+        ).toBe("Newer edit");
+    });
+
+    it("waits for custom headers to become valid JSON before autosaving", async () => {
+        vi.mocked(updateMcpConnector).mockResolvedValue(
+            makeSummary({ name: "Renamed" }),
+        );
+        await openDetailsAndRename("Renamed");
+        fireEvent.change(screen.getByPlaceholderText('{"X-API-Key":"secret"}'), {
+            target: { value: '{"X-API-Key":' },
+        });
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(1500);
+        });
+        expect(updateMcpConnector).not.toHaveBeenCalled();
+        expect(screen.queryByRole("alert")).toBeNull();
+
+        fireEvent.change(screen.getByPlaceholderText('{"X-API-Key":"secret"}'), {
+            target: { value: '{"X-API-Key":"secret"}' },
+        });
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(1500);
+            await flushMicrotasks();
+        });
+        expect(updateMcpConnector).toHaveBeenCalledTimes(1);
     });
 });

@@ -12,6 +12,7 @@ import {
     getUserMcpConnector,
     listUserMcpConnectors,
     McpOAuthRequiredError,
+    mcpConnectorSetupInstructions,
     refreshUserMcpConnectorTools,
     setUserMcpToolEnabled,
     startUserMcpConnectorOAuth,
@@ -66,17 +67,82 @@ export async function createMcpConnector(
         bearerToken: string | null;
         headers: Record<string, unknown> | undefined;
     },
-): Promise<{ ok: true; connector: unknown } | { ok: false; error: unknown }> {
+): Promise<
+    | { ok: true; connector: unknown; oauthRequired: boolean }
+    | { ok: false; kind: "setup"; code: string; detail: string }
+    | {
+          ok: false;
+          kind: "cleanup";
+          connectorId: string;
+          error: unknown;
+      }
+    | { ok: false; kind: "failed"; error: unknown }
+> {
+    let createdConnectorId: string | null = null;
     try {
+        if (!params.bearerToken?.trim()) {
+            const setupInstructions = await mcpConnectorSetupInstructions(
+                params.serverUrl,
+            );
+            if (setupInstructions) {
+                throw new ConnectorSetupError(setupInstructions);
+            }
+        }
         const connector = await createUserMcpConnector(userId, params, db);
-        return { ok: true, connector };
+        createdConnectorId = connector.id;
+        try {
+            return {
+                ok: true,
+                connector: await refreshUserMcpConnectorTools(
+                    userId,
+                    connector.id,
+                    db,
+                ),
+                oauthRequired: false,
+            };
+        } catch (err) {
+            // OAuth-backed servers cannot list tools until the browser consent
+            // flow completes. That is an expected intermediate state, so keep
+            // the row for /oauth/start. Every other initial connection error
+            // means registration failed and must not leave an installed row.
+            if (err instanceof McpOAuthRequiredError) {
+                return { ok: true, connector, oauthRequired: true };
+            }
+            try {
+                await deleteUserMcpConnector(userId, connector.id, db);
+            } catch (cleanupError) {
+                console.error("[user/mcp-connectors] cleanup failed", {
+                    userId,
+                    connectorId: connector.id,
+                    registrationError: errorMessage(err),
+                    cleanupError: errorMessage(cleanupError),
+                });
+                return {
+                    ok: false,
+                    kind: "cleanup",
+                    connectorId: connector.id,
+                    error: cleanupError,
+                };
+            }
+            createdConnectorId = null;
+            throw err;
+        }
     } catch (err) {
         const detail = errorMessage(err);
         console.error("[user/mcp-connectors] create failed", {
             userId,
+            createdConnectorId,
             error: detail,
         });
-        return { ok: false, error: err };
+        if (err instanceof ConnectorSetupError) {
+            return {
+                ok: false,
+                kind: "setup",
+                code: err.code,
+                detail: err.message,
+            };
+        }
+        return { ok: false, kind: "failed", error: err };
     }
 }
 
@@ -134,9 +200,9 @@ export async function startMcpConnectorOAuth(
           ok: true;
           result: Awaited<ReturnType<typeof startUserMcpConnectorOAuth>>;
       }
-    // The setup error is static text this repo authors (with only our own
-    // redirect URI interpolated), so it is safe to hand to the browser — and
-    // it is the one failure here the user can fix. Everything else may carry
+    // The setup error is static text this repo authors, so it is safe to hand
+    // to the browser — and it is the one failure here the user can fix.
+    // Everything else may carry
     // SDK-embedded upstream bodies and stays opaque; the operator reads the
     // real message in the log.
     | { ok: false; kind: "setup"; code: string; detail: string }

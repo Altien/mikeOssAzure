@@ -991,6 +991,11 @@ export interface McpConnectorSummary {
     updatedAt: string;
 }
 
+export interface McpConnectorCreateResult {
+    connector: McpConnectorSummary;
+    oauthRequired: boolean;
+}
+
 export async function listMcpConnectors(): Promise<McpConnectorSummary[]> {
     return apiRequest<McpConnectorSummary[]>("/user/mcp-connectors");
 }
@@ -1008,8 +1013,8 @@ export async function createMcpConnector(payload: {
     serverUrl: string;
     bearerToken?: string | null;
     headers?: Record<string, string>;
-}): Promise<McpConnectorSummary> {
-    return apiRequest<McpConnectorSummary>("/user/mcp-connectors", {
+}): Promise<McpConnectorCreateResult> {
+    return apiRequest<McpConnectorCreateResult>("/user/mcp-connectors", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

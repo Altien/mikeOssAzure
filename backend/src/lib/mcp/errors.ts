@@ -235,8 +235,8 @@ export function sanitizeMcpToolErrorResult(result: unknown): UnknownRecord {
  * who on a fresh self-hosted install is usually the one clicking Connect.
  *
  * The message carried here is static text this repository authors (the
- * provider registry's `setupInstructions`) with only the deployment's
- * redirect URI interpolated — nothing a remote server or the SDK produced.
+ * provider registry's `setupInstructions`) — nothing a remote server or the
+ * SDK produced.
  * Routes may therefore allowlist this class and return `message` verbatim
  * without weakening the rule for everything else.
  */
