@@ -436,6 +436,22 @@ describe("reportNetworkFailure while the page is being left", () => {
         ).toBeNull();
     });
 
+    it("tolerates a double release and a missing window", async () => {
+        const release = trackPendingRequest();
+        release();
+        release();
+        expect(() => release()).not.toThrow();
+
+        // Server-side render: no window to listen on, nothing to install.
+        vi.stubGlobal("window", undefined);
+        vi.resetModules();
+        const serverSide = await import("./errorReporting");
+        const serverRelease = serverSide.trackPendingRequest();
+        expect(() => serverRelease()).not.toThrow();
+        vi.unstubAllGlobals();
+        vi.resetModules();
+    });
+
     it("reports again when a beforeunload prompt kept the user on the page", () => {
         vi.useFakeTimers();
         state.enabled = true;
