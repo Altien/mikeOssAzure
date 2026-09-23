@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { diagnosticEnvelope, diagnosticEvent, diagnosticRoute, privacyBoundaryIntegration } from './sentryPrivacy';
+import { diagnosticEnvelope, diagnosticErrorTags, diagnosticEvent, diagnosticRoute, privacyBoundaryIntegration } from './sentryPrivacy';
 
 const id = '8f1c2a3e-1234-4bcd-9e0f-1234567890ab';
 const eventId = '1234567890abcdef1234567890abcdef';
@@ -96,4 +96,50 @@ describe('outbound telemetry privacy boundary', () => {
     expect(transport.flush).not.toHaveBeenCalled();
     expect(() => privacyBoundaryIntegration().setup({ getTransport: () => undefined })).not.toThrow();
   });
+});
+
+
+describe('bounded error diagnostics', () => {
+  it('finds network causes inside an AggregateError without private prose', () => {
+    const cause = Object.assign(new Error('private host / client document'), { code: 'ECONNREFUSED', address: 'private host' });
+    const error = new TypeError('fetch failed', { cause: new AggregateError([cause]) });
+    const tags = diagnosticErrorTags(error);
+    expect(tags).toEqual({ failure_code: 'ECONNREFUSED' });
+    expect(diagnosticEvent({ tags }).tags).toEqual(tags);
+    expect(JSON.stringify(diagnosticEvent({ tags }))).not.toContain('private');
+  });
+
+  it('keeps storage status and known database codes, drops arbitrary codes and metadata', () => {
+    const tags = diagnosticErrorTags({ name: 'AccessDenied', $metadata: { httpStatusCode: 403, requestId: 'private' } });
+    expect(diagnosticEvent({ tags }).tags).toEqual({ failure_code: 'AccessDenied', dependency_status: 403 });
+    expect(diagnosticErrorTags({ code: '42P01', message: 'private table' })).toEqual({ failure_code: '42P01' });
+    expect(diagnosticErrorTags({ code: 'private client', name: 'private client', status: 'private' })).toEqual({});
+    expect(diagnosticEvent({ tags: { failure_code: 'private', capture_source: 'private', file_type: 'private', dependency_status: 'private', diagnostic_test: 'private' } }).tags).toEqual({});
+  });
+
+  it('handles cyclic errors, huge aggregates and throwing accessors', () => {
+    const cyclic: { cause?: unknown } = {};
+    cyclic.cause = cyclic;
+    expect(diagnosticErrorTags(cyclic)).toEqual({});
+    expect(diagnosticErrorTags({ get code() { throw new Error('private'); } })).toEqual({});
+    expect(diagnosticErrorTags({ errors: Array(1000).fill(cyclic) })).toEqual({});
+  });
+
+  it('groups distinct known causes separately while unknown text never affects grouping', () => {
+    const fingerprint = (code: string) => diagnosticEvent({ tags: { failure_code: code } }).fingerprint;
+    expect(fingerprint('ECONNREFUSED')).not.toEqual(fingerprint('ENOTFOUND'));
+    expect(fingerprint('private A')).toEqual(fingerprint('private B'));
+  });
+});
+
+
+it('retains only known software names and numeric versions, never user-agent data', () => {
+  expect(diagnosticEvent({ contexts: {
+    browser: { name: 'Chrome', version: '152.0.0', userAgent: 'private' },
+    runtime: { name: 'node', version: 'v22.23.1', private: 'private' },
+    device: { name: 'private' },
+  } }).contexts).toEqual({ browser: { name: 'Chrome', version: '152.0.0' }, runtime: { name: 'node', version: 'v22.23.1' } });
+  expect(diagnosticEvent({ contexts: { browser: { name: 'private', version: '1.0' }, runtime: { name: 'node', version: 'private' } } }).contexts).toEqual({ runtime: { name: 'node' } });
+  expect(diagnosticErrorTags(new TypeError('Failed to fetch'))).toEqual({ failure_code: 'fetch_failed' });
+  expect(diagnosticErrorTags(new TypeError('Failed to fetch private document'))).toEqual({});
 });

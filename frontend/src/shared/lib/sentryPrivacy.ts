@@ -22,6 +22,11 @@ const ENUMS: Record<string, ReadonlySet<string>> = Object.fromEntries(Object.ent
   stage: 'conversion heartbeat process-file iteration failure-hook claim tick retention delivery docx-to-pdf copy-rollback anchor-cleanup resolve-cleanup resolve restore reveal locate citation-select release document-read resolve-batch tool-result sealed-source-after-process failed-file-sealed session-expiry seal-mismatch seal-recover session-cancel user-prefix-cleanup failed-document-remove',
   http_method: 'GET POST PUT PATCH DELETE HEAD OPTIONS',
   error_code: 'internal_error network_error',
+  capture_source: 'exception console unhandled message',
+  build_mode: 'development production test',
+  failure_code: 'ECONNREFUSED ECONNRESET ETIMEDOUT ENOTFOUND EAI_AGAIN ENOENT EACCES EPERM ENOSPC EPIPE ERR_SERVER_NOT_RUNNING UND_ERR_CONNECT_TIMEOUT UND_ERR_HEADERS_TIMEOUT UND_ERR_SOCKET CERT_HAS_EXPIRED DEPTH_ZERO_SELF_SIGNED_CERT AccessDenied InvalidAccessKeyId SignatureDoesNotMatch NoSuchBucket NoSuchKey SlowDown ServiceUnavailable RequestTimeout 23505 23503 42501 42P01 42703 53300 57014 08006 PGRST202 PGRST204 configuration_invalid signing_key_invalid conversion_unavailable conversion_timeout conversion_failed fetch_failed',
+  file_type: 'pdf doc docx odt rtf ppt pptx xls xlsx csv txt html',
+  diagnostic_test: 'true',
   office_code: 'GeneralException InvalidArgument InvalidObjectPath ItemNotFound AccessDenied NotAllowed DocumentNotSaved UnsupportedOperation InvalidOperation InvalidReference',
   office_host: 'Word',
   office_platform: 'PC Mac OfficeOnline Universal iOS Android',
@@ -62,10 +67,45 @@ function tagsFor(value: unknown): RecordValue {
     else if (ID_KEYS.has(key) && typeof entry === 'string' && UUID.test(entry)) out[key] = entry;
     else if (key === 'office_version' && typeof entry === 'string' && /^\d+(?:\.\d+){1,4}$/.test(entry) && entry.length < 30) out[key] = entry;
     else if (key === 'http_route' && typeof entry === 'string') out[key] = diagnosticRoute(entry);
-    else if (key === 'http_status' && /^\d{3}$/.test(String(entry)) && Number(entry) >= 100 && Number(entry) <= 599) out[key] = Number(entry);
+    else if ((key === 'http_status' || key === 'dependency_status') && /^\d{3}$/.test(String(entry)) && Number(entry) >= 100 && Number(entry) <= 599) out[key] = Number(entry);
     else if ((key === 'network' || key === 'project') && (entry === true || entry === false || entry === 'true' || entry === 'false')) out[key] = entry;
   }
   return out;
+}
+
+/** Extract only finite diagnostic vocabulary, including wrapped/AggregateError causes.
+ * Never copy error messages, SQL details, storage keys, URLs or SDK metadata.
+ */
+export function diagnosticErrorTags(error: unknown): Record<string, string | number> {
+  const tags: Record<string, string | number> = {};
+  const pending: unknown[] = [error];
+  const seen = new Set<object>();
+  for (let n = 0; pending.length && n < 12; n++) {
+    const candidate = pending.shift();
+    if (!candidate || typeof candidate !== 'object' || seen.has(candidate)) continue;
+    seen.add(candidate);
+    try {
+      const item = candidate as RecordValue;
+      if (item.code === 'sentry_test') tags.diagnostic_test = 'true';
+      for (const code of [item.code, item.name]) {
+        if (typeof code === 'string' && ENUMS.failure_code!.has(code) && tags.failure_code === undefined) tags.failure_code = code;
+      }
+      const status = item.status ?? item.statusCode ?? record(item.$metadata).httpStatusCode;
+      if (Number.isInteger(status) && Number(status) >= 400 && Number(status) <= 599 && tags.dependency_status === undefined) tags.dependency_status = Number(status);
+      if (item.cause) pending.push(item.cause);
+      if (Array.isArray(item.errors)) pending.push(...item.errors.slice(0, 5));
+    } catch {
+      // Host objects/proxies may have throwing accessors. Reporting must not throw.
+    }
+  }
+  if (tags.failure_code === undefined) {
+    try {
+      // Compare entire fixed runtime messages; never retain any of their text.
+      const message = record(error).message;
+      if (typeof message === 'string' && ['Failed to fetch', 'fetch failed', 'Load failed', 'NetworkError when attempting to fetch resource.'].includes(message)) tags.failure_code = 'fetch_failed';
+    } catch { /* Exotic errors must not break reporting. */ }
+  }
+  return tags;
 }
 
 function framesFor(value: unknown): RecordValue[] {
@@ -99,6 +139,19 @@ export function diagnosticEvent(value: unknown): RecordValue {
   const event = record(value);
   const tags = tagsFor(event.tags);
   const out: RecordValue = { tags };
+  // Broad software versions aid reproduction without user-agent strings or devices.
+  const softwareNames: Record<string, ReadonlySet<string>> = {
+    browser: new Set(['Chrome', 'Chrome Mobile', 'Edge', 'Firefox', 'Safari', 'Mobile Safari', 'Opera']),
+    runtime: new Set(['node', 'Node.js']),
+  };
+  const contexts: RecordValue = {};
+  for (const [key, names] of Object.entries(softwareNames)) {
+    const software = record(record(event.contexts)[key]);
+    if (typeof software.name !== 'string' || !names.has(software.name)) continue;
+    const version = typeof software.version === 'string' && /^v?\d+(?:\.\d+){0,3}$/.test(software.version) && software.version.length < 30 ? software.version : undefined;
+    contexts[key] = { name: software.name, ...(version ? { version } : {}) };
+  }
+  if (Object.keys(contexts).length) out.contexts = contexts;
   if (typeof event.event_id === 'string' && HEX_ID.test(event.event_id)) out.event_id = event.event_id;
   if (typeof event.timestamp === 'number' && Number.isFinite(event.timestamp)) out.timestamp = event.timestamp;
   if (typeof event.level === 'string' && LEVELS.has(event.level)) out.level = event.level;
@@ -107,13 +160,13 @@ export function diagnosticEvent(value: unknown): RecordValue {
   for (const key of ['release', 'environment']) {
     if (typeof event[key] === 'string' && /^[\w@.+/-]{1,100}$/.test(event[key])) out[key] = event[key];
   }
-  const description = [tags.component ?? 'application', tags.stage, tags.http_method, tags.http_route, tags.http_status, tags.error_code, tags.office_code].filter(v => v !== undefined).join(' / ');
+  const description = [tags.component ?? 'application', tags.stage, tags.http_method, tags.http_route, tags.http_status, tags.error_code, tags.office_code, tags.failure_code].filter(v => v !== undefined).join(' / ');
   const values = record(event.exception).values;
   if (Array.isArray(values) && values.length) {
     out.exception = { values: values.slice(0, 10).map(raw => {
       const exception = record(raw);
       const type = typeof exception.type === 'string' && ERROR_TYPES.has(exception.type) ? exception.type : 'Error';
-      const safe: RecordValue = { type, value: `Failure in ${description}` };
+      const safe: RecordValue = { type, value: `${tags.diagnostic_test === 'true' ? 'Diagnostic test' : 'Failure'} in ${description}` };
       const frames = framesFor(record(exception.stacktrace).frames);
       if (frames.length) safe.stacktrace = { frames };
       const handled = record(exception.mechanism).handled;
@@ -121,13 +174,13 @@ export function diagnosticEvent(value: unknown): RecordValue {
       return safe;
     }) };
   } else {
-    out.message = `Failure in ${description}`;
+    out.message = `${tags.diagnostic_test === 'true' ? 'Diagnostic test' : 'Failure'} in ${description}`;
     const frames = framesFor(record(event.stacktrace).frames);
     frames.push(...consoleFrames(record(event.extra).error_stack));
     if (frames.length) out.stacktrace = { frames };
   }
   // Group by code location and controlled operation, never arbitrary text.
-  out.fingerprint = ['{{ default }}', String(tags.component ?? 'application'), String(tags.stage ?? ''), String(tags.http_route ?? ''), String(tags.http_status ?? '')];
+  out.fingerprint = ['{{ default }}', String(tags.component ?? 'application'), String(tags.stage ?? ''), String(tags.http_route ?? ''), String(tags.http_status ?? ''), String(tags.failure_code ?? ''), String(tags.file_type ?? '')];
   const extra: RecordValue = {};
   for (const [key, entry] of Object.entries(record(event.extra))) {
     if (ID_KEYS.has(key) && typeof entry === 'string' && UUID.test(entry)) extra[key] = entry;

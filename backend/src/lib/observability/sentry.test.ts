@@ -212,7 +212,7 @@ describe("initSentry", () => {
     expect(options.environment).toBe("staging");
     expect(options.beforeSend).toBe(scrubEvent);
     expect(options.initialScope).toEqual({
-      tags: { service: "mike-backend", role: "worker", install: "community" },
+      tags: { service: "mike-backend", role: "worker", install: "community", build_mode: "test" },
     });
     expect(sentryMock.httpIntegration).toHaveBeenCalledWith({
       maxIncomingRequestBodySize: "none",
@@ -800,7 +800,7 @@ describe("community install minimisation", () => {
     expect(out.server_name).toBeUndefined();
     expect(out.user).toBeUndefined();
     expect(out.breadcrumbs).toBeUndefined();
-    expect(out.tags).toEqual({ component: "http" });
+    expect(out.tags).toEqual({ component: "http", capture_source: "exception" });
     expect(out.request).toEqual({ method: "GET", url: "/projects/p-1" });
     expect(out.contexts).toEqual({
       os: { name: "macOS", version: "26.5" },

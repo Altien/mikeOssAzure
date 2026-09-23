@@ -18,7 +18,7 @@
 //      explicitly are remembered so the bridge does not double-report them.
 
 import * as Sentry from "@sentry/node";
-import { privacyBoundaryIntegration } from "./sentryPrivacy";
+import { diagnosticErrorTags, privacyBoundaryIntegration } from "./sentryPrivacy";
 
 export type SentryRole = "api" | "worker" | "worker-thread" | "job";
 
@@ -683,6 +683,16 @@ export function scrubEvent(
     }
   }
 
+  event.tags = {
+    ...event.tags,
+    ...diagnosticErrorTags(original),
+    capture_source: event.logger === "console" ? "console" : mechanismInfo?.handled === false ? "unhandled" : event.exception?.values?.length ? "exception" : "message",
+  };
+  for (const arg of args ?? []) {
+    const nested = findNested(arg, c => c instanceof Error || 'code' in c);
+    Object.assign(event.tags, diagnosticErrorTags(nested));
+  }
+
   // The title and the exception text are free text from libraries that
   // happily quote emails, tokens, and URLs (Postgres "Key (email)=(…)",
   // axios "Request failed … Authorization: Bearer …").
@@ -777,6 +787,7 @@ export function initSentry(
     debug: config.debug,
     tracesSampleRate: config.tracesSampleRate,
     sendDefaultPii: false,
+    attachStacktrace: true,
     // Bodies are stripped in beforeSend as well; not collecting them at all
     // means they never sit in memory on the event either.
     integrations: [
@@ -792,7 +803,7 @@ export function initSentry(
       Sentry.onUnhandledRejectionIntegration({ mode: "strict" }),
     ],
     initialScope: {
-      tags: { service: "mike-backend", role, install: config.install },
+      tags: { service: "mike-backend", role, install: config.install, build_mode: env.NODE_ENV },
     },
     beforeSend: scrubEvent,
   });
@@ -833,7 +844,7 @@ export function reportError(
       scope.setExtra(key, value);
     }
     return Sentry.captureException(
-      error instanceof Error ? error : new Error(describe(error)),
+      error instanceof Error ? error : new Error(describe(error), { cause: error }),
     );
   });
 }

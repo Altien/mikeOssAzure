@@ -1,3 +1,5 @@
+import { diagnosticErrorTags } from "./sentryPrivacy";
+
 /**
  * Sentry event hygiene shared by the web app (browser + Next server) and the
  * Word add-in. Framework-free on purpose: this file must not import from
@@ -648,6 +650,16 @@ export function createEventScrubber(options?: {
             } else if (!event.exception?.values?.length) {
                 event.message = label;
             }
+        }
+
+        event.tags = {
+            ...event.tags,
+            ...diagnosticErrorTags(original),
+            capture_source: event.logger === "console" ? "console" : mechanismInfo?.handled === false ? "unhandled" : event.exception?.values?.length ? "exception" : "message",
+        };
+        for (const arg of args ?? []) {
+            const nested = findNested(arg, c => c instanceof Error || 'code' in c);
+            Object.assign(event.tags, diagnosticErrorTags(nested));
         }
 
         // The title and the exception text are free text from libraries

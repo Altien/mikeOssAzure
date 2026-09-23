@@ -26,7 +26,7 @@ it.each(['community', 'official'] as const)('retains exception and console locat
       flush: async () => true,
     }),
   });
-  const error = new Error('SYNTHETIC_PRIVATE_DOCUMENT');
+  const error = new TypeError('SYNTHETIC_PRIVATE_DOCUMENT', { cause: new AggregateError([Object.assign(new Error('SYNTHETIC_PRIVATE_DOCUMENT'), { code: 'ECONNREFUSED' })]) });
   Sentry.captureException(error);
   const relativeError = new Error('SYNTHETIC_PRIVATE_DOCUMENT');
   relativeError.stack = 'Error: SYNTHETIC_PRIVATE_DOCUMENT\n    at operation (backend/src/lib/storage.ts:42:7)';
@@ -34,6 +34,8 @@ it.each(['community', 'official'] as const)('retains exception and console locat
   console.error('[diagnostic probe]', { error: new Error('SYNTHETIC_PRIVATE_DOCUMENT') });
   await Sentry.flush(2000);
   expect(events).toHaveLength(3);
+  expect(events[0]?.tags).toMatchObject({ failure_code: 'ECONNREFUSED', capture_source: 'exception' });
+  expect(events[2]?.tags).toMatchObject({ capture_source: 'console' });
   expect(events[0]?.exception?.values?.[0]?.stacktrace?.frames?.some(f => f.filename?.endsWith('sentry.diagnostics.test.ts'))).toBe(true);
   expect(events[2]?.stacktrace?.frames?.some(f => f.filename?.endsWith('sentry.diagnostics.test.ts'))).toBe(true);
   expect(events[1]?.exception?.values?.[0]?.stacktrace?.frames).toContainEqual(expect.objectContaining({ filename: 'backend/src/lib/storage.ts', lineno: 42, colno: 7 }));
