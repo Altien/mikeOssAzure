@@ -66,6 +66,26 @@ describe("sendInternalError", () => {
     );
   });
 
+  it("wraps a raw PostgREST object: stack from the caller, code kept, text dropped", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const pg = {
+      code: "42P01",
+      message: 'relation "public.private_table" does not exist',
+      details: null,
+      hint: null,
+    };
+
+    const res = await request(appThatFails(pg)).get("/projects/p-1");
+
+    expect(res.status).toBe(500);
+    const reported = (reportError.mock.calls[0] as unknown[])[0] as Error;
+    expect(reported).toBeInstanceOf(Error);
+    expect(reported.cause).toBe(pg);
+    expect(reported.message).toBe("Dependency failure (42P01)");
+    // The helper frames are dropped: the top frame is the route handler.
+    expect(reported.stack!.split("\n")[1]).toContain("httpError.test");
+  });
+
   it("passes a non-default status through to the report", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
 
