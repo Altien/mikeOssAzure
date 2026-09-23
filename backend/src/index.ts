@@ -15,6 +15,7 @@ import { startAllWorkers, stopAllWorkers } from "./workerRuntime";
 import { flushSentry, reportError } from "./lib/observability/sentry";
 import { initSentry } from "./lib/observability/sentry";
 import { getKeyVaultConfig } from "./lib/config";
+import { failBoot } from "./lib/processLifecycle";
 
 const PORT = process.env.PORT ?? 3001;
 const workersMode = process.env.WORKERS_MODE === "inline" || process.env.WORKERS_MODE === "none"
@@ -115,6 +116,5 @@ async function start(): Promise<void> {
 }
 
 void start().catch((error) => {
-  console.error("Required backend initialization failed", error instanceof Error ? error.message : String(error));
-  process.exit(1);
+  void failBoot(error, "startup");
 });
