@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const reportNetworkFailure = vi.hoisted(() => vi.fn());
 vi.mock("@/app/lib/errorReporting", () => ({
+    trackPendingRequest: () => () => {},
     reportApiFailure: vi.fn(),
     reportNetworkFailure,
 }));
@@ -18,6 +19,7 @@ vi.mock("@/app/contexts/AuthContext", () => ({
 
 import { UserProfileProvider } from "./UserProfileContext";
 import {
+    CONFIGURED_MODELS_MAX_AGE_MS,
     clearConfiguredModels,
     useConfiguredModels,
 } from "@/app/hooks/useConfiguredModels";
@@ -103,5 +105,36 @@ describe("configured model catalog on a signed-in page mount", () => {
         await new Promise((resolve) => setTimeout(resolve, 20));
 
         expect(requestsTo("/models/configured")).toBe(1);
+    });
+
+    // A key saved in another tab never reaches this tab's provider, so a
+    // catalog older than the freshness window is revalidated by the next
+    // picker to mount: once, with later pickers joining that request.
+    it("revalidates a catalog older than the freshness window, once", async () => {
+        fetchMock.mockImplementation(async () =>
+            new Response(JSON.stringify({ models: [] }), {
+                status: 200,
+                headers: { "content-type": "application/json" },
+            }),
+        );
+        vi.useFakeTimers({ toFake: ["Date"] });
+        try {
+            const view = render(<UserProfileProvider>{null}</UserProfileProvider>);
+            await waitFor(() => expect(requestsTo("/models/configured")).toBe(1));
+            await new Promise((resolve) => setTimeout(resolve, 20));
+
+            vi.setSystemTime(Date.now() + CONFIGURED_MODELS_MAX_AGE_MS + 1);
+            view.rerender(
+                <UserProfileProvider>
+                    <ModelConsumer />
+                    <ModelConsumer />
+                </UserProfileProvider>,
+            );
+            await new Promise((resolve) => setTimeout(resolve, 20));
+
+            expect(requestsTo("/models/configured")).toBe(2);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });
