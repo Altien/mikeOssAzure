@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { diagnosticErrorTags } from "../../../lib/observability/sentryPrivacy";
 
 const mocks = vi.hoisted(() => ({
   deleteFile: vi.fn(),
@@ -21,6 +22,12 @@ const mocks = vi.hoisted(() => ({
   createServerSupabase: vi.fn(),
   enqueueStorageCleanup: vi.fn(),
   requestDocumentCleanupDelivery: vi.fn(),
+  reportError: vi.fn((_error: unknown, _context?: unknown) => null),
+}));
+
+vi.mock("../../../lib/observability/sentry", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../lib/observability/sentry")>()),
+  reportError: mocks.reportError,
 }));
 
 vi.mock("../../../lib/storage", async (importOriginal) => {
@@ -32,6 +39,11 @@ vi.mock("../../../lib/storage", async (importOriginal) => {
     // assertions on which objects were removed keep working.
     deleteFileBestEffort: (key: string) =>
       Promise.resolve(mocks.deleteFile(key)).catch(() => undefined),
+    deleteFilesBestEffort: async (keys: Array<string | null | undefined>) => {
+      for (const key of keys.filter(Boolean)) {
+        await Promise.resolve(mocks.deleteFile(key)).catch(() => undefined);
+      }
+    },
     createFileReadStream: mocks.createFileReadStream,
     copyFile: mocks.copyFile,
     uploadFileFromPath: mocks.uploadFileFromPath,

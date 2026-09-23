@@ -35,6 +35,8 @@ vi.mock("../../lib/storage", () => ({
   uploadTransport: () => "direct",
   copyFile: vi.fn(),
   deleteFile: vi.fn(),
+  deleteFileBestEffort: vi.fn(async () => undefined),
+  deleteFilesBestEffort: vi.fn(async () => undefined),
   headFile: vi.fn(),
 }));
 

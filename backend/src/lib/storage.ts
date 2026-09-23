@@ -527,6 +527,16 @@ export async function listFiles(prefix: string): Promise<string[]> {
   return _provider?.list(prefix) ?? [];
 }
 
+// "The object is not there" is the outcome a delete asks for. S3 and R2
+// answer a DeleteObject on a missing key with 204 anyway, but some
+// S3-compatible stores (and a HEAD-style 404 surfaced by a proxy) do not.
+// A missing BUCKET is also a 404, and is the opposite: misconfiguration.
+function isMissingObject(error: unknown): boolean {
+  const e = error as { name?: unknown; $metadata?: { httpStatusCode?: unknown } };
+  if (e?.name === "NoSuchKey" || e?.name === "NotFound") return true;
+  return e?.$metadata?.httpStatusCode === 404 && e?.name !== "NoSuchBucket";
+}
+
 export async function deleteFile(key: string): Promise<void> {
   await requireProvider("delete").remove(key);
 }
@@ -542,7 +552,32 @@ export function deleteFileBestEffort(
   key: string,
   stage: string,
 ): Promise<void | undefined> {
-  return bestEffort(deleteFile(key), {
+  return deleteFilesBestEffort([key], stage);
+}
+
+/**
+ * Best-effort delete of several objects that belong to ONE operation (an
+ * upload's staging and sealed copies). Every key is attempted, but the
+ * operation reports at most one warning: when storage is unreachable or the
+ * credentials are wrong, every key fails for the same reason, and one event
+ * per key only multiplies the noise (MIKE-BACKEND-5/6 arrived in pairs).
+ * Null/empty keys are skipped: there is nothing to delete.
+ */
+export function deleteFilesBestEffort(
+  keys: ReadonlyArray<string | null | undefined>,
+  stage: string,
+): Promise<void | undefined> {
+  const targets = keys.filter((key): key is string => !!key);
+  if (targets.length === 0) return Promise.resolve();
+  const work = Promise.allSettled(targets.map((key) => deleteFile(key))).then(
+    (results) => {
+      const failed = results.find(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+      if (failed) throw failed.reason;
+    },
+  );
+  return bestEffort(work, {
     what: `storage-delete:${stage}`,
     tags: { component: "storage", stage, storage_operation: "delete" },
   });
