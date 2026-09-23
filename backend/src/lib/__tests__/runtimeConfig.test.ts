@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  diagnosticErrorTags,
+  diagnosticEvent,
+} from "../observability/sentryPrivacy";
+import {
   uploadConversionTimeoutMs,
   uploadJobWallClockMs,
   uploadProcessingConfiguration,
@@ -151,9 +155,9 @@ describe("upload worker deadlines", () => {
     expect(uploadJobWallClockMs({ UPLOAD_JOB_WALL_CLOCK_MS: "1" })).toBe(
       60_000,
     );
-    expect(uploadJobWallClockMs({ UPLOAD_JOB_WALL_CLOCK_MS: "9999999999" })).toBe(
-      3_600_000,
-    );
+    expect(
+      uploadJobWallClockMs({ UPLOAD_JOB_WALL_CLOCK_MS: "9999999999" }),
+    ).toBe(3_600_000);
   });
 
   it("falls back to the defaults for unparseable values", () => {
@@ -164,4 +168,24 @@ describe("upload worker deadlines", () => {
       900_000,
     );
   });
+});
+
+it("identifies invalid configuration fields without sending their values", () => {
+  let failure: unknown;
+  try {
+    validateRuntimeConfiguration({
+      NODE_ENV: "production",
+      SUPABASE_URL: "PRIVATE_URL",
+      SUPABASE_SECRET_KEY: "PRIVATE_KEY",
+    });
+  } catch (error) {
+    failure = error;
+  }
+  const event = diagnosticEvent({ tags: diagnosticErrorTags(failure) });
+  expect(event.tags).toEqual({
+    failure_code: "configuration_invalid",
+    configuration_fields:
+      "API_PUBLIC_URL,FRONTEND_URL,SUPABASE_PUBLISHABLE_KEY,SUPABASE_URL",
+  });
+  expect(JSON.stringify(event)).not.toContain("PRIVATE");
 });

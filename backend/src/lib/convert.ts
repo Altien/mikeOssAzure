@@ -7,8 +7,8 @@ import { pathToFileURL } from "node:url";
 import { uploadConversionTimeoutMs } from "./runtimeConfig";
 
 let _convert:
-  | ((buf: Buffer, ext: string, filter: undefined) => Promise<Buffer>)
-  | null = null;
+  ((buf: Buffer, ext: string, filter: undefined) => Promise<Buffer>) | null =
+  null;
 let _sofficeBinaryPaths: string[] | null = null;
 
 function executablePath(filePath: string) {
@@ -128,8 +128,11 @@ export async function normalizeDocxZipPaths(buffer: Buffer): Promise<Buffer> {
  */
 export async function docxToPdf(buffer: Buffer): Promise<Buffer> {
   if (resolveSofficeBinaryPaths().length === 0) {
-    throw new Error(
-      "LibreOffice/soffice binary was not found. Ensure Railway uses backend/nixpacks.toml or set SOFFICE_BINARY_PATH/LIBREOFFICE_BINARY_PATH.",
+    throw Object.assign(
+      new Error(
+        "LibreOffice/soffice binary was not found. Ensure Railway uses backend/nixpacks.toml or set SOFFICE_BINARY_PATH/LIBREOFFICE_BINARY_PATH.",
+      ),
+      { code: "conversion_unavailable" },
     );
   }
   const convert = await getConvert();
@@ -148,8 +151,11 @@ export async function officeFileToPdf(
 ): Promise<string> {
   const binary = resolveSofficeBinaryPaths()[0];
   if (!binary) {
-    throw new Error(
-      "LibreOffice/soffice binary was not found. Ensure Railway uses backend/nixpacks.toml or set SOFFICE_BINARY_PATH/LIBREOFFICE_BINARY_PATH.",
+    throw Object.assign(
+      new Error(
+        "LibreOffice/soffice binary was not found. Ensure Railway uses backend/nixpacks.toml or set SOFFICE_BINARY_PATH/LIBREOFFICE_BINARY_PATH.",
+      ),
+      { code: "conversion_unavailable" },
     );
   }
 
@@ -194,14 +200,22 @@ export async function officeFileToPdf(
         clearTimeout(deadline);
         if (timedOut) {
           reject(
-            new Error(`LibreOffice conversion timed out after ${timeoutMs}ms`),
+            Object.assign(
+              new Error(
+                `LibreOffice conversion timed out after ${timeoutMs}ms`,
+              ),
+              { code: "conversion_timeout" },
+            ),
           );
         } else if (code === 0) {
           resolve();
         } else {
           reject(
-            new Error(
-              `LibreOffice conversion failed with exit code ${code ?? "unknown"}${stderr ? `: ${stderr}` : ""}`,
+            Object.assign(
+              new Error(
+                `LibreOffice conversion failed with exit code ${code ?? "unknown"}${stderr ? `: ${stderr}` : ""}`,
+              ),
+              { code: "conversion_failed" },
             ),
           );
         }

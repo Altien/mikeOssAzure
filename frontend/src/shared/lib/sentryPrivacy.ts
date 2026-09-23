@@ -19,12 +19,13 @@ const ENUMS: Record<string, ReadonlySet<string>> = Object.fromEntries(Object.ent
   surface: 'taskpane commands dialog',
   install: 'community official',
   component: 'http mike-api api-gateway dbq storage upload-worker conversion-worker extraction-worker app-jobs chat-stream assistant-chat word-chat word-office boot shutdown worker-shutdown worker-thread worker-thread-supervisor stale-sweep mcp-refresh-sweep workflow-sync best-effort route-error-boundary global-error-boundary',
-  stage: 'gateway-config gateway-fetch gateway-response conversion heartbeat process-file iteration failure-hook claim tick retention delivery docx-to-pdf copy-rollback anchor-cleanup resolve-cleanup resolve restore reveal locate citation-select release document-read resolve-batch tool-result sealed-source-after-process failed-file-sealed session-expiry seal-mismatch seal-recover session-cancel user-prefix-cleanup failed-document-remove',
+  stage: 'runtime-config manifest-key shutdown-http shutdown-workers shutdown-flush gateway-config gateway-fetch gateway-response conversion heartbeat process-file iteration failure-hook claim tick retention delivery docx-to-pdf copy-rollback anchor-cleanup resolve-cleanup resolve restore reveal locate citation-select release document-read resolve-batch tool-result sealed-source-after-process failed-file-sealed session-expiry seal-mismatch seal-recover session-cancel user-prefix-cleanup failed-document-remove',
   http_method: 'GET POST PUT PATCH DELETE HEAD OPTIONS',
   error_code: 'internal_error network_error',
   capture_source: 'exception console unhandled message',
+  diagnostics_version: '2',
   build_mode: 'development production test',
-  failure_code: 'ECONNREFUSED ECONNRESET ETIMEDOUT ENOTFOUND EAI_AGAIN ENOENT EACCES EPERM ENOSPC EPIPE ERR_SERVER_NOT_RUNNING UND_ERR_CONNECT_TIMEOUT UND_ERR_HEADERS_TIMEOUT UND_ERR_SOCKET CERT_HAS_EXPIRED DEPTH_ZERO_SELF_SIGNED_CERT AccessDenied InvalidAccessKeyId SignatureDoesNotMatch NoSuchBucket NoSuchKey SlowDown ServiceUnavailable RequestTimeout 23505 23503 42501 42P01 42703 53300 57014 08006 PGRST202 PGRST204 configuration_invalid signing_key_invalid conversion_unavailable conversion_timeout conversion_failed fetch_failed',
+  failure_code: 'ECONNREFUSED ECONNRESET ETIMEDOUT ENOTFOUND EAI_AGAIN ENOENT EACCES EPERM ENOSPC EPIPE ERR_SERVER_NOT_RUNNING UND_ERR_CONNECT_TIMEOUT UND_ERR_HEADERS_TIMEOUT UND_ERR_SOCKET CERT_HAS_EXPIRED DEPTH_ZERO_SELF_SIGNED_CERT AccessDenied InvalidAccessKeyId SignatureDoesNotMatch NoSuchBucket NoSuchKey SlowDown ServiceUnavailable RequestTimeout 23505 23503 23514 22003 22P02 28P01 28000 42P10 42883 42501 42P01 42703 53300 57014 08006 PGRST100 PGRST116 PGRST200 PGRST201 PGRST202 PGRST203 PGRST204 PGRST205 configuration_invalid signing_key_invalid conversion_unavailable conversion_timeout conversion_failed fetch_failed',
   file_type: 'pdf doc docx odt rtf ppt pptx xls xlsx csv txt html',
   diagnostic_test: 'true',
   office_code: 'GeneralException InvalidArgument InvalidObjectPath ItemNotFound AccessDenied NotAllowed DocumentNotSaved UnsupportedOperation InvalidOperation InvalidReference',
@@ -32,10 +33,12 @@ const ENUMS: Record<string, ReadonlySet<string>> = Object.fromEntries(Object.ent
   office_platform: 'PC Mac OfficeOnline Universal iOS Android',
   job_kind: 'audit.chat_turn account.delete storage.cleanup document.cleanup export.build conversion.convert extraction.extract mcp.refresh_token document.precompute_text memory.consolidate',
   storage: 'local cloud',
+  storage_operation: 'HEAD copy upload download delete',
 }).map(([key, values]) => [key, new Set(values.split(' '))]));
-const ROUTE_PARTS = new Set(('api auth login logout refresh session user users projects documents versions files folders upload uploads upload-sessions parts complete abort content download preview source text conversion chats chat messages stream cancel assistant tabular tabular-reviews reviews rows columns cells run results export workflows templates library models settings profile organizations members permissions shares keys api-keys health observability sentry-test').split(' '));
+const ROUTE_PARTS = new Set(('word-chat orgs single-documents tabular-review quick-actions workflow-addons audit manifest-signing-key api auth login logout refresh session user users projects directory people access memory ids filter-options folder-paths resolve folder documents versions files folders upload uploads upload-sessions parts complete abort content download preview source text conversion chats chat messages stream cancel assistant tabular tabular-reviews reviews rows columns cells run results export workflows templates library models settings profile organizations members permissions shares keys api-keys health observability sentry-test').split(' '));
 const ID_KEYS = new Set(('request_id requestId document_id documentId file_id fileId job_id jobId review_id reviewId row_id rowId session_id sessionId version_id versionId').split(' '));
-const ERROR_TYPES = new Set('Error TypeError RangeError ReferenceError SyntaxError URIError EvalError AggregateError AbortError TimeoutError APIError'.split(' '));
+const CONFIGURATION_FIELDS = new Set('SUPABASE_URL SUPABASE_PUBLISHABLE_KEY SUPABASE_SECRET_KEY AUTH_HANDOFF_ENCRYPTION_SECRET FRONTEND_URL API_PUBLIC_URL WORD_ADDIN_URL'.split(' '));
+const ERROR_TYPES = new Set('Error TypeError RangeError ReferenceError SyntaxError URIError EvalError AggregateError AbortError TimeoutError APIError StorageOperationError'.split(' '));
 const LEVELS = new Set('fatal error warning info debug'.split(' '));
 
 function record(value: unknown): RecordValue {
@@ -65,6 +68,7 @@ function tagsFor(value: unknown): RecordValue {
   for (const [key, entry] of Object.entries(record(value))) {
     if (typeof entry === 'string' && Object.hasOwn(ENUMS, key) && ENUMS[key]!.has(entry)) out[key] = entry;
     else if (ID_KEYS.has(key) && typeof entry === 'string' && UUID.test(entry)) out[key] = entry;
+    else if (key === 'configuration_fields' && typeof entry === 'string' && entry.length < 250 && entry.split(',').every(field => CONFIGURATION_FIELDS.has(field))) out[key] = entry;
     else if (key === 'office_version' && typeof entry === 'string' && /^\d+(?:\.\d+){1,4}$/.test(entry) && entry.length < 30) out[key] = entry;
     else if (key === 'http_route' && typeof entry === 'string') out[key] = diagnosticRoute(entry);
     else if ((key === 'http_status' || key === 'dependency_status') && /^\d{3}$/.test(String(entry)) && Number(entry) >= 100 && Number(entry) <= 599) out[key] = Number(entry);
@@ -86,6 +90,11 @@ export function diagnosticErrorTags(error: unknown): Record<string, string | num
     seen.add(candidate);
     try {
       const item = candidate as RecordValue;
+      if (typeof item.operation === 'string' && ENUMS.storage_operation!.has(item.operation)) tags.storage_operation = item.operation;
+      if (Array.isArray(item.configurationFields)) {
+        const fields = [...new Set(item.configurationFields.slice(0, 10).filter(field => typeof field === 'string' && CONFIGURATION_FIELDS.has(field)))];
+        if (fields.length) tags.configuration_fields = fields.sort().join(',');
+      }
       if (item.code === 'sentry_test') tags.diagnostic_test = 'true';
       for (const code of [item.code, item.name]) {
         if (typeof code === 'string' && ENUMS.failure_code!.has(code) && tags.failure_code === undefined) tags.failure_code = code;
@@ -160,14 +169,18 @@ export function diagnosticEvent(value: unknown): RecordValue {
   for (const key of ['release', 'environment']) {
     if (typeof event[key] === 'string' && /^[\w@.+/-]{1,100}$/.test(event[key])) out[key] = event[key];
   }
-  const description = [tags.component ?? 'application', tags.stage, tags.http_method, tags.http_route, tags.http_status, tags.error_code, tags.office_code, tags.failure_code].filter(v => v !== undefined).join(' / ');
+  const description = [tags.component ?? 'application', tags.stage, tags.http_method, tags.http_route, tags.http_status, tags.error_code, tags.office_code, tags.failure_code, tags.storage_operation].filter(v => v !== undefined).join(' / ');
   const values = record(event.exception).values;
   if (Array.isArray(values) && values.length) {
-    out.exception = { values: values.slice(0, 10).map(raw => {
+    const nestedFrames = consoleFrames(record(event.extra).error_stack);
+    out.exception = { values: values.slice(0, 10).map((raw, index) => {
       const exception = record(raw);
       const type = typeof exception.type === 'string' && ERROR_TYPES.has(exception.type) ? exception.type : 'Error';
       const safe: RecordValue = { type, value: `${tags.diagnostic_test === 'true' ? 'Diagnostic test' : 'Failure'} in ${description}` };
-      const frames = framesFor(record(exception.stacktrace).frames);
+      // attachStacktrace gives console messages a synthetic exception. Prefer
+      // the nested Error's actual throw site over that console call site.
+      const frames = tags.capture_source === 'console' && nestedFrames.length && index === Math.min(values.length, 10) - 1
+        ? nestedFrames : framesFor(record(exception.stacktrace).frames);
       if (frames.length) safe.stacktrace = { frames };
       const handled = record(exception.mechanism).handled;
       if (typeof handled === 'boolean') safe.mechanism = { type: 'generic', handled };

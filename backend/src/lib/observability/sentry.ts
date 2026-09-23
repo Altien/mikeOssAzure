@@ -803,7 +803,7 @@ export function initSentry(
       Sentry.onUnhandledRejectionIntegration({ mode: "strict" }),
     ],
     initialScope: {
-      tags: { service: "mike-backend", role, install: config.install, build_mode: env.NODE_ENV },
+      tags: { service: "mike-backend", role, install: config.install, build_mode: env.NODE_ENV, diagnostics_version: "2" },
     },
     beforeSend: scrubEvent,
   });

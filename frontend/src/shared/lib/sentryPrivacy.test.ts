@@ -143,3 +143,37 @@ it('retains only known software names and numeric versions, never user-agent dat
   expect(diagnosticErrorTags(new TypeError('Failed to fetch'))).toEqual({ failure_code: 'fetch_failed' });
   expect(diagnosticErrorTags(new TypeError('Failed to fetch private document'))).toEqual({});
 });
+
+
+it('separates diagnostic probes and allowlists configuration field names', () => {
+  const probe = diagnosticEvent({ tags: diagnosticErrorTags({ code: 'sentry_test' }) });
+  expect(probe.tags).toEqual({ diagnostic_test: 'true' });
+  expect(probe.message).toBe('Diagnostic test in application');
+  expect(diagnosticErrorTags({ configurationFields: ['SUPABASE_URL', 'private-value', 'SUPABASE_URL'] })).toEqual({ configuration_fields: 'SUPABASE_URL' });
+  expect(diagnosticEvent({ tags: { configuration_fields: 'SUPABASE_URL,private' } }).tags).toEqual({});
+});
+
+
+it('retains a known storage operation and its dependency cause without object keys', () => {
+  const error = { name: 'StorageOperationError', operation: 'HEAD', key: 'private-document', cause: { name: 'AccessDenied', $metadata: { httpStatusCode: 403 } } };
+  expect(diagnosticErrorTags(error)).toEqual({ storage_operation: 'HEAD', failure_code: 'AccessDenied', dependency_status: 403 });
+  expect(diagnosticErrorTags({ operation: 'private-document' })).toEqual({});
+});
+
+
+it('distinguishes real project endpoints while dropping IDs and query content', () => {
+  for (const operation of ['directory', 'people', 'access', 'memory']) {
+    expect(diagnosticRoute(`/projects/${id}/${operation}?private=value`)).toBe(`/projects/:id/${operation}`);
+  }
+});
+
+
+it('prefers the nested console Error throw site over the SDK synthetic message stack', () => {
+  const event = diagnosticEvent({
+    tags: { capture_source: 'console' },
+    exception: { values: [{ type: 'Error', stacktrace: { frames: [{ filename: 'src/logging.ts', lineno: 8 }] } }] },
+    extra: { error_stack: 'Error: PRIVATE_DOCUMENT\n    at failing (backend/src/operation.ts:42:7)' },
+  });
+  expect(event.exception).toMatchObject({ values: [{ stacktrace: { frames: [{ filename: 'backend/src/operation.ts', lineno: 42, colno: 7 }] } }] });
+  expect(JSON.stringify(event)).not.toContain('PRIVATE_DOCUMENT');
+});

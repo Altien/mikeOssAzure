@@ -544,7 +544,7 @@ export function deleteFileBestEffort(
 ): Promise<void | undefined> {
   return bestEffort(deleteFile(key), {
     what: `storage-delete:${stage}`,
-    tags: { component: "storage", stage },
+    tags: { component: "storage", stage, storage_operation: "delete" },
   });
 }
 

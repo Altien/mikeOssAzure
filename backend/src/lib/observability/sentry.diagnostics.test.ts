@@ -14,6 +14,7 @@ it.each(['community', 'official'] as const)('retains exception and console locat
   Sentry.init({
     dsn: 'https://test@sentry.invalid/1',
     defaultIntegrations: false,
+    attachStacktrace: true,
     integrations: [privacyBoundaryIntegration(), Sentry.captureConsoleIntegration({ levels: ['error'] })],
     beforeSend: scrubEvent,
     transport: () => ({
@@ -32,12 +33,16 @@ it.each(['community', 'official'] as const)('retains exception and console locat
   relativeError.stack = 'Error: SYNTHETIC_PRIVATE_DOCUMENT\n    at operation (backend/src/lib/storage.ts:42:7)';
   Sentry.captureException(relativeError);
   console.error('[diagnostic probe]', { error: new Error('SYNTHETIC_PRIVATE_DOCUMENT') });
+  Sentry.captureMessage('SYNTHETIC_PRIVATE_DOCUMENT');
   await Sentry.flush(2000);
-  expect(events).toHaveLength(3);
+  expect(events).toHaveLength(4);
   expect(events[0]?.tags).toMatchObject({ failure_code: 'ECONNREFUSED', capture_source: 'exception' });
   expect(events[2]?.tags).toMatchObject({ capture_source: 'console' });
   expect(events[0]?.exception?.values?.[0]?.stacktrace?.frames?.some(f => f.filename?.endsWith('sentry.diagnostics.test.ts'))).toBe(true);
-  expect(events[2]?.stacktrace?.frames?.some(f => f.filename?.endsWith('sentry.diagnostics.test.ts'))).toBe(true);
+  const consoleFrames = events[2]?.exception?.values?.[0]?.stacktrace?.frames ?? events[2]?.stacktrace?.frames;
+  expect(consoleFrames?.some(f => f.filename?.endsWith('sentry.diagnostics.test.ts'))).toBe(true);
   expect(events[1]?.exception?.values?.[0]?.stacktrace?.frames).toContainEqual(expect.objectContaining({ filename: 'backend/src/lib/storage.ts', lineno: 42, colno: 7 }));
+  const messageFrames = events[3]?.exception?.values?.[0]?.stacktrace?.frames ?? events[3]?.stacktrace?.frames;
+  expect(messageFrames?.some(f => f.filename?.endsWith('sentry.diagnostics.test.ts'))).toBe(true);
   expect(JSON.stringify(events)).not.toContain('SYNTHETIC_PRIVATE_DOCUMENT');
 });

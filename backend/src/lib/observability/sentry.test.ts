@@ -212,7 +212,7 @@ describe("initSentry", () => {
     expect(options.environment).toBe("staging");
     expect(options.beforeSend).toBe(scrubEvent);
     expect(options.initialScope).toEqual({
-      tags: { service: "mike-backend", role: "worker", install: "community", build_mode: "test" },
+      tags: { service: "mike-backend", role: "worker", install: "community", build_mode: "test", diagnostics_version: "2" },
     });
     expect(sentryMock.httpIntegration).toHaveBeenCalledWith({
       maxIncomingRequestBodySize: "none",

@@ -208,8 +208,19 @@ export function validateRuntimeConfiguration(
   }
 
   if (errors.length > 0) {
-    throw new Error(
-      `Backend authentication configuration is invalid:\n- ${errors.join("\n- ")}`,
+    throw Object.assign(
+      new Error(
+        `Backend authentication configuration is invalid:\n- ${errors.join("\n- ")}`,
+      ),
+      {
+        code: "configuration_invalid",
+        // Field names only: never configuration values or validation prose.
+        configurationFields: [
+          ...new Set(
+            errors.map((issue) => issue.match(/^[A-Z_]+/)?.[0]).filter(Boolean),
+          ),
+        ],
+      },
     );
   }
 }

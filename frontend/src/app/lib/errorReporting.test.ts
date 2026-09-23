@@ -199,6 +199,7 @@ describe("browserSentryOptions", () => {
             tags: {
                 service: "mike-frontend",
                 runtime: "browser",
+                diagnostics_version: "2",
                 install: "community",
             },
         });
@@ -256,7 +257,7 @@ describe("serverSentryOptions", () => {
         expect(options.release).toBe("r1");
         expect(options.tracesSampleRate).toBe(0.1);
         expect(options.initialScope).toEqual({
-            tags: { service: "mike-frontend", runtime: "edge", install: "community" },
+            tags: { service: "mike-frontend", runtime: "edge", install: "community", diagnostics_version: "2" },
         });
         expect(options.beforeSend).toBe(scrubEvent);
     });
@@ -325,4 +326,11 @@ describe("reportNetworkFailure", () => {
         expect(scope.setTag).toHaveBeenCalledWith("network", true);
         expect(scope.setTag).toHaveBeenCalledWith("http_route", "/api/projects/:id/documents");
     });
+});
+
+
+it('labels opt-in pipeline test failures separately from application incidents', () => {
+    state.enabled = true;
+    reportApiFailure({ path: '/observability/sentry-test', status: 500 });
+    expect(state.scopes[0].setTag).toHaveBeenCalledWith('diagnostic_test', 'true');
 });
