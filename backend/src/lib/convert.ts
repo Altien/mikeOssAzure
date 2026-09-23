@@ -11,6 +11,17 @@ let _convert:
   null;
 let _sofficeBinaryPaths: string[] | null = null;
 
+// Server-log text for the operator (never sent to a client). The backend
+// Docker image and backend/nixpacks.toml both install LibreOffice; any other
+// host has to install it or point at its soffice binary.
+const CONVERTER_UNAVAILABLE_MESSAGE =
+  "LibreOffice (soffice) was not found, so Office documents cannot be " +
+  "converted to PDF (uploads are kept without a PDF rendition; previews " +
+  "and text extraction of legacy Office files fail). Install LibreOffice " +
+  "(the backend Docker image and backend/nixpacks.toml include it) or set " +
+  "SOFFICE_BINARY_PATH or LIBREOFFICE_BINARY_PATH to the soffice " +
+  "executable, then restart the backend and worker.";
+
 function executablePath(filePath: string) {
   try {
     fs.accessSync(filePath, fs.constants.X_OK);
@@ -47,6 +58,10 @@ function resolveSofficeBinaryPaths(): string[] {
     "/snap/bin/libreoffice",
     "/opt/libreoffice/program/soffice",
     "/opt/libreoffice7.6/program/soffice",
+    // The official macOS installer keeps soffice inside the app bundle and
+    // puts nothing on PATH, so a backend run outside Docker on a Mac would
+    // otherwise report LibreOffice as missing while it is installed.
+    "/Applications/LibreOffice.app/Contents/MacOS/soffice",
   ]) {
     candidates.add(filePath);
   }
@@ -130,7 +145,7 @@ export async function docxToPdf(buffer: Buffer): Promise<Buffer> {
   if (resolveSofficeBinaryPaths().length === 0) {
     throw Object.assign(
       new Error(
-        "LibreOffice/soffice binary was not found. Ensure Railway uses backend/nixpacks.toml or set SOFFICE_BINARY_PATH/LIBREOFFICE_BINARY_PATH.",
+        CONVERTER_UNAVAILABLE_MESSAGE,
       ),
       { code: "conversion_unavailable" },
     );
@@ -153,7 +168,7 @@ export async function officeFileToPdf(
   if (!binary) {
     throw Object.assign(
       new Error(
-        "LibreOffice/soffice binary was not found. Ensure Railway uses backend/nixpacks.toml or set SOFFICE_BINARY_PATH/LIBREOFFICE_BINARY_PATH.",
+        CONVERTER_UNAVAILABLE_MESSAGE,
       ),
       { code: "conversion_unavailable" },
     );
