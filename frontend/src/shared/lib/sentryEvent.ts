@@ -323,6 +323,8 @@ const FILESYSTEM_PATH_PATTERN =
   * for browser bundles, and "[external]" for anything outside the project.
   */
 export function repoRelativePath(path: string): string {
+    // SDK integrations can already supply repository-relative locations.
+    if (/^(?:\.\/)?(?:backend|frontend|word-addin|packages|src|dist|node_modules|_next)\//.test(path)) return path;
     let idx = -1;
     for (const root of REPO_ROOTS) {
         const at = path.lastIndexOf(root);

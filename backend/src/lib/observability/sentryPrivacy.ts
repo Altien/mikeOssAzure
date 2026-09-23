@@ -90,9 +90,9 @@ function framesFor(value: unknown): RecordValue[] {
 function consoleFrames(value: unknown): RecordValue[] {
   if (typeof value !== 'string') return [];
   return framesFor(value.split('\n').slice(1, 101).flatMap(line => {
-    const match = line.match(/(?:\(|\s)((?:\/|[A-Za-z]:\\|https?:\/\/|webpack)[^\n]*?):(\d+):(\d+)\)?$/);
+    const match = line.match(/(?:\(|\s)((?:(?:\.\/)?(?:backend|frontend|word-addin|packages|src|dist|node_modules|_next)\/|\/|[A-Za-z]:\\|https?:\/\/|webpack)[^\n]*?):(\d+):(\d+)\)?$/);
     return match ? [{ filename: match[1], lineno: Number(match[2]), colno: Number(match[3]) }] : [];
-  }));
+  }).reverse());
 }
 
 export function diagnosticEvent(value: unknown): RecordValue {
