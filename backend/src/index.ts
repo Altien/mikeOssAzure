@@ -15,7 +15,7 @@ import { startAllWorkers, stopAllWorkers } from "./workerRuntime";
 import { flushSentry, reportError } from "./lib/observability/sentry";
 import { initSentry } from "./lib/observability/sentry";
 import { getKeyVaultConfig } from "./lib/config";
-import { failBoot } from "./lib/processLifecycle";
+import { failBoot, listenOrFail } from "./lib/processLifecycle";
 
 const PORT = process.env.PORT ?? 3001;
 const workersMode = process.env.WORKERS_MODE === "inline" || process.env.WORKERS_MODE === "none"
@@ -81,7 +81,7 @@ async function start(): Promise<void> {
   if (workersMode === "thread") thread = await startThread();
   if (workersMode === "inline") await startAllWorkers();
 
-  const server = buildApp().listen(PORT, () => {
+  const server = listenOrFail(buildApp(), PORT, () => {
     console.log(`Mike backend running on port ${PORT} (workers: ${workersMode})`);
     void checkSchemaVersion().catch(() => {});
   });
