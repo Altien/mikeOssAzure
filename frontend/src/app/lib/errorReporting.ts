@@ -110,18 +110,54 @@ export function reportApiFailure(failure: {
 }
 
 /**
+ * When the page started to go away (reload, link to another document, tab
+ * close), or null while it is live. A browser rejects every fetch still in
+ * flight at that moment with the same bare "Failed to fetch" TypeError an
+ * unreachable server produces, and no AbortSignal is involved, so the
+ * request layer cannot tell the two apart from the error itself.
+ */
+let pageLeavingSince: number | null = null;
+/**
+ * `beforeunload` fires when a navigation starts but can be cancelled by a
+ * "leave site?" prompt (the memory editor installs one); after this long
+ * the page is treated as live again. `pagehide` is final until `pageshow`.
+ */
+const BEFOREUNLOAD_GRACE_MS = 3_000;
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+    window.addEventListener("beforeunload", () => {
+        pageLeavingSince = Date.now();
+    });
+    window.addEventListener("pagehide", () => {
+        pageLeavingSince = Number.POSITIVE_INFINITY;
+    });
+    window.addEventListener("pageshow", () => {
+        pageLeavingSince = null;
+    });
+}
+
+function pageIsBeingLeft(): boolean {
+    if (pageLeavingSince === null) return false;
+    if (pageLeavingSince === Number.POSITIVE_INFINITY) return true;
+    return Date.now() - pageLeavingSince < BEFOREUNLOAD_GRACE_MS;
+}
+
+/**
  * Fetch failed without an HTTP response. Browser errors alone cannot tell
  * whether the request reached the server, or distinguish TLS, CORS, a dropped
  * connection, and a failed response read. It was previously reported only
  * through the console bridge as one undifferentiated "Failed to fetch"
  * issue with no endpoint. Warning level, grouped per endpoint.
+ *
+ * Not reported while the page is being left: those are cancellations of the
+ * old page's requests, not failures anyone can act on. The error is still
+ * marked so a screen's later console.error of it is not bridged either.
  */
 export function reportNetworkFailure(
     error: unknown,
     request: { method: string; url: string },
 ): string | null {
     scrubber.markReported(error);
-    if (!Sentry.isEnabled()) return null;
+    if (!Sentry.isEnabled() || pageIsBeingLeft()) return null;
     const route = normalizeApiPath(request.url);
     let networkState = "unknown";
     let requestOrigin = "unknown";

@@ -357,3 +357,68 @@ it('tolerates unavailable browser network state', () => {
     expect(state.scopes[0].setTag).toHaveBeenCalledWith('network_state', 'unknown');
     expect(state.scopes[0].setTag).toHaveBeenCalledWith('request_origin', 'unknown');
 });
+
+// MIKE-FRONTEND-B/C/D/E: all four mount-time requests of one page failed in
+// the same second, repeatedly, while the session request of that same page
+// had just succeeded. A browser rejects in-flight fetches with the same bare
+// "Failed to fetch" TypeError when the page is reloaded or left, so those
+// cancellations must not be filed as network incidents.
+describe("reportNetworkFailure while the page is being left", () => {
+    afterEach(() => {
+        window.dispatchEvent(new Event("pageshow"));
+        vi.useRealTimers();
+    });
+
+    it.each(["beforeunload", "pagehide"])(
+        "drops fetch failures after %s but still marks them for the console bridge",
+        (eventName) => {
+            state.enabled = true;
+            window.dispatchEvent(new Event(eventName));
+            const failure = new TypeError("Failed to fetch");
+
+            expect(
+                reportNetworkFailure(failure, { method: "GET", url: "/api/chat" }),
+            ).toBeNull();
+
+            expect(Sentry.captureException).not.toHaveBeenCalled();
+            expect(
+                scrubEvent(
+                    {
+                        logger: "console",
+                        exception: {
+                            values: [{ mechanism: { type: "auto.core.capture_console" } }],
+                        },
+                    },
+                    { originalException: failure },
+                ),
+            ).toBeNull();
+        },
+    );
+
+    it("reports again once the page is shown (bfcache restore)", () => {
+        state.enabled = true;
+        window.dispatchEvent(new Event("pagehide"));
+        window.dispatchEvent(new Event("pageshow"));
+
+        reportNetworkFailure(new TypeError("Failed to fetch"), {
+            method: "GET",
+            url: "/api/chat",
+        });
+
+        expect(Sentry.captureException).toHaveBeenCalledOnce();
+    });
+
+    it("reports again when a beforeunload prompt kept the user on the page", () => {
+        vi.useFakeTimers();
+        state.enabled = true;
+        window.dispatchEvent(new Event("beforeunload"));
+        vi.advanceTimersByTime(5_000);
+
+        reportNetworkFailure(new TypeError("Failed to fetch"), {
+            method: "GET",
+            url: "/api/chat",
+        });
+
+        expect(Sentry.captureException).toHaveBeenCalledOnce();
+    });
+});
