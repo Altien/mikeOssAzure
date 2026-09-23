@@ -79,6 +79,24 @@ describe("deleteFile", () => {
     expect(mocks.send).not.toHaveBeenCalled();
   });
 
+  // A wrong endpoint or a proxy path answers 404 without NoSuchKey while the
+  // object still exists. The durable cleanup jobs treat a resolved delete as
+  // "gone" and stop retrying, so this must stay a failure they can see.
+  it("does not treat a code-less 404 (NotFound) as deleted", async () => {
+    mocks.send.mockRejectedValue(s3Error("NotFound", 404));
+    await expect(storage.deleteFile("docs/a.pdf")).rejects.toMatchObject({
+      name: "StorageOperationError",
+      operation: "delete",
+    });
+  });
+
+  it("does not treat any other 404 as deleted either", async () => {
+    mocks.send.mockRejectedValue(s3Error("SomeProxyError", 404));
+    await expect(storage.deleteFile("docs/a.pdf")).rejects.toMatchObject({
+      name: "StorageOperationError",
+    });
+  });
+
   it("still fails on a missing BUCKET: that is misconfiguration, not success", async () => {
     mocks.send.mockRejectedValue(s3Error("NoSuchBucket", 404));
     await expect(storage.deleteFile("k")).rejects.toMatchObject({
@@ -93,6 +111,16 @@ describe("deleteFileBestEffort / deleteFilesBestEffort", () => {
     mocks.send.mockRejectedValue(s3Error("NoSuchKey", 404));
     await storage.deleteFileBestEffort("k", "seal-recover");
     expect(mocks.reports).toHaveLength(0);
+  });
+
+  it("reports a code-less 404 as a failure with its status", async () => {
+    mocks.send.mockRejectedValue(s3Error("NotFound", 404));
+    await storage.deleteFileBestEffort("docs/a.pdf", "session-expiry");
+    expect(mocks.reports).toHaveLength(1);
+    expect(diagnosticErrorTags(mocks.reports[0]!.error)).toMatchObject({
+      storage_operation: "delete",
+      dependency_status: 404,
+    });
   });
 
   it("reports a real failure with its operation and failure code", async () => {

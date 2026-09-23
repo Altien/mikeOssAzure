@@ -527,14 +527,18 @@ export async function listFiles(prefix: string): Promise<string[]> {
   return _provider?.list(prefix) ?? [];
 }
 
-// "The object is not there" is the outcome a delete asks for. S3 and R2
-// answer a DeleteObject on a missing key with 204 anyway, but some
-// S3-compatible stores (and a HEAD-style 404 surfaced by a proxy) do not.
-// A missing BUCKET is also a 404, and is the opposite: misconfiguration.
+// "The object is not there" is the outcome a delete asks for, but only the
+// store's own answer to that effect may count. S3, R2 and MinIO answer a
+// DeleteObject on a missing key with 204; an S3-compatible store that answers
+// 404 instead names the reason in the body, and the SDK surfaces that as
+// `NoSuchKey`. A 404 WITHOUT that code (the SDK calls it "NotFound") is what
+// a wrong endpoint, a proxy path or a bucket-level 404 produce while the
+// object may well still exist. Treating it as success would let the durable
+// cleanup jobs (dbq/storageCleanup, documents.cleanupJobs, user.dataCleanup)
+// record the key as deleted, stop retrying, and leave the bytes behind for
+// good, so anything other than NoSuchKey stays a failure.
 function isMissingObject(error: unknown): boolean {
-  const e = error as { name?: unknown; $metadata?: { httpStatusCode?: unknown } };
-  if (e?.name === "NoSuchKey" || e?.name === "NotFound") return true;
-  return e?.$metadata?.httpStatusCode === 404 && e?.name !== "NoSuchBucket";
+  return (error as { name?: unknown } | null)?.name === "NoSuchKey";
 }
 
 export async function deleteFile(key: string): Promise<void> {
