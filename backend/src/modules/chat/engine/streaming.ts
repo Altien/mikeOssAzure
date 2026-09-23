@@ -80,8 +80,13 @@ export class AssistantStreamError extends Error {
   fullText: string;
   events: AssistantEvent[];
 
-  constructor(message: string, fullText: string, events: AssistantEvent[]) {
-    super(message);
+  constructor(
+    message: string,
+    fullText: string,
+    events: AssistantEvent[],
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
     this.name = "AssistantStreamError";
     this.fullText = fullText;
     this.events = events;
@@ -794,6 +799,7 @@ export async function runLLMStream(params: {
         message,
         fullText,
         events.map(sanitizeAssistantEvent),
+        { cause: err },
       );
     }
   }

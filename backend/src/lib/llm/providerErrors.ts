@@ -59,7 +59,7 @@ export function toProviderStreamError(
   const invalidKey = asInvalidApiKeyError(apiError ?? error, context.label);
   if (invalidKey) return invalidKey;
   const message = apiError && accessFailureMessage(apiError, context);
-  if (message) return new UserFacingError(message);
+  if (message) return new UserFacingError(message, { cause: error });
   if (error instanceof Error && error.message) return error;
-  return new Error(errorMessage(error, context.label));
+  return new Error(errorMessage(error, context.label), { cause: error });
 }

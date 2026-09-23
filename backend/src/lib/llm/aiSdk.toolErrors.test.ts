@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 
 import { stopNotice, streamAiSdk } from "./aiSdk";
-import { UserFacingError } from "../userFacingError";
+import { UserFacingError } from "../safeError";
 import type { NormalizedToolCall } from "./types";
 import {
   AssistantStreamAskInputsPause,

@@ -9,11 +9,12 @@ import { UserFacingError } from "../safeError";
  * provider text is treated as untrusted and only used to classify.
  */
 export class InvalidApiKeyError extends UserFacingError {
-  constructor(providerLabel: string) {
+  constructor(providerLabel: string, options?: ErrorOptions) {
     // Credentials are managed by the organisation; do not send the user to
     // personal-key settings when a vault or deployment key is rejected.
     super(
       `The ${providerLabel} API key was rejected. Ask an administrator to check the organisation credential in setup.`,
+      options,
     );
     this.name = "InvalidApiKeyError";
   }
@@ -90,6 +91,6 @@ export function asInvalidApiKeyError(
   providerLabel: string,
 ): InvalidApiKeyError | null {
   return isInvalidApiKeyError(error)
-    ? new InvalidApiKeyError(providerLabel)
+    ? new InvalidApiKeyError(providerLabel, { cause: error })
     : null;
 }
