@@ -58,9 +58,14 @@ export function useConfiguredModels(): ConfiguredModelOption[] {
     useEffect(() => {
         const update = () => setModels(cache ?? []);
         listeners.add(update);
-        // Revalidate on mount so a previous user's catalog or a catalog
-        // loaded before an API-key change cannot remain authoritative.
-        void load(cache !== null).then(update);
+        // Use the shared catalog when it is already loaded. Invalidation is
+        // the provider's job: UserProfileProvider clears/refreshes it on every
+        // sign-in and user change and after an API-key save, so a mount never
+        // sees a stale user's catalog. Forcing a refetch here instead meant
+        // every picker that mounted after the provider's request had resolved
+        // (the page chunk always mounts later than the shell) sent a second
+        // GET /models/configured per page load (MIKE-FRONTEND-C).
+        void load().then(update);
         return () => {
             listeners.delete(update);
         };
