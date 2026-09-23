@@ -42,6 +42,7 @@ import {
     serverSentryOptions,
     setReportingUser,
     reportNetworkFailure,
+    trackPendingRequest,
 } from "./errorReporting";
 import { MIKE_SENTRY_DSN } from "@/shared/lib/sentryEvent";
 
@@ -373,7 +374,10 @@ describe("reportNetworkFailure while the page is being left", () => {
         "drops fetch failures after %s but still marks them for the console bridge",
         (eventName) => {
             state.enabled = true;
+            // The beforeunload listener exists only while a request is pending.
+            const release = trackPendingRequest();
             window.dispatchEvent(new Event(eventName));
+            release();
             const failure = new TypeError("Failed to fetch");
 
             expect(
@@ -408,10 +412,36 @@ describe("reportNetworkFailure while the page is being left", () => {
         expect(Sentry.captureException).toHaveBeenCalledOnce();
     });
 
+    // Firefox will not put a page with a beforeunload listener into its
+    // back/forward cache, so an idle page must not carry one.
+    it("listens for beforeunload only while a request is pending", () => {
+        state.enabled = true;
+        window.dispatchEvent(new Event("beforeunload"));
+        reportNetworkFailure(new TypeError("Failed to fetch"), {
+            method: "GET",
+            url: "/api/chat",
+        });
+        expect(Sentry.captureException).toHaveBeenCalledOnce();
+
+        const releaseA = trackPendingRequest();
+        const releaseB = trackPendingRequest();
+        releaseA();
+        window.dispatchEvent(new Event("beforeunload"));
+        releaseB();
+        expect(
+            reportNetworkFailure(new TypeError("Failed to fetch"), {
+                method: "GET",
+                url: "/api/chat",
+            }),
+        ).toBeNull();
+    });
+
     it("reports again when a beforeunload prompt kept the user on the page", () => {
         vi.useFakeTimers();
         state.enabled = true;
+        const release = trackPendingRequest();
         window.dispatchEvent(new Event("beforeunload"));
+        release();
         vi.advanceTimersByTime(5_000);
 
         reportNetworkFailure(new TypeError("Failed to fetch"), {

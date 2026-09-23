@@ -16,6 +16,13 @@ vi.mock("@/app/lib/auth-token", () => ({
     getBrowserAccessToken: getBrowserAccessTokenMock,
     bounceIfUnauthorized: bounceIfUnauthorizedMock,
 }));
+const reportApiFailure = vi.hoisted(() => vi.fn());
+const reportNetworkFailure = vi.hoisted(() => vi.fn());
+vi.mock("@/app/lib/errorReporting", () => ({
+    trackPendingRequest: () => () => {},
+    reportApiFailure,
+    reportNetworkFailure,
+}));
 
 import {
     MikeApiError,

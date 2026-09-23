@@ -18,7 +18,19 @@ import {
 } from "@/app/lib/auth-token";
 import { isPanelDocument } from "@/app/components/shared/types";
 import { authenticatedFetch } from "@/app/lib/authEvents";
-const apiFetch = authenticatedFetch;
+import { reportNetworkFailure, trackPendingRequest } from "@/app/lib/errorReporting";
+const apiFetch: typeof fetch = async (input, init) => {
+    const release = trackPendingRequest();
+    try {
+        return await authenticatedFetch(input, init);
+    } catch (error) {
+        if (init?.signal?.aborted || (error instanceof Error && error.name === "AbortError")) throw error;
+        reportNetworkFailure(error, { method: init?.method ?? "GET", url: String(input) });
+        throw error;
+    } finally {
+        release();
+    }
+};
 import {
     UploadBatchError,
     createControlRequestRetryPolicy,

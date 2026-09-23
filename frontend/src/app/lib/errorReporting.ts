@@ -123,16 +123,43 @@ let pageLeavingSince: number | null = null;
  * the page is treated as live again. `pagehide` is final until `pageshow`.
  */
 const BEFOREUNLOAD_GRACE_MS = 3_000;
-if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
-    window.addEventListener("beforeunload", () => {
-        pageLeavingSince = Date.now();
-    });
+const hasWindow = () =>
+    typeof window !== "undefined" && typeof window.addEventListener === "function";
+if (hasWindow()) {
     window.addEventListener("pagehide", () => {
         pageLeavingSince = Number.POSITIVE_INFINITY;
     });
     window.addEventListener("pageshow", () => {
         pageLeavingSince = null;
     });
+}
+
+const onBeforeUnload = () => {
+    pageLeavingSince = Date.now();
+};
+let pendingRequests = 0;
+/**
+ * Count a request as in flight until the returned release is called. The
+ * `beforeunload` listener exists only while something is pending: Firefox
+ * refuses to put a page with a `beforeunload` listener into its back/forward
+ * cache, so keeping one installed on every page would make every back and
+ * forward navigation rebuild the app. A page with no request in flight has
+ * nothing this listener could protect.
+ */
+export function trackPendingRequest(): () => void {
+    let released = false;
+    if (pendingRequests === 0 && hasWindow()) {
+        window.addEventListener("beforeunload", onBeforeUnload);
+    }
+    pendingRequests += 1;
+    return () => {
+        if (released) return;
+        released = true;
+        pendingRequests -= 1;
+        if (pendingRequests === 0 && hasWindow()) {
+            window.removeEventListener("beforeunload", onBeforeUnload);
+        }
+    };
 }
 
 function pageIsBeingLeft(): boolean {
