@@ -49,6 +49,7 @@ afterEach(() => {
     state.enabled = false;
     state.scopes.length = 0;
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
 });
 
 describe("reportError", () => {
@@ -333,4 +334,26 @@ it('labels opt-in pipeline test failures separately from application incidents',
     state.enabled = true;
     reportApiFailure({ path: '/observability/sentry-test', status: 500 });
     expect(state.scopes[0].setTag).toHaveBeenCalledWith('diagnostic_test', 'true');
+});
+
+
+it.each([true, false])('reports only bounded browser network state (online=%s)', online => {
+    state.enabled = true;
+    vi.stubGlobal('navigator', { onLine: online });
+    vi.stubGlobal('window', { location: { href: 'https://private.example/documents/private', origin: 'https://private.example' } });
+    reportNetworkFailure(new TypeError('Failed to fetch'), { method: 'GET', url: '/api/models/configured?key=private' });
+    expect(state.scopes[0].setTag).toHaveBeenCalledWith('network_state', online ? 'online' : 'offline');
+    expect(state.scopes[0].setTag).toHaveBeenCalledWith('request_origin', 'same-origin');
+    reportNetworkFailure(new TypeError('Failed to fetch'), { method: 'GET', url: 'https://other-private.example/api/chat' });
+    expect(state.scopes[1].setTag).toHaveBeenCalledWith('request_origin', 'cross-origin');
+    expect(JSON.stringify(state.scopes.flatMap(scope => scope.setTag.mock.calls))).not.toContain('private');
+});
+
+it('tolerates unavailable browser network state', () => {
+    state.enabled = true;
+    vi.stubGlobal('navigator', undefined);
+    vi.stubGlobal('window', undefined);
+    reportNetworkFailure(new TypeError('Failed to fetch'), { method: 'GET', url: '/api/chat' });
+    expect(state.scopes[0].setTag).toHaveBeenCalledWith('network_state', 'unknown');
+    expect(state.scopes[0].setTag).toHaveBeenCalledWith('request_origin', 'unknown');
 });

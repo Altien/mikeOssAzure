@@ -110,9 +110,9 @@ export function reportApiFailure(failure: {
 }
 
 /**
- * The request never reached the server: the backend is down, the origin
- * is blocked, TLS failed, the network dropped. Not a bug in this code, but
- * it is the failure users see most and it was previously reported only
+ * Fetch failed without an HTTP response. Browser errors alone cannot tell
+ * whether the request reached the server, or distinguish TLS, CORS, a dropped
+ * connection, and a failed response read. It was previously reported only
  * through the console bridge as one undifferentiated "Failed to fetch"
  * issue with no endpoint. Warning level, grouped per endpoint.
  */
@@ -123,12 +123,27 @@ export function reportNetworkFailure(
     scrubber.markReported(error);
     if (!Sentry.isEnabled()) return null;
     const route = normalizeApiPath(request.url);
+    let networkState = "unknown";
+    let requestOrigin = "unknown";
+    try {
+        if (typeof navigator !== "undefined" && typeof navigator.onLine === "boolean") {
+            networkState = navigator.onLine ? "online" : "offline";
+        }
+        if (typeof window !== "undefined") {
+            requestOrigin = new URL(request.url, window.location.href).origin === window.location.origin
+                ? "same-origin" : "cross-origin";
+        }
+    } catch {
+        // Missing browser state or malformed URLs must not break reporting.
+    }
     return Sentry.withScope((scope) => {
         applyContext(scope, {
             level: "warning",
             tags: {
                 component: "mike-api",
                 network: true,
+                network_state: networkState,
+                request_origin: requestOrigin,
                 http_method: request.method,
                 http_route: route,
             },

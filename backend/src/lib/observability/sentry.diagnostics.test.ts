@@ -1,6 +1,7 @@
 import { afterEach, expect, it } from 'vitest';
 import * as Sentry from '@sentry/node';
 import { resetSentryForTests, scrubEvent } from './sentry';
+import { toProviderStreamError } from '../llm/providerErrors';
 import { privacyBoundaryIntegration } from './sentryPrivacy';
 
 // The final transport also emits Sentry's legacy top-level message stack.
@@ -34,8 +35,11 @@ it.each(['community', 'official'] as const)('retains exception and console locat
   Sentry.captureException(relativeError);
   console.error('[diagnostic probe]', { error: new Error('SYNTHETIC_PRIVATE_DOCUMENT') });
   Sentry.captureMessage('SYNTHETIC_PRIVATE_DOCUMENT');
+  const providerError = Object.assign(new Error('SYNTHETIC_PRIVATE_DOCUMENT'), { name: 'AI_APICallError', statusCode: 401, responseBody: 'SYNTHETIC_PRIVATE_DOCUMENT' });
+  Sentry.captureException(new Error('SYNTHETIC_PRIVATE_DOCUMENT', { cause: toProviderStreamError(providerError, { label: 'Gemini', modelId: 'private-model' }) }));
   await Sentry.flush(2000);
-  expect(events).toHaveLength(4);
+  expect(events).toHaveLength(5);
+  expect(events[4]?.tags).toMatchObject({ provider_error: 'invalid_api_key', dependency_status: 401 });
   expect(events[0]?.tags).toMatchObject({ failure_code: 'ECONNREFUSED', capture_source: 'exception' });
   expect(events[2]?.tags).toMatchObject({ capture_source: 'console' });
   expect(events[0]?.exception?.values?.[0]?.stacktrace?.frames?.some(f => f.filename?.endsWith('sentry.diagnostics.test.ts'))).toBe(true);

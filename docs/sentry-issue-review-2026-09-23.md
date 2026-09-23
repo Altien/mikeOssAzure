@@ -1,9 +1,10 @@
 # Sentry open-issue review — 2026-09-23 UTC
 
 Snapshot: `mike-xp`, `is:unresolved`, 90-day window, all projects, limit 100.
-The initial query returned 18 issues. A final refresh found two new matching
-500 reports, bringing the reviewed total to 20 (10 backend, 10 frontend, none
-in the Word add-in).
+The latest refresh returned 28 issues (14 backend, 14 frontend, none in the
+Word add-in): 24 non-test issues and four historical synthetic/probe issues.
+This extends the previous 20-issue review with BACKEND-B/C/D/E and
+FRONTEND-B/C/D/E.
 Every issue's details were inspected. The newest events use `self-hosted`;
 that label alone does not establish whether an installation is production.
 No issue was resolved or suppressed as part of this review.
@@ -13,7 +14,7 @@ causes. The changes fix reproduced telemetry defects and add diagnostics for
 future recurrences. They do not claim that a deployment/network/conversion
 failure was repaired, and cannot recover previously removed data.
 
-## Confirmed fix
+## Confirmed fixes
 
 A real-SDK test reproduced the loss of nested console Error stacks in community
 mode: the first scrubber made paths repository-relative, then the final parser
@@ -21,6 +22,12 @@ rejected those relative paths. The fix accepts sanitized locations, preserves
 already-relative exception paths, and emits console frames oldest first. The
 same test retains code locations and excludes synthetic private text in both
 install modes. See [fix PR #525](https://github.com/open-legal-products/mike/pull/525).
+
+A second regression reproduced loss of provider causes through the safe error
+wrappers: API-key/access errors and `AssistantStreamError` discarded the
+original error/status. The fix preserves non-enumerable `cause` internally;
+stream events still contain only the existing safe message and code. This is
+a separate commit in #525. It repairs diagnosis, not a rejected credential.
 
 ## Issue dispositions and next-event evidence
 
@@ -30,6 +37,10 @@ component is not proof of a common root cause.
 
 | Open issue(s) | What the current evidence establishes | New diagnostics / next decision |
 | --- | --- | --- |
+| [BACKEND-B](https://mike-xp.sentry.io/issues/MIKE-BACKEND-B) | Chat route reports an `AssistantStreamError`; the original cause was lost. Shares a request ID with C/D/E. | Fix #525 preserves the original cause through the stream wrapper. Reporting extracts controlled provider category/status and known inner network codes without chat content. Correlate the request before treating the four reports as separate root causes. |
+| [BACKEND-C](https://mike-xp.sentry.io/issues/MIKE-BACKEND-C), [BACKEND-D](https://mike-xp.sentry.io/issues/MIKE-BACKEND-D) | Google provider response-handler failures in streaming and nonstreaming AI SDK calls. HTTP status and response details were removed. | `provider_error:api_call` or `retry_exhausted`, numeric `dependency_status`, and bounded `lastError` traversal distinguish rejection, rate limits and provider outages. No response body, prompt, key or arbitrary model ID is transmitted. |
+| [BACKEND-E](https://mike-xp.sentry.io/issues/MIKE-BACKEND-E) | Stack reaches the explicit invalid-API-key mapping. Credential rejection is established; deployment key versus user-supplied key is not. | Fix #525 preserves the rejected API call as the internal cause. Reporting retains `provider_error:invalid_api_key` and numeric status. A credential/configuration correction may be needed; this PR does not claim to repair a rejected key. |
+| [FRONTEND-B](https://mike-xp.sentry.io/issues/MIKE-FRONTEND-B), [FRONTEND-C](https://mike-xp.sentry.io/issues/MIKE-FRONTEND-C), [FRONTEND-D](https://mike-xp.sentry.io/issues/MIKE-FRONTEND-D), [FRONTEND-E](https://mike-xp.sentry.io/issues/MIKE-FRONTEND-E) | Repeated fetch TypeErrors for an obscured root endpoint, models, chat and projects. The browser did not provide an HTTP response. | Preserve approved root/model endpoint vocabulary, exact fetch-failure category, browser/version and code stack. Add bounded `network_state` and `request_origin` to distinguish offline/same-origin/cross-origin failures without hosts or URLs. Browser “online” does not prove server reachability; opaque fetch errors cannot distinguish CORS from TLS/DNS by themselves. |
 | [BACKEND-A](https://mike-xp.sentry.io/issues/MIKE-BACKEND-A), [FRONTEND-A](https://mike-xp.sentry.io/issues/MIKE-FRONTEND-A) | New matching GET 500 reports share a request ID. The backend stack points to service-failure handling and the reporter wrapper; endpoint and original cause were removed. | Retain approved Express mount names instead of `/:id`, preserve non-Error throwable causes when wrapping them, and extract only known codes/status. A synchronization test checks that every Express mount survives route sanitization. |
 | [BACKEND-2](https://mike-xp.sentry.io/issues/MIKE-BACKEND-2) | Fatal startup configuration path; no stack or reason. | `runtime-config` versus `manifest-key`, controlled failure code, and invalid configuration **field names**, without their values. Distinguish missing/invalid auth configuration from signing-key configuration. |
 | [BACKEND-3](https://mike-xp.sentry.io/issues/MIKE-BACKEND-3), [BACKEND-4](https://mike-xp.sentry.io/issues/MIKE-BACKEND-4) | Generic application message/exception; cause unknown. | Capture source, restored nested-console stack, message call-site stack, allowlisted cause codes and numeric dependency status. Use the first application frame and any request ID to locate the failing operation. |
@@ -47,7 +58,7 @@ component is not proof of a common root cause.
 
 ## Review after 24 hours on the deployed changes
 
-1. Merge the stack-location fix, then the reporting PR built on it. Deploy the
+1. Merge the stack-location and cause-preservation fixes, then the reporting PR built on it. Deploy the
    backend API/workers and rebuilt web/add-in bundles. Use the existing release
    configuration to identify the deployment. No deployment is performed by
    these PRs.
@@ -57,7 +68,8 @@ component is not proof of a common root cause.
    events. Inspect new groups too: improved cause-based fingerprints can split
    an old generic issue into several actionable issues.
 3. For each recurrence, record service/role/build mode/release, operation and
-   stage, failure code/dependency status, safe code location, and any request
+   stage, failure code/provider category/dependency status, browser network state
+   and origin relation, safe code location, and any request
    ID. Use the table above to select a synthetic reproduction and the smallest
    regression test. A gateway-generated ID identifies its failure response;
    it is not an upstream distributed trace ID.

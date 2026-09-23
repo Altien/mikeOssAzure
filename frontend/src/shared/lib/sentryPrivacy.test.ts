@@ -177,3 +177,26 @@ it('prefers the nested console Error throw site over the SDK synthetic message s
   expect(event.exception).toMatchObject({ values: [{ stacktrace: { frames: [{ filename: 'backend/src/operation.ts', lineno: 42, colno: 7 }] } }] });
   expect(JSON.stringify(event)).not.toContain('PRIVATE_DOCUMENT');
 });
+
+
+it('retains provider categories and retry status without response bodies or credentials', () => {
+  const api = { name: 'AI_APICallError', statusCode: 401, responseBody: 'PRIVATE_PROVIDER_RESPONSE', apiKey: 'PRIVATE_KEY', requestBodyValues: { prompt: 'PRIVATE_PROMPT' } };
+  const retry = { name: 'AI_RetryError', lastError: api };
+  const wrapped = { name: 'AssistantStreamError', cause: { name: 'InvalidApiKeyError', cause: retry } };
+  const tags = diagnosticErrorTags(wrapped);
+  expect(tags).toEqual({ provider_error: 'invalid_api_key', dependency_status: 401 });
+  expect(diagnosticErrorTags(retry)).toEqual({ provider_error: 'retry_exhausted', dependency_status: 401 });
+  expect(diagnosticErrorTags(api)).toEqual({ provider_error: 'api_call', dependency_status: 401 });
+  expect(JSON.stringify(diagnosticEvent({ tags, extra: api }))).not.toContain('PRIVATE_');
+  const cyclic: { lastError?: unknown } = {};
+  cyclic.lastError = cyclic;
+  expect(diagnosticErrorTags(cyclic)).toEqual({});
+});
+
+it('allows only bounded network context and known model endpoints', () => {
+  expect(diagnosticEvent({ tags: { network_state: 'offline', request_origin: 'cross-origin' } }).tags).toEqual({ network_state: 'offline', request_origin: 'cross-origin' });
+  expect(diagnosticEvent({ tags: { network_state: 'private-network', request_origin: 'https://private.example', provider_error: 'private' } }).tags).toEqual({});
+  for (const operation of ['configured', 'ollama', 'openrouter', 'vercel', 'opencode-go']) {
+    expect(diagnosticRoute(`/api/models/${operation}?key=private`)).toBe(`/api/models/${operation}`);
+  }
+});

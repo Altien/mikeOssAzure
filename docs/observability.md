@@ -221,7 +221,12 @@ the backend, Next server/edge, browser, and all Word add-in entries.
   minimization, not a claim of anonymity.
 - Finite failure codes, dependency HTTP status, storage operation, file type,
   capture source, build mode and `diagnostics_version` remain. Wrapped and
-  aggregate causes are inspected locally with bounded traversal. Arbitrary
+  aggregate causes and AI SDK `lastError` are inspected locally with bounded
+  traversal. Known provider error classes become a finite `provider_error`
+  category; response bodies, prompts and credentials are never retained.
+  Browser fetch failures include only `network_state` (online/offline/unknown)
+  and `request_origin` (same-origin/cross-origin/unknown), never the hostname.
+  Online means the browser reports connectivity, not that a server is reachable. Arbitrary
   codes/names/messages and dependency metadata are not transmitted.
 - Invalid configuration reports may name approved environment **fields**, never
   their values. Converter failures distinguish missing binary, timeout and
