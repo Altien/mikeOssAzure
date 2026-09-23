@@ -14,14 +14,27 @@ causes. The changes fix reproduced telemetry defects and add diagnostics for
 future recurrences. They do not claim that a deployment/network/conversion
 failure was repaired, and cannot recover previously removed data.
 
-## Confirmed fixes
+## Outcome of the review
+
+- **0 underlying application failures fixed.**
+- **23 issues need more evidence** to establish the underlying root cause.
+- **1 issue (BACKEND-E) establishes API-key rejection**, but still needs
+  investigation to identify the deployment or user credential to correct.
+- **4 issues are synthetic test events.**
+
+The two reproduced fixes below repair diagnostic information loss. They are
+not two resolved application incidents. All code changes are now combined in
+[PR #525](https://github.com/open-legal-products/mike/pull/525); #526 was merged
+into that PR's branch.
+
+## Confirmed diagnostic fixes
 
 A real-SDK test reproduced the loss of nested console Error stacks in community
 mode: the first scrubber made paths repository-relative, then the final parser
 rejected those relative paths. The fix accepts sanitized locations, preserves
 already-relative exception paths, and emits console frames oldest first. The
 same test retains code locations and excludes synthetic private text in both
-install modes. See [fix PR #525](https://github.com/open-legal-products/mike/pull/525).
+install modes. See [PR #525](https://github.com/open-legal-products/mike/pull/525).
 
 A second regression reproduced loss of provider causes through the safe error
 wrappers: API-key/access errors and `AssistantStreamError` discarded the
@@ -58,10 +71,10 @@ component is not proof of a common root cause.
 
 ## Review after 24 hours on the deployed changes
 
-1. Merge the stack-location and cause-preservation fixes, then the reporting PR built on it. Deploy the
+1. Merge the combined diagnostic fixes and reporting changes in PR #525. Deploy the
    backend API/workers and rebuilt web/add-in bundles. Use the existing release
    configuration to identify the deployment. No deployment is performed by
-   these PRs.
+   this PR.
 2. Select the last 24 hours and `diagnostics_version:2` in Sentry. This avoids
    mistaking historical, pre-change events for new diagnostics, even if a
    self-hosted install omits its release tag. Separate `diagnostic_test:true`
