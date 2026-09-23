@@ -520,6 +520,38 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
         });
     });
 
+    // MIKE-FRONTEND-5/8: the browser-side "API 502" event must carry the id
+    // the Next gateway generated for its own api-gateway event, so the two
+    // halves of one outage can be joined with `request_id:<id>`.
+    it("correlates a gateway 502 with the gateway's own event by request id", async () => {
+        const gatewayId = "0b7c6a52-3a4e-4f59-9d0c-6f1e2a3b4c5d";
+        fetchMock.mockResolvedValue(
+            new Response(
+                JSON.stringify({
+                    detail: "The API is temporarily unavailable.",
+                    request_id: gatewayId,
+                }),
+                {
+                    status: 502,
+                    headers: {
+                        "content-type": "application/json",
+                        "x-request-id": gatewayId,
+                    },
+                },
+            ),
+        );
+
+        await expect(getUserProfile()).rejects.toMatchObject({
+            status: 502,
+            requestId: gatewayId,
+            message: "Something went wrong. Please try again.",
+        });
+        expect(reportApiFailure).toHaveBeenCalledExactlyOnceWith(
+            expect.objectContaining({ status: 502, requestId: gatewayId }),
+        );
+        expect(reportNetworkFailure).not.toHaveBeenCalled();
+    });
+
     it("reports the real HTTP method of a failed mutation", async () => {
         fetchMock.mockResolvedValueOnce(
             jsonResponse({ code: "internal_error", detail: "x" }, { status: 500 }),
