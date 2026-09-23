@@ -174,6 +174,7 @@ export function validateRuntimeConfiguration(
     );
   }
 
+  const errorsBeforeProductionChecks = errors.length;
   if (env.NODE_ENV === "production") {
     const frontend = env.FRONTEND_URL?.trim();
     if (!frontend) {
@@ -208,9 +209,20 @@ export function validateRuntimeConfiguration(
   }
 
   if (errors.length > 0) {
+    // The backend image sets NODE_ENV=production so that a real deployment
+    // can never boot with insecure cookies by omission. Someone who runs that
+    // image outside docker compose on their own machine hits these public-URL rules
+    // first, so say which switch they are actually looking for.
+    const hint =
+      errors.length > errorsBeforeProductionChecks
+        ? "\n\nNODE_ENV=production requires the public https URLs above " +
+          "(FRONTEND_URL, API_PUBLIC_URL, and WORD_ADDIN_URL when set). " +
+          "For a local run over http, set NODE_ENV=development instead; " +
+          "docker compose does this by default. See docs/deployment.md."
+        : "";
     throw Object.assign(
       new Error(
-        `Backend authentication configuration is invalid:\n- ${errors.join("\n- ")}`,
+        `Backend authentication configuration is invalid:\n- ${errors.join("\n- ")}${hint}`,
       ),
       {
         code: "configuration_invalid",
