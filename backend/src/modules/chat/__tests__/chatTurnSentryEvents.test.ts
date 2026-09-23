@@ -86,13 +86,15 @@ afterEach(async () => {
 
 /** The failing half of POST /chat, in the route's order. */
 async function failedChatTurn() {
-    // chat.routes.ts starts the title in parallel with the model stream.
+    // chat.routes.ts starts the title in parallel with the model stream and
+    // only records its failure; what it means is decided after the reply.
+    const titleOutcome: { failure: { error: unknown } | null } = { failure: null };
     const titlePromise = generateAssistantChatTitle({
         model: titleModelForChat(MODEL, null),
         message: "Summarise the indemnity clause",
         apiKeys: API_KEYS,
     }).catch((error) => {
-        logChatTitleFailure("[chat/stream] failed to generate chat title", error);
+        titleOutcome.failure = { error };
     });
     let streamError: unknown;
     try {
@@ -113,6 +115,14 @@ async function failedChatTurn() {
         console.error("[chat/stream] error:", err);
     }
     await titlePromise;
+    // chat.routes.ts settles the title's failure once the reply has.
+    if (titleOutcome.failure) {
+        logChatTitleFailure(
+            "[chat/stream] failed to generate chat title",
+            titleOutcome.failure.error,
+            streamError ?? null,
+        );
+    }
     return streamError;
 }
 
@@ -145,6 +155,35 @@ describe("one failed chat turn in Sentry", () => {
             provider_error: "invalid_api_key",
             dependency_status: 400,
         });
+    });
+
+    // The title may run on another model or provider, or hit a rate limit the
+    // reply did not. With the reply succeeding, nothing else reports it.
+    it("files a title-only provider failure once, as a warning, when the reply succeeded", async () => {
+        let titleFailure: unknown;
+        await generateAssistantChatTitle({
+            model: titleModelForChat(MODEL, null),
+            message: "Summarise the indemnity clause",
+            apiKeys: API_KEYS,
+        }).catch((error: unknown) => {
+            titleFailure = error;
+        });
+        expect(titleFailure).toBeDefined();
+        logChatTitleFailure(
+            "[chat/stream] failed to generate chat title",
+            titleFailure,
+            null,
+        );
+        await Sentry.flush(2000);
+
+        expect(
+            sent.map((event) => [
+                event.tags?.component ?? "(untagged)",
+                event.tags?.capture_source,
+                event.level,
+            ]),
+        ).toEqual([["chat-title", "exception", "warning"]]);
+        expect(sent[0]?.tags).toMatchObject({ dependency_status: 400 });
     });
 
     it("still files a genuinely different failure that follows it", async () => {

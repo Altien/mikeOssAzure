@@ -580,6 +580,10 @@ chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                 enabled: !!assistantMessageId,
             });
 
+        let titlePromise: Promise<void> = Promise.resolve();
+        // A holder, not a `let`: it is assigned inside the title promise's
+        // catch, which TypeScript's flow analysis cannot see.
+        const titleOutcome: { failure: { error: unknown } | null } = { failure: null };
         try {
             write(
                 `data: ${JSON.stringify({
@@ -604,7 +608,7 @@ chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                       .filter(Boolean)
                       .join("\n")
                 : "";
-            const titlePromise = shouldGenerateTitle
+            titlePromise = shouldGenerateTitle
                 ? generateAssistantChatTitle({
                       model: titleModelForChat(selectedModel, titleModel),
                       message: titleMessage,
@@ -624,10 +628,9 @@ chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                           }
                       })
                       .catch((error) => {
-                          logChatTitleFailure(
-                              "[chat/stream] failed to generate chat title",
-                              error,
-                          );
+                          // Decided once the reply has settled: see the
+                          // logChatTitleFailure calls below.
+                          titleOutcome.failure = { error };
                       })
                 : Promise.resolve();
 
@@ -718,6 +721,13 @@ chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
             }
 
             await titlePromise;
+            if (titleOutcome.failure) {
+                logChatTitleFailure(
+                    "[chat/stream] failed to generate chat title",
+                    titleOutcome.failure.error,
+                    null,
+                );
+            }
 
             if (!chatTitle && lastUser?.content) {
                 const title = lastUser.content.slice(0, 120);
@@ -787,6 +797,16 @@ chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
             );
             write("data: [DONE]\n\n");
         } catch (err) {
+            // The title ran in parallel with the reply; only now is it known
+            // whether its failure is the reply's failure seen twice.
+            await titlePromise;
+            if (titleOutcome.failure) {
+                logChatTitleFailure(
+                    "[chat/stream] failed to generate chat title",
+                    titleOutcome.failure.error,
+                    isAbortError(err) ? null : err,
+                );
+            }
             if (isAbortError(err)) {
                 devLog("[chat/stream] client aborted stream", { chatId });
                 void enqueueChatTurnAudit(
