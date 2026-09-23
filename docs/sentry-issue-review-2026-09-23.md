@@ -16,16 +16,29 @@ failure was repaired, and cannot recover previously removed data.
 
 ## Outcome of the review
 
-- **0 underlying application failures fixed.**
-- **23 issues need more evidence** to establish the underlying root cause.
-- **1 issue (BACKEND-E) establishes API-key rejection**, but still needs
-  investigation to identify the deployment or user credential to correct.
-- **4 issues are synthetic test events.**
+Updated after the application-fix round of 2026-09-23 (same day, second pass):
 
-The two reproduced fixes below repair diagnostic information loss. They are
-not two resolved application incidents. All code changes are now combined in
-[PR #525](https://github.com/open-legal-products/mike/pull/525); #526 was merged
-into that PR's branch.
+- **10 application defects fixed**, covering 19 issue groups. One commit per
+  fix, each with a regression test that fails without it:
+  BACKEND-2 (`ffc4a7ae`), BACKEND-3 duplicate (`3c957364`), BACKEND-7
+  (`4e57bbf8`), BACKEND-B/C/D/E (`d3fd1623`), FRONTEND-C (`30bfee33`),
+  FRONTEND-B/D/E (`813ecd02`), FRONTEND-4/5/8 operator log (`a5374b28`),
+  BACKEND-A/FRONTEND-A reporting (`cfbb1509`), BACKEND-5/6 (`611589f5`),
+  BACKEND-9 (`03e8acf1`).
+- **BACKEND-A / FRONTEND-A**: the reporting defect is fixed (a PostgREST
+  plain-object error now arrives with a stack at the service boundary and its
+  code); the application cause is narrowed to a single-segment GET on
+  `/audit`, `/quick-actions`, `/tabular-review` or `/workflow-addons` on an
+  install whose database is behind its code, and the next event will name it.
+- **BACKEND-8 / FRONTEND-7**: an unreachable object store on the sending
+  install; documented in `docs/deployment.md`, not a code defect.
+- **FRONTEND-6, FRONTEND-9**: not replicable from the available evidence.
+- **4 issues are synthetic test events** (BACKEND-1, FRONTEND-1/2/3).
+
+The two diagnostic fixes below (stack locations, provider causes) still stand;
+the dispositions table further down describes what each group's next event
+carries. All of this is in
+[PR #525](https://github.com/open-legal-products/mike/pull/525).
 
 ## Confirmed diagnostic fixes
 
