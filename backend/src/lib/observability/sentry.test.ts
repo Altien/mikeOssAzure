@@ -295,6 +295,57 @@ describe("scrubEvent", () => {
     ).not.toBeNull();
   });
 
+  it("drops the console bridge's copy of a wrapper whose cause chain holds a reported error (MIKE-BACKEND-B)", () => {
+    // runLLMStream reports the provider failure, then rethrows it wrapped
+    // for the route (AssistantStreamError { cause }); the route logs the
+    // wrapper. Same failure, so the bridge's copy must go.
+    const providerError = new Error("provider said no");
+    reportError(providerError);
+    const classified = new Error("key rejected", { cause: providerError });
+    const wrapper = new Error("stream failed", { cause: classified });
+    const consoleEvent = {
+      exception: {
+        values: [{ mechanism: { type: "auto.core.capture_console" } }],
+      },
+    } as Parameters<typeof scrubEvent>[0];
+
+    expect(scrubEvent(consoleEvent, { originalException: wrapper })).toBeNull();
+    // …also when the wrapper is nested inside a logged object.
+    expect(
+      scrubEvent({ logger: "console", message: "x" } as Parameters<typeof scrubEvent>[0], {
+        captureContext: {
+          extra: { arguments: ["[route] failed", { error: wrapper }] },
+        },
+      }),
+    ).toBeNull();
+    // A wrapper around something never reported is a new failure: kept.
+    expect(
+      scrubEvent(consoleEvent, {
+        originalException: new Error("save failed", { cause: new Error("db") }),
+      }),
+    ).not.toBeNull();
+  });
+
+  it("walks a cyclic or throwing cause chain without hanging or throwing", () => {
+    const a = new Error("a");
+    const b = new Error("b", { cause: a });
+    Object.defineProperty(a, "cause", { value: b });
+    const hostile = new Error("hostile");
+    Object.defineProperty(hostile, "cause", {
+      get() {
+        throw new Error("accessor");
+      },
+    });
+    const consoleEvent = {
+      exception: {
+        values: [{ mechanism: { type: "auto.core.capture_console" } }],
+      },
+    } as Parameters<typeof scrubEvent>[0];
+
+    expect(scrubEvent(consoleEvent, { originalException: b })).not.toBeNull();
+    expect(scrubEvent(consoleEvent, { originalException: hostile })).not.toBeNull();
+  });
+
   it("drops a console message whose logged object wraps an already-reported error", () => {
     const error = new Error("nested");
     reportError(error);

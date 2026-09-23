@@ -32,7 +32,10 @@ import {
     parseOptionalModel,
     parseOptionalReasoning,
 } from "../chat/chat.service";
-import { generateAssistantChatTitle } from "../chat/chat.service";
+import {
+    generateAssistantChatTitle,
+    logChatTitleFailure,
+} from "../chat/chat.service";
 import { titleModelForChat } from "../../lib/modelSelection";
 import {
     releaseMemoryConversationTurn,
@@ -199,7 +202,7 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                           }
                       })
                       .catch((error) => {
-                          console.error(
+                          logChatTitleFailure(
                               "[project-chat/stream] failed to generate chat title",
                               error,
                           );

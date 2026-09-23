@@ -432,6 +432,7 @@ export async function streamAiSdk(
               | Exclude<NonNullable<StreamChatParams["reasoning"]>, "max">
               | undefined),
       include: { rawChunks: true },
+      onError: () => {},
       prepareStep: ({ steps }: { steps: Array<{ toolCalls: Array<{ toolName: string }> }> }) => ({
         ...(steps.length >= Math.max(0, maxIterations)
           ? { activeTools: [], toolChoice: "none" as const }

@@ -70,7 +70,8 @@ const { streamWithProvider, unexpectedFetch } = vi.hoisted(() => ({
     }),
 }));
 
-vi.mock("../../modules/chat/chat.title", () => ({
+vi.mock("../../modules/chat/chat.title", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../../modules/chat/chat.title")>()),
     generateAssistantChatTitle: vi.fn(async () => "Generated Title"),
 }));
 

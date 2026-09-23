@@ -36,7 +36,7 @@ import {
 } from "./engine/index";
 import { normalizeEmail } from "../../lib/access";
 import { can } from "../../lib/permissions";
-import { generateAssistantChatTitle } from "./chat.title";
+import { generateAssistantChatTitle, logChatTitleFailure } from "./chat.title";
 import { sendInternalError } from "../../lib/httpError";
 import { titleModelForChat } from "../../lib/modelSelection";
 import {
@@ -624,7 +624,7 @@ chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                           }
                       })
                       .catch((error) => {
-                          console.error(
+                          logChatTitleFailure(
                               "[chat/stream] failed to generate chat title",
                               error,
                           );

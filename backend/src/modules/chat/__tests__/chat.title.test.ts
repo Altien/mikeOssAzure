@@ -6,7 +6,41 @@ const { completeText } = vi.hoisted(() => ({
 
 vi.mock("../../../lib/llm", () => ({ completeText }));
 
-import { generateAssistantChatTitle } from "../chat.title";
+import { generateAssistantChatTitle, logChatTitleFailure } from "../chat.title";
+import { UserFacingError } from "../../../lib/userFacingError";
+
+describe("logChatTitleFailure", () => {
+    // console.error is what the Sentry console bridge files; console.warn is
+    // not. A provider refusal of the title also fails the reply, which
+    // reports it — so logging it at error level filed it twice (MIKE-BACKEND-D).
+    it("keeps provider refusals and missing keys out of error level", () => {
+        const error = vi.spyOn(console, "error").mockImplementation(() => {});
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const apiCallError = Object.assign(new Error("API key not valid"), {
+            name: "AI_APICallError",
+            statusCode: 400,
+        });
+        const retryError = Object.assign(new Error("retries exhausted"), {
+            name: "AI_RetryError",
+            lastError: Object.assign(new Error("overloaded"), { statusCode: 529 }),
+        });
+        logChatTitleFailure("[t]", apiCallError);
+        logChatTitleFailure("[t]", retryError);
+        logChatTitleFailure("[t]", new UserFacingError("Gemini API key required"));
+        expect(error).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledTimes(3);
+        error.mockRestore();
+        warn.mockRestore();
+    });
+
+    it("still logs anything else — a failed title write, a bug — as an error", () => {
+        const error = vi.spyOn(console, "error").mockImplementation(() => {});
+        const bug = new TypeError("cannot read properties of undefined");
+        logChatTitleFailure("[t]", bug);
+        expect(error).toHaveBeenCalledWith("[t]", bug);
+        error.mockRestore();
+    });
+});
 
 describe("generateAssistantChatTitle", () => {
     beforeEach(() => {

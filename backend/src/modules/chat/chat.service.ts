@@ -64,7 +64,7 @@ export {
   buildWordChatSystemPrompt,
   withoutEmptyAssistantReservations,
 } from "./engine/index";
-export { generateAssistantChatTitle } from "./chat.title";
+export { generateAssistantChatTitle, logChatTitleFailure } from "./chat.title";
 export { type DocIndex, type ToolCall } from "./engine/types";
 export { findTextMatches } from "./engine/tools/documentOps";
 export { TOOLS } from "./engine/tools/toolSchemas";

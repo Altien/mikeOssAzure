@@ -1,4 +1,31 @@
 import { completeText, type UserApiKeys } from "../../lib/llm";
+import { providerFailureStatus } from "../../lib/llm/providerErrors";
+import { UserFacingError } from "../../lib/userFacingError";
+
+/**
+ * Log a failed BACKGROUND title generation — the one the chat stream routes
+ * start alongside the model's reply.
+ *
+ * That title call uses the same API keys (and, unless a title model is
+ * configured, the same provider) as the reply. When the provider refuses it
+ * — a rejected key, no credit, a rate limit, an outage — the reply fails for
+ * the same reason and runLLMStream reports that once, classified and tagged.
+ * Logging this copy with console.error made the Sentry console bridge file
+ * the same failure again as its own issue (MIKE-BACKEND-D). A missing key
+ * (UserFacingError) is the same story. Those stay in the operator's logs as
+ * a warning; anything else — a failed title write, a bug — is still an
+ * error, because nothing else will report it.
+ */
+export function logChatTitleFailure(label: string, error: unknown): void {
+    if (
+        error instanceof UserFacingError ||
+        providerFailureStatus(error) !== null
+    ) {
+        console.warn(label, error);
+        return;
+    }
+    console.error(label, error);
+}
 
 const TITLE_FALLBACK = "Misc. Query";
 
