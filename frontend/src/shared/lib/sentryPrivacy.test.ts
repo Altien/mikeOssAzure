@@ -168,6 +168,25 @@ it('distinguishes real project endpoints while dropping IDs and query content', 
 });
 
 
+// attachStacktrace makes the SDK attach a synthetic exception to every
+// captureMessage(); the event must stay a message (title from `message`, as
+// the add-in e2e contract reads it) with the call site as its stacktrace.
+it('keeps a captureMessage event a message when attachStacktrace added a synthetic exception', () => {
+  const event = diagnosticEvent({
+    message: 'PRIVATE_MESSAGE_TEXT',
+    tags: { component: 'mike-api', http_method: 'GET', http_route: '/workflows', http_status: 500, error_code: 'internal_error' },
+    exception: { values: [{ type: 'Error', value: 'PRIVATE_MESSAGE_TEXT', mechanism: { type: 'generic', synthetic: true, handled: true }, stacktrace: { frames: [{ filename: 'src/taskpane/lib/errorReporting.ts', lineno: 213, colno: 5 }] } }] },
+  });
+  expect(event.message).toBe('Failure in mike-api / GET / /workflows / 500 / internal_error');
+  expect(event.exception).toBeUndefined();
+  expect(event.stacktrace).toEqual({ frames: [{ filename: 'src/taskpane/lib/errorReporting.ts', lineno: 213, colno: 5 }] });
+  expect(JSON.stringify(event)).not.toContain('PRIVATE_');
+  // A real exception event is unaffected.
+  const thrown = diagnosticEvent({ exception: { values: [{ type: 'TypeError', mechanism: { type: 'generic', handled: false } }] } });
+  expect(thrown.exception).toBeDefined();
+  expect(thrown.message).toBeUndefined();
+});
+
 it('prefers the nested console Error throw site over the SDK synthetic message stack', () => {
   const event = diagnosticEvent({
     tags: { capture_source: 'console' },

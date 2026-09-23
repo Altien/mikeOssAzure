@@ -179,15 +179,23 @@ export function diagnosticEvent(value: unknown): RecordValue {
   }
   const description = [tags.component ?? 'application', tags.stage, tags.http_method, tags.http_route, tags.http_status, tags.error_code, tags.office_code, tags.failure_code, tags.storage_operation, tags.provider_error, tags.dependency_status].filter(v => v !== undefined).join(' / ');
   const values = record(event.exception).values;
-  if (Array.isArray(values) && values.length) {
+  const exceptionValues = Array.isArray(values) ? values : [];
+  // attachStacktrace gives captureMessage() a synthetic exception (mechanism
+  // synthetic:true, value = the message text) so the call site is recorded.
+  // It is still a message event: keep `message` (the title callers and the
+  // e2e contract read) and carry the synthetic frames as its stacktrace,
+  // instead of turning every reportApiFailure into an "Error".
+  const syntheticMessage = typeof event.message === 'string' && exceptionValues.length > 0
+    && exceptionValues.every(raw => record(record(raw).mechanism).synthetic === true);
+  if (exceptionValues.length && !syntheticMessage) {
     const nestedFrames = consoleFrames(record(event.extra).error_stack);
-    out.exception = { values: values.slice(0, 10).map((raw, index) => {
+    out.exception = { values: exceptionValues.slice(0, 10).map((raw, index) => {
       const exception = record(raw);
       const type = typeof exception.type === 'string' && ERROR_TYPES.has(exception.type) ? exception.type : 'Error';
       const safe: RecordValue = { type, value: `${tags.diagnostic_test === 'true' ? 'Diagnostic test' : 'Failure'} in ${description}` };
       // attachStacktrace gives console messages a synthetic exception. Prefer
       // the nested Error's actual throw site over that console call site.
-      const frames = tags.capture_source === 'console' && nestedFrames.length && index === Math.min(values.length, 10) - 1
+      const frames = tags.capture_source === 'console' && nestedFrames.length && index === Math.min(exceptionValues.length, 10) - 1
         ? nestedFrames : framesFor(record(exception.stacktrace).frames);
       if (frames.length) safe.stacktrace = { frames };
       const handled = record(exception.mechanism).handled;
@@ -197,6 +205,7 @@ export function diagnosticEvent(value: unknown): RecordValue {
   } else {
     out.message = `${tags.diagnostic_test === 'true' ? 'Diagnostic test' : 'Failure'} in ${description}`;
     const frames = framesFor(record(event.stacktrace).frames);
+    if (syntheticMessage) for (const raw of exceptionValues.slice(0, 10)) frames.push(...framesFor(record(record(raw).stacktrace).frames));
     frames.push(...consoleFrames(record(event.extra).error_stack));
     if (frames.length) out.stacktrace = { frames };
   }
