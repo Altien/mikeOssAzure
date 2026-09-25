@@ -35,6 +35,9 @@ jobs:
 
       - run: npm run typecheck:contracts
 
+      - name: Google Workspace approval database guarantees
+        run: bash scripts/test-google-workspace-db.sh
+
   frontend:
     runs-on: ubuntu-latest
     defaults:

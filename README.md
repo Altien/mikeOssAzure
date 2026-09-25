@@ -63,6 +63,7 @@ credentials.
 - [Documentation index](docs/README.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [MCP connectors](docs/connectors.md)
+- [Google Drive integration](docs/google-drive.md)
 - [CourtListener integration](docs/courtlistener.md)
 - [Microsoft Word add-in](word-addin/README.md)
 - [Tamper-evident exports](docs/tamper-evident-exports.md)
@@ -151,3 +152,7 @@ is maintained by Altien.
 ## Microsoft Word add-in (Beta)
 
 The Mike Word add-in brings Mike into a Word task pane for document chat, quick actions, workflows, supporting files, and tracked edits. See [the Word add-in guide](word-addin/README.md) for setup and Entra sign-in.
+
+## Google integrations
+
+Google Drive, Gmail, and Calendar are optional connections in **Settings → Connectors**. Each account is separately authorized; writes require separate consent and explicit review. See [Google Workspace integration](docs/google-workspace.md).

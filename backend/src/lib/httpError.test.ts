@@ -39,7 +39,7 @@ describe("sendInternalError", () => {
       .mockImplementation(() => {});
     const failure = new Error("relation private_table does not exist");
 
-    const res = await request(appThatFails(failure)).get("/projects/p-123?x=1");
+    const res = await request(appThatFails(failure)).get("/projects/p-123?code=private-oauth-code&state=private-oauth-state");
 
     expect(res.status).toBe(500);
     expect(res.body).toEqual({
@@ -58,8 +58,10 @@ describe("sendInternalError", () => {
         // URL and not the router-relative "/:projectId".
         http_route: "/projects/:projectId",
       },
-      extra: { path: "/projects/p-123?x=1" },
+      extra: { path: "/projects/p-123" },
     });
+    expect(JSON.stringify(consoleError.mock.calls)).not.toContain("private-oauth");
+    expect(JSON.stringify(reportError.mock.calls)).not.toContain("private-oauth");
     // Report first, log second: the console bridge must see a known error.
     expect(reportError.mock.invocationCallOrder[0]).toBeLessThan(
       consoleError.mock.invocationCallOrder[0],

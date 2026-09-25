@@ -1,3 +1,4 @@
+import { getGoogleWorkspaceStatus, startGoogleWorkspaceOAuth, cancelGoogleWorkspaceOAuth, disconnectGoogleWorkspace, listGoogleWorkspaceActions, decideGoogleWorkspaceAction } from "./mikeApi";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssistantEvent, Chat } from "@/app/components/shared/types";
 
@@ -56,6 +57,8 @@ import {
     deleteWorkflow,
     deleteWorkflowAsset,
     deleteWorkflowShare,
+    cancelGoogleDriveOAuth,
+    disconnectGoogleDrive,
     downloadDocumentsZip,
     downloadUserExport,
     exportAccountData,
@@ -80,6 +83,7 @@ import {
     getLibraryFilterOptions,
     getLibraryFolderChildren,
     getLibraryFolderPath,
+    getGoogleDriveStatus,
     getMcpConnector,
     getOpenCodeGoModels,
     getOpenRouterModels,
@@ -174,6 +178,7 @@ import {
     setProjectMemoryEnabled,
     setUserMemoryEnabled,
     shareWorkflow,
+    startGoogleDriveOAuth,
     startMcpConnectorOAuth,
     startUserExport,
     streamChat,
@@ -2348,6 +2353,42 @@ describe("thin endpoint wrappers", () => {
             method: "PATCH",
             body: { enabled: true },
         },
+        // Native Google Drive. Unlike the MCP connectors above these are
+        // first-party endpoints under /user/integrations, and the three verbs
+        // share one path — so the route/method pairing is what keeps
+        // "check status" from accidentally becoming "revoke my tokens".
+        {
+            name: "getGoogleDriveStatus",
+            call: () => getGoogleDriveStatus(),
+            url: "/user/integrations/google-drive",
+        },
+        {
+            name: "startGoogleDriveOAuth",
+            call: () => startGoogleDriveOAuth(),
+            url: "/user/integrations/google-drive/oauth/start",
+            method: "POST",
+        },
+        {
+            name: "cancelGoogleDriveOAuth",
+            call: () => cancelGoogleDriveOAuth("state-token"),
+            url: "/user/integrations/google-drive/oauth/cancel",
+            method: "POST",
+            body: { state: "state-token" },
+        },
+        {
+            name: "disconnectGoogleDrive",
+            call: () => disconnectGoogleDrive(),
+            url: "/user/integrations/google-drive",
+            method: "DELETE",
+        },
+        { name: "getGoogleWorkspaceStatus", call: () => getGoogleWorkspaceStatus("gmail"), url: "/user/integrations/gmail" },
+        { name: "startGoogleWorkspaceOAuth", call: () => startGoogleWorkspaceOAuth("gmail"), url: "/user/integrations/gmail/oauth/start", method: "POST", body: { write: false } },
+        { name: "upgradeGoogleWorkspaceOAuth", call: () => startGoogleWorkspaceOAuth("google-calendar", true), url: "/user/integrations/google-calendar/oauth/start", method: "POST", body: { write: true } },
+        { name: "cancelGoogleWorkspaceOAuth", call: () => cancelGoogleWorkspaceOAuth("gmail", "state"), url: "/user/integrations/gmail/oauth/cancel", method: "POST", body: { state: "state" } },
+        { name: "disconnectGoogleWorkspace", call: () => disconnectGoogleWorkspace("gmail"), url: "/user/integrations/gmail", method: "DELETE" },
+        { name: "listGoogleWorkspaceActions", call: () => listGoogleWorkspaceActions(), url: "/user/google-actions" },
+        { name: "approveGoogleWorkspaceAction", call: () => decideGoogleWorkspaceAction("a1", "approve"), url: "/user/google-actions/a1/approve", method: "POST" },
+        { name: "rejectGoogleWorkspaceAction", call: () => decideGoogleWorkspaceAction("a1", "reject"), url: "/user/google-actions/a1/reject", method: "POST" },
         // Projects
         {
             name: "getProject",

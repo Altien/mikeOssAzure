@@ -876,6 +876,10 @@ export function useAssistantChat({
                     typeof data.error === "string"
                       ? (data.error as string)
                       : undefined,
+                  google_action_id:
+                    typeof data.google_action_id === "string"
+                      ? (data.google_action_id as string)
+                      : undefined,
                   isStreaming: false,
                 }),
               );
