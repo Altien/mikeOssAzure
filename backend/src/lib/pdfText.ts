@@ -284,6 +284,17 @@ export function pagesWithoutText(text: string): number[] {
     .map((marker) => Number(marker[1]));
 }
 
+/**
+ * How many pages of a PDF have no text layer, or null when the PDF cannot be
+ * read (so "unreadable" is never reported as "fully readable").
+ */
+export async function countPagesWithoutText(
+  buf: ArrayBuffer,
+): Promise<number | null> {
+  const text = await extractPdfText(buf);
+  return text ? pagesWithoutText(text).length : null;
+}
+
 function formatPageRanges(pages: number[]): string {
   const ranges: string[] = [];
   for (let i = 0; i < pages.length; i++) {

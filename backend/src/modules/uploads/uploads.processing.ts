@@ -10,7 +10,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { Transform } from "node:stream";
@@ -26,6 +26,7 @@ import {
 } from "../../lib/observability/pollFailureGate";
 import { asReportableError } from "../../lib/httpError";
 import { shouldConvertToPdf } from "../../lib/documentTypes";
+import { countPagesWithoutText } from "../../lib/pdfText";
 import { uploadJobWallClockMs } from "../../lib/runtimeConfig";
 import {
   copyFile,
@@ -177,6 +178,37 @@ async function countPdfPages(filePath: string): Promise<number | null> {
   }
 }
 
+// Measured once at upload so the document list can flag scanned PDFs without
+// re-reading them. Null when the PDF cannot be parsed.
+async function countTextlessPdfPages(filePath: string): Promise<number | null> {
+  try {
+    const bytes = await readFile(filePath);
+    return await countPagesWithoutText(
+      bytes.buffer.slice(
+        bytes.byteOffset,
+        bytes.byteOffset + bytes.byteLength,
+      ) as ArrayBuffer,
+    );
+  } catch {
+    return null;
+  }
+}
+
+// Dev divergence (upstream cf5fa985): upstream writes the PDF page metrics in
+// processCreatedDocument/processNewDocumentVersion/processReplacementDocumentVersion.
+// Dev's worker only prepares claim-specific objects and a payload; the claim-
+// fenced finish_upload_processing_job RPC publishes them (0098, 0104).
+async function pdfPageMetrics(
+  file: UploadFileRow,
+  filePath: string,
+): Promise<{ page_count: number | null; textless_page_count: number | null }> {
+  if (file.file_type !== "pdf") return { page_count: null, textless_page_count: null };
+  return {
+    page_count: await countPdfPages(filePath),
+    textless_page_count: await countTextlessPdfPages(filePath),
+  };
+}
+
 async function buildPdfRendition(args: {
   sourceFilePath: string;
   workingDirectory: string;
@@ -325,7 +357,7 @@ async function prepareUploadFile(
         userId: session.user_id, documentId, versionSlug: slug, sourceStoragePath: sourcePath });
       return { kind: session.purpose, source_path: sourcePath, pdf_path: pdfPath,
         size_bytes: artifact.size, sha256: artifact.sha256,
-        page_count: file.file_type === "pdf" ? await countPdfPages(artifact.filePath) : null,
+        ...(await pdfPageMetrics(file, artifact.filePath)),
         project_id: scope === "project" ? session.destination.project_id : null,
         folder_id: scope === "project" ? (file.target_folder_id ?? session.destination.folder_id ?? null) : null,
         library_kind: scope === "library" ? session.destination.library_kind : "file",
@@ -348,7 +380,7 @@ async function prepareUploadFile(
         userId: session.user_id, documentId, versionSlug: slug, sourceStoragePath: sourcePath });
       return { kind: session.purpose, ...baseline, source_path: sourcePath, pdf_path: pdfPath,
         size_bytes: artifact.size, sha256: artifact.sha256,
-        page_count: file.file_type === "pdf" ? await countPdfPages(artifact.filePath) : null,
+        ...(await pdfPageMetrics(file, artifact.filePath)),
         filename: session.purpose === "document_version_create"
           ? ((session.destination.filename as string | undefined)?.trim() || file.filename) : file.filename };
     }

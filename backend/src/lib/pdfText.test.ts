@@ -63,6 +63,7 @@ vi.mock("pdfjs-dist/legacy/build/pdf.mjs", () => ({
 }));
 
 import {
+  countPagesWithoutText,
   extractPdfText,
   pagesWithoutText,
   withTextLayerNotice,
@@ -457,6 +458,16 @@ describe("withTextLayerNotice", () => {
 
   it("adds nothing when pdfjs could not read the file", () => {
     expect(withTextLayerNotice("")).toBe("");
+  });
+
+  it("counts pages without text, or null when the PDF cannot be read", async () => {
+    withPdf([[item("Cover letter", 72, 700)], [], []]);
+    await expect(countPagesWithoutText(new ArrayBuffer(8))).resolves.toBe(2);
+
+    (globalThis as { __fakePdf?: unknown }).__fakePdf = {
+      getDocument: () => ({ promise: Promise.reject(new Error("bad pdf")) }),
+    };
+    await expect(countPagesWithoutText(new ArrayBuffer(8))).resolves.toBeNull();
   });
 
   it("detects an image-only page from real extractPdfText output", async () => {
