@@ -62,9 +62,8 @@ export function citationReminder(
 
 export { extractPdfText, extractLegacyOfficeText } from "../../../../lib/pdfText";
 import {
-  extractPdfText,
+  extractPdfTextForModel,
   extractLegacyOfficeText,
-  withTextLayerNotice,
 } from "../../../../lib/pdfText";
 
 export async function generateDocx(
@@ -1522,7 +1521,7 @@ export async function readDocumentContent(
     let text: string;
     const fileType = docInfo.file_type?.toLowerCase?.() ?? "";
     if (fileType === "pdf") {
-      text = withTextLayerNotice(await extractPdfText(raw));
+      text = await extractPdfTextForModel(raw);
       devLog(
         `[read_document] pdf extracted length=${text.length} for filename="${docInfo.filename}"`,
       );

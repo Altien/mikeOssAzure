@@ -216,28 +216,46 @@ function layoutPageText(items: PdfTextItem[]): string {
   return out.join("\n");
 }
 
-export async function extractPdfText(buf: ArrayBuffer): Promise<string> {
+type PdfLoadingTask = {
+  promise: Promise<{
+    numPages: number;
+    getPage: (n: number) => Promise<{
+      getTextContent: () => Promise<{
+        items: PdfTextItem[];
+      }>;
+      getAnnotations: () => Promise<PdfFormAnnotation[]>;
+    }>;
+  }>;
+  destroy?: () => Promise<void>;
+};
+
+type PdfPageText = {
+  /** The page's section of extractPdfText output, "[Page N]" marker included. */
+  text: string;
+  /** No text layer and no form field values: nothing the model could read. */
+  empty: boolean;
+};
+
+/**
+ * Read every page of a PDF, or null when pdfjs cannot open it. Whether a page
+ * is empty is decided here, from the extracted items, rather than by parsing
+ * the joined text afterwards: a PDF line that happens to read "[Page 2]" is
+ * content, not a page boundary.
+ */
+async function readPdfPages(buf: ArrayBuffer): Promise<PdfPageText[] | null> {
+  let loadingTask: PdfLoadingTask | undefined;
   try {
     const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs" as string);
-    const pdf = await (
+    loadingTask = (
       pdfjsLib as unknown as {
-        getDocument: (opts: unknown) => {
-          promise: Promise<{
-            numPages: number;
-            getPage: (n: number) => Promise<{
-              getTextContent: () => Promise<{
-                items: PdfTextItem[];
-              }>;
-              getAnnotations: () => Promise<PdfFormAnnotation[]>;
-            }>;
-          }>;
-        };
+        getDocument: (opts: unknown) => PdfLoadingTask;
       }
     ).getDocument({
       data: new Uint8Array(buf),
       standardFontDataUrl: STANDARD_FONT_DATA_URL,
-    }).promise;
-    const parts: string[] = [];
+    });
+    const pdf = await loadingTask.promise;
+    const pages: PdfPageText[] = [];
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
       const textContent = await page.getTextContent();
@@ -250,38 +268,34 @@ export async function extractPdfText(buf: ArrayBuffer): Promise<string> {
       const positionedFields = fields
         .map(positionedFormItem)
         .filter((item): item is PdfTextItem => item !== null);
-      let pageText = `[Page ${i}]\n${layoutPageText([
+      const layout = layoutPageText([
         ...textContent.items,
         ...positionedFields,
-      ])}`;
+      ]);
+      let pageText = `[Page ${i}]\n${layout}`;
       const unpositionedFields = fields.filter((field) => !field.rect);
       if (unpositionedFields.length) {
         pageText += `\n[Page ${i} form fields]\n${unpositionedFields
           .map((field) => field.text)
           .join("\n")}`;
       }
-      parts.push(pageText);
+      pages.push({
+        text: pageText,
+        empty: !layout.trim() && unpositionedFields.length === 0,
+      });
     }
-    return parts.join("\n\n");
+    return pages;
   } catch {
-    return "";
+    return null;
+  } finally {
+    // Releases the pdfjs worker-side document; resolving the promise does not.
+    await loadingTask?.destroy?.().catch(() => {});
   }
 }
 
-/**
- * Page numbers in extractPdfText output whose page carries no text at all. A
- * page that is only an image (a scan without OCR) has an empty text layer, so
- * its section is the bare "[Page N]" marker.
- */
-export function pagesWithoutText(text: string): number[] {
-  const markers = [...text.matchAll(/^\[Page (\d+)\]$/gm)];
-  return markers
-    .filter((marker, i) => {
-      const start = marker.index! + marker[0].length;
-      const end = i + 1 < markers.length ? markers[i + 1].index! : text.length;
-      return !text.slice(start, end).trim();
-    })
-    .map((marker) => Number(marker[1]));
+export async function extractPdfText(buf: ArrayBuffer): Promise<string> {
+  const pages = await readPdfPages(buf);
+  return pages ? pages.map((page) => page.text).join("\n\n") : "";
 }
 
 /**
@@ -291,8 +305,8 @@ export function pagesWithoutText(text: string): number[] {
 export async function countPagesWithoutText(
   buf: ArrayBuffer,
 ): Promise<number | null> {
-  const text = await extractPdfText(buf);
-  return text ? pagesWithoutText(text).length : null;
+  const pages = await readPdfPages(buf);
+  return pages ? pages.filter((page) => page.empty).length : null;
 }
 
 function formatPageRanges(pages: number[]): string {
@@ -306,22 +320,37 @@ function formatPageRanges(pages: number[]): string {
 }
 
 /**
- * The text read_document returns for a PDF. Without a notice, a scanned PDF
- * reaches the model as empty page markers and nothing that says why, so the
- * model may report the document as blank or guess at its content.
+ * The notice for a PDF whose listed pages (1-based) have no text layer, or
+ * null when every page has text.
  */
-export function withTextLayerNotice(text: string): string {
-  const pageCount = [...text.matchAll(/^\[Page \d+\]$/gm)].length;
-  const empty = pagesWithoutText(text);
-  if (!empty.length) return text;
-  if (empty.length === pageCount) {
+export function textLayerNotice(
+  emptyPages: number[],
+  pageCount: number,
+): string | null {
+  if (!emptyPages.length) return null;
+  if (emptyPages.length === pageCount) {
     return "[This PDF has no text layer, so its content cannot be read. It is most likely a scanned document that needs OCR.]";
   }
-  const notice =
-    empty.length === 1
-      ? `[Page ${empty[0]} of this PDF has no text layer, so its content cannot be read. It is most likely scanned and needs OCR.]`
-      : `[Pages ${formatPageRanges(empty)} of this PDF have no text layer, so their content cannot be read. They are most likely scanned and need OCR.]`;
-  return `${notice}\n\n${text}`;
+  return emptyPages.length === 1
+    ? `[Page ${emptyPages[0]} of this PDF has no text layer, so its content cannot be read. It is most likely scanned and needs OCR.]`
+    : `[Pages ${formatPageRanges(emptyPages)} of this PDF have no text layer, so their content cannot be read. They are most likely scanned and need OCR.]`;
+}
+
+/**
+ * The text read_document returns for a PDF. Without a notice, a scanned PDF
+ * reaches the model as empty page markers and nothing that says why, so the
+ * model may report the document as blank or guess at its content. A fully
+ * scanned PDF is replaced by the notice; a partly scanned one keeps its text
+ * with the notice in front.
+ */
+export async function extractPdfTextForModel(buf: ArrayBuffer): Promise<string> {
+  const pages = await readPdfPages(buf);
+  if (!pages) return "";
+  const text = pages.map((page) => page.text).join("\n\n");
+  const emptyPages = pages.flatMap((page, i) => (page.empty ? [i + 1] : []));
+  const notice = textLayerNotice(emptyPages, pages.length);
+  if (!notice) return text;
+  return emptyPages.length === pages.length ? notice : `${notice}\n\n${text}`;
 }
 
 /**
