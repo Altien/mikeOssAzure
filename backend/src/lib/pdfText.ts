@@ -269,6 +269,51 @@ export async function extractPdfText(buf: ArrayBuffer): Promise<string> {
 }
 
 /**
+ * Page numbers in extractPdfText output whose page carries no text at all. A
+ * page that is only an image (a scan without OCR) has an empty text layer, so
+ * its section is the bare "[Page N]" marker.
+ */
+export function pagesWithoutText(text: string): number[] {
+  const markers = [...text.matchAll(/^\[Page (\d+)\]$/gm)];
+  return markers
+    .filter((marker, i) => {
+      const start = marker.index! + marker[0].length;
+      const end = i + 1 < markers.length ? markers[i + 1].index! : text.length;
+      return !text.slice(start, end).trim();
+    })
+    .map((marker) => Number(marker[1]));
+}
+
+function formatPageRanges(pages: number[]): string {
+  const ranges: string[] = [];
+  for (let i = 0; i < pages.length; i++) {
+    const first = pages[i];
+    while (i + 1 < pages.length && pages[i + 1] === pages[i] + 1) i++;
+    ranges.push(first === pages[i] ? `${first}` : `${first}–${pages[i]}`);
+  }
+  return ranges.join(", ");
+}
+
+/**
+ * The text read_document returns for a PDF. Without a notice, a scanned PDF
+ * reaches the model as empty page markers and nothing that says why, so the
+ * model may report the document as blank or guess at its content.
+ */
+export function withTextLayerNotice(text: string): string {
+  const pageCount = [...text.matchAll(/^\[Page \d+\]$/gm)].length;
+  const empty = pagesWithoutText(text);
+  if (!empty.length) return text;
+  if (empty.length === pageCount) {
+    return "[This PDF has no text layer, so its content cannot be read. It is most likely a scanned document that needs OCR.]";
+  }
+  const notice =
+    empty.length === 1
+      ? `[Page ${empty[0]} of this PDF has no text layer, so its content cannot be read. It is most likely scanned and needs OCR.]`
+      : `[Pages ${formatPageRanges(empty)} of this PDF have no text layer, so their content cannot be read. They are most likely scanned and need OCR.]`;
+  return `${notice}\n\n${text}`;
+}
+
+/**
  * The text read_document derives for the legacy Office types (.doc/.ppt):
  * LibreOffice → PDF → pdfjs. Exported so the document.precompute_text job
  * produces byte-identical text to the inline read path — a cache that can

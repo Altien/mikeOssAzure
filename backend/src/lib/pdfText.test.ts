@@ -62,7 +62,11 @@ vi.mock("pdfjs-dist/legacy/build/pdf.mjs", () => ({
     ).__fakePdf!.getDocument(),
 }));
 
-import { extractPdfText } from "./pdfText";
+import {
+  extractPdfText,
+  pagesWithoutText,
+  withTextLayerNotice,
+} from "./pdfText";
 
 function withPdf(
   pages: FakeItem[][],
@@ -407,5 +411,58 @@ describe("extractPdfText layout reconstruction", () => {
     };
 
     await expect(extractPdfText(new ArrayBuffer(8))).resolves.toBe("");
+  });
+});
+
+describe("withTextLayerNotice", () => {
+  it("leaves a PDF with text on every page unchanged", () => {
+    const text = "[Page 1]\nIntro\n\n[Page 2]\nTerms";
+    expect(withTextLayerNotice(text)).toBe(text);
+  });
+
+  it("replaces a fully scanned PDF with a single notice", () => {
+    expect(withTextLayerNotice("[Page 1]\n\n\n[Page 2]\n")).toBe(
+      "[This PDF has no text layer, so its content cannot be read. It is most likely a scanned document that needs OCR.]",
+    );
+  });
+
+  it("names the pages without text in a partly scanned PDF", () => {
+    const text = [
+      "[Page 1]\nBrief",
+      "[Page 2]\n",
+      "[Page 3]\n",
+      "[Page 4]\n",
+      "[Page 5]\nClosing",
+      "[Page 6]\n",
+    ].join("\n\n");
+
+    expect(pagesWithoutText(text)).toEqual([2, 3, 4, 6]);
+    expect(withTextLayerNotice(text)).toBe(
+      "[Pages 2–4, 6 of this PDF have no text layer, so their content cannot be read. They are most likely scanned and need OCR.]\n\n" +
+        text,
+    );
+  });
+
+  it("uses the singular for one page without text", () => {
+    const text = "[Page 1]\nBrief\n\n[Page 2]\n";
+    expect(withTextLayerNotice(text)).toMatch(
+      /^\[Page 2 of this PDF has no text layer/,
+    );
+  });
+
+  it("counts form field values as page text", () => {
+    const text = "[Page 1]\n\n[Page 1 form fields]\nName: Jane Doe";
+    expect(pagesWithoutText(text)).toEqual([]);
+  });
+
+  it("adds nothing when pdfjs could not read the file", () => {
+    expect(withTextLayerNotice("")).toBe("");
+  });
+
+  it("detects an image-only page from real extractPdfText output", async () => {
+    withPdf([[item("Cover letter", 72, 700)], []]);
+    const text = await extractPdfText(new ArrayBuffer(8));
+
+    expect(pagesWithoutText(text)).toEqual([2]);
   });
 });
