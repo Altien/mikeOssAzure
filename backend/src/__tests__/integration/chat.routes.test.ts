@@ -86,6 +86,7 @@ vi.mock("../../lib/mcpConnectors", async (importOriginal) => ({
 }));
 
 beforeEach(() => {
+    resetAssistantTurnRunsForTests();
     unexpectedFetch.mockClear();
     streamWithProvider.mockReset();
     vi.stubGlobal("fetch", unexpectedFetch);
@@ -138,13 +139,15 @@ function makeQuery(table: string) {
     // Select-chain state, applied against dbControl.assistantMessageRows when
     // the query resolves (see q.then below).
     let didSelect = false;
+    let selectedFields = "";
     const selectState = {
         filters: [] as { column: string; op: string; value: unknown }[],
         order: null as { column: string; ascending: boolean } | null,
         limit: null as number | null,
     };
-    q.select = vi.fn(() => {
+    q.select = vi.fn((fields?: string) => {
         didSelect = true;
+        selectedFields = fields ?? "";
         return q;
     });
     q.not = vi.fn((column: string, operator: string, value: unknown) => {
@@ -295,6 +298,8 @@ function makeQuery(table: string) {
                 }
                 return { data: rows, error: null };
             }
+            if (!activeUpdate && didSelect && table === "chat_messages" && selectedFields === "content")
+                return { data: [], error: null };
             return result;
         };
         return resolveQuery().then(resolve, reject);
@@ -414,7 +419,9 @@ vi.mock("../../lib/llm", async (importOriginal) => {
     };
 });
 
-import { app } from "../../app";
+import { buildApp } from "../../app";
+const app = buildApp();
+import { resetAssistantTurnRunsForTests } from "../../lib/assistantTurnRuns";
 import { createServerSupabase } from "../../lib/supabase";
 
 const VALID_BODY = {
@@ -469,7 +476,7 @@ describe("POST /chat — streaming endpoint", () => {
         });
 
         const res = await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send(VALID_BODY);
 
@@ -565,7 +572,7 @@ describe("POST /chat — streaming endpoint", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const res = await request(app)
-      .post("/chat")
+      .post("/api/chat")
       .set("Authorization", "Bearer test")
       .send(VALID_BODY);
 
@@ -587,7 +594,7 @@ describe("POST /chat — streaming endpoint", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const res = await request(app)
-      .post("/chat")
+      .post("/api/chat")
       .set("Authorization", "Bearer test")
       .send({ ...VALID_BODY, chat_id: "chat-1" });
 
@@ -607,7 +614,7 @@ describe("POST /chat — streaming endpoint", () => {
     beginMemoryConversationTurn.mockResolvedValueOnce(null);
 
     const res = await request(app)
-      .post("/chat")
+      .post("/api/chat")
       .set("Authorization", "Bearer test")
       .send(VALID_BODY);
 
@@ -621,7 +628,7 @@ describe("POST /chat — streaming endpoint", () => {
 
     it("rejects a chat without an explicit model before streaming", async () => {
         const res = await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send({ messages: VALID_BODY.messages });
 
@@ -646,7 +653,7 @@ describe("POST /chat — streaming endpoint", () => {
         });
 
         const res = await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send({ messages: VALID_BODY.messages });
 
@@ -672,7 +679,7 @@ describe("POST /chat — streaming endpoint", () => {
         });
 
         const res = await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send(VALID_BODY);
 
@@ -704,7 +711,7 @@ describe("POST /chat — streaming endpoint", () => {
         });
 
         const res = await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send(VALID_BODY);
 
@@ -738,7 +745,7 @@ describe("POST /chat — streaming endpoint", () => {
         });
 
         const res = await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send(VALID_BODY);
 
@@ -774,7 +781,7 @@ describe("POST /chat — streaming endpoint", () => {
         );
 
         const res = await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send(VALID_BODY);
 
@@ -847,7 +854,7 @@ describe("POST /chat — streaming endpoint", () => {
             });
 
             const res = await request(app)
-                .post("/chat")
+                .post("/api/chat")
                 .set("Authorization", "Bearer test")
                 .send(VALID_BODY);
 
@@ -890,7 +897,7 @@ describe("POST /chat — streaming endpoint", () => {
             });
 
             const res = await request(app)
-                .post("/chat")
+                .post("/api/chat")
                 .set("Authorization", "Bearer test")
                 .send(VALID_BODY);
 
@@ -934,7 +941,7 @@ describe("POST /chat — streaming endpoint", () => {
             await seedResolvableModel();
 
             const first = await request(app)
-                .post("/chat")
+                .post("/api/chat")
                 .set("Authorization", "Bearer test")
                 .send({ ...VALID_BODY, model: "gpt-5.6-terra" });
 
@@ -960,7 +967,7 @@ describe("POST /chat — streaming endpoint", () => {
             }
 
             const loaded = await request(app)
-                .get("/chat/chat-1")
+                .get("/api/chat/chat-1")
                 .set("Authorization", "Bearer test");
             expect(loaded.status).toBe(200);
             expect(loaded.body.messages).toEqual(
@@ -994,7 +1001,7 @@ describe("POST /chat — streaming endpoint", () => {
             );
             await seedResolvableModel();
             const second = await request(app)
-                .post("/chat")
+                .post("/api/chat")
                 .set("Authorization", "Bearer test")
                 .send({
                     model: "gpt-5.6-terra",
@@ -1025,10 +1032,14 @@ describe("POST /chat — streaming endpoint", () => {
                     }),
                 }),
             });
+            // Records carry an SSE `id:` line (the turn's sequence number)
+            // ahead of `data:` now that a client can resume a stream.
             const deltas = second.text
                 .split("\n\n")
-                .filter((line) => line.startsWith("data: {"))
-                .map((line) => JSON.parse(line.slice(6)))
+                .filter((record) => record.includes("data: {"))
+                .map((record) =>
+                    JSON.parse(record.slice(record.indexOf("data: ") + 6)),
+                )
                 .filter((event) => event.type === "content_delta");
             expect(deltas.map((event) => event.text).join("")).toBe(
                 "I will use New York law.",
@@ -1056,7 +1067,7 @@ describe("POST /chat — streaming endpoint", () => {
     it("stores cloud Word chats only in the document-scoped Word tables", async () => {
         const chatLib = await import("../../modules/chat/engine/index.js");
         const res = await request(app)
-            .post("/word-chat")
+            .post("/api/word-chat")
             .set("Authorization", "Bearer test")
             .send({
                 messages: [{ role: "user", content: "Visible prompt" }],
@@ -1166,7 +1177,7 @@ describe("POST /chat — streaming endpoint", () => {
         "rejects invalid Word-chat input before streaming",
         async (body, detail) => {
             const res = await request(app)
-                .post("/word-chat")
+                .post("/api/word-chat")
                 .set("Authorization", "Bearer test")
                 .send(body);
 
@@ -1179,7 +1190,7 @@ describe("POST /chat — streaming endpoint", () => {
 
     it("rejects a Word chat without an explicit model before creating storage", async () => {
         const res = await request(app)
-            .post("/word-chat")
+            .post("/api/word-chat")
             .set("Authorization", "Bearer test")
             .send({
                 messages: VALID_BODY.messages,
@@ -1206,7 +1217,7 @@ describe("POST /chat — streaming endpoint", () => {
         });
 
         const res = await request(app)
-            .post("/word-chat")
+            .post("/api/word-chat")
             .set("Authorization", "Bearer test")
             .send({
                 messages: VALID_BODY.messages,
@@ -1224,7 +1235,7 @@ describe("POST /chat — streaming endpoint", () => {
         dbControl.wordChatMissing = true;
 
         const res = await request(app)
-            .post("/word-chat")
+            .post("/api/word-chat")
             .set("Authorization", "Bearer test")
             .send({
                 ...VALID_BODY,
@@ -1243,7 +1254,7 @@ describe("POST /chat — streaming endpoint", () => {
 
     it("streams local Word chats without inserting any chat rows", async () => {
         const res = await request(app)
-            .post("/word-chat")
+            .post("/api/word-chat")
             .set("Authorization", "Bearer test")
             .send({
                 ...VALID_BODY,
@@ -1281,7 +1292,7 @@ describe("POST /chat — streaming endpoint", () => {
 
         let requestSettled = false;
         const responsePromise = request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send(VALID_BODY)
             .then((response) => {
@@ -1311,7 +1322,7 @@ describe("POST /chat — streaming endpoint", () => {
         dbControl.terminalUpdateFailures = 2;
 
         const res = await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send(VALID_BODY);
 
@@ -1331,7 +1342,7 @@ describe("POST /chat — streaming endpoint", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
         const res = await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send(VALID_BODY);
 
@@ -1362,7 +1373,7 @@ describe("POST /chat — streaming endpoint", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
         const res = await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send(VALID_BODY);
 
@@ -1393,7 +1404,7 @@ describe("POST /chat — streaming endpoint", () => {
         runLLMStream.mockRejectedValue(new Error("upstream LLM failure"));
 
         const res = await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send(VALID_BODY);
 
@@ -1445,7 +1456,7 @@ describe("POST /chat — streaming endpoint", () => {
         );
 
         const res = await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send(VALID_BODY);
 
@@ -1509,7 +1520,7 @@ describe("POST /chat — streaming endpoint", () => {
       },
     ];
         const res = await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send({
         ...VALID_BODY,
@@ -1587,7 +1598,7 @@ describe("POST /chat — streaming endpoint", () => {
         ];
 
         const res = await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send({
         ...VALID_BODY,
@@ -1627,7 +1638,7 @@ describe("POST /chat — streaming endpoint", () => {
 
     it("returns 400 on an empty messages array (never starts a stream)", async () => {
         const res = await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send({ messages: [] });
 
@@ -1638,7 +1649,7 @@ describe("POST /chat — streaming endpoint", () => {
 
     it("returns 400 when messages is missing entirely", async () => {
         const res = await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send({});
 
@@ -1648,7 +1659,7 @@ describe("POST /chat — streaming endpoint", () => {
 
     it("returns 400 when chat_id is not a non-empty string", async () => {
         const res = await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send({ ...VALID_BODY, chat_id: "   " });
 
@@ -1677,7 +1688,7 @@ describe("POST /chat — streaming endpoint", () => {
         "shares strict request validation with project chat",
         async (body, detail) => {
             const res = await request(app)
-                .post("/chat")
+                .post("/api/chat")
                 .set("Authorization", "Bearer test")
                 .send(body);
 
@@ -1689,7 +1700,7 @@ describe("POST /chat — streaming endpoint", () => {
 
     it("returns 400 from the Word route when document_context is not a string", async () => {
         const res = await request(app)
-            .post("/word-chat")
+            .post("/api/word-chat")
             .set("Authorization", "Bearer test")
             .send({
                 ...VALID_BODY,
@@ -1705,7 +1716,7 @@ describe("POST /chat — streaming endpoint", () => {
     it("makes document_context tool-readable without adding it to the system prompt", async () => {
         const chatLib = await import("../../modules/chat/engine/index.js");
         const res = await request(app)
-            .post("/word-chat")
+            .post("/api/word-chat")
             .set("Authorization", "Bearer test")
             .send({
                 ...VALID_BODY,
@@ -1754,7 +1765,7 @@ describe("POST /chat — streaming endpoint", () => {
         });
 
         const res = await request(app)
-            .post("/word-chat")
+            .post("/api/word-chat")
             .set("Authorization", "Bearer test")
             .send({
                 ...VALID_BODY,
@@ -1784,7 +1795,7 @@ describe("PATCH /chat/:chatId", () => {
 
     it("returns 400 when no supported update is provided", async () => {
         const res = await request(app)
-            .patch("/chat/chat-1")
+            .patch("/api/chat/chat-1")
             .set("Authorization", "Bearer test")
             .send({});
 
@@ -1795,7 +1806,7 @@ describe("PATCH /chat/:chatId", () => {
     it("updates the chat and profile when a model is selected", async () => {
         const userSettings = await import("../../modules/user/user.settings.js");
         const res = await request(app)
-            .patch("/chat/chat-1")
+            .patch("/api/chat/chat-1")
             .set("Authorization", "Bearer test")
             .send({ model: "gemini-3-flash-preview" });
 
@@ -1815,7 +1826,7 @@ describe("PATCH /chat/:chatId", () => {
     it("updates the chat and profile when reasoning is selected", async () => {
         const userSettings = await import("../../modules/user/user.settings.js");
         const res = await request(app)
-            .patch("/chat/chat-1")
+            .patch("/api/chat/chat-1")
             .set("Authorization", "Bearer test")
             .send({ reasoningLevel: "xhigh" });
 
@@ -1890,7 +1901,7 @@ describe("PATCH /word-chat/:chatId/model", () => {
         ],
     ])("returns 400 for a malformed body: %j", async (body, detail) => {
         const res = await request(app)
-            .patch("/chat/chat-1")
+            .patch("/api/chat/chat-1")
             .set("Authorization", "Bearer test")
             .send(body);
 
@@ -2150,7 +2161,7 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
         );
 
         const res = await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send({ ...VALID_BODY, chat_id: "chat-1" });
 
@@ -2170,7 +2181,7 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
         );
 
         const res = await request(app)
-            .post("/chat/chat-1/generate-title")
+            .post("/api/chat/chat-1/generate-title")
             .set("Authorization", "Bearer test")
             .send({ message: "hello there" });
 
@@ -2191,7 +2202,7 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
         );
 
         const res = await request(app)
-            .post("/chat/create")
+            .post("/api/chat/create")
             .set("Authorization", "Bearer test")
             .send({ project_id: "proj-1" });
 
@@ -2212,7 +2223,7 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
         );
 
         const res = await request(app)
-            .post("/chat/create")
+            .post("/api/chat/create")
             .set("Authorization", "Bearer test")
             .send({ project_id: "proj-1" });
 
@@ -2224,7 +2235,7 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
         mockedCreate.mockImplementation(() => makeRbacDb(null, "u1") as never);
 
         const res = await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send({ ...VALID_BODY, chat_id: "chat-1" });
 
@@ -2236,7 +2247,7 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
         mockedCreate.mockImplementation(() => makeRbacDb("admin") as never);
 
         const res = await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send({ ...VALID_BODY, chat_id: "chat-1" });
 
@@ -2249,7 +2260,7 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
         mockedCreate.mockImplementation(() => makeRbacDb("admin") as never);
 
         const res = await request(app)
-            .post("/chat/chat-1/generate-title")
+            .post("/api/chat/chat-1/generate-title")
             .set("Authorization", "Bearer test")
             .send({ message: "hello there" });
 
@@ -2270,7 +2281,7 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
         );
 
         const res = await request(app)
-            .post("/chat/chat-1/generate-title")
+            .post("/api/chat/chat-1/generate-title")
             .set("Authorization", "Bearer test")
             .send({ message: "hello there" });
 
@@ -2289,7 +2300,7 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
         );
 
         const res = await request(app)
-            .get("/chat/chat-1")
+            .get("/api/chat/chat-1")
             .set("Authorization", "Bearer test");
 
         expect(res.status).toBe(200);
@@ -2317,7 +2328,7 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
         );
 
         const res = await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send({ ...VALID_BODY, chat_id: "chat-1" });
 
@@ -2329,7 +2340,7 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
         mockedCreate.mockImplementation(() => makeRbacDb("member") as never);
 
         const res = await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send({ ...VALID_BODY, chat_id: "chat-1" });
 
@@ -2367,7 +2378,7 @@ describe("chat grants, deletion and roster", () => {
         mockedCreate.mockImplementation(() => makeRbacDb("admin") as never);
 
         const res = await request(app)
-            .patch("/chat/chat-1")
+            .patch("/api/chat/chat-1")
             .set("Authorization", "Bearer test")
             .send({ title: "  Renamed  " });
 
@@ -2394,7 +2405,7 @@ describe("chat grants, deletion and roster", () => {
         );
 
         const res = await request(app)
-            .patch("/chat/chat-1")
+            .patch("/api/chat/chat-1")
             .set("Authorization", "Bearer test")
             .send({ title: "Renamed" });
 
@@ -2415,7 +2426,7 @@ describe("chat grants, deletion and roster", () => {
         );
 
         const res = await request(app)
-            .patch("/chat/chat-1")
+            .patch("/api/chat/chat-1")
             .set("Authorization", "Bearer test")
             .send({ title: "Renamed" });
 
@@ -2458,7 +2469,7 @@ describe("chat grants, deletion and roster", () => {
         );
 
         const res = await request(app)
-            .post("/chat/chat-1/access")
+            .post("/api/chat/chat-1/access")
             .set("Authorization", "Bearer test")
             .send({ email: " Mate@Example.com ", role: "viewer" });
 
@@ -2521,7 +2532,7 @@ describe("chat grants, deletion and roster", () => {
         });
 
         const res = await request(app)
-            .post("/chat/chat-1/access")
+            .post("/api/chat/chat-1/access")
             .set("Authorization", "Bearer test")
             .send({ email: "mate@example.com", role: "viewer" });
 
@@ -2563,7 +2574,7 @@ describe("chat grants, deletion and roster", () => {
         );
 
         const res = await request(app)
-            .post("/chat/chat-1/access")
+            .post("/api/chat/chat-1/access")
             .set("Authorization", "Bearer test")
             .send({ email: "future@example.com", role: "viewer" });
 
@@ -2599,7 +2610,7 @@ describe("chat grants, deletion and roster", () => {
         );
 
         const res = await request(app)
-            .post("/chat/chat-1/access")
+            .post("/api/chat/chat-1/access")
             .set("Authorization", "Bearer test")
             .send({ email: "Colleague@Example.com", role: "viewer" });
 
@@ -2711,7 +2722,7 @@ describe("chat grants, deletion and roster", () => {
         });
 
         const res = await request(app)
-            .post("/chat/chat-1/access")
+            .post("/api/chat/chat-1/access")
             .set("Authorization", "Bearer test")
             .send({ email: "mate@example.com", role: "viewer" });
 
@@ -2735,7 +2746,7 @@ describe("chat grants, deletion and roster", () => {
         );
 
         const res = await request(app)
-            .post("/chat/chat-1/access")
+            .post("/api/chat/chat-1/access")
             .set("Authorization", "Bearer test")
             .send({ email: "mate@example.com", role: "editor" });
 
@@ -2754,7 +2765,7 @@ describe("chat grants, deletion and roster", () => {
         );
 
         const res = await request(app)
-            .post("/chat/chat-1/access")
+            .post("/api/chat/chat-1/access")
             .set("Authorization", "Bearer test")
             .send({ email: "U1@Test.Local", role: "editor" });
 
@@ -2771,7 +2782,7 @@ describe("chat grants, deletion and roster", () => {
         );
 
         const res = await request(app)
-            .post("/chat/chat-1/access")
+            .post("/api/chat/chat-1/access")
             .set("Authorization", "Bearer test")
             .send({ email: "ghost@example.com", role: "manager" });
 
@@ -2788,7 +2799,7 @@ describe("chat grants, deletion and roster", () => {
         );
 
         const res = await request(app)
-            .delete("/chat/chat-1")
+            .delete("/api/chat/chat-1")
             .set("Authorization", "Bearer test");
 
         expect(res.status).toBe(204);
@@ -2803,7 +2814,7 @@ describe("chat grants, deletion and roster", () => {
         mockedCreate.mockImplementation(() => makeRbacDb("member") as never);
 
         const res = await request(app)
-            .delete("/chat/chat-1")
+            .delete("/api/chat/chat-1")
             .set("Authorization", "Bearer test");
 
         expect(res.status).toBe(403);
@@ -2820,7 +2831,7 @@ describe("chat grants, deletion and roster", () => {
         mockedCreate.mockImplementation(() => makeRbacDb("admin") as never);
 
         const res = await request(app)
-            .delete("/chat/chat-1")
+            .delete("/api/chat/chat-1")
             .set("Authorization", "Bearer test");
 
         expect(res.status).toBe(204);
@@ -2833,7 +2844,7 @@ describe("chat grants, deletion and roster", () => {
         mockedCreate.mockImplementation(() => makeRbacDb(null) as never);
 
         const res = await request(app)
-            .delete("/chat/chat-1")
+            .delete("/api/chat/chat-1")
             .set("Authorization", "Bearer test");
 
         expect(res.status).toBe(404);
@@ -2852,7 +2863,7 @@ describe("chat grants, deletion and roster", () => {
         );
 
         const viewer = await request(app)
-            .get("/chat/chat-1")
+            .get("/api/chat/chat-1")
             .set("Authorization", "Bearer test");
 
         expect(viewer.status).toBe(200);
@@ -2863,7 +2874,7 @@ describe("chat grants, deletion and roster", () => {
         mockedCreate.mockImplementation(() => makeRbacDb("member") as never);
 
         const member = await request(app)
-            .get("/chat/chat-1")
+            .get("/api/chat/chat-1")
             .set("Authorization", "Bearer test");
 
         expect(member.status).toBe(200);
@@ -2878,7 +2889,7 @@ describe("chat grants, deletion and roster", () => {
         );
 
         const creator = await request(app)
-            .get("/chat/chat-1")
+            .get("/api/chat/chat-1")
             .set("Authorization", "Bearer test");
 
         expect(creator.status).toBe(200);
@@ -2933,7 +2944,7 @@ describe("chat grants, deletion and roster", () => {
         );
 
         const res = await request(app)
-            .get("/chat/chat-1/people")
+            .get("/api/chat/chat-1/people")
             .set("Authorization", "Bearer test");
 
         expect(res.status).toBe(200);
@@ -2963,7 +2974,7 @@ describe("chat grants, deletion and roster", () => {
         mockedCreate.mockImplementation(() => makeRbacDb(null) as never);
 
         const res = await request(app)
-            .get("/chat/chat-1/people")
+            .get("/api/chat/chat-1/people")
             .set("Authorization", "Bearer test");
 
         expect(res.status).toBe(404);
@@ -2975,7 +2986,7 @@ describe("chat grants, deletion and roster", () => {
         mockedCreate.mockImplementation(() => makeRbacDb("member") as never);
 
         const res = await request(app)
-            .get("/chat")
+            .get("/api/chat")
             .set("Authorization", "Bearer test");
 
         expect(res.status).toBe(200);
@@ -3014,10 +3025,10 @@ describe("chat grants, deletion and roster", () => {
         mockedCreate.mockImplementation(() => makeRbacDb("member") as never);
 
         const incomplete = await request(app)
-            .get("/chat?before_updated_at=2026-09-21T12%3A00%3A00.000Z")
+            .get("/api/chat?before_updated_at=2026-09-21T12%3A00%3A00.000Z")
             .set("Authorization", "Bearer test");
         const malformed = await request(app)
-            .get("/chat?before_updated_at=not-a-date&before_id=not-a-uuid")
+            .get("/api/chat?before_updated_at=not-a-date&before_id=not-a-uuid")
             .set("Authorization", "Bearer test");
 
         expect(incomplete.status).toBe(400);
@@ -3042,7 +3053,7 @@ describe("chat grants, deletion and roster", () => {
             mockedCreate.mockImplementation(directShare);
 
             const res = await request(app)
-                .get("/chat/chat-1")
+                .get("/api/chat/chat-1")
                 .set("Authorization", "Bearer test");
 
             expect(res.status).toBe(200);
@@ -3055,7 +3066,7 @@ describe("chat grants, deletion and roster", () => {
             mockedCreate.mockImplementation(directShare);
 
             const res = await request(app)
-                .post("/chat/chat-1/generate-title")
+                .post("/api/chat/chat-1/generate-title")
                 .set("Authorization", "Bearer test")
                 .send({ message: "hello there" });
 
@@ -3067,7 +3078,7 @@ describe("chat grants, deletion and roster", () => {
             mockedCreate.mockImplementation(directShare);
 
             const res = await request(app)
-                .post("/chat")
+                .post("/api/chat")
                 .set("Authorization", "Bearer test")
                 .send({ ...VALID_BODY, chat_id: "chat-1" });
 
@@ -3081,7 +3092,7 @@ describe("chat grants, deletion and roster", () => {
             mockedCreate.mockImplementation(directShare);
 
             const res = await request(app)
-                .delete("/chat/chat-1")
+                .delete("/api/chat/chat-1")
                 .set("Authorization", "Bearer test");
 
             expect(res.status).toBe(403);
@@ -3090,5 +3101,216 @@ describe("chat grants, deletion and roster", () => {
             );
             expect(chatWrites("delete")).toEqual([]);
         });
+    });
+});
+
+
+/**
+ * Server-owned turns. The generation is a run registered in
+ * lib/assistantTurnRuns: it survives the requesting socket closing, any
+ * response can attach to it (a reload, a second tab) and replay from a
+ * sequence number, and only the Stop endpoint aborts it.
+ */
+describe("server-owned turns: resume, stop, concurrency", () => {
+    type StreamParams = { write: (s: string) => void; signal?: AbortSignal };
+    const emitFrom = (params: StreamParams) => (frame: object) =>
+        params.write(`data: ${JSON.stringify(frame)}\n\n`);
+    const records = (text: string) =>
+        text.split("\n\n").filter((record) => record.includes("data: "));
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        runLLMStream.mockReset();
+        dbInserts.length = 0;
+        dbUpdates.length = 0;
+        dbRpcCalls.length = 0;
+        // GET /chat/:chatId reads rows through this list.
+        dbControl.assistantMessageRows = [];
+        resetAssistantTurnRunsForTests();
+    });
+
+    /** A generation the test releases by hand. */
+    function heldGeneration() {
+        const held = {
+            release: () => {},
+            started: new Promise<StreamParams>((resolve) => {
+                runLLMStream.mockImplementation(async (params: unknown) => {
+                    const p = params as StreamParams;
+                    resolve(p);
+                    emitFrom(p)({ type: "content_delta", text: "First" });
+                    await new Promise<void>((done) => {
+                        held.release = done;
+                    });
+                    emitFrom(p)({ type: "content_delta", text: " second" });
+                    return {
+                        fullText: "First second",
+                        events: [{ type: "content", text: "First second" }],
+                        citations: [],
+                    };
+                });
+            }),
+        };
+        return held;
+    }
+
+    it("keeps generating after the requesting socket closes, and a reload attaches from where it left off", async () => {
+        const held = heldGeneration();
+        const first = request(app)
+            .post("/api/chat")
+            .set("Authorization", "Bearer test")
+            .send(VALID_BODY);
+        const firstSettled = first.then(
+            () => "ended",
+            () => "aborted",
+        );
+        const params = await held.started;
+
+        // The refresh: the caller's socket goes away mid-answer.
+        first.abort();
+        expect(await firstSettled).toBe("aborted");
+        expect(params.signal?.aborted).toBe(false);
+
+        // What a reloaded page sees: the transcript plus the live turn.
+        const loaded = await request(app)
+            .get("/api/chat/chat-1")
+            .set("Authorization", "Bearer test");
+        expect(loaded.status).toBe(200);
+        const turnId = findAssistantReservation()?.value as { id: string };
+        // chat_id (1) and the first delta (2) are out; the generated title
+        // frame lands whenever its mocked call resolves.
+        expect(loaded.body.active_turn).toMatchObject({
+            id: turnId.id,
+            assistant_message_id: turnId.id,
+        });
+        expect(loaded.body.active_turn.seq).toBeGreaterThanOrEqual(2);
+
+        // Attach from the second frame: the replay skips chat_id, then the
+        // live tail arrives once the generation is released.
+        const tail = request(app)
+            .get(`/chat/chat-1/turn/${turnId.id}/stream?from=2`)
+            .set("Authorization", "Bearer test");
+        setTimeout(() => held.release(), 30);
+        const resumed = await tail;
+        expect(resumed.status).toBe(200);
+        expect(resumed.headers["content-type"]).toContain("text/event-stream");
+        const lines = records(resumed.text);
+        expect(lines[0]).toBe('id: 2\ndata: {"type":"content_delta","text":"First"}');
+        const second = lines.findIndex((line) => line.includes('"text":" second"'));
+        expect(second).toBeGreaterThan(0);
+        expect(lines[second]).toMatch(/^id: \d+\ndata: /);
+        expect(resumed.text).toContain("data: [DONE]");
+        expect(resumed.text).not.toContain('"type":"chat_id"');
+
+        // The whole answer was stored: nothing was cancelled.
+        expect(findAssistantUpdate()?.value).toMatchObject({
+            content: [{ type: "content", text: "First second" }],
+        });
+        const after = await request(app)
+            .get("/api/chat/chat-1")
+            .set("Authorization", "Bearer test");
+        expect(after.body.active_turn).toBeNull();
+    });
+
+    it("refuses a second turn while one is generating into the chat", async () => {
+        const held = heldGeneration();
+        const first = request(app)
+            .post("/api/chat")
+            .set("Authorization", "Bearer test")
+            .send({ ...VALID_BODY, chat_id: "chat-1" });
+        const firstDone = first.then((res) => res);
+        await held.started;
+        const second = await request(app)
+            .post("/api/chat")
+            .set("Authorization", "Bearer test")
+            .send({ ...VALID_BODY, chat_id: "chat-1" });
+        expect(second.status).toBe(409);
+        expect(second.body).toEqual({
+            code: "turn_in_progress",
+            detail: "A response is already being generated for this chat.",
+        });
+        held.release();
+        expect((await firstDone).text).toContain("data: [DONE]");
+        expect(runLLMStream).toHaveBeenCalledTimes(1);
+    });
+
+    it("stops a run through the endpoint: readers see cancelled then [DONE], the partial answer is stored", async () => {
+        const { AssistantStreamAbortError } = await import("../../modules/chat/engine/index.js");
+        const started = new Promise<StreamParams>((resolve) => {
+            runLLMStream.mockImplementation(async (params: unknown) => {
+                const p = params as StreamParams;
+                resolve(p);
+                emitFrom(p)({ type: "content_delta", text: "Partial" });
+                await new Promise<void>((done) =>
+                    p.signal?.addEventListener("abort", () => done(), { once: true }),
+                );
+                throw new AssistantStreamAbortError("Partial", [
+                    { type: "content", text: "Partial" },
+                ]);
+            });
+        });
+        const first = request(app)
+            .post("/api/chat")
+            .set("Authorization", "Bearer test")
+            .send(VALID_BODY);
+        const firstDone = first.then((res) => res);
+        await started;
+        const turnId = (findAssistantReservation()?.value as { id: string }).id;
+
+        const unknown = await request(app)
+            .post(`/chat/chat-1/turn/not-a-turn/stop`)
+            .set("Authorization", "Bearer test");
+        expect(unknown.status).toBe(404);
+        expect(unknown.body.code).toBe("turn_not_found");
+
+        const stopped = await request(app)
+            .post(`/chat/chat-1/turn/${turnId}/stop`)
+            .set("Authorization", "Bearer test");
+        expect(stopped.status).toBe(200);
+        expect(stopped.body).toEqual({ stopped: true, finished: false });
+
+        const text = (await firstDone).text;
+        expect(text).toContain('"type":"cancelled"');
+        expect(text).toContain("data: [DONE]");
+        expect(findAssistantUpdate()?.value).toMatchObject({
+            content: [
+                { type: "content", text: "Partial" },
+                { type: "content", text: "Cancelled by user." },
+            ],
+        });
+
+        // Stopping again is a no-op that says so; the run is kept briefly
+        // for late readers, and a replay of it ends at once.
+        const again = await request(app)
+            .post(`/chat/chat-1/turn/${turnId}/stop`)
+            .set("Authorization", "Bearer test");
+        expect(again.body).toEqual({ stopped: false, finished: true });
+        const replay = await request(app)
+            .get(`/chat/chat-1/turn/${turnId}/stream`)
+            .set("Authorization", "Bearer test");
+        expect(replay.status).toBe(200);
+        expect(records(replay.text)[0]).toContain('"type":"chat_id"');
+        expect(replay.text).toContain("data: [DONE]");
+    });
+
+    it("answers 404 for a turn that belongs to another chat or is unknown", async () => {
+        const held = heldGeneration();
+        const first = request(app)
+            .post("/api/chat")
+            .set("Authorization", "Bearer test")
+            .send(VALID_BODY);
+        const firstDone = first.then((res) => res);
+        await held.started;
+        const turnId = (findAssistantReservation()?.value as { id: string }).id;
+        const wrongChat = await request(app)
+            .get(`/chat/chat-2/turn/${turnId}/stream`)
+            .set("Authorization", "Bearer test");
+        expect(wrongChat.status).toBe(404);
+        const unknown = await request(app)
+            .get(`/chat/chat-1/turn/nope/stream`)
+            .set("Authorization", "Bearer test");
+        expect(unknown.status).toBe(404);
+        expect(unknown.body.code).toBe("turn_not_found");
+        held.release();
+        await firstDone;
     });
 });

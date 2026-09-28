@@ -75,6 +75,14 @@ export async function initServerSessionKeys(): Promise<void> {
   if (error) throw new Error("Auth session schema is unavailable");
 }
 
+/** Domain-separated key for authenticated, ephemeral inter-replica messages. */
+export function deriveServerRelayKey(): Buffer {
+  if (!stateKey) throw new Error("Auth state key has not been initialized");
+  return createHmac("sha256", stateKey)
+    .update("mike-stream-run-relay-v1")
+    .digest();
+}
+
 function key(kind: "session" | "handoff"): Buffer {
   const value = kind === "session" ? sessionKey : handoffKey;
   if (!value) throw new Error("Auth session keys have not been initialized");

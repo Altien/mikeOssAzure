@@ -261,6 +261,21 @@ export function pendingClientToolCallCount(): number {
 }
 
 /**
+ * Is this forwarded call still waiting for the pane's answer?
+ *
+ * A server-owned Word turn replays its buffered frames to a pane that
+ * attaches late, and `client_tool_call` is the one frame that must not be
+ * replayed unconditionally: a call that has already been answered, has timed
+ * out (60 s) or was cancelled is settled, and re-executing it would apply the
+ * same edit a second time. Replaying a call that is still pending is the
+ * point — a pane closed mid-call reopens, executes it, and the tool loop that
+ * has been waiting all along gets its result.
+ */
+export function isClientToolCallPending(callId: string): boolean {
+  return pendingClientToolCalls.has(callId);
+}
+
+/**
  * Register a bridge id and wait for the add-in to POST its result.
  *
  * Resolves with the client's payload; on timeout it resolves with an error
@@ -653,12 +668,14 @@ export const TOOL_EDIT_BLOCK_INDEX_BASE = 1_000;
 export function createWordClientToolsAdapter(params: {
   userId: string;
   write: (s: string) => void;
+  /** Registers owner/fence metadata before exposing a call to any pane. */
+  registerCall?: (callId: string, timeoutMs: number) => Promise<void>;
   signal?: AbortSignal;
   nonce?: string;
   /** Test seam; production scales apply deadlines via applyTimeoutMsFor. */
   timeoutMs?: number;
 }): ClientToolsAdapter {
-  const { userId, write, signal, nonce, timeoutMs } = params;
+  const { userId, write, signal, nonce, timeoutMs, registerCall } = params;
 
   // Message-wide flat ordinal for this turn's tool edits. One adapter is one
   // chat request, and the pane counts the same way from the same base.
@@ -684,6 +701,7 @@ export function createWordClientToolsAdapter(params: {
     });
     let keepAlive: NodeJS.Timeout | null = null;
     try {
+      if (registerCall) await registerCall(bridgeId, timeoutMs ?? callTimeoutMs);
       write(
         `data: ${JSON.stringify({
           type: "client_tool_call",

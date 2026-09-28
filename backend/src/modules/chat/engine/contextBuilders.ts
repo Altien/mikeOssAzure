@@ -19,6 +19,8 @@ import { parseCitations, createCitation } from "./citations";
 import type { AssistantEvent } from "./streaming";
 import { catalogWorkflowId, ensureDefaultWorkflows } from "../../../lib/workflowCatalog";
 import { safeErrorLog } from "../../../lib/safeError";
+import { streamRunCluster } from "../../../lib/streamRunCluster";
+import { streamRunFenceArgs } from "../../../lib/streamRuns";
 
 // ---------------------------------------------------------------------------
 // Prompt-injection spotlighting helpers
@@ -602,10 +604,15 @@ export async function appendAssistantEventsToMessage(
   authorUserId: string,
   events: AssistantEvent[],
   citations: unknown[] | undefined,
+  runId?: string,
 ): Promise<boolean> {
   if (events.length === 0 && (!citations || citations.length === 0))
     return true;
-  const { data, error } = await db.rpc("append_chat_assistant_events", {
+  const cluster = streamRunCluster();
+  const fence = runId ? streamRunFenceArgs(runId) : null;
+  if (cluster && !fence) return false;
+  const { data, error } = await db.rpc(cluster ? "append_chat_assistant_events_fenced" : "append_chat_assistant_events", {
+    ...(fence ?? {}),
     p_chat_id: chatId,
     p_message_id: messageId,
     p_author_user_id: authorUserId,

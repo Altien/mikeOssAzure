@@ -59,6 +59,7 @@ import type {
     AssistantEvent,
     Chat,
     ChatDetailOut,
+    ActiveAssistantTurn,
     Citation,
     Document,
     Folder,
@@ -112,6 +113,7 @@ interface ServerChatDetailOut {
     messages: ServerMessage[];
     // Dev-only (skill runtime): the skill the chat is bound to.
     skill_binding?: ChatDetailSkillBinding | null;
+    active_turn?: ActiveAssistantTurn | null;
 }
 
 /** Dev-only: `ChatDetailOut` plus the skill-runtime binding (src/altien). */
@@ -2280,7 +2282,41 @@ export async function getChat(
         },
         messages,
         skillBinding: raw.skill_binding ?? null,
+        active_turn: raw.active_turn ?? null,
     };
+}
+
+/**
+ * Attach to a turn the server is generating (or has just finished) for this
+ * chat. Frames with a sequence number >= `from` are replayed, then the live
+ * ones follow until the turn ends. `from` is the id of the last frame the
+ * caller saw plus one; 1 means everything.
+ */
+export async function streamChatTurn(payload: {
+    chatId: string;
+    turnId: string;
+    from?: number;
+    signal?: AbortSignal;
+}): Promise<Response> {
+    const { chatId, turnId, from = 1, signal } = payload;
+    return apiFetch(
+        `${API_BASE}/chat/${chatId}/turn/${turnId}/stream?from=${from}`,
+        { headers: { Accept: "text/event-stream" }, signal },
+    );
+}
+
+/**
+ * The one way to cut a generation short. Closing the stream only detaches
+ * this client; the server keeps generating for everyone else.
+ */
+export async function stopChatTurn(
+    chatId: string,
+    turnId: string,
+): Promise<{ stopped: boolean; finished: boolean }> {
+    return apiRequest<{ stopped: boolean; finished: boolean }>(
+        `/chat/${chatId}/turn/${turnId}/stop`,
+        { method: "POST" },
+    );
 }
 
 export async function renameChat(chatId: string, title: string): Promise<void> {
@@ -2663,13 +2699,34 @@ export async function streamTabularGeneration(
  * observer that takes no generation lease and enqueues nothing, so resuming a
  * run can never 409 or restart it. Used when a stream drops mid-run and when
  * the view mounts on a review that is already `is_running`.
+ *
+ * `from` is the sequence number to replay from — the last `id:` seen plus one
+ * — so a reconnect picks up where it left off instead of replaying the whole
+ * run. A server with no in-process run ignores it and tails the database.
  */
 export async function streamTabularGenerationResume(
     reviewId: string,
     signal?: AbortSignal,
+    from?: number,
 ): Promise<Response> {
-    return apiFetch(`${API_BASE}/tabular-review/${reviewId}/generate/stream`, {
-        signal: signal ?? undefined,
+    const query = from ? `?from=${from}` : "";
+    return apiFetch(
+        `${API_BASE}/tabular-review/${reviewId}/generate/stream${query}`,
+        { signal: signal ?? undefined },
+    );
+}
+
+/**
+ * Stop a generation the server is running. Closing the SSE socket no longer
+ * cancels anything, so this is the Stop control's only lever. A deployment
+ * whose extraction runs on the queue — or a run owned by another replica —
+ * has nothing in-process to stop and answers 404 `generation_not_found`.
+ */
+export async function stopTabularGeneration(
+    reviewId: string,
+): Promise<{ stopped: boolean; finished: boolean }> {
+    return apiRequest(`/tabular-review/${reviewId}/generate/stop`, {
+        method: "POST",
     });
 }
 
@@ -2695,6 +2752,41 @@ export async function streamTabularChat(
         }),
         signal: signal ?? undefined,
     });
+}
+
+/**
+ * Attach to a review-chat turn the server is generating (or has just
+ * finished). Frames with a sequence number >= `from` are replayed, then the
+ * live ones follow until the turn ends; `from` is the last frame the caller
+ * saw plus one, and 1 means everything.
+ */
+export async function streamTabularChatTurn(payload: {
+    reviewId: string;
+    chatId: string;
+    turnId: string;
+    from?: number;
+    signal?: AbortSignal;
+}): Promise<Response> {
+    const { reviewId, chatId, turnId, from = 1, signal } = payload;
+    return apiFetch(
+        `${API_BASE}/tabular-review/${reviewId}/chats/${chatId}/turn/${turnId}/stream?from=${from}`,
+        { headers: { Accept: "text/event-stream" }, signal },
+    );
+}
+
+/**
+ * The one way to cut a review-chat answer short. Closing the stream only
+ * detaches this client; the server keeps generating for everyone else.
+ */
+export async function stopTabularChatTurn(
+    reviewId: string,
+    chatId: string,
+    turnId: string,
+): Promise<{ stopped: boolean; finished: boolean }> {
+    return apiRequest<{ stopped: boolean; finished: boolean }>(
+        `/tabular-review/${reviewId}/chats/${chatId}/turn/${turnId}/stop`,
+        { method: "POST" },
+    );
 }
 
 export interface TRCitationAnnotation {
@@ -2730,6 +2822,13 @@ export interface TRChat {
     reasoning_level: NonNullable<Message["reasoning"]> | null;
     created_at: string;
     updated_at: string;
+    /**
+     * Set while the server is still generating an answer into this thread. A
+     * panel that has just loaded (a refresh, a second tab, a thread opened
+     * from the list while its answer runs elsewhere) attaches to it instead
+     * of showing a transcript whose last answer is simply missing.
+     */
+    active_turn?: ActiveAssistantTurn | null;
 }
 
 const TABULAR_CHAT_SELECTION_PREFIX = "tabular-review-chat:";

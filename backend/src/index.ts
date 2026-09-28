@@ -10,6 +10,9 @@ import { initDownloadSigningSecret } from "./lib/downloadTokens";
 import { initManifestSigningKey, manifestPublicKey } from "./lib/manifestSigning";
 import { checkSchemaVersion } from "./lib/schemaCheck";
 import { initServerSessionKeys } from "./lib/serverSession";
+import { closeStreamRunCluster, initStreamRunCluster, streamRunCluster } from "./lib/streamRunCluster";
+import { installStreamRunRelayHandler } from "./lib/streamRuns";
+import { submitClientToolResult } from "./modules/chat/engine/tools/wordClientTools";
 import { enforceDocumentLifecycleMigration } from "./lib/dbq/lifecycleGuard";
 import { startAllWorkers, stopAllWorkers } from "./workerRuntime";
 import { flushSentry, reportError } from "./lib/observability/sentry";
@@ -71,6 +74,18 @@ async function start(): Promise<void> {
   if (telemetryDsn) process.env.SENTRY_DSN = telemetryDsn;
   initSentry("api");
   await initServerSessionKeys();
+  await initStreamRunCluster();
+  installStreamRunRelayHandler(async (payload) => {
+    if (!payload || typeof payload !== "object") return false;
+    const { callId, userId, result, runId, fence } = payload as Record<string, unknown>;
+    if (typeof callId !== "string" || typeof userId !== "string" || typeof runId !== "string" || typeof fence !== "string") return false;
+    const cluster = streamRunCluster();
+    const [call, run] = await Promise.all([cluster?.toolCall(callId, userId), cluster?.lookup(runId)]);
+    if (!cluster || !call || !run || call.owner_instance !== cluster.instanceId || call.run_id !== runId || call.fence !== fence || run.fence !== fence) return false;
+    const delivered = submitClientToolResult(callId, userId, result);
+    if (delivered) void cluster.settleToolCall(callId, userId).catch(() => {});
+    return delivered;
+  });
   await initDownloadSigningSecret();
   await initManifestSigningKey();
   await enforceDocumentLifecycleMigration();
@@ -96,6 +111,7 @@ async function start(): Promise<void> {
         server.close((error) => error ? reject(error) : resolve()),
       );
       if (workersMode === "inline") await stopAllWorkers();
+      await closeStreamRunCluster();
       if (thread) {
         const active = thread;
         const exit = new Promise<void>((resolve) => active.once("exit", () => resolve()));
