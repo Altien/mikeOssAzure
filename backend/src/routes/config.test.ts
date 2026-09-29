@@ -28,6 +28,7 @@ const TOUCHED_ENV = [
   "ENTRA_FRONTEND_CLIENT_ID",
   "ENTRA_BACKEND_CLIENT_ID",
   "DEMO_MODE",
+  "WORKFLOW_CONTRIBUTIONS_ENABLED",
   "FRONTEND_URL",
   "NODE_ENV",
 ] as const;
@@ -120,6 +121,17 @@ describe("GET /config — demoMode field", () => {
   });
 });
 
+describe("GET /config — workflowContributionsEnabled field (OSS-6)", () => {
+  it("defaults to false and is enabled only by WORKFLOW_CONTRIBUTIONS_ENABLED=true", async () => {
+    const defaultResponse = await request(makeApp()).get("/config");
+    expect(defaultResponse.body.workflowContributionsEnabled).toBe(false);
+
+    process.env.WORKFLOW_CONTRIBUTIONS_ENABLED = "true";
+    const enabledResponse = await request(makeApp()).get("/config");
+    expect(enabledResponse.body.workflowContributionsEnabled).toBe(true);
+  });
+});
+
 describe("GET /config — entra block", () => {
   it("surfaces ENTRA_TENANT_ID and ENTRA_CLIENT_ID when both are set", async () => {
     process.env.AUTH_PROVIDER = "entra";
@@ -204,6 +216,7 @@ describe("GET /config — secret-leak guard", () => {
       "authProvider",
       "demoMode",
       "entra",
+      "workflowContributionsEnabled",
     ]);
     expect(Object.keys(res.body.entra).sort()).toEqual([
       "apiScope",

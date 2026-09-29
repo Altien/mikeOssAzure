@@ -67,6 +67,7 @@ import {
 } from "@/app/components/shared/TablePrimitive";
 import { TableToolbar } from "@/app/components/shared/TableToolbar";
 import { useAuth } from "@/app/contexts/AuthContext";
+import { useConfig } from "@/app/contexts/ConfigContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { downloadWorkflowZip } from "./workflowZipExport";
 // dynamic import keeps Tiptap (browser-only) out of the SSR bundle
@@ -88,8 +89,6 @@ type DeleteStatus = "idle" | "loading" | "complete";
 type WorkflowShare = Awaited<ReturnType<typeof listWorkflowShares>>[number];
 
 const NAME_COL_W = "w-[332px] shrink-0";
-const WORKFLOW_CONTRIBUTIONS_ENABLED =
-    process.env.NEXT_PUBLIC_WORKFLOW_CONTRIBUTIONS_ENABLED === "true";
 
 // ---------------------------------------------------------------------------
 // Page
@@ -98,6 +97,12 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
     const router = useRouter();
     const { user } = useAuth();
     const { profile } = useUserProfile();
+    // Upstream divergence (OSS-6, decisions 4, 7): the contributions flag is
+    // runtime config (/config workflowContributionsEnabled, server env
+    // WORKFLOW_CONTRIBUTIONS_ENABLED, default off), not upstream's build-time
+    // NEXT_PUBLIC_WORKFLOW_CONTRIBUTIONS_ENABLED.
+    const WORKFLOW_CONTRIBUTIONS_ENABLED =
+        useConfig().workflowContributionsEnabled === true;
     const [workflow, setWorkflow] = useState<Workflow | null>(null);
     const [loading, setLoading] = useState(true);
     const [notFound, setNotFound] = useState(false);

@@ -24,6 +24,12 @@ export type AuthProvider = "supabase" | "local" | "entra";
 export interface RuntimeConfig {
     authProvider: AuthProvider;
     demoMode: boolean;
+    // OSS-6 (decisions 4, 7): server WORKFLOW_CONTRIBUTIONS_ENABLED, served at
+    // runtime instead of upstream's build-time
+    // NEXT_PUBLIC_WORKFLOW_CONTRIBUTIONS_ENABLED. Gates the "open source this
+    // workflow" action. Optional so older backends and fixtures stay valid
+    // (absent = off).
+    workflowContributionsEnabled?: boolean;
     entra: {
         tenantId: string;
         clientId: string;
@@ -38,6 +44,7 @@ export interface RuntimeConfig {
 const DEFAULT_CONFIG: RuntimeConfig = {
     authProvider: "supabase",
     demoMode: false,
+    workflowContributionsEnabled: false,
     entra: { tenantId: "", clientId: "" },
 };
 

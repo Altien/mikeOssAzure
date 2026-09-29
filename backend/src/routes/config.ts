@@ -18,6 +18,8 @@
 //     Entra validator already accepts for the web frontend.
 //   - demoMode controls a public warning banner and contains no deployment
 //     identity or secret material.
+//   - workflowContributionsEnabled only toggles the "open source this
+//     workflow" action (WORKFLOW_CONTRIBUTIONS_ENABLED, default off).
 //
 // Cache-Control short — config changes are rare but we already have
 // /install's flushConfigCache for explicit invalidation when an
@@ -62,6 +64,12 @@ configRouter.get("/", async (_req, res) => {
     res.json({
         authProvider,
         demoMode: process.env.DEMO_MODE?.toLowerCase() === "true",
+        // OSS-6 (decisions 4, 7): upstream bakes this into the bundle as
+        // NEXT_PUBLIC_WORKFLOW_CONTRIBUTIONS_ENABLED; dev serves it at
+        // runtime. Same server flag and test as routes/workflows.ts's
+        // open-source gate (plain env, not a secret; default off).
+        workflowContributionsEnabled:
+            process.env.WORKFLOW_CONTRIBUTIONS_ENABLED === "true",
         entra: { tenantId, clientId, apiScope },
     });
 });
