@@ -363,7 +363,10 @@ export function normalizeDownloadFilename(name: string): string {
 }
 
 export function sanitizeDispositionFilename(name: string): string {
-  return normalizeDownloadFilename(name).replace(/["\\]/g, "_");
+  // Non-ASCII goes in filename*; a raw non-latin1 char in the header throws ERR_INVALID_CHAR.
+  return normalizeDownloadFilename(name)
+    .replace(/["\\]/g, "_")
+    .replace(/[^\x20-\x7E]/g, "_");
 }
 
 export function encodeRFC5987(str: string): string {
