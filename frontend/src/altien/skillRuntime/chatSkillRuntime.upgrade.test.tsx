@@ -2,7 +2,9 @@ import { forwardRef } from "react";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders } from "@/test/render";
-import ProjectAssistantChatClient from "@/app/(pages)/projects/[id]/assistant/chat/[chatId]/ProjectAssistantChatClient";
+// OSS-6: dev's ProjectAssistantChatClient split is gone; the skill runtime is
+// hooked into upstream's page (chatSkillRuntime.tsx).
+import ProjectAssistantChatPage from "@/app/(pages)/projects/[id]/assistant/chat/[chatId]/page";
 
 const { getChatSkillBindingMock, upgradeChatSkillMock } = vi.hoisted(() => ({
     getChatSkillBindingMock: vi.fn(),
@@ -36,6 +38,7 @@ vi.mock("@/app/contexts/ChatHistoryContext", () => ({
         setNewChatMessages: vi.fn(),
         chats: [],
         saveChat: vi.fn(),
+        renameChat: vi.fn(),
     }),
 }));
 
@@ -79,16 +82,20 @@ vi.mock("@/app/components/projects/ProjectExplorer", () => ({
     ProjectExplorer: () => <div>Project explorer</div>,
 }));
 
-vi.mock("@/app/components/shared/DocView", () => ({
-    DocView: () => <div>Document view</div>,
+vi.mock("@/app/components/shared/views/PdfView", () => ({
+    PdfView: () => <div>Document view</div>,
 }));
 
-vi.mock("@/app/components/shared/DocxView", () => ({
+vi.mock("@/app/components/shared/views/SpreadsheetView", () => ({
+    SpreadsheetView: () => <div>Spreadsheet view</div>,
+}));
+
+vi.mock("@/app/components/shared/views/DocxView", () => ({
     DocxView: () => <div>Word view</div>,
 }));
 
-vi.mock("@/app/components/shared/OwnerOnlyModal", () => ({
-    OwnerOnlyModal: () => null,
+vi.mock("@/app/components/popups/OwnerOnlyPopup", () => ({
+    OwnerOnlyPopup: () => null,
 }));
 
 vi.mock("@/altien/authorityTrace/AuthorityTracePanel", () => ({
@@ -137,7 +144,7 @@ describe("explicit chat skill upgrade", () => {
             contentHash: "ccccccccdddddddd",
         });
 
-        renderWithProviders(<ProjectAssistantChatClient />, {
+        renderWithProviders(<ProjectAssistantChatPage />, {
             user: { id: "user-1", email: "tester@example.com" },
         });
 
@@ -185,7 +192,7 @@ describe("explicit chat skill upgrade", () => {
             },
         });
 
-        renderWithProviders(<ProjectAssistantChatClient />, {
+        renderWithProviders(<ProjectAssistantChatPage />, {
             user: { id: "user-1", email: "tester@example.com" },
         });
 

@@ -3,7 +3,9 @@ import { fireEvent, screen } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { renderWithProviders } from "@/test/render";
 import type { Message } from "@/app/components/shared/types";
-import ProjectAssistantChatClient from "@/app/(pages)/projects/[id]/assistant/chat/[chatId]/ProjectAssistantChatClient";
+// OSS-6: dev's ProjectAssistantChatClient split is gone; the Authority Trace
+// tab is hooked into upstream's page (projectChatAuthorityTrace.tsx).
+import ProjectAssistantChatPage from "@/app/(pages)/projects/[id]/assistant/chat/[chatId]/page";
 
 const { authorityTraceMessage } = vi.hoisted(() => ({
     authorityTraceMessage: {
@@ -48,6 +50,7 @@ vi.mock("@/app/contexts/ChatHistoryContext", () => ({
         setNewChatMessages: vi.fn(),
         chats: [],
         saveChat: vi.fn(),
+        renameChat: vi.fn(),
     }),
 }));
 
@@ -84,16 +87,20 @@ vi.mock("@/app/components/projects/ProjectExplorer", () => ({
     ProjectExplorer: () => <div>Project explorer</div>,
 }));
 
-vi.mock("@/app/components/shared/DocView", () => ({
-    DocView: () => <div>Document view</div>,
+vi.mock("@/app/components/shared/views/PdfView", () => ({
+    PdfView: () => <div>Document view</div>,
 }));
 
-vi.mock("@/app/components/shared/DocxView", () => ({
+vi.mock("@/app/components/shared/views/SpreadsheetView", () => ({
+    SpreadsheetView: () => <div>Spreadsheet view</div>,
+}));
+
+vi.mock("@/app/components/shared/views/DocxView", () => ({
     DocxView: () => <div>Word view</div>,
 }));
 
-vi.mock("@/app/components/shared/OwnerOnlyModal", () => ({
-    OwnerOnlyModal: () => null,
+vi.mock("@/app/components/popups/OwnerOnlyPopup", () => ({
+    OwnerOnlyPopup: () => null,
 }));
 
 vi.mock("@/altien/authorityTrace/AuthorityTracePanel", () => ({
@@ -114,9 +121,9 @@ beforeAll(() => {
     Element.prototype.scrollIntoView = vi.fn();
 });
 
-describe("ProjectAssistantChatClient Authority Trace", () => {
+describe("project chat page: Authority Trace", () => {
     it("opens a persisted run in the project viewer", async () => {
-        renderWithProviders(<ProjectAssistantChatClient />, {
+        renderWithProviders(<ProjectAssistantChatPage />, {
             user: { id: "user-1", email: "tester@example.com" },
         });
 
