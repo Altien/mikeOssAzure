@@ -194,7 +194,8 @@ describe("useAssistantChat SSE parsing", () => {
             'data: {"type":"citations","status":"final","citations":[{"ref":1}]}\n\n',
         ]);
 
-        expect(assistant?.citations).toEqual([{ ref: 1 }]);
+        // Dev stores streamed citations on `annotations` (upstream: `citations`).
+        expect(assistant?.annotations).toEqual([{ ref: 1 }]);
         expect(assistant?.citationStatus).toBe("final");
         expect(assistant?.events).toEqual([
             { type: "content", text: "Cited." },
