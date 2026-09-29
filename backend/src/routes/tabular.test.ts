@@ -327,8 +327,14 @@ describe("review-row load failures answer 500 instead of hanging (sync-log 5f996
     });
 });
 
-describe("tabular cell prompts (spreadsheet citations deferred, sync-log 6ae1f98d)", () => {
-    it("regenerate-cell asks for page citations only, never sheet/cell citations", async () => {
+// Inverted by OSS-6 step D: the frontend now renders sheet/cell citations
+// (SpreadsheetView + citation-utils), so both prompts carry upstream's
+// spreadsheet citation sentence again (was 172cd8f1's "absent" assertion).
+const SHEET_CITATION_FORMAT =
+    "[[document:SOURCE_DOCUMENT_ID||sheet:SHEET_NAME||cell:A1||quote:exact cell text]]";
+
+describe("tabular cell prompts (page and spreadsheet citations, sync-log 6ae1f98d)", () => {
+    it("regenerate-cell asks for page citations and sheet/cell citations for spreadsheets", async () => {
         const { db } = makeFakeDb(respond);
         createServerSupabaseMock.mockReturnValue(db);
 
@@ -345,10 +351,10 @@ describe("tabular cell prompts (spreadsheet citations deferred, sync-log 6ae1f98
         expect(systemPrompt).toContain(
             "[[document:SOURCE_DOCUMENT_ID||page:N||",
         );
-        expect(systemPrompt).not.toMatch(/sheet:/i);
+        expect(systemPrompt).toContain(SHEET_CITATION_FORMAT);
     });
 
-    it("generate asks for page citations only, never sheet/cell citations", async () => {
+    it("generate asks for page citations and sheet/cell citations for spreadsheets", async () => {
         const { db } = makeFakeDb(respond);
         createServerSupabaseMock.mockReturnValue(db);
         streamChatWithToolsMock.mockResolvedValue(undefined);
@@ -364,7 +370,7 @@ describe("tabular cell prompts (spreadsheet citations deferred, sync-log 6ae1f98
             expect(systemPrompt).toContain(
                 "[[document:SOURCE_DOCUMENT_ID||page:N||",
             );
-            expect(systemPrompt).not.toMatch(/sheet:/i);
+            expect(systemPrompt).toContain(SHEET_CITATION_FORMAT);
         }
     });
 });
