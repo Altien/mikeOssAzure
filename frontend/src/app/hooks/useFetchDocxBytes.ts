@@ -1,7 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { supabase } from "@/app/lib/supabase";
+import {
+    getBrowserAccessToken,
+    bounceIfUnauthorized,
+} from "@/app/lib/auth-token";
 
 export interface FetchDocxResult {
     bytes: ArrayBuffer | null;
@@ -56,8 +59,11 @@ export function useFetchDocxBytes(
         }
 
         const key = cacheKey(documentId, versionId, refetchKey);
+        // Upstream divergence (OSS-6, auth-fetch): `/api` prefix, token from
+        // auth-token and a 401 bounce, instead of supabase.auth.getSession().
         const apiBase =
-            process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+            (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") +
+            "/api";
         const qs = versionId
             ? `?version_id=${encodeURIComponent(versionId)}`
             : "";
@@ -80,15 +86,13 @@ export function useFetchDocxBytes(
         const pending =
             inFlight.get(key) ??
             (async () => {
-                const {
-                    data: { session },
-                } = await supabase.auth.getSession();
-                const token = session?.access_token;
+                const token = await getBrowserAccessToken();
                 // Stream bytes through the backend (avoids CORS on R2
                 // signed URLs).
                 const bin = await fetch(url, {
                     headers: token ? { Authorization: `Bearer ${token}` } : {},
                 });
+                bounceIfUnauthorized(bin);
                 if (!bin.ok) throw new Error(`HTTP ${bin.status}`);
                 const buf = await bin.arrayBuffer();
                 bytesCache.set(key, buf);

@@ -1,7 +1,10 @@
 import { useState, type ReactNode } from "react";
 import { ChevronDown, Loader2 } from "lucide-react";
 import { PillButton } from "@/app/components/ui/pill-button";
-import { supabase } from "@/app/lib/supabase";
+import {
+    getBrowserAccessToken,
+    bounceIfUnauthorized,
+} from "@/app/lib/auth-token";
 import type { EditAnnotation } from "../../shared/types";
 import { applyOptimisticResolution } from "../EditCard";
 
@@ -60,12 +63,13 @@ function BulkEditActions({
         setBusy(verb);
         setProgress({ done: 0, total: pending.length });
         try {
-            const {
-                data: { session },
-            } = await supabase.auth.getSession();
-            const token = session?.access_token;
+            // Upstream divergence (OSS-6, auth-fetch): token from auth-token
+            // (Entra/local/Supabase), `/api` prefix and a 401 bounce,
+            // instead of supabase.auth.getSession().
+            const token = await getBrowserAccessToken();
             const apiBase =
-                process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+                (process.env.NEXT_PUBLIC_API_BASE_URL ??
+                    "http://localhost:3001") + "/api";
 
             // Sequential so the per-document version counter advances in a
             // predictable order and the viewer doesn't race between bumps.
@@ -97,6 +101,7 @@ function BulkEditActions({
                                 : undefined,
                         },
                     );
+                    bounceIfUnauthorized(resp);
                     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                     const data = (await resp.json()) as {
                         ok: boolean;

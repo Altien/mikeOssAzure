@@ -2,7 +2,10 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ChevronDown, Download, Loader2 } from "lucide-react";
-import { supabase } from "@/app/lib/supabase";
+import {
+    getBrowserAccessToken,
+    bounceIfUnauthorized,
+} from "@/app/lib/auth-token";
 import type { AssistantEvent } from "../../shared/types";
 import { FileTypeIcon } from "../../shared/FileTypeIcon";
 import { RESPONSE_GLASS_SURFACE, withoutMarkdownNode } from "./messageStyles";
@@ -376,8 +379,12 @@ export function DocDownloadBlock({
     // Only backend-relative URLs are accepted. The download fetch carries
     // the user's bearer token, so any absolute URL from tool output is
     // refused to keep the token from leaking off-origin.
+    // Upstream divergence (OSS-6, auth-fetch): `/api` prefix, token from
+    // auth-token (Entra/local/Supabase) and a 401 bounce, instead of
+    // supabase.auth.getSession().
     const API_BASE =
-        process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+        (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") +
+        "/api";
     const isSafeHref = download_url.startsWith("/");
     const href = isSafeHref ? `${API_BASE}${download_url}` : null;
     const [busy, setBusy] = useState(false);
@@ -391,13 +398,11 @@ export function DocDownloadBlock({
         if (busy || isReloading || !href) return;
         setBusy(true);
         try {
-            const {
-                data: { session },
-            } = await supabase.auth.getSession();
-            const token = session?.access_token;
+            const token = await getBrowserAccessToken();
             const resp = await fetch(href, {
                 headers: token ? { Authorization: `Bearer ${token}` } : {},
             });
+            bounceIfUnauthorized(resp);
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const blob = await resp.blob();
             const blobUrl = URL.createObjectURL(blob);

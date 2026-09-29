@@ -3,7 +3,10 @@
 import { useEffect, useMemo, useRef } from "react";
 import { Loader2 } from "lucide-react";
 import { useFetchDocxBytes } from "@/app/hooks/useFetchDocxBytes";
-import { supabase } from "@/app/lib/supabase";
+import {
+    getBrowserAccessToken,
+    bounceIfUnauthorized,
+} from "@/app/lib/auth-token";
 import {
     clearDocxQuoteHighlights,
     highlightDocxQuote,
@@ -145,12 +148,13 @@ async function tagWIdsOnRenderedDom(
     versionId: string | null | undefined,
 ): Promise<void> {
     try {
-        const {
-            data: { session },
-        } = await supabase.auth.getSession();
-        const token = session?.access_token;
+        // Upstream divergence (OSS-6, auth-fetch): token from auth-token
+        // (Entra/local/Supabase), `/api` prefix and a 401 bounce, instead
+        // of supabase.auth.getSession().
+        const token = await getBrowserAccessToken();
         const apiBase =
-            process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+            (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") +
+            "/api";
         const qs = versionId
             ? `?version_id=${encodeURIComponent(versionId)}`
             : "";
@@ -158,6 +162,7 @@ async function tagWIdsOnRenderedDom(
             `${apiBase}/single-documents/${documentId}/tracked-change-ids${qs}`,
             { headers: token ? { Authorization: `Bearer ${token}` } : {} },
         );
+        bounceIfUnauthorized(resp);
         if (!resp.ok) {
             console.warn(
                 "[DocxView] tracked-change-ids fetch failed",

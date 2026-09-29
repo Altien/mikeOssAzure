@@ -8,12 +8,12 @@ import { Input } from "@/app/components/ui/input";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
-import {
-    MfaVerificationPopup,
-    needsMfaVerification,
-} from "@/app/components/popups/MfaVerificationPopup";
+// Upstream divergence (sync-log: 3a10943; OSS-6): upstream gates account
+// deletion and email changes behind MfaVerificationPopup (Supabase-auth
+// TOTP step-up). Dev has no app-level MFA — Entra enforces MFA at sign-in
+// via Conditional Access — so the popup and its retry paths are omitted.
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
-import { deleteAccount, isMfaRequiredError } from "@/app/lib/mikeApi";
+import { deleteAccount } from "@/app/lib/mikeApi";
 import {
     accountGlassDangerOutlineButtonClassName,
     accountGlassInputClassName,
@@ -41,10 +41,8 @@ export default function AccountPage() {
     const [emailSaved, setEmailSaved] = useState(false);
     const [emailStatus, setEmailStatus] = useState<string | null>(null);
     const [emailWarning, setEmailWarning] = useState<string | null>(null);
-    const [emailMfaOpen, setEmailMfaOpen] = useState(false);
     const [deleteConfirm, setDeleteConfirm] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
-    const [accountDeleteMfaOpen, setAccountDeleteMfaOpen] = useState(false);
 
     useEffect(() => {
         if (profile?.displayName) {
@@ -67,29 +65,15 @@ export default function AccountPage() {
     };
 
     const handleDeleteAccount = async () => {
-        devLog("[account/mfa] delete account requested");
+        devLog("[account] delete account requested");
         setIsDeleting(true);
         try {
-            if (await needsMfaVerification()) {
-                setDeleteConfirm(false);
-                setAccountDeleteMfaOpen(true);
-                setIsDeleting(false);
-                return;
-            }
             await deleteAccount();
             await signOut();
             router.push("/");
         } catch (error) {
             setIsDeleting(false);
-            devLog("[account/mfa] delete account failed", {
-                isMfaRequired: isMfaRequiredError(error),
-                error,
-            });
-            if (isMfaRequiredError(error)) {
-                setDeleteConfirm(false);
-                setAccountDeleteMfaOpen(true);
-                return;
-            }
+            devLog("[account] delete account failed", { error });
             setDeleteConfirm(false);
             alert("Failed to delete account. Please try again.");
         }
@@ -99,16 +83,11 @@ export default function AccountPage() {
         const nextEmail = email.trim();
         if (!nextEmail || nextEmail === user?.email) return;
 
-        devLog("[account/mfa] save email requested");
+        devLog("[account] save email requested");
         setIsSavingEmail(true);
         setEmailStatus(null);
         setEmailWarning(null);
         try {
-            if (await needsMfaVerification()) {
-                setEmailMfaOpen(true);
-                return;
-            }
-
             const updatedUser = await updateEmail(nextEmail);
             const pendingEmail = updatedUser.pendingEmail;
             setEmail(pendingEmail || updatedUser.email);
@@ -120,7 +99,7 @@ export default function AccountPage() {
             );
             setTimeout(() => setEmailSaved(false), 2000);
         } catch (error: unknown) {
-            devLog("[account/mfa] save email failed", { error });
+            devLog("[account] save email failed", { error });
             const message =
                 error instanceof Error
                     ? error.message
@@ -384,28 +363,6 @@ export default function AccountPage() {
                 title="Email already registered"
                 message={emailWarning}
                 onClose={() => setEmailWarning(null)}
-            />
-            <MfaVerificationPopup
-                open={accountDeleteMfaOpen}
-                onCancel={() => setAccountDeleteMfaOpen(false)}
-                onVerified={() => {
-                    devLog("[account/mfa] account delete verification callback");
-                    setAccountDeleteMfaOpen(false);
-                    void handleDeleteAccount();
-                }}
-                title="Two-factor verification required"
-                message="Account deletion is sensitive. Enter a code from your authenticator app to continue."
-            />
-            <MfaVerificationPopup
-                open={emailMfaOpen}
-                onCancel={() => setEmailMfaOpen(false)}
-                onVerified={() => {
-                    devLog("[account/mfa] email verification callback");
-                    setEmailMfaOpen(false);
-                    void handleSaveEmail();
-                }}
-                title="Two-factor verification required"
-                message="Email changes are sensitive. Enter a code from your authenticator app to continue."
             />
         </div>
     );

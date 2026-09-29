@@ -12,17 +12,20 @@ import {
 import { Input } from "@/app/components/ui/input";
 import { Modal } from "@/app/components/modals/Modal";
 import { NewMcpModal } from "@/app/components/account/NewMcpModal";
-import {
-    MfaVerificationPopup,
-    needsMfaVerification,
-} from "@/app/components/popups/MfaVerificationPopup";
+// Upstream divergence (sync-log: 9a1277b): upstream wraps the connector
+// write actions in a Supabase Auth MFA step-up flow (MfaVerificationPopup +
+// needsMfaVerification + isMfaRequiredError retries). Dev did not adopt
+// app-level Supabase MFA — Entra enforces MFA at the IdP (Conditional
+// Access) — so the actions run directly (same decision as
+// account/privacy-data/page.tsx, and the backend routes use requireAuth,
+// not requireMfaIfEnrolled). MfaVerificationPopup is not adopted (OSS-6
+// X list); do not reintroduce it.
 import {
     type McpConnectorSummary,
     MikeApiError,
     createMcpConnector,
     deleteMcpConnector,
     getMcpConnector,
-    isMfaRequiredError,
     listMcpConnectors,
     refreshMcpConnectorTools,
     setMcpToolEnabled,
@@ -114,8 +117,6 @@ export default function ConnectorsPage() {
     const [loading, setLoading] = useState(true);
     const [busyKey, setBusyKey] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const [pendingMfaAction, setPendingMfaAction] =
-        useState<PendingMfaAction | null>(null);
     const [addOpen, setAddOpen] = useState(false);
     const [addDraft, setAddDraft] = useState<AddDraft>(emptyAddDraft);
     const [addStep, setAddStep] = useState<AddStep>("form");
@@ -241,16 +242,10 @@ export default function ConnectorsPage() {
         setError(null);
         setDetailError(null);
         try {
-            if (await needsMfaVerification()) {
-                setPendingMfaAction(action);
-                return;
-            }
+            // Dev divergence: no app-level MFA step-up (see import note).
+            // Entra enforces MFA at the IdP, so the action runs directly.
             await fn();
         } catch (err) {
-            if (isMfaRequiredError(err)) {
-                setPendingMfaAction(action);
-                return;
-            }
             const message =
                 err instanceof Error ? err.message : "Action failed.";
             if (action.type === "create") setAddError(message);
@@ -563,29 +558,6 @@ export default function ConnectorsPage() {
         });
     };
 
-    const handleMfaVerified = async () => {
-        const action = pendingMfaAction;
-        setPendingMfaAction(null);
-        if (!action) return;
-        if (action.type === "create") await handleCreate();
-        if (action.type === "save") await handleSaveSelectedConnector();
-        if (action.type === "clear-token") {
-            await handleClearBearerToken(action.connectorId);
-        }
-        if (action.type === "refresh") await handleRefresh(action.connectorId);
-        if (action.type === "delete") await handleDelete(action.connectorId);
-        if (action.type === "connector-enabled") {
-            await handleConnectorEnabled(action.connectorId, action.enabled);
-        }
-        if (action.type === "tool-enabled") {
-            await handleToolEnabled(
-                action.connectorId,
-                action.toolId,
-                action.enabled,
-            );
-        }
-    };
-
     return (
         <div>
             <div className="mb-4">
@@ -681,12 +653,6 @@ export default function ConnectorsPage() {
                 onDelete={handleDelete}
                 onConnectorEnabled={handleConnectorEnabled}
                 onToolEnabled={handleToolEnabled}
-            />
-
-            <MfaVerificationPopup
-                open={!!pendingMfaAction}
-                onCancel={() => setPendingMfaAction(null)}
-                onVerified={() => void handleMfaVerified()}
             />
         </div>
     );

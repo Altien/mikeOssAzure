@@ -1,7 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { supabase } from "@/app/lib/supabase";
+import {
+    getBrowserAccessToken,
+    bounceIfUnauthorized,
+} from "@/app/lib/auth-token";
 
 /**
  * /display returns PDF bytes (when the active version has a PDF rendition),
@@ -46,15 +49,15 @@ export function useFetchSingleDoc(
 
         (async () => {
             try {
-                const {
-                    data: { session },
-                } = await supabase.auth.getSession();
-                const token = session?.access_token;
+                // Upstream divergence (OSS-6, auth-fetch): token from
+                // auth-token (Entra/local/Supabase), `/api` prefix, and a
+                // 401 bounce, instead of supabase.auth.getSession().
+                const token = await getBrowserAccessToken();
                 if (cancelled) return;
 
                 const apiBase =
-                    process.env.NEXT_PUBLIC_API_BASE_URL ??
-                    "http://localhost:3001";
+                    (process.env.NEXT_PUBLIC_API_BASE_URL ??
+                        "http://localhost:3001") + "/api";
                 const qs = versionId
                     ? `?version_id=${encodeURIComponent(versionId)}`
                     : "";
@@ -66,6 +69,7 @@ export function useFetchSingleDoc(
                             : {},
                     },
                 );
+                bounceIfUnauthorized(response);
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 if (cancelled) return;
 

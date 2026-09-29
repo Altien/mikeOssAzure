@@ -20,7 +20,10 @@ const TABS: TabDef[] = [
         label: "Privacy & Data",
         href: "/account/privacy-data",
     },
-    { id: "security", label: "Security", href: "/account/security" },
+    // Upstream divergence (sync-log: 3a10943): upstream adds a Security tab
+    // (/account/security) for Supabase Auth TOTP MFA management. Dev did not
+    // adopt app-level Supabase MFA (Entra handles MFA at the IdP), so the
+    // tab and page are omitted.
     { id: "models", label: "Model Preferences", href: "/account/models" },
     { id: "api-keys", label: "API Keys", href: "/account/api-keys" },
     { id: "connectors", label: "Connectors", href: "/account/connectors" },

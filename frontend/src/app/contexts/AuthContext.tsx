@@ -1,6 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { getSupabaseClient } from "@/app/lib/supabase";
 import { useConfig, useConfigLoading } from "@/app/contexts/ConfigContext";
 import {
@@ -11,14 +12,22 @@ import {
   getBrowserAccessToken,
 } from "@/app/lib/auth-token";
 
-interface User { id: string; email: string; }
+interface User { id: string; email: string; pendingEmail?: string | null; }
 interface AuthContextType {
   user: User | null; isAuthenticated: boolean; authLoading: boolean;
   signInLocal: (email: string) => Promise<void>;
   signOut: () => Promise<void>; getAccessToken: () => Promise<string | null>;
+  // Upstream's account page changes email through Supabase Auth. Only the
+  // supabase mode can do that; in entra/local modes the identity provider
+  // owns the address, so updateEmail rejects with an explanatory error.
+  updateEmail: (email: string) => Promise<User>;
 }
 // Exported for the test harness (src/test/render.tsx) to inject auth state.
 export const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+function toSupabaseUser(user: SupabaseUser): User {
+  return { id: user.id, email: user.email || "", pendingEmail: user.new_email ?? null };
+}
 
 function decodeJwtUser(token: string): User {
   const payload = token.split(".")[1];
@@ -69,12 +78,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const supabase = getSupabaseClient();
       const checkUser = async () => {
         const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) setUser({ id: session.user.id, email: session.user.email || "" });
+        if (session?.user) setUser(toSupabaseUser(session.user));
         setAuthLoading(false);
       };
       checkUser();
       const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_e, session) => {
-        setUser(session?.user ? { id: session.user.id, email: session.user.email || "" } : null);
+        setUser(session?.user ? toSupabaseUser(session.user) : null);
         setAuthLoading(false);
       });
       return () => subscription.unsubscribe();
@@ -161,7 +170,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.location.href = `${apiBase}/auth/logout`;
   };
 
-  return <AuthContext.Provider value={{ user, isAuthenticated: !!user, authLoading: authLoading || configLoading, signInLocal, signOut, getAccessToken }}>{children}</AuthContext.Provider>;
+  const updateEmail = async (email: string): Promise<User> => {
+    if (config.authProvider !== "supabase") {
+      throw new Error(
+        "Your email address is managed by your organisation's sign-in provider and cannot be changed here.",
+      );
+    }
+    const supabase = getSupabaseClient();
+    const redirectTo = typeof window === "undefined" ? undefined : `${window.location.origin}/account`;
+    const { data, error } = await supabase.auth.updateUser(
+      { email },
+      redirectTo ? { emailRedirectTo: redirectTo } : undefined,
+    );
+    if (error) throw error;
+    if (!data.user) throw new Error("Unable to update email");
+    const nextUser = toSupabaseUser(data.user);
+    setUser(nextUser);
+    return nextUser;
+  };
+
+  return <AuthContext.Provider value={{ user, isAuthenticated: !!user, authLoading: authLoading || configLoading, signInLocal, signOut, getAccessToken, updateEmail }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

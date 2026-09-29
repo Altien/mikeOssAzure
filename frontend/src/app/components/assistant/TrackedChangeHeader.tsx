@@ -1,7 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { supabase } from "@/app/lib/supabase";
+import {
+    getBrowserAccessToken,
+    bounceIfUnauthorized,
+} from "@/app/lib/auth-token";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { applyOptimisticResolution } from "./EditCard";
 import type { EditAnnotation } from "../shared/types";
@@ -145,13 +148,13 @@ function EditResolveButtons({
                 );
             }
             try {
-                const {
-                    data: { session },
-                } = await supabase.auth.getSession();
-                const token = session?.access_token;
+                // Upstream divergence (OSS-6, auth-fetch): token from
+                // auth-token (Entra/local/Supabase), `/api` prefix and a
+                // 401 bounce, instead of supabase.auth.getSession().
+                const token = await getBrowserAccessToken();
                 const apiBase =
-                    process.env.NEXT_PUBLIC_API_BASE_URL ??
-                    "http://localhost:3001";
+                    (process.env.NEXT_PUBLIC_API_BASE_URL ??
+                        "http://localhost:3001") + "/api";
                 const resp = await fetch(
                     `${apiBase}/single-documents/${edit.document_id}/edits/${edit.edit_id}/${verb}`,
                     {
@@ -161,6 +164,7 @@ function EditResolveButtons({
                             : undefined,
                     },
                 );
+                bounceIfUnauthorized(resp);
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const data = (await resp.json()) as {
                     ok: boolean;

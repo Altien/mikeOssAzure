@@ -52,6 +52,11 @@ export function renderWithProviders(ui: ReactElement, opts: Opts = {}) {
         signOut,
         getAccessToken:
             getAccessToken ?? (async () => (user ? "fake-token" : null)),
+        updateEmail: async (email: string) => ({
+            id: user?.id ?? "test-user",
+            email,
+            pendingEmail: null,
+        }),
     };
 
     function Wrapper({ children }: { children: ReactNode }) {

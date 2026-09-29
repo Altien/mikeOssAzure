@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, Loader2 } from "lucide-react";
-import { supabase } from "@/app/lib/supabase";
+import {
+    getBrowserAccessToken,
+    bounceIfUnauthorized,
+} from "@/app/lib/auth-token";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { PdfView } from "../shared/views/PdfView";
 import { DocxView } from "../shared/views/DocxView";
@@ -367,12 +370,13 @@ function DownloadButton({
         if (busy || isReloading) return;
         setBusy(true);
         try {
-            const {
-                data: { session },
-            } = await supabase.auth.getSession();
-            const token = session?.access_token;
+            // Upstream divergence (OSS-6, auth-fetch): token from auth-token
+            // (Entra/local/Supabase), `/api` prefix and a 401 bounce,
+            // instead of supabase.auth.getSession().
+            const token = await getBrowserAccessToken();
             const apiBase =
-                process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+                (process.env.NEXT_PUBLIC_API_BASE_URL ??
+                    "http://localhost:3001") + "/api";
             const qs = versionId
                 ? `?version_id=${encodeURIComponent(versionId)}`
                 : "";
@@ -382,6 +386,7 @@ function DownloadButton({
                     headers: token ? { Authorization: `Bearer ${token}` } : {},
                 },
             );
+            bounceIfUnauthorized(resp);
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const blob = await resp.blob();
             const blobUrl = URL.createObjectURL(blob);

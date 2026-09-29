@@ -5,11 +5,9 @@ import { Eye, EyeOff, RefreshCw } from "lucide-react";
 import { Input } from "@/app/components/ui/input";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { refreshOllamaModels } from "@/app/hooks/useOllamaModels";
-import {
-    MfaVerificationPopup,
-    needsMfaVerification,
-} from "@/app/components/popups/MfaVerificationPopup";
-import { isMfaRequiredError } from "@/app/lib/mikeApi";
+// Upstream divergence (sync-log: 3a10943): upstream gates key save/remove
+// behind MfaVerificationPopup (Supabase-auth TOTP step-up). Dev has no
+// app-level MFA (Entra enforces it at the IdP), so the calls run directly.
 import {
     accountGlassIconButtonClassName,
     accountGlassInputClassName,
@@ -159,9 +157,6 @@ function ApiKeyField({
     const [reveal, setReveal] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [saved, setSaved] = useState(false);
-    const [pendingMfaAction, setPendingMfaAction] = useState<
-        "save" | "remove" | null
-    >(null);
 
     useEffect(() => {
         setValue("");
@@ -172,10 +167,6 @@ function ApiKeyField({
     const handleSave = async () => {
         setIsSaving(true);
         try {
-            if (await needsMfaVerification()) {
-                setPendingMfaAction("save");
-                return;
-            }
             const ok = await onSave(value);
             if (ok) {
                 setValue("");
@@ -184,12 +175,8 @@ function ApiKeyField({
             } else {
                 alert(`Failed to save ${label}.`);
             }
-        } catch (error) {
-            if (isMfaRequiredError(error)) {
-                setPendingMfaAction("save");
-            } else {
-                alert(`Failed to save ${label}.`);
-            }
+        } catch {
+            alert(`Failed to save ${label}.`);
         } finally {
             setIsSaving(false);
         }
@@ -198,30 +185,12 @@ function ApiKeyField({
     const handleRemove = async () => {
         setIsSaving(true);
         try {
-            if (await needsMfaVerification()) {
-                setPendingMfaAction("remove");
-                return;
-            }
             const ok = await onRemove();
             if (!ok) alert(`Failed to remove ${label}.`);
-        } catch (error) {
-            if (isMfaRequiredError(error)) {
-                setPendingMfaAction("remove");
-            } else {
-                alert(`Failed to remove ${label}.`);
-            }
+        } catch {
+            alert(`Failed to remove ${label}.`);
         } finally {
             setIsSaving(false);
-        }
-    };
-
-    const handleMfaVerified = async () => {
-        const action = pendingMfaAction;
-        setPendingMfaAction(null);
-        if (action === "save") {
-            await handleSave();
-        } else if (action === "remove") {
-            await handleRemove();
         }
     };
 
@@ -301,11 +270,6 @@ function ApiKeyField({
                     </div>
                 </div>
             </div>
-            <MfaVerificationPopup
-                open={!!pendingMfaAction}
-                onCancel={() => setPendingMfaAction(null)}
-                onVerified={() => void handleMfaVerified()}
-            />
         </>
     );
 }

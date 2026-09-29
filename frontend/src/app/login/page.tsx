@@ -2,7 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/app/lib/supabase";
+// Upstream divergence (OSS-6, auth; decision 8): upstream's page design is
+// adopted, but sign-in follows dev's runtime auth mode from /config —
+// "entra" shows a Microsoft sign-in button (backend-driven OIDC redirect),
+// "local" signs in by email only, and "supabase" keeps upstream's
+// email/password flow through the lazy supabase client.
+import { getSupabaseClient } from "@/app/lib/supabase";
+import { useConfig } from "@/app/contexts/ConfigContext";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import Link from "next/link";
@@ -22,7 +28,10 @@ const authToggleInactiveClassName =
 
 export default function LoginPage() {
     const router = useRouter();
-    const { isAuthenticated, authLoading } = useAuth();
+    const config = useConfig();
+    const isEntraAuth = config.authProvider === "entra";
+    const isLocalAuth = config.authProvider === "local";
+    const { isAuthenticated, authLoading, signInLocal } = useAuth();
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [loading, setLoading] = useState(false);
@@ -34,12 +43,45 @@ export default function LoginPage() {
         }
     }, [authLoading, isAuthenticated, router]);
 
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        const oauthError = params.get("error");
+        if (oauthError) {
+            setError(oauthError);
+            return;
+        }
+        // Session-expired arrives via `?reason=session-expired` from the
+        // 401 interceptor in mikeApi.ts / lib/auth-token.ts.  Show a
+        // friendly nudge rather than the raw query value.
+        const reason = params.get("reason");
+        if (reason === "session-expired") {
+            setError("Your session has expired. Please sign in again.");
+        }
+    }, []);
+
+    const handleMicrosoftLogin = async () => {
+        const apiBase =
+            (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") +
+            "/api";
+        const returnUrl = encodeURIComponent(
+            window.location.origin + "/assistant",
+        );
+        window.location.href = `${apiBase}/auth/select-provider?returnUrl=${returnUrl}&selectAccount=true`;
+    };
+
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
         setError(null);
 
         try {
+            if (isLocalAuth) {
+                await signInLocal(email);
+                router.push("/assistant");
+                return;
+            }
+
+            const supabase = getSupabaseClient();
             const { error } = await supabase.auth.signInWithPassword({
                 email,
                 password,
@@ -58,6 +100,8 @@ export default function LoginPage() {
             setLoading(false);
         }
     };
+
+    const submitLabel = isLocalAuth ? "Continue locally" : "Log in";
 
     return (
         <div className="min-h-dvh bg-gray-50/80 flex items-start justify-center px-6 pt-32 md:pt-40 pb-10 relative">
@@ -83,58 +127,88 @@ export default function LoginPage() {
                             </Link>
                         </div>
                     </div>
-                    <form onSubmit={handleLogin} className="space-y-4">
-                        <div>
-                            <label
-                                htmlFor="email"
-                                className="block text-sm font-medium text-gray-700 mb-2"
+                    {isEntraAuth ? (
+                        <div className="space-y-4">
+                            {error && (
+                                <div className="text-red-600 text-sm bg-red-50 p-3 rounded">
+                                    {error}
+                                </div>
+                            )}
+                            <Button
+                                type="button"
+                                onClick={handleMicrosoftLogin}
+                                className="w-full mt-5 bg-black hover:bg-gray-900 text-white"
                             >
-                                Email
-                            </label>
-                            <Input
-                                id="email"
-                                type="email"
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
-                                placeholder="Enter your email"
-                                required
-                                className={`w-full ${authInputClassName}`}
-                            />
+                                Sign in with Microsoft
+                            </Button>
                         </div>
-
-                        <div>
-                            <label
-                                htmlFor="password"
-                                className="block text-sm font-medium text-gray-700 mb-2"
-                            >
-                                Password
-                            </label>
-                            <Input
-                                id="password"
-                                type="password"
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                                placeholder="Enter your password"
-                                required
-                                className={`w-full ${authInputClassName}`}
-                            />
-                        </div>
-
-                        {error && (
-                            <div className="text-red-600 text-sm bg-red-50 p-3 rounded">
-                                {error}
+                    ) : (
+                        <form onSubmit={handleLogin} className="space-y-4">
+                            <div>
+                                <label
+                                    htmlFor="email"
+                                    className="block text-sm font-medium text-gray-700 mb-2"
+                                >
+                                    Email
+                                </label>
+                                <Input
+                                    id="email"
+                                    type="email"
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    placeholder="Enter your email"
+                                    required
+                                    className={`w-full ${authInputClassName}`}
+                                />
                             </div>
-                        )}
 
-                        <Button
-                            type="submit"
-                            disabled={loading}
-                            className="w-full mt-5 bg-black hover:bg-gray-900 text-white"
-                        >
-                            {loading ? "Logging in..." : "Log in"}
-                        </Button>
-                    </form>
+                            <div>
+                                <label
+                                    htmlFor="password"
+                                    className="block text-sm font-medium text-gray-700 mb-2"
+                                >
+                                    Password
+                                </label>
+                                <Input
+                                    id="password"
+                                    type="password"
+                                    value={password}
+                                    onChange={(e) =>
+                                        setPassword(e.target.value)
+                                    }
+                                    placeholder="Enter your password"
+                                    required={!isLocalAuth}
+                                    disabled={isLocalAuth}
+                                    className={`w-full ${authInputClassName}`}
+                                />
+                            </div>
+
+                            {error && (
+                                <div className="text-red-600 text-sm bg-red-50 p-3 rounded">
+                                    {error}
+                                </div>
+                            )}
+
+                            <Button
+                                type="submit"
+                                disabled={loading}
+                                className="w-full mt-5 bg-black hover:bg-gray-900 text-white"
+                            >
+                                {loading ? "Logging in..." : submitLabel}
+                            </Button>
+                        </form>
+                    )}
                 </div>
+                {/* Set DEMO_MODE=true on the public demo backend. Customer
+                    installs leave it unset and do not see this. */}
+                {config.demoMode && (
+                    <p className="text-center text-xs text-gray-500 leading-relaxed px-2">
+                        Mike hosted on MikeOSS.com is currently a demo service.
+                        Please do not upload, submit, or store sensitive,
+                        confidential, privileged, client, or personally
+                        identifiable documents.
+                    </p>
+                )}
             </div>
         </div>
     );

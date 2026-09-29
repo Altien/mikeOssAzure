@@ -2,7 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/app/lib/supabase";
+// Upstream divergence (OSS-6, auth; decision 8): upstream's design and
+// Supabase sign-up form are kept for the "supabase" auth mode only. In
+// "entra"/"local" modes account creation is managed by the organisation's
+// identity provider, so the page shows a "sign up unavailable" card
+// (dev's behaviour) in upstream's glass styling.
+import { getSupabaseClient } from "@/app/lib/supabase";
+import { useConfig } from "@/app/contexts/ConfigContext";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import Link from "next/link";
@@ -33,6 +39,8 @@ export default function SignupPage() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState(false);
+    const config = useConfig();
+    const signupAvailable = config.authProvider === "supabase";
 
     useEffect(() => {
         if (!authLoading && isAuthenticated && !success) {
@@ -60,6 +68,7 @@ export default function SignupPage() {
         }
 
         try {
+            const supabase = getSupabaseClient();
             const { data, error } = await supabase.auth.signUp({
                 email,
                 password,
@@ -119,6 +128,35 @@ export default function SignupPage() {
                         <p className="text-gray-600 leading-relaxed">
                             Redirecting you to the home page...
                         </p>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (!signupAvailable) {
+        return (
+            <div className="min-h-dvh bg-gray-50/80 flex items-start justify-center px-6 pt-32 md:pt-40 pb-10 relative">
+                <div className="absolute top-4 md:top-8 left-1/2 -translate-x-1/2">
+                    <SiteLogo size="lg" asLink />
+                </div>
+                <div className="w-full max-w-md">
+                    <div
+                        className={`${authGlassCardClassName} p-10 text-center`}
+                    >
+                        <h2 className="text-2xl font-medium font-serif text-gray-950 mb-3">
+                            Sign up unavailable
+                        </h2>
+                        <p className="text-gray-600 leading-relaxed mb-6">
+                            Account creation is managed by your organisation.
+                            Please sign in with your organisation account.
+                        </p>
+                        <Link
+                            href="/login"
+                            className="inline-flex h-9 items-center justify-center rounded-lg bg-black px-4 text-sm text-white hover:bg-gray-900"
+                        >
+                            Go to login
+                        </Link>
                     </div>
                 </div>
             </div>
