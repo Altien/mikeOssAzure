@@ -74,6 +74,12 @@ async function dispatchDocumentTool(
         undefined,
         undefined,
         undefined,
+        // Dev's runToolCalls has externalSourceCache, authorityTraceState and
+        // skillResourceStore between apiKeys and nonce (upstream: nonce
+        // directly follows apiKeys).
+        undefined,
+        undefined,
+        undefined,
         NONCE,
     );
 }
