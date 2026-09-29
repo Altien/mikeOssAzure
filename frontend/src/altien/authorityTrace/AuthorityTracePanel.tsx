@@ -10,7 +10,7 @@ import {
     type AuthorityTraceVerdict,
     type AuthorityTraceWorkspace,
 } from "./api";
-import { cn } from "@/lib/utils";
+import { cn } from "@/app/lib/utils";
 
 function citationState(citation: AuthorityTraceCitation): {
     label: string;

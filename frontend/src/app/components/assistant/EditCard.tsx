@@ -3,7 +3,7 @@
 import { useState } from "react";
 // Dev auth (Entra bearer token) kept over upstream's supabase client;
 // type renamed with upstream 44e868e (EditAnnotation -> EditAnnotation).
-import { getBrowserAccessToken, bounceIfUnauthorized } from "@/lib/auth-token";
+import { getBrowserAccessToken, bounceIfUnauthorized } from "@/app/lib/auth-token";
 import type { EditAnnotation } from "../shared/types";
 
 function normalizeText(s: string) {

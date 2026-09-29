@@ -3,7 +3,7 @@
 import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
 import { Loader2, Trash2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/app/lib/utils";
 
 type ConfirmStatus = "idle" | "loading" | "complete";
 

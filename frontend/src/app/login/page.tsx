@@ -2,13 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getSupabaseClient } from "@/lib/supabase";
-import { useConfig } from "@/contexts/ConfigContext";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { getSupabaseClient } from "@/app/lib/supabase";
+import { useConfig } from "@/app/contexts/ConfigContext";
+import { Button } from "@/app/components/ui/button";
+import { Input } from "@/app/components/ui/input";
 import Link from "next/link";
-import { SiteLogo } from "@/components/site-logo";
-import { useAuth } from "@/contexts/AuthContext";
+import { SiteLogo } from "@/app/components/site-logo";
+import { useAuth } from "@/app/contexts/AuthContext";
 export default function LoginPage() {
     const router = useRouter();
     const config = useConfig();

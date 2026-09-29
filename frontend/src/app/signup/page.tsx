@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { SiteLogo } from "@/components/site-logo";
+import { SiteLogo } from "@/app/components/site-logo";
 
 export default function SignupPage() {
     return (

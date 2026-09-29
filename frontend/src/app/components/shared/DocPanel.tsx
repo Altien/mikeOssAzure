@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, Loader2 } from "lucide-react";
-import { getBrowserAccessToken, bounceIfUnauthorized } from "@/lib/auth-token";
+import { getBrowserAccessToken, bounceIfUnauthorized } from "@/app/lib/auth-token";
 import { applyOptimisticResolution } from "../assistant/EditCard";
 import { DocView } from "./DocView";
 import { DocxView } from "./DocxView";

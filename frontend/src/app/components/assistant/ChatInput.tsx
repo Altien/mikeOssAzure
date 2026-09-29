@@ -33,14 +33,14 @@ import { AssistantWorkflowModal } from "./AssistantWorkflowModal";
 import { ApiKeyMissingModal } from "../shared/ApiKeyMissingModal";
 import { ModelToggle } from "./ModelToggle";
 import { useSelectedModel } from "@/app/hooks/useSelectedModel";
-import { useUserProfile } from "@/contexts/UserProfileContext";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import {
     getModelProvider,
     isModelAvailable,
     type ModelProvider,
 } from "@/app/lib/modelAvailability";
 import type { Document, Message } from "../shared/types";
-import { cn } from "@/lib/utils";
+import { cn } from "@/app/lib/utils";
 
 export interface ChatInputHandle {
     addDoc: (doc: Document) => void;

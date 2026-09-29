@@ -19,12 +19,12 @@ import {
 } from "vitest";
 import type { Message } from "@/app/components/shared/types";
 
-// Dev divergence: auth is Entra (via @/lib/auth-token), not Supabase's
+// Dev divergence: auth is Entra (via @/app/lib/auth-token), not Supabase's
 // getSession(); mock the token boundary instead.
 const { getTokenMock } = vi.hoisted(() => ({
     getTokenMock: vi.fn(),
 }));
-vi.mock("@/lib/auth-token", () => ({
+vi.mock("@/app/lib/auth-token", () => ({
     getBrowserAccessToken: getTokenMock,
     bounceIfUnauthorized: vi.fn(),
 }));

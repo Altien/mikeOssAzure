@@ -9,8 +9,8 @@ import {
     DropdownMenuLabel,
     DropdownMenuSeparator,
     DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { useUserProfile } from "@/contexts/UserProfileContext";
+} from "@/app/components/ui/dropdown-menu";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { MODELS } from "@/app/components/assistant/ModelToggle";
 import {
     isModelAvailable,

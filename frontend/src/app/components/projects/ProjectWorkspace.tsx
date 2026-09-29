@@ -37,8 +37,8 @@ import { ConfirmPopup } from "@/app/components/shared/ConfirmPopup";
 import { OwnerOnlyModal } from "@/app/components/shared/OwnerOnlyModal";
 import { PeopleModal } from "@/app/components/shared/PeopleModal";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
-import { useAuth } from "@/contexts/AuthContext";
-import { useUserProfile } from "@/contexts/UserProfileContext";
+import { useAuth } from "@/app/contexts/AuthContext";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { ProjectDetailsModal } from "./ProjectDetailsModal";
 import {
     ProjectPageHeader,

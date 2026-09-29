@@ -1,15 +1,15 @@
 "use client";
 
 import React, { createContext, useContext, useEffect, useState, ReactNode } from "react";
-import { getSupabaseClient } from "@/lib/supabase";
-import { useConfig, useConfigLoading } from "@/contexts/ConfigContext";
+import { getSupabaseClient } from "@/app/lib/supabase";
+import { useConfig, useConfigLoading } from "@/app/contexts/ConfigContext";
 import {
   ENTRA_TOKEN_KEY,
   ENTRA_USER_KEY,
   LOCAL_TOKEN_KEY,
   LOCAL_USER_KEY,
   getBrowserAccessToken,
-} from "@/lib/auth-token";
+} from "@/app/lib/auth-token";
 
 interface User { id: string; email: string; }
 interface AuthContextType {

@@ -12,7 +12,7 @@ import type { Document } from "./types";
 import { FileDirectory } from "./FileDirectory";
 import { useDirectoryData, invalidateDirectoryCache } from "./useDirectoryData";
 import { OwnerOnlyModal } from "./OwnerOnlyModal";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth } from "@/app/contexts/AuthContext";
 import { Modal } from "./Modal";
 import {
     SUPPORTED_DOCUMENT_ACCEPT,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { getBrowserAccessToken, bounceIfUnauthorized } from "@/lib/auth-token";
+import { getBrowserAccessToken, bounceIfUnauthorized } from "@/app/lib/auth-token";
 
 /**
  * /display returns either PDF bytes (when the active version has a PDF

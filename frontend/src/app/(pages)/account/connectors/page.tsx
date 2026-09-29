@@ -11,7 +11,7 @@ import {
     RefreshCw,
     Trash2,
 } from "lucide-react";
-import { Input } from "@/components/ui/input";
+import { Input } from "@/app/components/ui/input";
 import { Modal } from "@/app/components/shared/Modal";
 // Upstream divergence (sync-log: 9a1277b): upstream wraps the connector
 // write actions in a Supabase Auth MFA step-up flow (MfaVerificationPopup +

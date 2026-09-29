@@ -8,8 +8,8 @@ import React, {
     ReactNode,
     useCallback,
 } from "react";
-import { useAuth } from "@/contexts/AuthContext";
-import { bounceIfUnauthorized } from "@/lib/auth-token";
+import { useAuth } from "@/app/contexts/AuthContext";
+import { bounceIfUnauthorized } from "@/app/lib/auth-token";
 
 interface UserProfile {
     displayName: string | null;

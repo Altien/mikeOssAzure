@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { FolderOpen, ChevronDown } from "lucide-react";
 import { listProjects, updateProject, deleteProject } from "@/app/lib/mikeApi";
 import { OwnerOnlyModal } from "@/app/components/shared/OwnerOnlyModal";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth } from "@/app/contexts/AuthContext";
 import type { Project } from "@/app/components/shared/types";
 import { NewProjectModal } from "./NewProjectModal";
 import { TableToolbar } from "@/app/components/shared/TableToolbar";

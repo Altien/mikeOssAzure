@@ -8,7 +8,7 @@ const { mockGetBrowserAccessToken, mockBounceIfUnauthorized } = vi.hoisted(() =>
     mockBounceIfUnauthorized: vi.fn(),
 }));
 
-vi.mock("@/lib/auth-token", () => ({
+vi.mock("@/app/lib/auth-token", () => ({
     getBrowserAccessToken: mockGetBrowserAccessToken,
     bounceIfUnauthorized: mockBounceIfUnauthorized,
 }));

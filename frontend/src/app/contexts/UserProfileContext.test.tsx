@@ -13,11 +13,11 @@ const { mockUseAuth, mockBounceIfUnauthorized } = vi.hoisted(() => ({
     mockBounceIfUnauthorized: vi.fn(),
 }));
 
-vi.mock("@/contexts/AuthContext", () => ({
+vi.mock("@/app/contexts/AuthContext", () => ({
     useAuth: mockUseAuth,
 }));
 
-vi.mock("@/lib/auth-token", () => ({
+vi.mock("@/app/lib/auth-token", () => ({
     bounceIfUnauthorized: mockBounceIfUnauthorized,
 }));
 

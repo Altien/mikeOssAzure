@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { Minus, RectangleHorizontal, Rows3 } from "lucide-react";
-import { CiteButton } from "@/components/ui/cite-button";
+import { CiteButton } from "@/app/components/ui/cite-button";
 import {
     CitationVerificationBadge,
     type CitationVerificationDisplayState,

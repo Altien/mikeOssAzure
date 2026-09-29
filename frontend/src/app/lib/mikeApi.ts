@@ -3,7 +3,7 @@
  * Attaches the active browser auth token for user authentication.
  */
 
-import { getBrowserAccessToken, bounceIfUnauthorized } from "@/lib/auth-token";
+import { getBrowserAccessToken, bounceIfUnauthorized } from "@/app/lib/auth-token";
 import type {
     AssistantEvent,
     Chat,
@@ -71,7 +71,7 @@ export async function getAuthHeader(): Promise<Record<string, string>> {
     return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-// 401 handling is centralised in @/lib/auth-token's bounceIfUnauthorized.
+// 401 handling is centralised in @/app/lib/auth-token's bounceIfUnauthorized.
 // Use that helper at every direct-fetch call site so a stale or expired
 // token can't leave the user trapped in a half-authenticated state.
 

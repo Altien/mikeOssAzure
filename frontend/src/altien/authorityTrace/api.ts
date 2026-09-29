@@ -1,4 +1,4 @@
-import { bounceIfUnauthorized } from "@/lib/auth-token";
+import { bounceIfUnauthorized } from "@/app/lib/auth-token";
 import {
   API_BASE,
   MikeApiError,

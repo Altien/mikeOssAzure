@@ -3,7 +3,7 @@
 import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
 import { AlertCircle, X } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/app/lib/utils";
 
 interface WarningPopupAction {
     label: ReactNode;

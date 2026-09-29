@@ -11,14 +11,14 @@ import {
     ENTRA_USER_KEY,
     LOCAL_TOKEN_KEY,
     LOCAL_USER_KEY,
-} from "@/lib/auth-token";
+} from "@/app/lib/auth-token";
 
 // supabase client — mocked at the module boundary.  Tests build a
 // per-case fake and inject it through this spy.
 const { mockGetSupabaseClient } = vi.hoisted(() => ({
     mockGetSupabaseClient: vi.fn(),
 }));
-vi.mock("@/lib/supabase", () => ({
+vi.mock("@/app/lib/supabase", () => ({
     getSupabaseClient: mockGetSupabaseClient,
 }));
 

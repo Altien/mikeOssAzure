@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { Loader2 } from "lucide-react";
 import { useFetchDocxBytes } from "@/app/hooks/useFetchDocxBytes";
-import { getBrowserAccessToken, bounceIfUnauthorized } from "@/lib/auth-token";
+import { getBrowserAccessToken, bounceIfUnauthorized } from "@/app/lib/auth-token";
 import {
     clearDocxQuoteHighlights,
     highlightDocxQuote,

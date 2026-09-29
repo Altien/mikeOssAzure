@@ -7,7 +7,7 @@ import {
     listWorkflowShares,
     shareWorkflow,
 } from "@/app/lib/mikeApi";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth } from "@/app/contexts/AuthContext";
 import { EmailPillInput } from "../shared/EmailPillInput";
 import { Modal } from "../shared/Modal";
 

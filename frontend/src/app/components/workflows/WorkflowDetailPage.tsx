@@ -25,8 +25,8 @@ import { ConfirmPopup } from "@/app/components/shared/ConfirmPopup";
 import { HeaderActionsMenu } from "@/app/components/shared/HeaderActionsMenu";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import { WorkflowDetailsModal } from "@/app/components/workflows/WorkflowDetailsModal";
-import { useAuth } from "@/contexts/AuthContext";
-import { useUserProfile } from "@/contexts/UserProfileContext";
+import { useAuth } from "@/app/contexts/AuthContext";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
 // dynamic import keeps Tiptap (browser-only) out of the SSR bundle
 const WorkflowPromptEditor = dynamic(
     () =>

@@ -17,7 +17,7 @@ import {
     Scale,
 } from "lucide-react";
 import { AuthorityTraceEventBlock } from "@/altien/authorityTrace/AuthorityTraceEventBlock";
-import { MikeIcon } from "@/components/chat/mike-icon";
+import { MikeIcon } from "@/app/components/chat/mike-icon";
 import { displayCitationQuote, formatCitationPage } from "../shared/types";
 import type {
     AssistantEvent,
@@ -31,7 +31,7 @@ import {
     citationVerificationPillClassName,
 } from "./message/citationVerification";
 import { PreResponseWrapper } from "../shared/PreResponseWrapper";
-import { getBrowserAccessToken, bounceIfUnauthorized } from "@/lib/auth-token";
+import { getBrowserAccessToken, bounceIfUnauthorized } from "@/app/lib/auth-token";
 
 const RESPONSE_GLASS_SURFACE =
     "rounded-xl border border-white/70 bg-white/55 shadow-[0_3px_9px_rgba(15,23,42,0.03),inset_0_1px_0_rgba(255,255,255,0.9),inset_0_-4px_9px_rgba(255,255,255,0.05)] backdrop-blur-2xl";

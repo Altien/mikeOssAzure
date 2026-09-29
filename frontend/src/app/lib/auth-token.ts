@@ -1,5 +1,5 @@
-import { getCachedAuthProvider } from "@/contexts/ConfigContext";
-import { getSupabaseClient } from "@/lib/supabase";
+import { getCachedAuthProvider } from "@/app/contexts/ConfigContext";
+import { getSupabaseClient } from "@/app/lib/supabase";
 
 export const ENTRA_TOKEN_KEY = "mike.entra.access_token";
 export const ENTRA_USER_KEY = "mike.entra.user";

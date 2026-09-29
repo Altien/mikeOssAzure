@@ -3,7 +3,7 @@ import {
     apiRequest,
     getAuthHeader,
 } from "@/app/lib/mikeApi";
-import { bounceIfUnauthorized } from "@/lib/auth-token";
+import { bounceIfUnauthorized } from "@/app/lib/auth-token";
 
 export type SkillListItem = {
     id: string;

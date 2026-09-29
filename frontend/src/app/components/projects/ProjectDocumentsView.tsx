@@ -44,7 +44,7 @@ import {
     AddDocumentsModal,
     invalidateDirectoryCache,
 } from "@/app/components/shared/AddDocumentsModal";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth } from "@/app/contexts/AuthContext";
 import { WarningPopup } from "@/app/components/shared/WarningPopup";
 import { ConfirmPopup } from "@/app/components/shared/ConfirmPopup";
 import {

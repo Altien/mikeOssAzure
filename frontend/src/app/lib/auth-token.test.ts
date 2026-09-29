@@ -7,11 +7,11 @@ const { mockGetCachedAuthProvider, mockGetSupabaseClient } = vi.hoisted(() => ({
     mockGetSupabaseClient: vi.fn(),
 }));
 
-vi.mock("@/contexts/ConfigContext", () => ({
+vi.mock("@/app/contexts/ConfigContext", () => ({
     getCachedAuthProvider: mockGetCachedAuthProvider,
 }));
 
-vi.mock("@/lib/supabase", () => ({
+vi.mock("@/app/lib/supabase", () => ({
     getSupabaseClient: mockGetSupabaseClient,
 }));
 

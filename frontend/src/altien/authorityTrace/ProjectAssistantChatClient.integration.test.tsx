@@ -55,7 +55,7 @@ vi.mock("@/app/contexts/SidebarContext", () => ({
     useSidebar: () => ({ setSidebarOpen: vi.fn() }),
 }));
 
-vi.mock("@/contexts/UserProfileContext", () => ({
+vi.mock("@/app/contexts/UserProfileContext", () => ({
     useUserProfile: () => ({ profile: { displayName: "Tester" } }),
 }));
 
@@ -106,7 +106,7 @@ vi.mock("@/app/components/assistant/ChatInput", () => ({
     ChatInput: forwardRef(() => <div>Chat input</div>),
 }));
 
-vi.mock("@/components/chat/mike-icon", () => ({
+vi.mock("@/app/components/chat/mike-icon", () => ({
     MikeIcon: () => <span>Mike</span>,
 }));
 

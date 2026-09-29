@@ -1,7 +1,7 @@
 import { ReactElement, ReactNode } from "react";
 import { render, type RenderOptions } from "@testing-library/react";
-import { ConfigContext, type RuntimeConfig } from "@/contexts/ConfigContext";
-import { AuthContext } from "@/contexts/AuthContext";
+import { ConfigContext, type RuntimeConfig } from "@/app/contexts/ConfigContext";
+import { AuthContext } from "@/app/contexts/AuthContext";
 
 interface TestUser {
     id: string;
