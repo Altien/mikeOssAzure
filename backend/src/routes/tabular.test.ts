@@ -159,6 +159,70 @@ afterEach(() => {
     else process.env.AUTH_PROVIDER = ORIGINAL_AUTH_PROVIDER;
 });
 
+describe("review-row load failures answer 500 instead of hanging (sync-log 5f996cf6)", () => {
+    function failingRowsDb() {
+        return makeFakeDb((call) =>
+            call.table === "tabular_review_rows" && call.op === "select"
+                ? { data: null, error: { message: "rows unavailable" } }
+                : respond(call),
+        ).db;
+    }
+
+    it("GET /:reviewId", async () => {
+        createServerSupabaseMock.mockReturnValue(failingRowsDb());
+
+        const response = await request(makeApp())
+            .get("/api/tabular-review/review-1")
+            .set("Authorization", "Bearer valid-token");
+
+        expect(response.status).toBe(500);
+    });
+
+    it("POST /:reviewId/regenerate-cell", async () => {
+        createServerSupabaseMock.mockReturnValue(failingRowsDb());
+
+        const response = await request(makeApp())
+            .post("/api/tabular-review/review-1/regenerate-cell")
+            .set("Authorization", "Bearer valid-token")
+            .send({ row_id: "row-doc", column_index: 0 });
+
+        expect(response.status).toBe(500);
+        expect(completeTextMock).not.toHaveBeenCalled();
+    });
+
+    it("POST /:reviewId/generate", async () => {
+        createServerSupabaseMock.mockReturnValue(failingRowsDb());
+
+        const response = await request(makeApp())
+            .post("/api/tabular-review/review-1/generate")
+            .set("Authorization", "Bearer valid-token");
+
+        expect(response.status).toBe(500);
+        expect(streamChatWithToolsMock).not.toHaveBeenCalled();
+    });
+
+    it("regenerate-cell marks the cell as error when its sources fail to load", async () => {
+        const { db, callsFor } = makeFakeDb((call) =>
+            call.table === "documents" && call.op === "select"
+                ? { data: null, error: { message: "documents unavailable" } }
+                : respond(call),
+        );
+        createServerSupabaseMock.mockReturnValue(db);
+
+        const response = await request(makeApp())
+            .post("/api/tabular-review/review-1/regenerate-cell")
+            .set("Authorization", "Bearer valid-token")
+            .send({ row_id: "row-doc", column_index: 0 });
+
+        expect(response.status).toBe(500);
+        expect(completeTextMock).not.toHaveBeenCalled();
+        const updates = callsFor("tabular_cells", "update").map(
+            (call) => (call.payload as { status: string }).status,
+        );
+        expect(updates).toEqual(["generating", "error"]);
+    });
+});
+
 describe("tabular cell prompts (spreadsheet citations deferred, sync-log 6ae1f98d)", () => {
     it("regenerate-cell asks for page citations only, never sheet/cell citations", async () => {
         const { db } = makeFakeDb(respond);

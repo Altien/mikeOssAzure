@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Response } from "express";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import { downloadFile } from "../lib/storage";
@@ -432,6 +432,30 @@ async function loadReviewRows(
     }));
 }
 
+// Upstream divergence (sync-log: 5f996cf6): upstream awaits loadReviewRows
+// (which throws on a DB error) bare inside its async handlers. Under
+// Express 4 that rejection escapes the handler, processGuards only logs it,
+// and the request hangs with no response (dev issue-041 class). Dev answers
+// 500 instead. Do not "simplify" these call sites back to a bare await.
+async function loadReviewRowsOr500(
+    db: SupabaseDb,
+    reviewId: string,
+    res: Response,
+): Promise<ReviewRow[] | null> {
+    try {
+        return await loadReviewRows(db, reviewId);
+    } catch (error) {
+        console.error(
+            `[tabular] failed to load review rows review=${reviewId}`,
+            safeErrorLog(error),
+        );
+        res.status(500).json({
+            detail: safeErrorMessage(error, "Failed to load review rows"),
+        });
+        return null;
+    }
+}
+
 async function loadRowDocumentText(
     db: SupabaseDb,
     row: ReviewRow,
@@ -772,7 +796,8 @@ tabularRouter.get("/:reviewId", requireAuth, async (req, res) => {
         .eq("review_id", reviewId);
     if (cellsError)
         return void res.status(500).json({ detail: cellsError.message });
-    const rows = await loadReviewRows(db, reviewId);
+    const rows = await loadReviewRowsOr500(db, reviewId, res);
+    if (!rows) return;
     const rowDocIds = rows.flatMap((row) => row.source_document_ids ?? []);
     const docIds = Array.isArray(review.document_ids)
         ? (review.document_ids as string[])
@@ -1136,7 +1161,8 @@ tabularRouter.post(
         if (!column)
             return void res.status(400).json({ detail: "Column not found" });
 
-        const rows = await loadReviewRows(db, reviewId);
+        const rows = await loadReviewRowsOr500(db, reviewId, res);
+        if (!rows) return;
         const row = rows.find((candidate) => candidate.id === row_id);
         if (!row)
             return void res
@@ -1173,7 +1199,27 @@ tabularRouter.post(
             .eq("row_id", row.id)
             .eq("column_index", column_index);
 
-        const markdown = await loadRowDocumentText(db, row);
+        // Same escaped-rejection guard as loadReviewRowsOr500: a failed
+        // source lookup must not strand the cell in "generating" and hang
+        // the request.
+        let markdown: string;
+        try {
+            markdown = await loadRowDocumentText(db, row);
+        } catch (error) {
+            console.error(
+                `[tabular/regenerate-cell] source load failed row=${row.id}`,
+                safeErrorLog(error),
+            );
+            await db
+                .from("tabular_cells")
+                .update({ status: "error" })
+                .eq("review_id", reviewId)
+                .eq("row_id", row.id)
+                .eq("column_index", column_index);
+            return void res.status(500).json({
+                detail: safeErrorMessage(error, "Failed to load source documents"),
+            });
+        }
 
         const result = await queryTabularCell(
             tabular_model,
@@ -1234,7 +1280,9 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     if (columns.length === 0)
         return void res.status(400).json({ detail: "No columns configured" });
 
-    let rows = await loadReviewRows(db, reviewId);
+    const loadedRows = await loadReviewRowsOr500(db, reviewId, res);
+    if (!loadedRows) return;
+    let rows = loadedRows;
 
     const { data: cells, error: cellsError } = await db
         .from("tabular_cells")
@@ -1635,7 +1683,8 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
         .from("tabular_cells")
         .select("*")
         .eq("review_id", reviewId);
-    const rows = await loadReviewRows(db, reviewId);
+    const rows = await loadReviewRowsOr500(db, reviewId, res);
+    if (!rows) return;
 
     const sortedColumns = (
         (review.columns_config ?? []) as { index: number; name: string }[]
