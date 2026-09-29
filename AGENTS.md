@@ -42,7 +42,7 @@ How runtime config works now:
 
 - `GET /config` on the backend returns `{ authProvider, entra: {…} }` from
   server env / Key Vault. Unauthenticated, cacheable.
-- `frontend/src/contexts/ConfigContext.tsx` fetches `/config` once on app
+- `frontend/src/app/contexts/ConfigContext.tsx` fetches `/config` once on app
   load and exposes the values via `useConfig()`.
 - The same React hook also caches `authProvider` in `localStorage` under
   `mike.config.authProvider` so module-level helpers
