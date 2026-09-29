@@ -185,9 +185,16 @@ describe("deleteUserAccountData", () => {
     expect(deletedTables.indexOf("documents")).toBeLessThan(
       deletedTables.indexOf("library_folders"),
     );
-    // Upstream a5fe6d6 also deleted from workflow_open_source_submissions,
-    // but that feature's schema/route/frontend unit is deliberately deferred.
-    expect(callsFor("workflow_open_source_submissions")).toEqual([]);
+    // OSS-6: the user's workflow_open_source_submissions rows are deleted
+    // (upstream a5fe6d6; table added by 0041).
+    const submissionDeletes = callsFor(
+      "workflow_open_source_submissions",
+      "delete",
+    );
+    expect(submissionDeletes).toHaveLength(1);
+    expect(
+      filterValue(submissionDeletes[0], "eq", "submitted_by_user_id"),
+    ).toBe("u1");
     // workflow_shares wiped both as sharer and (lowercased) recipient.
     const shareDeletes = callsFor("workflow_shares", "delete");
     expect(shareDeletes).toHaveLength(2);

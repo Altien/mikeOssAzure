@@ -327,10 +327,10 @@ export async function deleteUserAccountData(
         // behind. This block runs only after documents are deleted above.
         db.from("library_folders").delete().eq("user_id", userId),
         db.from("hidden_workflows").delete().eq("user_id", userId),
-        // Upstream divergence (sync-log: a5fe6d6): NOT SUPPORTED — the
-        // workflow-submissions table and its route/frontend were deliberately
-        // deferred. Keep dev's omission during conflict resolution; do not
-        // target the absent table until the complete feature is adopted.
+        db
+            .from("workflow_open_source_submissions")
+            .delete()
+            .eq("submitted_by_user_id", userId),
         db.from("workflow_shares").delete().eq("shared_by_user_id", userId),
         userEmail
             ? db

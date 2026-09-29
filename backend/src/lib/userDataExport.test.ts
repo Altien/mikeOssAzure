@@ -172,13 +172,17 @@ describe("buildUserAccountExport", () => {
     expect(
       noEmailCalls.filter((c) => c.filters.some(([m]) => m.startsWith("filter"))),
     ).toEqual([]);
-    // Do not query the deferred workflow-submissions table: it is absent from
-    // dev's numbered migrations until the complete feature is adopted.
-    expect(
-      noEmailCalls.filter(
-        (c) => c.table === "workflow_open_source_submissions",
-      ),
-    ).toEqual([]);
+    // OSS-6: the user's workflow_open_source_submissions rows are exported
+    // (upstream a5fe6d6; table added by 0041), scoped to the submitter.
+    const submissionScans = noEmailCalls.filter(
+      (c) => c.table === "workflow_open_source_submissions",
+    );
+    expect(submissionScans).toHaveLength(1);
+    expect(submissionScans[0].filters).toContainEqual([
+      "eq",
+      "submitted_by_user_id",
+      "u1",
+    ]);
   });
 
   it("reports API keys as booleans only — never selects key material", async () => {
