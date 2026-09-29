@@ -56,6 +56,11 @@ const ALL_MODELS = new Set<string>([
 // Provider inference
 // ---------------------------------------------------------------------------
 
+// Upstream divergence (sync-log: fe942475): NOT SUPPORTED — the self-hosted
+// stack's local Ollama provider (`ollama/<tag>` ids, GET /models/ollama) was
+// deferred; dev is an Azure deployment with no local model runtime. Keep dev's
+// behaviour during conflict resolution; do not re-enable this upstream feature
+// until the complete feature is intentionally adopted.
 export function providerForModel(model: string): Provider {
     if (model.startsWith("claude")) return "claude";
     if (model.startsWith("gemini")) return "gemini";
