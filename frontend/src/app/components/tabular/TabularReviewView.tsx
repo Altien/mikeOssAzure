@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
     Plus,
     Loader2,
     Play,
     ChevronDown,
     MessageSquare,
+    MessageSquareX,
     Download,
     Users,
     Upload,
@@ -23,6 +24,7 @@ import {
     getTabularReview,
     getProject,
     getTabularReviewPeople,
+    listProjects,
     regenerateTabularCell,
     streamTabularGeneration,
     updateTabularReview,
@@ -39,12 +41,12 @@ import type {
 } from "../shared/types";
 import { AddColumnModal } from "./AddColumnModal";
 import { TRWorkflowModal } from "./TRWorkflowModal";
-import { AddDocumentsModal } from "../shared/AddDocumentsModal";
-import { AddProjectDocsModal } from "../shared/AddProjectDocsModal";
-import { PeopleModal } from "../shared/PeopleModal";
-import { OwnerOnlyModal } from "../shared/OwnerOnlyModal";
-import { ApiKeyMissingModal } from "../shared/ApiKeyMissingModal";
-import { ConfirmPopup } from "../shared/ConfirmPopup";
+import { AddDocumentsModal } from "../modals/AddDocumentsModal";
+import { AddProjectDocsModal } from "../modals/AddProjectDocsModal";
+import { PeopleModal } from "../modals/PeopleModal";
+import { OwnerOnlyPopup } from "../popups/OwnerOnlyPopup";
+import { ApiKeyMissingPopup } from "../popups/ApiKeyMissingPopup";
+import { ConfirmPopup } from "../popups/ConfirmPopup";
 import { HeaderActionsMenu } from "../shared/HeaderActionsMenu";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
@@ -57,34 +59,19 @@ import { TRSidePanel } from "./TRSidePanel";
 import { TRTable } from "./TRTable";
 import type { TRTableHandle } from "./TRTable";
 import { TRChatPanel } from "./TRChatPanel";
+import { TabularReviewDetailsModal } from "./TabularReviewDetailsModal";
 import { exportTabularReviewToExcel } from "./exportToExcel";
 import { useSidebar } from "@/app/contexts/SidebarContext";
 import { PageHeader } from "../shared/PageHeader";
 import { TableToolbar } from "../shared/TableToolbar";
+import { TabPillButton } from "@/app/components/ui/tab-pill-button";
 
-export function TRView() {
-    // Read both ids from the live URL — useParams() reports the
-    // prerender's "_" placeholders under output: "export". Two URL
-    // shapes to handle: /tabular-reviews/<reviewId> (no project) and
-    // /projects/<projectId>/tabular-reviews/<reviewId> (nested under
-    // a project). See ProjectWorkspace.tsx for the full diagnosis.
-    const pathname = usePathname() ?? "";
-    const nested = pathname.match(
-        /^\/projects\/([^/?#]+)\/tabular-reviews\/([^/?#]+)/,
-    );
-    const standalone = pathname.match(
-        /^\/tabular-reviews\/([^/?#]+)/,
-    );
-    const rawProjectId = nested?.[1] ?? "";
-    const rawReviewId = nested?.[2] ?? standalone?.[1] ?? "";
-    const projectId: string | undefined =
-        rawProjectId && rawProjectId !== "_"
-            ? decodeURIComponent(rawProjectId)
-            : undefined;
-    const reviewId =
-        rawReviewId && rawReviewId !== "_"
-            ? decodeURIComponent(rawReviewId)
-            : "";
+interface Props {
+    reviewId: string;
+    projectId?: string;
+}
+
+export function TRView({ reviewId, projectId }: Props) {
     const { setSidebarOpen } = useSidebar();
     const [review, setReview] = useState<TabularReview | null>(null);
     const [project, setProject] = useState<Project | null>(null);
@@ -98,6 +85,8 @@ export function TRView() {
     const [savingColumnsConfig, setSavingColumnsConfig] = useState(false);
     const [addColOpen, setAddColOpen] = useState(false);
     const [addDocsOpen, setAddDocsOpen] = useState(false);
+    const [detailsOpen, setDetailsOpen] = useState(false);
+    const [availableProjects, setAvailableProjects] = useState<Project[]>([]);
     const [peopleModalOpen, setPeopleModalOpen] = useState(false);
     const [workflowModalOpen, setWorkflowModalOpen] = useState(false);
     const [applyingWorkflow, setApplyingWorkflow] = useState(false);
@@ -110,7 +99,14 @@ export function TRView() {
     const { user } = useAuth();
     const [expandedCell, setExpandedCell] = useState<TabularCell | null>(null);
     const [expandedCellCitation, setExpandedCellCitation] = useState<
-        { quote: string; page: number; documentId?: string } | undefined
+        {
+            quote: string;
+            page?: number;
+            sheet?: string;
+            cell?: string;
+            documentId?: string;
+            citationRef: number;
+        } | undefined
     >(undefined);
     const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
     const [actionsOpen, setActionsOpen] = useState(false);
@@ -120,33 +116,24 @@ export function TRView() {
         string[]
     >([]);
     const searchParams = useSearchParams();
-    const initialChatParamRef = useRef<string | null>(
-        searchParams.get("chat"),
-    );
+    const initialChatParamRef = useRef<string | null>(searchParams.get("chat"));
     const [chatOpen, setChatOpen] = useState(!!initialChatParamRef.current);
     const [selectedChatId, setSelectedChatId] = useState<string | null>(
         initialChatParamRef.current && initialChatParamRef.current !== "new"
             ? initialChatParamRef.current
             : null,
     );
-    const [highlightedCell, setHighlightedCell] = useState<{ colIdx: number; rowIdx: number } | null>(null);
+    const [highlightedCell, setHighlightedCell] = useState<{
+        colIdx: number;
+        rowIdx: number;
+    } | null>(null);
     const [apiKeyModalProvider, setApiKeyModalProvider] =
         useState<ModelProvider | null>(null);
     const actionsRef = useRef<HTMLDivElement>(null);
     const tableRef = useRef<TRTableHandle>(null);
     const router = useRouter();
-    const { profile, aoaiDeployments } = useUserProfile();
-    const apiKeys = {
-        claudeApiKey: profile?.claudeApiKey ?? null,
-        geminiApiKey: profile?.geminiApiKey ?? null,
-        openaiApiKey: profile?.openaiApiKey ?? null,
-        globalApiKeys: profile?.globalApiKeys,
-    };
-    const extraModels = aoaiDeployments.map((d) => ({
-        id: `aoai:${d.name}`,
-        label: d.model ? `${d.name} (${d.model})` : d.name,
-        group: "Azure OpenAI" as const,
-    }));
+    const { profile } = useUserProfile();
+    const apiKeys = profile?.apiKeys;
     const tabularModel = profile?.tabularModel ?? "gemini-3-flash-preview";
 
     useEffect(() => {
@@ -176,7 +163,6 @@ export function TRView() {
     }, [actionsOpen]);
 
     useEffect(() => {
-        if (!reviewId) return; // pre-hydration tick — usePathname not resolved
         const fetches: Promise<unknown>[] = [
             getTabularReview(reviewId).then(({ review, cells, rows, documents }) => {
                 setReview(review);
@@ -191,6 +177,12 @@ export function TRView() {
                 getProject(projectId)
                     .then(setProject)
                     .catch(() => {}),
+            );
+        } else {
+            fetches.push(
+                listProjects()
+                    .then(setAvailableProjects)
+                    .catch(() => setAvailableProjects([])),
             );
         }
         Promise.all(fetches).finally(() => setLoading(false));
@@ -320,8 +312,8 @@ export function TRView() {
         // If columns changed since last save, update the review first
         if (columns.length === 0) return;
 
-        if (!isModelAvailable(tabularModel, apiKeys, extraModels)) {
-            setApiKeyModalProvider(getModelProvider(tabularModel, extraModels));
+        if (apiKeys && !isModelAvailable(tabularModel, apiKeys)) {
+            setApiKeyModalProvider(getModelProvider(tabularModel));
             return;
         }
 
@@ -536,7 +528,9 @@ export function TRView() {
             current.filter((row) => !rowIdsToDelete.includes(row.id)),
         );
         setCells((current) =>
-            current.filter((cell) => !rowIdsToDelete.includes(cell.row_id)),
+            current.filter(
+                (cell) => !rowIdsToDelete.includes(cell.row_id),
+            ),
         );
         setSelectedRowIds([]);
         setActionsOpen(false);
@@ -581,28 +575,40 @@ export function TRView() {
         await clearResultsForRows(rows.map((row) => row.id));
     }
 
-    async function handleTitleCommit(newTitle: string) {
-        if (!newTitle || newTitle === review?.title) return;
+    function requestReviewDetails() {
         if (review?.is_owner === false) {
-            setOwnerOnlyAction("rename this tabular review");
+            setOwnerOnlyAction("edit tabular review details");
             return;
         }
-        setReview((prev) => (prev ? { ...prev, title: newTitle } : prev));
-        await updateTabularReview(reviewId, { title: newTitle });
+        setDetailsOpen(true);
     }
 
-    function requestReviewRename() {
-        if (review?.is_owner === false) {
-            setOwnerOnlyAction("rename this tabular review");
+    async function handleDetailsSave(values: {
+        title: string;
+        projectId?: string | null;
+    }) {
+        if (!review || review.is_owner === false) {
+            setOwnerOnlyAction("edit tabular review details");
             return;
         }
-        const nextTitle = window.prompt(
-            "Rename tabular review",
-            review?.title ?? "Untitled Review",
+        const updated = await updateTabularReview(reviewId, {
+            title: values.title,
+            project_id: values.projectId ?? null,
+        });
+        setReview((prev) =>
+            prev
+                ? {
+                      ...prev,
+                      ...updated,
+                  }
+                : updated,
         );
-        const trimmed = nextTitle?.trim();
-        if (!trimmed) return;
-        void handleTitleCommit(trimmed);
+        if (!projectId && updated.project_id) {
+            setDetailsOpen(false);
+            router.push(
+                `/projects/${updated.project_id}/tabular-reviews/${reviewId}`,
+            );
+        }
     }
 
     function requestReviewDelete() {
@@ -689,7 +695,6 @@ export function TRView() {
                 {/* Header */}
                 <PageHeader
                     shrink
-                    className="gap-4"
                     breadcrumbs={[
                         ...(projectId
                             ? [
@@ -719,7 +724,8 @@ export function TRView() {
                             : [
                                   {
                                       label: "Tabular Reviews",
-                                      onClick: () => router.push("/tabular-reviews"),
+                                      onClick: () =>
+                                          router.push("/tabular-reviews"),
                                       title: "Back to Tabular Reviews",
                                   },
                               ]),
@@ -755,9 +761,9 @@ export function TRView() {
                                     <HeaderActionsMenu
                                         items={[
                                             {
-                                                label: "Rename",
+                                                label: "Edit details",
                                                 icon: Pencil,
-                                                onSelect: requestReviewRename,
+                                                onSelect: requestReviewDetails,
                                             },
                                             {
                                                 label: "Apply workflow",
@@ -800,29 +806,20 @@ export function TRView() {
                         {
                             actions: [
                                 {
-                                    onClick: () => {
-                                        if (!chatOpen) setSidebarOpen(false);
-                                        if (chatOpen) setSelectedChatId(null);
-                                        setChatOpen((v) => !v);
-                                    },
-                                    disabled:
-                                        loading ||
-                                        columns.length === 0 ||
-                                        rows.length === 0,
-                                    title: chatOpen
-                                        ? "Close assistant"
-                                        : "Open assistant",
-                                    icon: chatOpen ? (
-                                        <X className="h-4 w-4" />
-                                    ) : (
-                                        <MessageSquare className="h-4 w-4" />
-                                    ),
+                                    onClick: () => setAddDocsOpen(true),
+                                    disabled: loading || savingColumnsConfig,
+                                    title: "Add documents",
+                                    icon: <Upload className="h-4 w-4" />,
                                     label: (
                                         <span className="hidden sm:inline">
-                                            Assistant
+                                            Documents
                                         </span>
                                     ),
                                 },
+                            ],
+                        },
+                        {
+                            actions: [
                                 {
                                     onClick: handleGenerate,
                                     disabled:
@@ -843,87 +840,196 @@ export function TRView() {
                                 },
                             ],
                         },
+                        {
+                            actions: [
+                                {
+                                    onClick: () => {
+                                        if (!chatOpen) setSidebarOpen(false);
+                                        if (chatOpen) setSelectedChatId(null);
+                                        setChatOpen((v) => !v);
+                                    },
+                                    disabled:
+                                        loading ||
+                                        columns.length === 0 ||
+                                        rows.length === 0,
+                                    title: chatOpen
+                                        ? "Close chat"
+                                        : "Open chat",
+                                    icon: chatOpen ? (
+                                        <MessageSquareX className="h-4 w-4" />
+                                    ) : (
+                                        <MessageSquare className="h-4 w-4" />
+                                    ),
+                                    label: (
+                                        <span className="hidden sm:inline">
+                                            Chat
+                                        </span>
+                                    ),
+                                },
+                            ],
+                        },
                     ]}
                 />
 
-                {/* Toolbar */}
-                <TableToolbar
-                    items={[]}
-                    active="table"
-                    onChange={() => undefined}
-                    actions={
-                        <div className="ml-auto flex items-center gap-5">
-                            {loading ? (
-                                <>
-                                    <div className="h-3 w-24 rounded bg-gray-100 animate-pulse" />
-                                    <div className="h-3 w-20 rounded bg-gray-100 animate-pulse" />
-                                </>
-                            ) : null}
-                            {!loading && selectedRowIds.length > 0 && (
-                                <div ref={actionsRef} className="relative">
-                                    <button
-                                        onClick={() =>
-                                            setActionsOpen((v) => !v)
-                                        }
-                                        className="flex items-center gap-1 text-xs font-medium text-gray-600 hover:text-gray-900 transition-colors"
-                                    >
-                                        Actions
-                                        <ChevronDown className="h-3.5 w-3.5" />
-                                    </button>
-                                    {actionsOpen && (
-                                        <div className="absolute top-full right-0 mt-1 w-36 rounded-lg border border-gray-100 bg-white shadow-lg z-50 overflow-hidden">
-                                            <button
+                {/* Toolbar + table column, chat panel beside it */}
+                <div className="flex flex-1 overflow-hidden">
+                    {/* On mobile the chat panel replaces the table entirely */}
+                    <div
+                        className={`flex flex-1 flex-col overflow-hidden ${
+                            chatOpen ? "max-md:hidden" : ""
+                        }`}
+                    >
+                        <TableToolbar
+                            items={[]}
+                            active="table"
+                            onChange={() => undefined}
+                            actions={
+                                <div className="flex items-center gap-1.5">
+                                    {loading ? (
+                                        <div className="h-3 w-24 rounded bg-gray-100 animate-pulse" />
+                                    ) : null}
+                                    {!loading && selectedRowIds.length > 0 && (
+                                        <>
+                                            {/* Desktop: compact Actions menu */}
+                                            <div
+                                                ref={actionsRef}
+                                                className="relative max-md:hidden"
+                                            >
+                                                <TabPillButton
+                                                    onClick={() =>
+                                                        setActionsOpen(
+                                                            (v) => !v,
+                                                        )
+                                                    }
+                                                >
+                                                    Actions
+                                                    <ChevronDown className="h-3.5 w-3.5" />
+                                                </TabPillButton>
+                                                {actionsOpen && (
+                                                    <div className="absolute top-full right-0 mt-1 w-36 rounded-lg border border-gray-100 bg-white shadow-lg z-50 overflow-hidden">
+                                                        <button
+                                                            onClick={
+                                                                handleClearResults
+                                                            }
+                                                            className="w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50 transition-colors"
+                                                        >
+                                                            Clear results
+                                                        </button>
+                                                        <button
+                                                            onClick={
+                                                                handleDeleteDocuments
+                                                            }
+                                                            className="w-full px-3 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 transition-colors"
+                                                        >
+                                                            Delete
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                            {/* Mobile (toolbar dropdown): flattened entries */}
+                                            <TabPillButton
                                                 onClick={handleClearResults}
-                                                className="w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50 transition-colors"
+                                                className="md:hidden"
                                             >
                                                 Clear results
-                                            </button>
-                                            <button
+                                            </TabPillButton>
+                                            <TabPillButton
                                                 onClick={handleDeleteDocuments}
-                                                className="w-full px-3 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 transition-colors"
+                                                className="md:hidden text-red-600"
                                             >
                                                 Delete
-                                            </button>
-                                        </div>
+                                            </TabPillButton>
+                                        </>
+                                    )}
+                                    {!loading && (
+                                        <TabPillButton
+                                            onClick={() => setAddColOpen(true)}
+                                            disabled={
+                                                savingColumn ||
+                                                savingColumnsConfig
+                                            }
+                                        >
+                                            <Plus className="h-3.5 w-3.5" />
+                                            Add Columns
+                                        </TabPillButton>
                                     )}
                                 </div>
-                            )}
-                            {!loading && (
-                                <>
-                                    <button
-                                        onClick={() => setAddDocsOpen(true)}
-                                        disabled={savingColumnsConfig}
-                                        className={`flex items-center gap-1 text-xs font-medium transition-colors ${
-                                            savingColumnsConfig
-                                                ? "text-gray-300 cursor-default"
-                                                : "text-gray-700 hover:text-gray-900"
-                                        }`}
-                                    >
-                                        <Upload className="h-3.5 w-3.5" />
-                                        Add Documents
-                                    </button>
-                                    <button
-                                        onClick={() => setAddColOpen(true)}
-                                        disabled={
-                                            savingColumn || savingColumnsConfig
-                                        }
-                                        className={`flex items-center gap-1 text-xs font-medium transition-colors ${
-                                            savingColumn || savingColumnsConfig
-                                                ? "text-gray-300 cursor-default"
-                                                : "text-gray-700 hover:text-gray-900"
-                                        }`}
-                                    >
-                                        <Plus className="h-3.5 w-3.5" />
-                                        Add Columns
-                                    </button>
-                                </>
-                            )}
+                            }
+                        />
+                        <div
+                            className="relative flex flex-1 overflow-hidden"
+                            onDragOver={(e) => {
+                                if (!hasFilePayload(e.dataTransfer)) return;
+                                e.preventDefault();
+                                e.dataTransfer.dropEffect = "copy";
+                                setDragOverReviewFiles(true);
+                            }}
+                            onDragLeave={(e) => {
+                                if (
+                                    !e.currentTarget.contains(
+                                        e.relatedTarget as Node,
+                                    )
+                                ) {
+                                    setDragOverReviewFiles(false);
+                                }
+                            }}
+                            onDrop={(e) => {
+                                if (!hasFilePayload(e.dataTransfer)) return;
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setDragOverReviewFiles(false);
+                                void handleDropReviewFiles(
+                                    Array.from(e.dataTransfer.files),
+                                );
+                            }}
+                        >
+                            <TRTable
+                                ref={tableRef}
+                                loading={loading}
+                                documentGrouping={
+                                    review?.document_grouping ?? "document"
+                                }
+                                columns={columns}
+                                rows={filteredRows}
+                                documents={documents}
+                                cells={cells}
+                                highlightedCell={highlightedCell}
+                                savingColumn={savingColumn}
+                                savingColumnsConfig={savingColumnsConfig}
+                                selectedRowIds={selectedRowIds}
+                                uploadingFilenames={uploadingDroppedFilenames}
+                                dragOverFiles={dragOverReviewFiles}
+                                onSelectionChange={setSelectedRowIds}
+                                onExpand={(cell) => {
+                                    setExpandedCell(cell);
+                                    setExpandedCellCitation(undefined);
+                                }}
+                                onCitationClick={(
+                                    cell,
+                                    page,
+                                    quote,
+                                    citationRef,
+                                    sheet,
+                                    citationCell,
+                                    documentId,
+                                ) => {
+                                    setExpandedCell(cell);
+                                    setExpandedCellCitation({
+                                        quote,
+                                        page,
+                                        sheet,
+                                        cell: citationCell,
+                                        documentId,
+                                        citationRef,
+                                    });
+                                }}
+                                onUpdateColumn={handleUpdateColumn}
+                                onDeleteColumn={handleDeleteColumn}
+                                onAddColumn={() => setAddColOpen(true)}
+                                onAddDocuments={() => setAddDocsOpen(true)}
+                            />
                         </div>
-                    }
-                />
-
-                {/* Table area */}
-                <div className="flex flex-1 overflow-hidden">
+                    </div>
                     {chatOpen && (
                         <TRChatPanel
                             reviewId={reviewId}
@@ -938,73 +1044,6 @@ export function TRView() {
                             onChatIdChange={setSelectedChatId}
                         />
                     )}
-                    <div
-                        className="relative flex flex-1 overflow-hidden"
-                        onDragOver={(e) => {
-                            if (!hasFilePayload(e.dataTransfer)) return;
-                            e.preventDefault();
-                            e.dataTransfer.dropEffect = "copy";
-                            setDragOverReviewFiles(true);
-                        }}
-                        onDragLeave={(e) => {
-                            if (
-                                !e.currentTarget.contains(
-                                    e.relatedTarget as Node,
-                                )
-                            ) {
-                                setDragOverReviewFiles(false);
-                            }
-                        }}
-                        onDrop={(e) => {
-                            if (!hasFilePayload(e.dataTransfer)) return;
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setDragOverReviewFiles(false);
-                            void handleDropReviewFiles(
-                                Array.from(e.dataTransfer.files),
-                            );
-                        }}
-                    >
-                        <TRTable
-                            ref={tableRef}
-                            loading={loading}
-                            documentGrouping={
-                                review?.document_grouping ?? "document"
-                            }
-                            columns={columns}
-                            rows={filteredRows}
-                            documents={documents}
-                            cells={cells}
-                            highlightedCell={highlightedCell}
-                            savingColumn={savingColumn}
-                            savingColumnsConfig={savingColumnsConfig}
-                            selectedRowIds={selectedRowIds}
-                            uploadingFilenames={uploadingDroppedFilenames}
-                            dragOverFiles={dragOverReviewFiles}
-                            onSelectionChange={setSelectedRowIds}
-                            onExpand={(cell) => {
-                                setExpandedCell(cell);
-                                setExpandedCellCitation(undefined);
-                            }}
-                            onCitationClick={(
-                                cell,
-                                page,
-                                quote,
-                                documentId,
-                            ) => {
-                                setExpandedCell(cell);
-                                setExpandedCellCitation({
-                                    quote,
-                                    page,
-                                    documentId,
-                                });
-                            }}
-                            onUpdateColumn={handleUpdateColumn}
-                            onDeleteColumn={handleDeleteColumn}
-                            onAddColumn={() => setAddColOpen(true)}
-                            onAddDocuments={() => setAddDocsOpen(true)}
-                        />
-                    </div>
                 </div>
             </div>
 
@@ -1034,6 +1073,7 @@ export function TRView() {
                         <TRSidePanel
                             cell={expandedCell}
                             row={expandedRow}
+                            rows={filteredRows}
                             document={expandedDoc}
                             documents={documents}
                             column={expandedCol}
@@ -1042,11 +1082,11 @@ export function TRView() {
                                 setExpandedCell(null);
                                 setExpandedCellCitation(undefined);
                             }}
-                            onNavigate={(columnIndex) => {
+                            onNavigate={(rowId, columnIndex) => {
                                 const nextCell = cells.find(
-                                    (c) =>
-                                        c.row_id === expandedCell.row_id &&
-                                        c.column_index === columnIndex,
+                                    (candidate) =>
+                                        candidate.row_id === rowId &&
+                                        candidate.column_index === columnIndex,
                                 );
                                 if (nextCell) {
                                     setExpandedCell(nextCell);
@@ -1065,9 +1105,12 @@ export function TRView() {
                             }
                             citationQuote={expandedCellCitation?.quote}
                             citationPage={expandedCellCitation?.page}
+                            citationSheet={expandedCellCitation?.sheet}
+                            citationCell={expandedCellCitation?.cell}
                             citationDocumentId={
                                 expandedCellCitation?.documentId
                             }
+                            citationRef={expandedCellCitation?.citationRef}
                         />
                     );
                 })()}
@@ -1083,9 +1126,7 @@ export function TRView() {
                 <AddProjectDocsModal
                     open={addDocsOpen}
                     onClose={() => setAddDocsOpen(false)}
-                    onSelect={(docs: Document[]) =>
-                        handleAddDocuments(docs)
-                    }
+                    onSelect={(docs: Document[]) => handleAddDocuments(docs)}
                     breadcrumb={[
                         "Projects",
                         project.name +
@@ -1103,9 +1144,7 @@ export function TRView() {
                 <AddDocumentsModal
                     open={addDocsOpen}
                     onClose={() => setAddDocsOpen(false)}
-                    onSelect={(docs: Document[]) =>
-                        handleAddDocuments(docs)
-                    }
+                    onSelect={(docs: Document[]) => handleAddDocuments(docs)}
                     breadcrumb={[
                         "Tabular Reviews",
                         ...(review ? [review.title || "Untitled Review"] : []),
@@ -1113,6 +1152,16 @@ export function TRView() {
                     ]}
                 />
             )}
+
+            <TabularReviewDetailsModal
+                open={detailsOpen}
+                review={review}
+                projects={project ? [project] : availableProjects}
+                canEdit={review?.is_owner !== false}
+                lockProject={Boolean(projectId)}
+                onClose={() => setDetailsOpen(false)}
+                onSave={handleDetailsSave}
+            />
 
             <PeopleModal
                 open={peopleModalOpen}
@@ -1133,7 +1182,9 @@ export function TRView() {
                         : async (next) => {
                               const updated = await updateTabularReview(
                                   reviewId,
-                                  { shared_with: next },
+                                  {
+                                      shared_with: next,
+                                  },
                               );
                               setReview((prev) =>
                                   prev
@@ -1192,13 +1243,13 @@ export function TRView() {
                 onConfirm={() => void confirmReviewDelete()}
             />
 
-            <OwnerOnlyModal
+            <OwnerOnlyPopup
                 open={!!ownerOnlyAction}
                 action={ownerOnlyAction ?? undefined}
                 onClose={() => setOwnerOnlyAction(null)}
             />
 
-            <ApiKeyMissingModal
+            <ApiKeyMissingPopup
                 open={apiKeyModalProvider !== null}
                 provider={apiKeyModalProvider}
                 onClose={() => setApiKeyModalProvider(null)}

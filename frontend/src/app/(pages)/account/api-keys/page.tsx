@@ -1,133 +1,311 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, ExternalLink } from "lucide-react";
+import { Eye, EyeOff, RefreshCw } from "lucide-react";
+import { Input } from "@/app/components/ui/input";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
+import { refreshOllamaModels } from "@/app/hooks/useOllamaModels";
 import {
-    getApiKeyStatus,
-    type ApiKeyProvider,
-    type ApiKeyStatus,
-} from "@/app/lib/mikeApi";
+    MfaVerificationPopup,
+    needsMfaVerification,
+} from "@/app/components/popups/MfaVerificationPopup";
+import { isMfaRequiredError } from "@/app/lib/mikeApi";
+import {
+    accountGlassIconButtonClassName,
+    accountGlassInputClassName,
+} from "../accountStyles";
+import { AccountSection } from "../AccountSection";
 
-const PROVIDERS: ReadonlyArray<{
-    provider: ApiKeyProvider;
-    label: string;
-    secret: string;
-}> = [
+const MODEL_API_KEY_FIELDS = [
     {
         provider: "claude",
-        label: "Anthropic (Claude)",
-        secret: "anthropic-api-key",
+        label: "Anthropic (Claude) API Key",
+        placeholder: "sk-ant-...",
     },
     {
         provider: "gemini",
-        label: "Google Gemini",
-        secret: "gemini-api-key",
+        label: "Google (Gemini) API Key",
+        placeholder: "AI...",
     },
     {
         provider: "openai",
-        label: "OpenAI",
-        secret: "openai-api-key",
-    },
-    {
-        provider: "kimi",
-        label: "Kimi K3",
-        secret: "moonshot-api-key",
+        label: "OpenAI API Key",
+        placeholder: "sk-...",
     },
     {
         provider: "openrouter",
-        label: "OpenRouter",
-        secret: "openrouter-api-key",
+        label: "OpenRouter API Key",
+        placeholder: "sk-or-...",
     },
+] as const;
+
+const OTHER_API_KEY_FIELDS = [
     {
         provider: "courtlistener",
-        label: "CourtListener",
-        secret: "courtlistener-api-token",
+        label: "CourtListener API Key",
+        placeholder: "Token...",
+        description:
+            "Add a CourtListener API key if you want the latest CourtListener data. Otherwise, Mike will use the bulk data hosted by us.",
     },
-    {
-        provider: "azure_openai",
-        label: "Azure OpenAI",
-        secret: "azure-openai-endpoint + azure-openai-api-key",
-    },
-];
-
-const INSTALL_URL =
-    (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") +
-    "/install";
+] as const;
 
 export default function ApiKeysPage() {
-    const [status, setStatus] = useState<ApiKeyStatus | null>(null);
-    const [loadFailed, setLoadFailed] = useState(false);
+    const { profile, updateApiKey, reloadProfile } = useUserProfile();
+    const [refreshing, setRefreshing] = useState(false);
 
-    useEffect(() => {
-        getApiKeyStatus()
-            .then(setStatus)
-            .catch(() => setLoadFailed(true));
-    }, []);
+    const handleRefresh = async () => {
+        setRefreshing(true);
+        try {
+            await Promise.all([reloadProfile(), refreshOllamaModels()]);
+        } finally {
+            setRefreshing(false);
+        }
+    };
 
     return (
         <div>
-            <h2 className="mb-3 text-2xl font-medium font-serif text-gray-900">
-                External services
-            </h2>
-            <p className="mb-4 max-w-2xl text-sm text-gray-500">
-                Provider credentials are shared by everyone in this Mike
-                installation. They are stored once in Azure Key Vault and can
-                only be changed by an administrator through organisation
-                setup.
-            </p>
-
-            {loadFailed && (
-                <p className="mb-4 text-sm text-red-600">
-                    Could not load organisation credential status.
-                </p>
-            )}
-
-            <div className="overflow-hidden rounded-xl border border-gray-200 bg-white divide-y divide-gray-200">
-                {PROVIDERS.map((provider) => {
-                    const configured = !!status?.[provider.provider];
-                    return (
-                        <div
-                            key={provider.provider}
-                            className="flex items-start justify-between gap-4 px-4 py-5"
-                        >
-                            <div className="min-w-0">
-                                <p className="text-sm font-medium text-gray-800">
-                                    {provider.label}
-                                </p>
-                                <p className="mt-1 text-xs text-gray-500">
-                                    Key Vault: {provider.secret}
-                                </p>
-                            </div>
-                            <div
-                                className={`flex shrink-0 items-center gap-1.5 text-xs font-medium ${
-                                    configured
-                                        ? "text-emerald-700"
-                                        : "text-amber-700"
-                                }`}
-                            >
-                                {configured ? (
-                                    <CheckCircle2 className="h-4 w-4" />
-                                ) : (
-                                    <AlertTriangle className="h-4 w-4" />
-                                )}
-                                {status === null
-                                    ? "Checking..."
-                                    : configured
-                                      ? "Configured for this organisation"
-                                      : "Administrator action required"}
-                            </div>
-                        </div>
-                    );
-                })}
+            <div className="mb-3 flex items-center justify-between gap-2">
+                <h2 className="text-2xl font-medium font-serif text-gray-900">
+                    API Keys
+                </h2>
+                <button
+                    type="button"
+                    onClick={handleRefresh}
+                    disabled={refreshing}
+                    className="flex items-center gap-1.5 text-xs font-medium text-gray-600 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-400"
+                    title="Re-check API keys and detect local (Ollama) models"
+                >
+                    <RefreshCw
+                        className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
+                    />
+                    {refreshing ? "Refreshing..." : "Refresh"}
+                </button>
             </div>
+            <p className="text-sm text-gray-500 mb-4">
+                You must provide your own API keys for the app to work or add
+                your API keys into the .env file if you are running your own
+                instance of Mike. All API keys are encrypted in storage.
+            </p>
+            <AccountSection>
+                {MODEL_API_KEY_FIELDS.map((field, index) => (
+                    <div key={field.provider}>
+                        <ApiKeyField
+                            label={field.label}
+                            placeholder={field.placeholder}
+                            hasSavedKey={
+                                !!profile?.apiKeys[field.provider].configured
+                            }
+                            isServerConfigured={
+                                profile?.apiKeys[field.provider].source ===
+                                "env"
+                            }
+                            onSave={(value) =>
+                                updateApiKey(
+                                    field.provider,
+                                    value.trim() || null,
+                                )
+                            }
+                            onRemove={() => updateApiKey(field.provider, null)}
+                        />
+                        {index < MODEL_API_KEY_FIELDS.length - 1 && (
+                            <div className="mx-4 h-px bg-gray-200" />
+                        )}
+                    </div>
+                ))}
+            </AccountSection>
 
-            <a
-                href={INSTALL_URL}
-                className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-gray-700 underline underline-offset-4 hover:text-gray-950"
-            >
-                Open organisation setup
-                <ExternalLink className="h-3.5 w-3.5" />
-            </a>
+            <AccountSection className="mt-8">
+                {OTHER_API_KEY_FIELDS.map((field) => (
+                    <ApiKeyField
+                        key={field.provider}
+                        label={field.label}
+                        description={field.description}
+                        placeholder={field.placeholder}
+                        hasSavedKey={
+                            !!profile?.apiKeys[field.provider].configured
+                        }
+                        isServerConfigured={
+                            profile?.apiKeys[field.provider].source === "env"
+                        }
+                        onSave={(value) =>
+                            updateApiKey(field.provider, value.trim() || null)
+                        }
+                        onRemove={() => updateApiKey(field.provider, null)}
+                    />
+                ))}
+            </AccountSection>
         </div>
+    );
+}
+
+function ApiKeyField({
+    label,
+    description,
+    placeholder,
+    hasSavedKey,
+    isServerConfigured,
+    onSave,
+    onRemove,
+}: {
+    label: string;
+    description?: string;
+    placeholder: string;
+    hasSavedKey: boolean;
+    isServerConfigured: boolean;
+    onSave: (value: string) => Promise<boolean>;
+    onRemove: () => Promise<boolean>;
+}) {
+    const [value, setValue] = useState("");
+    const [reveal, setReveal] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
+    const [saved, setSaved] = useState(false);
+    const [pendingMfaAction, setPendingMfaAction] = useState<
+        "save" | "remove" | null
+    >(null);
+
+    useEffect(() => {
+        setValue("");
+    }, [hasSavedKey]);
+
+    const dirty = value.trim().length > 0;
+
+    const handleSave = async () => {
+        setIsSaving(true);
+        try {
+            if (await needsMfaVerification()) {
+                setPendingMfaAction("save");
+                return;
+            }
+            const ok = await onSave(value);
+            if (ok) {
+                setValue("");
+                setSaved(true);
+                setTimeout(() => setSaved(false), 2000);
+            } else {
+                alert(`Failed to save ${label}.`);
+            }
+        } catch (error) {
+            if (isMfaRequiredError(error)) {
+                setPendingMfaAction("save");
+            } else {
+                alert(`Failed to save ${label}.`);
+            }
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const handleRemove = async () => {
+        setIsSaving(true);
+        try {
+            if (await needsMfaVerification()) {
+                setPendingMfaAction("remove");
+                return;
+            }
+            const ok = await onRemove();
+            if (!ok) alert(`Failed to remove ${label}.`);
+        } catch (error) {
+            if (isMfaRequiredError(error)) {
+                setPendingMfaAction("remove");
+            } else {
+                alert(`Failed to remove ${label}.`);
+            }
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const handleMfaVerified = async () => {
+        const action = pendingMfaAction;
+        setPendingMfaAction(null);
+        if (action === "save") {
+            await handleSave();
+        } else if (action === "remove") {
+            await handleRemove();
+        }
+    };
+
+    return (
+        <>
+            <div className="px-4 py-5">
+                <label className="text-sm font-medium text-gray-700 block mb-2">
+                    {label}
+                </label>
+                {description && (
+                    <p className="text-sm text-gray-500 mb-3">{description}</p>
+                )}
+                <div className="space-y-2">
+                    <div className="relative flex-1">
+                        <Input
+                            type={reveal ? "text" : "password"}
+                            value={value}
+                            onChange={(e) => setValue(e.target.value)}
+                            placeholder={
+                                isServerConfigured
+                                    ? "Server .env key configured"
+                                    : hasSavedKey
+                                      ? "Saved key hidden"
+                                      : placeholder
+                            }
+                            className={`pr-10 ${accountGlassInputClassName}`}
+                            autoComplete="off"
+                            spellCheck={false}
+                            disabled={isServerConfigured}
+                        />
+                        {dirty && (
+                            <button
+                                type="button"
+                                onClick={() => setReveal((r) => !r)}
+                                disabled={isServerConfigured}
+                                className={`absolute inset-y-1 right-1.5 flex items-center ${accountGlassIconButtonClassName}`}
+                                aria-label={reveal ? "Hide key" : "Show key"}
+                            >
+                                {reveal ? (
+                                    <EyeOff className="h-4 w-4" />
+                                ) : (
+                                    <Eye className="h-4 w-4" />
+                                )}
+                            </button>
+                        )}
+                    </div>
+                    <div className="flex flex-wrap justify-end gap-2">
+                        <button
+                            type="button"
+                            onClick={handleSave}
+                            disabled={
+                                isServerConfigured ||
+                                isSaving ||
+                                !dirty ||
+                                saved
+                            }
+                            className="text-xs font-medium text-gray-700 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-400"
+                        >
+                            {isSaving ? (
+                                "Saving..."
+                            ) : saved ? (
+                                "Saved"
+                            ) : (
+                                "Save"
+                            )}
+                        </button>
+                        {hasSavedKey && !isServerConfigured && (
+                            <button
+                                type="button"
+                                onClick={handleRemove}
+                                disabled={isSaving}
+                                className="text-xs font-medium text-red-600 transition-colors hover:text-red-700 disabled:cursor-not-allowed disabled:text-red-300"
+                            >
+                                Remove
+                            </button>
+                        )}
+                    </div>
+                </div>
+            </div>
+            <MfaVerificationPopup
+                open={!!pendingMfaAction}
+                onCancel={() => setPendingMfaAction(null)}
+                onVerified={() => void handleMfaVerified()}
+            />
+        </>
     );
 }

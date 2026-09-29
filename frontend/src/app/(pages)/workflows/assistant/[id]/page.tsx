@@ -1,15 +1,13 @@
-import AssistantWorkflowClient from "./AssistantWorkflowClient";
+"use client";
 
-// See app/(pages)/projects/[id]/page.tsx for why we don't pass id —
-// usePathname() inside the client reads the real URL.
-// Upstream divergence (sync-log: 3132e04): upstream's page is a client
-// component using `use(params)`; under dev's output: "export" the params
-// are the prerender's "_" placeholder, so dev keeps the server-wrapper +
-// pathname-reading-client idiom instead.
-export function generateStaticParams() {
-    return [{ id: "_" }];
+import { use } from "react";
+import { WorkflowDetailPage } from "@/app/components/workflows/WorkflowDetailPage";
+
+interface Props {
+    params: Promise<{ id: string }>;
 }
 
-export default function AssistantWorkflowPage() {
-    return <AssistantWorkflowClient />;
+export default function AssistantWorkflowPage({ params }: Props) {
+    const { id } = use(params);
+    return <WorkflowDetailPage id={id} workflowType="assistant" />;
 }

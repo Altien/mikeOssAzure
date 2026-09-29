@@ -8,17 +8,17 @@ import {
     type CSSProperties,
 } from "react";
 import { X } from "lucide-react";
-import { DocPanel, type DocPanelMode } from "../shared/DocPanel";
+import { DocPanel, type DocPanelMode } from "./DocPanel";
 import type {
-    CitationAnnotation,
+    Citation,
     EditAnnotation,
 } from "../shared/types";
 import {
     CaseLawPanel,
     type CaseTab,
 } from "./CaseLawPanel";
-import { AuthorityTracePanel } from "@/altien/authorityTrace/AuthorityTracePanel";
 import { cn } from "@/app/lib/utils";
+import { LIQUID_PANEL_SURFACE_CLASS } from "@/app/components/ui/liquid-surface";
 
 // ---------------------------------------------------------------------------
 // Tab data
@@ -46,27 +46,20 @@ export type DocumentTab = CommonTab & { kind: "document" };
 
 export type CitationTab = CommonTab & {
     kind: "citation";
-    citation: CitationAnnotation;
+    citation: Citation;
 };
 
 export type EditTab = CommonTab & {
     kind: "edit";
     edit: EditAnnotation;
-};
-
-export type AuthorityTraceTab = {
-    kind: "authority_trace";
-    id: string;
-    runId: string;
-    title: string;
+    changeNumber?: number;
 };
 
 export type AssistantSidePanelTab =
     | DocumentTab
     | CitationTab
     | EditTab
-    | CaseTab
-    | AuthorityTraceTab;
+    | CaseTab;
 
 interface Props {
     tabs: AssistantSidePanelTab[];
@@ -124,7 +117,6 @@ function tabTitle(tab: AssistantSidePanelTab): string {
     if (tab.kind === "case") {
         return tab.caseName || tab.citation || "Case";
     }
-    if (tab.kind === "authority_trace") return tab.title;
     return tab.filename;
 }
 
@@ -205,7 +197,8 @@ export function AssistantSidePanel({
             ref={panelRef}
             className={cn(
                 "relative flex h-full w-full shrink-0 flex-col md:my-3 md:mr-3 md:h-[calc(100%-1.5rem)] md:w-[var(--assistant-panel-width)]",
-                "rounded-2xl border border-white/70 bg-white shadow-[0_6px_18px_rgba(15,23,42,0.08),inset_0_1px_0_rgba(255,255,255,0.9),inset_0_-10px_24px_rgba(255,255,255,0.18),inset_1px_0_0_rgba(255,255,255,0.5)] backdrop-blur-2xl overflow-hidden",
+                LIQUID_PANEL_SURFACE_CLASS,
+                "overflow-hidden",
             )}
             style={{
                 "--assistant-panel-width": `${panelWidth}px`,
@@ -233,7 +226,6 @@ export function AssistantSidePanel({
                         const isActive = tab.id === active.id;
                         const showVersionBadge =
                             tab.kind !== "case" &&
-                            tab.kind !== "authority_trace" &&
                             typeof tab.versionNumber === "number" &&
                             Number.isFinite(tab.versionNumber) &&
                             tab.versionNumber > 1;
@@ -308,17 +300,6 @@ export function AssistantSidePanel({
                             </div>
                         );
                     }
-                    if (tab.kind === "authority_trace") {
-                        return (
-                            <div
-                                key={tab.id}
-                                className={`absolute inset-0 flex flex-col ${isActive ? "" : "invisible pointer-events-none"}`}
-                                aria-hidden={!isActive}
-                            >
-                                <AuthorityTracePanel runId={tab.runId} />
-                            </div>
-                        );
-                    }
                     const mode: DocPanelMode =
                         tab.kind === "citation"
                             ? {
@@ -329,6 +310,7 @@ export function AssistantSidePanel({
                               ? {
                                     kind: "edit",
                                     edit: tab.edit,
+                                    changeNumber: tab.changeNumber,
                                     isEditReloading:
                                         isEditReloading?.(tab.edit.edit_id) ??
                                         false,

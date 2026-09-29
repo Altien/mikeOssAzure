@@ -2,13 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-    FileText,
-    File,
-    Folder,
-    FolderOpen,
     ChevronRight,
     ChevronDown,
-    FolderPlus,
     Trash2,
 } from "lucide-react";
 import type {
@@ -16,6 +11,11 @@ import type {
     Folder as ProjectFolder,
 } from "@/app/components/shared/types";
 import { VersionChip } from "@/app/components/shared/VersionChip";
+import { FileTypeIcon } from "@/app/components/shared/FileTypeIcon";
+import {
+    ProjectSvgIcon,
+    SubfolderSvgIcon,
+} from "@/app/components/shared/FolderSvgIcon";
 
 interface Props {
     projectName?: string | null;
@@ -32,11 +32,7 @@ interface Props {
 }
 
 function DocIcon({ fileType }: { fileType: string | null }) {
-    if (fileType === "pdf")
-        return <FileText className="h-3.5 w-3.5 text-red-500 shrink-0" />;
-    if (fileType === "docx" || fileType === "doc")
-        return <File className="h-3.5 w-3.5 text-blue-500 shrink-0" />;
-    return <File className="h-3.5 w-3.5 text-gray-400 shrink-0" />;
+    return <FileTypeIcon fileType={fileType} className="h-3.5 w-3.5" />;
 }
 
 type ContextMenuState = {
@@ -96,7 +92,11 @@ export function ProjectExplorer({
     function toggleFolder(id: string) {
         setExpandedIds((prev) => {
             const next = new Set(prev);
-            next.has(id) ? next.delete(id) : next.add(id);
+            if (next.has(id)) {
+                next.delete(id);
+            } else {
+                next.add(id);
+            }
             return next;
         });
     }
@@ -167,7 +167,7 @@ export function ProjectExplorer({
     }
 
     function renderLevel(parentId: string | null, depth: number): React.ReactNode {
-        const basePadding = 28 + (depth - 1) * 16; // pl-7 at depth 1, +16px per level
+        const basePadding = 24 + (depth - 1) * 16;
         const childFolders = folders
             .filter((f) => f.parent_folder_id === parentId)
             .sort((a, b) => a.name.localeCompare(b.name));
@@ -182,7 +182,7 @@ export function ProjectExplorer({
                         style={{ paddingLeft: basePadding }}
                     >
                         <ChevronRight className="h-3 w-3 text-gray-300 shrink-0" />
-                        <FolderPlus className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                        <SubfolderSvgIcon className="h-3.5 w-3.5 shrink-0" />
                         <input
                             ref={newFolderInputRef}
                             autoFocus
@@ -247,10 +247,10 @@ export function ProjectExplorer({
                                     ? <ChevronDown className="h-3 w-3 text-gray-400 shrink-0" />
                                     : <ChevronRight className="h-3 w-3 text-gray-400 shrink-0" />
                                 }
-                                {isExpanded
-                                    ? <FolderOpen className="h-3.5 w-3.5 text-amber-500 shrink-0" />
-                                    : <Folder className="h-3.5 w-3.5 text-amber-500 shrink-0" />
-                                }
+                                <SubfolderSvgIcon
+                                    open={isExpanded}
+                                    className="h-3.5 w-3.5 shrink-0"
+                                />
                                 {isRenaming ? (
                                     <input
                                         autoFocus
@@ -351,7 +351,7 @@ export function ProjectExplorer({
                     className="flex items-center gap-2 px-2 py-1.5 select-none"
                     onContextMenu={(e) => { e.stopPropagation(); openContextMenu(e, null); }}
                 >
-                    <FolderOpen className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                    <ProjectSvgIcon open className="h-3.5 w-3.5 shrink-0" />
                     <span className="text-xs text-gray-500 truncate">{projectName}</span>
                 </li>
             )}
@@ -387,7 +387,7 @@ export function ProjectExplorer({
                                 setNewFolderName("");
                             }}
                         >
-                            <FolderPlus className="h-3.5 w-3.5 text-gray-400" />
+                            <SubfolderSvgIcon className="h-3.5 w-3.5 shrink-0" />
                             New subfolder
                         </button>
                     )}

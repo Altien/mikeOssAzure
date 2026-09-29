@@ -8,16 +8,16 @@ import type {
 } from "../shared/types";
 import { TRSidePanel } from "./TRSidePanel";
 
-// Dev adaptation of upstream 6ae1f98d: dev's viewers live at ../shared/DocView
-// and ../shared/DocxView (upstream's views/* stack is deferred), and folder
-// rows use lucide icons.
-vi.mock("../shared/DocView", () => ({
-    DocView: ({ doc }: { doc: { document_id: string } }) => (
+vi.mock("../shared/views/PdfView", () => ({
+    PdfView: ({ doc }: { doc: { document_id: string } }) => (
         <div>PDF {doc.document_id}</div>
     ),
 }));
-vi.mock("../shared/DocxView", () => ({
+vi.mock("../shared/views/DocxView", () => ({
     DocxView: () => <div>DOCX</div>,
+}));
+vi.mock("../shared/views/SpreadsheetView", () => ({
+    SpreadsheetView: () => <div>Spreadsheet</div>,
 }));
 
 describe("TRSidePanel", () => {
@@ -59,10 +59,11 @@ describe("TRSidePanel", () => {
             },
         } as TabularCell;
 
-        render(
+        const { container } = render(
             <TRSidePanel
                 cell={cell}
                 row={row}
+                rows={[row]}
                 documents={documents}
                 column={column}
                 columns={[column]}
@@ -70,6 +71,10 @@ describe("TRSidePanel", () => {
                 onNavigate={vi.fn()}
             />,
         );
+
+        expect(
+            container.querySelector('img[src*="folder-closed"]'),
+        ).toBeInTheDocument();
 
         const folderButton = screen.getByRole("button", { name: "Closing" });
         expect(folderButton).toHaveAttribute("aria-expanded", "false");

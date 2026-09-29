@@ -1,12 +1,13 @@
-import { DocumentsSection } from "./DocumentsSection";
+"use client";
 
-export function generateStaticParams() {
-    return [{ id: "_" }];
+import { use } from "react";
+import { ProjectDocumentsView } from "@/app/components/projects/ProjectDocumentsView";
+
+interface Props {
+    params: Promise<{ id: string }>;
 }
 
-// Server stub: `output: "export"` needs one prebuilt shell per dynamic route.
-// The real id is read client-side from the URL (see DocumentsSection /
-// ProjectWorkspaceLayout) because server-baked params are always "_".
-export default function ProjectDetailPage() {
-    return <DocumentsSection />;
+export default function ProjectDetailPage({ params }: Props) {
+    const { id } = use(params);
+    return <ProjectDocumentsView projectId={id} />;
 }

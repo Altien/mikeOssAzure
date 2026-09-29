@@ -1,945 +1,576 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { http, HttpResponse } from "msw";
-import { server } from "@/test/msw-server";
+import {
+    afterEach,
+    beforeEach,
+    describe,
+    expect,
+    it,
+    vi,
+} from "vitest";
+import type { AssistantEvent, Chat } from "@/app/components/shared/types";
 
-// Mock auth-token at the module boundary so each test controls the
-// token + can assert bounceIfUnauthorized was invoked on the response.
-const { mockGetBrowserAccessToken, mockBounceIfUnauthorized } = vi.hoisted(
-    () => ({
-        mockGetBrowserAccessToken: vi.fn(),
-        mockBounceIfUnauthorized: vi.fn(),
-    }),
-);
-
-vi.mock("@/app/lib/auth-token", () => ({
-    getBrowserAccessToken: mockGetBrowserAccessToken,
-    bounceIfUnauthorized: mockBounceIfUnauthorized,
+// mikeApi resolves the auth header through the module-level Supabase client,
+// so swap it for a controllable session before the module under test loads.
+const { getSessionMock } = vi.hoisted(() => ({
+    getSessionMock: vi.fn(),
+}));
+vi.mock("@/app/lib/supabase", () => ({
+    supabase: { auth: { getSession: getSessionMock } },
 }));
 
 import {
-    listProjects,
+    MikeApiError,
+    addDocumentToProject,
+    clearTabularCells,
+    copyDocumentVersionFromDocument,
+    createChat,
+    createLibraryFolder,
+    createMcpConnector,
     createProject,
-    updateProject,
-    deleteProject,
+    createProjectFolder,
+    createTabularReview,
+    createWorkflow,
     deleteAccount,
-    getUserProfile,
-    updateUserProfile,
-    getApiKeyStatus,
-    saveApiKey,
-    uploadProjectDocument,
-    uploadStandaloneDocument,
-    downloadDocumentsZip,
-    listChats,
-    getChat,
-    listProjectChats,
-    renameChat,
+    deleteAllChats,
+    deleteAllProjects,
+    deleteAllTabularReviews,
     deleteChat,
+    deleteDocument,
+    deleteDocumentVersion,
+    deleteLibraryFolder,
+    deleteMcpConnector,
+    deleteProject,
+    deleteProjectFolder,
+    deleteTabularChat,
+    deleteTabularReview,
+    deleteWorkflow,
+    deleteWorkflowShare,
+    downloadDocumentsZip,
+    exportAccountData,
+    exportChatData,
+    exportTabularReviewsData,
     generateChatTitle,
-    streamChat,
-    streamProjectChat,
-    listTabularReviews,
+    generateTabularColumnPrompt,
+    getApiKeyStatus,
+    getChat,
+    getCourtlistenerOpinions,
     getDocumentUrl,
-    mapTRMessages,
+    getLibrary,
+    getMcpConnector,
+    getOllamaModels,
     getProject,
     getProjectPeople,
-    createProjectFolder,
-    renameProjectFolder,
-    deleteProjectFolder,
-    moveSubfolderToFolder,
-    moveDocumentToFolder,
-    addDocumentToProject,
-    listDocumentVersions,
-    uploadDocumentVersion,
-    renameDocumentVersion,
-    listStandaloneDocuments,
-    deleteDocument,
-    createChat,
-    createTabularReview,
-    getTabularReview,
-    updateTabularReview,
-    getTabularReviewPeople,
-    generateTabularColumnPrompt,
-    deleteTabularReview,
-    streamTabularGeneration,
-    streamTabularChat,
-    getTabularChats,
     getTabularChatMessages,
-    deleteTabularChat,
-    regenerateTabularCell,
-    clearTabularCells,
-    listWorkflows,
+    getTabularChats,
+    getTabularReview,
+    getTabularReviewPeople,
+    getUserProfile,
     getWorkflow,
-    createWorkflow,
-    updateWorkflow,
-    deleteWorkflow,
-    listHiddenWorkflows,
     hideWorkflow,
-    unhideWorkflow,
-    shareWorkflow,
+    isMfaRequiredError,
+    listChats,
+    listDocumentVersions,
+    listHiddenWorkflows,
+    listMcpConnectors,
+    listProjectChats,
+    listProjects,
+    listStandaloneDocuments,
+    listTabularReviewIds,
+    listTabularReviews,
     listWorkflowShares,
-    deleteWorkflowShare,
+    listWorkflows,
+    lookupUserByEmail,
+    mapTRMessages,
+    moveDocumentToFolder,
+    moveLibraryDocument,
+    moveLibraryFolder,
+    moveSubfolderToFolder,
+    openSourceWorkflow,
+    refreshMcpConnectorTools,
+    regenerateTabularCell,
+    renameChat,
+    renameDocumentVersion,
+    renameLibraryDocument,
+    renameLibraryFolder,
+    renameProjectDocument,
+    renameProjectFolder,
+    renameTabularChat,
+    replaceDocumentVersionFile,
+    saveApiKey,
+    setMcpToolEnabled,
+    shareWorkflow,
+    startMcpConnectorOAuth,
+    streamChat,
+    streamProjectChat,
+    streamTabularChat,
+    streamTabularGeneration,
+    unhideWorkflow,
+    updateMcpConnector,
+    updateProject,
+    updateTabularReview,
+    updateUserMfaOnLogin,
+    updateUserProfile,
+    updateWorkflow,
+    uploadDocumentVersion,
+    uploadLibraryDocument,
+    uploadProjectDocument,
     uploadReviewDocument,
+    uploadStandaloneDocument,
 } from "./mikeApi";
 
+const fetchMock = vi.fn();
+
+const withSession = (token: string | null) => {
+    getSessionMock.mockResolvedValue({
+        data: {
+            session: token ? { access_token: token } : null,
+        },
+    });
+};
+
+const jsonResponse = (body: unknown, init?: ResponseInit) =>
+    new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+        ...init,
+    });
+
+/** Build a Response whose body is a real ReadableStream of the given chunks. */
+const streamResponse = (chunks: string[]) => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+            for (const chunk of chunks) {
+                controller.enqueue(encoder.encode(chunk));
+            }
+            controller.close();
+        },
+    });
+    return new Response(stream, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+    });
+};
+
+const readAll = async (response: Response) => {
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        text += decoder.decode(value, { stream: true });
+    }
+    return text + decoder.decode();
+};
+
+const lastFetchCall = () => {
+    const call = fetchMock.mock.calls.at(-1);
+    if (!call) throw new Error("fetch was not called");
+    return { url: call[0] as string, init: call[1] as RequestInit };
+};
+
 beforeEach(() => {
-    mockGetBrowserAccessToken.mockReset().mockResolvedValue("tok-abc");
-    mockBounceIfUnauthorized.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+    withSession("token-123");
 });
 
-describe("mikeApi: apiRequest wrapper — URL + headers + auth", () => {
-    it("constructs URLs as API_BASE + path", async () => {
-        let requestedPath: string | null = null;
-        server.use(
-            http.get("*/api/projects", ({ request }) => {
-                requestedPath = new URL(request.url).pathname;
-                return HttpResponse.json([]);
-            }),
-        );
-
-        await listProjects();
-
-        expect(requestedPath).toBe("/api/projects");
-    });
-
-    it("injects Authorization: Bearer <token>", async () => {
-        let receivedAuth: string | null = null;
-        server.use(
-            http.get("*/api/projects", ({ request }) => {
-                receivedAuth = request.headers.get("Authorization");
-                return HttpResponse.json([]);
-            }),
-        );
-
-        await listProjects();
-
-        expect(receivedAuth).toBe("Bearer tok-abc");
-    });
-
-    it("omits Authorization when getBrowserAccessToken returns null", async () => {
-        mockGetBrowserAccessToken.mockResolvedValue(null);
-        let receivedAuth: string | null = "(default)";
-        server.use(
-            http.get("*/api/projects", ({ request }) => {
-                receivedAuth = request.headers.get("Authorization");
-                return HttpResponse.json([]);
-            }),
-        );
-
-        await listProjects();
-
-        expect(receivedAuth).toBeNull();
-    });
-
-    it("sends Accept: application/json by default", async () => {
-        let receivedAccept: string | null = null;
-        server.use(
-            http.get("*/api/projects", ({ request }) => {
-                receivedAccept = request.headers.get("Accept");
-                return HttpResponse.json([]);
-            }),
-        );
-
-        await listProjects();
-
-        expect(receivedAccept).toBe("application/json");
-    });
-
-    it("allows callers to override headers (e.g. add Content-Type for POSTs)", async () => {
-        let contentType: string | null = null;
-        server.use(
-            http.post("*/api/projects", ({ request }) => {
-                contentType = request.headers.get("Content-Type");
-                return HttpResponse.json({ id: "p", name: "n" });
-            }),
-        );
-
-        await createProject("n");
-
-        // createProject explicitly sets Content-Type; the wrapper's
-        // default headers must NOT clobber it.
-        expect(contentType).toBe("application/json");
-    });
-
-    it("calls bounceIfUnauthorized on every response", async () => {
-        server.use(http.get("*/api/projects", () => HttpResponse.json([])));
-
-        await listProjects();
-
-        expect(mockBounceIfUnauthorized).toHaveBeenCalledOnce();
-    });
+afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
 });
 
-describe("mikeApi: apiRequest wrapper — body parsing", () => {
-    it("returns the parsed JSON body on 2xx", async () => {
-        const fixture = [{ id: "p1", name: "Project 1" }];
-        server.use(http.get("*/api/projects", () => HttpResponse.json(fixture)));
-
-        const result = await listProjects();
-
-        expect(result).toEqual(fixture);
-    });
-
-    it("returns undefined on 204 (no content)", async () => {
-        server.use(
-            http.delete("*/api/projects/:id", () =>
-                new HttpResponse(null, { status: 204 }),
-            ),
-        );
-
-        // deleteProject's return type is void — undefined satisfies it.
-        await expect(deleteProject("p1")).resolves.toBeUndefined();
-    });
-
-    it("returns undefined when Content-Length is 0 (some backends send 200 + empty body)", async () => {
-        server.use(
-            http.delete("*/api/projects/:id", () =>
-                new HttpResponse("", {
-                    status: 200,
-                    headers: { "Content-Length": "0" },
-                }),
-            ),
-        );
-
-        await expect(deleteProject("p1")).resolves.toBeUndefined();
-    });
-});
-
-describe("mikeApi: apiRequest wrapper — error envelope", () => {
-    it("throws the response text on non-2xx (backend-provided detail wins)", async () => {
-        server.use(
-            http.get("*/api/projects", () =>
-                HttpResponse.text("Quota exceeded: 1000 requests/hour", {
-                    status: 429,
-                }),
-            ),
-        );
-
-        await expect(listProjects()).rejects.toThrow(
-            "Quota exceeded: 1000 requests/hour",
-        );
-    });
-
-    it("falls back to a generic message when the response body is empty", async () => {
-        // Some load-balancers strip the body on 5xx; the wrapper
-        // must still produce an informative error.
-        server.use(
-            http.get("*/api/projects", () =>
-                new HttpResponse(null, { status: 502 }),
-            ),
-        );
-
-        await expect(listProjects()).rejects.toThrow("API error: 502");
-    });
-});
-
-describe("mikeApi: project endpoints", () => {
-    it("createProject POSTs the right body shape", async () => {
-        let received: unknown;
-        server.use(
-            http.post("*/api/projects", async ({ request }) => {
-                received = await request.json();
-                return HttpResponse.json({ id: "new", name: "Acme" });
-            }),
-        );
-
-        const project = await createProject("Acme", "CM-1234", [
-            "alice@example.com",
-        ]);
-
-        expect(received).toEqual({
-            name: "Acme",
-            cm_number: "CM-1234",
-            shared_with: ["alice@example.com"],
+describe("MikeApiError / isMfaRequiredError", () => {
+    it("carries status and code, defaulting code to null", () => {
+        const withCode = new MikeApiError({
+            message: "nope",
+            status: 403,
+            code: "mfa_verification_required",
         });
-        expect(project).toEqual({ id: "new", name: "Acme" });
+        expect(withCode.name).toBe("MikeApiError");
+        expect(withCode.status).toBe(403);
+        expect(withCode.code).toBe("mfa_verification_required");
+
+        const withoutCode = new MikeApiError({ message: "nope", status: 500 });
+        expect(withoutCode.code).toBeNull();
     });
 
-    it("createProject omits undefined fields from the body", async () => {
-        // JSON.stringify drops undefined values — assert that
-        // contract so a refactor doesn't accidentally send `null` and
-        // change backend semantics.
-        let received: Record<string, unknown> = {};
-        server.use(
-            http.post("*/api/projects", async ({ request }) => {
-                received = (await request.json()) as Record<string, unknown>;
-                return HttpResponse.json({ id: "p", name: "n" });
-            }),
-        );
-
-        await createProject("Solo");
-
-        expect(received.name).toBe("Solo");
-        expect("cm_number" in received).toBe(false);
-        expect("shared_with" in received).toBe(false);
-    });
-
-    it("updateProject PATCHes with the correct path + body", async () => {
-        let method: string | null = null;
-        let path: string | null = null;
-        let body: unknown;
-        server.use(
-            http.patch("*/api/projects/:id", async ({ request, params }) => {
-                method = request.method;
-                path = String(params.id);
-                body = await request.json();
-                return HttpResponse.json({ id: "p1", name: "Renamed" });
-            }),
-        );
-
-        await updateProject("p1", { name: "Renamed", cm_number: "CM-1" });
-
-        expect(method).toBe("PATCH");
-        expect(path).toBe("p1");
-        expect(body).toEqual({ name: "Renamed", cm_number: "CM-1" });
-    });
-
-    it("deleteProject hits DELETE /api/projects/:id and resolves on 204", async () => {
-        let method: string | null = null;
-        server.use(
-            http.delete("*/api/projects/:id", ({ request }) => {
-                method = request.method;
-                return new HttpResponse(null, { status: 204 });
-            }),
-        );
-
-        await deleteProject("p1");
-
-        expect(method).toBe("DELETE");
+    it("recognizes exactly the 403 + mfa_verification_required combination", () => {
+        expect(
+            isMfaRequiredError(
+                new MikeApiError({
+                    message: "x",
+                    status: 403,
+                    code: "mfa_verification_required",
+                }),
+            ),
+        ).toBe(true);
+        expect(
+            isMfaRequiredError(
+                new MikeApiError({ message: "x", status: 403, code: "other" }),
+            ),
+        ).toBe(false);
+        expect(
+            isMfaRequiredError(
+                new MikeApiError({
+                    message: "x",
+                    status: 401,
+                    code: "mfa_verification_required",
+                }),
+            ),
+        ).toBe(false);
+        expect(isMfaRequiredError(new Error("plain"))).toBe(false);
     });
 });
 
-describe("mikeApi: user / account endpoints", () => {
-    it("deleteAccount DELETEs /user/account", async () => {
-        let method: string | null = null;
-        let path: string | null = null;
-        server.use(
-            http.delete("*/api/user/account", ({ request }) => {
-                method = request.method;
-                path = new URL(request.url).pathname;
-                return new HttpResponse(null, { status: 204 });
-            }),
-        );
-
-        await deleteAccount();
-
-        expect(method).toBe("DELETE");
-        expect(path).toBe("/api/user/account");
-    });
-
-    it("getUserProfile / updateUserProfile / getApiKeyStatus / saveApiKey wire to the right paths + verbs", async () => {
-        const calls: { method: string; path: string; body?: unknown }[] = [];
-        const PROFILE_FIXTURE = {
-            displayName: "User",
-            organisation: null,
-            messageCreditsUsed: 0,
-            creditsResetDate: "2026-06-01",
-            creditsRemaining: 100,
-            tier: "Free",
-            tabularModel: "gemini-3-flash-preview",
-            apiKeyStatus: {
-                claude: false,
-                gemini: false,
-                openai: false,
-            },
-        };
-        server.use(
-            http.get("*/api/user/profile", ({ request }) => {
-                calls.push({
-                    method: "GET",
-                    path: new URL(request.url).pathname,
-                });
-                return HttpResponse.json(PROFILE_FIXTURE);
-            }),
-            http.patch("*/api/user/profile", async ({ request }) => {
-                calls.push({
-                    method: "PATCH",
-                    path: new URL(request.url).pathname,
-                    body: await request.json(),
-                });
-                return HttpResponse.json({
-                    ...PROFILE_FIXTURE,
-                    displayName: "New Name",
-                });
-            }),
-            http.get("*/api/user/api-keys", ({ request }) => {
-                calls.push({
-                    method: "GET",
-                    path: new URL(request.url).pathname,
-                });
-                return HttpResponse.json({
-                    claude: true,
-                    gemini: false,
-                    openai: true,
-                });
-            }),
-            // saveApiKey is PUT to /api/user/api-keys/:provider (NOT POST,
-            // NOT /api/user/api-keys with provider-in-body).  Pin the
-            // verb + URL shape so a refactor that "normalises" to POST
-            // breaks loudly.
-            http.put("*/api/user/api-keys/:provider", async ({ request, params }) => {
-                calls.push({
-                    method: "PUT",
-                    path: `/api/user/api-keys/${params.provider}`,
-                    body: await request.json(),
-                });
-                return HttpResponse.json({
-                    claude: true,
-                    gemini: false,
-                    openai: true,
-                });
-            }),
-        );
+describe("apiRequest plumbing (via thin wrappers)", () => {
+    it("attaches the Supabase bearer token and JSON accept header", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ tier: "free" }));
 
         const profile = await getUserProfile();
-        expect(profile.displayName).toBe("User");
-        expect(profile.tier).toBe("Free");
 
-        const updated = await updateUserProfile({
-            displayName: "New Name",
-            tabularModel: "gpt-5",
+        expect(profile).toEqual({ tier: "free" });
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("http://localhost:3001/user/profile");
+        expect(init.cache).toBe("no-store");
+        expect(init.headers).toMatchObject({
+            Accept: "application/json",
+            Authorization: "Bearer token-123",
         });
-        expect(updated.displayName).toBe("New Name");
-
-        const status = await getApiKeyStatus();
-        expect(status.claude).toBe(true);
-
-        await saveApiKey("openai", "sk-fresh");
-
-        expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual([
-            "GET /api/user/profile",
-            "PATCH /api/user/profile",
-            "GET /api/user/api-keys",
-            "PUT /api/user/api-keys/openai",
-        ]);
-        // updateUserProfile body uses camelCase keys (NOT the snake_case
-        // the UserProfileContext uses for its own /api/user/profile
-        // fetch).  This API client is a separate convenience layer.
-        expect(calls[1].body).toEqual({
-            displayName: "New Name",
-            tabularModel: "gpt-5",
-        });
-        // saveApiKey body shape pin: { api_key: <value> }.
-        expect(calls[3].body).toEqual({ api_key: "sk-fresh" });
     });
-});
 
-describe("mikeApi: file uploads (FormData)", () => {
-    it("uploadProjectDocument POSTs multipart with the file and no Content-Type override", async () => {
-        let contentType: string | null = null;
-        let path: string | null = null;
-        let hasFileField = false;
-        server.use(
-            http.post("*/api/projects/:id/documents", async ({ request, params }) => {
-                contentType = request.headers.get("Content-Type");
-                path = `/api/projects/${params.id}/documents`;
-                const form = await request.formData();
-                // jsdom + MSW v2 don't reliably expose the File's
-                // `name` through formData().get(...).name; assert on
-                // field presence + the multipart Content-Type instead.
-                hasFileField = form.has("file");
-                return HttpResponse.json({ id: "d-1", filename: "doc.pdf" });
+    it("omits the Authorization header when there is no session", async () => {
+        withSession(null);
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listProjects();
+
+        const { init } = lastFetchCall();
+        expect(
+            (init.headers as Record<string, string>).Authorization,
+        ).toBeUndefined();
+    });
+
+    it("appends ?include=documents when requested", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listProjects({ includeDocuments: true });
+
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/projects?include=documents",
+        );
+    });
+
+    it("returns undefined for 204 responses", async () => {
+        fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+
+        await expect(deleteAllChats()).resolves.toBeUndefined();
+        expect(lastFetchCall().init.method).toBe("DELETE");
+    });
+
+    it("returns undefined when content-length is 0", async () => {
+        fetchMock.mockResolvedValue(
+            new Response(null, {
+                status: 200,
+                headers: { "content-length": "0" },
             }),
         );
 
-        const file = new File(["%PDF-1.4..."], "doc.pdf", {
-            type: "application/pdf",
-        });
-        const result = await uploadProjectDocument("p-1", file);
-
-        expect(path).toBe("/api/projects/p-1/documents");
-        // The SUT does NOT set Content-Type — fetch derives it from
-        // FormData so the boundary is correct.  Asserting on the
-        // resulting header confirms multipart was used.
-        expect(contentType).toMatch(/^multipart\/form-data; boundary=/);
-        expect(hasFileField).toBe(true);
-        expect(result).toEqual({ id: "d-1", filename: "doc.pdf" });
+        await expect(deleteAllChats()).resolves.toBeUndefined();
     });
 
-    it("uploadStandaloneDocument POSTs to /single-documents", async () => {
-        let path: string | null = null;
-        server.use(
-            http.post("*/api/single-documents", async ({ request }) => {
-                path = new URL(request.url).pathname;
-                await request.formData();
-                return HttpResponse.json({ id: "d-2", filename: "f.docx" });
-            }),
-        );
-
-        await uploadStandaloneDocument(
-            new File([""], "f.docx", {
-                type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            }),
-        );
-
-        expect(path).toBe("/api/single-documents");
-    });
-
-    it("uploadProjectDocument throws the response text on non-2xx", async () => {
-        server.use(
-            http.post("*/api/projects/:id/documents", () =>
-                HttpResponse.text("file too large", { status: 413 }),
+    it("maps a JSON error body to a MikeApiError with code and detail", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse(
+                { detail: "MFA required", code: "mfa_verification_required" },
+                { status: 403 },
             ),
         );
 
-        await expect(
-            uploadProjectDocument("p-1", new File([""], "x.pdf")),
-        ).rejects.toThrow("file too large");
+        const error = await getUserProfile().catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(MikeApiError);
+        const apiError = error as MikeApiError;
+        expect(apiError.status).toBe(403);
+        expect(apiError.code).toBe("mfa_verification_required");
+        expect(apiError.message).toBe("MFA required");
+        expect(isMfaRequiredError(apiError)).toBe(true);
+    });
+
+    it("falls back to a generic message when detail is not a string", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({ detail: { nested: true } }, { status: 500 }),
+        );
+
+        await expect(getUserProfile()).rejects.toMatchObject({
+            status: 500,
+            code: null,
+            message: "API error: 500",
+        });
+    });
+
+    it("uses the raw body text for non-JSON error responses", async () => {
+        fetchMock.mockResolvedValue(
+            new Response("upstream exploded", { status: 502 }),
+        );
+
+        await expect(getUserProfile()).rejects.toMatchObject({
+            status: 502,
+            message: "upstream exploded",
+        });
+    });
+
+    it("synthesizes a message when the error body is empty", async () => {
+        fetchMock.mockResolvedValue(new Response("", { status: 503 }));
+
+        await expect(getUserProfile()).rejects.toMatchObject({
+            status: 503,
+            message: "API error: 503",
+        });
+    });
+
+    it("encodes query parameters (lookupUserByEmail, listChats)", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ exists: false }));
+        await lookupUserByEmail("a+b@example.com");
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/user/lookup?email=a%2Bb%40example.com",
+        );
+
+        fetchMock.mockResolvedValue(jsonResponse([]));
+        await listChats({ limit: 5 });
+        expect(lastFetchCall().url).toBe("http://localhost:3001/chat?limit=5");
     });
 });
 
-describe("mikeApi: streaming chat helpers", () => {
-    it("streamChat POSTs to /chat with Accept: text/event-stream + the AbortSignal", async () => {
-        let method: string | null = null;
-        let accept: string | null = null;
-        let body: unknown;
-        server.use(
-            http.post("*/api/chat", async ({ request }) => {
-                method = request.method;
-                accept = request.headers.get("Accept");
-                body = await request.json();
-                return new HttpResponse("data: [DONE]\n\n", {
-                    status: 200,
-                    headers: { "Content-Type": "text/event-stream" },
-                });
-            }),
-        );
-
-        const controller = new AbortController();
-        const response = await streamChat({
-            messages: [{ role: "user", content: "hi" }],
-            chat_id: "c-1",
-            model: "gpt-5",
-            signal: controller.signal,
-        });
-
-        expect(method).toBe("POST");
-        expect(accept).toBe("text/event-stream");
-        // The signal field is destructured out and NOT included in the body.
-        expect(body).toEqual({
-            messages: [{ role: "user", content: "hi" }],
-            chat_id: "c-1",
-            model: "gpt-5",
-        });
-        // The returned Response is a streaming body, not parsed JSON —
-        // that's the contract the caller (useAssistantChat) relies on.
-        expect(response.body).toBeInstanceOf(ReadableStream);
-        expect(mockBounceIfUnauthorized).toHaveBeenCalledWith(response);
-    });
-
-    it("streamProjectChat URL contains the projectId and the body omits it", async () => {
-        let path: string | null = null;
-        let body: Record<string, unknown> = {};
-        server.use(
-            http.post(
-                "*/api/projects/:projectId/chat",
-                async ({ request, params }) => {
-                    path = `/api/projects/${params.projectId}/chat`;
-                    body = (await request.json()) as Record<string, unknown>;
-                    return new HttpResponse("data: [DONE]\n\n", {
-                        status: 200,
-                        headers: { "Content-Type": "text/event-stream" },
-                    });
+describe("blob requests (exportAccountData)", () => {
+    it("returns the blob and the filename from content-disposition", async () => {
+        fetchMock.mockResolvedValue(
+            new Response("zip-bytes", {
+                status: 200,
+                headers: {
+                    "content-disposition": 'attachment; filename="export.zip"',
                 },
-            ),
+            }),
         );
 
-        await streamProjectChat({
-            projectId: "p-99",
-            messages: [{ role: "user", content: "review" }],
-            displayed_doc: { filename: "x.pdf", document_id: "d-1" },
-        });
+        const { blob, filename } = await exportAccountData();
 
-        expect(path).toBe("/api/projects/p-99/chat");
-        // projectId is consumed for the URL only; it should NOT appear in the body.
-        expect("projectId" in body).toBe(false);
-        expect(body.displayed_doc).toEqual({
-            filename: "x.pdf",
-            document_id: "d-1",
+        expect(filename).toBe("export.zip");
+        expect(await blob.text()).toBe("zip-bytes");
+    });
+
+    it("parses unquoted filenames and returns null when absent", async () => {
+        fetchMock.mockResolvedValue(
+            new Response("x", {
+                status: 200,
+                headers: {
+                    "content-disposition": "attachment; filename=data.zip",
+                },
+            }),
+        );
+        expect((await exportAccountData()).filename).toBe("data.zip");
+
+        fetchMock.mockResolvedValue(new Response("x", { status: 200 }));
+        expect((await exportAccountData()).filename).toBeNull();
+    });
+
+    it("throws a MikeApiError on failure", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({ detail: "not allowed" }, { status: 403 }),
+        );
+
+        await expect(exportAccountData()).rejects.toMatchObject({
+            status: 403,
+            message: "not allowed",
         });
     });
 });
 
-describe("mikeApi: chat history endpoints", () => {
-    it("listChats GETs /chat; listProjectChats GETs /projects/:id/chats", async () => {
-        const paths: string[] = [];
-        server.use(
-            http.get("*/api/chat", ({ request }) => {
-                paths.push(new URL(request.url).pathname);
-                return HttpResponse.json([]);
-            }),
-            http.get("*/api/projects/:id/chats", ({ request }) => {
-                paths.push(new URL(request.url).pathname);
-                return HttpResponse.json([]);
-            }),
-        );
+describe("downloadDocumentsZip", () => {
+    it("POSTs the document ids and returns the blob", async () => {
+        fetchMock.mockResolvedValue(new Response("zip", { status: 200 }));
 
-        await listChats();
-        await listProjectChats("p-1");
+        const blob = await downloadDocumentsZip(["d1", "d2"]);
 
-        expect(paths).toEqual(["/api/chat", "/api/projects/p-1/chats"]);
+        expect(await blob.text()).toBe("zip");
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("http://localhost:3001/single-documents/download-zip");
+        expect(JSON.parse(init.body as string)).toEqual({
+            document_ids: ["d1", "d2"],
+        });
     });
 
-    it("renameChat PATCHes /chat/:id with { title }", async () => {
-        let body: unknown;
-        server.use(
-            http.patch("*/api/chat/:id", async ({ request }) => {
-                body = await request.json();
-                return HttpResponse.json({ ok: true });
-            }),
-        );
+    it("throws a plain Error carrying the response text", async () => {
+        fetchMock.mockResolvedValue(new Response("bad ids", { status: 400 }));
 
-        await renameChat("c-1", "New title");
-
-        expect(body).toEqual({ title: "New title" });
-    });
-
-    it("deleteChat DELETEs /chat/:id", async () => {
-        let method: string | null = null;
-        server.use(
-            http.delete("*/api/chat/:id", ({ request }) => {
-                method = request.method;
-                return new HttpResponse(null, { status: 204 });
-            }),
-        );
-
-        await deleteChat("c-1");
-
-        expect(method).toBe("DELETE");
-    });
-
-    it("generateChatTitle POSTs /chat/:id/generate-title with { message }", async () => {
-        let body: unknown;
-        server.use(
-            http.post("*/api/chat/:id/generate-title", async ({ request }) => {
-                body = await request.json();
-                return HttpResponse.json({ title: "Generated" });
-            }),
-        );
-
-        const result = await generateChatTitle("c-1", "user said hi");
-
-        expect(body).toEqual({ message: "user said hi" });
-        expect(result).toEqual({ title: "Generated" });
+        await expect(downloadDocumentsZip(["x"])).rejects.toThrow("bad ids");
     });
 });
 
-describe("mikeApi: getChat — server → client message mapping", () => {
-    it("maps user messages with string content + files + workflow", async () => {
-        server.use(
-            http.get("*/api/chat/:id", () =>
-                HttpResponse.json({
-                    chat: { id: "c-1", title: "t" },
-                    messages: [
-                        {
-                            id: "m1",
-                            chat_id: "c-1",
-                            role: "user",
-                            content: "first question",
-                            files: [{ filename: "f.pdf", document_id: "d-1" }],
-                            workflow: { id: "wf-1", title: "Summarise" },
-                            created_at: "2026-01-01",
-                        },
-                    ],
-                }),
-            ),
+describe("getChat message mapping", () => {
+    const chat: Chat = {
+        id: "c1",
+        project_id: null,
+        user_id: "u1",
+        title: "T",
+        created_at: "2026-01-01",
+    };
+
+    it("maps user messages, keeping files and workflow", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({
+                chat,
+                messages: [
+                    {
+                        id: "m1",
+                        chat_id: "c1",
+                        role: "user",
+                        content: "hello",
+                        files: [{ filename: "a.pdf", document_id: "d1" }],
+                        workflow: { id: "w1", title: "NDA review" },
+                        created_at: "2026-01-01",
+                    },
+                    {
+                        id: "m2",
+                        chat_id: "c1",
+                        role: "user",
+                        content: null,
+                        created_at: "2026-01-01",
+                    },
+                ],
+            }),
         );
 
-        const { messages } = await getChat("c-1");
+        const { messages } = await getChat("c1");
 
         expect(messages[0]).toEqual({
+            id: "m1",
             role: "user",
-            content: "first question",
-            files: [{ filename: "f.pdf", document_id: "d-1" }],
-            workflow: { id: "wf-1", title: "Summarise" },
+            content: "hello",
+            files: [{ filename: "a.pdf", document_id: "d1" }],
+            workflow: { id: "w1", title: "NDA review" },
         });
+        // Non-string user content degrades to an empty string.
+        expect(messages[1].content).toBe("");
     });
 
-    it("user message with null content becomes empty string", async () => {
-        // Defensive: the server might emit null for a user message
-        // with an upload-only turn.  Mapping to "" keeps the UI sane.
-        server.use(
-            http.get("*/api/chat/:id", () =>
-                HttpResponse.json({
-                    chat: { id: "c-1", title: "t" },
-                    messages: [
-                        {
-                            id: "m1",
-                            chat_id: "c-1",
-                            role: "user",
-                            content: null,
-                            created_at: "2026-01-01",
-                        },
-                    ],
-                }),
-            ),
-        );
-
-        const { messages } = await getChat("c-1");
-        expect(messages[0].content).toBe("");
-    });
-
-    it("assistant message: concatenates the text from every content event into `content`, preserves events", async () => {
-        // This is THE seam that breaks under refactor: the server
-        // emits the raw events array, the client recomputes the
-        // plain-text `content` from just the content-type events,
-        // and the UI relies on both being present.
-        const events = [
+    it("joins assistant content events into content and preserves events", async () => {
+        const events: AssistantEvent[] = [
             { type: "reasoning", text: "thinking" },
-            { type: "content", text: "Hello, " },
-            { type: "tool_call_start", name: "x" },
-            { type: "content", text: "world." },
+            { type: "content", text: "Part one. " },
+            { type: "doc_read", filename: "a.pdf" },
+            { type: "content", text: "Part two." },
         ];
-        server.use(
-            http.get("*/api/chat/:id", () =>
-                HttpResponse.json({
-                    chat: { id: "c-1", title: "t" },
-                    messages: [
-                        {
-                            id: "m2",
-                            chat_id: "c-1",
-                            role: "assistant",
-                            content: events,
-                            annotations: [],
-                            created_at: "2026-01-01",
-                        },
-                    ],
-                }),
-            ),
+        fetchMock.mockResolvedValue(
+            jsonResponse({
+                chat,
+                messages: [
+                    {
+                        id: "m1",
+                        chat_id: "c1",
+                        role: "assistant",
+                        content: events,
+                        citations: [{ ref: 1 }],
+                        created_at: "2026-01-01",
+                    },
+                ],
+            }),
         );
 
-        const { messages } = await getChat("c-1");
+        const { messages } = await getChat("c1");
 
-        const m = messages[0];
-        expect(m.role).toBe("assistant");
-        expect(m.events).toEqual(events);
-        // Plain content is just the joined text of `content`-type
-        // events — reasoning + tool events are stripped.
-        expect(m.content).toBe("Hello, world.");
+        expect(messages[0].content).toBe("Part one. Part two.");
+        expect(messages[0].events).toEqual(events);
+        expect(messages[0].citations).toEqual([{ ref: 1 }]);
     });
 
-    it("maps the renamed server citations field to the frozen UI annotations contract", async () => {
-        const citations = [
-            { ref: 1, doc_id: "doc-0", page: 2, quote: "Evidence" },
+    it("maps a legacy string assistant body to empty content without events", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({
+                chat,
+                messages: [
+                    {
+                        id: "m1",
+                        chat_id: "c1",
+                        role: "assistant",
+                        content: "plain string",
+                        created_at: "2026-01-01",
+                    },
+                ],
+            }),
+        );
+
+        const { messages } = await getChat("c1");
+
+        expect(messages[0].content).toBe("");
+        expect(messages[0].events).toBeUndefined();
+    });
+});
+
+describe("mapTRMessages", () => {
+    it("maps user and assistant rows including annotations", () => {
+        const events: AssistantEvent[] = [
+            { type: "content", text: "Answer" },
         ];
-        server.use(
-            http.get("*/api/chat/:id", () =>
-                HttpResponse.json({
-                    chat: { id: "c-1", title: "t" },
-                    messages: [
-                        {
-                            id: "m2",
-                            chat_id: "c-1",
-                            role: "assistant",
-                            content: [{ type: "content", text: "Answer [1]" }],
-                            citations,
-                            created_at: "2026-01-01",
-                        },
-                    ],
-                }),
-            ),
-        );
-
-        const { messages } = await getChat("c-1");
-
-        expect(messages[0].annotations).toEqual(citations);
-    });
-
-    it("assistant message with non-array content: content='' and events=undefined", async () => {
-        // Defensive: a legacy row where `content` is a stringified
-        // assistant reply (not an events array).  Map to empty
-        // content + undefined events so the UI shows the message
-        // but doesn't render a malformed events list.
-        server.use(
-            http.get("*/api/chat/:id", () =>
-                HttpResponse.json({
-                    chat: { id: "c-1", title: "t" },
-                    messages: [
-                        {
-                            id: "m3",
-                            chat_id: "c-1",
-                            role: "assistant",
-                            content: "legacy plain string",
-                            created_at: "2026-01-01",
-                        },
-                    ],
-                }),
-            ),
-        );
-
-        const { messages } = await getChat("c-1");
-        expect(messages[0]).toEqual({
-            role: "assistant",
-            content: "",
-            annotations: undefined,
-            events: undefined,
-        });
-    });
-});
-
-describe("mikeApi: query-string encoding", () => {
-    it("listTabularReviews appends ?project_id when given", async () => {
-        let search: string | null = null;
-        server.use(
-            http.get("*/api/tabular-review", ({ request }) => {
-                search = new URL(request.url).search;
-                return HttpResponse.json([]);
-            }),
-        );
-
-        await listTabularReviews("p-1");
-
-        expect(search).toBe("?project_id=p-1");
-    });
-
-    it("listTabularReviews omits the query string when projectId is absent", async () => {
-        let search: string | null = null;
-        server.use(
-            http.get("*/api/tabular-review", ({ request }) => {
-                search = new URL(request.url).search;
-                return HttpResponse.json([]);
-            }),
-        );
-
-        await listTabularReviews();
-
-        expect(search).toBe("");
-    });
-
-    it("getDocumentUrl encodes the versionId", async () => {
-        let search: string | null = null;
-        server.use(
-            http.get("*/api/single-documents/:id/url", ({ request }) => {
-                search = new URL(request.url).search;
-                return HttpResponse.json({
-                    url: "u",
-                    filename: "f",
-                    version_id: "v with spaces",
-                });
-            }),
-        );
-
-        await getDocumentUrl("d-1", "v with spaces");
-
-        expect(search).toBe("?version_id=v%20with%20spaces");
-    });
-});
-
-describe("mikeApi: downloadDocumentsZip", () => {
-    it("POSTs the document_ids array and returns a Blob", async () => {
-        let body: unknown;
-        server.use(
-            http.post("*/api/single-documents/download-zip", async ({ request }) => {
-                body = await request.json();
-                return new HttpResponse(new Uint8Array([0x50, 0x4b, 0x03, 0x04]), {
-                    headers: { "Content-Type": "application/zip" },
-                });
-            }),
-        );
-
-        const blob = await downloadDocumentsZip(["d-1", "d-2"]);
-
-        expect(body).toEqual({ document_ids: ["d-1", "d-2"] });
-        // Cross-realm Blob check — MSW v2 produces a Blob from a
-        // different realm than the test scope, so `instanceof` is
-        // unreliable in jsdom.  Duck-type on size + a read.
-        expect(blob.size).toBe(4);
-        expect(typeof blob.arrayBuffer).toBe("function");
-        const buf = await blob.arrayBuffer();
-        expect(new Uint8Array(buf)).toEqual(
-            new Uint8Array([0x50, 0x4b, 0x03, 0x04]),
-        );
-    });
-
-    it("throws on non-2xx with the response text", async () => {
-        server.use(
-            http.post("*/api/single-documents/download-zip", () =>
-                HttpResponse.text("nope", { status: 500 }),
-            ),
-        );
-
-        await expect(downloadDocumentsZip(["d"])).rejects.toThrow("nope");
-    });
-});
-
-describe("mikeApi: mapTRMessages (pure helper)", () => {
-    it("maps user messages with string content", () => {
-        const result = mapTRMessages([
+        const mapped = mapTRMessages([
             {
                 id: "m1",
-                chat_id: "c",
+                chat_id: "c1",
                 role: "user",
-                content: "what does this contract say?",
+                content: "question",
+                created_at: "2026-01-01",
+            },
+            {
+                id: "m2",
+                chat_id: "c1",
+                role: "assistant",
+                content: events,
+                annotations: [
+                    {
+                        type: "tabular_citation",
+                        ref: 1,
+                        col_index: 0,
+                        row_index: 2,
+                        col_name: "Term",
+                        doc_name: "a.pdf",
+                        quote: "12 months",
+                    },
+                ],
                 created_at: "2026-01-01",
             },
         ]);
 
-        expect(result).toEqual([
-            { role: "user", content: "what does this contract say?" },
+        expect(mapped).toEqual([
+            { role: "user", content: "question" },
+            {
+                role: "assistant",
+                content: "Answer",
+                events,
+                annotations: [
+                    {
+                        type: "tabular_citation",
+                        ref: 1,
+                        col_index: 0,
+                        row_index: 2,
+                        col_name: "Term",
+                        doc_name: "a.pdf",
+                        quote: "12 months",
+                    },
+                ],
+            },
         ]);
     });
 
-    it("user message with non-string content collapses to empty string", () => {
-        const result = mapTRMessages([
+    it("degrades non-array assistant content to an empty string", () => {
+        const mapped = mapTRMessages([
             {
                 id: "m1",
-                chat_id: "c",
-                role: "user",
-                content: null as unknown as string,
-                created_at: "",
-            },
-        ]);
-        expect(result[0]).toEqual({ role: "user", content: "" });
-    });
-
-    it("assistant message: joins content-type events, preserves events array, carries annotations", () => {
-        const events = [
-            { type: "reasoning" as const, text: "think" },
-            { type: "content" as const, text: "A:" },
-            { type: "content" as const, text: " 42." },
-        ];
-        const annotations = [
-            {
-                type: "tabular_citation" as const,
-                ref: 1,
-                col_index: 0,
-                row_index: 0,
-                col_name: "Answer",
-                doc_name: "f.pdf",
-                quote: "...",
-            },
-        ];
-
-        const result = mapTRMessages([
-            {
-                id: "m2",
-                chat_id: "c",
+                chat_id: "c1",
                 role: "assistant",
-                content: events,
-                annotations,
-                created_at: "",
+                content: "legacy",
+                created_at: "2026-01-01",
             },
         ]);
-
-        expect(result[0]).toEqual({
-            role: "assistant",
-            content: "A: 42.",
-            events,
-            annotations,
-        });
-    });
-
-    it("assistant message with non-array content: content='', events=undefined, annotations defaulted to undefined", () => {
-        const result = mapTRMessages([
-            {
-                id: "m3",
-                chat_id: "c",
-                role: "assistant",
-                content: "some legacy string" as unknown as never,
-                created_at: "",
-            },
-        ]);
-
-        expect(result[0]).toEqual({
+        expect(mapped[0]).toEqual({
             role: "assistant",
             content: "",
             events: undefined,
@@ -948,736 +579,1083 @@ describe("mikeApi: mapTRMessages (pure helper)", () => {
     });
 });
 
-// --- Smoke coverage for the remaining CRUD wrappers ------------------------
-//
-// Each function below delegates to `apiRequest` (or a manual fetch for
-// the upload helpers) and is essentially a path + method + body shape.
-// The wrapper contract is already pinned above; these tests verify the
-// call-site each function makes so a typo in a path or a wrong verb
-// fails loudly rather than silently breaking the page.
+// ---------------------------------------------------------------------------
+// Streaming endpoints. These are the frontend half of the SSE contract: the
+// backend answers these POSTs with `data: <json>\n\n` server-sent-event lines,
+// and these functions must hand the raw streaming Response through untouched
+// so the consumer (useAssistantChat and the tabular loops) can parse it
+// incrementally. Parsing itself is covered in
+// src/app/hooks/useAssistantChat.sse.test.ts.
+// ---------------------------------------------------------------------------
 
-describe("mikeApi: smoke — project subresources", () => {
-    it("getProject GETs /projects/:id", async () => {
-        let path: string | null = null;
-        server.use(
-            http.get("*/api/projects/:id", ({ request }) => {
-                path = new URL(request.url).pathname;
-                return HttpResponse.json({ id: "p-1", name: "n" });
-            }),
-        );
-        await getProject("p-1");
-        expect(path).toBe("/api/projects/p-1");
+describe("streamChat", () => {
+    it("POSTs with the SSE accept header and forwards the signal outside the body", async () => {
+        fetchMock.mockResolvedValue(streamResponse([]));
+        const controller = new AbortController();
+
+        await streamChat({
+            messages: [{ role: "user", content: "hi" }],
+            chat_id: "c1",
+            model: "gemini-3-flash-preview",
+            signal: controller.signal,
+        });
+
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("http://localhost:3001/chat");
+        expect(init.method).toBe("POST");
+        expect(init.headers).toMatchObject({
+            "Content-Type": "application/json",
+            Accept: "text/event-stream",
+            Authorization: "Bearer token-123",
+        });
+        expect(init.signal).toBe(controller.signal);
+        // The abort signal must not leak into the JSON payload.
+        expect(JSON.parse(init.body as string)).toEqual({
+            messages: [{ role: "user", content: "hi" }],
+            chat_id: "c1",
+            model: "gemini-3-flash-preview",
+        });
     });
 
-    it("getProjectPeople GETs /projects/:id/people", async () => {
-        let path: string | null = null;
-        server.use(
-            http.get("*/api/projects/:id/people", ({ request }) => {
-                path = new URL(request.url).pathname;
-                return HttpResponse.json({
-                    owner: { user_id: "u", email: null, display_name: null },
-                    members: [],
-                });
-            }),
-        );
-        await getProjectPeople("p-1");
-        expect(path).toBe("/api/projects/p-1/people");
-    });
+    it("returns the streaming Response body unconsumed", async () => {
+        const chunks = [
+            'data: {"type":"content_delta","text":"Hel',
+            'lo"}\n\n',
+        ];
+        fetchMock.mockResolvedValue(streamResponse(chunks));
 
-    it("addDocumentToProject POSTs /projects/:p/documents/:d (no body)", async () => {
-        let method: string | null = null;
-        let path: string | null = null;
-        server.use(
-            http.post("*/api/projects/:p/documents/:d", ({ request, params }) => {
-                method = request.method;
-                path = `/api/projects/${params.p}/documents/${params.d}`;
-                return HttpResponse.json({ id: "d-1", filename: "x.pdf" });
-            }),
-        );
-        await addDocumentToProject("p-1", "d-1");
-        expect(method).toBe("POST");
-        expect(path).toBe("/api/projects/p-1/documents/d-1");
-    });
-});
+        const response = await streamChat({
+            messages: [{ role: "user", content: "hi" }],
+        });
 
-describe("mikeApi: smoke — folder CRUD", () => {
-    it("createProjectFolder POSTs /projects/:id/folders with { name, parent_folder_id }", async () => {
-        let body: unknown;
-        server.use(
-            http.post("*/api/projects/:id/folders", async ({ request }) => {
-                body = await request.json();
-                return HttpResponse.json({
-                    id: "f-1",
-                    name: "F",
-                    project_id: "p",
-                });
-            }),
-        );
-        await createProjectFolder("p-1", "F", "parent-1");
-        expect(body).toEqual({ name: "F", parent_folder_id: "parent-1" });
-    });
-
-    it("createProjectFolder defaults parent_folder_id to null when omitted", async () => {
-        let body: Record<string, unknown> = {};
-        server.use(
-            http.post("*/api/projects/:id/folders", async ({ request }) => {
-                body = (await request.json()) as Record<string, unknown>;
-                return HttpResponse.json({
-                    id: "f-1",
-                    name: "F",
-                    project_id: "p",
-                });
-            }),
-        );
-        await createProjectFolder("p-1", "F");
-        // Null (not undefined) — the backend expects a top-level
-        // folder under the project root when the value is null.
-        expect(body.parent_folder_id).toBeNull();
-    });
-
-    it("renameProjectFolder PATCHes with { name }", async () => {
-        let body: unknown;
-        server.use(
-            http.patch("*/api/projects/:p/folders/:f", async ({ request }) => {
-                body = await request.json();
-                return HttpResponse.json({
-                    id: "f-1",
-                    name: "Renamed",
-                    project_id: "p",
-                });
-            }),
-        );
-        await renameProjectFolder("p-1", "f-1", "Renamed");
-        expect(body).toEqual({ name: "Renamed" });
-    });
-
-    it("deleteProjectFolder DELETEs /projects/:p/folders/:f", async () => {
-        let method: string | null = null;
-        server.use(
-            http.delete("*/api/projects/:p/folders/:f", ({ request }) => {
-                method = request.method;
-                return new HttpResponse(null, { status: 204 });
-            }),
-        );
-        await deleteProjectFolder("p-1", "f-1");
-        expect(method).toBe("DELETE");
-    });
-
-    it("moveSubfolderToFolder PATCHes with { parent_folder_id }", async () => {
-        let body: unknown;
-        server.use(
-            http.patch("*/api/projects/:p/folders/:f", async ({ request }) => {
-                body = await request.json();
-                return HttpResponse.json({
-                    id: "f-1",
-                    name: "n",
-                    project_id: "p",
-                });
-            }),
-        );
-        await moveSubfolderToFolder("p", "f-1", "new-parent");
-        expect(body).toEqual({ parent_folder_id: "new-parent" });
-    });
-
-    it("moveDocumentToFolder PATCHes /projects/:p/documents/:d/folder with { folder_id }", async () => {
-        let path: string | null = null;
-        let body: unknown;
-        server.use(
-            http.patch(
-                "*/api/projects/:p/documents/:d/folder",
-                async ({ request, params }) => {
-                    path = `/api/projects/${params.p}/documents/${params.d}/folder`;
-                    body = await request.json();
-                    return HttpResponse.json({ id: "d", filename: "x.pdf" });
-                },
-            ),
-        );
-        await moveDocumentToFolder("p", "d", "f-1");
-        expect(path).toBe("/api/projects/p/documents/d/folder");
-        expect(body).toEqual({ folder_id: "f-1" });
+        expect(response.bodyUsed).toBe(false);
+        expect(await readAll(response)).toBe(chunks.join(""));
     });
 });
 
-describe("mikeApi: smoke — single document versions", () => {
-    it("listDocumentVersions GETs /single-documents/:id/versions", async () => {
-        let path: string | null = null;
-        server.use(
-            http.get("*/api/single-documents/:id/versions", ({ request }) => {
-                path = new URL(request.url).pathname;
-                return HttpResponse.json({
-                    current_version_id: null,
-                    versions: [],
-                });
-            }),
-        );
-        await listDocumentVersions("d-1");
-        expect(path).toBe("/api/single-documents/d-1/versions");
-    });
+describe("streamProjectChat", () => {
+    it("targets the project chat route and strips projectId/signal from the body", async () => {
+        fetchMock.mockResolvedValue(streamResponse([]));
+        const controller = new AbortController();
 
-    // Dev's API took the field name "filename" (mirror-era: display_name).
-    it("uploadDocumentVersion POSTs multipart with optional filename field", async () => {
-        let hasFile = false;
-        let displayNameField: string | null = null;
-        server.use(
-            http.post(
-                "*/api/single-documents/:id/versions",
-                async ({ request }) => {
-                    const form = await request.formData();
-                    hasFile = form.has("file");
-                    const dn = form.get("filename");
-                    if (typeof dn === "string") displayNameField = dn;
-                    return HttpResponse.json({
-                        id: "v",
-                        version_number: 1,
-                        source: "upload",
-                        created_at: "2026-01-01",
-                        display_name: "v1",
-                    });
-                },
-            ),
-        );
+        await streamProjectChat({
+            projectId: "p1",
+            messages: [{ role: "user", content: "hi" }],
+            displayed_doc: { filename: "a.pdf", document_id: "d1" },
+            signal: controller.signal,
+        });
 
-        await uploadDocumentVersion(
-            "d-1",
-            new File([""], "v.docx"),
-            "v1",
-        );
-
-        expect(hasFile).toBe(true);
-        expect(displayNameField).toBe("v1");
-    });
-
-    it("uploadDocumentVersion omits filename when undefined", async () => {
-        let displayNamePresent = true;
-        server.use(
-            http.post(
-                "*/api/single-documents/:id/versions",
-                async ({ request }) => {
-                    const form = await request.formData();
-                    displayNamePresent = form.has("filename");
-                    return HttpResponse.json({
-                        id: "v",
-                        version_number: 1,
-                        source: "upload",
-                        created_at: "",
-                        display_name: null,
-                    });
-                },
-            ),
-        );
-        await uploadDocumentVersion("d-1", new File([""], "v.docx"));
-        expect(displayNamePresent).toBe(false);
-    });
-
-    it("renameDocumentVersion PATCHes /single-documents/:d/versions/:v with { filename }", async () => {
-        let body: unknown;
-        server.use(
-            http.patch(
-                "*/api/single-documents/:d/versions/:v",
-                async ({ request }) => {
-                    body = await request.json();
-                    return HttpResponse.json({
-                        id: "v",
-                        version_number: 1,
-                        source: "upload",
-                        created_at: "",
-                        display_name: "Renamed",
-                    });
-                },
-            ),
-        );
-        await renameDocumentVersion("d-1", "v-1", "Renamed");
-        expect(body).toEqual({ filename: "Renamed" });
-    });
-
-    it("listStandaloneDocuments GETs /single-documents", async () => {
-        let path: string | null = null;
-        server.use(
-            http.get("*/api/single-documents", ({ request }) => {
-                path = new URL(request.url).pathname;
-                return HttpResponse.json([]);
-            }),
-        );
-        await listStandaloneDocuments();
-        expect(path).toBe("/api/single-documents");
-    });
-
-    it("deleteDocument DELETEs /single-documents/:id", async () => {
-        let method: string | null = null;
-        server.use(
-            http.delete("*/api/single-documents/:id", ({ request }) => {
-                method = request.method;
-                return new HttpResponse(null, { status: 204 });
-            }),
-        );
-        await deleteDocument("d-1");
-        expect(method).toBe("DELETE");
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("http://localhost:3001/projects/p1/chat");
+        expect(init.signal).toBe(controller.signal);
+        expect(JSON.parse(init.body as string)).toEqual({
+            messages: [{ role: "user", content: "hi" }],
+            displayed_doc: { filename: "a.pdf", document_id: "d1" },
+        });
     });
 });
 
-describe("mikeApi: smoke — chat endpoints (remaining)", () => {
-    it("createChat POSTs /chat/create with project_id (or {} when omitted)", async () => {
-        const bodies: unknown[] = [];
-        server.use(
-            http.post("*/api/chat/create", async ({ request }) => {
-                bodies.push(await request.json());
-                return HttpResponse.json({ id: "c-new" });
-            }),
+describe("streamTabularChat", () => {
+    it("maps context fields into the payload and drops null chat_id", async () => {
+        fetchMock.mockResolvedValue(streamResponse([]));
+
+        await streamTabularChat(
+            "r1",
+            [{ role: "user", content: "summarize" }],
+            null,
+            undefined,
+            { reviewTitle: "Leases", projectName: null },
         );
 
-        await createChat({ project_id: "p-1" });
-        await createChat();
-        await createChat({});
-
-        expect(bodies).toEqual([{ project_id: "p-1" }, {}, {}]);
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("http://localhost:3001/tabular-review/r1/chat");
+        expect(JSON.parse(init.body as string)).toEqual({
+            messages: [{ role: "user", content: "summarize" }],
+            review_title: "Leases",
+        });
     });
 });
 
-describe("mikeApi: smoke — tabular review CRUD", () => {
-    it("createTabularReview POSTs /tabular-review with the payload", async () => {
-        let body: unknown;
-        server.use(
-            http.post("*/api/tabular-review", async ({ request }) => {
-                body = await request.json();
-                return HttpResponse.json({ id: "r-1", title: "t" });
-            }),
+describe("streamTabularGeneration", () => {
+    it("POSTs to the generate route with auth only", async () => {
+        fetchMock.mockResolvedValue(streamResponse([]));
+
+        await streamTabularGeneration("r1");
+
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("http://localhost:3001/tabular-review/r1/generate");
+        expect(init.method).toBe("POST");
+        expect(init.headers).toEqual({ Authorization: "Bearer token-123" });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Tabular review listing. This is the query-building half of the paginated
+// review list (PR #263 db-pagination + PR #274 folder grouping): the backend
+// scopes, sorts, and pages entirely off these params, so a silently dropped
+// or misnamed param means the UI shows the wrong rows, not an error.
+// ---------------------------------------------------------------------------
+
+describe("listTabularReviews", () => {
+    it("requests the bare collection when no filters are given", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listTabularReviews();
+
+        const { url, init } = lastFetchCall();
+        // No stray "?" — the backend treats /tabular-review and
+        // /tabular-review? the same, but the cache key would differ.
+        expect(url).toBe("http://localhost:3001/tabular-review");
+        expect(init.signal).toBeUndefined();
+    });
+
+    it("serializes every pagination knob and forwards the abort signal", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+        const controller = new AbortController();
+
+        await listTabularReviews("p1", {
+            limit: 25,
+            offset: 50,
+            search: "lease agreements",
+            sortKey: "updated_at",
+            sortDirection: "desc",
+            scope: "standalone",
+            signal: controller.signal,
+        });
+
+        const { url, init } = lastFetchCall();
+        expect(url).toBe(
+            "http://localhost:3001/tabular-review" +
+                "?project_id=p1&limit=25&offset=50&search=lease+agreements" +
+                "&sort_key=updated_at&sort_direction=desc&scope=standalone",
         );
+        // The signal lets the list screen cancel a stale page when the user
+        // types a new search before the previous one resolves.
+        expect(init.signal).toBe(controller.signal);
+    });
+
+    it('omits the scope param for "all" — the backend default', async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listTabularReviews(undefined, { scope: "all", limit: 10 });
+
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/tabular-review?limit=10",
+        );
+    });
+});
+
+describe("listTabularReviewIds", () => {
+    it("requests the bare id list when no filters are given", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listTabularReviewIds();
+
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/tabular-review/ids",
+        );
+    });
+
+    it("scopes ids by project, search, and scope so select-all matches the visible filter", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([{ id: "r1", user_id: "u1" }]));
+        const controller = new AbortController();
+
+        const ids = await listTabularReviewIds("p1", {
+            search: "nda",
+            scope: "in-project",
+            signal: controller.signal,
+        });
+
+        expect(ids).toEqual([{ id: "r1", user_id: "u1" }]);
+        const { url, init } = lastFetchCall();
+        // Select-all-then-delete deletes whatever this returns; if the query
+        // here is broader than the list query, users delete unseen reviews.
+        expect(url).toBe(
+            "http://localhost:3001/tabular-review/ids?project_id=p1&search=nda&scope=in-project",
+        );
+        expect(init.signal).toBe(controller.signal);
+    });
+
+    it('omits the scope param for "all"', async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listTabularReviewIds(undefined, { scope: "all" });
+
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/tabular-review/ids",
+        );
+    });
+});
+
+describe("tabular review CRUD", () => {
+    it("createTabularReview posts the folder grouping mode through unchanged", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ id: "r1" }));
 
         await createTabularReview({
-            title: "Review",
-            document_ids: ["d-1"],
-            columns_config: [
-                { index: 0, name: "Name", prompt: "What is the party name?" },
-            ],
-            workflow_id: "wf-1",
-            project_id: "p-1",
+            title: "Leases",
+            document_ids: ["d1", "d2"],
+            columns_config: [{ index: 0, name: "Term", prompt: "Find term" }],
+            project_id: "p1",
+            document_grouping: "folder",
         });
 
-        expect(body).toEqual({
-            title: "Review",
-            document_ids: ["d-1"],
-            columns_config: [
-                { index: 0, name: "Name", prompt: "What is the party name?" },
-            ],
-            workflow_id: "wf-1",
-            project_id: "p-1",
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("http://localhost:3001/tabular-review");
+        expect(init.method).toBe("POST");
+        expect(JSON.parse(init.body as string)).toEqual({
+            title: "Leases",
+            document_ids: ["d1", "d2"],
+            columns_config: [{ index: 0, name: "Term", prompt: "Find term" }],
+            project_id: "p1",
+            document_grouping: "folder",
         });
     });
 
-    it("getTabularReview GETs /tabular-review/:id", async () => {
-        let path: string | null = null;
-        server.use(
-            http.get("*/api/tabular-review/:id", ({ request }) => {
-                path = new URL(request.url).pathname;
-                return HttpResponse.json({});
-            }),
-        );
-        await getTabularReview("r-1");
-        expect(path).toBe("/api/tabular-review/r-1");
+    it("updateTabularReview PATCHes partial payloads without inventing fields", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ id: "r1" }));
+
+        await updateTabularReview("r1", { document_grouping: "document" });
+
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("http://localhost:3001/tabular-review/r1");
+        expect(init.method).toBe("PATCH");
+        expect(JSON.parse(init.body as string)).toEqual({
+            document_grouping: "document",
+        });
     });
 
-    it("updateTabularReview PATCHes /tabular-review/:id", async () => {
-        let method: string | null = null;
-        let body: unknown;
-        server.use(
-            http.patch("*/api/tabular-review/:id", async ({ request }) => {
-                method = request.method;
-                body = await request.json();
-                return HttpResponse.json({ id: "r-1", title: "New" });
-            }),
-        );
-        await updateTabularReview("r-1", { title: "New" });
-        expect(method).toBe("PATCH");
-        expect(body).toEqual({ title: "New" });
+    it("deleteTabularReview issues DELETE on the review resource", async () => {
+        fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+
+        await deleteTabularReview("r1");
+
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("http://localhost:3001/tabular-review/r1");
+        expect(init.method).toBe("DELETE");
     });
 
-    it("getTabularReviewPeople GETs /tabular-review/:id/people", async () => {
-        let path: string | null = null;
-        server.use(
-            http.get("*/api/tabular-review/:id/people", ({ request }) => {
-                path = new URL(request.url).pathname;
-                return HttpResponse.json({
-                    owner: { user_id: "u", email: null, display_name: null },
-                    members: [],
-                });
-            }),
-        );
-        await getTabularReviewPeople("r-1");
-        expect(path).toBe("/api/tabular-review/r-1/people");
-    });
-
-    it("generateTabularColumnPrompt POSTs /tabular-review/prompt with optional fields", async () => {
-        let body: unknown;
-        server.use(
-            http.post("*/api/tabular-review/prompt", async ({ request }) => {
-                body = await request.json();
-                return HttpResponse.json({ prompt: "...", source: "llm" });
-            }),
+    it("generateTabularColumnPrompt forwards title and optional hints", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({ prompt: "p", source: "preset" }),
         );
 
-        await generateTabularColumnPrompt("Effective Date", {
+        const result = await generateTabularColumnPrompt("Termination", {
             format: "date",
-            documentName: "Contract",
-            tags: ["dates"],
+            documentName: "lease.pdf",
+            tags: ["real-estate"],
         });
 
-        expect(body).toEqual({
-            title: "Effective Date",
+        expect(result.source).toBe("preset");
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("http://localhost:3001/tabular-review/prompt");
+        expect(JSON.parse(init.body as string)).toEqual({
+            title: "Termination",
             format: "date",
-            documentName: "Contract",
-            tags: ["dates"],
+            documentName: "lease.pdf",
+            tags: ["real-estate"],
         });
-    });
-
-    it("deleteTabularReview DELETEs /tabular-review/:id", async () => {
-        let method: string | null = null;
-        server.use(
-            http.delete("*/api/tabular-review/:id", ({ request }) => {
-                method = request.method;
-                return new HttpResponse(null, { status: 204 });
-            }),
-        );
-        await deleteTabularReview("r-1");
-        expect(method).toBe("DELETE");
-    });
-
-    it("uploadReviewDocument: uploads standalone + PATCHes the review's document_ids", async () => {
-        const calls: { kind: string; body?: unknown }[] = [];
-        server.use(
-            http.post("*/api/single-documents", async () => {
-                calls.push({ kind: "upload" });
-                return HttpResponse.json({ id: "d-new", filename: "f.pdf" });
-            }),
-            http.patch("*/api/tabular-review/:id", async ({ request }) => {
-                calls.push({ kind: "patch", body: await request.json() });
-                return HttpResponse.json({ id: "r-1", title: "t" });
-            }),
-        );
-
-        await uploadReviewDocument("r-1", new File([""], "f.pdf"), {
-            documentIds: ["d-existing"],
-            columnsConfig: [
-                { index: 0, name: "N", prompt: "p" },
-            ],
-        });
-
-        expect(calls.map((c) => c.kind)).toEqual(["upload", "patch"]);
-        // The PATCH body appends the new id to the existing list.
-        expect(calls[1].body).toEqual({
-            columns_config: [{ index: 0, name: "N", prompt: "p" }],
-            document_ids: ["d-existing", "d-new"],
-        });
-    });
-
-    it("uploadReviewDocument routes through uploadProjectDocument when projectId is given", async () => {
-        const paths: string[] = [];
-        server.use(
-            http.post("*/api/projects/:p/documents", async ({ request }) => {
-                paths.push(new URL(request.url).pathname);
-                return HttpResponse.json({ id: "d-p", filename: "f.pdf" });
-            }),
-            http.patch("*/api/tabular-review/:id", () =>
-                HttpResponse.json({ id: "r-1", title: "t" }),
-            ),
-        );
-
-        await uploadReviewDocument("r-1", new File([""], "f.pdf"), {
-            projectId: "p-99",
-        });
-
-        expect(paths).toEqual(["/api/projects/p-99/documents"]);
     });
 });
 
-describe("mikeApi: smoke — tabular review streaming + cells", () => {
-    it("streamTabularGeneration POSTs /tabular-review/:id/generate (no body, no Content-Type)", async () => {
-        let method: string | null = null;
-        let contentType: string | null = null;
-        server.use(
-            http.post("*/api/tabular-review/:id/generate", ({ request }) => {
-                method = request.method;
-                contentType = request.headers.get("Content-Type");
-                return new HttpResponse("data: [DONE]\n\n", {
-                    headers: { "Content-Type": "text/event-stream" },
-                });
-            }),
-        );
-        await streamTabularGeneration("r-1");
-        expect(method).toBe("POST");
-        // Manual fetch with no Content-Type override.
-        expect(contentType).toBeNull();
-    });
+describe("uploadReviewDocument", () => {
+    it("uploads into the project then appends the new id to the review", async () => {
+        fetchMock
+            .mockResolvedValueOnce(jsonResponse({ id: "new-doc" }))
+            .mockResolvedValueOnce(jsonResponse({ id: "r1" }));
+        const file = new File(["x"], "a.pdf");
 
-    it("streamTabularChat POSTs /tabular-review/:id/chat with messages + chat_id + context", async () => {
-        let body: unknown;
-        server.use(
-            http.post("*/api/tabular-review/:id/chat", async ({ request }) => {
-                body = await request.json();
-                return new HttpResponse("data: [DONE]\n\n", {
-                    headers: { "Content-Type": "text/event-stream" },
-                });
-            }),
-        );
-        await streamTabularChat(
-            "r-1",
-            [{ role: "user", content: "hi" }],
-            "c-1",
-            undefined,
-            { reviewTitle: "Review", projectName: "Proj" },
-        );
-        expect(body).toEqual({
-            messages: [{ role: "user", content: "hi" }],
-            chat_id: "c-1",
-            review_title: "Review",
-            project_name: "Proj",
+        const uploaded = await uploadReviewDocument("r1", file, {
+            projectId: "p1",
+            documentIds: ["d1"],
+            columnsConfig: [{ index: 0, name: "Term", prompt: "p" }],
+        });
+
+        expect(uploaded).toEqual({ id: "new-doc" });
+        const [uploadCall, patchCall] = fetchMock.mock.calls;
+        expect(uploadCall[0]).toBe("http://localhost:3001/projects/p1/documents");
+        expect((uploadCall[1] as RequestInit).body).toBeInstanceOf(FormData);
+        expect(patchCall[0]).toBe("http://localhost:3001/tabular-review/r1");
+        // Existing ids must be preserved — the review would otherwise shrink
+        // to just the newly uploaded document.
+        expect(JSON.parse((patchCall[1] as RequestInit).body as string)).toEqual({
+            columns_config: [{ index: 0, name: "Term", prompt: "p" }],
+            document_ids: ["d1", "new-doc"],
         });
     });
 
-    it("streamTabularChat omits chat_id/context when not provided", async () => {
-        let body: Record<string, unknown> = {};
-        server.use(
-            http.post("*/api/tabular-review/:id/chat", async ({ request }) => {
-                body = (await request.json()) as Record<string, unknown>;
-                return new HttpResponse("data: [DONE]\n\n", {
-                    headers: { "Content-Type": "text/event-stream" },
-                });
-            }),
-        );
-        await streamTabularChat("r-1", [{ role: "user", content: "hi" }]);
-        expect("chat_id" in body).toBe(false);
-        expect("review_title" in body).toBe(false);
-        expect("project_name" in body).toBe(false);
-    });
+    it("falls back to a standalone upload when the review has no project", async () => {
+        fetchMock
+            .mockResolvedValueOnce(jsonResponse({ id: "new-doc" }))
+            .mockResolvedValueOnce(jsonResponse({ id: "r1" }));
 
-    it("getTabularChats GETs /tabular-review/:id/chats", async () => {
-        let path: string | null = null;
-        server.use(
-            http.get("*/api/tabular-review/:id/chats", ({ request }) => {
-                path = new URL(request.url).pathname;
-                return HttpResponse.json([]);
-            }),
-        );
-        await getTabularChats("r-1");
-        expect(path).toBe("/api/tabular-review/r-1/chats");
-    });
+        await uploadReviewDocument("r1", new File(["x"], "a.pdf"));
 
-    it("getTabularChatMessages GETs /tabular-review/:r/chats/:c/messages", async () => {
-        let path: string | null = null;
-        server.use(
-            http.get(
-                "*/api/tabular-review/:r/chats/:c/messages",
-                ({ request }) => {
-                    path = new URL(request.url).pathname;
-                    return HttpResponse.json([]);
-                },
-            ),
+        const [uploadCall, patchCall] = fetchMock.mock.calls;
+        expect(uploadCall[0]).toBe("http://localhost:3001/single-documents");
+        // With no prior ids the review ends up with exactly the new document.
+        expect(JSON.parse((patchCall[1] as RequestInit).body as string)).toEqual(
+            { document_ids: ["new-doc"] },
         );
-        await getTabularChatMessages("r-1", "c-1");
-        expect(path).toBe("/api/tabular-review/r-1/chats/c-1/messages");
-    });
-
-    it("deleteTabularChat DELETEs /tabular-review/:r/chats/:c", async () => {
-        let method: string | null = null;
-        server.use(
-            http.delete("*/api/tabular-review/:r/chats/:c", ({ request }) => {
-                method = request.method;
-                return new HttpResponse(null, { status: 204 });
-            }),
-        );
-        await deleteTabularChat("r-1", "c-1");
-        expect(method).toBe("DELETE");
-    });
-
-    // Upstream 6ae1f98d (PR #274) re-keyed tabular cells by review row
-    // (folder-grouped rows can span several documents), so the cell API
-    // addresses rows, not documents.
-    it("regenerateTabularCell POSTs with { row_id, column_index }", async () => {
-        let body: unknown;
-        server.use(
-            http.post(
-                "*/api/tabular-review/:id/regenerate-cell",
-                async ({ request }) => {
-                    body = await request.json();
-                    return HttpResponse.json({
-                        summary: "s",
-                        flag: "green",
-                        reasoning: "r",
-                    });
-                },
-            ),
-        );
-        await regenerateTabularCell("r-1", "row-1", 3);
-        expect(body).toEqual({ row_id: "row-1", column_index: 3 });
-    });
-
-    it("clearTabularCells POSTs with { row_ids }", async () => {
-        let body: unknown;
-        server.use(
-            http.post(
-                "*/api/tabular-review/:id/clear-cells",
-                async ({ request }) => {
-                    body = await request.json();
-                    return HttpResponse.json({});
-                },
-            ),
-        );
-        await clearTabularCells("r-1", ["row-1", "row-2"]);
-        expect(body).toEqual({ row_ids: ["row-1", "row-2"] });
     });
 });
 
-describe("mikeApi: smoke — workflows", () => {
-    it("listWorkflows GETs /workflows?type=...", async () => {
-        let search: string | null = null;
-        server.use(
-            http.get("*/api/workflows", ({ request }) => {
-                search = new URL(request.url).search;
-                return HttpResponse.json([]);
-            }),
+describe("tabular review chats", () => {
+    it("lists chats and fetches messages from the nested routes", async () => {
+        fetchMock.mockImplementation(() => Promise.resolve(jsonResponse([])));
+
+        await getTabularChats("r1");
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/tabular-review/r1/chats",
         );
+
+        await getTabularChatMessages("r1", "c1");
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/tabular-review/r1/chats/c1/messages",
+        );
+    });
+
+    it("renames via PATCH and deletes via DELETE on the chat resource", async () => {
+        fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+
+        await renameTabularChat("r1", "c1", "New title");
+        let { url, init } = lastFetchCall();
+        expect(url).toBe("http://localhost:3001/tabular-review/r1/chats/c1");
+        expect(init.method).toBe("PATCH");
+        expect(JSON.parse(init.body as string)).toEqual({ title: "New title" });
+
+        await deleteTabularChat("r1", "c1");
+        ({ url, init } = lastFetchCall());
+        expect(url).toBe("http://localhost:3001/tabular-review/r1/chats/c1");
+        expect(init.method).toBe("DELETE");
+    });
+
+    it("includes chat_id but omits absent context in streamTabularChat", async () => {
+        fetchMock.mockResolvedValue(streamResponse([]));
+
+        await streamTabularChat("r1", [{ role: "user", content: "q" }], "c9");
+
+        expect(JSON.parse(lastFetchCall().init.body as string)).toEqual({
+            messages: [{ role: "user", content: "q" }],
+            chat_id: "c9",
+        });
+    });
+});
+
+describe("tabular cell operations", () => {
+    it("regenerateTabularCell posts the row/column address with snake_case keys", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({ summary: "s", flag: "green", reasoning: "r" }),
+        );
+
+        const cell = await regenerateTabularCell("r1", "row-1", 2);
+
+        expect(cell.flag).toBe("green");
+        const { url, init } = lastFetchCall();
+        expect(url).toBe(
+            "http://localhost:3001/tabular-review/r1/regenerate-cell",
+        );
+        expect(JSON.parse(init.body as string)).toEqual({
+            row_id: "row-1",
+            column_index: 2,
+        });
+    });
+
+    it("clearTabularCells posts the row ids to clear", async () => {
+        fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+
+        await clearTabularCells("r1", ["row-1", "row-2"]);
+
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("http://localhost:3001/tabular-review/r1/clear-cells");
+        expect(JSON.parse(init.body as string)).toEqual({
+            row_ids: ["row-1", "row-2"],
+        });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Multipart uploads. These bypass apiRequest (FormData must not get a JSON
+// content type) and therefore have their own, weaker error contract: a plain
+// Error carrying the raw response text instead of MikeApiError.
+// ---------------------------------------------------------------------------
+
+describe("multipart upload endpoints", () => {
+    const file = new File(["pdf-bytes"], "a.pdf", { type: "application/pdf" });
+
+    it("uploadLibraryDocument posts FormData with auth and no JSON content type", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ id: "d1" }));
+
+        const doc = await uploadLibraryDocument("templates", file);
+
+        expect(doc).toEqual({ id: "d1" });
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("http://localhost:3001/library/templates/documents");
+        expect(init.method).toBe("POST");
+        expect(init.body).toBeInstanceOf(FormData);
+        expect((init.body as FormData).get("file")).toBeInstanceOf(File);
+        // Setting Content-Type manually would break the multipart boundary.
+        expect(init.headers).toEqual({ Authorization: "Bearer token-123" });
+    });
+
+    it("upload failures throw a plain Error with the response text, not MikeApiError", async () => {
+        fetchMock.mockImplementation(() =>
+            Promise.resolve(new Response("file too large", { status: 413 })),
+        );
+
+        const error = await uploadProjectDocument("p1", file).catch(
+            (e: unknown) => e,
+        );
+
+        expect(error).toBeInstanceOf(Error);
+        expect(error).not.toBeInstanceOf(MikeApiError);
+        expect((error as Error).message).toBe("file too large");
+
+        await expect(uploadStandaloneDocument(file)).rejects.toThrow(
+            "file too large",
+        );
+        await expect(uploadLibraryDocument("files", file)).rejects.toThrow(
+            "file too large",
+        );
+    });
+
+    it("uploadDocumentVersion appends the filename field only when given", async () => {
+        fetchMock.mockImplementation(() =>
+            Promise.resolve(jsonResponse({ id: "v1" })),
+        );
+
+        await uploadDocumentVersion("d1", file, "renamed.pdf");
+        let body = lastFetchCall().init.body as FormData;
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/single-documents/d1/versions",
+        );
+        expect(body.get("filename")).toBe("renamed.pdf");
+
+        await uploadDocumentVersion("d1", file);
+        body = lastFetchCall().init.body as FormData;
+        expect(body.get("filename")).toBeNull();
+    });
+
+    it("replaceDocumentVersionFile PUTs to the version file route and surfaces errors", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ id: "v1" }));
+
+        await replaceDocumentVersionFile("d1", "v1", file, "renamed.pdf");
+
+        const { url, init } = lastFetchCall();
+        expect(url).toBe(
+            "http://localhost:3001/single-documents/d1/versions/v1/file",
+        );
+        expect(init.method).toBe("PUT");
+        expect((init.body as FormData).get("filename")).toBe("renamed.pdf");
+
+        fetchMock.mockResolvedValue(new Response("nope", { status: 409 }));
+        await expect(
+            replaceDocumentVersionFile("d1", "v1", file),
+        ).rejects.toThrow("nope");
+    });
+});
+
+describe("query and payload defaults", () => {
+    it("getDocumentUrl appends version_id only when a version is requested", async () => {
+        fetchMock.mockImplementation(() =>
+            Promise.resolve(
+                jsonResponse({ url: "u", filename: "f", version_id: null }),
+            ),
+        );
+
+        await getDocumentUrl("d1");
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/single-documents/d1/url",
+        );
+
+        await getDocumentUrl("d1", "v 1");
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/single-documents/d1/url?version_id=v%201",
+        );
+    });
+
+    it("createChat defaults to an empty JSON object body", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ id: "c1" }));
+
+        await createChat();
+        expect(lastFetchCall().init.body).toBe("{}");
+        fetchMock.mockResolvedValue(jsonResponse({ id: "c2" }));
+
+        await createChat({ project_id: "p1" });
+        expect(JSON.parse(lastFetchCall().init.body as string)).toEqual({
+            project_id: "p1",
+        });
+    });
+
+    it("listChats without options hits the bare /chat route", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
+        await listChats();
+
+        expect(lastFetchCall().url).toBe("http://localhost:3001/chat");
+    });
+
+    it("folder creation defaults parent_folder_id to null, not undefined", async () => {
+        fetchMock.mockImplementation(() =>
+            Promise.resolve(jsonResponse({ id: "f1" })),
+        );
+
+        await createProjectFolder("p1", "Discovery");
+        // null must survive JSON.stringify (undefined would drop the key and
+        // the backend would reject the payload).
+        expect(JSON.parse(lastFetchCall().init.body as string)).toEqual({
+            name: "Discovery",
+            parent_folder_id: null,
+        });
+
+        await createLibraryFolder("files", "Precedents", "parent-1");
+        expect(JSON.parse(lastFetchCall().init.body as string)).toEqual({
+            name: "Precedents",
+            parent_folder_id: "parent-1",
+        });
+    });
+
+    it("downloadDocumentsZip synthesizes a message when the error body is empty", async () => {
+        fetchMock.mockResolvedValue(new Response("", { status: 500 }));
+
+        await expect(downloadDocumentsZip(["d1"])).rejects.toThrow(
+            "API error: 500",
+        );
+    });
+
+    it("mapTRMessages degrades a null user body to an empty string", () => {
+        const mapped = mapTRMessages([
+            {
+                id: "m1",
+                chat_id: "c1",
+                role: "user",
+                content: null,
+                created_at: "2026-01-01",
+            },
+        ]);
+        expect(mapped).toEqual([{ role: "user", content: "" }]);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Workflows. The slash-command menu (PR #280) is fed by listWorkflows, and
+// hide/unhide controls which ones it offers — a wrong route here silently
+// empties the menu rather than erroring.
+// ---------------------------------------------------------------------------
+
+describe("workflow endpoints", () => {
+    it("listWorkflows filters by type via the query string", async () => {
+        fetchMock.mockResolvedValue(jsonResponse([]));
+
         await listWorkflows("assistant");
-        expect(search).toBe("?type=assistant");
+
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/workflows?type=assistant",
+        );
     });
 
-    it("getWorkflow GETs /workflows/:id", async () => {
-        let path: string | null = null;
-        server.use(
-            http.get("*/api/workflows/:id", ({ request }) => {
-                path = new URL(request.url).pathname;
-                return HttpResponse.json({});
-            }),
-        );
-        await getWorkflow("wf-1");
-        expect(path).toBe("/api/workflows/wf-1");
-    });
+    it("hide/unhide/list use the hidden-workflows routes with matching methods", async () => {
+        fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
 
-    it("createWorkflow POSTs the payload to /workflows", async () => {
-        let body: unknown;
-        server.use(
-            http.post("*/api/workflows", async ({ request }) => {
-                body = await request.json();
-                return HttpResponse.json({ id: "wf-new" });
-            }),
+        await hideWorkflow("w1");
+        let { url, init } = lastFetchCall();
+        expect(url).toBe("http://localhost:3001/workflows/hidden");
+        expect(init.method).toBe("POST");
+        expect(JSON.parse(init.body as string)).toEqual({ workflow_id: "w1" });
+
+        await unhideWorkflow("w1");
+        ({ url, init } = lastFetchCall());
+        expect(url).toBe("http://localhost:3001/workflows/hidden/w1");
+        expect(init.method).toBe("DELETE");
+
+        fetchMock.mockResolvedValue(jsonResponse(["w2"]));
+        await expect(listHiddenWorkflows()).resolves.toEqual(["w2"]);
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/workflows/hidden",
         );
-        await createWorkflow({
-            title: "Summary",
-            type: "assistant",
-            prompt_md: "# do the thing",
-            practice: "Contracts",
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Thin endpoint wrappers. Each is a one-liner over apiRequest, so the only
+// things that can break are the route, the HTTP method, and the payload
+// shape — a wrong route or a camelCase key that should be snake_case fails
+// silently in TypeScript and only surfaces as a runtime 404/422. Assert
+// exactly those three things for every wrapper.
+// ---------------------------------------------------------------------------
+
+describe("thin endpoint wrappers", () => {
+    type WrapperCase = {
+        name: string;
+        call: () => Promise<unknown>;
+        url: string;
+        method?: string; // defaults to GET (fetch's default when unset)
+        body?: unknown; // absent means the request must not carry a body
+    };
+
+    const cases: WrapperCase[] = [
+        // Account & profile
+        {
+            name: "createProject",
+            call: () => createProject("Acme v. Zenith", "CM-42", "litigation", ["a@b.c"]),
+            url: "/projects",
+            method: "POST",
+            body: {
+                name: "Acme v. Zenith",
+                cm_number: "CM-42",
+                practice: "litigation",
+                shared_with: ["a@b.c"],
+            },
+        },
+        {
+            name: "deleteAccount",
+            call: () => deleteAccount(),
+            url: "/user/account",
+            method: "DELETE",
+        },
+        {
+            name: "deleteAllProjects",
+            call: () => deleteAllProjects(),
+            url: "/user/projects",
+            method: "DELETE",
+        },
+        {
+            name: "deleteAllTabularReviews",
+            call: () => deleteAllTabularReviews(),
+            url: "/user/tabular-reviews",
+            method: "DELETE",
+        },
+        {
+            name: "updateUserProfile",
+            call: () => updateUserProfile({ displayName: "Amal", titleModel: "m1" }),
+            url: "/user/profile",
+            method: "PATCH",
+            body: { displayName: "Amal", titleModel: "m1" },
+        },
+        {
+            name: "updateUserMfaOnLogin",
+            call: () => updateUserMfaOnLogin(true),
+            url: "/user/security/mfa-login",
+            method: "PATCH",
+            body: { enabled: true },
+        },
+        {
+            name: "getApiKeyStatus",
+            call: () => getApiKeyStatus(),
+            url: "/user/api-keys",
+        },
+        {
+            name: "saveApiKey",
+            call: () => saveApiKey("claude", "sk-ant-1"),
+            url: "/user/api-keys/claude",
+            method: "PUT",
+            body: { api_key: "sk-ant-1" },
+        },
+        {
+            // null is the delete-my-key signal and must survive
+            // JSON.stringify rather than dropping the field.
+            name: "saveApiKey (clear)",
+            call: () => saveApiKey("openai", null),
+            url: "/user/api-keys/openai",
+            method: "PUT",
+            body: { api_key: null },
+        },
+        // MCP connectors
+        {
+            name: "listMcpConnectors",
+            call: () => listMcpConnectors(),
+            url: "/user/mcp-connectors",
+        },
+        {
+            name: "getMcpConnector",
+            call: () => getMcpConnector("m1"),
+            url: "/user/mcp-connectors/m1",
+        },
+        {
+            name: "createMcpConnector",
+            call: () =>
+                createMcpConnector({
+                    name: "Drive",
+                    serverUrl: "https://mcp.example/mcp/v1",
+                    bearerToken: "tok",
+                }),
+            url: "/user/mcp-connectors",
+            method: "POST",
+            body: {
+                name: "Drive",
+                serverUrl: "https://mcp.example/mcp/v1",
+                bearerToken: "tok",
+            },
+        },
+        {
+            name: "updateMcpConnector",
+            call: () => updateMcpConnector("m1", { enabled: false }),
+            url: "/user/mcp-connectors/m1",
+            method: "PATCH",
+            body: { enabled: false },
+        },
+        {
+            name: "deleteMcpConnector",
+            call: () => deleteMcpConnector("m1"),
+            url: "/user/mcp-connectors/m1",
+            method: "DELETE",
+        },
+        {
+            name: "refreshMcpConnectorTools",
+            call: () => refreshMcpConnectorTools("m1"),
+            url: "/user/mcp-connectors/m1/refresh-tools",
+            method: "POST",
+        },
+        {
+            name: "startMcpConnectorOAuth",
+            call: () => startMcpConnectorOAuth("m1"),
+            url: "/user/mcp-connectors/m1/oauth/start",
+            method: "POST",
+        },
+        {
+            name: "setMcpToolEnabled",
+            call: () => setMcpToolEnabled("m1", "t1", true),
+            url: "/user/mcp-connectors/m1/tools/t1",
+            method: "PATCH",
+            body: { enabled: true },
+        },
+        // Projects
+        {
+            name: "getProject",
+            call: () => getProject("p1"),
+            url: "/projects/p1",
+        },
+        {
+            name: "updateProject",
+            call: () => updateProject("p1", { name: "Renamed", practice: null }),
+            url: "/projects/p1",
+            method: "PATCH",
+            body: { name: "Renamed", practice: null },
+        },
+        {
+            name: "deleteProject",
+            call: () => deleteProject("p1"),
+            url: "/projects/p1",
+            method: "DELETE",
+        },
+        {
+            name: "getProjectPeople",
+            call: () => getProjectPeople("p1"),
+            url: "/projects/p1/people",
+        },
+        {
+            name: "listProjectChats",
+            call: () => listProjectChats("p1"),
+            url: "/projects/p1/chats",
+        },
+        // Project folders & documents
+        {
+            name: "renameProjectFolder",
+            call: () => renameProjectFolder("p1", "f1", "Discovery"),
+            url: "/projects/p1/folders/f1",
+            method: "PATCH",
+            body: { name: "Discovery" },
+        },
+        {
+            name: "deleteProjectFolder",
+            call: () => deleteProjectFolder("p1", "f1"),
+            url: "/projects/p1/folders/f1",
+            method: "DELETE",
+        },
+        {
+            // Moving to the root sends an explicit null parent, on the same
+            // PATCH route as rename — only the body distinguishes them.
+            name: "moveSubfolderToFolder",
+            call: () => moveSubfolderToFolder("p1", "f1", null),
+            url: "/projects/p1/folders/f1",
+            method: "PATCH",
+            body: { parent_folder_id: null },
+        },
+        {
+            name: "moveDocumentToFolder",
+            call: () => moveDocumentToFolder("p1", "d1", "f2"),
+            url: "/projects/p1/documents/d1/folder",
+            method: "PATCH",
+            body: { folder_id: "f2" },
+        },
+        {
+            name: "renameProjectDocument",
+            call: () => renameProjectDocument("p1", "d1", "renamed.pdf"),
+            url: "/projects/p1/documents/d1",
+            method: "PATCH",
+            body: { filename: "renamed.pdf" },
+        },
+        {
+            name: "addDocumentToProject",
+            call: () => addDocumentToProject("p1", "d1"),
+            url: "/projects/p1/documents/d1",
+            method: "POST",
+        },
+        // Library
+        {
+            name: "getLibrary",
+            call: () => getLibrary("templates"),
+            url: "/library/templates",
+        },
+        {
+            name: "renameLibraryFolder",
+            call: () => renameLibraryFolder("files", "f1", "Precedents"),
+            url: "/library/files/folders/f1",
+            method: "PATCH",
+            body: { name: "Precedents" },
+        },
+        {
+            name: "deleteLibraryFolder",
+            call: () => deleteLibraryFolder("files", "f1"),
+            url: "/library/files/folders/f1",
+            method: "DELETE",
+        },
+        {
+            name: "moveLibraryFolder",
+            call: () => moveLibraryFolder("templates", "f1", "parent-1"),
+            url: "/library/templates/folders/f1",
+            method: "PATCH",
+            body: { parent_folder_id: "parent-1" },
+        },
+        {
+            name: "moveLibraryDocument",
+            call: () => moveLibraryDocument("files", "d1", null),
+            url: "/library/files/documents/d1/folder",
+            method: "PATCH",
+            body: { folder_id: null },
+        },
+        {
+            name: "renameLibraryDocument",
+            call: () => renameLibraryDocument("files", "d1", "renamed.docx"),
+            url: "/library/files/documents/d1",
+            method: "PATCH",
+            body: { filename: "renamed.docx" },
+        },
+        // Standalone documents & versions
+        {
+            name: "listStandaloneDocuments",
+            call: () => listStandaloneDocuments(),
+            url: "/single-documents",
+        },
+        {
+            name: "deleteDocument",
+            call: () => deleteDocument("d1"),
+            url: "/single-documents/d1",
+            method: "DELETE",
+        },
+        {
+            name: "listDocumentVersions",
+            call: () => listDocumentVersions("d1"),
+            url: "/single-documents/d1/versions",
+        },
+        {
+            name: "copyDocumentVersionFromDocument",
+            call: () => copyDocumentVersionFromDocument("d1", "src-1", "copy.pdf"),
+            url: "/single-documents/d1/versions/from-document",
+            method: "POST",
+            body: { source_document_id: "src-1", filename: "copy.pdf" },
+        },
+        {
+            // null clears the per-version name so the document name shows.
+            name: "renameDocumentVersion",
+            call: () => renameDocumentVersion("d1", "v1", null),
+            url: "/single-documents/d1/versions/v1",
+            method: "PATCH",
+            body: { filename: null },
+        },
+        {
+            name: "deleteDocumentVersion",
+            call: () => deleteDocumentVersion("d1", "v1"),
+            url: "/single-documents/d1/versions/v1",
+            method: "DELETE",
+        },
+        // Chat
+        {
+            name: "renameChat",
+            call: () => renameChat("c1", "New title"),
+            url: "/chat/c1",
+            method: "PATCH",
+            body: { title: "New title" },
+        },
+        {
+            name: "deleteChat",
+            call: () => deleteChat("c1"),
+            url: "/chat/c1",
+            method: "DELETE",
+        },
+        {
+            name: "generateChatTitle",
+            call: () => generateChatTitle("c1", "first message"),
+            url: "/chat/c1/generate-title",
+            method: "POST",
+            body: { message: "first message" },
+        },
+        // Tabular review
+        {
+            name: "getTabularReview",
+            call: () => getTabularReview("r1"),
+            url: "/tabular-review/r1",
+        },
+        {
+            name: "getTabularReviewPeople",
+            call: () => getTabularReviewPeople("r1"),
+            url: "/tabular-review/r1/people",
+        },
+        // Workflows
+        {
+            name: "getWorkflow",
+            call: () => getWorkflow("w1"),
+            url: "/workflows/w1",
+        },
+        {
+            name: "createWorkflow",
+            call: () =>
+                createWorkflow({
+                    metadata: { title: "NDA review", type: "assistant" },
+                    skill_md: "# Steps",
+                }),
+            url: "/workflows",
+            method: "POST",
+            body: {
+                metadata: { title: "NDA review", type: "assistant" },
+                skill_md: "# Steps",
+            },
+        },
+        {
+            name: "updateWorkflow",
+            call: () => updateWorkflow("w1", { metadata: { title: "Renamed" } }),
+            url: "/workflows/w1",
+            method: "PATCH",
+            body: { metadata: { title: "Renamed" } },
+        },
+        {
+            name: "deleteWorkflow",
+            call: () => deleteWorkflow("w1"),
+            url: "/workflows/w1",
+            method: "DELETE",
+        },
+        {
+            name: "openSourceWorkflow",
+            call: () =>
+                openSourceWorkflow("w1", {
+                    contributor_mode: "named",
+                    contributor: {
+                        name: "Amal",
+                        organisation: null,
+                        role: null,
+                        linkedin: null,
+                    },
+                }),
+            url: "/workflows/w1/open-source",
+            method: "POST",
+            body: {
+                contributor_mode: "named",
+                contributor: {
+                    name: "Amal",
+                    organisation: null,
+                    role: null,
+                    linkedin: null,
+                },
+            },
+        },
+        {
+            name: "shareWorkflow",
+            call: () =>
+                shareWorkflow("w1", { emails: ["a@b.c"], allow_edit: false }),
+            url: "/workflows/w1/share",
+            method: "POST",
+            body: { emails: ["a@b.c"], allow_edit: false },
+        },
+        {
+            name: "listWorkflowShares",
+            call: () => listWorkflowShares("w1"),
+            url: "/workflows/w1/shares",
+        },
+        {
+            name: "deleteWorkflowShare",
+            call: () => deleteWorkflowShare("w1", "s1"),
+            url: "/workflows/w1/shares/s1",
+            method: "DELETE",
+        },
+    ];
+
+    it.each(cases)("$name → $method $url", async ({ call, url, method, body }) => {
+        fetchMock.mockResolvedValue(jsonResponse({}));
+
+        await call();
+
+        const { url: actualUrl, init } = lastFetchCall();
+        expect(actualUrl).toBe(`http://localhost:3001${url}`);
+        expect(init.method ?? "GET").toBe(method ?? "GET");
+        if (body !== undefined) {
+            expect(JSON.parse(init.body as string)).toEqual(body);
+            expect(init.headers).toMatchObject({
+                "Content-Type": "application/json",
+            });
+        } else {
+            expect(init.body).toBeUndefined();
+        }
+        expect(init.headers).toMatchObject({
+            Authorization: "Bearer token-123",
         });
-        expect(body).toEqual({
-            title: "Summary",
-            type: "assistant",
-            prompt_md: "# do the thing",
-            practice: "Contracts",
-        });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Wrappers with response mapping — the ones the table above can't cover
+// because they unwrap an envelope or hit the blob path.
+// ---------------------------------------------------------------------------
+
+describe("unwrapping and blob wrappers", () => {
+    it("getOllamaModels unwraps the models envelope", async () => {
+        const models = [
+            { id: "ollama/llama3.2", label: "Llama 3.2", group: "Local" },
+        ];
+        fetchMock.mockResolvedValue(jsonResponse({ models }));
+
+        await expect(getOllamaModels()).resolves.toEqual(models);
+        expect(lastFetchCall().url).toBe("http://localhost:3001/models/ollama");
     });
 
-    it("updateWorkflow PATCHes /workflows/:id", async () => {
-        let method: string | null = null;
-        let body: unknown;
-        server.use(
-            http.patch("*/api/workflows/:id", async ({ request }) => {
-                method = request.method;
-                body = await request.json();
-                return HttpResponse.json({});
-            }),
-        );
-        await updateWorkflow("wf-1", { title: "New", practice: null });
-        expect(method).toBe("PATCH");
-        expect(body).toEqual({ title: "New", practice: null });
+    it("getCourtlistenerOpinions posts the cluster id and unwraps opinions", async () => {
+        const opinions = [
+            {
+                opinionId: 7,
+                type: "majority",
+                author: "Judge X",
+                url: "https://example.test/op/7",
+            },
+        ];
+        fetchMock.mockResolvedValue(jsonResponse({ opinions }));
+
+        await expect(getCourtlistenerOpinions(123)).resolves.toEqual(opinions);
+        const { url, init } = lastFetchCall();
+        expect(url).toBe("http://localhost:3001/case-law/case-opinions");
+        expect(init.method).toBe("POST");
+        expect(JSON.parse(init.body as string)).toEqual({ clusterId: 123 });
     });
 
-    it("deleteWorkflow DELETEs /workflows/:id", async () => {
-        let method: string | null = null;
-        server.use(
-            http.delete("*/api/workflows/:id", ({ request }) => {
-                method = request.method;
-                return new HttpResponse(null, { status: 204 });
-            }),
+    it("exportChatData and exportTabularReviewsData hit their export routes", async () => {
+        fetchMock.mockImplementation(() =>
+            Promise.resolve(
+                new Response("bytes", {
+                    status: 200,
+                    headers: {
+                        "content-disposition": 'attachment; filename="x.zip"',
+                    },
+                }),
+            ),
         );
-        await deleteWorkflow("wf-1");
-        expect(method).toBe("DELETE");
-    });
 
-    it("listHiddenWorkflows GETs /workflows/hidden", async () => {
-        let path: string | null = null;
-        server.use(
-            http.get("*/api/workflows/hidden", ({ request }) => {
-                path = new URL(request.url).pathname;
-                return HttpResponse.json([]);
-            }),
+        const chats = await exportChatData();
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/user/chats/export",
         );
-        await listHiddenWorkflows();
-        expect(path).toBe("/api/workflows/hidden");
-    });
+        expect(chats.filename).toBe("x.zip");
+        expect(await chats.blob.text()).toBe("bytes");
 
-    it("hideWorkflow POSTs /workflows/hidden with { workflow_id }", async () => {
-        let body: unknown;
-        server.use(
-            http.post("*/api/workflows/hidden", async ({ request }) => {
-                body = await request.json();
-                return HttpResponse.json({});
-            }),
+        await exportTabularReviewsData();
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/user/tabular-reviews/export",
         );
-        await hideWorkflow("wf-1");
-        expect(body).toEqual({ workflow_id: "wf-1" });
-    });
-
-    it("unhideWorkflow DELETEs /workflows/hidden/:id", async () => {
-        let method: string | null = null;
-        let path: string | null = null;
-        server.use(
-            http.delete("*/api/workflows/hidden/:id", ({ request }) => {
-                method = request.method;
-                path = new URL(request.url).pathname;
-                return new HttpResponse(null, { status: 204 });
-            }),
-        );
-        await unhideWorkflow("wf-1");
-        expect(method).toBe("DELETE");
-        expect(path).toBe("/api/workflows/hidden/wf-1");
-    });
-
-    it("shareWorkflow POSTs /workflows/:id/share with { emails, allow_edit }", async () => {
-        let body: unknown;
-        server.use(
-            http.post("*/api/workflows/:id/share", async ({ request }) => {
-                body = await request.json();
-                return new HttpResponse(null, { status: 204 });
-            }),
-        );
-        await shareWorkflow("wf-1", {
-            emails: ["alice@example.com"],
-            allow_edit: true,
-        });
-        expect(body).toEqual({
-            emails: ["alice@example.com"],
-            allow_edit: true,
-        });
-    });
-
-    it("listWorkflowShares GETs /workflows/:id/shares", async () => {
-        let path: string | null = null;
-        server.use(
-            http.get("*/api/workflows/:id/shares", ({ request }) => {
-                path = new URL(request.url).pathname;
-                return HttpResponse.json([]);
-            }),
-        );
-        await listWorkflowShares("wf-1");
-        expect(path).toBe("/api/workflows/wf-1/shares");
-    });
-
-    it("deleteWorkflowShare DELETEs /workflows/:w/shares/:s", async () => {
-        let path: string | null = null;
-        server.use(
-            http.delete("*/api/workflows/:w/shares/:s", ({ request }) => {
-                path = new URL(request.url).pathname;
-                return new HttpResponse(null, { status: 204 });
-            }),
-        );
-        await deleteWorkflowShare("wf-1", "share-1");
-        expect(path).toBe("/api/workflows/wf-1/shares/share-1");
     });
 });

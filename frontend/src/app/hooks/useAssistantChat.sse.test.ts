@@ -19,14 +19,11 @@ import {
 } from "vitest";
 import type { Message } from "@/app/components/shared/types";
 
-// Dev divergence: auth is Entra (via @/app/lib/auth-token), not Supabase's
-// getSession(); mock the token boundary instead.
-const { getTokenMock } = vi.hoisted(() => ({
-    getTokenMock: vi.fn(),
+const { getSessionMock } = vi.hoisted(() => ({
+    getSessionMock: vi.fn(),
 }));
-vi.mock("@/app/lib/auth-token", () => ({
-    getBrowserAccessToken: getTokenMock,
-    bounceIfUnauthorized: vi.fn(),
+vi.mock("@/app/lib/supabase", () => ({
+    supabase: { auth: { getSession: getSessionMock } },
 }));
 vi.mock("next/navigation", () => ({
     useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
@@ -87,7 +84,9 @@ const sendAndGetAssistant = async (chunks: string[]) => {
 
 beforeEach(() => {
     vi.stubGlobal("fetch", fetchMock);
-    getTokenMock.mockResolvedValue("t");
+    getSessionMock.mockResolvedValue({
+        data: { session: { access_token: "t" } },
+    });
 });
 
 afterEach(() => {
@@ -194,8 +193,7 @@ describe("useAssistantChat SSE parsing", () => {
             'data: {"type":"citations","status":"final","citations":[{"ref":1}]}\n\n',
         ]);
 
-        // Dev stores streamed citations on `annotations` (upstream: `citations`).
-        expect(assistant?.annotations).toEqual([{ ref: 1 }]);
+        expect(assistant?.citations).toEqual([{ ref: 1 }]);
         expect(assistant?.citationStatus).toBe("final");
         expect(assistant?.events).toEqual([
             { type: "content", text: "Cited." },

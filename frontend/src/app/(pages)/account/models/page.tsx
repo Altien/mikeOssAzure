@@ -1,122 +1,132 @@
 "use client";
 
-import { useState } from "react";
-import { AlertCircle, Check, ChevronDown } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { AlertCircle, Check, ChevronDown, Loader2 } from "lucide-react";
 import {
     DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
     DropdownMenuLabel,
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/app/components/ui/dropdown-menu";
+import {
+    LiquidDropdownContent,
+    LiquidDropdownItem,
+} from "@/app/components/ui/liquid-dropdown";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
-import { MODELS } from "@/app/components/assistant/ModelToggle";
+import type { ApiKeyState } from "@/app/lib/mikeApi";
+import {
+    MODELS,
+    SETTINGS_MODELS,
+    type ModelOption,
+} from "@/app/components/assistant/ModelToggle";
 import {
     isModelAvailable,
     modelGroupToProvider,
     providerLabel,
-    type ApiKeyAvailability,
 } from "@/app/lib/modelAvailability";
+import {
+    accountGlassInputClassName,
+} from "../accountStyles";
+import { AccountSection } from "../AccountSection";
+import { useOllamaModels } from "@/app/hooks/useOllamaModels";
 
-export default function ModelsAndApiKeysPage() {
-    const {
-        profile,
-        updateModelPreference,
-        aoaiDeployments,
-        aoaiDeploymentsLoading,
-        aoaiDeploymentsError,
-    } = useUserProfile();
+type ModelPreferenceField = "titleModel" | "tabularModel";
 
-    // Build dynamic AOAI model entries for the picker. Label uses the
-    // deployment name first (it's what the customer recognises), with
-    // the underlying base model as a hint when AOAI exposes one.
-    const aoaiModelEntries = aoaiDeployments.map((d) => ({
-        id: `aoai:${d.name}`,
-        label: d.model ? `${d.name} (${d.model})` : d.name,
-        group: "Azure OpenAI" as const,
-    }));
+export default function ModelPreferencesPage() {
+    const { profile, updateModelPreference } = useUserProfile();
+    const ollamaModels = useOllamaModels();
+    const [savingField, setSavingField] = useState<ModelPreferenceField | null>(
+        null,
+    );
+    const [savedField, setSavedField] = useState<ModelPreferenceField | null>(
+        null,
+    );
+    const [optimisticValues, setOptimisticValues] = useState<
+        Partial<Record<ModelPreferenceField, string>>
+    >({});
+    const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    useEffect(() => {
+        return () => {
+            if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+        };
+    }, []);
+
+    const handleModelChange = async (
+        field: ModelPreferenceField,
+        id: string,
+    ) => {
+        setOptimisticValues((current) => ({ ...current, [field]: id }));
+        setSavedField(null);
+        setSavingField(field);
+        const ok = await updateModelPreference(field, id);
+        setSavingField((current) => (current === field ? null : current));
+        if (ok) {
+            setSavedField(field);
+            if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+            savedTimerRef.current = setTimeout(() => {
+                setSavedField((current) => (current === field ? null : current));
+            }, 1600);
+        } else {
+            setOptimisticValues((current) => {
+                const next = { ...current };
+                delete next[field];
+                return next;
+            });
+        }
+    };
 
     return (
-        <div className="space-y-4">
-            {/* Model Preferences */}
-            <div className="pb-6">
-                <div className="flex items-center gap-2 mb-4">
-                    <h2 className="text-2xl font-medium font-serif">
-                        Model Preferences
-                    </h2>
-                </div>
-                <div className="space-y-4 max-w-md">
-                    <div>
-                        <label className="text-sm text-gray-600 block mb-2">
-                            Fast model{" "}
-                            <span className="text-gray-400">
-                                (used for chat titles and column-prompt
-                                suggestions)
-                            </span>
-                        </label>
-                        <ModelPreferenceDropdown
-                            value={profile?.fastModel ?? null}
-                            apiKeys={{
-                                claudeApiKey: profile?.claudeApiKey ?? null,
-                                geminiApiKey: profile?.geminiApiKey ?? null,
-                                openaiApiKey: profile?.openaiApiKey ?? null,
-                                globalApiKeys: profile?.globalApiKeys,
-                            }}
-                            extraModels={aoaiModelEntries}
-                            placeholder="Auto (cheapest configured)"
-                            onChange={(id) =>
-                                updateModelPreference("fastModel", id)
-                            }
-                        />
-                    </div>
-                    <div>
-                        <label className="text-sm text-gray-600 block mb-2">
-                            Tabular review model
-                        </label>
-                        <ModelPreferenceDropdown
-                            value={
-                                profile?.tabularModel ??
-                                "gemini-3-flash-preview"
-                            }
-                            apiKeys={{
-                                claudeApiKey: profile?.claudeApiKey ?? null,
-                                geminiApiKey: profile?.geminiApiKey ?? null,
-                                openaiApiKey: profile?.openaiApiKey ?? null,
-                                globalApiKeys: profile?.globalApiKeys,
-                            }}
-                            extraModels={aoaiModelEntries}
-                            onChange={(id) =>
-                                updateModelPreference("tabularModel", id)
-                            }
-                        />
-                    </div>
-                </div>
+        <div>
+            <div className="flex items-center gap-2 mb-4">
+                <h2 className="text-2xl font-medium font-serif">
+                    Model Preferences
+                </h2>
             </div>
-
-            <div className="py-6">
-                <p className="max-w-xl text-sm text-gray-500">
-                    Provider credentials and Azure OpenAI connection settings
-                    are shared by the organisation and managed by an
-                    administrator through{" "}
-                    <a
-                        href={
-                            (process.env.NEXT_PUBLIC_API_BASE_URL ??
-                                "http://localhost:3001") + "/install"
+            <AccountSection>
+                <div className="px-4 py-5">
+                    <label className="text-sm font-medium text-gray-700 block mb-2">
+                        Title generation model
+                    </label>
+                    <p className="text-xs text-gray-400 mb-2">
+                        Used for naming chats and other lightweight titles.
+                    </p>
+                    <ModelPreferenceDropdown
+                        value={
+                            optimisticValues.titleModel ??
+                            profile?.titleModel ??
+                            "gemini-3.1-flash-lite-preview"
                         }
-                        className="font-medium text-gray-700 underline underline-offset-4"
-                    >
-                        organisation setup
-                    </a>
-                    . Users can choose from the models the administrator has
-                    made available.
-                </p>
-                <DiscoveredDeployments
-                    deployments={aoaiDeployments}
-                    loading={aoaiDeploymentsLoading}
-                    error={aoaiDeploymentsError}
-                />
-            </div>
+                        options={[...SETTINGS_MODELS, ...ollamaModels]}
+                        apiKeys={profile?.apiKeys}
+                        isSaving={savingField === "titleModel"}
+                        isSaved={savedField === "titleModel"}
+                        onChange={(id) => handleModelChange("titleModel", id)}
+                    />
+                </div>
+                <div className="mx-4 h-px bg-gray-200" />
+                <div className="px-4 py-5">
+                    <label className="text-sm font-medium text-gray-700 block mb-2">
+                        Tabular review model
+                    </label>
+                    <p className="text-xs text-gray-400 mb-2">
+                        We recommend using a smaller model for tabular reviews
+                        to reduce token costs.
+                    </p>
+                    <ModelPreferenceDropdown
+                        value={
+                            optimisticValues.tabularModel ??
+                            profile?.tabularModel ??
+                            "gemini-3-flash-preview"
+                        }
+                        options={[...MODELS, ...ollamaModels]}
+                        apiKeys={profile?.apiKeys}
+                        isSaving={savingField === "tabularModel"}
+                        isSaved={savedField === "tabularModel"}
+                        onChange={(id) => handleModelChange("tabularModel", id)}
+                    />
+                </div>
+            </AccountSection>
         </div>
     );
 }
@@ -125,87 +135,61 @@ function ModelPreferenceDropdown({
     value,
     onChange,
     apiKeys,
-    extraModels,
-    placeholder,
+    options,
+    isSaving,
+    isSaved,
 }: {
-    // null means "no preference set" — backend resolver picks. The
-    // dropdown shows the placeholder text and offers an explicit
-    // "Auto" reset entry at the top.
-    value: string | null;
-    onChange: (id: string | null) => void;
-    apiKeys: ApiKeyAvailability;
-    extraModels: { id: string; label: string; group: "Azure OpenAI" }[];
-    placeholder?: string;
+    value: string;
+    onChange: (id: string) => void;
+    apiKeys?: ApiKeyState;
+    options: ModelOption[];
+    isSaving?: boolean;
+    isSaved?: boolean;
 }) {
     const [isOpen, setIsOpen] = useState(false);
-    const allModels = [...MODELS, ...extraModels];
-    const selected = value ? allModels.find((m) => m.id === value) : null;
-    const selectedAvailable = value
-        ? isModelAvailable(value, apiKeys, extraModels)
-        : true;
-    const groups: (
-        | "Anthropic"
-        | "Google"
-        | "OpenAI"
-        | "Kimi"
-        | "Azure OpenAI"
-    )[] = [
+    const selected = options.find((m) => m.id === value);
+    const selectedAvailable = apiKeys ? isModelAvailable(value, apiKeys) : true;
+    const groups: ModelOption["group"][] = [
         "Anthropic",
         "Google",
         "OpenAI",
-        "Kimi",
-        "Azure OpenAI",
+        "Local",
     ];
-    const showAutoOption = placeholder !== undefined;
 
     return (
         <DropdownMenu onOpenChange={setIsOpen}>
             <DropdownMenuTrigger asChild>
                 <button
                     type="button"
-                    className="w-full h-9 rounded-md border border-gray-300 bg-white px-3 text-sm shadow-sm flex items-center justify-between gap-2 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-black/10"
+                    disabled={isSaving}
+                    className={`flex h-9 w-full items-center justify-between gap-2 px-3 text-sm hover:bg-white/78 ${accountGlassInputClassName}`}
                 >
                     <span className="flex items-center gap-2 min-w-0">
                         {!selectedAvailable && (
                             <AlertCircle className="h-3.5 w-3.5 shrink-0 text-red-500" />
                         )}
-                        <span
-                            className={`truncate ${selected ? "text-gray-900" : "text-gray-500 italic"}`}
-                        >
-                            {selected?.label ??
-                                placeholder ??
-                                "Select a model"}
+                        <span className="truncate text-gray-900">
+                            {selected?.label ?? "Select a model"}
                         </span>
                     </span>
-                    <ChevronDown
-                        className={`h-3.5 w-3.5 shrink-0 text-gray-500 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
-                    />
+                    {isSaving ? (
+                        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-gray-500" />
+                    ) : isSaved ? (
+                        <Check className="h-3.5 w-3.5 shrink-0 text-green-600" />
+                    ) : (
+                        <ChevronDown
+                            className={`h-3.5 w-3.5 shrink-0 text-gray-500 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
+                        />
+                    )}
                 </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent
+            <LiquidDropdownContent
                 className="z-50"
                 style={{ width: "var(--radix-dropdown-menu-trigger-width)" }}
                 align="start"
             >
-                {showAutoOption && (
-                    <>
-                        <DropdownMenuItem
-                            className="cursor-pointer"
-                            onSelect={() => onChange(null)}
-                            title="Let the backend pick the cheapest configured provider"
-                        >
-                            <span className="flex-1 italic text-gray-600">
-                                {placeholder}
-                            </span>
-                            {!value && (
-                                <Check className="h-3.5 w-3.5 text-gray-600 ml-1" />
-                            )}
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                    </>
-                )}
                 {groups.map((group, gi) => {
-                    const items = allModels.filter((m) => m.group === group);
+                    const items = options.filter((m) => m.group === group);
                     if (items.length === 0) return null;
                     return (
                         <div key={group}>
@@ -215,20 +199,17 @@ function ModelPreferenceDropdown({
                             </DropdownMenuLabel>
                             {items.map((m) => {
                                 const provider = modelGroupToProvider(m.group);
-                                const available = isModelAvailable(
-                                    m.id,
-                                    apiKeys,
-                                    extraModels,
-                                );
-                                const providerName = providerLabel(provider);
+                                const available = apiKeys
+                                    ? isModelAvailable(m.id, apiKeys)
+                                    : true;
                                 return (
-                                    <DropdownMenuItem
+                                    <LiquidDropdownItem
                                         key={m.id}
                                         className="cursor-pointer"
                                         onSelect={() => onChange(m.id)}
                                         title={
                                             !available
-                                                ? `Configure ${providerName} to use this model`
+                                                ? `Add a ${providerLabel(provider)} API key to use this model`
                                                 : undefined
                                         }
                                     >
@@ -243,68 +224,13 @@ function ModelPreferenceDropdown({
                                         {m.id === value && available && (
                                             <Check className="h-3.5 w-3.5 text-gray-600 ml-1" />
                                         )}
-                                    </DropdownMenuItem>
+                                    </LiquidDropdownItem>
                                 );
                             })}
                         </div>
                     );
                 })}
-            </DropdownMenuContent>
+            </LiquidDropdownContent>
         </DropdownMenu>
-    );
-}
-
-function DiscoveredDeployments({
-    deployments,
-    loading,
-    error,
-}: {
-    deployments: { name: string; model: string | null }[];
-    loading: boolean;
-    error: string | null;
-}) {
-    if (loading) {
-        return (
-            <p className="text-xs text-gray-500 mt-4 max-w-xl">
-                Loading deployments…
-            </p>
-        );
-    }
-    if (error) {
-        return (
-            <p className="text-xs text-red-600 mt-4 max-w-xl">
-                Could not list deployments: {error}
-            </p>
-        );
-    }
-    if (deployments.length === 0) {
-        return (
-            <p className="text-xs text-gray-500 mt-4 max-w-xl">
-                No deployments are visible yet. Ask an administrator to check
-                the Azure OpenAI settings in organisation setup or deploy a
-                model in the configured Azure OpenAI resource.
-            </p>
-        );
-    }
-    return (
-        <div className="mt-4 max-w-xl">
-            <div className="text-xs text-gray-600 font-medium mb-2">
-                Discovered deployments ({deployments.length})
-            </div>
-            <ul className="text-xs text-gray-500 space-y-1">
-                {deployments.map((d) => (
-                    <li key={d.name}>
-                        <span className="font-mono text-gray-700">
-                            {d.name}
-                        </span>
-                        {d.model && (
-                            <span className="ml-2 text-gray-400">
-                                → {d.model}
-                            </span>
-                        )}
-                    </li>
-                ))}
-            </ul>
-        </div>
     );
 }

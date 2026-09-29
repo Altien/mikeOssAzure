@@ -1,8 +1,5 @@
 import { CircleAlert } from "lucide-react";
-import type {
-  CitationAnnotation,
-  DocumentCitationQuote,
-} from "../../shared/types";
+import type { Citation, DocumentCitationQuote } from "../../shared/types";
 
 export type CitationVerificationDisplayState = "verified" | "unverified";
 
@@ -30,7 +27,7 @@ const PRESENTATION: Record<
 };
 
 export function citationVerificationState(
-  citation: CitationAnnotation,
+  citation: Citation,
 ): CitationVerificationDisplayState | null {
   if (citation.kind === "case") return null;
   return citation.verified === false ? "unverified" : "verified";
@@ -42,19 +39,19 @@ export function quoteVerificationState(
   return quote.verification?.verified === false ? "unverified" : "verified";
 }
 
-export function citationVerificationPillClassName(citation: CitationAnnotation): string {
+export function citationVerificationPillClassName(citation: Citation): string {
   const state = citationVerificationState(citation);
   return state ? PRESENTATION[state].pillClassName : "";
 }
 
 export function citationVerificationDescription(
-  citation: CitationAnnotation,
+  citation: Citation,
 ): string | null {
   const state = citationVerificationState(citation);
   return state === "unverified" ? PRESENTATION.unverified.description : null;
 }
 
-export function citationVerificationAriaLabel(citation: CitationAnnotation): string {
+export function citationVerificationAriaLabel(citation: Citation): string {
   const state = citationVerificationState(citation);
   const suffix =
     state === "unverified" ? `. ${PRESENTATION.unverified.label}` : "";

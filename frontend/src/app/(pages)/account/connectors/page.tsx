@@ -3,30 +3,26 @@
 import { useCallback, useEffect, useState } from "react";
 import {
     ChevronDown,
-    Check,
     Eye,
     EyeOff,
     Loader2,
     Plus,
     RefreshCw,
-    Trash2,
 } from "lucide-react";
 import { Input } from "@/app/components/ui/input";
-import { Modal } from "@/app/components/shared/Modal";
-// Upstream divergence (sync-log: 9a1277b): upstream wraps the connector
-// write actions in a Supabase Auth MFA step-up flow (MfaVerificationPopup +
-// needsMfaVerification + isMfaRequiredError retries). Dev did not adopt
-// app-level Supabase MFA — Entra enforces MFA at the IdP (Conditional
-// Access) — so the actions run directly (same decision as
-// account/privacy-data/page.tsx, and the backend routes use requireAuth,
-// not requireMfaIfEnrolled). The MfaVerificationPopup component does not
-// exist on dev; do not reintroduce it.
+import { Modal } from "@/app/components/modals/Modal";
+import { NewMcpModal } from "@/app/components/account/NewMcpModal";
+import {
+    MfaVerificationPopup,
+    needsMfaVerification,
+} from "@/app/components/popups/MfaVerificationPopup";
 import {
     type McpConnectorSummary,
     MikeApiError,
     createMcpConnector,
     deleteMcpConnector,
     getMcpConnector,
+    isMfaRequiredError,
     listMcpConnectors,
     refreshMcpConnectorTools,
     setMcpToolEnabled,
@@ -34,21 +30,12 @@ import {
     updateMcpConnector,
 } from "@/app/lib/mikeApi";
 import {
-    accountGlassDangerButtonClassName,
     accountGlassIconButtonClassName,
     accountGlassInputClassName,
     accountGlassPrimaryButtonClassName,
 } from "../accountStyles";
 import { AccountSection } from "../AccountSection";
 import { AccountToggle } from "../AccountToggle";
-import {
-    disconnectGitHubSkillOAuth,
-    getGitHubSkillImportPolicy,
-    setGitHubSkillImportPolicy,
-    startGitHubSkillOAuth,
-    type GitHubSkillImportPolicy,
-} from "@/altien/skills/api";
-import { openOAuthPopup, type OAuthPopupMessage } from "./oauthPopup";
 
 type PendingMfaAction =
     | { type: "create" }
@@ -84,9 +71,16 @@ const emptyAddDraft: AddDraft = {
     customHeaders: "",
 };
 
-type McpOAuthPopupMessage = OAuthPopupMessage & {
+type McpOAuthPopupMessage = {
+    type?: string;
+    success?: boolean;
     connectorId?: string;
+    detail?: string;
 };
+
+const mcpOAuthMessageOrigin = new URL(
+    process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001",
+).origin;
 
 function parseCustomHeaders(raw: string): Record<string, string> | undefined {
     const text = raw.trim();
@@ -120,6 +114,8 @@ export default function ConnectorsPage() {
     const [loading, setLoading] = useState(true);
     const [busyKey, setBusyKey] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [pendingMfaAction, setPendingMfaAction] =
+        useState<PendingMfaAction | null>(null);
     const [addOpen, setAddOpen] = useState(false);
     const [addDraft, setAddDraft] = useState<AddDraft>(emptyAddDraft);
     const [addStep, setAddStep] = useState<AddStep>("form");
@@ -147,9 +143,6 @@ export default function ConnectorsPage() {
         useState<string | null>(null);
     const [showDetailToken, setShowDetailToken] = useState(false);
     const [showDetailAdvanced, setShowDetailAdvanced] = useState(false);
-    const [githubPolicy, setGithubPolicy] =
-        useState<GitHubSkillImportPolicy | null>(null);
-    const [githubPolicyBusy, setGithubPolicyBusy] = useState(false);
 
     const selectedConnector = selectedConnectorDetails;
 
@@ -157,12 +150,7 @@ export default function ConnectorsPage() {
         setLoading(true);
         setError(null);
         try {
-            const [connectorRows, policy] = await Promise.all([
-                listMcpConnectors(),
-                getGitHubSkillImportPolicy(),
-            ]);
-            setConnectors(connectorRows);
-            setGithubPolicy(policy);
+            setConnectors(await listMcpConnectors());
         } catch (err) {
             setError(
                 err instanceof Error ? err.message : "Failed to load connectors.",
@@ -253,10 +241,16 @@ export default function ConnectorsPage() {
         setError(null);
         setDetailError(null);
         try {
-            // Dev divergence: no app-level MFA step-up (see import note).
-            // Entra enforces MFA at the IdP, so the action runs directly.
+            if (await needsMfaVerification()) {
+                setPendingMfaAction(action);
+                return;
+            }
             await fn();
         } catch (err) {
+            if (isMfaRequiredError(err)) {
+                setPendingMfaAction(action);
+                return;
+            }
             const message =
                 err instanceof Error ? err.message : "Action failed.";
             if (action.type === "create") setAddError(message);
@@ -280,63 +274,76 @@ export default function ConnectorsPage() {
     const connectConnectorOAuth = async (
         connectorId: string,
     ): Promise<McpConnectorSummary | null> => {
-        const popup = openOAuthPopup(
+        const popup = window.open(
+            "about:blank",
             "mike_mcp_oauth",
             "popup,width=560,height=720,menubar=no,toolbar=no,location=no,status=no",
         );
         const { authorizationUrl, alreadyAuthorized } =
             await startMcpConnectorOAuth(connectorId);
         if (alreadyAuthorized) {
-            popup.close();
+            popup?.close();
             const refreshed = await refreshMcpConnectorTools(connectorId);
             replaceConnector(refreshed);
             return refreshed;
         }
         if (!authorizationUrl) {
-            popup.close();
+            popup?.close();
             throw new Error("OAuth authorization URL was not returned.");
         }
+        if (!popup) {
+            window.location.assign(authorizationUrl);
+            return null;
+        }
+        popup.location.href = authorizationUrl;
 
-        const outcome = await popup.wait<McpOAuthPopupMessage>({
-            authorizationUrl,
-            messageType: "mcp_oauth_result",
-            acknowledgeType: "mcp_oauth_result_ack",
-            accept: (data) =>
-                !data.connectorId || data.connectorId === connectorId,
-            timedOutMessage: "OAuth authorization timed out.",
-            closedMessage: "OAuth authorization window was closed.",
-            failedMessage: "OAuth authorization failed.",
+        await new Promise<void>((resolve, reject) => {
+            const timeout = window.setTimeout(() => {
+                cleanup();
+                reject(new Error("OAuth authorization timed out."));
+            }, 5 * 60 * 1000);
+            const poll = window.setInterval(() => {
+                if (popup.closed) {
+                    cleanup();
+                    reject(new Error("OAuth authorization window was closed."));
+                }
+            }, 700);
+            const cleanup = () => {
+                window.clearTimeout(timeout);
+                window.clearInterval(poll);
+                window.removeEventListener("message", onMessage);
+            };
+            const onMessage = (event: MessageEvent<McpOAuthPopupMessage>) => {
+                if (event.origin !== mcpOAuthMessageOrigin) return;
+                if (event.data?.type !== "mcp_oauth_result") return;
+                if (
+                    event.data.connectorId &&
+                    event.data.connectorId !== connectorId
+                ) {
+                    return;
+                }
+                const sourceWindow = event.source as Window | null;
+                sourceWindow?.postMessage(
+                    { type: "mcp_oauth_result_ack" },
+                    event.origin,
+                );
+                cleanup();
+                if (event.data.success) {
+                    resolve();
+                    return;
+                }
+                reject(
+                    new Error(
+                        event.data.detail || "OAuth authorization failed.",
+                    ),
+                );
+            };
+            window.addEventListener("message", onMessage);
         });
-        if (outcome === "redirected") return null;
 
         const refreshed = await refreshMcpConnectorTools(connectorId);
         replaceConnector(refreshed);
         return refreshed;
-    };
-
-    const connectGitHubOAuth = async () => {
-        const popup = openOAuthPopup(
-            "mike_github_skill_oauth",
-            "popup,width=680,height=760,menubar=no,toolbar=no,location=yes,status=no",
-        );
-        try {
-            const { authorizationUrl } = await startGitHubSkillOAuth();
-            if (!authorizationUrl) {
-                throw new Error("GitHub OAuth authorization URL was not returned.");
-            }
-            const outcome = await popup.wait({
-                authorizationUrl,
-                messageType: "github_skill_oauth_result",
-                timedOutMessage: "GitHub authorization timed out.",
-                closedMessage: "GitHub authorization window was closed.",
-                failedMessage: "GitHub authorization failed.",
-            });
-            if (outcome === "redirected") return;
-            setGithubPolicy(await getGitHubSkillImportPolicy());
-        } catch (err) {
-            popup.close();
-            throw err;
-        }
     };
 
     const handleCreate = async () => {
@@ -556,6 +563,29 @@ export default function ConnectorsPage() {
         });
     };
 
+    const handleMfaVerified = async () => {
+        const action = pendingMfaAction;
+        setPendingMfaAction(null);
+        if (!action) return;
+        if (action.type === "create") await handleCreate();
+        if (action.type === "save") await handleSaveSelectedConnector();
+        if (action.type === "clear-token") {
+            await handleClearBearerToken(action.connectorId);
+        }
+        if (action.type === "refresh") await handleRefresh(action.connectorId);
+        if (action.type === "delete") await handleDelete(action.connectorId);
+        if (action.type === "connector-enabled") {
+            await handleConnectorEnabled(action.connectorId, action.enabled);
+        }
+        if (action.type === "tool-enabled") {
+            await handleToolEnabled(
+                action.connectorId,
+                action.toolId,
+                action.enabled,
+            );
+        }
+    };
+
     return (
         <div>
             <div className="mb-4">
@@ -581,127 +611,6 @@ export default function ConnectorsPage() {
             )}
 
             <div className="space-y-3">
-                {githubPolicy && (
-                    <AccountSection className="p-4">
-                        <div className="flex items-start justify-between gap-4">
-                            <div>
-                                <h3 className="text-sm font-medium text-gray-900">
-                                    GitHub skill acquisition
-                                </h3>
-                                <p className="mt-1 text-sm text-gray-500">
-                                    Allow TenantAdmins to import bounded,
-                                    commit-pinned skill snapshots from github.com.
-                                </p>
-                                {!githubPolicy.deploymentAllowed && (
-                                    <p className="mt-2 text-xs text-amber-700">
-                                        Denied by the deployment-wide policy.
-                                    </p>
-                                )}
-                                <p className="mt-2 text-xs text-gray-500">
-                                    Private repository connection:{" "}
-                                    {githubPolicy.privateRepositoryConnectionConfigured
-                                        ? `connected${githubPolicy.githubLogin ? ` as ${githubPolicy.githubLogin}` : ""}`
-                                        : "not configured"}
-                                </p>
-                                {githubPolicy.canManage &&
-                                    githubPolicy.oauthAvailable && (
-                                    <div className="mt-3 flex gap-2">
-                                        {!githubPolicy.privateRepositoryConnectionConfigured ? (
-                                            <button
-                                                type="button"
-                                                disabled={githubPolicyBusy}
-                                                onClick={() => {
-                                                    setGithubPolicyBusy(true);
-                                                    setError(null);
-                                                    void connectGitHubOAuth()
-                                                        .catch((err) =>
-                                                            setError(
-                                                                err instanceof Error
-                                                                    ? err.message
-                                                                    : "GitHub connection failed.",
-                                                            ),
-                                                        )
-                                                        .finally(() =>
-                                                            setGithubPolicyBusy(
-                                                                false,
-                                                            ),
-                                                        );
-                                                }}
-                                                className={`inline-flex h-9 items-center gap-1.5 text-sm ${accountGlassPrimaryButtonClassName}`}
-                                            >
-                                                Connect GitHub
-                                            </button>
-                                        ) : (
-                                            <button
-                                                type="button"
-                                                disabled={githubPolicyBusy}
-                                                onClick={() => {
-                                                    setGithubPolicyBusy(true);
-                                                    setError(null);
-                                                    void disconnectGitHubSkillOAuth()
-                                                        .then(() =>
-                                                            getGitHubSkillImportPolicy(),
-                                                        )
-                                                        .then(setGithubPolicy)
-                                                        .catch((err) =>
-                                                            setError(
-                                                                err instanceof Error
-                                                                    ? err.message
-                                                                    : "GitHub disconnect failed.",
-                                                            ),
-                                                        )
-                                                        .finally(() =>
-                                                            setGithubPolicyBusy(
-                                                                false,
-                                                            ),
-                                                        );
-                                                }}
-                                                className={accountGlassDangerButtonClassName}
-                                            >
-                                                Disconnect GitHub
-                                            </button>
-                                        )}
-                                    </div>
-                                )}
-                                {!githubPolicy.oauthAvailable && (
-                                    <p className="mt-2 text-xs text-amber-700">
-                                        GitHub OAuth is not configured for this
-                                        deployment.
-                                    </p>
-                                )}
-                            </div>
-                            <AccountToggle
-                                checked={githubPolicy.tenantEnabled}
-                                disabled={
-                                    !githubPolicy.deploymentAllowed ||
-                                    !githubPolicy.canManage
-                                }
-                                loading={githubPolicyBusy}
-                                label={
-                                    githubPolicy.tenantEnabled
-                                        ? "Allowed"
-                                        : "Denied"
-                                }
-                                onChange={(enabled) => {
-                                    setGithubPolicyBusy(true);
-                                    setError(null);
-                                    void setGitHubSkillImportPolicy(enabled)
-                                        .then(setGithubPolicy)
-                                        .catch((err) =>
-                                            setError(
-                                                err instanceof Error
-                                                    ? err.message
-                                                    : "Failed to update GitHub policy.",
-                                            ),
-                                        )
-                                        .finally(() =>
-                                            setGithubPolicyBusy(false),
-                                        );
-                                }}
-                            />
-                        </div>
-                    </AccountSection>
-                )}
                 {loading ? (
                     <ConnectorsSkeleton />
                 ) : connectors.length === 0 ? (
@@ -723,7 +632,7 @@ export default function ConnectorsPage() {
                 )}
             </div>
 
-            <AddMcpConnectorModal
+            <NewMcpModal
                 open={addOpen}
                 draft={addDraft}
                 step={addStep}
@@ -772,6 +681,12 @@ export default function ConnectorsPage() {
                 onDelete={handleDelete}
                 onConnectorEnabled={handleConnectorEnabled}
                 onToolEnabled={handleToolEnabled}
+            />
+
+            <MfaVerificationPopup
+                open={!!pendingMfaAction}
+                onCancel={() => setPendingMfaAction(null)}
+                onVerified={() => void handleMfaVerified()}
             />
         </div>
     );
@@ -873,129 +788,6 @@ function ConnectorRow({
                 </button>
             </div>
         </AccountSection>
-    );
-}
-
-function AddMcpConnectorModal({
-    open,
-    draft,
-    step,
-    result,
-    error,
-    authMessage,
-    showToken,
-    showAdvanced,
-    onDraftChange,
-    onShowTokenChange,
-    onShowAdvancedChange,
-    onClose,
-    onSubmit,
-    onOpenConnector,
-}: {
-    open: boolean;
-    draft: AddDraft;
-    step: AddStep;
-    result: McpConnectorSummary | null;
-    error: string | null;
-    authMessage: string | null;
-    showToken: boolean;
-    showAdvanced: boolean;
-    onDraftChange: (draft: AddDraft) => void;
-    onShowTokenChange: (show: boolean) => void;
-    onShowAdvancedChange: (show: boolean) => void;
-    onClose: () => void;
-    onSubmit: () => Promise<void>;
-    onOpenConnector: (connectorId: string) => void;
-}) {
-    const canSubmit =
-        draft.name.trim().length > 0 &&
-        draft.serverUrl.trim().length > 0 &&
-        step !== "working" &&
-        step !== "auth";
-
-    return (
-        <Modal
-            open={open}
-            onClose={onClose}
-            breadcrumbs={[
-                "Connectors",
-                step === "success"
-                    ? "Connector added"
-                    : step === "auth"
-                      ? "Authenticate connector"
-                      : "Add MCP connector",
-            ]}
-            size="lg"
-            primaryAction={
-                step === "success" && result
-                    ? {
-                          label: "View connector",
-                          onClick: () => onOpenConnector(result.id),
-                      }
-                    : {
-                          label:
-                              step === "working"
-                                  ? "Connecting..."
-                                  : step === "auth"
-                                    ? "Authorizing..."
-                                  : "Connect",
-                          icon:
-                              step === "working" || step === "auth" ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : undefined,
-                          onClick: () => void onSubmit(),
-                          disabled: !canSubmit,
-                      }
-            }
-            cancelAction={
-                step === "working" || step === "auth"
-                    ? false
-                    : { label: step === "success" ? "Done" : "Cancel", onClick: onClose }
-            }
-            footerStatus={
-                error ? (
-                    <div className="rounded-xl border border-white/70 bg-white/75 px-3 py-2 text-sm text-red-600 shadow-[0_12px_32px_rgba(15,23,42,0.10),inset_0_1px_0_rgba(255,255,255,0.75)] backdrop-blur-xl">
-                        {error}
-                    </div>
-                ) : null
-            }
-        >
-            {step === "success" && result ? (
-                <SuccessToolsList connector={result} />
-            ) : step === "auth" ? (
-                <ConnectorAuthScreen
-                    message={
-                        authMessage ??
-                        "Complete authorization in the popup to finish connecting this MCP server."
-                    }
-                />
-            ) : (
-                <div className="space-y-4 pb-4">
-                    <p className="text-sm text-gray-500">
-                        The assistant will have access to this MCP server and
-                        its enabled tools.
-                    </p>
-                    <ConnectorForm
-                        draft={draft}
-                        showToken={showToken}
-                        showAdvanced={showAdvanced}
-                        showTokenNote
-                        tokenPlaceholder="Bearer token"
-                        disabled={step === "working"}
-                        onDraftChange={(next) =>
-                            onDraftChange({
-                                name: next.name,
-                                serverUrl: next.serverUrl,
-                                bearerToken: next.bearerToken,
-                                customHeaders: next.customHeaders,
-                            })
-                        }
-                        onShowTokenChange={onShowTokenChange}
-                        onShowAdvancedChange={onShowAdvancedChange}
-                    />
-                </div>
-            )}
-        </Modal>
     );
 }
 
@@ -1103,7 +895,7 @@ function McpConnectorDetailsModal({
             }
         >
             {connector && (
-                <div className="flex min-h-0 flex-1 flex-col gap-5 pb-4">
+                <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto pb-4">
                     <ConnectorForm
                         draft={draft}
                         showToken={showToken}
@@ -1368,41 +1160,6 @@ function ConnectorForm({
                         </div>
                     </label>
                 )}
-            </div>
-        </div>
-    );
-}
-
-function SuccessToolsList({ connector }: { connector: McpConnectorSummary }) {
-    return (
-        <div className="flex h-full min-h-0 flex-1 flex-col gap-4 pb-4">
-            <div className="flex items-start gap-3 rounded-xl border border-green-100/80 bg-green-50/80 px-3 py-3 text-green-800 shadow-[0_3px_9px_rgba(15,23,42,0.03),inset_0_1px_0_rgba(255,255,255,0.9),inset_0_-4px_9px_rgba(255,255,255,0.05)] backdrop-blur-xl">
-                <Check className="mt-0.5 h-4 w-4 shrink-0 text-green-600" />
-                <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">
-                        {connector.name} is connected.{" "}
-                        <span className="font-normal text-green-700">
-                        {connector.tools.length} tools discovered.
-                        </span>
-                    </p>
-                </div>
-            </div>
-            <ScrollableToolList connector={connector} fill />
-        </div>
-    );
-}
-
-function ConnectorAuthScreen({ message }: { message: string }) {
-    return (
-        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 pb-4 text-center">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/70 bg-white/75 text-gray-700 shadow-[0_3px_9px_rgba(15,23,42,0.03),inset_0_1px_0_rgba(255,255,255,0.9),inset_0_-4px_9px_rgba(255,255,255,0.05)] backdrop-blur-xl">
-                <Loader2 className="h-4 w-4 animate-spin" />
-            </div>
-            <div className="max-w-sm space-y-1">
-                <h3 className="text-sm font-medium text-gray-900">
-                    Authentication required
-                </h3>
-                <p className="text-sm text-gray-500">{message}</p>
             </div>
         </div>
     );

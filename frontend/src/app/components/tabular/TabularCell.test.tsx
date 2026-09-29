@@ -27,11 +27,12 @@ describe("TabularCell", () => {
 
         fireEvent.click(screen.getByTitle('Page 4: "Exact language"'));
 
-        // Dev's handler has no citationRef/sheet/cell params (spreadsheet
-        // viewer deferred) — see sync-log 6ae1f98d.
         expect(onCitationClick).toHaveBeenCalledWith(
             4,
             "Exact language",
+            1,
+            undefined,
+            undefined,
             "doc-2",
         );
     });

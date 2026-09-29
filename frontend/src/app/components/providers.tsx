@@ -1,17 +1,19 @@
 "use client";
 
-import { ConfigProvider } from "@/app/contexts/ConfigContext";
+import { Suspense } from "react";
 import { AuthProvider } from "@/app/contexts/AuthContext";
 import { UserProfileProvider } from "@/app/contexts/UserProfileContext";
+import { MfaLoginGate } from "@/app/components/shared/MfaLoginGate";
+import { FullScreenLoader } from "@/app/components/shared/FullScreenLoader";
 
 export function Providers({ children }: { children: React.ReactNode }) {
     return (
-        <ConfigProvider>
-            <AuthProvider>
-                <UserProfileProvider>
-                    {children}
-                </UserProfileProvider>
-            </AuthProvider>
-        </ConfigProvider>
+        <AuthProvider>
+            <UserProfileProvider>
+                <Suspense fallback={<FullScreenLoader />}>
+                    <MfaLoginGate>{children}</MfaLoginGate>
+                </Suspense>
+            </UserProfileProvider>
+        </AuthProvider>
     );
 }

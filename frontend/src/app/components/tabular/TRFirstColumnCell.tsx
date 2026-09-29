@@ -1,19 +1,18 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CornerDownRight, Folder } from "lucide-react";
+import { CornerDownRight } from "lucide-react";
 import type { Document, TabularReviewRow } from "../shared/types";
+import { FileTypeIcon } from "../shared/FileTypeIcon";
+import { ClosedFolderSvgIcon } from "../shared/FolderSvgIcon";
 import { TABLE_CHECKBOX_CLASS } from "../shared/TablePrimitive";
 import { TRExpandedCellSurface } from "./TRExpandedCellSurface";
-
-// Dev adaptation of upstream 6ae1f98d: lucide icons instead of upstream's
-// FileTypeIcon / FolderSvgIcon (deferred frontend refactor, KNOWLEDGE §5), and
-// no scroll-close signal (dev's TRTable has none).
 
 interface Props {
     row: TabularReviewRow;
     sourceDocuments: Document[];
     selected: boolean;
+    closeSignal: number;
     className: string;
     onToggleSelection: () => void;
 }
@@ -22,11 +21,17 @@ export function TRFirstColumnCell({
     row,
     sourceDocuments,
     selected,
+    closeSignal,
     className,
     onToggleSelection,
 }: Props) {
     const [expanded, setExpanded] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const timeout = window.setTimeout(() => setExpanded(false), 0);
+        return () => window.clearTimeout(timeout);
+    }, [closeSignal]);
 
     useEffect(() => {
         if (!expanded) return;
@@ -58,22 +63,28 @@ export function TRFirstColumnCell({
                     className="flex min-w-0 flex-1 items-center text-left"
                     aria-expanded={expanded}
                 >
-                    <Folder className="mr-2 h-3.5 w-3.5 shrink-0 text-gray-500" />
+                    <ClosedFolderSvgIcon className="mr-2 h-3.5 w-3.5 shrink-0" />
                     <span className="line-clamp-1" title={row.label}>
                         {row.label}
                     </span>
                 </button>
             ) : (
-                <span className="line-clamp-1" title={row.label}>
-                    {row.label}
-                </span>
+                <>
+                    <FileTypeIcon
+                        fileType={row.label}
+                        className="mr-2 h-3.5 w-3.5"
+                    />
+                    <span className="line-clamp-1" title={row.label}>
+                        {row.label}
+                    </span>
+                </>
             )}
 
             {row.row_type === "folder" && expanded && (
                 <TRExpandedCellSurface>
                     <div className="p-2 text-xs text-gray-800">
                         <div className="mb-1.5 flex items-center font-medium">
-                            <Folder className="mr-2 h-3.5 w-3.5 shrink-0 text-gray-500" />
+                            <ClosedFolderSvgIcon className="mr-2 h-3.5 w-3.5 shrink-0" />
                             <span className="truncate" title={row.label}>
                                 {row.label}
                             </span>
@@ -87,6 +98,13 @@ export function TRFirstColumnCell({
                                     <CornerDownRight
                                         className="mr-2 h-3.5 w-3.5 shrink-0 text-gray-400"
                                         aria-hidden="true"
+                                    />
+                                    <FileTypeIcon
+                                        fileType={
+                                            document.file_type ??
+                                            document.filename
+                                        }
+                                        className="mr-2 h-3.5 w-3.5"
                                     />
                                     <span
                                         className="min-w-0 truncate"

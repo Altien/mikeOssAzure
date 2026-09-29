@@ -1,11 +1,13 @@
+"use client";
+
+import { use } from "react";
 import { TRView } from "@/app/components/tabular/TabularReviewView";
 
-// See app/(pages)/projects/[id]/page.tsx for why we don't pass ids —
-// usePathname() inside TRView reads the real URL.
-export function generateStaticParams() {
-    return [{ id: "_", reviewId: "_" }];
+interface Props {
+    params: Promise<{ id: string; reviewId: string }>;
 }
 
-export default function ProjectTabularReviewPage() {
-    return <TRView />;
+export default function ProjectTabularReviewPage({ params }: Props) {
+    const { id, reviewId } = use(params);
+    return <TRView reviewId={reviewId} projectId={id} />;
 }

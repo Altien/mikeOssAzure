@@ -3,53 +3,64 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useDebouncedValue } from "@/app/hooks/useDebouncedValue";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronDown, Loader2, Table2 } from "lucide-react";
+import { ChevronDown, Loader2, Plus } from "lucide-react";
 import {
     RowActionMenuItems,
     RowActions,
 } from "@/app/components/shared/RowActions";
 import {
     deleteTabularReview,
-    listTabularReviews,
     createTabularReview,
     listProjects,
     updateTabularReview,
 } from "@/app/lib/mikeApi";
 import type { TabularReview, Project } from "@/app/components/shared/types";
 import { TableToolbar } from "@/app/components/shared/TableToolbar";
-import { AddNewTRModal } from "@/app/components/tabular/AddNewTRModal";
-import { OwnerOnlyModal } from "@/app/components/shared/OwnerOnlyModal";
+import { NewTRModal } from "@/app/components/tabular/NewTRModal";
+import { TabularReviewDetailsModal } from "@/app/components/tabular/TabularReviewDetailsModal";
+import { OwnerOnlyPopup } from "@/app/components/popups/OwnerOnlyPopup";
+import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import {
-    GLASS_DROPDOWN,
-    HeaderFilterDropdown,
-} from "@/app/components/shared/HeaderFilterDropdown";
-import {
     TABLE_CHECKBOX_CLASS,
-    TABLE_STICKY_CELL_BG,
     SkeletonDot,
     SkeletonLine,
     TableBody,
     TableCell,
     TableEmptyState,
+    TableFilters,
+    type TableFilterOption,
     TableHeaderCell,
     TableHeaderRow,
     TablePrimaryCell,
     TableRow,
     TableScrollArea,
+    type TableSortDirection,
     TableStickyCell,
 } from "@/app/components/shared/TablePrimitive";
+import { PillButton } from "@/app/components/ui/pill-button";
+import { TabPillButton } from "@/app/components/ui/tab-pill-button";
+import { TabularReviewSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
+import { LiquidDropdownSurface } from "@/app/components/ui/liquid-dropdown";
+import {
+    type TabularReviewScope,
+    usePaginatedTabularReviews,
+} from "@/app/hooks/usePaginatedTabularReviews";
+import { deleteTabularReviewsWithConcurrency } from "@/app/lib/deleteTabularReviewsWithConcurrency";
 
-type ReviewScope = "all" | "in-project" | "standalone";
+type ReviewScope = TabularReviewScope;
+type ReviewSortKey = "name" | "columns" | "documents" | "created";
 
 const REVIEW_SCOPES: { id: ReviewScope; label: string }[] = [
     { id: "all", label: "All" },
     { id: "in-project", label: "In Project" },
     { id: "standalone", label: "Standalone" },
 ];
-const PAGE_SIZE = 20;
-
+const SORT_OPTIONS: TableFilterOption<TableSortDirection>[] = [
+    { value: "asc", label: "Ascending" },
+    { value: "desc", label: "Descending" },
+];
 function formatDate(iso: string) {
     return new Date(iso).toLocaleDateString(undefined, {
         day: "numeric",
@@ -59,65 +70,77 @@ function formatDate(iso: string) {
 }
 
 export default function TabularReviewsPage() {
-    const [reviews, setReviews] = useState<TabularReview[]>([]);
     const [projects, setProjects] = useState<Project[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [loadingMore, setLoadingMore] = useState(false);
     const [creating, setCreating] = useState(false);
-    const [page, setPage] = useState(0);
-    const [hasMore, setHasMore] = useState(true);
     const [newTROpen, setNewTROpen] = useState(false);
+    const [detailsReview, setDetailsReview] = useState<TabularReview | null>(
+        null,
+    );
     const [activeScope, setActiveScope] = useState<ReviewScope>("all");
-    const [renamingId, setRenamingId] = useState<string | null>(null);
-    const [renameValue, setRenameValue] = useState("");
     const [projectFilter, setProjectFilter] = useState<string | null>(null);
+    const [sort, setSort] = useState<{
+        key: ReviewSortKey;
+        direction: TableSortDirection;
+    } | null>(null);
     const [search, setSearch] = useState("");
     const debouncedSearch = useDebouncedValue(search, 250);
-    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const {
+        reviews,
+        setReviews,
+        loading,
+        loadingMore,
+        hasMore,
+        error: loadError,
+        loadMoreError,
+        loadMore,
+        retry,
+        selectedReviewIds: selectedIds,
+        setSelectedReviewIds: setSelectedIds,
+        selectAllMatching,
+        selectingAll,
+        getReviewOwnerId,
+    } = usePaginatedTabularReviews({
+        projectId: projectFilter ?? undefined,
+        search: debouncedSearch,
+        selectionKey: search,
+        scope: activeScope,
+        sort,
+    });
     const [actionsOpen, setActionsOpen] = useState(false);
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
+    const [bulkDeleteNotice, setBulkDeleteNotice] = useState<string | null>(
+        null,
+    );
+    const [deletingReviewIds, setDeletingReviewIds] = useState<Set<string>>(
+        () => new Set(),
+    );
     const actionsRef = useRef<HTMLDivElement>(null);
     const router = useRouter();
+    const searchParams = useSearchParams();
     const { user } = useAuth();
+    const previewEmptyStates = searchParams.get("emptyStates") === "1";
+    const effectiveLoading = loading && !previewEmptyStates;
+    const visibleReviews = useMemo(
+        () => (previewEmptyStates ? [] : reviews),
+        [previewEmptyStates, reviews],
+    );
 
     useEffect(() => {
         let cancelled = false;
-        const loadPage = async () => {
-            if (page === 0) setLoading(true);
-            else setLoadingMore(true);
-            try {
-                const [r, p] = await Promise.all([
-                    listTabularReviews(undefined, {
-                        limit: PAGE_SIZE + 1,
-                        offset: page * PAGE_SIZE,
-                        search: debouncedSearch || undefined,
-                    }).catch(() => []),
-                    page === 0 ? listProjects().catch(() => []) : null,
-                ]);
-                if (cancelled) return;
-                const nextHasMore = r.length > PAGE_SIZE;
-                const pageRows = nextHasMore ? r.slice(0, PAGE_SIZE) : r;
-                setReviews((prev) =>
-                    page === 0 ? pageRows : [...prev, ...pageRows],
-                );
-                setHasMore(nextHasMore);
-                if (p) setProjects(p);
-            } finally {
-                if (!cancelled) {
-                    setLoading(false);
-                    setLoadingMore(false);
-                }
-            }
-        };
-
-        void loadPage();
+        void listProjects()
+            .then((loadedProjects) => {
+                if (!cancelled) setProjects(loadedProjects);
+            })
+            .catch(() => {
+                if (!cancelled) setProjects([]);
+            });
         return () => {
             cancelled = true;
         };
-    }, [debouncedSearch, page]);
+    }, []);
 
     function handleLoadMore() {
-        setPage((prev) => prev + 1);
+        void loadMore();
     }
 
     function handleScroll(event: React.UIEvent<HTMLDivElement>) {
@@ -125,18 +148,8 @@ export default function TabularReviewsPage() {
         const el = event.currentTarget;
         const distanceToBottom =
             el.scrollHeight - el.scrollTop - el.clientHeight;
-        if (distanceToBottom < 200) handleLoadMore();
+        if (distanceToBottom < 200) void loadMore();
     }
-
-    useEffect(() => {
-        setPage(0);
-        setHasMore(true);
-        setReviews([]);
-    }, [debouncedSearch]);
-
-    useEffect(() => {
-        setSelectedIds([]);
-    }, [activeScope, projectFilter]);
 
     useEffect(() => {
         function handleClick(e: MouseEvent) {
@@ -151,15 +164,11 @@ export default function TabularReviewsPage() {
         return () => document.removeEventListener("mousedown", handleClick);
     }, [actionsOpen]);
 
-    // Title search is server-side (debouncedSearch -> listTabularReviews).
-    // Dev has no column sort, so upstream's sort/visibleReviews plumbing is not carried.
-    const filtered = reviews
-        .filter((r) => {
-            if (activeScope === "in-project") return !!r.project_id;
-            if (activeScope === "standalone") return !r.project_id;
-            return true;
-        })
-        .filter((r) => !projectFilter || r.project_id === projectFilter);
+    const projectNameById = useMemo(
+        () => new Map(projects.map((project) => [project.id, project.name])),
+        [projects],
+    );
+    const filtered = visibleReviews;
 
     const allSelected =
         filtered.length > 0 &&
@@ -169,13 +178,31 @@ export default function TabularReviewsPage() {
 
     function toggleAll() {
         if (allSelected) setSelectedIds([]);
-        else setSelectedIds(filtered.map((r) => r.id));
+        else void selectAllMatching();
     }
 
     function toggleOne(id: string) {
         setSelectedIds((prev) =>
             prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
         );
+    }
+
+    function clearSelection() {
+        setSelectedIds([]);
+        setActionsOpen(false);
+    }
+
+    function handleProjectFilterChange(value: string | null) {
+        setProjectFilter(value);
+        clearSelection();
+    }
+
+    function handleSortChange(
+        key: ReviewSortKey,
+        direction: TableSortDirection | null,
+    ) {
+        setSort(direction ? { key, direction } : null);
+        clearSelection();
     }
 
     const handleNewReview = async (
@@ -206,47 +233,99 @@ export default function TabularReviewsPage() {
         }
     };
 
-    async function handleRenameSubmit(reviewId: string) {
-        const trimmed = renameValue.trim();
-        if (!trimmed) {
-            setRenamingId(null);
+    function requestReviewDetails(review: TabularReview) {
+        if (user?.id && review.user_id !== user.id) {
+            setOwnerOnlyAction("edit tabular review details");
             return;
         }
-        const review = reviews.find((r) => r.id === reviewId);
-        if (review && user?.id && review.user_id !== user.id) {
-            setRenamingId(null);
-            setOwnerOnlyAction("rename this tabular review");
+        setDetailsReview(review);
+    }
+
+    async function handleDetailsSave(values: {
+        title: string;
+        projectId?: string | null;
+    }) {
+        if (!detailsReview) return;
+        if (user?.id && detailsReview.user_id !== user.id) {
+            setOwnerOnlyAction("edit tabular review details");
             return;
         }
+        const updated = await updateTabularReview(detailsReview.id, {
+            title: values.title,
+            project_id: values.projectId ?? null,
+        });
         setReviews((prev) =>
-            prev.map((r) => (r.id === reviewId ? { ...r, title: trimmed } : r)),
+            prev.map((review) =>
+                review.id === updated.id ? { ...review, ...updated } : review,
+            ),
         );
-        setRenamingId(null);
-        await updateTabularReview(reviewId, { title: trimmed });
+        setDetailsReview((current) =>
+            current?.id === updated.id ? { ...current, ...updated } : current,
+        );
     }
 
     async function handleDeleteSelected() {
         const ids = [...selectedIds];
         setActionsOpen(false);
+        setBulkDeleteNotice(null);
         const owned = ids.filter((id) => {
-            const r = reviews.find((rr) => rr.id === id);
-            return !r || !user?.id || r.user_id === user.id;
+            const ownerId = getReviewOwnerId(id);
+            return !!ownerId && (!user?.id || ownerId === user.id);
         });
         const blocked = ids.length - owned.length;
         setSelectedIds([]);
-        await Promise.all(
-            owned.map((id) => deleteTabularReview(id).catch(() => {})),
-        );
-        setReviews((prev) => prev.filter((r) => !owned.includes(r.id)));
-        if (blocked > 0) {
-            setOwnerOnlyAction(
-                `delete ${blocked} of the selected reviews — only the review creator can delete a review`,
+        setDeletingReviewIds((current) => {
+            const next = new Set(current);
+            for (const id of owned) next.add(id);
+            return next;
+        });
+        const { deletedIds, failedIds } =
+            await deleteTabularReviewsWithConcurrency(
+                owned,
+                deleteTabularReview,
             );
+        setDeletingReviewIds((current) => {
+            const next = new Set(current);
+            for (const id of owned) next.delete(id);
+            return next;
+        });
+        setSelectedIds(failedIds);
+        setReviews((prev) =>
+            prev.filter((review) => !deletedIds.includes(review.id)),
+        );
+        const notices = [
+            blocked > 0
+                ? `${blocked} selected review${blocked === 1 ? " was" : "s were"} skipped because only the review creator can delete them.`
+                : null,
+            failedIds.length > 0
+                ? `${failedIds.length} review${failedIds.length === 1 ? " was" : "s were"} not deleted because the request failed. ${failedIds.length === 1 ? "It remains" : "They remain"} selected so you can try again.`
+                : null,
+        ].filter((notice): notice is string => notice !== null);
+        if (notices.length > 0) setBulkDeleteNotice(notices.join(" "));
+    }
+
+    async function handleDeleteReviewRow(review: TabularReview) {
+        if (user?.id && review.user_id !== user.id) {
+            setOwnerOnlyAction("delete this tabular review");
+            return;
+        }
+        setDeletingReviewIds((current) => new Set(current).add(review.id));
+        try {
+            await deleteTabularReview(review.id);
+            setReviews((prev) =>
+                prev.filter((current) => current.id !== review.id),
+            );
+        } finally {
+            setDeletingReviewIds((current) => {
+                const next = new Set(current);
+                next.delete(review.id);
+                return next;
+            });
         }
     }
 
     const projectFilterButton = (
-        <HeaderFilterDropdown
+        <TableFilters
             label="Filter by project"
             value={projectFilter}
             allLabel="All Projects"
@@ -254,29 +333,74 @@ export default function TabularReviewsPage() {
                 value: project.id,
                 label: project.name,
             }))}
-            onChange={setProjectFilter}
+            onChange={handleProjectFilterChange}
+        />
+    );
+    const nameSortDirection = sort?.key === "name" ? sort.direction : null;
+    const columnsSortDirection =
+        sort?.key === "columns" ? sort.direction : null;
+    const documentsSortDirection =
+        sort?.key === "documents" ? sort.direction : null;
+    const createdSortDirection =
+        sort?.key === "created" ? sort.direction : null;
+    const nameFilterButton = (
+        <TableFilters
+            label="Sort by review name"
+            value={nameSortDirection}
+            allLabel="Default Order"
+            widthClassName="w-40"
+            align="right"
+            options={SORT_OPTIONS}
+            onChange={(direction) => handleSortChange("name", direction)}
+        />
+    );
+    const columnsFilterButton = (
+        <TableFilters
+            label="Sort by columns"
+            value={columnsSortDirection}
+            allLabel="Default Order"
+            widthClassName="w-40"
+            options={SORT_OPTIONS}
+            onChange={(direction) => handleSortChange("columns", direction)}
+        />
+    );
+    const documentsFilterButton = (
+        <TableFilters
+            label="Sort by documents"
+            value={documentsSortDirection}
+            allLabel="Default Order"
+            widthClassName="w-40"
+            options={SORT_OPTIONS}
+            onChange={(direction) => handleSortChange("documents", direction)}
+        />
+    );
+    const createdFilterButton = (
+        <TableFilters
+            label="Sort by created date"
+            value={createdSortDirection}
+            allLabel="Default Order"
+            widthClassName="w-40"
+            options={SORT_OPTIONS}
+            onChange={(direction) => handleSortChange("created", direction)}
         />
     );
 
     const toolbarActions =
         selectedIds.length > 0 ? (
             <div ref={actionsRef} className="relative">
-                <button
-                    onClick={() => setActionsOpen((v) => !v)}
-                    className="flex items-center gap-1 text-xs font-medium text-gray-700 hover:text-gray-900 transition-colors"
-                >
+                <TabPillButton onClick={() => setActionsOpen((v) => !v)}>
                     Actions
                     <ChevronDown className="h-3.5 w-3.5" />
-                </button>
+                </TabPillButton>
                 {actionsOpen && (
-                    <div className={`absolute top-full right-0 mt-1 z-[100] w-36 overflow-hidden ${GLASS_DROPDOWN}`}>
+                    <LiquidDropdownSurface className="absolute top-full right-0 mt-1 z-[100] w-36 overflow-hidden">
                         <button
                             onClick={handleDeleteSelected}
                             className="w-full px-3 py-1.5 text-left text-xs text-red-600 transition-colors hover:bg-red-500/10"
                         >
                             Delete
                         </button>
-                    </div>
+                    </LiquidDropdownSurface>
                 )}
             </div>
         ) : undefined;
@@ -309,56 +433,77 @@ export default function TabularReviewsPage() {
             <TableToolbar
                 items={REVIEW_SCOPES}
                 active={activeScope}
-                onChange={setActiveScope}
+                onChange={(scope) => {
+                    setActiveScope(scope);
+                    clearSelection();
+                }}
                 actions={toolbarActions}
             />
 
             {/* Table */}
-            <TableScrollArea onScroll={handleScroll}>
-                <TableHeaderRow>
-                    <TableStickyCell header>
-                        {loading ? (
-                            <SkeletonDot />
-                        ) : (
-                            <input
-                                type="checkbox"
-                                checked={allSelected}
-                                ref={(el) => {
-                                    if (el) el.indeterminate = someSelected;
-                                }}
-                                onChange={toggleAll}
-                                className={TABLE_CHECKBOX_CLASS}
-                                aria-label="Select all reviews"
-                            />
-                        )}
-                        <span>Name</span>
-                    </TableStickyCell>
-                    <TableHeaderCell className="ml-auto w-24">
-                        Columns
-                    </TableHeaderCell>
-                    <TableHeaderCell className="w-24">Documents</TableHeaderCell>
-                    <TableHeaderCell className="w-40">
-                        <div className="flex items-center gap-1">
-                            <span>Project</span>
-                            {projectFilterButton}
-                        </div>
-                    </TableHeaderCell>
-                    <TableHeaderCell className="w-32">Created</TableHeaderCell>
-                    <TableHeaderCell className="w-8" />
-                </TableHeaderRow>
-
-                {loading ? (
+            <TableScrollArea
+                onScroll={handleScroll}
+                header={
+                    <TableHeaderRow>
+                        <TableStickyCell header>
+                            {effectiveLoading ? (
+                                <SkeletonDot className="mr-4" />
+                            ) : (
+                                <input
+                                    type="checkbox"
+                                    checked={allSelected}
+                                    disabled={
+                                        selectingAll ||
+                                        deletingReviewIds.size > 0
+                                    }
+                                    ref={(el) => {
+                                        if (el) el.indeterminate = someSelected;
+                                    }}
+                                    onChange={toggleAll}
+                                    className={TABLE_CHECKBOX_CLASS}
+                                    aria-label="Select all reviews"
+                                />
+                            )}
+                            <span className="mr-1">Name</span>
+                            {!loading && nameFilterButton}
+                        </TableStickyCell>
+                        <TableHeaderCell className="ml-auto w-24">
+                            <div className="flex items-center gap-1">
+                                <span>Columns</span>
+                                {!loading && columnsFilterButton}
+                            </div>
+                        </TableHeaderCell>
+                        <TableHeaderCell className="w-24">
+                            <div className="flex items-center gap-1">
+                                <span>Documents</span>
+                                {!loading && documentsFilterButton}
+                            </div>
+                        </TableHeaderCell>
+                        <TableHeaderCell className="w-40">
+                            <div className="flex items-center gap-1">
+                                <span>Project</span>
+                                {!loading && projectFilterButton}
+                            </div>
+                        </TableHeaderCell>
+                        <TableHeaderCell className="w-32">
+                            <div className="flex items-center gap-1">
+                                <span>Created</span>
+                                {!loading && createdFilterButton}
+                            </div>
+                        </TableHeaderCell>
+                        <TableHeaderCell className="w-8" />
+                    </TableHeaderRow>
+                }
+            >
+                {effectiveLoading ? (
                     <TableBody>
                         {[1, 2, 3].map((i) => (
-                            <TableRow
-                                key={i}
-                                interactive={false}
-                            >
+                            <TableRow key={i} interactive={false}>
                                 <TableStickyCell
                                     hover={false}
                                     bgClassName="bg-transparent"
                                 >
-                                    <SkeletonDot />
+                                    <SkeletonDot className="mr-4" />
                                     <SkeletonLine className="h-3.5 w-48" />
                                 </TableStickyCell>
                                 <TableCell className="ml-auto w-24">
@@ -377,11 +522,30 @@ export default function TabularReviewsPage() {
                             </TableRow>
                         ))}
                     </TableBody>
+                ) : loadError ? (
+                    <TableEmptyState>
+                        <p className="text-lg font-medium font-serif text-gray-900">
+                            Unable to load reviews
+                        </p>
+                        <p className="mt-1 text-xs text-gray-400">
+                            Check your connection and try again.
+                        </p>
+                        <PillButton
+                            tone="black"
+                            size="sm"
+                            onClick={retry}
+                            className="mt-4 px-3"
+                        >
+                            Try again
+                        </PillButton>
+                    </TableEmptyState>
                 ) : filtered.length === 0 ? (
                     <TableEmptyState>
-                        {activeScope === "all" && !projectFilter ? (
+                        {activeScope === "all" &&
+                        !projectFilter &&
+                        !debouncedSearch ? (
                             <>
-                                <Table2 className="h-8 w-8 text-gray-300 mb-4" />
+                                <TabularReviewSkeuoIcon className="mb-4 h-8 w-8" />
                                 <p className="text-2xl font-medium font-serif text-gray-900">
                                     Tabular Reviews
                                 </p>
@@ -389,13 +553,16 @@ export default function TabularReviewsPage() {
                                     Extract data from documents into tables
                                     using AI.
                                 </p>
-                                <button
+                                <PillButton
+                                    tone="black"
+                                    size="sm"
                                     onClick={() => setNewTROpen(true)}
                                     disabled={creating}
-                                    className="mt-4 inline-flex items-center gap-1 rounded-full bg-gray-900 px-3 py-1 text-xs font-medium text-white hover:bg-gray-700 transition-colors shadow-md disabled:opacity-40"
+                                    className="mt-4 px-3"
                                 >
-                                    + Create New
-                                </button>
+                                    <Plus className="h-3.5 w-3.5" />
+                                    Create
+                                </PillButton>
                             </>
                         ) : (
                             <p className="text-sm text-gray-400">
@@ -406,83 +573,73 @@ export default function TabularReviewsPage() {
                 ) : (
                     <TableBody>
                         {filtered.map((review) => {
-                            const project = projects.find(
-                                (p) => p.id === review.project_id,
-                            );
-                            const rowBg = selectedIds.includes(review.id)
-                                ? "bg-gray-50"
-                                : TABLE_STICKY_CELL_BG;
+                            const projectName = review.project_id
+                                ? projectNameById.get(review.project_id)
+                                : null;
+                            const deleting = deletingReviewIds.has(review.id);
                             return (
                                 <TableRow
                                     key={review.id}
-                                    rightClickDropdown={(close) => (
-                                        <RowActionMenuItems
-                                            onClose={close}
-                                            onRename={() => {
-                                                if (
-                                                    user?.id &&
-                                                    review.user_id !== user.id
-                                                ) {
-                                                    setOwnerOnlyAction(
-                                                        "rename this tabular review",
-                                                    );
-                                                    return;
-                                                }
-                                                setRenameValue(
-                                                    review.title ??
-                                                        "Untitled Review",
-                                                );
-                                                setRenamingId(review.id);
-                                            }}
-                                            onDelete={async () => {
-                                                if (
-                                                    user?.id &&
-                                                    review.user_id !== user.id
-                                                ) {
-                                                    setOwnerOnlyAction(
-                                                        "delete this tabular review",
-                                                    );
-                                                    return;
-                                                }
-                                                await deleteTabularReview(
-                                                    review.id,
-                                                );
-                                                setReviews((prev) =>
-                                                    prev.filter(
-                                                        (r) =>
-                                                            r.id !== review.id,
-                                                    ),
-                                                );
-                                            }}
-                                        />
-                                    )}
-                                    onClick={() => {
-                                        if (renamingId === review.id) return;
-                                        router.push(
-                                            review.project_id
-                                                ? `/projects/${review.project_id}/tabular-reviews/${review.id}`
-                                                : `/tabular-reviews/${review.id}`,
-                                        );
-                                    }}
+                                    interactive={!deleting}
+                                    selected={
+                                        !deleting &&
+                                        selectedIds.includes(review.id)
+                                    }
+                                    rightClickDropdown={
+                                        deleting
+                                            ? undefined
+                                            : (close, menuProps) => (
+                                                  <RowActionMenuItems
+                                                      onClose={close}
+                                                      surfaceProps={menuProps}
+                                                      onEditDetails={() => {
+                                                          requestReviewDetails(
+                                                              review,
+                                                          );
+                                                      }}
+                                                      onDelete={() =>
+                                                          handleDeleteReviewRow(
+                                                              review,
+                                                          )
+                                                      }
+                                                  />
+                                              )
+                                    }
+                                    onClick={
+                                        deleting
+                                            ? undefined
+                                            : () => {
+                                                  router.push(
+                                                      review.project_id
+                                                          ? `/projects/${review.project_id}/tabular-reviews/${review.id}`
+                                                          : `/tabular-reviews/${review.id}`,
+                                                  );
+                                              }
+                                    }
+                                    className={
+                                        deleting
+                                            ? "pointer-events-none opacity-50"
+                                            : undefined
+                                    }
                                 >
                                     <TablePrimaryCell
-                                        bgClassName={rowBg}
-                                        selected={selectedIds.includes(
-                                            review.id,
-                                        )}
+                                                selected={
+                                                    !deleting &&
+                                                    selectedIds.includes(
+                                                        review.id,
+                                                    )
+                                                }
+                                        selectionIndicator={
+                                            deleting ? (
+                                                <Loader2 className="mr-4 h-3 w-3 shrink-0 animate-spin text-gray-400" />
+                                            ) : undefined
+                                        }
                                         onSelectionChange={() =>
                                             toggleOne(review.id)
                                         }
                                         label={
                                             review.title ?? "Untitled Review"
                                         }
-                                        editing={renamingId === review.id}
-                                        editValue={renameValue}
-                                        onEditValueChange={setRenameValue}
-                                        onEditCommit={() =>
-                                            handleRenameSubmit(review.id)
-                                        }
-                                        onEditCancel={() => setRenamingId(null)}
                                     />
                                     <TableCell className="ml-auto w-24">
                                         {review.columns_config?.length ?? 0}
@@ -491,8 +648,8 @@ export default function TabularReviewsPage() {
                                         {review.document_count ?? 0}
                                     </TableCell>
                                     <TableCell className="w-40 pr-2">
-                                        {project ? (
-                                            project.name
+                                        {projectName ? (
+                                            projectName
                                         ) : (
                                             <span className="text-gray-300">
                                                 —
@@ -513,50 +670,20 @@ export default function TabularReviewsPage() {
                                         onClick={(e) => e.stopPropagation()}
                                     >
                                         <RowActions
-                                            onRename={() => {
-                                                if (
-                                                    user?.id &&
-                                                    review.user_id !== user.id
-                                                ) {
-                                                    setOwnerOnlyAction(
-                                                        "rename this tabular review",
-                                                    );
-                                                    return;
-                                                }
-                                                setRenameValue(
-                                                    review.title ??
-                                                        "Untitled Review",
-                                                );
-                                                setRenamingId(review.id);
+                                            onEditDetails={() => {
+                                                requestReviewDetails(review);
                                             }}
-                                            onDelete={async () => {
-                                                if (
-                                                    user?.id &&
-                                                    review.user_id !== user.id
-                                                ) {
-                                                    setOwnerOnlyAction(
-                                                        "delete this tabular review",
-                                                    );
-                                                    return;
-                                                }
-                                                await deleteTabularReview(
-                                                    review.id,
-                                                );
-                                                setReviews((prev) =>
-                                                    prev.filter(
-                                                        (r) =>
-                                                            r.id !== review.id,
-                                                    ),
-                                                );
-                                            }}
-                                            />
+                                            onDelete={() =>
+                                                handleDeleteReviewRow(review)
+                                            }
+                                        />
                                     </div>
                                 </TableRow>
                             );
                         })}
                     </TableBody>
                 )}
-                {!loading && hasMore && filtered.length > 0 && (
+                {!effectiveLoading && hasMore && filtered.length > 0 && (
                     <div className="flex justify-center py-3">
                         <button
                             onClick={handleLoadMore}
@@ -566,23 +693,45 @@ export default function TabularReviewsPage() {
                             {loadingMore && (
                                 <Loader2 className="h-3 w-3 animate-spin" />
                             )}
-                            {loadingMore ? "Loading…" : "Load more"}
+                            {loadingMore
+                                ? "Loading…"
+                                : loadMoreError
+                                  ? "Retry loading"
+                                  : "Load more"}
                         </button>
                     </div>
                 )}
             </TableScrollArea>
 
-            <AddNewTRModal
+            <NewTRModal
                 open={newTROpen}
                 onClose={() => setNewTROpen(false)}
                 onAdd={handleNewReview}
                 projects={projects}
             />
 
-            <OwnerOnlyModal
+            <TabularReviewDetailsModal
+                open={!!detailsReview}
+                review={detailsReview}
+                projects={projects}
+                canEdit={
+                    !!detailsReview &&
+                    (!user?.id || detailsReview.user_id === user.id)
+                }
+                onClose={() => setDetailsReview(null)}
+                onSave={handleDetailsSave}
+            />
+
+            <OwnerOnlyPopup
                 open={!!ownerOnlyAction}
                 action={ownerOnlyAction ?? undefined}
                 onClose={() => setOwnerOnlyAction(null)}
+            />
+            <WarningPopup
+                open={!!bulkDeleteNotice}
+                title="Some reviews were not deleted"
+                message={bulkDeleteNotice}
+                onClose={() => setBulkDeleteNotice(null)}
             />
         </div>
     );

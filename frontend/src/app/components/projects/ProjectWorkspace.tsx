@@ -3,6 +3,7 @@
 import {
     createContext,
     type ReactNode,
+    use,
     useCallback,
     useContext,
     useEffect,
@@ -10,18 +11,13 @@ import {
     useRef,
     useState,
 } from "react";
-import {
-    usePathname,
-    useRouter,
-    useSelectedLayoutSegments,
-} from "next/navigation";
+import { useRouter, useSelectedLayoutSegments } from "next/navigation";
 import {
     createTabularReview,
     deleteProject,
     getProject,
     getProjectPeople,
     listProjectChats,
-    listTabularReviews,
     updateProject,
 } from "@/app/lib/mikeApi";
 import type {
@@ -29,13 +25,12 @@ import type {
     ColumnConfig,
     Folder as ProjectFolder,
     Project,
-    TabularReview,
 } from "@/app/components/shared/types";
 import { TableToolbar } from "@/app/components/shared/TableToolbar";
-import { AddNewTRModal } from "@/app/components/tabular/AddNewTRModal";
-import { ConfirmPopup } from "@/app/components/shared/ConfirmPopup";
-import { OwnerOnlyModal } from "@/app/components/shared/OwnerOnlyModal";
-import { PeopleModal } from "@/app/components/shared/PeopleModal";
+import { NewTRModal } from "@/app/components/tabular/NewTRModal";
+import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
+import { OwnerOnlyPopup } from "@/app/components/popups/OwnerOnlyPopup";
+import { PeopleModal } from "@/app/components/modals/PeopleModal";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
@@ -59,17 +54,12 @@ type ProjectWorkspaceValue = {
     setProjectChats: React.Dispatch<React.SetStateAction<Chat[] | null>>;
     projectChatsLoading: boolean;
     ensureProjectChats: () => Promise<Chat[]>;
-    projectReviews: TabularReview[] | null;
-    setProjectReviews: React.Dispatch<
-        React.SetStateAction<TabularReview[] | null>
-    >;
-    projectReviewsLoading: boolean;
-    ensureProjectReviews: () => Promise<TabularReview[]>;
     prefetchProjectSections: () => void;
     creatingChat: boolean;
     creatingReview: boolean;
     createChat: () => Promise<void>;
     openNewReview: () => void;
+    setAddDocumentsHeaderAction: (action: (() => void) | null) => void;
     setOwnerOnlyAction: React.Dispatch<React.SetStateAction<string | null>>;
 };
 
@@ -118,11 +108,7 @@ export function ProjectWorkspaceProvider({
         Record<ProjectWorkspaceSection, string>
     >({ documents: "", assistant: "", reviews: "" });
     const [projectChats, setProjectChats] = useState<Chat[] | null>(null);
-    const [projectReviews, setProjectReviews] = useState<
-        TabularReview[] | null
-    >(null);
     const [projectChatsLoading, setProjectChatsLoading] = useState(false);
-    const [projectReviewsLoading, setProjectReviewsLoading] = useState(false);
     const [peopleModalOpen, setPeopleModalOpen] = useState(false);
     const [projectDetailsOpen, setProjectDetailsOpen] = useState(false);
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
@@ -134,6 +120,8 @@ export function ProjectWorkspaceProvider({
     const [newTRModalOpen, setNewTRModalOpen] = useState(false);
     const [creatingChat, setCreatingChat] = useState(false);
     const [creatingReview, setCreatingReview] = useState(false);
+    const [addDocumentsHeaderAction, setAddDocumentsHeaderActionState] =
+        useState<{ action: (() => void) | null }>({ action: null });
 
     const segments = useSelectedLayoutSegments();
     const activeSection = activeSectionFromSegments(segments);
@@ -143,18 +131,19 @@ export function ProjectWorkspaceProvider({
     const { profile } = useUserProfile();
     const { saveChat } = useChatHistoryContext();
     const projectChatsPromiseRef = useRef<Promise<Chat[]> | null>(null);
-    const projectReviewsPromiseRef = useRef<Promise<TabularReview[]> | null>(
-        null,
-    );
 
     useEffect(() => {
         setProjectChats(null);
-        setProjectReviews(null);
         setProjectChatsLoading(false);
-        setProjectReviewsLoading(false);
         projectChatsPromiseRef.current = null;
-        projectReviewsPromiseRef.current = null;
     }, [projectId]);
+
+    const setAddDocumentsHeaderAction = useCallback(
+        (action: (() => void) | null) => {
+            setAddDocumentsHeaderActionState({ action });
+        },
+        [],
+    );
 
     useEffect(() => {
         if (!showShell) {
@@ -217,34 +206,9 @@ export function ProjectWorkspaceProvider({
         return promise;
     }, [projectChats, projectId]);
 
-    const ensureProjectReviews = useCallback(() => {
-        if (projectReviews) return Promise.resolve(projectReviews);
-        if (projectReviewsPromiseRef.current)
-            return projectReviewsPromiseRef.current;
-
-        setProjectReviewsLoading(true);
-        const promise = listTabularReviews(projectId)
-            .then((loaded) => {
-                setProjectReviews(loaded);
-                return loaded;
-            })
-            .catch((error) => {
-                console.error("[project reviews] failed to load", error);
-                setProjectReviews([]);
-                return [];
-            })
-            .finally(() => {
-                projectReviewsPromiseRef.current = null;
-                setProjectReviewsLoading(false);
-            });
-        projectReviewsPromiseRef.current = promise;
-        return promise;
-    }, [projectId, projectReviews]);
-
     const prefetchProjectSections = useCallback(() => {
         void ensureProjectChats();
-        void ensureProjectReviews();
-    }, [ensureProjectChats, ensureProjectReviews]);
+    }, [ensureProjectChats]);
 
     const createChat = useCallback(async () => {
         setCreatingChat(true);
@@ -300,7 +264,6 @@ export function ProjectWorkspaceProvider({
                 document_grouping: documentGrouping,
                 project_id: projectId,
             });
-            setProjectReviews((prev) => (prev ? [review, ...prev] : prev));
             router.push(`/projects/${projectId}/tabular-reviews/${review.id}`);
         } finally {
             setCreatingReview(false);
@@ -310,6 +273,7 @@ export function ProjectWorkspaceProvider({
     async function handleProjectDetailsSave(values: {
         name: string;
         cmNumber: string;
+        practice: string;
     }) {
         if (project && project.is_owner === false) {
             setOwnerOnlyAction("edit project details");
@@ -317,10 +281,12 @@ export function ProjectWorkspaceProvider({
         }
         const name = values.name.trim();
         const cmNumber = values.cmNumber.trim();
+        const practice = values.practice.trim();
         if (!name) return;
         const updated = await updateProject(projectId, {
             name,
             cm_number: cmNumber,
+            practice: practice || null,
         });
         setProject((prev) =>
             prev
@@ -328,6 +294,7 @@ export function ProjectWorkspaceProvider({
                       ...prev,
                       name: updated.name,
                       cm_number: updated.cm_number,
+                      practice: updated.practice,
                   }
                 : updated,
         );
@@ -370,15 +337,12 @@ export function ProjectWorkspaceProvider({
             setProjectChats,
             projectChatsLoading,
             ensureProjectChats,
-            projectReviews,
-            setProjectReviews,
-            projectReviewsLoading,
-            ensureProjectReviews,
             prefetchProjectSections,
             creatingChat,
             creatingReview,
             createChat,
             openNewReview,
+            setAddDocumentsHeaderAction,
             setOwnerOnlyAction,
         }),
         [
@@ -392,14 +356,12 @@ export function ProjectWorkspaceProvider({
             projectChats,
             projectChatsLoading,
             ensureProjectChats,
-            projectReviews,
-            projectReviewsLoading,
-            ensureProjectReviews,
             prefetchProjectSections,
             creatingChat,
             creatingReview,
             createChat,
             openNewReview,
+            setAddDocumentsHeaderAction,
         ],
     );
 
@@ -417,34 +379,36 @@ export function ProjectWorkspaceProvider({
                 <ProjectPageHeader
                     project={project}
                     search={search}
+                    activeSection={activeSection}
                     creatingChat={creatingChat}
                     creatingReview={creatingReview}
                     docsCount={project?.documents?.length ?? 0}
                     isOwner={project?.is_owner !== false}
                     onBackToProjects={() => router.push("/projects")}
-                    onOwnerOnly={setOwnerOnlyAction}
                     onOpenDetails={() => setProjectDetailsOpen(true)}
                     onDeleteProject={requestProjectDelete}
                     onSearchChange={setSearch}
                     onOpenPeople={() => setPeopleModalOpen(true)}
                     onNewChat={() => void createChat()}
                     onNewReview={openNewReview}
+                    onAddDocuments={addDocumentsHeaderAction.action}
                 />
 
                 {children}
 
-                <AddNewTRModal
+                <NewTRModal
                     open={newTRModalOpen}
                     onClose={() => setNewTRModalOpen(false)}
                     onAdd={handleCreateReview}
                     projectDocs={project?.documents?.filter(
                         (d) => d.status === "ready",
                     )}
+                    projectFolders={folders}
                     projectName={project?.name}
                     projectCmNumber={project?.cm_number}
                 />
 
-                <OwnerOnlyModal
+                <OwnerOnlyPopup
                     open={!!ownerOnlyAction}
                     action={ownerOnlyAction ?? undefined}
                     onClose={() => setOwnerOnlyAction(null)}
@@ -454,9 +418,6 @@ export function ProjectWorkspaceProvider({
                     open={projectDetailsOpen}
                     project={project}
                     canEdit={project?.is_owner !== false}
-                    currentUserDisplayName={profile?.displayName ?? null}
-                    currentUserEmail={user?.email ?? null}
-                    fetchPeople={getProjectPeople}
                     onClose={() => setProjectDetailsOpen(false)}
                     onSave={handleProjectDetailsSave}
                     onShareProject={() => {
@@ -539,7 +500,7 @@ export function ProjectSectionToolbar({
         <TableToolbar
             items={[
                 { id: "documents", label: "Documents" },
-                { id: "assistant", label: "Assistant Chats" },
+                { id: "assistant", label: "Chats" },
                 { id: "reviews", label: "Tabular Reviews" },
             ]}
             active={activeSection}
@@ -558,18 +519,13 @@ export function ProjectSectionToolbar({
 }
 
 export function ProjectWorkspaceLayout({
+    params,
     children,
 }: {
+    params: Promise<{ id: string }>;
     children: ReactNode;
 }) {
-    // Static-export divergence (OSS-5): under `output: "export"` the
-    // `/projects/[id]` subtree is a single prebaked shell, so server-baked
-    // params / `use(params)` resolve to the placeholder `"_"` for every URL.
-    // `usePathname()` is the only client hook that reflects the live URL, so
-    // derive the real project id from it and feed it into the workspace
-    // context. Everything below consumes `projectId` from context unchanged.
-    const pathname = usePathname() ?? "";
-    const id = pathname.match(/^\/projects\/([^/?#]+)/)?.[1] ?? "";
+    const { id } = use(params);
     return (
         <ProjectWorkspaceProvider projectId={id}>
             {children}

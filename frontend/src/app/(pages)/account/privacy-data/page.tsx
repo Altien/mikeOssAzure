@@ -4,12 +4,11 @@ import { useState } from "react";
 import { Download, Trash2 } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
-import { ConfirmPopup } from "@/app/components/shared/ConfirmPopup";
-// Upstream divergence (sync-log: 3a10943): upstream wraps these actions in
-// a Supabase Auth MFA step-up flow (MfaVerificationPopup +
-// needsMfaVerification + isMfaRequiredError retries). Dev did not adopt
-// app-level Supabase MFA — Entra enforces MFA at the IdP — so the actions
-// run directly after the confirm popup.
+import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
+import {
+    MfaVerificationPopup,
+    needsMfaVerification,
+} from "@/app/components/popups/MfaVerificationPopup";
 import {
     deleteAllChats,
     deleteAllProjects,
@@ -17,14 +16,17 @@ import {
     exportAccountData,
     exportChatData,
     exportTabularReviewsData,
+    isMfaRequiredError,
 } from "@/app/lib/mikeApi";
 import {
     accountGlassDangerOutlineButtonClassName,
     accountGlassPrimaryButtonClassName,
-    accountGlassSectionClassName,
 } from "../accountStyles";
+import { AccountSection } from "../AccountSection";
 
 type DeleteDataAction = "chats" | "tabular-reviews" | "projects";
+type ExportDataAction = "export-chats" | "export-tabular-reviews" | "export-account";
+type MfaRetryAction = DeleteDataAction | ExportDataAction;
 
 const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
@@ -61,6 +63,8 @@ export default function PrivacyDataPage() {
         useState<DeleteDataAction | null>(null);
     const [deletingAction, setDeletingAction] =
         useState<DeleteDataAction | null>(null);
+    const [pendingMfaAction, setPendingMfaAction] =
+        useState<MfaRetryAction | null>(null);
     const [isExportingAccount, setIsExportingAccount] = useState(false);
     const [isExportingChats, setIsExportingChats] = useState(false);
     const [isExportingTabularReviews, setIsExportingTabularReviews] =
@@ -78,13 +82,24 @@ export default function PrivacyDataPage() {
     };
 
     const handleExportAccountData = async () => {
-        devLog("[privacy-data] export account requested");
+        devLog("[privacy-data/mfa] export account requested");
         setIsExportingAccount(true);
         try {
+            if (await needsMfaVerification()) {
+                setPendingMfaAction("export-account");
+                return;
+            }
             const { blob, filename } = await exportAccountData();
             downloadBlob(blob, filename ?? "mike-account-export.json");
         } catch (error) {
-            devLog("[privacy-data] export account failed", { error });
+            devLog("[privacy-data/mfa] export account failed", {
+                isMfaRequired: isMfaRequiredError(error),
+                error,
+            });
+            if (isMfaRequiredError(error)) {
+                setPendingMfaAction("export-account");
+                return;
+            }
             alert("Failed to export account data. Please try again.");
         } finally {
             setIsExportingAccount(false);
@@ -92,13 +107,24 @@ export default function PrivacyDataPage() {
     };
 
     const handleExportChatData = async () => {
-        devLog("[privacy-data] export chats requested");
+        devLog("[privacy-data/mfa] export chats requested");
         setIsExportingChats(true);
         try {
+            if (await needsMfaVerification()) {
+                setPendingMfaAction("export-chats");
+                return;
+            }
             const { blob, filename } = await exportChatData();
             downloadBlob(blob, filename ?? "mike-chat-export.json");
         } catch (error) {
-            devLog("[privacy-data] export chats failed", { error });
+            devLog("[privacy-data/mfa] export chats failed", {
+                isMfaRequired: isMfaRequiredError(error),
+                error,
+            });
+            if (isMfaRequiredError(error)) {
+                setPendingMfaAction("export-chats");
+                return;
+            }
             alert("Failed to export chats. Please try again.");
         } finally {
             setIsExportingChats(false);
@@ -106,13 +132,24 @@ export default function PrivacyDataPage() {
     };
 
     const handleExportTabularReviewsData = async () => {
-        devLog("[privacy-data] export tabular reviews requested");
+        devLog("[privacy-data/mfa] export tabular reviews requested");
         setIsExportingTabularReviews(true);
         try {
+            if (await needsMfaVerification()) {
+                setPendingMfaAction("export-tabular-reviews");
+                return;
+            }
             const { blob, filename } = await exportTabularReviewsData();
             downloadBlob(blob, filename ?? "mike-tabular-reviews-export.json");
         } catch (error) {
-            devLog("[privacy-data] export tabular reviews failed", { error });
+            devLog("[privacy-data/mfa] export tabular reviews failed", {
+                isMfaRequired: isMfaRequiredError(error),
+                error,
+            });
+            if (isMfaRequiredError(error)) {
+                setPendingMfaAction("export-tabular-reviews");
+                return;
+            }
             alert("Failed to export tabular reviews. Please try again.");
         } finally {
             setIsExportingTabularReviews(false);
@@ -120,9 +157,14 @@ export default function PrivacyDataPage() {
     };
 
     const handleDeleteData = async (action: DeleteDataAction) => {
-        devLog("[privacy-data] delete requested", { action });
+        devLog("[privacy-data/mfa] delete requested", { action });
         setDeletingAction(action);
         try {
+            if (await needsMfaVerification()) {
+                setPendingDeleteAction(null);
+                setPendingMfaAction(action);
+                return;
+            }
             if (action === "chats") {
                 await deleteAllChats();
                 setCurrentChatId(null);
@@ -136,10 +178,36 @@ export default function PrivacyDataPage() {
             }
             setPendingDeleteAction(null);
         } catch (error) {
-            devLog("[privacy-data] delete failed", { action, error });
+            devLog("[privacy-data/mfa] delete failed", {
+                action,
+                isMfaRequired: isMfaRequiredError(error),
+                error,
+            });
+            if (isMfaRequiredError(error)) {
+                setPendingDeleteAction(null);
+                setPendingMfaAction(action);
+                return;
+            }
             alert("Failed to delete data. Please try again.");
         } finally {
             setDeletingAction(null);
+        }
+    };
+
+    const handleMfaVerified = async () => {
+        const action = pendingMfaAction;
+        devLog("[privacy-data/mfa] verification callback", { action });
+        setPendingMfaAction(null);
+        if (!action) return;
+
+        if (action === "export-account") {
+            await handleExportAccountData();
+        } else if (action === "export-chats") {
+            await handleExportChatData();
+        } else if (action === "export-tabular-reviews") {
+            await handleExportTabularReviewsData();
+        } else {
+            await handleDeleteData(action);
         }
     };
 
@@ -153,7 +221,7 @@ export default function PrivacyDataPage() {
                 <h2 className="text-2xl font-medium font-serif text-gray-900">
                     Export data
                 </h2>
-                <div className={accountGlassSectionClassName}>
+                <AccountSection>
                     <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
                         <div className="space-y-1">
                             <p className="text-sm font-medium text-gray-900">
@@ -226,14 +294,14 @@ export default function PrivacyDataPage() {
                             {isExportingAccount ? "Exporting..." : "Export"}
                         </Button>
                     </div>
-                </div>
+                </AccountSection>
             </section>
 
             <section className="space-y-3">
                 <h2 className="text-2xl font-medium font-serif text-gray-900">
                     Delete data
                 </h2>
-                <div className={accountGlassSectionClassName}>
+                <AccountSection>
                     <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
                         <div className="space-y-1">
                             <p className="text-sm font-medium text-gray-900">
@@ -300,7 +368,7 @@ export default function PrivacyDataPage() {
                             Delete
                         </Button>
                     </div>
-                </div>
+                </AccountSection>
             </section>
             <ConfirmPopup
                 open={!!pendingDeleteAction}
@@ -317,6 +385,13 @@ export default function PrivacyDataPage() {
                     if (!pendingDeleteAction) return;
                     void handleDeleteData(pendingDeleteAction);
                 }}
+            />
+            <MfaVerificationPopup
+                open={!!pendingMfaAction}
+                onCancel={() => setPendingMfaAction(null)}
+                onVerified={() => void handleMfaVerified()}
+                title="Two-factor verification required"
+                message="This action is sensitive. Enter a code from your authenticator app to continue."
             />
         </div>
     );

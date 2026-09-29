@@ -17,9 +17,20 @@ describe("preprocessCitations", () => {
         ]);
     });
 
-    // Upstream divergence (sync-log: 6ae1f98d): spreadsheet (sheet/cell)
-    // citations are not parsed — the excel/ppt viewer stack is deferred
-    // (KNOWLEDGE §5 frontend refactor), so upstream's spreadsheet case is dropped.
+    it("parses a source-aware spreadsheet citation", () => {
+        const result = preprocessCitations(
+            "Value [[document:doc-sheet||sheet:Summary||cell:B7||quote:42]]",
+        );
+
+        expect(result.citations).toEqual([
+            {
+                documentId: "doc-sheet",
+                sheet: "Summary",
+                cell: "B7",
+                quote: "42",
+            },
+        ]);
+    });
 
     it("keeps legacy page citations compatible", () => {
         const result = preprocessCitations(

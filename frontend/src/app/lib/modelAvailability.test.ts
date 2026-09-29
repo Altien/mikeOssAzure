@@ -1,36 +1,112 @@
 import { describe, expect, it } from "vitest";
+import { SETTINGS_MODELS } from "../components/assistant/ModelToggle";
+import type { ApiKeyState } from "./mikeApi";
 import {
     getModelProvider,
     isModelAvailable,
+    isProviderAvailable,
+    modelGroupToProvider,
     providerLabel,
 } from "./modelAvailability";
 
-describe("Kimi K3 model availability", () => {
-    it("maps kimi-k3 to Kimi and enables it only for the organisation key", () => {
-        const unavailable = {
-            claudeApiKey: null,
-            geminiApiKey: null,
-            openaiApiKey: null,
-            globalApiKeys: {
-                claude: false,
-                gemini: false,
-                openai: false,
-                kimi: false,
-                azureOpenai: false,
-            },
-        };
+const keys = (configured: {
+    claude?: boolean;
+    gemini?: boolean;
+    openai?: boolean;
+}): ApiKeyState =>
+    ({
+        claude: { configured: !!configured.claude, source: null },
+        gemini: { configured: !!configured.gemini, source: null },
+        openai: { configured: !!configured.openai, source: null },
+        openrouter: { configured: false, source: null },
+        courtlistener: { configured: false, source: null },
+    }) as ApiKeyState;
 
-        expect(getModelProvider("kimi-k3")).toBe("kimi");
-        expect(providerLabel("kimi")).toBe("Kimi K3");
-        expect(isModelAvailable("kimi-k3", unavailable)).toBe(false);
+describe("getModelProvider", () => {
+    it("maps each settings model to a provider via its group", () => {
+        expect(getModelProvider("claude-haiku-4-5")).toBe("claude");
+        expect(getModelProvider("gemini-3-flash-preview")).toBe("gemini");
+        expect(getModelProvider("gpt-5.4-lite")).toBe("openai");
+    });
+
+    it("resolves any ollama/-prefixed id without consulting SETTINGS_MODELS", () => {
+        // Ollama models are discovered at runtime, so they can never appear
+        // in the static list — the prefix alone must be enough.
+        expect(getModelProvider("ollama/llama3.2")).toBe("ollama");
+        expect(getModelProvider("ollama/some-brand-new-model")).toBe("ollama");
+    });
+
+    it("resolves a provider for every model in SETTINGS_MODELS", () => {
+        for (const model of SETTINGS_MODELS) {
+            expect(getModelProvider(model.id)).not.toBeNull();
+        }
+    });
+
+    it("returns null for an unknown model id", () => {
+        expect(getModelProvider("not-a-model")).toBeNull();
+    });
+});
+
+describe("isModelAvailable", () => {
+    it("is true only when the model's provider has a configured key", () => {
         expect(
-            isModelAvailable("kimi-k3", {
-                ...unavailable,
-                globalApiKeys: {
-                    ...unavailable.globalApiKeys,
-                    kimi: true,
-                },
-            }),
+            isModelAvailable("claude-fable-5", keys({ claude: true })),
         ).toBe(true);
+        expect(
+            isModelAvailable("claude-fable-5", keys({ gemini: true })),
+        ).toBe(false);
+    });
+
+    it("is false for an unknown model regardless of keys", () => {
+        expect(
+            isModelAvailable(
+                "not-a-model",
+                keys({ claude: true, gemini: true, openai: true }),
+            ),
+        ).toBe(false);
+    });
+
+    it("is true for ollama models even with no keys configured", () => {
+        expect(isModelAvailable("ollama/llama3.2", keys({}))).toBe(true);
+    });
+});
+
+describe("isProviderAvailable", () => {
+    it("reflects the configured flag for the provider", () => {
+        expect(isProviderAvailable("openai", keys({ openai: true }))).toBe(
+            true,
+        );
+        expect(isProviderAvailable("openai", keys({}))).toBe(false);
+    });
+
+    it("is false when the provider key is missing entirely", () => {
+        expect(
+            isProviderAvailable("claude", {} as unknown as ApiKeyState),
+        ).toBe(false);
+    });
+
+    it("treats ollama as always available — local models need no API key", () => {
+        expect(isProviderAvailable("ollama", keys({}))).toBe(true);
+        expect(
+            isProviderAvailable("ollama", {} as unknown as ApiKeyState),
+        ).toBe(true);
+    });
+});
+
+describe("providerLabel", () => {
+    it("returns the display label for each provider", () => {
+        expect(providerLabel("claude")).toBe("Anthropic (Claude)");
+        expect(providerLabel("openai")).toBe("OpenAI");
+        expect(providerLabel("ollama")).toBe("Local (Ollama)");
+        expect(providerLabel("gemini")).toBe("Google (Gemini)");
+    });
+});
+
+describe("modelGroupToProvider", () => {
+    it("maps every model group to its provider id", () => {
+        expect(modelGroupToProvider("Anthropic")).toBe("claude");
+        expect(modelGroupToProvider("OpenAI")).toBe("openai");
+        expect(modelGroupToProvider("Local")).toBe("ollama");
+        expect(modelGroupToProvider("Google")).toBe("gemini");
     });
 });

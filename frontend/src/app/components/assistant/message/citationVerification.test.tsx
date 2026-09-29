@@ -1,10 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import type {
-  CitationAnnotation,
-  DocumentCitationAnnotation,
-} from "../../shared/types";
-import { RelevantQuotes } from "../../shared/RelevantQuotes";
+import type { Citation, DocumentCitation } from "../../shared/types";
+import { CitationQuotesHeader } from "../CitationQuotesHeader";
 import {
   citationVerificationAriaLabel,
   citationVerificationPillClassName,
@@ -12,7 +9,7 @@ import {
   CitationVerificationBadge,
 } from "./citationVerification";
 
-function documentCitation(verified?: boolean): DocumentCitationAnnotation {
+function documentCitation(verified?: boolean): DocumentCitation {
   return {
     type: "citation_data",
     kind: "document",
@@ -27,7 +24,7 @@ function documentCitation(verified?: boolean): DocumentCitationAnnotation {
   };
 }
 
-const caseCitation: CitationAnnotation = {
+const caseCitation: Citation = {
   type: "citation_data",
   kind: "case",
   ref: 2,
@@ -88,7 +85,7 @@ describe("citation verification presentation", () => {
 
   it("shows per-quote verification in the citation panel", () => {
     render(
-      <RelevantQuotes
+      <CitationQuotesHeader
         quotes={[
           {
             id: "quote-1",

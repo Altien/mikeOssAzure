@@ -4,21 +4,22 @@ import { useState } from "react";
 import { ChevronDown, Check, AlertCircle } from "lucide-react";
 import {
     DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
     DropdownMenuLabel,
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/app/components/ui/dropdown-menu";
 import {
-    isModelAvailable,
-    type ApiKeyAvailability,
-} from "@/app/lib/modelAvailability";
+    LiquidDropdownContent,
+    LiquidDropdownItem,
+} from "@/app/components/ui/liquid-dropdown";
+import { isModelAvailable } from "@/app/lib/modelAvailability";
+import type { ApiKeyState } from "@/app/lib/mikeApi";
+import { useOllamaModels } from "@/app/hooks/useOllamaModels";
 
 export interface ModelOption {
     id: string;
     label: string;
-    group: "Anthropic" | "Google" | "OpenAI" | "Kimi" | "Azure OpenAI";
+    group: "Anthropic" | "Google" | "OpenAI" | "Local";
 }
 
 export const MODELS: ModelOption[] = [
@@ -31,9 +32,7 @@ export const MODELS: ModelOption[] = [
     { id: "gemini-3-flash-preview", label: "Gemini 3 Flash", group: "Google" },
     { id: "gpt-5.5", label: "GPT-5.5", group: "OpenAI" },
     { id: "gpt-5.4", label: "GPT-5.4", group: "OpenAI" },
-    { id: "kimi-k3", label: "Kimi K3", group: "Kimi" },
-    // Azure OpenAI entries are appended dynamically at render time from
-    // deployment discovery — see UserProfileContext.aoaiDeployments.
+    // Local (Ollama) models are appended dynamically — see useOllamaModels.
 ];
 
 export const SETTINGS_MODELS: ModelOption[] = [
@@ -49,48 +48,26 @@ export const SETTINGS_MODELS: ModelOption[] = [
 
 export const DEFAULT_MODEL_ID = "gemini-3-flash-preview";
 
-const STATIC_ALLOWED_MODEL_IDS = new Set(MODELS.map((m) => m.id));
+export const ALLOWED_MODEL_IDS = new Set(MODELS.map((m) => m.id));
 
-// Validates a model id from user input or storage. Static models live
-// in the set above; AOAI deployments are accepted by prefix because
-// the deployment names are user-defined and only known at runtime.
-export function isAllowedModelId(id: string): boolean {
-    return STATIC_ALLOWED_MODEL_IDS.has(id) || id.startsWith("aoai:");
-}
-
-// Backwards-compat alias for the few callers that previously did
-// `ALLOWED_MODEL_IDS.has(id)`. New code should use `isAllowedModelId`.
-export const ALLOWED_MODEL_IDS = {
-    has: (id: string) => isAllowedModelId(id),
-};
-
-const GROUP_ORDER: ModelOption["group"][] = [
-    "Anthropic",
-    "Google",
-    "OpenAI",
-    "Kimi",
-    "Azure OpenAI",
-];
+const GROUP_ORDER: ModelOption["group"][] = ["Anthropic", "Google", "OpenAI", "Local"];
+const itemClassName =
+    "rounded-xl px-2.5 py-1.5 text-gray-700 focus:bg-app-surface-hover focus:text-gray-900 data-[highlighted]:bg-app-surface-hover data-[highlighted]:text-gray-900";
 
 interface Props {
     value: string;
     onChange: (id: string) => void;
-    apiKeys?: ApiKeyAvailability;
-    // Extra entries to merge into the static MODELS list. Today this
-    // carries Azure OpenAI deployments discovered against a configured
-    // endpoint; the same hook can be used for any other dynamically-
-    // sourced provider in future. Entries here are always considered
-    // available (they wouldn't have come back from discovery otherwise).
-    extraModels?: ModelOption[];
+    apiKeys?: ApiKeyState;
 }
 
-export function ModelToggle({ value, onChange, apiKeys, extraModels }: Props) {
+export function ModelToggle({ value, onChange, apiKeys }: Props) {
     const [isOpen, setIsOpen] = useState(false);
-    const allModels = extraModels ? [...MODELS, ...extraModels] : MODELS;
-    const selected = allModels.find((m) => m.id === value);
+    const ollamaModels = useOllamaModels();
+    const models = [...MODELS, ...ollamaModels];
+    const selected = models.find((m) => m.id === value);
     const selectedLabel = selected?.label ?? "Model";
     const selectedAvailable = apiKeys
-        ? isModelAvailable(value, apiKeys, extraModels)
+        ? isModelAvailable(value, apiKeys)
         : true;
 
     return (
@@ -98,7 +75,7 @@ export function ModelToggle({ value, onChange, apiKeys, extraModels }: Props) {
             <DropdownMenuTrigger asChild>
                 <button
                     type="button"
-                    className={`flex items-center gap-1.5 rounded-lg px-2 h-8 text-sm transition-colors cursor-pointer text-gray-400 hover:bg-gray-100 hover:text-gray-700 ${isOpen ? "bg-gray-100 text-gray-700" : ""}`}
+                    className={`flex h-8 cursor-pointer items-center gap-1.5 rounded-full px-2 text-sm text-gray-400 transition-colors hover:text-gray-700 ${isOpen ? "text-gray-700" : ""}`}
                     title={
                         !selectedAvailable
                             ? "API key missing for selected model"
@@ -114,51 +91,30 @@ export function ModelToggle({ value, onChange, apiKeys, extraModels }: Props) {
                     />
                 </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent className="w-56 z-50" side="top" align="end">
+            <LiquidDropdownContent
+                className="z-50 w-56 p-1.5 text-gray-700"
+                side="top"
+                align="end"
+            >
                 {GROUP_ORDER.map((group, gi) => {
-                    const items = allModels.filter((m) => m.group === group);
-                    // Azure OpenAI is special-cased: render its section
-                    // header + a disabled placeholder when there are no
-                    // deployments yet (discovery hasn't run / global key
-                    // unset / no deployments returned). Without this, AOAI
-                    // is INVISIBLE even when configured, so the operator
-                    // has no on-screen confirmation it took effect.
-                    // Closes 040 Entry 13 fix A.
-                    if (items.length === 0) {
-                        if (group !== "Azure OpenAI") return null;
-                        return (
-                            <div key={group}>
-                                {gi > 0 && <DropdownMenuSeparator />}
-                                <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-gray-400">
-                                    {group}
-                                </DropdownMenuLabel>
-                                <DropdownMenuItem
-                                    disabled
-                                    className="cursor-default"
-                                >
-                                    <span className="flex-1 text-gray-400 italic">
-                                        {apiKeys?.globalApiKeys?.azureOpenai
-                                            ? "Discovering deployments…"
-                                            : "Configure in /install to use"}
-                                    </span>
-                                </DropdownMenuItem>
-                            </div>
-                        );
-                    }
+                    const items = models.filter((m) => m.group === group);
+                    if (items.length === 0) return null;
                     return (
                         <div key={group}>
-                            {gi > 0 && <DropdownMenuSeparator />}
+                            {gi > 0 && (
+                                <DropdownMenuSeparator className="-mx-1 my-1 bg-white/70" />
+                            )}
                             <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-gray-400">
                                 {group}
                             </DropdownMenuLabel>
                             {items.map((m) => {
                                 const available = apiKeys
-                                    ? isModelAvailable(m.id, apiKeys, extraModels)
+                                    ? isModelAvailable(m.id, apiKeys)
                                     : true;
                                 return (
-                                    <DropdownMenuItem
+                                    <LiquidDropdownItem
                                         key={m.id}
-                                        className="cursor-pointer"
+                                        className={`${itemClassName} ${m.id === value ? "bg-app-surface-hover text-gray-900 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]" : ""}`}
                                         onSelect={() => onChange(m.id)}
                                     >
                                         <span
@@ -175,13 +131,13 @@ export function ModelToggle({ value, onChange, apiKeys, extraModels }: Props) {
                                         {m.id === value && available && (
                                             <Check className="h-3.5 w-3.5 text-gray-600 ml-1" />
                                         )}
-                                    </DropdownMenuItem>
+                                    </LiquidDropdownItem>
                                 );
                             })}
                         </div>
                     );
                 })}
-            </DropdownMenuContent>
+            </LiquidDropdownContent>
         </DropdownMenu>
     );
 }

@@ -1,19 +1,23 @@
 /**
  * Mike API client — all requests to the Node.js backend.
- * Attaches the active browser auth token for user authentication.
+ * Attaches the Supabase auth token for user authentication.
  */
 
-import { getBrowserAccessToken, bounceIfUnauthorized } from "@/app/lib/auth-token";
+import { supabase } from "@/app/lib/supabase";
 import type {
     AssistantEvent,
     Chat,
     ChatDetailOut,
-    CitationAnnotation,
+    Citation,
     Document,
     Folder,
+    LibraryFolder,
     Message,
+    OpenSourceWorkflowContributorMode,
+    OpenSourceWorkflowResponse,
     Project,
     Workflow,
+    WorkflowContributor,
     TabularReview,
     TabularReviewDetailOut,
 } from "@/app/components/shared/types";
@@ -26,18 +30,16 @@ interface ServerMessage {
     content: string | AssistantEvent[] | null;
     files?: { filename: string; document_id?: string }[] | null;
     workflow?: { id: string; title: string } | null;
-    annotations?: CitationAnnotation[] | null;
-    citations?: CitationAnnotation[] | null;
+    citations?: Citation[] | null;
     created_at: string;
 }
 interface ServerChatDetailOut {
     chat: Chat;
     messages: ServerMessage[];
-    skill_binding?: ChatDetailOut["skillBinding"];
 }
 
-export const API_BASE =
-    (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") + "/api";
+const API_BASE =
+    process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
 const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
     if (isDev) console.log(...args);
@@ -55,9 +57,6 @@ export class MikeApiError extends Error {
     }
 }
 
-// Upstream divergence (sync-log: 3a10943): kept for API parity with
-// upstream, but dev's backend never emits mfa_verification_required —
-// app-level Supabase MFA was not adopted (Entra handles MFA at the IdP).
 export function isMfaRequiredError(error: unknown) {
     return (
         error instanceof MikeApiError &&
@@ -66,19 +65,15 @@ export function isMfaRequiredError(error: unknown) {
     );
 }
 
-export async function getAuthHeader(): Promise<Record<string, string>> {
-    const token = await getBrowserAccessToken();
-    return token ? { Authorization: `Bearer ${token}` } : {};
+async function getAuthHeader(): Promise<Record<string, string>> {
+    const {
+        data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) return {};
+    return { Authorization: `Bearer ${session.access_token}` };
 }
 
-// 401 handling is centralised in @/app/lib/auth-token's bounceIfUnauthorized.
-// Use that helper at every direct-fetch call site so a stale or expired
-// token can't leave the user trapped in a half-authenticated state.
-
-export async function apiRequest<T>(
-    path: string,
-    init?: RequestInit,
-): Promise<T> {
+async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
     const authHeaders = await getAuthHeader();
     const { headers: initHeaders, ...restInit } = init ?? {};
     const response = await fetch(`${API_BASE}${path}`, {
@@ -90,8 +85,6 @@ export async function apiRequest<T>(
             ...(initHeaders as Record<string, string> | undefined),
         },
     });
-
-    bounceIfUnauthorized(response);
 
     if (!response.ok) {
         throw await toApiError(response, path);
@@ -167,32 +160,6 @@ async function toApiError(response: Response, path: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Help
-// ---------------------------------------------------------------------------
-
-export type HelpArticleSummary = {
-    slug: string;
-    title: string;
-};
-
-export type HelpArticle = HelpArticleSummary & {
-    markdown: string;
-};
-
-export async function listHelpArticles(): Promise<HelpArticleSummary[]> {
-    const result = await apiRequest<{ articles: HelpArticleSummary[] }>(
-        "/help/articles",
-    );
-    return result.articles;
-}
-
-export async function getHelpArticle(slug: string): Promise<HelpArticle> {
-    return apiRequest<HelpArticle>(
-        `/help/articles/${encodeURIComponent(slug)}`,
-    );
-}
-
-// ---------------------------------------------------------------------------
 // Projects
 // ---------------------------------------------------------------------------
 
@@ -206,12 +173,13 @@ export async function listProjects(options?: {
 export async function createProject(
     name: string,
     cm_number?: string,
+    practice?: string,
     shared_with?: string[],
 ): Promise<Project> {
     return apiRequest<Project>("/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, cm_number, shared_with }),
+        body: JSON.stringify({ name, cm_number, practice, shared_with }),
     });
 }
 
@@ -266,8 +234,22 @@ export interface UserProfile {
     apiKeyStatus: ApiKeyStatus;
 }
 
+export interface UserLookupResult {
+    exists: boolean;
+    email: string;
+    display_name: string | null;
+}
+
 export async function getUserProfile(): Promise<UserProfile> {
     return apiRequest<UserProfile>("/user/profile");
+}
+
+export async function lookupUserByEmail(
+    email: string,
+): Promise<UserLookupResult> {
+    return apiRequest<UserLookupResult>(
+        `/user/lookup?email=${encodeURIComponent(email)}`,
+    );
 }
 
 export async function updateUserProfile(payload: {
@@ -298,10 +280,8 @@ export type ApiKeyProvider =
     | "claude"
     | "gemini"
     | "openai"
-    | "kimi"
     | "openrouter"
-    | "courtlistener"
-    | "azure_openai";
+    | "courtlistener";
 export type ApiKeySource = "user" | "env" | null;
 export type ApiKeyState = Record<
     ApiKeyProvider,
@@ -317,6 +297,19 @@ export type ApiKeyStatus = Record<ApiKeyProvider, boolean> & {
 
 export async function getApiKeyStatus(): Promise<ApiKeyStatus> {
     return apiRequest<ApiKeyStatus>("/user/api-keys");
+}
+
+export interface OllamaModelOption {
+    id: string;
+    label: string;
+    group: "Local";
+}
+
+export async function getOllamaModels(): Promise<OllamaModelOption[]> {
+    const { models } = await apiRequest<{ models: OllamaModelOption[] }>(
+        "/models/ollama",
+    );
+    return models;
 }
 
 export async function saveApiKey(
@@ -453,6 +446,7 @@ export async function updateProject(
     payload: {
         name?: string;
         cm_number?: string;
+        practice?: string | null;
         shared_with?: string[];
     },
 ): Promise<Project> {
@@ -574,6 +568,110 @@ export async function renameProjectDocument(
     );
 }
 
+export type LibraryKind = "files" | "templates";
+
+export interface LibraryCollection {
+    documents: Document[];
+    folders: LibraryFolder[];
+}
+
+export async function getLibrary(
+    kind: LibraryKind,
+): Promise<LibraryCollection> {
+    return apiRequest<LibraryCollection>(`/library/${kind}`);
+}
+
+export async function uploadLibraryDocument(
+    kind: LibraryKind,
+    file: File,
+): Promise<Document> {
+    const authHeaders = await getAuthHeader();
+    const form = new FormData();
+    form.append("file", file);
+    const response = await fetch(`${API_BASE}/library/${kind}/documents`, {
+        method: "POST",
+        headers: { ...authHeaders },
+        body: form,
+    });
+    if (!response.ok) throw new Error(await response.text());
+    return response.json() as Promise<Document>;
+}
+
+export async function createLibraryFolder(
+    kind: LibraryKind,
+    name: string,
+    parentFolderId?: string | null,
+): Promise<LibraryFolder> {
+    return apiRequest<LibraryFolder>(`/library/${kind}/folders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            name,
+            parent_folder_id: parentFolderId ?? null,
+        }),
+    });
+}
+
+export async function renameLibraryFolder(
+    kind: LibraryKind,
+    folderId: string,
+    name: string,
+): Promise<LibraryFolder> {
+    return apiRequest<LibraryFolder>(`/library/${kind}/folders/${folderId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+    });
+}
+
+export async function deleteLibraryFolder(
+    kind: LibraryKind,
+    folderId: string,
+): Promise<void> {
+    await apiRequest(`/library/${kind}/folders/${folderId}`, {
+        method: "DELETE",
+    });
+}
+
+export async function moveLibraryFolder(
+    kind: LibraryKind,
+    folderId: string,
+    parentFolderId: string | null,
+): Promise<LibraryFolder> {
+    return apiRequest<LibraryFolder>(`/library/${kind}/folders/${folderId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ parent_folder_id: parentFolderId }),
+    });
+}
+
+export async function moveLibraryDocument(
+    kind: LibraryKind,
+    documentId: string,
+    folderId: string | null,
+): Promise<Document> {
+    return apiRequest<Document>(
+        `/library/${kind}/documents/${documentId}/folder`,
+        {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ folder_id: folderId }),
+        },
+    );
+}
+
+export async function renameLibraryDocument(
+    kind: LibraryKind,
+    documentId: string,
+    filename: string,
+): Promise<Document> {
+    return apiRequest<Document>(`/library/${kind}/documents/${documentId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename }),
+    });
+}
+
 export async function addDocumentToProject(
     projectId: string,
     documentId: string,
@@ -621,7 +719,6 @@ export async function uploadDocumentVersion(
             body: form,
         },
     );
-    bounceIfUnauthorized(response);
     if (!response.ok) throw new Error(await response.text());
     return response.json() as Promise<DocumentVersion>;
 }
@@ -708,7 +805,6 @@ export async function uploadProjectDocument(
             body: form,
         },
     );
-    bounceIfUnauthorized(response);
     if (!response.ok) throw new Error(await response.text());
     return response.json() as Promise<Document>;
 }
@@ -724,7 +820,6 @@ export async function uploadStandaloneDocument(
         headers: { ...authHeaders },
         body: form,
     });
-    bounceIfUnauthorized(response);
     if (!response.ok) throw new Error(await response.text());
     return response.json() as Promise<Document>;
 }
@@ -758,7 +853,6 @@ export async function downloadDocumentsZip(
         },
         body: JSON.stringify({ document_ids: documentIds }),
     });
-    bounceIfUnauthorized(response);
     if (!response.ok) {
         const detail = await response.text();
         throw new Error(detail || `API error: ${response.status}`);
@@ -796,6 +890,7 @@ export async function getChat(chatId: string): Promise<ChatDetailOut> {
     const messages: Message[] = raw.messages.map((m) => {
         if (m.role === "user") {
             return {
+                id: m.id,
                 role: "user",
                 content: typeof m.content === "string" ? m.content : "",
                 files: m.files ?? undefined,
@@ -806,26 +901,18 @@ export async function getChat(chatId: string): Promise<ChatDetailOut> {
             ? (m.content as AssistantEvent[])
             : undefined;
         return {
+            id: m.id,
             role: "assistant",
             content:
                 events
                     ?.filter((e) => e.type === "content")
                     .map((e) => (e as { type: "content"; text: string }).text)
                     .join("") ?? "",
-            // Upstream divergence (sync-log: 82dcaef): FULL CITATIONS-FIELD
-            // FRONTEND MIGRATION NOT SUPPORTED — the frozen frontend still
-            // consumes `annotations`, while migration 0018 renamed the server
-            // field to `citations`. Keep this compatibility alias during
-            // conflict resolution until the complete frontend migration lands.
-            annotations: m.annotations ?? m.citations ?? undefined,
+            citations: m.citations ?? undefined,
             events,
         };
     });
-    return {
-        chat: raw.chat,
-        messages,
-        skillBinding: raw.skill_binding ?? null,
-    };
+    return { chat: raw.chat, messages };
 }
 
 export async function renameChat(chatId: string, title: string): Promise<void> {
@@ -887,11 +974,28 @@ export async function streamChat(payload: {
     chat_id?: string;
     project_id?: string;
     model?: string;
+    ask_inputs_response?: {
+        responses: (
+            | {
+                  id: string;
+                  kind: "choice";
+                  question: string;
+                  answer?: string;
+                  skipped?: boolean;
+              }
+            | {
+                  id: string;
+                  kind: "documents";
+                  filenames: string[];
+                  skipped?: boolean;
+              }
+        )[];
+    };
     signal?: AbortSignal;
 }): Promise<Response> {
     const { signal, ...body } = payload;
     const authHeaders = await getAuthHeader();
-    const response = await fetch(`${API_BASE}/chat`, {
+    return fetch(`${API_BASE}/chat`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -901,8 +1005,6 @@ export async function streamChat(payload: {
         body: JSON.stringify(body),
         signal,
     });
-    bounceIfUnauthorized(response);
-    return response;
 }
 
 type StreamChatMessage = {
@@ -919,11 +1021,28 @@ export async function streamProjectChat(payload: {
     model?: string;
     displayed_doc?: { filename: string; document_id: string };
     attached_documents?: { filename: string; document_id: string }[];
+    ask_inputs_response?: {
+        responses: (
+            | {
+                  id: string;
+                  kind: "choice";
+                  question: string;
+                  answer?: string;
+                  skipped?: boolean;
+              }
+            | {
+                  id: string;
+                  kind: "documents";
+                  filenames: string[];
+                  skipped?: boolean;
+              }
+        )[];
+    };
     signal?: AbortSignal;
 }): Promise<Response> {
     const { projectId, signal, ...body } = payload;
     const authHeaders = await getAuthHeader();
-    const response = await fetch(`${API_BASE}/projects/${projectId}/chat`, {
+    return fetch(`${API_BASE}/projects/${projectId}/chat`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -933,8 +1052,6 @@ export async function streamProjectChat(payload: {
         body: JSON.stringify(body),
         signal,
     });
-    bounceIfUnauthorized(response);
-    return response;
 }
 
 // ---------------------------------------------------------------------------
@@ -1083,12 +1200,10 @@ export async function streamTabularGeneration(
     reviewId: string,
 ): Promise<Response> {
     const authHeaders = await getAuthHeader();
-    const response = await fetch(`${API_BASE}/tabular-review/${reviewId}/generate`, {
+    return fetch(`${API_BASE}/tabular-review/${reviewId}/generate`, {
         method: "POST",
         headers: { ...authHeaders },
     });
-    bounceIfUnauthorized(response);
-    return response;
 }
 
 export async function streamTabularChat(
@@ -1099,7 +1214,7 @@ export async function streamTabularChat(
     context?: { reviewTitle?: string | null; projectName?: string | null },
 ): Promise<Response> {
     const authHeaders = await getAuthHeader();
-    const response = await fetch(`${API_BASE}/tabular-review/${reviewId}/chat`, {
+    return fetch(`${API_BASE}/tabular-review/${reviewId}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders },
         body: JSON.stringify({
@@ -1110,8 +1225,6 @@ export async function streamTabularChat(
         }),
         signal: signal ?? undefined,
     });
-    bounceIfUnauthorized(response);
-    return response;
 }
 
 export interface TRCitationAnnotation {
@@ -1194,6 +1307,18 @@ export async function deleteTabularChat(
     });
 }
 
+export async function renameTabularChat(
+    reviewId: string,
+    chatId: string,
+    title: string,
+): Promise<void> {
+    await apiRequest(`/tabular-review/${reviewId}/chats/${chatId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title }),
+    });
+}
+
 export async function regenerateTabularCell(
     reviewId: string,
     rowId: string,
@@ -1228,7 +1353,7 @@ export async function clearTabularCells(
 // Workflows
 // ---------------------------------------------------------------------------
 
-type WorkflowType = Workflow["type"];
+type WorkflowType = Workflow["metadata"]["type"];
 
 export async function listWorkflows(
     type: WorkflowType,
@@ -1241,11 +1366,15 @@ export async function getWorkflow(workflowId: string): Promise<Workflow> {
 }
 
 export async function createWorkflow(payload: {
-    title: string;
-    type: "assistant" | "tabular";
-    prompt_md?: string;
+    metadata: {
+        title: string;
+        type: "assistant" | "tabular";
+        language?: string | null;
+        practice?: string | null;
+        jurisdictions?: string[] | null;
+    };
+    skill_md?: string;
     columns_config?: { index: number; name: string; prompt: string }[];
-    practice?: string | null;
 }): Promise<Workflow> {
     return apiRequest<Workflow>("/workflows", {
         method: "POST",
@@ -1257,10 +1386,14 @@ export async function createWorkflow(payload: {
 export async function updateWorkflow(
     workflowId: string,
     payload: {
-        title?: string;
-        prompt_md?: string;
+        metadata?: {
+            title?: string;
+            language?: string | null;
+            practice?: string | null;
+            jurisdictions?: string[] | null;
+        };
+        skill_md?: string;
         columns_config?: { index: number; name: string; prompt: string }[];
-        practice?: string | null;
     },
 ): Promise<Workflow> {
     return apiRequest<Workflow>(`/workflows/${workflowId}`, {
@@ -1272,6 +1405,23 @@ export async function updateWorkflow(
 
 export async function deleteWorkflow(workflowId: string): Promise<void> {
     await apiRequest(`/workflows/${workflowId}`, { method: "DELETE" });
+}
+
+export async function openSourceWorkflow(
+    workflowId: string,
+    payload: {
+        contributor_mode: OpenSourceWorkflowContributorMode;
+        contributor?: WorkflowContributor | null;
+    },
+): Promise<OpenSourceWorkflowResponse> {
+    return apiRequest<OpenSourceWorkflowResponse>(
+        `/workflows/${workflowId}/open-source`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+        },
+    );
 }
 
 export async function listHiddenWorkflows(): Promise<string[]> {
