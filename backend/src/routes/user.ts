@@ -107,6 +107,38 @@ function normalizeCreditsResetDate(current: string | null): string {
   return base.toISOString();
 }
 
+// GET /user/lookup?email=person@example.com
+//
+// Upstream route (dropped by the a5fe6d6 "conflict→ours" resolution, restored
+// in OSS-6 step A; consumed by PeopleModal / AddUserInput). Any signed-in user
+// may learn whether an email has a profile and its display name — accepted as
+// upstream ships it (OSS-6 decision 11, single-tenant deployment).
+// Dev divergence: the lookup is wrapped in try/catch because Express 4 does
+// not route rejected async handlers to the error middleware — an escaped
+// rejection from findProfileUserByEmail would hang the request.
+userRouter.get("/lookup", requireAuth, async (req, res) => {
+  const email = typeof req.query.email === "string" ? req.query.email : "";
+  if (!email.trim()) {
+    return void res.status(400).json({ detail: "email is required" });
+  }
+
+  try {
+    const db = createServerSupabase();
+    const user = await findProfileUserByEmail(db, email);
+    res.json({
+      exists: !!user,
+      email: user?.email ?? email.trim().toLowerCase(),
+      display_name: user?.display_name ?? null,
+    });
+  } catch (err) {
+    // findProfileUserByEmail rethrows the raw Supabase/PostgREST error
+    // object, which is not guaranteed to be an Error instance.
+    const message = (err as { message?: unknown } | null)?.message;
+    const detail = typeof message === "string" ? message : "User lookup failed";
+    res.status(500).json({ detail });
+  }
+});
+
 userRouter.get("/profile", requireAuth, async (_req, res) => {
   const userId = res.locals.userId as string;
   const db = createServerSupabase();

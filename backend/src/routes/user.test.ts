@@ -99,6 +99,7 @@ vi.mock("../lib/mcpConnectors", () => ({
 }));
 
 import { makeApp } from "../test/helpers/buildTestApp";
+import { makeFakeDb } from "../test/helpers/fakeDb";
 
 const TOUCHED_ENV = [
   "AUTH_PROVIDER",
@@ -1130,5 +1131,93 @@ describe("MCP connector routes", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.detail).toBe("connection refused");
+  });
+});
+
+// ── GET /api/user/lookup (OSS-6 step A, upstream route restored) ─────────
+
+describe("GET /api/user/lookup", () => {
+  it("requires authentication — 401 without a header", async () => {
+    const res = await request(makeApp()).get(
+      "/api/user/lookup?email=person@example.com",
+    );
+
+    expect(res.status).toBe(401);
+    expect(createServerSupabaseMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when email is missing or blank", async () => {
+    const missing = await request(makeApp())
+      .get("/api/user/lookup")
+      .set("Authorization", "Bearer ok");
+    const blank = await request(makeApp())
+      .get("/api/user/lookup?email=%20%20")
+      .set("Authorization", "Bearer ok");
+
+    expect(missing.status).toBe(400);
+    expect(missing.body.detail).toBe("email is required");
+    expect(blank.status).toBe(400);
+    expect(createServerSupabaseMock).not.toHaveBeenCalled();
+  });
+
+  it("reports an existing profile with its normalised email and display name", async () => {
+    const { db, callsFor } = makeFakeDb((call) =>
+      call.table === "user_profiles"
+        ? {
+            data: [
+              {
+                user_id: "user-2",
+                email: "person@example.com",
+                display_name: "  Person Two  ",
+              },
+            ],
+          }
+        : {},
+    );
+    createServerSupabaseMock.mockReturnValue(db);
+
+    const res = await request(makeApp())
+      .get("/api/user/lookup?email=%20Person@Example.com%20")
+      .set("Authorization", "Bearer ok");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      exists: true,
+      email: "person@example.com",
+      display_name: "Person Two",
+    });
+    const [lookup] = callsFor("user_profiles", "select");
+    expect(lookup.filters).toContainEqual(["eq", "email", "person@example.com"]);
+  });
+
+  it("reports a missing profile as exists:false with the normalised email", async () => {
+    const { db } = makeFakeDb(() => ({ data: null }));
+    createServerSupabaseMock.mockReturnValue(db);
+
+    const res = await request(makeApp())
+      .get("/api/user/lookup?email=Nobody@Example.com")
+      .set("Authorization", "Bearer ok");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      exists: false,
+      email: "nobody@example.com",
+      display_name: null,
+    });
+  });
+
+  it("returns 500 (not a hung request) when the profile query fails", async () => {
+    const { db } = makeFakeDb(() => ({
+      data: null,
+      error: { message: "db down" },
+    }));
+    createServerSupabaseMock.mockReturnValue(db);
+
+    const res = await request(makeApp())
+      .get("/api/user/lookup?email=person@example.com")
+      .set("Authorization", "Bearer ok");
+
+    expect(res.status).toBe(500);
+    expect(res.body.detail).toBe("db down");
   });
 });
