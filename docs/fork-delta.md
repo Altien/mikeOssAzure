@@ -47,8 +47,6 @@ changes can be reviewed and integrated incrementally.
 - Adds the Authority Trace review panel and client calls
   (`frontend/src/altien/authorityTrace/`, with thin hooks in shared
   assistant components and `mikeApi.ts`).
-- Release verification evidence is in
-  [`tests/09-authority-trace.md`](tests/09-authority-trace.md).
 
 ## Models and integrations
 
