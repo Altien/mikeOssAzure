@@ -1488,7 +1488,10 @@ describe("mikeApi: smoke — tabular review streaming + cells", () => {
         expect(method).toBe("DELETE");
     });
 
-    it("regenerateTabularCell POSTs with { document_id, column_index }", async () => {
+    // Upstream 6ae1f98d (PR #274) re-keyed tabular cells by review row
+    // (folder-grouped rows can span several documents), so the cell API
+    // addresses rows, not documents.
+    it("regenerateTabularCell POSTs with { row_id, column_index }", async () => {
         let body: unknown;
         server.use(
             http.post(
@@ -1503,11 +1506,11 @@ describe("mikeApi: smoke — tabular review streaming + cells", () => {
                 },
             ),
         );
-        await regenerateTabularCell("r-1", "d-1", 3);
-        expect(body).toEqual({ document_id: "d-1", column_index: 3 });
+        await regenerateTabularCell("r-1", "row-1", 3);
+        expect(body).toEqual({ row_id: "row-1", column_index: 3 });
     });
 
-    it("clearTabularCells POSTs with { document_ids }", async () => {
+    it("clearTabularCells POSTs with { row_ids }", async () => {
         let body: unknown;
         server.use(
             http.post(
@@ -1518,8 +1521,8 @@ describe("mikeApi: smoke — tabular review streaming + cells", () => {
                 },
             ),
         );
-        await clearTabularCells("r-1", ["d-1", "d-2"]);
-        expect(body).toEqual({ document_ids: ["d-1", "d-2"] });
+        await clearTabularCells("r-1", ["row-1", "row-2"]);
+        expect(body).toEqual({ row_ids: ["row-1", "row-2"] });
     });
 });
 
