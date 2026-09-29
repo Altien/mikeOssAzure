@@ -6,6 +6,7 @@ import {
     User,
     ChevronsUpDown,
     ChevronDown,
+    PackageOpen,
 } from "lucide-react";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
@@ -38,6 +39,8 @@ const NAV_ITEMS = [
     { href: "/library", label: "Library", icon: LibrarySkeuoIcon },
     { href: "/tabular-reviews", label: "Tabular Review", icon: TabularReviewSkeuoIcon },
     { href: "/workflows", label: "Workflows", icon: WorkflowSkeuoIcon },
+    // Upstream divergence (OSS-6, §2.3 item 7): dev's skills library page.
+    { href: "/skills", label: "Skills", icon: PackageOpen },
 ];
 
 interface AppSidebarProps {

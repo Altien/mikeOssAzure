@@ -19,6 +19,7 @@ import {
 } from "./CaseLawPanel";
 import { cn } from "@/app/lib/utils";
 import { LIQUID_PANEL_SURFACE_CLASS } from "@/app/components/ui/liquid-surface";
+import { AuthorityTracePanel } from "@/altien/authorityTrace/AuthorityTracePanel";
 
 // ---------------------------------------------------------------------------
 // Tab data
@@ -55,11 +56,21 @@ export type EditTab = CommonTab & {
     changeNumber?: number;
 };
 
+// Upstream divergence (OSS-6, §2.3 item 7): dev's Authority Trace tab
+// (panel from src/altien/authorityTrace), alongside upstream's case tab.
+export type AuthorityTraceTab = {
+    kind: "authority_trace";
+    id: string;
+    runId: string;
+    title: string;
+};
+
 export type AssistantSidePanelTab =
     | DocumentTab
     | CitationTab
     | EditTab
-    | CaseTab;
+    | CaseTab
+    | AuthorityTraceTab;
 
 interface Props {
     tabs: AssistantSidePanelTab[];
@@ -117,6 +128,7 @@ function tabTitle(tab: AssistantSidePanelTab): string {
     if (tab.kind === "case") {
         return tab.caseName || tab.citation || "Case";
     }
+    if (tab.kind === "authority_trace") return tab.title;
     return tab.filename;
 }
 
@@ -226,6 +238,7 @@ export function AssistantSidePanel({
                         const isActive = tab.id === active.id;
                         const showVersionBadge =
                             tab.kind !== "case" &&
+                            tab.kind !== "authority_trace" &&
                             typeof tab.versionNumber === "number" &&
                             Number.isFinite(tab.versionNumber) &&
                             tab.versionNumber > 1;
@@ -297,6 +310,17 @@ export function AssistantSidePanel({
                                     tab={tab}
                                     compactActions={panelWidth < 600}
                                 />
+                            </div>
+                        );
+                    }
+                    if (tab.kind === "authority_trace") {
+                        return (
+                            <div
+                                key={tab.id}
+                                className={`absolute inset-0 flex flex-col ${isActive ? "" : "invisible pointer-events-none"}`}
+                                aria-hidden={!isActive}
+                            >
+                                <AuthorityTracePanel runId={tab.runId} />
                             </div>
                         );
                     }

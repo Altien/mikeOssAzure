@@ -13,6 +13,7 @@ import type {
   Citation,
   Message,
 } from "@/app/components/shared/types";
+import { handleAuthorityTraceStreamEvent } from "@/altien/authorityTrace/events";
 
 interface UseAssistantChatOptions {
   initialMessages?: Message[];
@@ -559,6 +560,19 @@ export function useAssistantChat({
                 workflow_id: data.workflow_id as string,
                 title: data.title as string,
               });
+              continue;
+            }
+
+            // Upstream divergence (OSS-6, §2.3 item 7): dev's authority-trace
+            // SSE events are parsed in src/altien/authorityTrace/events.
+            if (
+              handleAuthorityTraceStreamEvent({
+                data,
+                pushEvent,
+                updateMatchingEvent,
+                pushThinkingPlaceholder,
+              })
+            ) {
               continue;
             }
 

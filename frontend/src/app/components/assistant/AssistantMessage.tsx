@@ -26,6 +26,7 @@ import {
     WorkflowAppliedBlock,
     type CourtListenerBlockItem,
 } from "./message/EventBlocks";
+import { AuthorityTraceEventBlock } from "@/altien/authorityTrace/AuthorityTraceEventBlock";
 
 interface Props {
     events?: AssistantEvent[];
@@ -96,6 +97,8 @@ interface Props {
      * edits flip their per-card UI without per-card clicks.
      */
     resolvedEditStatuses?: Record<string, "accepted" | "rejected">;
+    /** Dev (OSS-6, authority trace): opens the Authority Trace panel. */
+    onAuthorityTraceOpen?: (runId: string) => void;
 }
 
 export function AssistantMessage({
@@ -118,6 +121,7 @@ export function AssistantMessage({
     isDocReloading,
     isEditReloading,
     resolvedEditStatuses,
+    onAuthorityTraceOpen,
 }: Props) {
     const contentDivRef = useRef<HTMLDivElement | null>(null);
     const [isCopied, setIsCopied] = useState(false);
@@ -720,6 +724,21 @@ export function AssistantMessage({
                     hasError={!!event.error}
                     showConnector={showConnector}
                     items={items.length > 0 ? items : undefined}
+                />
+            );
+        }
+        // Upstream divergence (OSS-6, §2.3 item 7): dev's authority-trace
+        // events render through src/altien; the block opens the trace panel.
+        if (
+            event.type === "authority_trace_extraction" ||
+            event.type === "authority_trace_verification"
+        ) {
+            return (
+                <AuthorityTraceEventBlock
+                    key={globalIdx}
+                    event={event}
+                    showConnector={showConnector}
+                    onOpen={onAuthorityTraceOpen}
                 />
             );
         }

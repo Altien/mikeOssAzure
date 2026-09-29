@@ -69,6 +69,8 @@ export function PdfView({
         .join("|");
 
     const [containerWidth, setContainerWidth] = useState(0);
+    // Dev (OSS-6): width the PDF was last rendered at (flash-loop fix below).
+    const lastRenderWidthRef = useRef(0);
     const [zoom, setZoom] = useState(1.0);
     const [currentPage, setCurrentPage] = useState(1);
     const [numPages, setNumPages] = useState(0);
@@ -468,6 +470,9 @@ export function PdfView({
             const pdfDoc = await lib.getDocument({
                 data: new Uint8Array(result.buffer),
                 standardFontDataUrl: STANDARD_FONT_DATA_URL,
+                // Dev (OSS-6, §2.3 item 6): errors only — silences benign
+                // "Empty FlateDecode stream" warnings.
+                verbosity: 0,
             }).promise;
             if (cancelled) return;
             pdfDocRef.current = pdfDoc;
@@ -481,6 +486,14 @@ export function PdfView({
     // Re-render at new scale when container is resized (debounced 150ms)
     useEffect(() => {
         if (!pdfDocRef.current) return;
+        // Upstream divergence (OSS-6, §2.3 item 6 — PDF flash-loop fix):
+        // rendering content toggles the vertical scrollbar, which shifts the
+        // measured width by ~15px and would re-trigger this effect forever
+        // (the flash loop). Only re-render on a real resize — a delta wider
+        // than any scrollbar. The scroll container also reserves the gutter
+        // ([scrollbar-gutter:stable]).
+        if (Math.abs(containerWidth - lastRenderWidthRef.current) < 24) return;
+        lastRenderWidthRef.current = containerWidth;
         const timer = setTimeout(() => {
             if (pdfDocRef.current) {
                 renderPDF(pdfDocRef.current, quoteListRef.current);
@@ -534,7 +547,7 @@ export function PdfView({
         >
             <div
                 ref={scrollContainerRef}
-                className="flex-1 overflow-auto px-3 pt-5 pb-3"
+                className="flex-1 overflow-auto [scrollbar-gutter:stable] px-3 pt-5 pb-3"
             >
                 {loading && (
                     <div className="flex h-full items-center justify-center">

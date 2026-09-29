@@ -28,6 +28,9 @@ export function toolCallLabel(name: string): string {
     if (name === "courtlistener_read_case") return "Reading case...";
     if (name === "courtlistener_verify_citations")
         return "Verifying citations...";
+    // Upstream divergence (OSS-6, §2.3 item 7): dev's authority-trace tool.
+    if (name === "verify_citation_sources")
+        return "Verifying citation sources...";
     if (name.startsWith("mcp_")) return "Using connector...";
     return name ? `Running ${name}...` : "Working...";
 }

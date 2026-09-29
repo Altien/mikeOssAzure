@@ -40,6 +40,7 @@ import {
 import { AccountSection } from "../AccountSection";
 import { AccountToggle } from "../AccountToggle";
 import { openOAuthPopup, type OAuthPopupMessage } from "./oauthPopup";
+import { GitHubSkillImportSection } from "@/altien/skills/GitHubSkillImportSection";
 
 type PendingMfaAction =
     | { type: "create" }
@@ -545,6 +546,9 @@ export default function ConnectorsPage() {
             )}
 
             <div className="space-y-3">
+                {/* Upstream divergence (OSS-6, §2.3 item 7): dev's GitHub
+                    skill-acquisition settings (src/altien/skills). */}
+                <GitHubSkillImportSection onError={setError} />
                 {loading ? (
                     <ConnectorsSkeleton />
                 ) : connectors.length === 0 ? (

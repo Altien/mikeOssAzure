@@ -71,6 +71,19 @@ import {
     removeDeletedDocumentTabs,
 } from "@/app/lib/folderDeleteState";
 import { usePathParams } from "@/app/lib/usePathParams";
+// Upstream divergence (OSS-6, §2.3 item 7): dev's skill runtime (bound-skill
+// chip + explicit upgrade banner) and Authority Trace tab, hooked in from
+// src/altien. Each hook-in site below is marked "Dev (OSS-6)".
+import {
+    ChatSkillChip,
+    ChatSkillUpgradeBanner,
+    useChatSkillRuntime,
+} from "@/altien/skillRuntime/chatSkillRuntime";
+import {
+    AuthorityTraceTabItem,
+    useProjectChatAuthorityTrace,
+} from "@/altien/authorityTrace/projectChatAuthorityTrace";
+import { AuthorityTracePanel } from "@/altien/authorityTrace/AuthorityTracePanel";
 
 type DocTab = {
     documentId: string;
@@ -258,6 +271,22 @@ export default function ProjectAssistantChatPage() {
     );
 
     const activeTab = tabs.find((t) => t.documentId === activeTabId) ?? null;
+    // Dev (OSS-6): skill runtime + Authority Trace tab state.
+    const skillRuntime = useChatSkillRuntime(projectId, chatId);
+    const authorityTrace = useProjectChatAuthorityTrace({
+        activeTabId,
+        setActiveTabId,
+        onOpen: () => {
+            setActiveQuotes(null);
+            setSelectedDocId(null);
+        },
+        onClose: () => {
+            const fallback = tabs.at(-1) ?? null;
+            setActiveTabId(fallback?.documentId ?? null);
+            setActiveQuotes(null);
+            setSelectedDocId(fallback?.documentId ?? null);
+        },
+    });
     const tabBarRef = useRef<HTMLDivElement | null>(null);
     const tabItemRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -373,9 +402,10 @@ export default function ProjectAssistantChatPage() {
         if (hasLoaded.current) return;
         hasLoaded.current = true;
         getChat(chatId)
-            .then(({ chat, messages: loaded }) => {
+            .then(({ chat, messages: loaded, skillBinding }) => {
                 setChatTitle(chat.title);
                 setChatOwnerId(chat.user_id ?? null);
+                skillRuntime.setBinding(skillBinding ?? null); // Dev (OSS-6)
                 if (loaded.length > 0) setMessages(loaded);
             })
             .catch(() => router.replace(`/projects/${projectId}/assistant`))
@@ -945,7 +975,15 @@ export default function ProjectAssistantChatPage() {
                           },
                     chatLoaded
                         ? {
-                              label: chatTitle ?? "Untitled New Chat",
+                              label: (
+                                  <>
+                                      {chatTitle ?? "Untitled New Chat"}
+                                      {/* Dev (OSS-6) */}
+                                      <ChatSkillChip
+                                          binding={skillRuntime.binding}
+                                      />
+                                  </>
+                              ),
                           }
                         : {
                               loading: true,
@@ -986,6 +1024,9 @@ export default function ProjectAssistantChatPage() {
                     },
                 ]}
             />
+
+            {/* Dev (OSS-6): explicit skill upgrade. Never automatic. */}
+            <ChatSkillUpgradeBanner runtime={skillRuntime} />
 
             {/* Three-panel body */}
             <div className="flex flex-1 min-h-0 border-t border-gray-200 overflow-hidden">
@@ -1135,7 +1176,7 @@ export default function ProjectAssistantChatPage() {
                         ref={tabBarRef}
                         className="h-10 flex items-end border-b border-gray-200 shrink-0 overflow-x-auto min-w-0 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
                     >
-                        {tabs.length === 0 ? (
+                        {tabs.length === 0 && !authorityTrace.runId ? (
                             <span className="px-4 self-center text-xs text-gray-700">
                                 Document Viewer
                             </span>
@@ -1215,9 +1256,17 @@ export default function ProjectAssistantChatPage() {
                                 );
                             })
                         )}
+                        {/* Dev (OSS-6) */}
+                        <AuthorityTraceTabItem
+                            trace={authorityTrace}
+                            tabItemRefs={tabItemRefs}
+                        />
                     </div>
                     <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-                        {activeTab ? (
+                        {authorityTrace.active && authorityTrace.runId ? (
+                            // Dev (OSS-6)
+                            <AuthorityTracePanel runId={authorityTrace.runId} />
+                        ) : activeTab ? (
                             isDocxFilename(activeTab.filename) ? (
                                 <DocxView
                                     key={activeTab.documentId}
@@ -1379,6 +1428,9 @@ export default function ProjectAssistantChatPage() {
                                             onEditError={handleEditError}
                                             isDocReloading={(docId) =>
                                                 reloadingDocIds.has(docId)
+                                            }
+                                            onAuthorityTraceOpen={
+                                                authorityTrace.open // Dev (OSS-6)
                                             }
                                         />
                                     ),
