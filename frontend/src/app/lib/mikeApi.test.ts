@@ -8,13 +8,20 @@ import {
 } from "vitest";
 import type { AssistantEvent, Chat } from "@/app/components/shared/types";
 
-// mikeApi resolves the auth header through the module-level Supabase client,
-// so swap it for a controllable session before the module under test loads.
-const { getSessionMock } = vi.hoisted(() => ({
-    getSessionMock: vi.fn(),
-}));
-vi.mock("@/app/lib/supabase", () => ({
-    supabase: { auth: { getSession: getSessionMock } },
+// Upstream's suite (204d2d53) on dev's harness (OSS-6): dev's mikeApi resolves
+// the bearer token through @/app/lib/auth-token (Entra/local/Supabase) rather
+// than the module-level Supabase client, prefixes every path with `/api`, and
+// hands every response to bounceIfUnauthorized. Mock auth-token at the module
+// boundary before the module under test loads.
+const { getBrowserAccessTokenMock, bounceIfUnauthorizedMock } = vi.hoisted(
+    () => ({
+        getBrowserAccessTokenMock: vi.fn(),
+        bounceIfUnauthorizedMock: vi.fn(),
+    }),
+);
+vi.mock("@/app/lib/auth-token", () => ({
+    getBrowserAccessToken: getBrowserAccessTokenMock,
+    bounceIfUnauthorized: bounceIfUnauthorizedMock,
 }));
 
 import {
@@ -56,7 +63,6 @@ import {
     getDocumentUrl,
     getLibrary,
     getMcpConnector,
-    getOllamaModels,
     getProject,
     getProjectPeople,
     getTabularChatMessages,
@@ -116,15 +122,18 @@ import {
     uploadReviewDocument,
     uploadStandaloneDocument,
 } from "./mikeApi";
+// Dev-only exports (OSS-6 §2.3 items 2, 6, 7) — see "dev divergences" below.
+import {
+    API_BASE,
+    downloadResolvedDocument,
+    getHelpArticle,
+    listHelpArticles,
+} from "./mikeApi";
 
 const fetchMock = vi.fn();
 
 const withSession = (token: string | null) => {
-    getSessionMock.mockResolvedValue({
-        data: {
-            session: token ? { access_token: token } : null,
-        },
-    });
+    getBrowserAccessTokenMock.mockResolvedValue(token);
 };
 
 const jsonResponse = (body: unknown, init?: ResponseInit) =>
@@ -230,7 +239,7 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
 
         expect(profile).toEqual({ tier: "free" });
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/user/profile");
+        expect(url).toBe("http://localhost:3001/api/user/profile");
         expect(init.cache).toBe("no-store");
         expect(init.headers).toMatchObject({
             Accept: "application/json",
@@ -256,7 +265,7 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
         await listProjects({ includeDocuments: true });
 
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/projects?include=documents",
+            "http://localhost:3001/api/projects?include=documents",
         );
     });
 
@@ -332,12 +341,12 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
         fetchMock.mockResolvedValue(jsonResponse({ exists: false }));
         await lookupUserByEmail("a+b@example.com");
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/user/lookup?email=a%2Bb%40example.com",
+            "http://localhost:3001/api/user/lookup?email=a%2Bb%40example.com",
         );
 
         fetchMock.mockResolvedValue(jsonResponse([]));
         await listChats({ limit: 5 });
-        expect(lastFetchCall().url).toBe("http://localhost:3001/chat?limit=5");
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/chat?limit=5");
     });
 });
 
@@ -393,7 +402,7 @@ describe("downloadDocumentsZip", () => {
 
         expect(await blob.text()).toBe("zip");
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/single-documents/download-zip");
+        expect(url).toBe("http://localhost:3001/api/single-documents/download-zip");
         expect(JSON.parse(init.body as string)).toEqual({
             document_ids: ["d1", "d2"],
         });
@@ -601,7 +610,7 @@ describe("streamChat", () => {
         });
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/chat");
+        expect(url).toBe("http://localhost:3001/api/chat");
         expect(init.method).toBe("POST");
         expect(init.headers).toMatchObject({
             "Content-Type": "application/json",
@@ -646,7 +655,7 @@ describe("streamProjectChat", () => {
         });
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/projects/p1/chat");
+        expect(url).toBe("http://localhost:3001/api/projects/p1/chat");
         expect(init.signal).toBe(controller.signal);
         expect(JSON.parse(init.body as string)).toEqual({
             messages: [{ role: "user", content: "hi" }],
@@ -668,7 +677,7 @@ describe("streamTabularChat", () => {
         );
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/tabular-review/r1/chat");
+        expect(url).toBe("http://localhost:3001/api/tabular-review/r1/chat");
         expect(JSON.parse(init.body as string)).toEqual({
             messages: [{ role: "user", content: "summarize" }],
             review_title: "Leases",
@@ -683,7 +692,7 @@ describe("streamTabularGeneration", () => {
         await streamTabularGeneration("r1");
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/tabular-review/r1/generate");
+        expect(url).toBe("http://localhost:3001/api/tabular-review/r1/generate");
         expect(init.method).toBe("POST");
         expect(init.headers).toEqual({ Authorization: "Bearer token-123" });
     });
@@ -705,7 +714,7 @@ describe("listTabularReviews", () => {
         const { url, init } = lastFetchCall();
         // No stray "?" — the backend treats /tabular-review and
         // /tabular-review? the same, but the cache key would differ.
-        expect(url).toBe("http://localhost:3001/tabular-review");
+        expect(url).toBe("http://localhost:3001/api/tabular-review");
         expect(init.signal).toBeUndefined();
     });
 
@@ -725,7 +734,7 @@ describe("listTabularReviews", () => {
 
         const { url, init } = lastFetchCall();
         expect(url).toBe(
-            "http://localhost:3001/tabular-review" +
+            "http://localhost:3001/api/tabular-review" +
                 "?project_id=p1&limit=25&offset=50&search=lease+agreements" +
                 "&sort_key=updated_at&sort_direction=desc&scope=standalone",
         );
@@ -740,7 +749,7 @@ describe("listTabularReviews", () => {
         await listTabularReviews(undefined, { scope: "all", limit: 10 });
 
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/tabular-review?limit=10",
+            "http://localhost:3001/api/tabular-review?limit=10",
         );
     });
 });
@@ -752,7 +761,7 @@ describe("listTabularReviewIds", () => {
         await listTabularReviewIds();
 
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/tabular-review/ids",
+            "http://localhost:3001/api/tabular-review/ids",
         );
     });
 
@@ -771,7 +780,7 @@ describe("listTabularReviewIds", () => {
         // Select-all-then-delete deletes whatever this returns; if the query
         // here is broader than the list query, users delete unseen reviews.
         expect(url).toBe(
-            "http://localhost:3001/tabular-review/ids?project_id=p1&search=nda&scope=in-project",
+            "http://localhost:3001/api/tabular-review/ids?project_id=p1&search=nda&scope=in-project",
         );
         expect(init.signal).toBe(controller.signal);
     });
@@ -782,7 +791,7 @@ describe("listTabularReviewIds", () => {
         await listTabularReviewIds(undefined, { scope: "all" });
 
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/tabular-review/ids",
+            "http://localhost:3001/api/tabular-review/ids",
         );
     });
 });
@@ -800,7 +809,7 @@ describe("tabular review CRUD", () => {
         });
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/tabular-review");
+        expect(url).toBe("http://localhost:3001/api/tabular-review");
         expect(init.method).toBe("POST");
         expect(JSON.parse(init.body as string)).toEqual({
             title: "Leases",
@@ -817,7 +826,7 @@ describe("tabular review CRUD", () => {
         await updateTabularReview("r1", { document_grouping: "document" });
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/tabular-review/r1");
+        expect(url).toBe("http://localhost:3001/api/tabular-review/r1");
         expect(init.method).toBe("PATCH");
         expect(JSON.parse(init.body as string)).toEqual({
             document_grouping: "document",
@@ -830,7 +839,7 @@ describe("tabular review CRUD", () => {
         await deleteTabularReview("r1");
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/tabular-review/r1");
+        expect(url).toBe("http://localhost:3001/api/tabular-review/r1");
         expect(init.method).toBe("DELETE");
     });
 
@@ -847,7 +856,7 @@ describe("tabular review CRUD", () => {
 
         expect(result.source).toBe("preset");
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/tabular-review/prompt");
+        expect(url).toBe("http://localhost:3001/api/tabular-review/prompt");
         expect(JSON.parse(init.body as string)).toEqual({
             title: "Termination",
             format: "date",
@@ -872,9 +881,9 @@ describe("uploadReviewDocument", () => {
 
         expect(uploaded).toEqual({ id: "new-doc" });
         const [uploadCall, patchCall] = fetchMock.mock.calls;
-        expect(uploadCall[0]).toBe("http://localhost:3001/projects/p1/documents");
+        expect(uploadCall[0]).toBe("http://localhost:3001/api/projects/p1/documents");
         expect((uploadCall[1] as RequestInit).body).toBeInstanceOf(FormData);
-        expect(patchCall[0]).toBe("http://localhost:3001/tabular-review/r1");
+        expect(patchCall[0]).toBe("http://localhost:3001/api/tabular-review/r1");
         // Existing ids must be preserved — the review would otherwise shrink
         // to just the newly uploaded document.
         expect(JSON.parse((patchCall[1] as RequestInit).body as string)).toEqual({
@@ -891,7 +900,7 @@ describe("uploadReviewDocument", () => {
         await uploadReviewDocument("r1", new File(["x"], "a.pdf"));
 
         const [uploadCall, patchCall] = fetchMock.mock.calls;
-        expect(uploadCall[0]).toBe("http://localhost:3001/single-documents");
+        expect(uploadCall[0]).toBe("http://localhost:3001/api/single-documents");
         // With no prior ids the review ends up with exactly the new document.
         expect(JSON.parse((patchCall[1] as RequestInit).body as string)).toEqual(
             { document_ids: ["new-doc"] },
@@ -905,12 +914,12 @@ describe("tabular review chats", () => {
 
         await getTabularChats("r1");
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/tabular-review/r1/chats",
+            "http://localhost:3001/api/tabular-review/r1/chats",
         );
 
         await getTabularChatMessages("r1", "c1");
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/tabular-review/r1/chats/c1/messages",
+            "http://localhost:3001/api/tabular-review/r1/chats/c1/messages",
         );
     });
 
@@ -919,13 +928,13 @@ describe("tabular review chats", () => {
 
         await renameTabularChat("r1", "c1", "New title");
         let { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/tabular-review/r1/chats/c1");
+        expect(url).toBe("http://localhost:3001/api/tabular-review/r1/chats/c1");
         expect(init.method).toBe("PATCH");
         expect(JSON.parse(init.body as string)).toEqual({ title: "New title" });
 
         await deleteTabularChat("r1", "c1");
         ({ url, init } = lastFetchCall());
-        expect(url).toBe("http://localhost:3001/tabular-review/r1/chats/c1");
+        expect(url).toBe("http://localhost:3001/api/tabular-review/r1/chats/c1");
         expect(init.method).toBe("DELETE");
     });
 
@@ -952,7 +961,7 @@ describe("tabular cell operations", () => {
         expect(cell.flag).toBe("green");
         const { url, init } = lastFetchCall();
         expect(url).toBe(
-            "http://localhost:3001/tabular-review/r1/regenerate-cell",
+            "http://localhost:3001/api/tabular-review/r1/regenerate-cell",
         );
         expect(JSON.parse(init.body as string)).toEqual({
             row_id: "row-1",
@@ -966,7 +975,7 @@ describe("tabular cell operations", () => {
         await clearTabularCells("r1", ["row-1", "row-2"]);
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/tabular-review/r1/clear-cells");
+        expect(url).toBe("http://localhost:3001/api/tabular-review/r1/clear-cells");
         expect(JSON.parse(init.body as string)).toEqual({
             row_ids: ["row-1", "row-2"],
         });
@@ -989,7 +998,7 @@ describe("multipart upload endpoints", () => {
 
         expect(doc).toEqual({ id: "d1" });
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/library/templates/documents");
+        expect(url).toBe("http://localhost:3001/api/library/templates/documents");
         expect(init.method).toBe("POST");
         expect(init.body).toBeInstanceOf(FormData);
         expect((init.body as FormData).get("file")).toBeInstanceOf(File);
@@ -1026,7 +1035,7 @@ describe("multipart upload endpoints", () => {
         await uploadDocumentVersion("d1", file, "renamed.pdf");
         let body = lastFetchCall().init.body as FormData;
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/single-documents/d1/versions",
+            "http://localhost:3001/api/single-documents/d1/versions",
         );
         expect(body.get("filename")).toBe("renamed.pdf");
 
@@ -1042,7 +1051,7 @@ describe("multipart upload endpoints", () => {
 
         const { url, init } = lastFetchCall();
         expect(url).toBe(
-            "http://localhost:3001/single-documents/d1/versions/v1/file",
+            "http://localhost:3001/api/single-documents/d1/versions/v1/file",
         );
         expect(init.method).toBe("PUT");
         expect((init.body as FormData).get("filename")).toBe("renamed.pdf");
@@ -1064,12 +1073,12 @@ describe("query and payload defaults", () => {
 
         await getDocumentUrl("d1");
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/single-documents/d1/url",
+            "http://localhost:3001/api/single-documents/d1/url",
         );
 
         await getDocumentUrl("d1", "v 1");
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/single-documents/d1/url?version_id=v%201",
+            "http://localhost:3001/api/single-documents/d1/url?version_id=v%201",
         );
     });
 
@@ -1091,7 +1100,7 @@ describe("query and payload defaults", () => {
 
         await listChats();
 
-        expect(lastFetchCall().url).toBe("http://localhost:3001/chat");
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/chat");
     });
 
     it("folder creation defaults parent_folder_id to null, not undefined", async () => {
@@ -1149,7 +1158,7 @@ describe("workflow endpoints", () => {
         await listWorkflows("assistant");
 
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/workflows?type=assistant",
+            "http://localhost:3001/api/workflows?type=assistant",
         );
     });
 
@@ -1158,19 +1167,19 @@ describe("workflow endpoints", () => {
 
         await hideWorkflow("w1");
         let { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/workflows/hidden");
+        expect(url).toBe("http://localhost:3001/api/workflows/hidden");
         expect(init.method).toBe("POST");
         expect(JSON.parse(init.body as string)).toEqual({ workflow_id: "w1" });
 
         await unhideWorkflow("w1");
         ({ url, init } = lastFetchCall());
-        expect(url).toBe("http://localhost:3001/workflows/hidden/w1");
+        expect(url).toBe("http://localhost:3001/api/workflows/hidden/w1");
         expect(init.method).toBe("DELETE");
 
         fetchMock.mockResolvedValue(jsonResponse(["w2"]));
         await expect(listHiddenWorkflows()).resolves.toEqual(["w2"]);
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/workflows/hidden",
+            "http://localhost:3001/api/workflows/hidden",
         );
     });
 });
@@ -1584,7 +1593,7 @@ describe("thin endpoint wrappers", () => {
         await call();
 
         const { url: actualUrl, init } = lastFetchCall();
-        expect(actualUrl).toBe(`http://localhost:3001${url}`);
+        expect(actualUrl).toBe(`http://localhost:3001/api${url}`);
         expect(init.method ?? "GET").toBe(method ?? "GET");
         if (body !== undefined) {
             expect(JSON.parse(init.body as string)).toEqual(body);
@@ -1606,15 +1615,8 @@ describe("thin endpoint wrappers", () => {
 // ---------------------------------------------------------------------------
 
 describe("unwrapping and blob wrappers", () => {
-    it("getOllamaModels unwraps the models envelope", async () => {
-        const models = [
-            { id: "ollama/llama3.2", label: "Llama 3.2", group: "Local" },
-        ];
-        fetchMock.mockResolvedValue(jsonResponse({ models }));
-
-        await expect(getOllamaModels()).resolves.toEqual(models);
-        expect(lastFetchCall().url).toBe("http://localhost:3001/models/ollama");
-    });
+    // Upstream's getOllamaModels case removed: NOT SUPPORTED in dev
+    // (sync-log: fe942475).
 
     it("getCourtlistenerOpinions posts the cluster id and unwraps opinions", async () => {
         const opinions = [
@@ -1629,7 +1631,7 @@ describe("unwrapping and blob wrappers", () => {
 
         await expect(getCourtlistenerOpinions(123)).resolves.toEqual(opinions);
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/case-law/case-opinions");
+        expect(url).toBe("http://localhost:3001/api/case-law/case-opinions");
         expect(init.method).toBe("POST");
         expect(JSON.parse(init.body as string)).toEqual({ clusterId: 123 });
     });
@@ -1648,14 +1650,158 @@ describe("unwrapping and blob wrappers", () => {
 
         const chats = await exportChatData();
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/user/chats/export",
+            "http://localhost:3001/api/user/chats/export",
         );
         expect(chats.filename).toBe("x.zip");
         expect(await chats.blob.text()).toBe("bytes");
 
         await exportTabularReviewsData();
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/user/tabular-reviews/export",
+            "http://localhost:3001/api/user/tabular-reviews/export",
         );
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Dev divergences (OSS-6 §2.3) — cases carried over from dev's pre-OSS-6
+// mikeApi suite that upstream's suite cannot cover.
+// ---------------------------------------------------------------------------
+
+describe("dev divergences", () => {
+    it("API_BASE carries the /api prefix", () => {
+        expect(API_BASE).toBe("http://localhost:3001/api");
+    });
+
+    it("hands every JSON, blob and direct-fetch response to bounceIfUnauthorized", async () => {
+        const profileResponse = jsonResponse({ tier: "Free" });
+        fetchMock.mockResolvedValueOnce(profileResponse);
+        await getUserProfile();
+        expect(bounceIfUnauthorizedMock).toHaveBeenLastCalledWith(
+            profileResponse,
+        );
+
+        const blobResponse = new Response(new Blob(["x"]), { status: 200 });
+        fetchMock.mockResolvedValueOnce(blobResponse);
+        await exportAccountData();
+        expect(bounceIfUnauthorizedMock).toHaveBeenLastCalledWith(blobResponse);
+
+        const zipResponse = new Response(new Blob(["zip"]), { status: 200 });
+        fetchMock.mockResolvedValueOnce(zipResponse);
+        await downloadDocumentsZip(["d1"]);
+        expect(bounceIfUnauthorizedMock).toHaveBeenLastCalledWith(zipResponse);
+    });
+
+    it("help articles: list unwraps the envelope, get encodes the slug", async () => {
+        const articles = [{ slug: "getting-started", title: "Getting started" }];
+        fetchMock.mockResolvedValueOnce(jsonResponse({ articles }));
+        await expect(listHelpArticles()).resolves.toEqual(articles);
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/api/help/articles",
+        );
+
+        fetchMock.mockResolvedValueOnce(
+            jsonResponse({ slug: "a b", title: "A", markdown: "# A" }),
+        );
+        await getHelpArticle("a b");
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/api/help/articles/a%20b",
+        );
+    });
+
+    it("getChat surfaces the skill binding (null when absent)", async () => {
+        const binding = { skill_id: "s1", version: 2 };
+        fetchMock.mockResolvedValueOnce(
+            jsonResponse({
+                chat: { id: "c1" },
+                messages: [],
+                skill_binding: binding,
+            }),
+        );
+        await expect(getChat("c1")).resolves.toMatchObject({
+            skillBinding: binding,
+        });
+
+        fetchMock.mockResolvedValueOnce(
+            jsonResponse({ chat: { id: "c1" }, messages: [] }),
+        );
+        await expect(getChat("c1")).resolves.toMatchObject({
+            skillBinding: null,
+        });
+    });
+
+    describe("downloadResolvedDocument", () => {
+        let clickSpy: ReturnType<typeof vi.spyOn>;
+        beforeEach(() => {
+            clickSpy = vi
+                .spyOn(HTMLAnchorElement.prototype, "click")
+                .mockImplementation(() => {});
+            vi.stubGlobal("URL", {
+                ...URL,
+                createObjectURL: vi.fn(() => "blob:mock"),
+                revokeObjectURL: vi.fn(),
+            });
+        });
+        afterEach(() => {
+            clickSpy.mockRestore();
+        });
+
+        it("absolute (pre-signed) URL: clicks it directly without an authenticated fetch", async () => {
+            fetchMock.mockResolvedValueOnce(
+                jsonResponse({
+                    url: "https://r2.example.test/signed",
+                    filename: "a.pdf",
+                    version_id: null,
+                }),
+            );
+
+            await downloadResolvedDocument("d1", null, "fallback.pdf");
+
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+            expect(clickSpy).toHaveBeenCalledOnce();
+        });
+
+        it("relative (Azure proxy) URL: fetches the bytes through /api with the bearer token", async () => {
+            fetchMock
+                .mockResolvedValueOnce(
+                    jsonResponse({
+                        url: "/single-documents/d1/content",
+                        filename: "",
+                        version_id: "v1",
+                    }),
+                )
+                .mockResolvedValueOnce(
+                    new Response(new Blob(["pdf"]), { status: 200 }),
+                );
+
+            await downloadResolvedDocument("d1", "v1", "fallback.pdf");
+
+            expect(fetchMock.mock.calls[0][0]).toBe(
+                "http://localhost:3001/api/single-documents/d1/url?version_id=v1",
+            );
+            const { url, init } = lastFetchCall();
+            expect(url).toBe(
+                "http://localhost:3001/api/single-documents/d1/content",
+            );
+            expect(init.headers).toMatchObject({
+                Authorization: "Bearer token-123",
+            });
+            expect(clickSpy).toHaveBeenCalledOnce();
+        });
+
+        it("relative URL: throws on a non-2xx download", async () => {
+            fetchMock
+                .mockResolvedValueOnce(
+                    jsonResponse({
+                        url: "/single-documents/d1/content",
+                        filename: "a.pdf",
+                        version_id: null,
+                    }),
+                )
+                .mockResolvedValueOnce(new Response("", { status: 404 }));
+
+            await expect(
+                downloadResolvedDocument("d1", null, "a.pdf"),
+            ).rejects.toThrow("Download failed: 404");
+        });
     });
 });

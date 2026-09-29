@@ -110,3 +110,45 @@ describe("modelGroupToProvider", () => {
         expect(modelGroupToProvider("Google")).toBe("gemini");
     });
 });
+
+// Dev (OSS-6 §2.3 item 3): organisation Kimi and per-deployment Azure OpenAI.
+describe("dev providers: kimi and azureOpenai", () => {
+    const orgKeys = (configured: { kimi?: boolean; azure_openai?: boolean }) =>
+        ({
+            ...keys({}),
+            kimi: { configured: !!configured.kimi, source: configured.kimi ? "env" : null },
+            azure_openai: {
+                configured: !!configured.azure_openai,
+                source: configured.azure_openai ? "env" : null,
+            },
+        }) as ApiKeyState;
+    const deployments = [
+        { id: "aoai:prod-east", label: "prod-east", group: "Azure OpenAI" as const },
+    ];
+
+    it("maps the Kimi and Azure OpenAI groups and aoai: ids", () => {
+        expect(modelGroupToProvider("Kimi")).toBe("kimi");
+        expect(modelGroupToProvider("Azure OpenAI")).toBe("azureOpenai");
+        expect(getModelProvider("kimi-k3")).toBe("kimi");
+        expect(getModelProvider("aoai:anything")).toBe("azureOpenai");
+        expect(providerLabel("kimi")).toBe("Kimi K3");
+        expect(providerLabel("azureOpenai")).toBe("Azure OpenAI");
+    });
+
+    it("kimi availability follows the organisation credential", () => {
+        expect(isModelAvailable("kimi-k3", orgKeys({ kimi: true }))).toBe(true);
+        expect(isModelAvailable("kimi-k3", orgKeys({}))).toBe(false);
+    });
+
+    it("an aoai: deployment is available iff discovery returned it", () => {
+        const configured = orgKeys({ azure_openai: true });
+        expect(isModelAvailable("aoai:prod-east", configured, deployments)).toBe(true);
+        expect(isModelAvailable("aoai:gone", configured, deployments)).toBe(false);
+    });
+
+    it("without the discovered list, aoai: falls back to the provider credential", () => {
+        expect(isModelAvailable("aoai:prod-east", orgKeys({ azure_openai: true }))).toBe(true);
+        expect(isModelAvailable("aoai:prod-east", orgKeys({}))).toBe(false);
+        expect(isProviderAvailable("azureOpenai", orgKeys({ azure_openai: true }))).toBe(true);
+    });
+});
