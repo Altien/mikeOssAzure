@@ -28,14 +28,23 @@ import {
     accountGlassInputClassName,
 } from "../accountStyles";
 import { AccountSection } from "../AccountSection";
+import {
+    useAoaiDeployments,
+    type AoaiDeployment,
+} from "@/altien/models/aoaiDeployments";
 // Upstream divergence (sync-log: fe942475): NOT SUPPORTED — upstream
 // appends local Ollama models (useOllamaModels) to both dropdowns. Dev's
 // backend serves no local models, so only the static lists are offered.
+// Upstream divergence (OSS-6, §2.3 item 3): both dropdowns also offer the
+// discovered Azure OpenAI deployments and the Kimi group; the page adds the
+// organisation-setup note and the discovered-deployments list (credentials
+// are organisation Key Vault secrets, managed through /install).
 
 type ModelPreferenceField = "titleModel" | "tabularModel";
 
 export default function ModelPreferencesPage() {
     const { profile, updateModelPreference } = useUserProfile();
+    const aoai = useAoaiDeployments();
     const [savingField, setSavingField] = useState<ModelPreferenceField | null>(
         null,
     );
@@ -98,7 +107,8 @@ export default function ModelPreferencesPage() {
                             profile?.titleModel ??
                             "gemini-3.1-flash-lite-preview"
                         }
-                        options={SETTINGS_MODELS}
+                        options={[...SETTINGS_MODELS, ...aoai.modelOptions]}
+                        extraModels={aoai.modelOptions}
                         apiKeys={profile?.apiKeys}
                         isSaving={savingField === "titleModel"}
                         isSaved={savedField === "titleModel"}
@@ -120,7 +130,8 @@ export default function ModelPreferencesPage() {
                             profile?.tabularModel ??
                             "gemini-3-flash-preview"
                         }
-                        options={MODELS}
+                        options={[...MODELS, ...aoai.modelOptions]}
+                        extraModels={aoai.modelOptions}
                         apiKeys={profile?.apiKeys}
                         isSaving={savingField === "tabularModel"}
                         isSaved={savedField === "tabularModel"}
@@ -128,6 +139,80 @@ export default function ModelPreferencesPage() {
                     />
                 </div>
             </AccountSection>
+            <OrganisationModelsNote
+                deployments={aoai.deployments}
+                loading={aoai.loading}
+                error={aoai.error}
+            />
+        </div>
+    );
+}
+
+// Dev-only (OSS-6, §2.3 item 3): provider credentials and the Azure OpenAI
+// connection are organisation settings; show where they are managed and
+// which AOAI deployments discovery found.
+function OrganisationModelsNote({
+    deployments,
+    loading,
+    error,
+}: {
+    deployments: AoaiDeployment[];
+    loading: boolean;
+    error: string | null;
+}) {
+    const installUrl =
+        (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") +
+        "/install";
+    return (
+        <div className="py-6">
+            <p className="max-w-xl text-sm text-gray-500">
+                Provider credentials and Azure OpenAI connection settings are
+                shared by the organisation and managed by an administrator
+                through{" "}
+                <a
+                    href={installUrl}
+                    className="font-medium text-gray-700 underline underline-offset-4"
+                >
+                    organisation setup
+                </a>
+                . Users can choose from the models the administrator has made
+                available.
+            </p>
+            {loading ? (
+                <p className="mt-4 max-w-xl text-xs text-gray-500">
+                    Loading deployments…
+                </p>
+            ) : error ? (
+                <p className="mt-4 max-w-xl text-xs text-red-600">
+                    Could not list deployments: {error}
+                </p>
+            ) : deployments.length === 0 ? (
+                <p className="mt-4 max-w-xl text-xs text-gray-500">
+                    No deployments are visible yet. Ask an administrator to
+                    check the Azure OpenAI settings in organisation setup or
+                    deploy a model in the configured Azure OpenAI resource.
+                </p>
+            ) : (
+                <div className="mt-4 max-w-xl">
+                    <div className="mb-2 text-xs font-medium text-gray-600">
+                        Discovered deployments ({deployments.length})
+                    </div>
+                    <ul className="space-y-1 text-xs text-gray-500">
+                        {deployments.map((d) => (
+                            <li key={d.name}>
+                                <span className="font-mono text-gray-700">
+                                    {d.name}
+                                </span>
+                                {d.model && (
+                                    <span className="ml-2 text-gray-400">
+                                        → {d.model}
+                                    </span>
+                                )}
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            )}
         </div>
     );
 }
@@ -137,6 +222,7 @@ function ModelPreferenceDropdown({
     onChange,
     apiKeys,
     options,
+    extraModels,
     isSaving,
     isSaved,
 }: {
@@ -144,17 +230,22 @@ function ModelPreferenceDropdown({
     onChange: (id: string) => void;
     apiKeys?: ApiKeyState;
     options: ModelOption[];
+    extraModels?: ModelOption[];
     isSaving?: boolean;
     isSaved?: boolean;
 }) {
     const [isOpen, setIsOpen] = useState(false);
     const selected = options.find((m) => m.id === value);
-    const selectedAvailable = apiKeys ? isModelAvailable(value, apiKeys) : true;
+    const selectedAvailable = apiKeys
+        ? isModelAvailable(value, apiKeys, extraModels)
+        : true;
     const groups: ModelOption["group"][] = [
         "Anthropic",
         "Google",
         "OpenAI",
         "Local",
+        "Kimi",
+        "Azure OpenAI",
     ];
 
     return (
@@ -201,7 +292,7 @@ function ModelPreferenceDropdown({
                             {items.map((m) => {
                                 const provider = modelGroupToProvider(m.group);
                                 const available = apiKeys
-                                    ? isModelAvailable(m.id, apiKeys)
+                                    ? isModelAvailable(m.id, apiKeys, extraModels)
                                     : true;
                                 return (
                                     <LiquidDropdownItem

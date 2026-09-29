@@ -14,11 +14,15 @@ import {
 } from "@/app/components/ui/liquid-dropdown";
 import { isModelAvailable } from "@/app/lib/modelAvailability";
 import type { ApiKeyState } from "@/app/lib/mikeApi";
+import { useAoaiDeployments } from "@/altien/models/aoaiDeployments";
 
+// Upstream divergence (OSS-6, §2.3 item 3): dev adds the "Kimi" group
+// (kimi-k3) and the "Azure OpenAI" group, whose entries are the deployments
+// discovered at runtime (useAoaiDeployments → `aoai:<deployment>` ids).
 export interface ModelOption {
     id: string;
     label: string;
-    group: "Anthropic" | "Google" | "OpenAI" | "Local";
+    group: "Anthropic" | "Google" | "OpenAI" | "Local" | "Kimi" | "Azure OpenAI";
 }
 
 export const MODELS: ModelOption[] = [
@@ -31,6 +35,7 @@ export const MODELS: ModelOption[] = [
     { id: "gemini-3-flash-preview", label: "Gemini 3 Flash", group: "Google" },
     { id: "gpt-5.5", label: "GPT-5.5", group: "OpenAI" },
     { id: "gpt-5.4", label: "GPT-5.4", group: "OpenAI" },
+    { id: "kimi-k3", label: "Kimi K3", group: "Kimi" },
     // Local (Ollama) models are appended dynamically — see useOllamaModels.
 ];
 
@@ -49,7 +54,14 @@ export const DEFAULT_MODEL_ID = "gemini-3-flash-preview";
 
 export const ALLOWED_MODEL_IDS = new Set(MODELS.map((m) => m.id));
 
-const GROUP_ORDER: ModelOption["group"][] = ["Anthropic", "Google", "OpenAI", "Local"];
+const GROUP_ORDER: ModelOption["group"][] = [
+    "Anthropic",
+    "Google",
+    "OpenAI",
+    "Local",
+    "Kimi",
+    "Azure OpenAI",
+];
 const itemClassName =
     "rounded-xl px-2.5 py-1.5 text-gray-700 focus:bg-app-surface-hover focus:text-gray-900 data-[highlighted]:bg-app-surface-hover data-[highlighted]:text-gray-900";
 
@@ -63,12 +75,14 @@ export function ModelToggle({ value, onChange, apiKeys }: Props) {
     const [isOpen, setIsOpen] = useState(false);
     // Upstream divergence (sync-log: fe942475): NOT SUPPORTED — upstream
     // appends local Ollama models (useOllamaModels, "Local" group). Dev's
-    // backend serves no local models, so the list is the static MODELS.
-    const models = MODELS;
+    // backend serves no local models, so the list is the static MODELS
+    // plus dev's discovered Azure OpenAI deployments.
+    const { modelOptions: extraModels } = useAoaiDeployments();
+    const models = [...MODELS, ...extraModels];
     const selected = models.find((m) => m.id === value);
     const selectedLabel = selected?.label ?? "Model";
     const selectedAvailable = apiKeys
-        ? isModelAvailable(value, apiKeys)
+        ? isModelAvailable(value, apiKeys, extraModels)
         : true;
 
     return (
@@ -99,7 +113,32 @@ export function ModelToggle({ value, onChange, apiKeys }: Props) {
             >
                 {GROUP_ORDER.map((group, gi) => {
                     const items = models.filter((m) => m.group === group);
-                    if (items.length === 0) return null;
+                    if (items.length === 0) {
+                        // Dev: an empty Azure OpenAI group still renders a
+                        // disabled hint, so an operator can see whether AOAI
+                        // took effect (040 Entry 13 fix A).
+                        if (group !== "Azure OpenAI") return null;
+                        return (
+                            <div key={group}>
+                                {gi > 0 && (
+                                    <DropdownMenuSeparator className="-mx-1 my-1 bg-white/70" />
+                                )}
+                                <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-gray-400">
+                                    {group}
+                                </DropdownMenuLabel>
+                                <LiquidDropdownItem
+                                    disabled
+                                    className={`${itemClassName} cursor-default`}
+                                >
+                                    <span className="flex-1 italic text-gray-400">
+                                        {apiKeys?.azure_openai?.configured
+                                            ? "Discovering deployments…"
+                                            : "Configure in /install to use"}
+                                    </span>
+                                </LiquidDropdownItem>
+                            </div>
+                        );
+                    }
                     return (
                         <div key={group}>
                             {gi > 0 && (
@@ -110,7 +149,7 @@ export function ModelToggle({ value, onChange, apiKeys }: Props) {
                             </DropdownMenuLabel>
                             {items.map((m) => {
                                 const available = apiKeys
-                                    ? isModelAvailable(m.id, apiKeys)
+                                    ? isModelAvailable(m.id, apiKeys, extraModels)
                                     : true;
                                 return (
                                     <LiquidDropdownItem

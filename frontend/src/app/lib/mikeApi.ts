@@ -297,8 +297,70 @@ export interface UserLookupResult {
     display_name: string | null;
 }
 
+// Upstream divergence (OSS-6, §2.3 item 3 — org Key Vault keys): dev's
+// backend serves `/user/profile` in its snake_case shape (credentials are
+// organisation-level only: `*_configured` flags + `global_api_keys`, never
+// key values) and stores the title/suggestion model as `fast_model`. These
+// adapters present upstream's camelCase `UserProfile` (with `apiKeyStatus`,
+// every configured provider reported with source "env" = organisation Key
+// Vault/env) so UserProfileContext and the pages stay upstream's.
+type DevProfileWire = {
+    display_name?: string | null;
+    organisation?: string | null;
+    message_credits_used?: number | null;
+    credits_reset_date?: string | null;
+    tier?: string | null;
+    tabular_model?: string | null;
+    fast_model?: string | null;
+    legal_research_us?: boolean | null;
+    global_api_keys?: Partial<Record<string, boolean>>;
+} & Partial<Record<`${ApiKeyProvider}_configured`, boolean>>;
+
+const DEV_MONTHLY_CREDIT_LIMIT = 999999; // temporarily unlimited (dev)
+
+const DEV_GLOBAL_KEY_NAME: Record<ApiKeyProvider, string> = {
+    claude: "claude",
+    gemini: "gemini",
+    openai: "openai",
+    openrouter: "openrouter",
+    courtlistener: "courtlistener",
+    kimi: "kimi",
+    azure_openai: "azureOpenai",
+};
+
+function fromDevProfileWire(wire: DevProfileWire): UserProfile {
+    const creditsUsed = wire.message_credits_used ?? 0;
+    const status = {} as Record<ApiKeyProvider, boolean>;
+    const sources: Partial<Record<ApiKeyProvider, ApiKeySource>> = {};
+    for (const provider of Object.keys(
+        DEV_GLOBAL_KEY_NAME,
+    ) as ApiKeyProvider[]) {
+        const configured =
+            !!wire[`${provider}_configured`] ||
+            !!wire.global_api_keys?.[DEV_GLOBAL_KEY_NAME[provider]];
+        status[provider] = configured;
+        sources[provider] = configured ? "env" : null;
+    }
+    return {
+        displayName: wire.display_name ?? null,
+        organisation: wire.organisation ?? null,
+        messageCreditsUsed: creditsUsed,
+        creditsResetDate: wire.credits_reset_date ?? "",
+        creditsRemaining: Math.max(DEV_MONTHLY_CREDIT_LIMIT - creditsUsed, 0),
+        tier: wire.tier || "Free",
+        // "" = no preference; the backend picks the cheapest configured model.
+        titleModel: wire.fast_model ?? "",
+        tabularModel: wire.tabular_model || "gemini-3-flash-preview",
+        mfaOnLogin: false,
+        legalResearchUs: wire.legal_research_us !== false,
+        apiKeyStatus: { ...status, sources },
+    };
+}
+
 export async function getUserProfile(): Promise<UserProfile> {
-    return apiRequest<UserProfile>("/user/profile");
+    return fromDevProfileWire(
+        await apiRequest<DevProfileWire>("/user/profile"),
+    );
 }
 
 export async function lookupUserByEmail(
@@ -316,11 +378,21 @@ export async function updateUserProfile(payload: {
     tabularModel?: string;
     legalResearchUs?: boolean;
 }): Promise<UserProfile> {
-    return apiRequest<UserProfile>("/user/profile", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-    });
+    // Dev wire names (see fromDevProfileWire): titleModel is `fast_model`.
+    const body: Record<string, string | boolean | null> = {};
+    if ("displayName" in payload) body.display_name = payload.displayName ?? null;
+    if ("organisation" in payload) body.organisation = payload.organisation ?? null;
+    if ("titleModel" in payload) body.fast_model = payload.titleModel || null;
+    if ("tabularModel" in payload) body.tabular_model = payload.tabularModel ?? null;
+    if ("legalResearchUs" in payload && payload.legalResearchUs !== undefined)
+        body.legal_research_us = payload.legalResearchUs;
+    return fromDevProfileWire(
+        await apiRequest<DevProfileWire>("/user/profile", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+        }),
+    );
 }
 
 export async function updateUserMfaOnLogin(
@@ -333,12 +405,16 @@ export async function updateUserMfaOnLogin(
     });
 }
 
+// Upstream divergence (OSS-6, §2.3 item 3): dev adds the organisation
+// credentials "kimi" and "azure_openai" (backend API_KEY_PROVIDERS).
 export type ApiKeyProvider =
     | "claude"
     | "gemini"
     | "openai"
     | "openrouter"
-    | "courtlistener";
+    | "courtlistener"
+    | "kimi"
+    | "azure_openai";
 export type ApiKeySource = "user" | "env" | null;
 export type ApiKeyState = Record<
     ApiKeyProvider,

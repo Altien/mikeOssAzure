@@ -5,8 +5,15 @@ import { ALLOWED_MODEL_IDS, DEFAULT_MODEL_ID } from "../components/assistant/Mod
 
 const STORAGE_KEY = "mike.selectedModel";
 
+// Upstream divergence (OSS-6, §2.3 item 3): Azure OpenAI deployments are
+// user-defined names discovered at runtime, so `aoai:` ids are accepted by
+// prefix. The `ollama/` prefix is upstream's (unreachable in dev, fe942475).
 function isAllowed(id: string): boolean {
-    return ALLOWED_MODEL_IDS.has(id) || id.startsWith("ollama/");
+    return (
+        ALLOWED_MODEL_IDS.has(id) ||
+        id.startsWith("ollama/") ||
+        id.startsWith("aoai:")
+    );
 }
 
 function readStored(): string {

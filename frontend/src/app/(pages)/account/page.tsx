@@ -6,6 +6,7 @@ import { LogOut, Trash2 } from "lucide-react";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { useAuth } from "@/app/contexts/AuthContext";
+import { useConfig } from "@/app/contexts/ConfigContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 // Upstream divergence (sync-log: 3a10943; OSS-6): upstream gates account
@@ -30,6 +31,9 @@ export default function AccountPage() {
     const router = useRouter();
     const { user, signOut, updateEmail } = useAuth();
     const { profile, updateDisplayName, updateOrganisation } = useUserProfile();
+    // Dev (OSS-6, auth): see the Email and Danger Zone notes.
+    const { authProvider } = useConfig();
+    const emailEditable = authProvider === "supabase";
     const [displayName, setDisplayName] = useState("");
     const [isSavingName, setIsSavingName] = useState(false);
     const [saved, setSaved] = useState(false);
@@ -237,6 +241,25 @@ export default function AccountPage() {
                     Email
                 </h2>
                 <AccountSection className="p-4">
+                    {/* Upstream divergence (OSS-6, auth): the email editor
+                        exists only in supabase mode. In entra/local mode the
+                        sign-in provider owns the address (AuthContext's
+                        updateEmail rejects), so it is shown read-only. */}
+                    {!emailEditable ? (
+                        <div className="space-y-2">
+                            <Input
+                                type="email"
+                                value={user.email ?? ""}
+                                readOnly
+                                disabled
+                                className={accountGlassInputClassName}
+                            />
+                            <p className="text-xs text-gray-500">
+                                Your email is managed by your
+                                organisation&apos;s sign-in provider.
+                            </p>
+                        </div>
+                    ) : (
                     <div className="space-y-2">
                         <Input
                             type="email"
@@ -287,6 +310,7 @@ export default function AccountPage() {
                             </button>
                         </div>
                     </div>
+                    )}
                 </AccountSection>
             </section>
 
@@ -319,7 +343,14 @@ export default function AccountPage() {
                 </Button>
             </section>
 
-            {/* Danger Zone */}
+            {/* Danger Zone
+                Upstream divergence (OSS-6, auth; dev behaviour kept): hidden
+                in entra mode. The identity is owned by the customer's Entra
+                tenant, so self-service deletion is misleading (group
+                membership lets the user sign straight back in); closure and
+                erasure go through a tenant-admin ticket. Supabase and local
+                modes, where the app owns the identity, keep it. */}
+            {authProvider !== "entra" && (
             <section className="space-y-3">
                 <h2 className="text-2xl font-medium font-serif text-red-600">
                     Danger Zone
@@ -345,6 +376,7 @@ export default function AccountPage() {
                     </Button>
                 </AccountSection>
             </section>
+            )}
             <ConfirmPopup
                 open={deleteConfirm}
                 title="Delete account?"

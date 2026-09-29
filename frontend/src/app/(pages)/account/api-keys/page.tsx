@@ -1,56 +1,64 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Eye, EyeOff, RefreshCw } from "lucide-react";
-import { Input } from "@/app/components/ui/input";
+import { useState } from "react";
+import {
+    AlertTriangle,
+    CheckCircle2,
+    ExternalLink,
+    RefreshCw,
+} from "lucide-react";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
+import type { ApiKeyProvider } from "@/app/lib/mikeApi";
+// Upstream divergence (OSS-6, §2.3 item 3 — org Key Vault keys): upstream's
+// page lets each user paste personal provider keys (ApiKeyField + PUT
+// /user/api-keys/:provider). Dev's credentials are organisation secrets in
+// Azure Key Vault, set by an administrator through /install; the backend
+// rejects personal keys (PUT returns an "organisation credential required"
+// error). So this page is a read-only status list in upstream's layout
+// (header, Refresh, AccountSection), including dev's Kimi and Azure OpenAI.
 // Upstream divergence (sync-log: fe942475): NOT SUPPORTED — upstream's
 // Refresh also re-detects local Ollama models (refreshOllamaModels). Dev's
 // backend serves no local models, so Refresh only reloads the profile.
 // Upstream divergence (sync-log: 3a10943): upstream gates key save/remove
-// behind MfaVerificationPopup (Supabase-auth TOTP step-up). Dev has no
-// app-level MFA (Entra enforces it at the IdP), so the calls run directly.
-import {
-    accountGlassIconButtonClassName,
-    accountGlassInputClassName,
-} from "../accountStyles";
+// behind MfaVerificationPopup. Dev has no app-level MFA and no key editing.
 import { AccountSection } from "../AccountSection";
 
-const MODEL_API_KEY_FIELDS = [
+const PROVIDERS: ReadonlyArray<{
+    provider: ApiKeyProvider;
+    label: string;
+    secret: string;
+}> = [
     {
         provider: "claude",
-        label: "Anthropic (Claude) API Key",
-        placeholder: "sk-ant-...",
+        label: "Anthropic (Claude)",
+        secret: "anthropic-api-key",
     },
-    {
-        provider: "gemini",
-        label: "Google (Gemini) API Key",
-        placeholder: "AI...",
-    },
-    {
-        provider: "openai",
-        label: "OpenAI API Key",
-        placeholder: "sk-...",
-    },
+    { provider: "gemini", label: "Google (Gemini)", secret: "gemini-api-key" },
+    { provider: "openai", label: "OpenAI", secret: "openai-api-key" },
+    { provider: "kimi", label: "Kimi K3", secret: "moonshot-api-key" },
     {
         provider: "openrouter",
-        label: "OpenRouter API Key",
-        placeholder: "sk-or-...",
+        label: "OpenRouter",
+        secret: "openrouter-api-key",
     },
-] as const;
-
-const OTHER_API_KEY_FIELDS = [
     {
         provider: "courtlistener",
-        label: "CourtListener API Key",
-        placeholder: "Token...",
-        description:
-            "Add a CourtListener API key if you want the latest CourtListener data. Otherwise, Mike will use the bulk data hosted by us.",
+        label: "CourtListener",
+        secret: "courtlistener-api-token",
     },
-] as const;
+    {
+        provider: "azure_openai",
+        label: "Azure OpenAI",
+        secret: "azure-openai-endpoint + azure-openai-api-key",
+    },
+];
+
+const INSTALL_URL =
+    (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") +
+    "/install";
 
 export default function ApiKeysPage() {
-    const { profile, updateApiKey, reloadProfile } = useUserProfile();
+    const { profile, reloadProfile } = useUserProfile();
     const [refreshing, setRefreshing] = useState(false);
 
     const handleRefresh = async () => {
@@ -82,196 +90,59 @@ export default function ApiKeysPage() {
                 </button>
             </div>
             <p className="text-sm text-gray-500 mb-4">
-                You must provide your own API keys for the app to work or add
-                your API keys into the .env file if you are running your own
-                instance of Mike. All API keys are encrypted in storage.
+                Provider credentials are shared by everyone in this Mike
+                installation. They are stored once in Azure Key Vault and can
+                only be changed by an administrator through organisation
+                setup.
             </p>
             <AccountSection>
-                {MODEL_API_KEY_FIELDS.map((field, index) => (
-                    <div key={field.provider}>
-                        <ApiKeyField
-                            label={field.label}
-                            placeholder={field.placeholder}
-                            hasSavedKey={
-                                !!profile?.apiKeys[field.provider].configured
-                            }
-                            isServerConfigured={
-                                profile?.apiKeys[field.provider].source ===
-                                "env"
-                            }
-                            onSave={(value) =>
-                                updateApiKey(
-                                    field.provider,
-                                    value.trim() || null,
-                                )
-                            }
-                            onRemove={() => updateApiKey(field.provider, null)}
-                        />
-                        {index < MODEL_API_KEY_FIELDS.length - 1 && (
-                            <div className="mx-4 h-px bg-gray-200" />
-                        )}
-                    </div>
-                ))}
-            </AccountSection>
-
-            <AccountSection className="mt-8">
-                {OTHER_API_KEY_FIELDS.map((field) => (
-                    <ApiKeyField
-                        key={field.provider}
-                        label={field.label}
-                        description={field.description}
-                        placeholder={field.placeholder}
-                        hasSavedKey={
-                            !!profile?.apiKeys[field.provider].configured
-                        }
-                        isServerConfigured={
-                            profile?.apiKeys[field.provider].source === "env"
-                        }
-                        onSave={(value) =>
-                            updateApiKey(field.provider, value.trim() || null)
-                        }
-                        onRemove={() => updateApiKey(field.provider, null)}
-                    />
-                ))}
-            </AccountSection>
-        </div>
-    );
-}
-
-function ApiKeyField({
-    label,
-    description,
-    placeholder,
-    hasSavedKey,
-    isServerConfigured,
-    onSave,
-    onRemove,
-}: {
-    label: string;
-    description?: string;
-    placeholder: string;
-    hasSavedKey: boolean;
-    isServerConfigured: boolean;
-    onSave: (value: string) => Promise<boolean>;
-    onRemove: () => Promise<boolean>;
-}) {
-    const [value, setValue] = useState("");
-    const [reveal, setReveal] = useState(false);
-    const [isSaving, setIsSaving] = useState(false);
-    const [saved, setSaved] = useState(false);
-
-    useEffect(() => {
-        setValue("");
-    }, [hasSavedKey]);
-
-    const dirty = value.trim().length > 0;
-
-    const handleSave = async () => {
-        setIsSaving(true);
-        try {
-            const ok = await onSave(value);
-            if (ok) {
-                setValue("");
-                setSaved(true);
-                setTimeout(() => setSaved(false), 2000);
-            } else {
-                alert(`Failed to save ${label}.`);
-            }
-        } catch {
-            alert(`Failed to save ${label}.`);
-        } finally {
-            setIsSaving(false);
-        }
-    };
-
-    const handleRemove = async () => {
-        setIsSaving(true);
-        try {
-            const ok = await onRemove();
-            if (!ok) alert(`Failed to remove ${label}.`);
-        } catch {
-            alert(`Failed to remove ${label}.`);
-        } finally {
-            setIsSaving(false);
-        }
-    };
-
-    return (
-        <>
-            <div className="px-4 py-5">
-                <label className="text-sm font-medium text-gray-700 block mb-2">
-                    {label}
-                </label>
-                {description && (
-                    <p className="text-sm text-gray-500 mb-3">{description}</p>
-                )}
-                <div className="space-y-2">
-                    <div className="relative flex-1">
-                        <Input
-                            type={reveal ? "text" : "password"}
-                            value={value}
-                            onChange={(e) => setValue(e.target.value)}
-                            placeholder={
-                                isServerConfigured
-                                    ? "Server .env key configured"
-                                    : hasSavedKey
-                                      ? "Saved key hidden"
-                                      : placeholder
-                            }
-                            className={`pr-10 ${accountGlassInputClassName}`}
-                            autoComplete="off"
-                            spellCheck={false}
-                            disabled={isServerConfigured}
-                        />
-                        {dirty && (
-                            <button
-                                type="button"
-                                onClick={() => setReveal((r) => !r)}
-                                disabled={isServerConfigured}
-                                className={`absolute inset-y-1 right-1.5 flex items-center ${accountGlassIconButtonClassName}`}
-                                aria-label={reveal ? "Hide key" : "Show key"}
-                            >
-                                {reveal ? (
-                                    <EyeOff className="h-4 w-4" />
-                                ) : (
-                                    <Eye className="h-4 w-4" />
-                                )}
-                            </button>
-                        )}
-                    </div>
-                    <div className="flex flex-wrap justify-end gap-2">
-                        <button
-                            type="button"
-                            onClick={handleSave}
-                            disabled={
-                                isServerConfigured ||
-                                isSaving ||
-                                !dirty ||
-                                saved
-                            }
-                            className="text-xs font-medium text-gray-700 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-400"
-                        >
-                            {isSaving ? (
-                                "Saving..."
-                            ) : saved ? (
-                                "Saved"
-                            ) : (
-                                "Save"
+                {PROVIDERS.map((provider, index) => {
+                    const configured =
+                        !!profile?.apiKeys[provider.provider]?.configured;
+                    return (
+                        <div key={provider.provider}>
+                            <div className="flex items-start justify-between gap-4 px-4 py-5">
+                                <div className="min-w-0">
+                                    <p className="text-sm font-medium text-gray-700">
+                                        {provider.label}
+                                    </p>
+                                    <p className="mt-1 text-xs text-gray-500">
+                                        Key Vault: {provider.secret}
+                                    </p>
+                                </div>
+                                <div
+                                    className={`flex shrink-0 items-center gap-1.5 text-xs font-medium ${
+                                        configured
+                                            ? "text-emerald-700"
+                                            : "text-amber-700"
+                                    }`}
+                                >
+                                    {configured ? (
+                                        <CheckCircle2 className="h-4 w-4" />
+                                    ) : (
+                                        <AlertTriangle className="h-4 w-4" />
+                                    )}
+                                    {profile === null
+                                        ? "Checking..."
+                                        : configured
+                                          ? "Configured for this organisation"
+                                          : "Administrator action required"}
+                                </div>
+                            </div>
+                            {index < PROVIDERS.length - 1 && (
+                                <div className="mx-4 h-px bg-gray-200" />
                             )}
-                        </button>
-                        {hasSavedKey && !isServerConfigured && (
-                            <button
-                                type="button"
-                                onClick={handleRemove}
-                                disabled={isSaving}
-                                className="text-xs font-medium text-red-600 transition-colors hover:text-red-700 disabled:cursor-not-allowed disabled:text-red-300"
-                            >
-                                Remove
-                            </button>
-                        )}
-                    </div>
-                </div>
-            </div>
-        </>
+                        </div>
+                    );
+                })}
+            </AccountSection>
+            <a
+                href={INSTALL_URL}
+                className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-gray-700 underline underline-offset-4 hover:text-gray-950"
+            >
+                Open organisation setup
+                <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+        </div>
     );
 }

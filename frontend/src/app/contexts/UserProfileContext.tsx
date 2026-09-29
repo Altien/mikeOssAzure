@@ -63,6 +63,11 @@ const API_KEY_PROVIDERS: ApiKeyProvider[] = [
     "openai",
     "openrouter",
     "courtlistener",
+    // Upstream divergence (OSS-6, §2.3 item 3): dev's organisation
+    // credentials (Key Vault) for Kimi and Azure OpenAI. The Azure OpenAI
+    // deployment list lives in src/altien/models/aoaiDeployments.
+    "kimi",
+    "azure_openai",
 ];
 
 function emptyApiKeys(): ApiKeyState {
@@ -72,6 +77,8 @@ function emptyApiKeys(): ApiKeyState {
         openai: { configured: false, source: null },
         openrouter: { configured: false, source: null },
         courtlistener: { configured: false, source: null },
+        kimi: { configured: false, source: null },
+        azure_openai: { configured: false, source: null },
     };
 }
 
