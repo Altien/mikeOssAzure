@@ -1,9 +1,11 @@
 import { fireEvent, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderWithProviders } from "@/test/render";
-import type { CitationAnnotation } from "../shared/types";
+import type { Citation } from "../shared/types";
 import { AssistantMessage } from "./AssistantMessage";
 
+// OSS-6: upstream's AssistantMessage takes `citations` (was `annotations`)
+// and renders from `events` only (no `content` prop).
 describe("AssistantMessage citations", () => {
     it("renders a legacy document citation without a filename", () => {
         const legacyCitation = {
@@ -14,12 +16,11 @@ describe("AssistantMessage citations", () => {
             document_id: "doc-1",
             page: 1,
             quote: "Legacy citation text",
-        } as unknown as CitationAnnotation;
+        } as unknown as Citation;
 
         renderWithProviders(
             <AssistantMessage
-                content=""
-                annotations={[legacyCitation]}
+                citations={[legacyCitation]}
                 citationStatus="final"
             />,
         );
@@ -32,7 +33,6 @@ describe("AssistantMessage Authority Trace", () => {
     it("renders a stable extraction result and its warnings", () => {
         renderWithProviders(
             <AssistantMessage
-                content=""
                 events={[
                     {
                         type: "authority_trace_extraction",
@@ -62,7 +62,6 @@ describe("AssistantMessage Authority Trace", () => {
         const onOpen = vi.fn();
         renderWithProviders(
             <AssistantMessage
-                content=""
                 onAuthorityTraceOpen={onOpen}
                 events={[
                     {
@@ -101,7 +100,6 @@ describe("AssistantMessage Authority Trace", () => {
     it("renders fatal verification errors without claiming a completed run", () => {
         renderWithProviders(
             <AssistantMessage
-                content=""
                 events={[
                     {
                         type: "authority_trace_verification",
@@ -122,7 +120,6 @@ describe("AssistantMessage Authority Trace", () => {
     it("renders extraction prerequisites without labelling them fatal", () => {
         renderWithProviders(
             <AssistantMessage
-                content=""
                 events={[
                     {
                         type: "authority_trace_verification",

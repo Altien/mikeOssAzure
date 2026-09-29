@@ -394,13 +394,15 @@ export type Citation =
 
 const PAGE_BREAK_SENTINEL = "[[PAGE_BREAK]]";
 
-export function isSpreadsheetFilename(filename: string): boolean {
-  const ext = filename.split(".").pop()?.toLowerCase();
+// Dev fix (85f362c8, re-applied in OSS-6): legacy chat citations can lack a
+// filename, so these tolerate null/undefined instead of throwing on render.
+export function isSpreadsheetFilename(filename: string | null | undefined): boolean {
+  const ext = filename?.split(".").pop()?.toLowerCase();
   return ext === "xlsx" || ext === "xlsm" || ext === "xls";
 }
 
-export function isDocxFilename(filename: string): boolean {
-  const ext = filename.split(".").pop()?.toLowerCase();
+export function isDocxFilename(filename: string | null | undefined): boolean {
+  const ext = filename?.split(".").pop()?.toLowerCase();
   return ext === "docx" || ext === "doc";
 }
 

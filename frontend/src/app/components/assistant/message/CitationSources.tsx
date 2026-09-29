@@ -30,7 +30,9 @@ function citationSourceLabel(annotation: Citation): string {
         if (caseName && citation) return `${caseName}, ${citation}`;
         return caseName || citation || `Case ${annotation.cluster_id}`;
     }
-    return annotation.filename;
+    // Dev fix (85f362c8, re-applied in OSS-6): legacy chat citations can
+    // lack a filename; label them instead of rendering an empty source row.
+    return annotation.filename?.trim() || "Document citation";
 }
 
 export function citationTooltip(annotation: Citation): string {
