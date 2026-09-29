@@ -3,10 +3,13 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Modal } from "./Modal";
 
+// OSS-6: retargeted from dev's shared/Modal to upstream's modals/Modal —
+// upstream dropped the `title` prop (the header renders only for
+// breadcrumbs) and the implicit Cancel action (cancelAction is explicit).
 describe("Modal", () => {
     it("renders nothing when open=false", () => {
         render(
-            <Modal open={false} onClose={() => {}} title="Hidden">
+            <Modal open={false} onClose={() => {}} breadcrumbs={["Hidden"]}>
                 body
             </Modal>,
         );
@@ -14,17 +17,21 @@ describe("Modal", () => {
         expect(screen.queryByText("Hidden")).not.toBeInTheDocument();
     });
 
-    it("renders title, children, and the Close button fires onClose", async () => {
+    it("renders breadcrumbs (with separators), children, and the Close button fires onClose", async () => {
         const onClose = vi.fn();
         render(
-            <Modal open onClose={onClose} title="Project details">
+            <Modal
+                open
+                onClose={onClose}
+                breadcrumbs={["Projects", "Acme v Beta"]}
+            >
                 <p>modal body</p>
             </Modal>,
         );
 
-        expect(
-            screen.getByRole("heading", { name: "Project details" }),
-        ).toBeInTheDocument();
+        expect(screen.getByText("Projects")).toBeInTheDocument();
+        expect(screen.getByText("Acme v Beta")).toBeInTheDocument();
+        expect(screen.getByText("›")).toBeInTheDocument();
         expect(screen.getByText("modal body")).toBeInTheDocument();
 
         await userEvent.click(screen.getByRole("button", { name: "Close" }));
@@ -34,7 +41,7 @@ describe("Modal", () => {
     it("clicking the backdrop closes; clicking inside the card does not", async () => {
         const onClose = vi.fn();
         render(
-            <Modal open onClose={onClose} title="T">
+            <Modal open onClose={onClose}>
                 <p>inside</p>
             </Modal>,
         );
@@ -43,22 +50,20 @@ describe("Modal", () => {
         expect(onClose).not.toHaveBeenCalled();
 
         // The backdrop is the fixed full-screen wrapper around the card.
-        const backdrop = screen
-            .getByRole("heading", { name: "T" })
-            .closest(".fixed");
+        const backdrop = screen.getByText("inside").closest(".fixed");
         await userEvent.click(backdrop as HTMLElement);
         expect(onClose).toHaveBeenCalledOnce();
     });
 
-    it("providing a primaryAction auto-adds a Cancel action wired to onClose", async () => {
-        const onClose = vi.fn();
+    it("renders primary and explicit cancel actions and fires their handlers", async () => {
+        const onCancel = vi.fn();
         const onSave = vi.fn();
         render(
             <Modal
                 open
-                onClose={onClose}
-                title="T"
+                onClose={() => {}}
                 primaryAction={{ label: "Save", onClick: onSave }}
+                cancelAction={{ label: "Cancel", onClick: onCancel }}
             >
                 body
             </Modal>,
@@ -68,17 +73,15 @@ describe("Modal", () => {
         expect(onSave).toHaveBeenCalledOnce();
 
         await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
-        expect(onClose).toHaveBeenCalledOnce();
+        expect(onCancel).toHaveBeenCalledOnce();
     });
 
-    it("cancelAction={false} suppresses the implicit Cancel button", () => {
+    it("does not add an implicit Cancel button", () => {
         render(
             <Modal
                 open
                 onClose={() => {}}
-                title="T"
                 primaryAction={{ label: "Save", onClick: () => {} }}
-                cancelAction={false}
             >
                 body
             </Modal>,
@@ -89,21 +92,14 @@ describe("Modal", () => {
         ).not.toBeInTheDocument();
     });
 
-    it("renders breadcrumbs (with separators) instead of the title header", () => {
+    it("keepMounted keeps closed content in the DOM, hidden", () => {
         render(
-            <Modal
-                open
-                onClose={() => {}}
-                title="Should not show"
-                breadcrumbs={["Projects", "Acme v Beta"]}
-            >
-                body
+            <Modal open={false} keepMounted onClose={() => {}}>
+                <p>kept</p>
             </Modal>,
         );
 
-        expect(screen.getByText("Projects")).toBeInTheDocument();
-        expect(screen.getByText("Acme v Beta")).toBeInTheDocument();
-        expect(screen.getByText("›")).toBeInTheDocument();
-        expect(screen.queryByText("Should not show")).not.toBeInTheDocument();
+        const kept = screen.getByText("kept");
+        expect(kept.closest(".fixed")).toHaveClass("hidden");
     });
 });
