@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import {
     deleteDocument,
-    getDocumentUrl,
+    downloadResolvedDocument,
     downloadDocumentsZip,
     listDocumentVersions,
     uploadDocumentVersion,
@@ -381,14 +381,13 @@ export function DocTable({
         filename: string,
     ) {
         try {
-            const resolved = await getDocumentUrl(docId, versionId);
-            const a = document.createElement("a");
-            a.href = resolved.url;
-            // Prefer the backend's resolved filename (which honours the
-            // version filename). Fall back to the passed filename
-            // if for some reason it's missing.
-            a.download = resolved.filename || filename;
-            a.click();
+            // Upstream divergence (OSS-6, §2.3 item 6): upstream assigns the
+            // resolved URL to an <a>. On Azure that URL is a relative,
+            // auth-guarded `/download/<token>` proxy path, so dev resolves
+            // and downloads through downloadResolvedDocument (bearer fetch
+            // + blob; absolute R2 URLs still use a plain <a>). It prefers
+            // the backend's resolved filename and falls back to `filename`.
+            await downloadResolvedDocument(docId, versionId, filename);
         } catch (e) {
             console.error("downloadDocVersion failed", e);
         }
@@ -1922,11 +1921,9 @@ export function DocTable({
 
     const docs = documents;
     const downloadDoc = useCallback(async (docId: string) => {
-        const { url, filename } = await getDocumentUrl(docId);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = filename;
-        a.click();
+        // Upstream divergence (OSS-6, §2.3 item 6): Azure download URLs are
+        // relative, auth-guarded proxy paths — see downloadDocVersion.
+        await downloadResolvedDocument(docId, null, "document");
     }, []);
 
     const handleDownloadSelectedDocs = useCallback(async () => {

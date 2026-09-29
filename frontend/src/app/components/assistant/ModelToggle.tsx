@@ -14,7 +14,6 @@ import {
 } from "@/app/components/ui/liquid-dropdown";
 import { isModelAvailable } from "@/app/lib/modelAvailability";
 import type { ApiKeyState } from "@/app/lib/mikeApi";
-import { useOllamaModels } from "@/app/hooks/useOllamaModels";
 
 export interface ModelOption {
     id: string;
@@ -62,8 +61,10 @@ interface Props {
 
 export function ModelToggle({ value, onChange, apiKeys }: Props) {
     const [isOpen, setIsOpen] = useState(false);
-    const ollamaModels = useOllamaModels();
-    const models = [...MODELS, ...ollamaModels];
+    // Upstream divergence (sync-log: fe942475): NOT SUPPORTED — upstream
+    // appends local Ollama models (useOllamaModels, "Local" group). Dev's
+    // backend serves no local models, so the list is the static MODELS.
+    const models = MODELS;
     const selected = models.find((m) => m.id === value);
     const selectedLabel = selected?.label ?? "Model";
     const selectedAvailable = apiKeys

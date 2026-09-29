@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { PackageOpen } from "lucide-react";
 import { getProject, listProjects } from "@/app/lib/mikeApi";
 import type { Document, Project } from "@/app/components/shared/types";
-import { ConfirmPopup } from "@/app/components/shared/ConfirmPopup";
+import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 import {
     adaptSkillName,
     analyseSkillVersion,

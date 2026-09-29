@@ -28,13 +28,14 @@ import {
     accountGlassInputClassName,
 } from "../accountStyles";
 import { AccountSection } from "../AccountSection";
-import { useOllamaModels } from "@/app/hooks/useOllamaModels";
+// Upstream divergence (sync-log: fe942475): NOT SUPPORTED — upstream
+// appends local Ollama models (useOllamaModels) to both dropdowns. Dev's
+// backend serves no local models, so only the static lists are offered.
 
 type ModelPreferenceField = "titleModel" | "tabularModel";
 
 export default function ModelPreferencesPage() {
     const { profile, updateModelPreference } = useUserProfile();
-    const ollamaModels = useOllamaModels();
     const [savingField, setSavingField] = useState<ModelPreferenceField | null>(
         null,
     );
@@ -97,7 +98,7 @@ export default function ModelPreferencesPage() {
                             profile?.titleModel ??
                             "gemini-3.1-flash-lite-preview"
                         }
-                        options={[...SETTINGS_MODELS, ...ollamaModels]}
+                        options={SETTINGS_MODELS}
                         apiKeys={profile?.apiKeys}
                         isSaving={savingField === "titleModel"}
                         isSaved={savedField === "titleModel"}
@@ -119,7 +120,7 @@ export default function ModelPreferencesPage() {
                             profile?.tabularModel ??
                             "gemini-3-flash-preview"
                         }
-                        options={[...MODELS, ...ollamaModels]}
+                        options={MODELS}
                         apiKeys={profile?.apiKeys}
                         isSaving={savingField === "tabularModel"}
                         isSaved={savedField === "tabularModel"}

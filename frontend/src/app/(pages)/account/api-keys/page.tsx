@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import { Eye, EyeOff, RefreshCw } from "lucide-react";
 import { Input } from "@/app/components/ui/input";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
-import { refreshOllamaModels } from "@/app/hooks/useOllamaModels";
+// Upstream divergence (sync-log: fe942475): NOT SUPPORTED — upstream's
+// Refresh also re-detects local Ollama models (refreshOllamaModels). Dev's
+// backend serves no local models, so Refresh only reloads the profile.
 // Upstream divergence (sync-log: 3a10943): upstream gates key save/remove
 // behind MfaVerificationPopup (Supabase-auth TOTP step-up). Dev has no
 // app-level MFA (Entra enforces it at the IdP), so the calls run directly.
@@ -54,7 +56,7 @@ export default function ApiKeysPage() {
     const handleRefresh = async () => {
         setRefreshing(true);
         try {
-            await Promise.all([reloadProfile(), refreshOllamaModels()]);
+            await reloadProfile();
         } finally {
             setRefreshing(false);
         }
@@ -71,7 +73,7 @@ export default function ApiKeysPage() {
                     onClick={handleRefresh}
                     disabled={refreshing}
                     className="flex items-center gap-1.5 text-xs font-medium text-gray-600 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-400"
-                    title="Re-check API keys and detect local (Ollama) models"
+                    title="Re-check API keys"
                 >
                     <RefreshCw
                         className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}

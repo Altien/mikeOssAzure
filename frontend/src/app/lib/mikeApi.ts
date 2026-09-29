@@ -1,9 +1,21 @@
 /**
  * Mike API client — all requests to the Node.js backend.
- * Attaches the Supabase auth token for user authentication.
+ * Attaches the active browser auth token for user authentication.
+ *
+ * Upstream divergence (OSS-6, dev API layer): the token comes from
+ * `@/app/lib/auth-token` (Entra / local / Supabase, chosen at runtime by
+ * GET /config) instead of `supabase.auth.getSession()`; every route is
+ * under the backend's `/api` prefix; 401s go through bounceIfUnauthorized;
+ * `API_BASE`, `apiRequest` and `getAuthHeader` are exported for the
+ * dev-only `src/altien/*` clients. Dev-only additions are marked inline
+ * (help articles, skill binding, downloadResolvedDocument). Ollama is NOT
+ * SUPPORTED (sync-log: fe942475), so upstream's getOllamaModels is omitted.
  */
 
-import { supabase } from "@/app/lib/supabase";
+import {
+    getBrowserAccessToken,
+    bounceIfUnauthorized,
+} from "@/app/lib/auth-token";
 import type {
     AssistantEvent,
     Chat,
@@ -21,6 +33,7 @@ import type {
     TabularReview,
     TabularReviewDetailOut,
 } from "@/app/components/shared/types";
+import type { ChatDetailSkillBinding } from "@/altien/skillRuntime/api";
 
 // Server-side shape before mapping
 interface ServerMessage {
@@ -36,10 +49,17 @@ interface ServerMessage {
 interface ServerChatDetailOut {
     chat: Chat;
     messages: ServerMessage[];
+    // Dev-only (skill runtime): the skill the chat is bound to.
+    skill_binding?: ChatDetailSkillBinding | null;
 }
 
-const API_BASE =
-    process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+/** Dev-only: `ChatDetailOut` plus the skill-runtime binding (src/altien). */
+export type ChatDetailWithSkillOut = ChatDetailOut & {
+    skillBinding?: ChatDetailSkillBinding | null;
+};
+
+export const API_BASE =
+    (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") + "/api";
 const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
     if (isDev) console.log(...args);
@@ -57,6 +77,9 @@ export class MikeApiError extends Error {
     }
 }
 
+// Upstream divergence (sync-log: 3a10943): kept for API parity with
+// upstream, but dev's backend never emits mfa_verification_required —
+// app-level Supabase MFA was not adopted (Entra handles MFA at the IdP).
 export function isMfaRequiredError(error: unknown) {
     return (
         error instanceof MikeApiError &&
@@ -65,15 +88,19 @@ export function isMfaRequiredError(error: unknown) {
     );
 }
 
-async function getAuthHeader(): Promise<Record<string, string>> {
-    const {
-        data: { session },
-    } = await supabase.auth.getSession();
-    if (!session?.access_token) return {};
-    return { Authorization: `Bearer ${session.access_token}` };
+export async function getAuthHeader(): Promise<Record<string, string>> {
+    const token = await getBrowserAccessToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+// 401 handling is centralised in @/app/lib/auth-token's bounceIfUnauthorized.
+// Use that helper at every direct-fetch call site so a stale or expired
+// token can't leave the user trapped in a half-authenticated state.
+
+export async function apiRequest<T>(
+    path: string,
+    init?: RequestInit,
+): Promise<T> {
     const authHeaders = await getAuthHeader();
     const { headers: initHeaders, ...restInit } = init ?? {};
     const response = await fetch(`${API_BASE}${path}`, {
@@ -85,6 +112,8 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
             ...(initHeaders as Record<string, string> | undefined),
         },
     });
+
+    bounceIfUnauthorized(response);
 
     if (!response.ok) {
         throw await toApiError(response, path);
@@ -112,6 +141,8 @@ async function apiBlobRequest(path: string): Promise<{
             ...authHeaders,
         },
     });
+
+    bounceIfUnauthorized(response);
 
     if (!response.ok) {
         throw await toApiError(response, path);
@@ -157,6 +188,32 @@ async function toApiError(response: Response, path: string) {
             message: text || `API error: ${response.status}`,
         });
     }
+}
+
+// ---------------------------------------------------------------------------
+// Help (dev-only: in-app help articles served by the backend)
+// ---------------------------------------------------------------------------
+
+export type HelpArticleSummary = {
+    slug: string;
+    title: string;
+};
+
+export type HelpArticle = HelpArticleSummary & {
+    markdown: string;
+};
+
+export async function listHelpArticles(): Promise<HelpArticleSummary[]> {
+    const result = await apiRequest<{ articles: HelpArticleSummary[] }>(
+        "/help/articles",
+    );
+    return result.articles;
+}
+
+export async function getHelpArticle(slug: string): Promise<HelpArticle> {
+    return apiRequest<HelpArticle>(
+        `/help/articles/${encodeURIComponent(slug)}`,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -299,18 +356,10 @@ export async function getApiKeyStatus(): Promise<ApiKeyStatus> {
     return apiRequest<ApiKeyStatus>("/user/api-keys");
 }
 
-export interface OllamaModelOption {
-    id: string;
-    label: string;
-    group: "Local";
-}
-
-export async function getOllamaModels(): Promise<OllamaModelOption[]> {
-    const { models } = await apiRequest<{ models: OllamaModelOption[] }>(
-        "/models/ollama",
-    );
-    return models;
-}
+// Upstream divergence (sync-log: fe942475): NOT SUPPORTED — upstream's
+// getOllamaModels (GET /models/ollama, local Ollama models) is omitted.
+// Dev's backend does not serve local models (see providerForModel in
+// backend/src/lib/llm/models.ts). Do not re-add during conflict resolution.
 
 export async function saveApiKey(
     provider: ApiKeyProvider,
@@ -593,6 +642,7 @@ export async function uploadLibraryDocument(
         headers: { ...authHeaders },
         body: form,
     });
+    bounceIfUnauthorized(response);
     if (!response.ok) throw new Error(await response.text());
     return response.json() as Promise<Document>;
 }
@@ -719,6 +769,7 @@ export async function uploadDocumentVersion(
             body: form,
         },
     );
+    bounceIfUnauthorized(response);
     if (!response.ok) throw new Error(await response.text());
     return response.json() as Promise<DocumentVersion>;
 }
@@ -741,6 +792,7 @@ export async function replaceDocumentVersionFile(
             body: form,
         },
     );
+    bounceIfUnauthorized(response);
     if (!response.ok) throw new Error(await response.text());
     return response.json() as Promise<DocumentVersion>;
 }
@@ -805,6 +857,7 @@ export async function uploadProjectDocument(
             body: form,
         },
     );
+    bounceIfUnauthorized(response);
     if (!response.ok) throw new Error(await response.text());
     return response.json() as Promise<Document>;
 }
@@ -820,6 +873,7 @@ export async function uploadStandaloneDocument(
         headers: { ...authHeaders },
         body: form,
     });
+    bounceIfUnauthorized(response);
     if (!response.ok) throw new Error(await response.text());
     return response.json() as Promise<Document>;
 }
@@ -840,6 +894,49 @@ export async function getDocumentUrl(
     return apiRequest(`/single-documents/${documentId}/url${qs}`);
 }
 
+/**
+ * Dev-only (OSS-6 divergence, §2.3 item 6): resolve a document/version
+ * download URL and trigger a browser download.
+ *
+ * R2 returns an absolute pre-signed URL the browser can fetch directly. Azure
+ * returns a relative backend-proxy path (`/download/<token>`) that sits behind
+ * `requireAuth`, so a plain `<a>` click can't authenticate (no Bearer header)
+ * and the relative path also misses the `/api` prefix. For that case we fetch
+ * with the auth header and save the resulting blob.
+ */
+export async function downloadResolvedDocument(
+    documentId: string,
+    versionId: string | null,
+    fallbackFilename: string,
+): Promise<void> {
+    const { url, filename } = await getDocumentUrl(documentId, versionId);
+    const name = filename || fallbackFilename;
+
+    // Absolute pre-signed URL (R2): the browser fetches it directly; adding an
+    // Authorization header would only trip CORS on the storage host.
+    if (/^https?:\/\//i.test(url)) {
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = name;
+        a.rel = "noopener";
+        a.click();
+        return;
+    }
+
+    // Relative backend proxy (Azure): authenticate and download the bytes.
+    const authHeaders = await getAuthHeader();
+    const response = await fetch(`${API_BASE}${url}`, { headers: authHeaders });
+    bounceIfUnauthorized(response);
+    if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+    const blob = await response.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+}
+
 export async function downloadDocumentsZip(
     documentIds: string[],
 ): Promise<Blob> {
@@ -853,6 +950,7 @@ export async function downloadDocumentsZip(
         },
         body: JSON.stringify({ document_ids: documentIds }),
     });
+    bounceIfUnauthorized(response);
     if (!response.ok) {
         const detail = await response.text();
         throw new Error(detail || `API error: ${response.status}`);
@@ -885,7 +983,9 @@ export async function listProjectChats(projectId: string): Promise<Chat[]> {
     return apiRequest<Chat[]>(`/projects/${projectId}/chats`);
 }
 
-export async function getChat(chatId: string): Promise<ChatDetailOut> {
+export async function getChat(
+    chatId: string,
+): Promise<ChatDetailWithSkillOut> {
     const raw = await apiRequest<ServerChatDetailOut>(`/chat/${chatId}`);
     const messages: Message[] = raw.messages.map((m) => {
         if (m.role === "user") {
@@ -912,7 +1012,11 @@ export async function getChat(chatId: string): Promise<ChatDetailOut> {
             events,
         };
     });
-    return { chat: raw.chat, messages };
+    return {
+        chat: raw.chat,
+        messages,
+        skillBinding: raw.skill_binding ?? null,
+    };
 }
 
 export async function renameChat(chatId: string, title: string): Promise<void> {
@@ -995,7 +1099,7 @@ export async function streamChat(payload: {
 }): Promise<Response> {
     const { signal, ...body } = payload;
     const authHeaders = await getAuthHeader();
-    return fetch(`${API_BASE}/chat`, {
+    const response = await fetch(`${API_BASE}/chat`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -1005,6 +1109,8 @@ export async function streamChat(payload: {
         body: JSON.stringify(body),
         signal,
     });
+    bounceIfUnauthorized(response);
+    return response;
 }
 
 type StreamChatMessage = {
@@ -1042,7 +1148,7 @@ export async function streamProjectChat(payload: {
 }): Promise<Response> {
     const { projectId, signal, ...body } = payload;
     const authHeaders = await getAuthHeader();
-    return fetch(`${API_BASE}/projects/${projectId}/chat`, {
+    const response = await fetch(`${API_BASE}/projects/${projectId}/chat`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -1052,6 +1158,8 @@ export async function streamProjectChat(payload: {
         body: JSON.stringify(body),
         signal,
     });
+    bounceIfUnauthorized(response);
+    return response;
 }
 
 // ---------------------------------------------------------------------------
@@ -1200,10 +1308,15 @@ export async function streamTabularGeneration(
     reviewId: string,
 ): Promise<Response> {
     const authHeaders = await getAuthHeader();
-    return fetch(`${API_BASE}/tabular-review/${reviewId}/generate`, {
-        method: "POST",
-        headers: { ...authHeaders },
-    });
+    const response = await fetch(
+        `${API_BASE}/tabular-review/${reviewId}/generate`,
+        {
+            method: "POST",
+            headers: { ...authHeaders },
+        },
+    );
+    bounceIfUnauthorized(response);
+    return response;
 }
 
 export async function streamTabularChat(
@@ -1214,17 +1327,22 @@ export async function streamTabularChat(
     context?: { reviewTitle?: string | null; projectName?: string | null },
 ): Promise<Response> {
     const authHeaders = await getAuthHeader();
-    return fetch(`${API_BASE}/tabular-review/${reviewId}/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders },
-        body: JSON.stringify({
-            messages,
-            chat_id: chat_id ?? undefined,
-            review_title: context?.reviewTitle ?? undefined,
-            project_name: context?.projectName ?? undefined,
-        }),
-        signal: signal ?? undefined,
-    });
+    const response = await fetch(
+        `${API_BASE}/tabular-review/${reviewId}/chat`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...authHeaders },
+            body: JSON.stringify({
+                messages,
+                chat_id: chat_id ?? undefined,
+                review_title: context?.reviewTitle ?? undefined,
+                project_name: context?.projectName ?? undefined,
+            }),
+            signal: signal ?? undefined,
+        },
+    );
+    bounceIfUnauthorized(response);
+    return response;
 }
 
 export interface TRCitationAnnotation {

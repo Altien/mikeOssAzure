@@ -16,6 +16,19 @@ export type ChatSkillBinding = {
     availableUpgrade: { versionId: string; contentHash: string } | null;
 };
 
+/**
+ * The skill binding summary `GET /chat/:id` returns as `skill_binding`,
+ * surfaced by `getChat()` as `skillBinding`. Lives here (not in upstream's
+ * `shared/types.ts`) so the upstream types file stays verbatim (OSS-6).
+ */
+export type ChatDetailSkillBinding = {
+    skillId: string;
+    versionId: string;
+    displayName: string;
+    contentHash: string;
+    dependencyVersions: unknown[];
+};
+
 export function getChatSkillBinding(projectId: string, chatId: string) {
     return apiRequest<{ binding: ChatSkillBinding | null }>(
         `/projects/${encodeURIComponent(projectId)}/chat/${encodeURIComponent(chatId)}/skill`,

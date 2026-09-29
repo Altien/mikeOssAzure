@@ -1,4 +1,9 @@
 // Shared TypeScript types for Mike AI legal assistant
+// Upstream divergence (OSS-6, dev-only authority trace): the one dev
+// addition to this otherwise-verbatim file is the AuthorityTraceAssistantEvent
+// member of the AssistantEvent union. The event types themselves live in
+// src/altien/authorityTrace/events.ts.
+import type { AuthorityTraceAssistantEvent } from "@/altien/authorityTrace/events";
 
 export interface Folder {
   id: string;
@@ -101,6 +106,7 @@ export interface EditAnnotation {
 }
 
 export type AssistantEvent =
+  | AuthorityTraceAssistantEvent
   | { type: "reasoning"; text: string; isStreaming?: boolean }
   | { type: "error"; message: string }
   | {
