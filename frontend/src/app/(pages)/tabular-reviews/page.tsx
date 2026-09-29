@@ -114,7 +114,7 @@ export default function TabularReviewsPage() {
         return () => {
             cancelled = true;
         };
-    }, [debouncedSearch, page, sort]);
+    }, [debouncedSearch, page]);
 
     function handleLoadMore() {
         setPage((prev) => prev + 1);
