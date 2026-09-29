@@ -28,24 +28,28 @@ issue here first and we will help you triage.
 
 ## System Workflows
 
-The canonical workflow sources are not stored in this repository. They live in
-the separate upstream repository
-[`Open-Legal-Products/mike-workflows`](https://github.com/Open-Legal-Products/mike-workflows).
-The generator expects that repository to be checked out beside this one, at
-the exact relative path `../mike-workflows/`, with system workflow sources in
-`../mike-workflows/system/`.
+System workflows live in the sibling
+[`Open-Legal-Products/mike-workflows`](https://github.com/Open-Legal-Products/mike-workflows)
+repository under `assistant-workflows/` and `tabular-review-workflows/`. Put
+structured metadata in the YAML frontmatter at the top of `SKILL.md`, set
+`metadata.mike-availability` to `system`, put workflow instructions in the body
+of `SKILL.md`, and use `table-columns.yaml` for tabular review columns.
 
-**Regeneration is not supported in this dev fork.** Do not run
-`scripts/build-workflows.js`, even after cloning the sibling repository: dev
-kept the older generator while the adopted upstream workflow content moved to
-a newer source format. The script now exits with an intentional hard stop.
+After changing system workflows, regenerate the app files:
 
-Do not reconstruct missing workflow sources from the generated TypeScript and
-do not treat this repository as their source of truth. During an upstream
-merge conflict, preserve the checked-in `backend/src/lib/systemWorkflows.ts`.
-Regeneration may be restored only by deliberately adopting the canonical
-workflow sources, their current generator/source schema, and the deferred
-workflow engine as one complete unit.
+```bash
+node scripts/build-workflows.js
+```
+
+<!-- Dev fork rule (OSS-6 spec §3.3): the checked-in
+     `backend/src/lib/systemWorkflows.ts` is generated content and the runtime
+     source of truth. This fork has no dev-only system workflows, so it never
+     needs to regenerate: during an upstream sync, resolve conflicts on
+     `systemWorkflows.ts` (and `scripts/build-workflows.js`) by taking
+     upstream's version. Never hand-edit it. Regenerating locally requires
+     cloning `mike-workflows` as a sibling; the generator skips `landing/`
+     when that directory is absent. -->
+
 
 ## Reporting issues
 
