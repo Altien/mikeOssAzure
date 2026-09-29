@@ -1,7 +1,6 @@
 "use client";
 
 import {
-    use,
     useCallback,
     useEffect,
     useLayoutEffect,
@@ -71,10 +70,7 @@ import {
     folderDeleteDialogReducer,
     removeDeletedDocumentTabs,
 } from "@/app/lib/folderDeleteState";
-
-interface Props {
-    params: Promise<{ id: string; chatId: string }>;
-}
+import { usePathParams } from "@/app/lib/usePathParams";
 
 type DocTab = {
     documentId: string;
@@ -208,8 +204,13 @@ function Divider({ onDrag }: { onDrag: (dx: number) => void }) {
     );
 }
 
-export default function ProjectAssistantChatPage({ params }: Props) {
-    const { id: projectId, chatId } = use(params);
+export default function ProjectAssistantChatPage() {
+    // Static-export divergence (OSS-6): ids from the live URL instead of
+    // `use(params)` (always "_" under output: "export"). layout.tsx only
+    // mounts this page once both ids are non-empty.
+    const { id: projectId, chatId } = usePathParams<"id" | "chatId">(
+        "/projects/:id/assistant/chat/:chatId",
+    );
     const router = useRouter();
 
     const { setSidebarOpen } = useSidebar();

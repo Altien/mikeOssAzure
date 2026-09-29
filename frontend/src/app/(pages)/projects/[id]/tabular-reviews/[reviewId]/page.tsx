@@ -1,13 +1,13 @@
 "use client";
 
-import { use } from "react";
 import { TRView } from "@/app/components/tabular/TabularReviewView";
+import { usePathParams } from "@/app/lib/usePathParams";
 
-interface Props {
-    params: Promise<{ id: string; reviewId: string }>;
-}
-
-export default function ProjectTabularReviewPage({ params }: Props) {
-    const { id, reviewId } = use(params);
+export default function ProjectTabularReviewPage() {
+    // Static-export divergence (OSS-6): ids from the live URL instead of
+    // `use(params)` (always "_" under output: "export"; see layout.tsx).
+    const { id, reviewId } = usePathParams<"id" | "reviewId">(
+        "/projects/:id/tabular-reviews/:reviewId",
+    );
     return <TRView reviewId={reviewId} projectId={id} />;
 }

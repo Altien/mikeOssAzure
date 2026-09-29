@@ -1,16 +1,19 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useAssistantChat } from "@/app/hooks/useAssistantChat";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { ChatView } from "@/app/components/assistant/ChatView";
 import { getChat } from "@/app/lib/mikeApi";
+import { usePathParams } from "@/app/lib/usePathParams";
 
 export default function AssistantChatPage() {
     const router = useRouter();
-    const params = useParams();
-    const id = params.id as string;
+    // Static-export divergence (OSS-6): id from the live URL, not
+    // useParams() (always "_" under output: "export"). layout.tsx only
+    // mounts this page once the id is non-empty.
+    const { id } = usePathParams<"id">("/assistant/chat/:id");
 
     const { setCurrentChatId, newChatMessages, setNewChatMessages } =
         useChatHistoryContext();
