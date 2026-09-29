@@ -44,6 +44,13 @@ function makeDb(tables: Record<string, Row[]>) {
                     });
                     return query;
                 },
+                // dev drift: access.ts queries shared_with via .contains(), not .filter("cs")
+                contains: (column: string, value: unknown) =>
+                    query.filter(
+                        column,
+                        "cs",
+                        typeof value === "string" ? value : JSON.stringify(value),
+                    ),
                 single: async () => ({ data: rows[0] ?? null, error: null }),
                 then: (
                     resolve: (value: { data: Row[]; error: null }) => unknown,

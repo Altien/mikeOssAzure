@@ -351,9 +351,6 @@ describe("deleteUserAccountData", () => {
             tabular_review_chats: [{ id: "rc1", user_id: "u1" }],
             project_subfolders: [{ id: "f1", user_id: "u1" }],
             hidden_workflows: [{ id: "h1", user_id: "u1" }],
-            workflow_open_source_submissions: [
-                { id: "s1", submitted_by_user_id: "u1" },
-            ],
             workflow_shares: [
                 { id: "ws-by", shared_by_user_id: "u1", shared_with_email: "x@y.z" },
                 {
@@ -387,7 +384,7 @@ describe("deleteUserAccountData", () => {
         expect(ids(tables.tabular_reviews)).toEqual(["r-other"]);
         expect(tables.project_subfolders).toEqual([]);
         expect(tables.hidden_workflows).toEqual([]);
-        expect(tables.workflow_open_source_submissions).toEqual([]);
+        // dev drift: no workflow_open_source_submissions table (workflow-sync engine deferred)
         expect(ids(tables.workflows)).toEqual(["w-other"]);
 
         // Shares by the user and shares to the user's email are both removed.
