@@ -159,6 +159,110 @@ afterEach(() => {
     else process.env.AUTH_PROVIDER = ORIGINAL_AUTH_PROVIDER;
 });
 
+describe("row-model access filtering (CWE-639)", () => {
+    it("regenerate-cell 404s a row with any source the caller cannot read", async () => {
+        const { db, callsFor } = makeFakeDb(respond);
+        createServerSupabaseMock.mockReturnValue(db);
+
+        const response = await request(makeApp())
+            .post("/api/tabular-review/review-1/regenerate-cell")
+            .set("Authorization", "Bearer valid-token")
+            .send({ row_id: "row-folder", column_index: 0 });
+
+        expect(response.status).toBe(404);
+        expect(filterAccessibleDocumentIdsMock).toHaveBeenCalledWith(
+            ["doc-a", "doc-foreign"],
+            "user-1",
+            "user@example.com",
+            db,
+        );
+        expect(completeTextMock).not.toHaveBeenCalled();
+        expect(callsFor("tabular_cells", "update")).toEqual([]);
+    });
+
+    it("generate skips rows with any source the caller cannot read", async () => {
+        const { db } = makeFakeDb(respond);
+        createServerSupabaseMock.mockReturnValue(db);
+        streamChatWithToolsMock.mockResolvedValue(undefined);
+
+        const response = await request(makeApp())
+            .post("/api/tabular-review/review-1/generate")
+            .set("Authorization", "Bearer valid-token");
+
+        expect(response.status).toBe(200);
+        expect(streamChatWithToolsMock).toHaveBeenCalledTimes(1);
+        expect(response.text).toContain('"row_id":"row-doc"');
+        expect(response.text).not.toContain("row-folder");
+    });
+
+    it("POST / filters document_ids and groups same-folder documents into one row", async () => {
+        const docs = [
+            { id: "doc-a", current_version_id: null, project_id: "p-1", folder_id: "f-1", library_folder_id: null },
+            { id: "doc-b", current_version_id: null, project_id: "p-1", folder_id: "f-1", library_folder_id: null },
+            { id: "doc-c", current_version_id: null, project_id: "p-1", folder_id: null, library_folder_id: null },
+        ];
+        const { db, callsFor } = makeFakeDb((call) => {
+            if (call.table === "tabular_reviews" && call.op === "insert")
+                return { data: [{ ...(call.payload as object), id: "review-new" }], error: null };
+            if (call.table === "tabular_review_rows" && call.op === "insert")
+                return {
+                    data: (call.payload as { sort_index: number }[]).map((row) => ({
+                        ...row,
+                        id: `row-${row.sort_index}`,
+                    })),
+                    error: null,
+                };
+            if (call.table === "documents" && call.op === "select")
+                return { data: docs, error: null };
+            if (call.table === "project_subfolders" && call.op === "select")
+                return { data: [{ id: "f-1", name: "Leases", parent_folder_id: null }], error: null };
+            return { data: [], error: null };
+        });
+        createServerSupabaseMock.mockReturnValue(db);
+
+        const response = await request(makeApp())
+            .post("/api/tabular-review")
+            .set("Authorization", "Bearer valid-token")
+            .send({
+                title: "Grouped",
+                document_ids: ["doc-a", "doc-b", "doc-c", "doc-foreign"],
+                columns_config: [{ index: 0, name: "Parties", prompt: "Who?" }],
+                document_grouping: "folder",
+            });
+
+        expect(response.status).toBe(201);
+        const [reviewInsert] = callsFor("tabular_reviews", "insert");
+        expect(reviewInsert.payload).toMatchObject({
+            document_ids: ["doc-a", "doc-b", "doc-c"],
+            document_grouping: "folder",
+        });
+        const [rowInsert] = callsFor("tabular_review_rows", "insert");
+        expect(
+            (rowInsert.payload as { label: string; row_type: string }[]).map(
+                (row) => [row.label, row.row_type],
+            ),
+        ).toEqual([
+            ["Leases", "folder"],
+            ["Untitled document", "document"],
+        ]);
+        const [sourceInsert] = callsFor("tabular_review_row_sources", "insert");
+        expect(sourceInsert.payload).toEqual([
+            { row_id: "row-0", document_id: "doc-a", sort_index: 0 },
+            { row_id: "row-0", document_id: "doc-b", sort_index: 1 },
+            { row_id: "row-1", document_id: "doc-c", sort_index: 0 },
+        ]);
+        const [cellInsert] = callsFor("tabular_cells", "insert");
+        expect(
+            (cellInsert.payload as { row_id: string; document_id: string | null }[]).map(
+                (cell) => [cell.row_id, cell.document_id],
+            ),
+        ).toEqual([
+            ["row-0", null],
+            ["row-1", "doc-c"],
+        ]);
+    });
+});
+
 describe("review-row load failures answer 500 instead of hanging (sync-log 5f996cf6)", () => {
     function failingRowsDb() {
         return makeFakeDb((call) =>
