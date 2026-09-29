@@ -3,7 +3,7 @@
  * Configured @mike/api-client barrel for the Word add-in — the single place the
  * shared typed client is wired to the add-in's Office session. Mirrors
  * apps/web/src/app/lib/mikeApi.ts, but its auth comes from ../auth/session
- * (OfficeRuntime.storage-backed) instead of Supabase's browser SDK.
+ * (Entra via MSAL in this fork) instead of a browser SDK session.
  *
  * Components import API functions FROM THIS MODULE (not from "@mike/api-client"
  * directly) so that importing any of them runs the side-effecting
@@ -12,14 +12,11 @@
 import { configureMikeApiClient } from "@mike/api-client";
 import type { Document } from "@mike/core";
 import { getFreshAccessToken, refreshSession } from "../auth/session";
+import { API_BASE_URL } from "../auth/runtimeConfig";
 
-// Guard the `process` reference: webpack's EnvironmentPlugin only substitutes
-// registered vars, and a stale dev server can leave a literal `process.env...`
-// that throws "process is not defined" in the browser — the typeof guard
-// short-circuits before touching `process`, falling back safely.
-const BASE_URL: string =
-  (typeof process !== "undefined" && process.env.REACT_APP_API_BASE_URL) ||
-  "http://localhost:3001";
+// Dev fork: every backend router is mounted under /api (upstream's are at the
+// root), so the client's base is `${REACT_APP_API_BASE_URL}/api`.
+const BASE_URL: string = API_BASE_URL;
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
   const token = await getFreshAccessToken();

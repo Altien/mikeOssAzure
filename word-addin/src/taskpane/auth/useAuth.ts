@@ -3,23 +3,25 @@ import {
   getSessionState,
   initialize,
   signIn,
-  signInAsGuest,
   signOut,
   subscribe,
+  type AuthMode,
 } from "./session";
 
 // ---------------------------------------------------------------------------
 // Thin React binding over the shared session store (auth/session.ts). All token
-// state — including refresh-token handling — lives in that module so the bare
-// API client can share it; this hook just subscribes mounted components to it.
+// state — including silent renewal — lives in that module so the bare API
+// client can share it; this hook just subscribes mounted components to it.
 // ---------------------------------------------------------------------------
 
 export interface AuthState {
   token: string | null;
   loading: boolean;
   error: string | null;
-  login: (email: string, password: string) => Promise<void>;
-  loginAsGuest: () => Promise<void>;
+  /** Backend auth mode from GET /config; null until known. */
+  mode: AuthMode | null;
+  /** Entra: Microsoft sign-in (no args). Local dev mode: pass the email. */
+  login: (email?: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -34,13 +36,9 @@ export function useAuth(): AuthState {
     return unsubscribe;
   }, []);
 
-  const login = useCallback(
-    (email: string, password: string) => signIn(email, password),
-    []
-  );
-  const loginAsGuest = useCallback(() => signInAsGuest(), []);
+  const login = useCallback((email?: string) => signIn(email), []);
   const logout = useCallback(() => signOut(), []);
 
-  const { token, loading, error } = getSessionState();
-  return { token, loading, error, login, loginAsGuest, logout };
+  const { token, loading, error, mode } = getSessionState();
+  return { token, loading, error, mode, login, logout };
 }

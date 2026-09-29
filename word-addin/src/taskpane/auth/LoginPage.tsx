@@ -6,18 +6,28 @@ import { Label } from "@mike/shared/ui/label";
 import { Spinner } from "@mike/shared/ui/spinner";
 import { MikeIcon } from "@mike/shared/chat/mike-icon";
 
+// Dev-fork divergence (upstream sync b8bd5b0c): upstream's email + password
+// form posted to Supabase. Sign-in here follows the backend's auth mode
+// (GET /config): "Sign in with Microsoft" for Entra (MSAL, see auth/entra.ts),
+// an email-only form for the local development provider, and an explanatory
+// error for Supabase mode (NOT SUPPORTED in the add-in).
 export function LoginPage(): React.ReactElement {
-  const { login, loginAsGuest, loading, error } = useAuth();
+  const { login, loading, error, mode } = useAuth();
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  // Gated to non-production builds; the /auth/guest endpoint is gated too.
-  const guestEnabled = process.env.NODE_ENV !== "production";
 
   const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
-    if (!email.trim() || !password) return;
-    await login(email.trim(), password);
+    if (mode === "local") {
+      if (!email.trim()) return;
+      await login(email.trim());
+      return;
+    }
+    await login();
   };
+
+  // mode is null only when GET /config failed — the button then retries it.
+  const canSubmit =
+    mode === null || mode === "entra" || (mode === "local" && !!email.trim());
 
   return (
     <div className="flex h-full items-center justify-center overflow-y-auto bg-background px-5 py-8 @sm:px-6">
@@ -39,33 +49,24 @@ export function LoginPage(): React.ReactElement {
         </div>
 
         <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="email">Email address</Label>
-            <Input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@firm.com"
-              disabled={loading}
-              autoComplete="email"
-              required
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="password">Password</Label>
-            <Input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              disabled={loading}
-              autoComplete="current-password"
-              required
-            />
-          </div>
+          {mode === "local" && (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="email">Email address</Label>
+              <Input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@firm.com"
+                disabled={loading}
+                autoComplete="email"
+                required
+              />
+              <p className="text-xs text-muted-foreground">
+                Local development sign-in (AUTH_PROVIDER=local)
+              </p>
+            </div>
+          )}
 
           {error && (
             <p
@@ -76,29 +77,22 @@ export function LoginPage(): React.ReactElement {
             </p>
           )}
 
-          <Button
-            type="submit"
-            className="w-full"
-            disabled={loading || !email.trim() || !password}
-          >
-            {loading ? <Spinner label="Signing in…" /> : "Sign in"}
-          </Button>
-
-          {guestEnabled && (
-            <div className="flex flex-col gap-2 border-t border-border pt-4">
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full"
-                disabled={loading}
-                onClick={() => void loginAsGuest()}
-              >
-                Continue as guest
-              </Button>
-              <p className="text-center text-xs text-muted-foreground">
-                Local development only
-              </p>
-            </div>
+          {mode !== "unsupported" && (
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={loading || !canSubmit}
+            >
+              {loading ? (
+                <Spinner label="Signing in…" />
+              ) : mode === "entra" ? (
+                "Sign in with Microsoft"
+              ) : mode === "local" ? (
+                "Sign in"
+              ) : (
+                "Retry"
+              )}
+            </Button>
           )}
         </div>
       </form>

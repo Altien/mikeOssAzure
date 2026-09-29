@@ -1,55 +1,86 @@
 /// <reference types="office-js" />
 /**
- * Single source of truth for the add-in's Supabase session.
+ * Single source of truth for the add-in's sign-in session.
  *
- * The task pane authenticates with Supabase's password grant and then calls the
- * Mike API with the resulting JWT as a Bearer token. Those access tokens are
- * short-lived (Supabase defaults to a one-hour expiry), so a token persisted in
- * OfficeRuntime.storage during an earlier session is reliably expired by the
- * time the user reopens Word — and EVERY authenticated call then fails with
- * 401 "Invalid or expired token" (chat, projects, workflows, actions alike).
- * The original implementation stored ONLY the access token and never refreshed
- * it, so once that token aged out the session was wedged until a manual
- * sign-out / sign-in.
+ * Dev-fork divergence (upstream sync b8bd5b0c): upstream signs in with a
+ * Supabase password grant and refreshes via Supabase's token endpoint. This
+ * fork authenticates the way the web frontend does, keyed off the backend's
+ * runtime `GET /config`:
+ *   - `entra`  — Microsoft Entra via MSAL.js (NAA, Office-dialog fallback);
+ *                see ./entra.ts. The backend's Entra validator accepts the
+ *                token exactly as it accepts the web frontend's.
+ *   - `local`  — development-only email login (POST /api/auth/local-login),
+ *                the same endpoint the web frontend's local mode uses.
+ *   - `supabase` — NOT SUPPORTED in the add-in (dev deploys are Entra).
+ * Do not reintroduce Supabase REST calls or build-time identity values here.
  *
- * This module fixes that by persisting the refresh token alongside the access
- * token and transparently exchanging it for a new access token when the current
- * one is expired (proactively, before a request leaves) or rejected (reactively,
- * when the API answers 401). Both the React auth hook (useAuth) and the bare
- * API client (api/client.ts) obtain their token through here, so a refresh
- * triggered by one is instantly visible to the other, and a refresh that
- * genuinely fails clears the session and drops every view back to the login
- * gate rather than looping on dead 401s.
+ * The module keeps upstream's shape: the React hook (useAuth) and the API
+ * client (api/mikeApi.ts) both read tokens through getFreshAccessToken() /
+ * refreshSession(), and every change is broadcast to subscribed hooks, so a
+ * failed refresh drops every view back to the login gate.
  */
+import { EntraAuth, entraConfigProblem, type EntraToken } from "./entra";
+import { API_BASE_URL, API_ORIGIN, loadRuntimeConfig } from "./runtimeConfig";
 
-const ACCESS_KEY = "mike_token";
-const REFRESH_KEY = "mike_refresh_token";
+export type AuthMode = "entra" | "local" | "unsupported";
 
-const SUPABASE_URL: string = process.env.REACT_APP_SUPABASE_URL ?? "";
-const SUPABASE_ANON_KEY: string = process.env.REACT_APP_SUPABASE_ANON_KEY ?? "";
+const LOCAL_TOKEN_KEY = "mike_local_token";
+// Set by an explicit Sign out so NAA / MSAL silent SSO doesn't immediately
+// sign the pane back in on the next load; cleared by the next interactive
+// sign-in.
+const SIGNED_OUT_KEY = "mike_signed_out";
 
-// Mike API base — same var the API client uses. In dev the pane calls it over
-// the HTTPS proxy (https://localhost:3000/api → :3001) to avoid mixed content.
-const API_BASE_URL: string =
-  process.env.REACT_APP_API_BASE_URL ?? "http://localhost:3001";
+// Refresh a little BEFORE the token's expiry so an in-flight request can't
+// race the boundary (covers modest client/server clock skew too).
+const EXPIRY_SKEW_MS = 60_000;
 
-// Refresh a little BEFORE the token's `exp` so an in-flight request can't race
-// the expiry boundary (covers modest client/server clock skew too).
-const EXPIRY_SKEW_SECONDS = 60;
+// ---------------------------------------------------------------------------
+// Persistence — OfficeRuntime.storage when the host provides it, else
+// localStorage. Only the dev-only local token and the signed-out flag are
+// stored here; Entra tokens live in MSAL's cache.
+// ---------------------------------------------------------------------------
+
+async function storageGet(key: string): Promise<string | null> {
+  try {
+    if (typeof OfficeRuntime !== "undefined" && OfficeRuntime.storage) {
+      return (await OfficeRuntime.storage.getItem(key)) ?? null;
+    }
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+async function storageSet(key: string, value: string | null): Promise<void> {
+  try {
+    if (typeof OfficeRuntime !== "undefined" && OfficeRuntime.storage) {
+      if (value === null) await OfficeRuntime.storage.removeItem(key);
+      else await OfficeRuntime.storage.setItem(key, value);
+      return;
+    }
+    if (value === null) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, value);
+  } catch {
+    // Storage unavailable — the in-memory session still applies.
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Module-level shared state. Every useAuth() instance and the API client read
 // through these, and broadcast() re-renders all subscribed hooks on change.
 // ---------------------------------------------------------------------------
 
-let _accessToken: string | null = null;
-let _refreshToken: string | null = null;
+let _mode: AuthMode | null = null;
+let _entra: EntraAuth | null = null;
+let _token: string | null = null;
+let _expiresOn: number | null = null;
 let _loading = true;
-let _error: string | null = null;
+let _error: string | null = null; // last sign-in attempt's failure
+let _setupError: string | null = null; // why sign-in can't work at all
 
-let _initialized = false; // guards the hook's one-time load + loading flip
-let _loadPromise: Promise<void> | null = null; // guards the storage read itself
-let _refreshPromise: Promise<string | null> | null = null; // de-dupes concurrent refreshes
+let _initialized = false;
+let _readyPromise: Promise<void> | null = null;
+let _refreshPromise: Promise<string | null> | null = null;
 
 const _subscribers = new Set<() => void>();
 
@@ -68,118 +99,116 @@ export interface SessionState {
   token: string | null;
   loading: boolean;
   error: string | null;
+  mode: AuthMode | null;
 }
 
 export function getSessionState(): SessionState {
-  return { token: _accessToken, loading: _loading, error: _error };
+  return {
+    token: _token,
+    loading: _loading,
+    error: _error ?? _setupError,
+    mode: _mode,
+  };
 }
 
-// ---------------------------------------------------------------------------
-// Persistence helpers
-// ---------------------------------------------------------------------------
-
-/** Read the persisted tokens into memory exactly once. */
-function ensureLoaded(): Promise<void> {
-  if (!_loadPromise) {
-    _loadPromise = Promise.all([
-      OfficeRuntime.storage.getItem(ACCESS_KEY),
-      OfficeRuntime.storage.getItem(REFRESH_KEY),
-    ])
-      .then(([access, refresh]) => {
-        _accessToken = access ?? null;
-        _refreshToken = refresh ?? null;
-      })
-      .catch(() => {
-        _accessToken = null;
-        _refreshToken = null;
-      });
-  }
-  return _loadPromise;
-}
-
-/** Persist a freshly minted session (login or refresh) and notify subscribers. */
-async function writeSession(
-  access: string,
-  refresh: string | null
-): Promise<void> {
-  _accessToken = access;
-  _refreshToken = refresh;
-  await OfficeRuntime.storage.setItem(ACCESS_KEY, access).catch(() => {});
-  if (refresh) {
-    await OfficeRuntime.storage.setItem(REFRESH_KEY, refresh).catch(() => {});
-  } else {
-    await OfficeRuntime.storage.removeItem(REFRESH_KEY).catch(() => {});
-  }
+function setToken(token: EntraToken | { accessToken: string; expiresOn: null } | null): void {
+  _token = token?.accessToken ?? null;
+  _expiresOn = token?.expiresOn ?? null;
   broadcast();
 }
 
-/** Drop the session from memory + storage and notify subscribers. */
-async function clearSession(): Promise<void> {
-  _accessToken = null;
-  _refreshToken = null;
-  await OfficeRuntime.storage.removeItem(ACCESS_KEY).catch(() => {});
-  await OfficeRuntime.storage.removeItem(REFRESH_KEY).catch(() => {});
-  broadcast();
+function isExpiring(): boolean {
+  return _expiresOn !== null && Date.now() >= _expiresOn - EXPIRY_SKEW_MS;
 }
 
 // ---------------------------------------------------------------------------
-// JWT expiry inspection
+// Startup: read /config, pick the mode, try a silent sign-in.
 // ---------------------------------------------------------------------------
 
-/** Decode a JWT's `exp` (seconds since epoch), or null if it isn't a JWT. */
-function decodeExp(token: string): number | null {
+async function prepare(): Promise<void> {
+  let cfg;
   try {
-    const payload = token.split(".")[1];
-    if (!payload) return null;
-    const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
-    const json = decodeURIComponent(
-      atob(base64)
-        .split("")
-        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
-        .join("")
-    );
-    const exp = (JSON.parse(json) as { exp?: number }).exp;
-    return typeof exp === "number" ? exp : null;
-  } catch {
-    return null;
+    cfg = await loadRuntimeConfig();
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    throw new Error(`Couldn't reach the Mike server at ${API_ORIGIN} (${detail}).`);
   }
+
+  if (cfg.authProvider === "local") {
+    _mode = "local";
+    const stored = await storageGet(LOCAL_TOKEN_KEY);
+    if (stored) setToken({ accessToken: stored, expiresOn: null });
+    return;
+  }
+
+  if (cfg.authProvider !== "entra") {
+    // Upstream divergence (sync-log: b8bd5b0c): NOT SUPPORTED — Supabase
+    // sign-in was removed from the add-in; dev deployments are Entra.
+    _mode = "unsupported";
+    _setupError =
+      "This Mike server uses Supabase sign-in, which the Word add-in does not support. " +
+      "Use AUTH_PROVIDER=entra (or local for development).";
+    return;
+  }
+
+  _mode = "entra";
+  _setupError = entraConfigProblem(cfg);
+  if (_setupError) return;
+  _entra = await EntraAuth.create(cfg);
+  if ((await storageGet(SIGNED_OUT_KEY)) === "1") return;
+  setToken(await _entra.acquireSilent());
 }
 
-/**
- * True when `token` is a JWT whose `exp` has passed (minus a safety skew).
- * Non-JWT or undecodable tokens return false — we can't prove they're stale, so
- * we let them go and rely on the reactive 401 path to catch a real rejection.
- */
-function isExpired(token: string): boolean {
-  const exp = decodeExp(token);
-  if (exp == null) return false;
-  return Date.now() / 1000 >= exp - EXPIRY_SKEW_SECONDS;
+/** Resolve once the mode is known; a failed /config read is retried next call. */
+function ensureReady(): Promise<void> {
+  if (!_readyPromise) {
+    _setupError = null;
+    _readyPromise = prepare().catch((e: unknown) => {
+      _readyPromise = null;
+      _setupError = e instanceof Error ? e.message : "Sign-in is unavailable";
+    });
+  }
+  return _readyPromise;
+}
+
+/** Kick off the one-time startup, flipping `loading` false when done. */
+export function initialize(): void {
+  if (_initialized) return;
+  _initialized = true;
+  void ensureReady().then(() => {
+    _loading = false;
+    broadcast();
+  });
 }
 
 // ---------------------------------------------------------------------------
-// Token acquisition
+// Token acquisition (API client)
 // ---------------------------------------------------------------------------
 
 /**
- * Return a usable access token for an outgoing API request, refreshing first if
- * the current one has expired. May return null (logged out / refresh failed),
- * in which case the request will 401 and the reactive path takes over.
+ * Return a usable access token for an outgoing API request, renewing it
+ * silently first when it is about to expire. May return null (signed out /
+ * renewal impossible), in which case the request 401s and the reactive path
+ * (refreshSession) takes over.
  */
 export async function getFreshAccessToken(): Promise<string | null> {
-  await ensureLoaded();
-  if (_accessToken && !isExpired(_accessToken)) return _accessToken;
-  if (_refreshToken) {
-    const refreshed = await refreshSession();
-    if (refreshed) return refreshed;
+  await ensureReady();
+  if (_token && !isExpiring()) return _token;
+  if (_mode === "entra" && _entra && _token) {
+    const renewed = await _entra.acquireSilent();
+    if (renewed) {
+      setToken(renewed);
+      return renewed.accessToken;
+    }
   }
-  return _accessToken;
+  return _token;
 }
 
 /**
- * Exchange the refresh token for a new access token. Concurrent callers share a
- * single in-flight request. On a definitive failure (no refresh token, or the
- * grant is rejected) the session is cleared so the UI returns to login; a
- * transient network error leaves the session intact so a later retry can work.
+ * Called after the API answered 401. Entra: force a silent renewal once;
+ * local: the dev token can't be renewed. On failure the session is cleared
+ * so the UI returns to the login gate instead of looping on 401s.
+ * Concurrent callers share a single attempt.
  */
 export function refreshSession(): Promise<string | null> {
   if (!_refreshPromise) {
@@ -191,144 +220,75 @@ export function refreshSession(): Promise<string | null> {
 }
 
 async function doRefresh(): Promise<string | null> {
-  await ensureLoaded();
-  if (!_refreshToken) {
-    // Nothing to refresh with (e.g. a pre-refresh-era stored token). Force a
-    // clean re-login rather than spinning on 401s.
-    await clearSession();
-    return null;
-  }
-
-  let res: Response;
-  try {
-    res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: SUPABASE_ANON_KEY,
-      },
-      body: JSON.stringify({ refresh_token: _refreshToken }),
-    });
-  } catch {
-    // Network blip — keep the session and let the caller surface the failure.
-    return null;
-  }
-
-  if (!res.ok) {
-    // The refresh token itself is invalid/expired/revoked: log out.
-    await clearSession();
-    return null;
-  }
-
-  const data = (await res.json().catch(() => ({}))) as {
-    access_token?: string;
-    refresh_token?: string;
-  };
-  if (!data.access_token) {
-    await clearSession();
-    return null;
-  }
-
-  // Supabase rotates refresh tokens — persist the new one (falling back to the
-  // existing token if the response omitted it).
-  await writeSession(data.access_token, data.refresh_token ?? _refreshToken);
-  return data.access_token;
-}
-
-// ---------------------------------------------------------------------------
-// React-hook-facing lifecycle + auth actions
-// ---------------------------------------------------------------------------
-
-/** Kick off the one-time storage read, flipping `loading` false when done. */
-export function initialize(): void {
-  if (_initialized) return;
-  _initialized = true;
-  void ensureLoaded().then(() => {
-    _loading = false;
-    broadcast();
-  });
-}
-
-export async function signIn(email: string, password: string): Promise<void> {
-  _loading = true;
-  _error = null;
-  broadcast();
-
-  try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: SUPABASE_ANON_KEY,
-      },
-      body: JSON.stringify({ email, password }),
-    });
-
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as {
-        error_description?: string;
-        message?: string;
-        error?: string;
-      };
-      throw new Error(
-        body.error_description ?? body.message ?? body.error ?? "Login failed"
-      );
+  await ensureReady();
+  if (_mode === "entra" && _entra) {
+    const renewed = await _entra.acquireSilent(true);
+    if (renewed) {
+      setToken(renewed);
+      return renewed.accessToken;
     }
-
-    const data = (await res.json()) as {
-      access_token: string;
-      refresh_token?: string;
-    };
-    await writeSession(data.access_token, data.refresh_token ?? null);
-    _loading = false;
-    _error = null;
-    broadcast();
-  } catch (e) {
-    _loading = false;
-    _error = e instanceof Error ? e.message : "Login failed";
-    broadcast();
   }
+  if (_mode === "local") await storageSet(LOCAL_TOKEN_KEY, null);
+  setToken(null);
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// React-hook-facing auth actions
+// ---------------------------------------------------------------------------
+
+async function signInLocal(email: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/auth/local-login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { detail?: string };
+    throw new Error(body.detail ?? `Local login failed (${res.status})`);
+  }
+  const data = (await res.json()) as { token?: string };
+  if (!data.token) throw new Error("Local login returned no token");
+  await storageSet(LOCAL_TOKEN_KEY, data.token);
+  setToken({ accessToken: data.token, expiresOn: null });
 }
 
 /**
- * Sign in as an ephemeral guest (local development only). Mirrors the web app:
- * POST {API}/auth/guest returns a Supabase session which we persist like a
- * normal login. The endpoint is gated to non-production on the server too.
+ * Interactive sign-in. Entra: Microsoft sign-in (NAA popup or Office dialog),
+ * must run from a user gesture. Local: `email` is required.
  */
-export async function signInAsGuest(): Promise<void> {
+export async function signIn(email?: string): Promise<void> {
   _loading = true;
   _error = null;
   broadcast();
 
   try {
-    const res = await fetch(`${API_BASE_URL}/auth/guest`, { method: "POST" });
-
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as {
-        detail?: string;
-        message?: string;
-      };
-      throw new Error(
-        body.detail ?? body.message ?? "Guest login is unavailable"
-      );
+    await ensureReady();
+    // A setup problem (unreachable server, unsupported mode, missing Entra
+    // config) is already surfaced via getSessionState().error.
+    if (_setupError) return;
+    if (_mode === "entra" && _entra) {
+      const token = await _entra.acquireInteractive();
+      await storageSet(SIGNED_OUT_KEY, null);
+      setToken(token);
+    } else if (_mode === "local") {
+      if (!email) throw new Error("Enter an email address");
+      await signInLocal(email);
     }
-
-    const data = (await res.json()) as {
-      access_token: string;
-      refresh_token?: string;
-    };
-    await writeSession(data.access_token, data.refresh_token ?? null);
-    _loading = false;
-    _error = null;
-    broadcast();
   } catch (e) {
+    _error = e instanceof Error ? e.message : "Sign-in failed";
+  } finally {
     _loading = false;
-    _error = e instanceof Error ? e.message : "Guest login failed";
     broadcast();
   }
 }
 
 export async function signOut(): Promise<void> {
   _error = null;
-  await clearSession();
+  if (_mode === "entra") {
+    await storageSet(SIGNED_OUT_KEY, "1");
+    await _entra?.signOut();
+  }
+  if (_mode === "local") await storageSet(LOCAL_TOKEN_KEY, null);
+  setToken(null);
 }

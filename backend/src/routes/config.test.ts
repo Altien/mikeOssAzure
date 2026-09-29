@@ -4,15 +4,29 @@ import {
   expect,
   beforeEach,
   afterEach,
+  vi,
 } from "vitest";
 import request from "supertest";
 import { makeApp } from "../test/helpers/buildTestApp";
+
+// Fake Key Vault behind getConfig(): env first (same lookup rule as the real
+// lib/config), then this map; never a live KV / DefaultAzureCredential call.
+const fakeKv = vi.hoisted(() => ({}) as Record<string, string>);
+vi.mock("../lib/config", () => ({
+  getConfig: async (name: string) => {
+    const fromEnv = process.env[name.toUpperCase().replaceAll("-", "_")];
+    if (fromEnv) return fromEnv;
+    if (fakeKv[name]) return fakeKv[name];
+    throw new Error(`${name} not configured`);
+  },
+}));
 
 const TOUCHED_ENV = [
   "AUTH_PROVIDER",
   "ENTRA_TENANT_ID",
   "ENTRA_CLIENT_ID",
   "ENTRA_FRONTEND_CLIENT_ID",
+  "ENTRA_BACKEND_CLIENT_ID",
   "DEMO_MODE",
   "FRONTEND_URL",
   "NODE_ENV",
@@ -21,6 +35,7 @@ const TOUCHED_ENV = [
 const envSnapshot = {} as Record<string, string | undefined>;
 
 beforeEach(() => {
+  for (const k of Object.keys(fakeKv)) delete fakeKv[k];
   for (const k of TOUCHED_ENV) envSnapshot[k] = process.env[k];
   for (const k of TOUCHED_ENV) delete process.env[k];
   process.env.NODE_ENV = "test";
@@ -116,7 +131,40 @@ describe("GET /config — entra block", () => {
     expect(res.body.entra).toEqual({
       tenantId: "tenant-guid",
       clientId: "client-guid",
+      apiScope: "",
     });
+  });
+
+  it("derives apiScope (the Word add-in's MSAL scope) from ENTRA_BACKEND_CLIENT_ID", async () => {
+    process.env.AUTH_PROVIDER = "entra";
+    process.env.ENTRA_BACKEND_CLIENT_ID = "backend-guid";
+
+    const res = await request(makeApp()).get("/config");
+
+    expect(res.body.entra.apiScope).toBe("api://backend-guid/access_as_user");
+  });
+
+  it("falls back to Key Vault (getConfig) for the entra block in entra mode — Azure deploys are KV-only", async () => {
+    process.env.AUTH_PROVIDER = "entra";
+    fakeKv["entra-tenant-id"] = "kv-tenant";
+    fakeKv["entra-client-id"] = "kv-client";
+    fakeKv["entra-backend-client-id"] = "kv-backend";
+
+    const res = await request(makeApp()).get("/config");
+
+    expect(res.body.entra).toEqual({
+      tenantId: "kv-tenant",
+      clientId: "kv-client",
+      apiScope: "api://kv-backend/access_as_user",
+    });
+  });
+
+  it("does not consult Key Vault outside entra mode", async () => {
+    fakeKv["entra-tenant-id"] = "kv-tenant";
+
+    const res = await request(makeApp()).get("/config");
+
+    expect(res.body.entra.tenantId).toBe("");
   });
 
   it("falls back to ENTRA_FRONTEND_CLIENT_ID when ENTRA_CLIENT_ID is unset", async () => {
@@ -130,7 +178,7 @@ describe("GET /config — entra block", () => {
   it("returns empty strings (never undefined) when no entra env is configured — keeps the JSON shape stable", async () => {
     const res = await request(makeApp()).get("/config");
 
-    expect(res.body.entra).toEqual({ tenantId: "", clientId: "" });
+    expect(res.body.entra).toEqual({ tenantId: "", clientId: "", apiScope: "" });
   });
 });
 
@@ -158,6 +206,7 @@ describe("GET /config — secret-leak guard", () => {
       "entra",
     ]);
     expect(Object.keys(res.body.entra).sort()).toEqual([
+      "apiScope",
       "clientId",
       "tenantId",
     ]);

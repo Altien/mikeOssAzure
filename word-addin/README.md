@@ -2,7 +2,9 @@
 
 An Office.js task pane add-in that brings the Mike legal AI platform directly into Microsoft Word. From the task pane you can chat with an AI about the open document (with optional full-document context), apply AI suggestions as tracked-change redlines, run one-click actions (improve writing, proofread, anonymise, draft clause), execute saved Mike workflows against the document, and browse or upload to Mike projects — all without leaving Word.
 
-The add-in talks to the **same API and Supabase project as the web app**: sign-in goes directly to Supabase (`/auth/v1/token`), while chat, actions, workflows, projects, and uploads call the Mike API (`http://localhost:3001` in local development).
+The add-in talks to the **same backend as the web app**: sign-in is **Microsoft Entra** via MSAL.js (Nested App Authentication, with an Office-dialog fallback — see [Signing in](#signing-in)), configured at runtime from the backend's `GET /config`; chat, actions, workflows, projects, and uploads call the Mike API under `/api` (`http://localhost:3001` in local development).
+
+> **Dev fork:** upstream's add-in signs in against Supabase. This fork replaced that with Entra/MSAL (the backend accepts the add-in's token exactly as it accepts the web frontend's), uses pnpm, and does not ship upstream's Supabase-bootstrapped Playwright suites (`e2e/`, `e2e-live/`).
 
 ---
 
@@ -10,13 +12,14 @@ The add-in talks to the **same API and Supabase project as the web app**: sign-i
 
 - Node.js 22+
 - Microsoft Word desktop (macOS or Windows) **or** Word on the web — sideloading steps differ; see below
-- The Mike API running locally (`npm run dev` from `backend/`) and Supabase configured per the root [README](../README.md) (`backend/.env` + `frontend/.env.local`)
+- pnpm (the repo enforces it via `only-allow`)
+- The Mike API running locally (`pnpm dev` from `backend/`) with `AUTH_PROVIDER=entra` and the app registration set up per [Signing in](#signing-in) — or `AUTH_PROVIDER=local` (+ `JWT_SECRET`) for an Entra-free development login
 
 ---
 
 ## Quick start (one command)
 
-If the API is already running and `frontend/.env.local` is filled in, this script does everything below for you — reads the Supabase URL + publishable key, writes `.env.development`, installs dependencies, installs the trusted dev certificate, and launches the add-in into Word:
+If the API is already running, this script does everything below for you — reads the backend origin (`NEXT_PUBLIC_API_BASE_URL` in `frontend/.env.local`, default `http://localhost:3001`), writes `.env.development`, installs dependencies, installs the trusted dev certificate, and launches the add-in into Word:
 
 ```bash
 bash word-addin/scripts/dev.sh
@@ -26,18 +29,18 @@ It is idempotent (safe to re-run) and only prompts you when it genuinely needs i
 
 The script verifies the backend before launching:
 
-- **Mike backend** — `GET <api>/health`
-- **Supabase** — `GET <supabase>/auth/v1/health`
+- **Mike backend** — `GET <api>/api/health`
+- **Auth mode** — `GET <api>/config` (`entra` or `local` are supported)
 
-If either is down it prints how to start them and **refuses to launch** (the task pane would just fail to sign in). Start the backend first:
+If the backend is down it prints how to start it and **refuses to launch** (the task pane would just fail to sign in). Start the backend first:
 
 ```bash
 # from backend/
-npm run dev                  # the Mike API on :3001
+pnpm dev                     # the Mike API on :3001
 ```
 
 Flags:
-- `--setup-only` — do everything except the final `npm start` (prep deps/env/cert; report backend status without launching).
+- `--setup-only` — do everything except the final `pnpm start` (prep deps/env/cert; report backend status without launching).
 - `FORCE=1 bash word-addin/scripts/dev.sh` — launch even if the backend check fails (sign-in won't work until Mike is up).
 
 The sections below explain each step the script automates, and the manual / web sideloading paths.
@@ -49,7 +52,7 @@ The sections below explain each step the script automates, and the manual / web 
 1. **Install dependencies**
 
    ```bash
-   cd word-addin && npm install
+   cd word-addin && pnpm install
    ```
 
 2. **Set environment variables**
@@ -58,15 +61,12 @@ The sections below explain each step the script automates, and the manual / web 
 
    ```bash
    # word-addin/.env.development
-   REACT_APP_SUPABASE_URL=https://your-project.supabase.co
-   REACT_APP_SUPABASE_ANON_KEY=<your Supabase anon / publishable key>
-   REACT_APP_API_BASE_URL=http://localhost:3001
+   REACT_APP_API_BASE_URL=https://localhost:3000
    ```
 
-   - `REACT_APP_SUPABASE_URL` / `REACT_APP_SUPABASE_ANON_KEY` — the same values as `frontend/.env.local`'s `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` (from the Supabase dashboard).
-   - `REACT_APP_API_BASE_URL` — the Mike backend; default is `http://localhost:3001`.
+   - `REACT_APP_API_BASE_URL` — the backend **origin** (no `/api`; same meaning as the web frontend's `NEXT_PUBLIC_API_BASE_URL`). The add-in calls `<origin>/api/...` and reads its sign-in config from `<origin>/config`. No identity values (tenant, client id, scope) are baked into the bundle.
 
-   > **Mixed content / HTTPS:** Word serves the task pane over HTTPS (`https://localhost:3000`), and its WebView blocks plain-HTTP requests to the local backend. The `dev.sh` script avoids this by pointing the bundle at the dev server's same-origin HTTPS proxy (it sets the URLs to `https://localhost:3000` and proxies `/api` → `http://localhost:3001` and `/auth` etc. → Supabase). If you set the raw URLs above by hand, use `dev.sh` or replicate that proxy when testing in desktop Word.
+   > **Mixed content / HTTPS:** Word serves the task pane over HTTPS (`https://localhost:3000`), and its WebView blocks plain-HTTP requests to the local backend. So in development the bundle points at the dev server itself (`https://localhost:3000`), which proxies `/api` and `/config` to `API_PROXY_TARGET` (default `http://localhost:3001`) — `dev.sh` sets this up. Same-origin calls also avoid the backend's CORS allow-list, which only admits `FRONTEND_URL`.
 
    Because this is a custom webpack build (not Create React App), `.env.development` is **not** read automatically. Source it before running npm commands:
 
@@ -89,13 +89,13 @@ The sections below explain each step the script automates, and the manual / web 
    From the repo root:
 
    ```bash
-   (cd ../backend && npm run dev)
+   (cd ../backend && pnpm dev)
    ```
 
 5. **Start the add-in and sideload into Word**
 
    ```bash
-   npm start
+   pnpm start
    ```
 
    This runs `office-addin-debugging start manifest.xml`, which starts the webpack dev server on `https://localhost:3000` **and** automatically opens Word with the add-in sideloaded. The task pane appears under **Home → Mike Legal AI → Open Mike**.
@@ -121,19 +121,19 @@ The manifest requires `WordApi 1.4`, which includes the change-tracking APIs. Wo
 
 ## Production build
 
-Production builds fail fast unless every service endpoint and the deployed add-in URL are explicit. This prevents publishing a bundle that silently calls localhost or has no Supabase key.
+Production builds fail fast unless every service endpoint and the deployed add-in URL are explicit. This prevents publishing a bundle that silently calls localhost.
 
 ```bash
 cd word-addin
 REACT_APP_API_BASE_URL=https://api.example.com \
-REACT_APP_SUPABASE_URL=https://example.supabase.co \
-REACT_APP_SUPABASE_ANON_KEY=... \
 REACT_APP_WEB_APP_URL=https://app.example.com \
 WORD_ADDIN_PUBLIC_URL=https://word.example.com \
-npm run build
+pnpm build
 ```
 
-The build writes the task-pane assets and a deployable, URL-rewritten manifest to `dist/`. The checked-in `manifest.xml` remains the localhost sideloading manifest.
+The build writes the task-pane assets (`taskpane.html`, `commands.html`, `auth-dialog.html`) and a deployable, URL-rewritten manifest to `dist/`. The checked-in `manifest.xml` remains the localhost sideloading manifest.
+
+If the add-in is hosted on a different origin than `FRONTEND_URL`, the backend's CORS allow-list (`backend/src/app.ts`, `FRONTEND_URL` only) will block its API calls — serve the add-in from the backend's origin or extend the allow-list (not done in this fork yet).
 
 ---
 
@@ -169,22 +169,40 @@ Browse Mike projects you have access to. Selecting a project shows all documents
 
 ## Signing in
 
-Enter the same email and password you use for the Mike web app. The add-in authenticates directly against Supabase (`/auth/v1/token`) and stores the access token in `OfficeRuntime.storage` (persists across task pane reloads). Click **Sign out** in the header to clear the token.
+The pane reads the backend's `GET /config` and follows its `authProvider`:
+
+- **`entra`** (production) — **Sign in with Microsoft**. The add-in uses MSAL.js (`@azure/msal-browser`) to get an access token for the backend API scope `api://<backend-client-id>/access_as_user` (served by `/config` as `entra.apiScope`), for the tenant and client application in `/config` (`entra.tenantId`, `entra.clientId` — the **web frontend's app registration**). The backend validates it with its unchanged Entra validator (`backend/src/lib/auth/providers/entra.ts`), exactly like the web frontend's token.
+  - **Nested App Authentication (NAA)** when the host supports the `NestedAppAuth 1.1` requirement set (current Microsoft 365 Word on Windows, Mac, and the web): MSAL brokers through the account already signed in to Office — usually silent single sign-on, otherwise a host-managed sign-in/consent prompt.
+  - **Office dialog fallback** on older hosts: the pane opens `auth-dialog.html` with `displayDialogAsync`; that page runs MSAL's redirect sign-in and posts the token back with `messageParent`.
+  - Tokens stay in MSAL's cache (NAA: the host; fallback: `localStorage`) and are renewed silently; a 401 forces one silent renewal, then drops back to the sign-in screen. **Sign out** clears the add-in's session and suppresses silent SSO until the next explicit sign-in (under NAA the Office account itself stays signed in to Office).
+- **`local`** (development only) — an email-only form that calls `POST /api/auth/local-login`, like the web frontend's local mode.
+- **`supabase`** — not supported by the add-in in this fork; the pane explains this instead of offering a form.
+
+### Entra app registration (one-time, by an admin)
+
+The add-in reuses the **frontend app registration** (the client id the backend serves as `entra.clientId`; KV `entra-client-id`), which already has delegated access to the backend API's `access_as_user` scope. On that registration, under **Authentication → Single-page application**, add these redirect URIs for each host the add-in is served from:
+
+| Purpose | Redirect URI (SPA platform) |
+|---|---|
+| NAA broker | `brk-multihub://localhost:3000` (dev) / `brk-multihub://<add-in host>` (prod) |
+| Dialog fallback | `https://localhost:3000/auth-dialog.html` (dev) / `https://<add-in host>/auth-dialog.html` (prod) |
+
+Notes:
+- `<add-in host>` is the host (and port, if any) of `WORD_ADDIN_PUBLIC_URL`, without a path — e.g. `brk-multihub://word.example.com`.
+- The backend API registration must expose `access_as_user` and the frontend registration must have it in **API permissions** with admin consent (the install script `scripts/install/create-entra-apps.ps1` already sets this up for the web app; nothing new is needed for the add-in).
+- The backend needs `entra-tenant-id`, `entra-client-id`, and `entra-backend-client-id` (Key Vault or the matching `ENTRA_*` env vars) — the same values the web sign-in uses; `/config` reads them env-first, Key Vault second.
+- Using a **separate** app registration for the add-in instead is possible but not wired: `/config` would need to serve its client id, and it would need its own `access_as_user` permission + consent.
 
 ---
 
 ## Tests
 
-The add-in ships a strict TypeScript check and a hermetic Playwright e2e suite that runs entirely against a mocked Office.js host and a stubbed backend — no Word, Supabase, or live backend required:
-
 ```bash
 cd word-addin
-npm run typecheck
-npm run build:e2e
-npm run test:e2e
+pnpm typecheck
 ```
 
-It builds the bundle with test env vars, serves it over plain HTTP, injects an Office.js mock (`e2e/support/office-mock.ts`), and drives every task-pane flow (auth, chat, actions, workflows, projects).
+Upstream's hermetic Playwright suite (`e2e/`) and live Word-on-the-web demo recorders (`e2e-live/`) are bootstrapped against Supabase auth and are **not** included in this fork (deferred with the rest of upstream's Playwright/e2e tooling).
 
 ---
 
@@ -194,10 +212,12 @@ It builds the bundle with test env vars, serves it over plain HTTP, injects an O
 Run `npx office-addin-dev-certs install` from `word-addin/`, then fully quit and restart Word.
 
 **Add-in shows blank after the cert is trusted**
-Right-click the task pane → **Inspect** and check the console for errors. A common cause is a missing or wrong `REACT_APP_SUPABASE_URL` / `REACT_APP_SUPABASE_ANON_KEY` — the bundle compiles with empty strings if the env vars were not exported before `npm start`.
+Right-click the task pane → **Inspect** and check the console for errors. A common cause is a wrong `REACT_APP_API_BASE_URL` — the bundle falls back to `http://localhost:3001` if the env var was not exported before `pnpm start`.
 
-**Login fails with "Login failed" or a 401**
-Confirm the `REACT_APP_SUPABASE_URL` / `REACT_APP_SUPABASE_ANON_KEY` in `.env.development` match `frontend/.env.local`, and that the URL has no trailing slash.
+**Sign-in fails or the API answers 401**
+- "Microsoft sign-in is not configured…" — the backend's `/config` has no tenant / client id / API scope; set `entra-tenant-id`, `entra-client-id`, `entra-backend-client-id` (Key Vault or `ENTRA_*` env).
+- `AADSTS50011` (redirect URI mismatch) — add the `brk-multihub://…` and `…/auth-dialog.html` SPA redirect URIs above to the frontend app registration.
+- 401 "Invalid audience" / "Invalid tenant" from the API — the token was issued for a different API or tenant; check `entra.apiScope` / `entra.tenantId` in `/config`.
 
 **Tracked insertion is unavailable**
 The add-in requires WordApi 1.4. Confirm the Word host and build support that requirement set; otherwise use a supported Microsoft 365 Word client.

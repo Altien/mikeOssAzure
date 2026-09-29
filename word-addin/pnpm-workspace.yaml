@@ -1,0 +1,8 @@
+# Standalone pnpm project (like frontend/ and backend/): this file makes
+# word-addin/ its own pnpm root so installs never resolve against a parent
+# directory's workspace.
+# Build scripts of office-addin-debugging's transitive deps are not needed
+# for the dev server / sideload flow.
+allowBuilds:
+  '@microsoft/teamsapp-cli': false
+  keytar: false

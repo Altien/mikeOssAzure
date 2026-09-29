@@ -27,6 +27,11 @@ export interface RuntimeConfig {
     entra: {
         tenantId: string;
         clientId: string;
+        // api://<backend-client-id>/access_as_user. Unused by the web app
+        // (its login is brokered by /api/auth); consumed by the Word add-in,
+        // which acquires tokens itself with MSAL. Optional so older backends
+        // and test fixtures without it stay valid.
+        apiScope?: string;
     };
 }
 

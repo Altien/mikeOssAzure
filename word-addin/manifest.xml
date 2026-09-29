@@ -19,6 +19,8 @@
 
   <AppDomains>
     <AppDomain>https://localhost:3000</AppDomain>
+    <!-- Entra sign-in in the Office-dialog fallback (hosts without NAA). -->
+    <AppDomain>https://login.microsoftonline.com</AppDomain>
   </AppDomains>
 
   <Hosts>

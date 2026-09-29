@@ -10,6 +10,12 @@
 //     login UI flow anyway.
 //   - entra.tenantId / entra.clientId end up in OAuth URLs the browser
 //     constructs and submits to login.microsoftonline.com.
+//   - entra.apiScope is the backend API's delegated scope
+//     (api://<backend-client-id>/access_as_user). The web frontend does not
+//     need it (its login is brokered by /api/auth); the Word add-in
+//     (word-addin/) acquires tokens itself with MSAL and requests exactly
+//     this scope, so its tokens carry the same audience the backend's
+//     Entra validator already accepts for the web frontend.
 //   - demoMode controls a public warning banner and contains no deployment
 //     identity or secret material.
 //
@@ -18,24 +24,44 @@
 // operator rotates a value.
 
 import { Router } from "express";
+import { getConfig } from "../lib/config";
 
 export const configRouter = Router();
 
-configRouter.get("/", (_req, res) => {
+async function configValue(name: string): Promise<string> {
+    return getConfig(name).catch(() => "");
+}
+
+configRouter.get("/", async (_req, res) => {
     const provider = (process.env.AUTH_PROVIDER ?? "supabase").toLowerCase();
     const authProvider =
         provider === "entra" || provider === "local" ? provider : "supabase";
+
+    // Env first (the original contract). In entra mode, fall back to Key
+    // Vault via getConfig(): Azure deploys write the Entra identifiers to KV
+    // only (create-entra-apps.ps1 / /install), never to Container App env,
+    // so without the fallback the Word add-in would get empty values there.
+    let tenantId = process.env.ENTRA_TENANT_ID ?? "";
+    let clientId =
+        process.env.ENTRA_CLIENT_ID ??
+        process.env.ENTRA_FRONTEND_CLIENT_ID ??
+        "";
+    let backendClientId = process.env.ENTRA_BACKEND_CLIENT_ID ?? "";
+    if (authProvider === "entra") {
+        [tenantId, clientId, backendClientId] = await Promise.all([
+            tenantId || configValue("entra-tenant-id"),
+            clientId || configValue("entra-client-id"),
+            backendClientId || configValue("entra-backend-client-id"),
+        ]);
+    }
+    const apiScope = backendClientId
+        ? `api://${backendClientId}/access_as_user`
+        : "";
 
     res.set("Cache-Control", "public, max-age=60");
     res.json({
         authProvider,
         demoMode: process.env.DEMO_MODE?.toLowerCase() === "true",
-        entra: {
-            tenantId: process.env.ENTRA_TENANT_ID ?? "",
-            clientId:
-                process.env.ENTRA_CLIENT_ID ??
-                process.env.ENTRA_FRONTEND_CLIENT_ID ??
-                "",
-        },
+        entra: { tenantId, clientId, apiScope },
     });
 });

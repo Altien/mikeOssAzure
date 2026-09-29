@@ -7,12 +7,9 @@ module.exports = async (_env, options) => {
   const isDev = options.mode !== "production";
 
   if (!isDev) {
-    const required = [
-      "REACT_APP_API_BASE_URL",
-      "REACT_APP_SUPABASE_URL",
-      "REACT_APP_SUPABASE_ANON_KEY",
-      "REACT_APP_WEB_APP_URL",
-    ];
+    // Dev fork: no Supabase URL/key — sign-in is Entra (MSAL) and its tenant /
+    // client / scope come from the backend's GET /config at runtime.
+    const required = ["REACT_APP_API_BASE_URL", "REACT_APP_WEB_APP_URL"];
     const missing = required.filter((name) => !process.env[name]?.trim());
     if (missing.length > 0) {
       throw new Error(
@@ -50,29 +47,23 @@ module.exports = async (_env, options) => {
     devServerConfig.server = { type: "https", options: httpsOptions };
 
     // Word loads the task pane over HTTPS, and its WebView blocks "mixed content"
-    // (HTTP requests from an HTTPS page). The Mike API and local Supabase only
-    // serve HTTP, so calling them directly fails with "Load failed". Proxy them
-    // through this HTTPS dev server instead, so the pane makes only same-origin
-    // HTTPS calls (REACT_APP_SUPABASE_URL=https://localhost:3000,
-    // REACT_APP_API_BASE_URL=https://localhost:3000/api) that webpack forwards to
-    // the local HTTP backends server-side. Targets are overridable so the proxy
-    // tracks whatever ports the backend is actually on.
-    const supaTarget =
-      process.env.SUPABASE_PROXY_TARGET || "http://127.0.0.1:54321";
+    // (HTTP requests from an HTTPS page). The local Mike API only serves HTTP,
+    // so calling it directly fails with "Load failed". Proxy it through this
+    // HTTPS dev server instead, so the pane makes only same-origin HTTPS calls
+    // (REACT_APP_API_BASE_URL=https://localhost:3000) that webpack forwards to
+    // the local HTTP backend server-side. The target is overridable so the
+    // proxy tracks whatever port the backend is actually on.
+    // Dev fork: the backend mounts its routers under /api and serves the
+    // runtime auth config at /config, so both are forwarded unchanged (no
+    // path rewrite); there is no Supabase proxy (sign-in is Entra / MSAL,
+    // which talks to login.microsoftonline.com directly).
     const apiTarget = process.env.API_PROXY_TARGET || "http://localhost:3001";
     devServerConfig.proxy = [
       {
-        context: ["/auth", "/rest", "/storage"],
-        target: supaTarget,
-        changeOrigin: true,
-        secure: false,
-      },
-      {
-        context: ["/api"],
+        context: ["/api", "/config"],
         target: apiTarget,
         changeOrigin: true,
         secure: false,
-        pathRewrite: { "^/api": "" },
       },
     ];
   }
@@ -86,6 +77,11 @@ module.exports = async (_env, options) => {
       // don't throw "process is not defined" (see src/process-shim.ts).
       taskpane: ["./src/process-shim.ts", "./src/taskpane/index.tsx"],
       commands: ["./src/process-shim.ts", "./src/commands/commands.ts"],
+      // Office-dialog fallback for Microsoft sign-in (hosts without NAA).
+      "auth-dialog": [
+        "./src/process-shim.ts",
+        "./src/auth-dialog/auth-dialog.ts",
+      ],
     },
     output: {
       path: path.resolve(__dirname, "dist"),
@@ -147,11 +143,16 @@ module.exports = async (_env, options) => {
         template: "./src/commands/commands.html",
         chunks: ["commands"],
       }),
+      new HtmlWebpackPlugin({
+        filename: "auth-dialog.html",
+        template: "./src/auth-dialog/auth-dialog.html",
+        chunks: ["auth-dialog"],
+      }),
       // Expose env vars to the bundle so TypeScript process.env calls compile
       new webpack.EnvironmentPlugin({
+        // Backend ORIGIN (no /api suffix) — same meaning as the web
+        // frontend's NEXT_PUBLIC_API_BASE_URL.
         REACT_APP_API_BASE_URL: isDev ? "http://localhost:3001" : undefined,
-        REACT_APP_SUPABASE_URL: isDev ? "" : undefined,
-        REACT_APP_SUPABASE_ANON_KEY: isDev ? "" : undefined,
         REACT_APP_DEFAULT_MODEL: "claude-sonnet-4-6",
         // The Mike web app origin — the task pane links here (e.g. the
         // account/api-keys page); it never fetches from it.
