@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requireAuth, requireMfaIfEnrolled } from "../middleware/auth";
+import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import {
   attachActiveVersionPaths,
@@ -551,11 +551,13 @@ projectsRouter.get("/:projectId/documents", requireAuth, async (req, res) => {
 // trail, under a SHA-256 digest that is Ed25519-signed when the deployment has
 // MANIFEST_SIGNING_KEY set. To check an export, recompute a downloaded file's
 // SHA-256 and compare, then check the manifest's signature against the key
-// served at GET /manifest-signing-key. See the README.
+// served at GET /api/manifest-signing-key. See the README.
 projectsRouter.get(
   "/:projectId/export",
+  // Upstream divergence (sync-log: 562a8139): upstream also guards this route
+  // with requireMfaIfEnrolled (Supabase app-level MFA). Dev has no such
+  // middleware — Entra enforces MFA at the IdP — so it is omitted here.
   requireAuth,
-  requireMfaIfEnrolled,
   async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
