@@ -23,7 +23,7 @@ const sharedVectors = (
     readFileSync(
       resolve(
         process.cwd(),
-        "../docs/altien/tests/authority-trace-normalization.json",
+        "../docs/tests/fixtures/authority-trace-normalization.json",
       ),
       "utf8",
     ),
