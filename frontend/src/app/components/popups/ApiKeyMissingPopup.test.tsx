@@ -29,16 +29,18 @@ vi.mock("@/app/lib/modelAvailability", () => ({
     },
 }));
 
-import { ApiKeyMissingModal } from "./ApiKeyMissingModal";
+// OSS-6: dev's shared/ApiKeyMissingModal became upstream's popups/ApiKeyMissingPopup
+// (dev's organisation-credential copy re-applied there).
+import { ApiKeyMissingPopup } from "./ApiKeyMissingPopup";
 
 beforeEach(() => {
     mockPush.mockReset();
 });
 
-describe("ApiKeyMissingModal", () => {
+describe("ApiKeyMissingPopup", () => {
     it("renders nothing when open=false", () => {
         const { container } = render(
-            <ApiKeyMissingModal
+            <ApiKeyMissingPopup
                 open={false}
                 onClose={() => {}}
                 provider="claude"
@@ -51,7 +53,7 @@ describe("ApiKeyMissingModal", () => {
 
     it("tells the user that an administrator must configure the organisation key", () => {
         render(
-            <ApiKeyMissingModal
+            <ApiKeyMissingPopup
                 open={true}
                 onClose={() => {}}
                 provider="claude"
@@ -68,7 +70,7 @@ describe("ApiKeyMissingModal", () => {
 
     it("falls back to 'this provider' when provider is null", () => {
         render(
-            <ApiKeyMissingModal
+            <ApiKeyMissingPopup
                 open={true}
                 onClose={() => {}}
                 provider={null}
@@ -84,7 +86,7 @@ describe("ApiKeyMissingModal", () => {
 
     it("renders the custom message override when supplied", () => {
         render(
-            <ApiKeyMissingModal
+            <ApiKeyMissingPopup
                 open={true}
                 onClose={() => {}}
                 provider="openai"
@@ -100,7 +102,7 @@ describe("ApiKeyMissingModal", () => {
     it("the dismiss button invokes onClose", async () => {
         const onClose = vi.fn();
         render(
-            <ApiKeyMissingModal
+            <ApiKeyMissingPopup
                 open={true}
                 onClose={onClose}
                 provider="claude"
@@ -117,7 +119,7 @@ describe("ApiKeyMissingModal", () => {
     it("'Open organisation setup' invokes onClose AND routes to /install", async () => {
         const onClose = vi.fn();
         render(
-            <ApiKeyMissingModal
+            <ApiKeyMissingPopup
                 open={true}
                 onClose={onClose}
                 provider="claude"
@@ -135,7 +137,7 @@ describe("ApiKeyMissingModal", () => {
     it("clicking the popup body does NOT dismiss it — only the X or the actions do", async () => {
         const onClose = vi.fn();
         render(
-            <ApiKeyMissingModal
+            <ApiKeyMissingPopup
                 open={true}
                 onClose={onClose}
                 provider="openai"
