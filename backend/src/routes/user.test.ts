@@ -248,7 +248,9 @@ describe("GET /api/user/profile — wiring and shape", () => {
     expect(createServerSupabaseMock).not.toHaveBeenCalled();
   });
 
-  it("returns configured flags without exposing organisation credentials", async () => {
+  // OSS-6: the profile speaks upstream's camelCase shape (UserProfile +
+  // apiKeyStatus) instead of dev's snake_case `*_configured` flags.
+  it("returns upstream's camelCase profile with apiKeyStatus and no credential values", async () => {
     const future = new Date(Date.now() + 86_400_000).toISOString();
     const { db } = makeDb({
       profile: {
@@ -258,8 +260,9 @@ describe("GET /api/user/profile — wiring and shape", () => {
           message_credits_used: 12,
           credits_reset_date: future,
           tier: "pro",
-          tabular_model: "gpt-5",
-          fast_model: "gemini-flash",
+          tabular_model: "gpt-5.4",
+          fast_model: "aoai:title-deploy",
+          legal_research_us: false,
         },
       },
     });
@@ -281,21 +284,70 @@ describe("GET /api/user/profile — wiring and shape", () => {
       .set("Authorization", "Bearer ok");
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({
-      display_name: "Caller",
+    expect(res.body).toEqual({
+      displayName: "Caller",
       organisation: "Acme",
-      message_credits_used: 12,
-      credits_reset_date: future,
+      messageCreditsUsed: 12,
+      creditsResetDate: future,
+      creditsRemaining: 999999 - 12,
       tier: "pro",
-      claude_api_key: null,
-      gemini_api_key: null,
-      openai_api_key: null,
-      azure_openai_endpoint: null,
-      azure_openai_deployment: null,
-      claude_configured: true,
-      gemini_configured: false,
-      openai_configured: true,
-      azure_openai_configured: true,
+      titleModel: "aoai:title-deploy",
+      tabularModel: "gpt-5.4",
+      mfaOnLogin: false,
+      legalResearchUs: false,
+      apiKeyStatus: {
+        claude: true,
+        gemini: false,
+        openai: true,
+        kimi: false,
+        openrouter: false,
+        courtlistener: false,
+        azure_openai: true,
+        // Legacy per-user rows report "user"; organisation secrets "env".
+        sources: {
+          claude: "user",
+          gemini: null,
+          openai: "user",
+          kimi: null,
+          openrouter: null,
+          courtlistener: null,
+          azure_openai: "user",
+        },
+      },
+    });
+    const bodyStr = JSON.stringify(res.body);
+    expect(bodyStr).not.toContain("sk-c");
+    expect(bodyStr).not.toContain("az-key");
+  });
+
+  it("defaults titleModel to \"\" (no preference), tabularModel to the default, tier to Free", async () => {
+    const { db } = makeDb({
+      profile: {
+        data: {
+          display_name: null,
+          organisation: null,
+          message_credits_used: 0,
+          credits_reset_date: new Date(Date.now() + 86_400_000).toISOString(),
+          tier: null,
+          tabular_model: null,
+          fast_model: null,
+          legal_research_us: null,
+        },
+      },
+    });
+    createServerSupabaseMock.mockReturnValue(db);
+
+    const res = await request(makeApp())
+      .get("/api/user/profile")
+      .set("Authorization", "Bearer ok");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      titleModel: "",
+      tabularModel: "gemini-3-flash-preview",
+      tier: "Free",
+      legalResearchUs: true,
+      mfaOnLogin: false,
     });
   });
 
@@ -328,9 +380,9 @@ describe("GET /api/user/profile — wiring and shape", () => {
 
     expect(res.status).toBe(200);
     // Credits NOT rolled today (refactor target).
-    expect(res.body.message_credits_used).toBe(99);
+    expect(res.body.messageCreditsUsed).toBe(99);
     // Reset date pushed 30 days out from now.
-    const newReset = new Date(res.body.credits_reset_date).getTime();
+    const newReset = new Date(res.body.creditsResetDate).getTime();
     expect(newReset).toBeGreaterThan(Date.now() + 29 * 86_400_000);
     // No DB update written.
     expect(calls.find((c) => c.type === "update")).toBeUndefined();
@@ -357,8 +409,8 @@ describe("GET /api/user/profile — wiring and shape", () => {
       .get("/api/user/profile")
       .set("Authorization", "Bearer ok");
 
-    expect(res.body.message_credits_used).toBe(7);
-    expect(res.body.credits_reset_date).toBe(future);
+    expect(res.body.messageCreditsUsed).toBe(7);
+    expect(res.body.creditsResetDate).toBe(future);
     expect(calls.find((c) => c.type === "update")).toBeUndefined();
   });
 
@@ -382,12 +434,12 @@ describe("GET /api/user/profile — wiring and shape", () => {
       .get("/api/user/profile")
       .set("Authorization", "Bearer ok");
 
-    expect(res.body.credits_reset_date).toMatch(/Z$/);
-    const t = new Date(res.body.credits_reset_date).getTime();
+    expect(res.body.creditsResetDate).toMatch(/Z$/);
+    const t = new Date(res.body.creditsResetDate).getTime();
     expect(t).toBeGreaterThan(Date.now() + 29 * 86_400_000);
   });
 
-  it("reflects ANTHROPIC_API_KEY/GEMINI_API_KEY/OPENAI_API_KEY env in global_api_keys booleans WITHOUT echoing values", async () => {
+  it("reflects organisation secrets (env fallback) in apiKeyStatus with source \"env\" WITHOUT echoing values", async () => {
     process.env.ANTHROPIC_API_KEY = "shared-claude-secret";
     process.env.GEMINI_API_KEY = "  ";
     process.env.OPENAI_API_KEY = "shared-openai-secret";
@@ -413,14 +465,23 @@ describe("GET /api/user/profile — wiring and shape", () => {
       .get("/api/user/profile")
       .set("Authorization", "Bearer ok");
 
-    expect(res.body.global_api_keys).toEqual({
+    expect(res.body.apiKeyStatus).toEqual({
       claude: true,
       gemini: false,
       openrouter: false,
       courtlistener: false,
       openai: true,
       kimi: true,
-      azureOpenai: true,
+      azure_openai: true,
+      sources: {
+        claude: "env",
+        gemini: null,
+        openrouter: null,
+        courtlistener: null,
+        openai: "env",
+        kimi: "env",
+        azure_openai: "env",
+      },
     });
     const bodyStr = JSON.stringify(res.body);
     expect(bodyStr).not.toContain("shared-claude-secret");
@@ -447,7 +508,9 @@ describe("GET /api/user/profile — wiring and shape", () => {
 // ── PATCH /api/user/profile ─────────────────────────────────────────────
 
 describe("PATCH /api/user/profile — body validation", () => {
-  it("returns 400 when no updatable fields are present in the body", async () => {
+  // OSS-6: upstream's validator — unknown fields are a 400 naming the field
+  // (was dev's "No updatable profile fields provided").
+  it("returns 400 naming an unsupported field", async () => {
     const { db } = makeDb({});
     createServerSupabaseMock.mockReturnValue(db);
 
@@ -458,8 +521,40 @@ describe("PATCH /api/user/profile — body validation", () => {
 
     expect(res.status).toBe(400);
     expect(res.body).toEqual({
-      detail: "No updatable profile fields provided",
+      detail: "Unsupported profile field: unrelated_field",
     });
+  });
+
+  it("rejects dev's old snake_case profile fields", async () => {
+    const { db } = makeDb({});
+    createServerSupabaseMock.mockReturnValue(db);
+
+    const res = await request(makeApp())
+      .patch("/api/user/profile")
+      .set("Authorization", "Bearer ok")
+      .send({ fast_model: "gpt-5.4-lite" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.detail).toBe("Unsupported profile field: fast_model");
+  });
+
+  it("rejects an unknown titleModel and a non-boolean legalResearchUs", async () => {
+    const { db } = makeDb({});
+    createServerSupabaseMock.mockReturnValue(db);
+
+    const bad = await request(makeApp())
+      .patch("/api/user/profile")
+      .set("Authorization", "Bearer ok")
+      .send({ titleModel: "not-a-model" });
+    expect(bad.status).toBe(400);
+    expect(bad.body.detail).toBe("Unsupported titleModel");
+
+    const flag = await request(makeApp())
+      .patch("/api/user/profile")
+      .set("Authorization", "Bearer ok")
+      .send({ legalResearchUs: "yes" });
+    expect(flag.status).toBe(400);
+    expect(flag.body.detail).toBe("legalResearchUs must be a boolean");
   });
 });
 
@@ -485,7 +580,7 @@ describe("PATCH /api/user/profile — profile-field updates", () => {
       .patch("/api/user/profile")
       .set("Authorization", "Bearer ok")
       .send({
-        display_name: "Caller After Patch",
+        displayName: "Caller After Patch",
         organisation: "New Org",
       });
 
@@ -496,7 +591,46 @@ describe("PATCH /api/user/profile — profile-field updates", () => {
       organisation: "New Org",
       updated_at: expect.any(String),
     });
-    expect(res.body.display_name).toBe("Caller After Patch");
+    expect(res.body.displayName).toBe("Caller After Patch");
+  });
+
+  it("maps titleModel to dev's fast_model column (\"\" = no preference → null)", async () => {
+    const future = new Date(Date.now() + 5 * 86_400_000).toISOString();
+    const row = {
+      display_name: null,
+      organisation: null,
+      message_credits_used: 0,
+      credits_reset_date: future,
+      tier: null,
+      tabular_model: null,
+      fast_model: null,
+    };
+    const first = makeDb({ profile: { data: row } });
+    createServerSupabaseMock.mockReturnValue(first.db);
+    const set = await request(makeApp())
+      .patch("/api/user/profile")
+      .set("Authorization", "Bearer ok")
+      .send({ titleModel: "aoai:my-deploy", tabularModel: "gpt-5.4", legalResearchUs: false });
+    expect(set.status).toBe(200);
+    expect(first.calls.find((c) => c.type === "update")).toMatchObject({
+      patch: {
+        fast_model: "aoai:my-deploy",
+        tabular_model: "gpt-5.4",
+        legal_research_us: false,
+      },
+    });
+
+    const second = makeDb({ profile: { data: row } });
+    createServerSupabaseMock.mockReturnValue(second.db);
+    const clear = await request(makeApp())
+      .patch("/api/user/profile")
+      .set("Authorization", "Bearer ok")
+      .send({ titleModel: "" });
+    expect(clear.status).toBe(200);
+    expect(second.calls.find((c) => c.type === "update")).toMatchObject({
+      patch: { fast_model: null },
+    });
+    expect(clear.body.titleModel).toBe("");
   });
 
   it("returns 500 when the profile update query errors", async () => {
@@ -508,7 +642,7 @@ describe("PATCH /api/user/profile — profile-field updates", () => {
     const res = await request(makeApp())
       .patch("/api/user/profile")
       .set("Authorization", "Bearer ok")
-      .send({ display_name: "X" });
+      .send({ displayName: "X" });
 
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ detail: "tx conflict" });
@@ -523,7 +657,7 @@ describe("PATCH /api/user/profile — profile-field updates", () => {
     const res = await request(makeApp())
       .patch("/api/user/profile")
       .set("Authorization", "Bearer ok")
-      .send({ display_name: "X" });
+      .send({ displayName: "X" });
 
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ detail: "re-fetch failed" });

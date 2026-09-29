@@ -4,6 +4,7 @@ import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import { getUserApiKeys } from "../lib/userApiKeys";
 import { resolveSecret } from "../lib/envSecrets";
+import { DEFAULT_TABULAR_MODEL, resolveModel } from "../lib/llm/models";
 import {
   completeUserMcpConnectorOAuth,
   createUserMcpConnector,
@@ -139,28 +140,119 @@ userRouter.get("/lookup", requireAuth, async (req, res) => {
   }
 });
 
-userRouter.get("/profile", requireAuth, async (_req, res) => {
-  const userId = res.locals.userId as string;
-  const db = createServerSupabase();
+// ---------------------------------------------------------------------------
+// /user/profile — upstream's camelCase wire shape (`UserProfile` +
+// `apiKeyStatus`, upstream 204d2d53), so the frontend and the word add-in use
+// upstream's client unchanged (OSS-6, internal design notes §3.0).
+// Upstream divergence (OSS-6), kept on the server side of that shape:
+//   - The title/suggestion model lives in dev's `fast_model` column (upstream
+//     `title_model`, not adopted — sync-log 44e868e). `titleModel` maps to it;
+//     "" means "no preference" (getUserModelSettings then picks the cheapest
+//     configured model) where upstream resolves a fallback id here.
+//   - Credentials are organisation-level (Key Vault primary, env fallback):
+//     `apiKeyStatus` reports them with source "env"; key values never leave
+//     the backend, and PATCH rejects credential fields with 403.
+//   - No app-level MFA (sync-log 3a10943): `mfaOnLogin` is always false.
+//   - Dev's credits-reset normalisation (normalizeCreditsResetDate).
+// ---------------------------------------------------------------------------
 
-  // Profile fields live on `user_profiles`; provider keys moved to the
-  // encrypted `user_api_keys` table in 0006. Fetched in parallel.
-  const [profileResult, apiKeys] = await Promise.all([
-    db
-      .from("user_profiles")
-      .select(
-        "display_name, organisation, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us",
-      )
-      .eq("user_id", userId)
-      .single(),
-    getUserApiKeys(userId, db),
+const MONTHLY_CREDIT_LIMIT = 999999;
+
+const PROFILE_SELECT =
+  "display_name, organisation, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us";
+
+type UserProfileRow = {
+  display_name: string | null;
+  organisation: string | null;
+  message_credits_used: number | null;
+  credits_reset_date: string | null;
+  tier: string | null;
+  tabular_model: string | null;
+  fast_model: string | null;
+  legal_research_us: boolean | null;
+};
+
+type ProfileApiKeyStatus = Record<OrganisationCredentialProvider, boolean> & {
+  sources: Record<OrganisationCredentialProvider, "user" | "env" | null>;
+};
+
+// Organisation secret first (source "env" = Key Vault/env); a legacy
+// per-user row (pre-organisation-keys deployments) reports source "user".
+async function buildProfileApiKeyStatus(
+  userId: string,
+  db: ReturnType<typeof createServerSupabase>,
+): Promise<ProfileApiKeyStatus> {
+  const userKeys = await getUserApiKeys(userId, db);
+  const userConfigured: Record<OrganisationCredentialProvider, boolean> = {
+    claude: !!userKeys.claude,
+    gemini: !!userKeys.gemini,
+    openai: !!userKeys.openai,
+    kimi: !!userKeys.kimi,
+    openrouter: !!userKeys.openrouter,
+    courtlistener: !!userKeys.courtlistener,
+    azure_openai: !!userKeys.azureOpenai,
+  };
+  const providers = Object.keys(
+    ORGANISATION_CREDENTIALS,
+  ) as OrganisationCredentialProvider[];
+  const status = {} as Record<OrganisationCredentialProvider, boolean>;
+  const sources = {} as ProfileApiKeyStatus["sources"];
+  for (const provider of providers) {
+    const values = await Promise.all(
+      ORGANISATION_CREDENTIALS[provider].secretNames.map((name) =>
+        resolveSecret(name),
+      ),
+    );
+    const organisation = values.every(Boolean);
+    const source = organisation ? "env" : userConfigured[provider] ? "user" : null;
+    status[provider] = source !== null;
+    sources[provider] = source;
+  }
+  return { ...status, sources };
+}
+
+function serializeProfile(
+  row: UserProfileRow,
+  credits: { used: number; resetDate: string },
+  apiKeyStatus: ProfileApiKeyStatus,
+) {
+  const titleModel = row.fast_model?.trim()
+    ? resolveModel(row.fast_model.trim(), "")
+    : "";
+  return {
+    displayName: row.display_name,
+    organisation: row.organisation,
+    messageCreditsUsed: credits.used,
+    creditsResetDate: credits.resetDate,
+    creditsRemaining: Math.max(MONTHLY_CREDIT_LIMIT - credits.used, 0),
+    tier: row.tier || "Free",
+    titleModel,
+    tabularModel: resolveModel(row.tabular_model, DEFAULT_TABULAR_MODEL),
+    mfaOnLogin: false,
+    // Features > Legal Research > Jurisdiction > US toggle (upstream
+    // 1fa0554); defaults to enabled.
+    legalResearchUs: row.legal_research_us !== false,
+    apiKeyStatus,
+  };
+}
+
+async function loadProfile(
+  db: ReturnType<typeof createServerSupabase>,
+  userId: string,
+): Promise<
+  | { data: ReturnType<typeof serializeProfile>; error: null }
+  | { data: null; error: { message: string } }
+> {
+  const [profileResult, apiKeyStatus] = await Promise.all([
+    db.from("user_profiles").select(PROFILE_SELECT).eq("user_id", userId).single(),
+    buildProfileApiKeyStatus(userId, db),
   ]);
-
   const { data, error } = profileResult;
-  if (error) return void res.status(500).json({ detail: error.message });
+  if (error) return { data: null, error };
+  const row = data as UserProfileRow;
 
-  let messageCreditsUsed = data.message_credits_used ?? 0;
-  let creditsResetDate = normalizeCreditsResetDate(data.credits_reset_date ?? null);
+  let messageCreditsUsed = row.message_credits_used ?? 0;
+  let creditsResetDate = normalizeCreditsResetDate(row.credits_reset_date ?? null);
   const now = new Date();
   const resetDate = new Date(creditsResetDate);
 
@@ -175,65 +267,105 @@ userRouter.get("/profile", requireAuth, async (_req, res) => {
       .update({ message_credits_used: 0, credits_reset_date: creditsResetDate })
       .eq("user_id", userId);
 
-    if (updateError) return void res.status(500).json({ detail: updateError.message });
+    if (updateError) return { data: null, error: updateError };
   }
 
-  res.json({
-    display_name: data.display_name,
-    organisation: data.organisation,
-    message_credits_used: messageCreditsUsed,
-    credits_reset_date: creditsResetDate,
-    tier: data.tier,
-    tabular_model: data.tabular_model,
-    fast_model: data.fast_model,
-    // Features > Legal Research > Jurisdiction > US toggle (upstream
-    // 1fa0554); defaults to enabled.
-    legal_research_us: data.legal_research_us !== false,
-    // Compatibility fields remain in the shape, but organisation credentials
-    // never leave the backend. The frontend uses configured booleans.
-    claude_api_key: null,
-    gemini_api_key: null,
-    openai_api_key: null,
-    azure_openai_endpoint: null,
-    azure_openai_api_key: null,
-    azure_openai_api_version: null,
-    azure_openai_deployment: null,
-    // Forward-compat: per-provider configured booleans the frontend
-    // should prefer once the plaintext fields above are dropped.
-    claude_configured: !!apiKeys.claude,
-    gemini_configured: !!apiKeys.gemini,
-    openai_configured: !!apiKeys.openai,
-    kimi_configured: !!apiKeys.kimi,
-    // openrouter / courtlistener (upstream 44e868e). getUserApiKeys
-    // already folds in the org-level KV/env fallback for these two, so
-    // "configured" means "some credential source exists".
-    openrouter_configured: !!apiKeys.openrouter,
-    courtlistener_configured: !!apiKeys.courtlistener,
-    azure_openai_configured: !!apiKeys.azureOpenai,
-    // Tells the frontend "the server has a shared key for this provider".
-    // Lets the model dropdown show models as available even when the user
-    // hasn't pasted a personal key. Actual key values never leave the
-    // server. Azure OpenAI is "globally configured" once endpoint +
-    // apiKey are set — deployment is no longer required because the
-    // user picks one per message from the discovered list.
-    // global_api_keys covers BOTH the env-var path (Bicep secretRef into KV
-    // for anthropic + openai) AND the KV-direct path (install configurator
-    // writes for gemini + azure-openai-* with no Bicep wiring). resolveSecret
-    // unifies them — env first via getConfig's built-in env check, KV via
-    // UAMI fallback, with the __unset__ placeholder filtered. Closes 040
-    // Entry 12's availability-flag arm.
-    global_api_keys: {
-      claude: !!(await resolveSecret("anthropic-api-key")),
-      gemini: !!(await resolveSecret("gemini-api-key")),
-      openai: !!(await resolveSecret("openai-api-key")),
-      kimi: !!(await resolveSecret("moonshot-api-key")),
-      openrouter: !!(await resolveSecret("openrouter-api-key")),
-      courtlistener: !!(await resolveSecret("courtlistener-api-token")),
-      azureOpenai:
-        !!(await resolveSecret("azure-openai-endpoint")) &&
-        !!(await resolveSecret("azure-openai-api-key")),
-    },
-  });
+  return {
+    data: serializeProfile(
+      row,
+      { used: messageCreditsUsed, resetDate: creditsResetDate },
+      apiKeyStatus,
+    ),
+    error: null,
+  };
+}
+
+type ProfileUpdate = {
+  display_name?: string | null;
+  organisation?: string | null;
+  fast_model?: string | null;
+  tabular_model?: string;
+  legal_research_us?: boolean;
+  updated_at: string;
+};
+
+// Upstream's validateProfilePayload; `titleModel` writes dev's `fast_model`
+// and accepts "" (= no preference, stored as null).
+function validateProfilePayload(
+  body: unknown,
+): { ok: true; update: ProfileUpdate } | { ok: false; detail: string } {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, detail: "Expected a JSON object" };
+  }
+
+  const raw = body as Record<string, unknown>;
+  const allowedFields = new Set([
+    "displayName",
+    "organisation",
+    "titleModel",
+    "tabularModel",
+    "legalResearchUs",
+  ]);
+  const invalidField = Object.keys(raw).find((key) => !allowedFields.has(key));
+  if (invalidField) {
+    return { ok: false, detail: `Unsupported profile field: ${invalidField}` };
+  }
+
+  const update: ProfileUpdate = { updated_at: new Date().toISOString() };
+
+  if ("displayName" in raw) {
+    if (raw.displayName !== null && typeof raw.displayName !== "string") {
+      return { ok: false, detail: "displayName must be a string or null" };
+    }
+    update.display_name = raw.displayName?.trim() || null;
+  }
+
+  if ("organisation" in raw) {
+    if (raw.organisation !== null && typeof raw.organisation !== "string") {
+      return { ok: false, detail: "organisation must be a string or null" };
+    }
+    update.organisation = raw.organisation?.trim() || null;
+  }
+
+  if ("tabularModel" in raw) {
+    if (typeof raw.tabularModel !== "string") {
+      return { ok: false, detail: "tabularModel must be a string" };
+    }
+    const resolved = resolveModel(raw.tabularModel, "");
+    if (!resolved) return { ok: false, detail: "Unsupported tabularModel" };
+    update.tabular_model = resolved;
+  }
+
+  if ("titleModel" in raw) {
+    if (typeof raw.titleModel !== "string") {
+      return { ok: false, detail: "titleModel must be a string" };
+    }
+    if (!raw.titleModel.trim()) {
+      update.fast_model = null;
+    } else {
+      const resolved = resolveModel(raw.titleModel.trim(), "");
+      if (!resolved) return { ok: false, detail: "Unsupported titleModel" };
+      update.fast_model = resolved;
+    }
+  }
+
+  if ("legalResearchUs" in raw) {
+    if (typeof raw.legalResearchUs !== "boolean") {
+      return { ok: false, detail: "legalResearchUs must be a boolean" };
+    }
+    update.legal_research_us = raw.legalResearchUs;
+  }
+
+  return { ok: true, update };
+}
+
+// GET /user/profile
+userRouter.get("/profile", requireAuth, async (_req, res) => {
+  const userId = res.locals.userId as string;
+  const db = createServerSupabase();
+  const { data, error } = await loadProfile(db, userId);
+  if (error) return void res.status(500).json({ detail: error.message });
+  res.json(data);
 });
 
 userRouter.patch("/profile", requireAuth, async (req, res) => {
@@ -254,8 +386,12 @@ userRouter.patch("/profile", requireAuth, async (req, res) => {
     { field: "azure_openai_api_version", provider: "azure_openai" },
     { field: "azure_openai_deployment", provider: "azure_openai" },
   ];
+  // Dev divergence: personal credential fields (dev's old snake_case client)
+  // get the explicit organisation-credential 403, not a generic 400.
+  const body: Record<string, unknown> =
+    req.body && typeof req.body === "object" ? req.body : {};
   const attemptedCredential = credentialFields.find(
-    ({ field }) => field in req.body,
+    ({ field }) => field in body,
   );
   if (attemptedCredential) {
     return void organisationCredentialRequired(
@@ -264,89 +400,21 @@ userRouter.patch("/profile", requireAuth, async (req, res) => {
     );
   }
 
+  const parsed = validateProfilePayload(req.body);
+  if (!parsed.ok) return void res.status(400).json({ detail: parsed.detail });
+
   const db = createServerSupabase();
-
-  // Profile fields stay on `user_profiles`.
-  const profileFields = [
-    "display_name",
-    "organisation",
-    "tabular_model",
-    "fast_model",
-  ] as const;
-  const profileUpdates: Record<string, string | boolean | null> = {};
-  for (const field of profileFields) {
-    if (field in req.body) {
-      const value = req.body[field];
-      profileUpdates[field] = typeof value === "string" ? value : value ?? null;
-    }
-  }
-
-  // Features flag (upstream 1fa0554): boolean toggle for US legal research
-  // (CourtListener) tools in chat.
-  if ("legal_research_us" in req.body) {
-    const value = req.body.legal_research_us;
-    if (typeof value !== "boolean") {
-      return void res
-        .status(400)
-        .json({ detail: "legal_research_us must be a boolean" });
-    }
-    profileUpdates.legal_research_us = value;
-  }
-
-  if (Object.keys(profileUpdates).length === 0) {
-    return void res
-      .status(400)
-      .json({ detail: "No updatable profile fields provided" });
-  }
-
-  // 1. Profile updates
-  if (Object.keys(profileUpdates).length > 0) {
-    profileUpdates.updated_at = new Date().toISOString();
-    const { error } = await db
-      .from("user_profiles")
-      .update(profileUpdates)
-      .eq("user_id", userId);
-    if (error) return void res.status(500).json({ detail: error.message });
-  }
+  const { error: updateError } = await db
+    .from("user_profiles")
+    .update(parsed.update)
+    .eq("user_id", userId);
+  if (updateError)
+    return void res.status(500).json({ detail: updateError.message });
 
   // Re-fetch to return the canonical post-update view (same shape as GET).
-  const [profileResult, apiKeys] = await Promise.all([
-    db
-      .from("user_profiles")
-      .select(
-        "display_name, organisation, message_credits_used, credits_reset_date, tier, tabular_model, fast_model, legal_research_us",
-      )
-      .eq("user_id", userId)
-      .single(),
-    getUserApiKeys(userId, db),
-  ]);
-  if (profileResult.error)
-    return void res.status(500).json({ detail: profileResult.error.message });
-  const p = profileResult.data;
-
-  res.json({
-    display_name: p.display_name,
-    organisation: p.organisation,
-    message_credits_used: p.message_credits_used,
-    credits_reset_date: p.credits_reset_date,
-    tier: p.tier,
-    tabular_model: p.tabular_model,
-    fast_model: p.fast_model,
-    claude_api_key: null,
-    gemini_api_key: null,
-    openai_api_key: null,
-    azure_openai_endpoint: null,
-    azure_openai_api_key: null,
-    azure_openai_api_version: null,
-    azure_openai_deployment: null,
-    claude_configured: !!apiKeys.claude,
-    gemini_configured: !!apiKeys.gemini,
-    openai_configured: !!apiKeys.openai,
-    kimi_configured: !!apiKeys.kimi,
-    openrouter_configured: !!apiKeys.openrouter,
-    courtlistener_configured: !!apiKeys.courtlistener,
-    azure_openai_configured: !!apiKeys.azureOpenai,
-  });
+  const { data, error } = await loadProfile(db, userId);
+  if (error) return void res.status(500).json({ detail: error.message });
+  res.json(data);
 });
 
 userRouter.post("/profile/credits/increment", requireAuth, async (_req, res) => {

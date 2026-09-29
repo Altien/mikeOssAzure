@@ -4,9 +4,10 @@ import type { ApiKeyState } from "@/app/lib/mikeApi";
 // Upstream divergence (OSS-6, §2.3 item 3 — AOAI and org Key Vault keys):
 // dev adds the "kimi" and "azureOpenai" providers. Availability still reads
 // upstream's ApiKeyState; dev's backend reports organisation (Key Vault/env)
-// credentials there with source "env" (see mikeApi getUserProfile). Azure
-// OpenAI availability is per-deployment: `aoai:<deployment>` ids come from
-// discovery (UserProfileContext.aoaiDeployments) and arrive via
+// credentials there with source "env" (backend routes/user.ts `/profile`
+// apiKeyStatus). Azure OpenAI availability is per-deployment:
+// `aoai:<deployment>` ids come from discovery
+// (src/altien/models/aoaiDeployments.tsx) and arrive via
 // `extraModels`. The "ollama" branches are upstream's, unreachable in dev
 // (sync-log: fe942475).
 export type ModelProvider =
