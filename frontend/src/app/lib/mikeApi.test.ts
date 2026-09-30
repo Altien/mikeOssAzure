@@ -292,7 +292,7 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
 
         await listProjects();
 
-        expect(lastFetchCall().url).toBe("http://localhost:3001/projects");
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/projects");
     });
 
     it("returns undefined for 204 responses", async () => {
@@ -446,7 +446,7 @@ describe("audit history", () => {
 
         const { url, init } = lastFetchCall();
         expect(url).toBe(
-            "http://localhost:3001/audit?q=agreement&action=document.edited&status=completed&surface=project&from=2026-08-01&to=2026-08-12&sort_by=title&sort_dir=asc&page=3",
+            "http://localhost:3001/api/audit?q=agreement&action=document.edited&status=completed&surface=project&from=2026-08-01&to=2026-08-12&sort_by=title&sort_dir=asc&page=3",
         );
         expect(init.signal).toBe(controller.signal);
     });
@@ -474,7 +474,7 @@ describe("audit history", () => {
         });
 
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/audit/export?q=agreement&action=document.edited&status=failed&surface=assistant&from=2026-07-01&to=2026-07-31&sort_by=created_at&sort_dir=desc",
+            "http://localhost:3001/api/audit/export?q=agreement&action=document.edited&status=failed&surface=assistant&from=2026-07-01&to=2026-07-31&sort_by=created_at&sort_dir=desc",
         );
         expect(result.filename).toBe("history.csv");
         expect(await result.blob.text()).toBe("history");
@@ -486,12 +486,12 @@ describe("audit history", () => {
         );
 
         await getAuditHistory({});
-        expect(lastFetchCall().url).toBe("http://localhost:3001/audit?");
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/audit?");
 
         fetchMock.mockResolvedValueOnce(new Response("history", { status: 200 }));
 
         await exportAuditHistory({});
-        expect(lastFetchCall().url).toBe("http://localhost:3001/audit/export?");
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/audit/export?");
     });
 });
 
@@ -899,7 +899,7 @@ describe("listProjectsPage", () => {
         await listProjectsPage();
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/projects");
+        expect(url).toBe("http://localhost:3001/api/projects");
         expect(init.signal).toBeUndefined();
     });
 
@@ -921,7 +921,7 @@ describe("listProjectsPage", () => {
 
         const { url, init } = lastFetchCall();
         expect(url).toBe(
-            "http://localhost:3001/projects" +
+            "http://localhost:3001/api/projects" +
                 "?limit=30&offset=60&search=acquisitions" +
                 "&sort_key=files&sort_direction=desc&scope=mine" +
                 "&practice=Litigation&owner_user_id=user-2",
@@ -934,7 +934,7 @@ describe("listProjectsPage", () => {
 
         await listProjectsPage({ scope: "all", limit: 10 });
 
-    expect(lastFetchCall().url).toBe("http://localhost:3001/projects?limit=10");
+    expect(lastFetchCall().url).toBe("http://localhost:3001/api/projects?limit=10");
   });
 });
 
@@ -945,7 +945,7 @@ describe("listProjectSummaries", () => {
     await listProjectSummaries({ limit: 11, offset: 10 });
 
         expect(lastFetchCall().url).toBe(
-      "http://localhost:3001/projects?limit=11&offset=10&view=summary",
+      "http://localhost:3001/api/projects?limit=11&offset=10&view=summary",
         );
     });
 });
@@ -964,7 +964,7 @@ describe("searchProjectDirectory", () => {
 
     const { url, init } = lastFetchCall();
     expect(url).toBe(
-      "http://localhost:3001/projects?view=directory-search&search=agreement&limit=51&offset=10",
+      "http://localhost:3001/api/projects?view=directory-search&search=agreement&limit=51&offset=10",
     );
     expect(init.signal).toBe(controller.signal);
   });
@@ -986,7 +986,7 @@ describe("getProjectDirectoryLevel", () => {
 
     const { url, init } = lastFetchCall();
     expect(url).toBe(
-      "http://localhost:3001/projects/p1/directory?parent_folder_id=folder-1&limit=50&offset=100",
+      "http://localhost:3001/api/projects/p1/directory?parent_folder_id=folder-1&limit=50&offset=100",
     );
     expect(init.signal).toBe(controller.signal);
   });
@@ -999,7 +999,7 @@ describe("getProjectDirectoryLevel", () => {
     await getProjectDirectoryLevel("p1");
 
     expect(lastFetchCall().url).toBe(
-      "http://localhost:3001/projects/p1/directory",
+      "http://localhost:3001/api/projects/p1/directory",
     );
   });
 });
@@ -1010,7 +1010,7 @@ describe("listProjectIds", () => {
 
         await listProjectIds();
 
-        expect(lastFetchCall().url).toBe("http://localhost:3001/projects/ids");
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/projects/ids");
     });
 
     it("scopes ids by search, scope, practice, and owner so select-all matches the visible filter", async () => {
@@ -1030,7 +1030,7 @@ describe("listProjectIds", () => {
         // Select-all-then-delete deletes whatever this returns; if the query
         // here is broader than the list query, users delete unseen projects.
         expect(url).toBe(
-            "http://localhost:3001/projects/ids?search=nda&scope=mine" +
+            "http://localhost:3001/api/projects/ids?search=nda&scope=mine" +
                 "&practice=Litigation&owner_user_id=user-2",
         );
         expect(init.signal).toBe(controller.signal);
@@ -1041,7 +1041,7 @@ describe("listProjectIds", () => {
 
         await listProjectIds({ scope: "all" });
 
-        expect(lastFetchCall().url).toBe("http://localhost:3001/projects/ids");
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/projects/ids");
     });
 });
 
@@ -1055,7 +1055,7 @@ describe("getProjectFilterOptions", () => {
     await getProjectFilterOptions(controller.signal);
 
     const { url, init } = lastFetchCall();
-    expect(url).toBe("http://localhost:3001/projects/filter-options");
+    expect(url).toBe("http://localhost:3001/api/projects/filter-options");
     expect(init.signal).toBe(controller.signal);
   });
 });
@@ -1067,7 +1067,7 @@ describe("listWorkflows", () => {
         await listWorkflows("assistant");
 
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/workflows?type=assistant",
+            "http://localhost:3001/api/workflows?type=assistant",
         );
     });
 });
@@ -1079,7 +1079,7 @@ describe("listWorkflowsPage", () => {
         await listWorkflowsPage();
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/workflows");
+        expect(url).toBe("http://localhost:3001/api/workflows");
         expect(init.signal).toBeUndefined();
     });
 
@@ -1103,7 +1103,7 @@ describe("listWorkflowsPage", () => {
 
         const { url, init } = lastFetchCall();
         expect(url).toBe(
-            "http://localhost:3001/workflows" +
+            "http://localhost:3001/api/workflows" +
                 "?type=assistant&limit=30&offset=60&search=nda" +
                 "&sort_key=name&sort_direction=desc&scope=owned" +
                 "&practice=Litigation&language=English&jurisdiction=NSW",
@@ -1117,7 +1117,7 @@ describe("listWorkflowsPage", () => {
         await listWorkflowsPage({ scope: "all", limit: 10 });
 
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/workflows?limit=10",
+            "http://localhost:3001/api/workflows?limit=10",
         );
     });
 });
@@ -1128,7 +1128,7 @@ describe("listWorkflowIds", () => {
 
         await listWorkflowIds();
 
-        expect(lastFetchCall().url).toBe("http://localhost:3001/workflows/ids");
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/workflows/ids");
     });
 
     it("scopes ids by every active filter so select-all matches the visible list", async () => {
@@ -1145,7 +1145,7 @@ describe("listWorkflowIds", () => {
 
         expect(ids).toEqual([{ id: "w1", user_id: "u1" }]);
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/workflows/ids?type=tabular&search=nda" +
+            "http://localhost:3001/api/workflows/ids?type=tabular&search=nda" +
                 "&scope=owned&practice=Litigation&language=English&jurisdiction=NSW",
         );
     });
@@ -1157,7 +1157,7 @@ describe("listSystemWorkflows", () => {
 
         await listSystemWorkflows();
 
-    expect(lastFetchCall().url).toBe("http://localhost:3001/workflows/system");
+    expect(lastFetchCall().url).toBe("http://localhost:3001/api/workflows/system");
     });
 
     it("appends the type filter when given", async () => {
@@ -1166,7 +1166,7 @@ describe("listSystemWorkflows", () => {
         await listSystemWorkflows("tabular");
 
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/workflows/system?type=tabular",
+            "http://localhost:3001/api/workflows/system?type=tabular",
         );
     });
 });
@@ -1186,7 +1186,7 @@ describe("getWorkflowFilterOptions", () => {
 
     const { url, init } = lastFetchCall();
     expect(url).toBe(
-      "http://localhost:3001/workflows/filter-options?type=assistant&scope=shared",
+      "http://localhost:3001/api/workflows/filter-options?type=assistant&scope=shared",
     );
     expect(init.signal).toBe(controller.signal);
   });
@@ -1212,7 +1212,7 @@ describe("Library search", () => {
     expect(result.documentsHasMore).toBe(true);
     const { url, init } = lastFetchCall();
     expect(url).toBe(
-      "http://localhost:3001/library/templates?view=search&limit=50&offset=100" +
+      "http://localhost:3001/api/library/templates?view=search&limit=50&offset=100" +
         "&search=agreement&file_type=docx&sort_key=updated&sort_direction=desc",
     );
     expect(init.signal).toBe(controller.signal);
@@ -1226,7 +1226,7 @@ describe("Library search", () => {
     await searchLibraryDocuments("files", {});
 
     expect(lastFetchCall().url).toBe(
-      "http://localhost:3001/library/files?view=search",
+      "http://localhost:3001/api/library/files?view=search",
     );
   });
 
@@ -1239,7 +1239,7 @@ describe("Library search", () => {
     ]);
 
     const { url, init } = lastFetchCall();
-    expect(url).toBe("http://localhost:3001/library/templates/levels");
+    expect(url).toBe("http://localhost:3001/api/library/templates/levels");
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body as string)).toEqual({
       levels: [
@@ -1257,7 +1257,7 @@ describe("Library search", () => {
     await getLibraryFolderChildren("files", "folder-1", { offset: 50 });
 
     expect(lastFetchCall().url).toBe(
-      "http://localhost:3001/library/files?parent_folder_id=folder-1&offset=50",
+      "http://localhost:3001/api/library/files?parent_folder_id=folder-1&offset=50",
     );
   });
 
@@ -1273,7 +1273,7 @@ describe("Library search", () => {
 
     const { url, init } = lastFetchCall();
     expect(url).toBe(
-      "http://localhost:3001/library/templates/ids?search=agreement&file_type=docx",
+      "http://localhost:3001/api/library/templates/ids?search=agreement&file_type=docx",
     );
     expect(init.signal).toBe(controller.signal);
   });
@@ -1284,7 +1284,7 @@ describe("Library search", () => {
     await listLibraryDocumentIds("files");
 
     expect(lastFetchCall().url).toBe(
-      "http://localhost:3001/library/files/ids",
+      "http://localhost:3001/api/library/files/ids",
     );
   });
 
@@ -1296,7 +1296,7 @@ describe("Library search", () => {
     const { url, init } = lastFetchCall();
     expect(result).toEqual({ deletedIds: ["d1", "d2"] });
     expect(url).toBe(
-      "http://localhost:3001/library/files/documents/bulk-delete",
+      "http://localhost:3001/api/library/files/documents/bulk-delete",
     );
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body as string)).toEqual({ ids: ["d1", "d2"] });
@@ -1308,7 +1308,7 @@ describe("Library search", () => {
     await getLibraryFilterOptions("files");
 
     expect(lastFetchCall().url).toBe(
-      "http://localhost:3001/library/files/filter-options",
+      "http://localhost:3001/api/library/files/filter-options",
     );
   });
 });
