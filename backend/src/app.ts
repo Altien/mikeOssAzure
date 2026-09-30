@@ -51,6 +51,19 @@ function hours(value: number): number {
   return minutes(value * 60);
 }
 
+// ponytail: path-shape check, not a lookup against PUBLIC_DIR — API routes
+// never end in these extensions or live under /_next.
+const STATIC_ASSET =
+  /^\/_next\/|\.(js|css|map|png|jpe?g|gif|svg|ico|webp|woff2?|ttf|txt)$/i;
+
+export function isStaticAsset(req: { method: string; path: string }): boolean {
+  return (
+    (req.method === "GET" || req.method === "HEAD") &&
+    !req.path.startsWith("/api/") &&
+    STATIC_ASSET.test(req.path)
+  );
+}
+
 function makeLimiter(options: {
   windowMs: number;
   max: number;
@@ -185,8 +198,12 @@ export function buildApp(): express.Express {
   );
 
   // Global rate limit. Per-route stricter limiters are decorated before
-  // the route mounts below.
-  app.use(generalLimiter);
+  // the route mounts below. Bundled-frontend assets are exempt: one page
+  // load fetches dozens of JS/CSS chunks, which exhausted the 300/15 min
+  // budget after ~20 page loads (OSS-6 smoke, 2026-09-30).
+  app.use((req, res, next) =>
+    isStaticAsset(req) ? next() : generalLimiter(req, res, next),
+  );
 
   app.use(express.json({ limit: JSON_BODY_LIMIT }));
   // /install posts form-encoded bodies (the bootstrap-token paste form).
