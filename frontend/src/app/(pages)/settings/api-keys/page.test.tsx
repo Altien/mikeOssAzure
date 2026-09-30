@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { screen } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw-server";
 import { renderWithProviders } from "@/test/render";
@@ -79,37 +78,7 @@ describe("organisation API key status", () => {
         expect(screen.queryByRole("button", { name: /^Save$/ })).not.toBeInTheDocument();
     });
 
-    it("Refresh reloads the profile", async () => {
-        let calls = 0;
-        server.use(
-            http.get("*/api/user/profile", () => {
-                calls += 1;
-                return HttpResponse.json(
-                    profileWith(
-                        calls === 1
-                            ? STATUS
-                            : {
-                                  ...STATUS,
-                                  azure_openai: true,
-                                  sources: { ...STATUS.sources, azure_openai: "env" },
-                              },
-                    ),
-                );
-            }),
-        );
-
-        renderPage();
-        expect(
-            await screen.findAllByText("Configured for this organisation"),
-        ).toHaveLength(3);
-
-        await userEvent.click(screen.getByRole("button", { name: /Refresh/ }));
-
-        await waitFor(() =>
-            expect(
-                screen.getAllByText("Configured for this organisation"),
-            ).toHaveLength(4),
-        );
-        expect(calls).toBe(2);
-    });
+    // Upstream 93c72a16 removed the page's Refresh button (it only re-detected
+    // local Ollama models), so the former "Refresh reloads the profile" test
+    // asserts superseded behaviour and is dropped.
 });
