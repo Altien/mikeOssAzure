@@ -30,7 +30,7 @@ export async function completeText(params: {
      * Only the OpenAI-compatible providers accept this today; the others
      * ignore it rather than risk an unknown-parameter rejection.
      */
-    reasoningEffort?: "low" | "high" | "max";
+    reasoningEffort?: "none" | "low" | "high" | "max";
 }): Promise<string> {
     const provider = providerForModel(params.model);
     if (provider === "claude") return completeClaudeText(params);

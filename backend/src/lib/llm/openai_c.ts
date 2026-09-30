@@ -261,8 +261,10 @@ export type OpenAICompatibleCompleteParams = {
      * Provider-side reasoning budget. Kimi K3 reasons at `max` by default and
      * does not accept the `thinking` parameter, so this is the only way to
      * keep a bounded extraction task from over-reasoning its way off-task.
+     * "none" turns reasoning off for tiny outputs (chat titles) so a
+     * reasoning model doesn't spend the whole token budget thinking.
      */
-    reasoningEffort?: "low" | "high" | "max";
+    reasoningEffort?: "none" | "low" | "high" | "max";
 };
 
 export async function completeOpenAICompatibleText(

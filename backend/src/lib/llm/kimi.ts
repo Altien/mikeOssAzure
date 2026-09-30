@@ -24,5 +24,11 @@ export function streamKimi(
 export function completeKimiText(
     params: OpenAICompatibleCompleteParams,
 ): Promise<string> {
-    return completeOpenAICompatibleText(params, KIMI_CONFIG);
+    // Moonshot's reasoning_effort has no "none"; "low" is its floor.
+    const reasoningEffort =
+        params.reasoningEffort === "none" ? "low" : params.reasoningEffort;
+    return completeOpenAICompatibleText(
+        { ...params, reasoningEffort },
+        KIMI_CONFIG,
+    );
 }

@@ -243,5 +243,14 @@ describe("Kimi K3 API adapter", () => {
         expect(createMock.mock.calls[1][0]).not.toHaveProperty(
             "reasoning_effort",
         );
+
+        // Moonshot has no "none" (used for chat titles): floor it at "low".
+        await completeKimiText({
+            model: "kimi-k3",
+            user: "Title this",
+            apiKeys: { kimi: "org-kimi-key" },
+            reasoningEffort: "none",
+        });
+        expect(createMock.mock.calls[2][0].reasoning_effort).toBe("low");
     });
 });

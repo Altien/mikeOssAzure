@@ -334,6 +334,9 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
             model: fast_model,
             user: `Generate a concise title (3–6 words) for a chat in an AI Legal Platform that starts with this message. The title should describe the topic or document — do NOT include words like "Legal Assistant", "AI", "Chat", or any similar prefix. If there is not enough information to generate a title, return exactly "${TITLE_FALLBACK}". Return only the title, no quotes or punctuation.\n\nMessage: ${message.slice(0, 500)}`,
             maxTokens: 64,
+            // A reasoning model otherwise spends all 64 tokens thinking and
+            // returns no content → fallback title (OSS-6 smoke, 2026-09-30).
+            reasoningEffort: "none",
             apiKeys: api_keys,
         });
         title = normalizeGeneratedTitle(titleText);
