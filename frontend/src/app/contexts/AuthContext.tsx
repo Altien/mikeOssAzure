@@ -167,7 +167,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(ENTRA_USER_KEY);
     setUser(null);
     const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
-    window.location.href = `${apiBase}/auth/logout`;
+    // Router is mounted at /api/auth (app.ts); the bare /auth path fell
+    // through to the SPA shell and never signed out.
+    window.location.href = `${apiBase}/api/auth/logout`;
   };
 
   const updateEmail = async (email: string): Promise<User> => {

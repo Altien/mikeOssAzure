@@ -48,7 +48,7 @@ How runtime config works now:
   `mike.config.authProvider` so module-level helpers
   (`getBrowserAccessToken`, `getCachedAuthProvider`) can answer "what mode
   are we in?" without a React context.
-- Sign-out goes through `GET /auth/logout` so the backend, not the
+- Sign-out goes through `GET /api/auth/logout` so the backend, not the
   browser, constructs the Microsoft logout URL.
 
 Rules to keep this honest:

@@ -674,7 +674,8 @@ describe("AuthContext: entra mode", () => {
         // The backend constructs the Microsoft logout URL — frontend
         // just navigates there.  NEXT_PUBLIC_API_BASE_URL falls back to
         // localhost:3001 in tests where it's unset.
-        expect(window.location.href).toMatch(/\/auth\/logout$/);
+        // Must match the backend mount (app.ts: /api/auth).
+        expect(window.location.href).toMatch(/\/api\/auth\/logout$/);
     });
 });
 
