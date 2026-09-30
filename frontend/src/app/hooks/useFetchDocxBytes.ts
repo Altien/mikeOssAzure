@@ -18,6 +18,7 @@ export interface FetchDocxResult {
 // key share a single in-flight request.
 const bytesCache = new Map<string, ArrayBuffer>();
 const inFlight = new Map<string, Promise<ArrayBuffer>>();
+const generations = new Map<string, number>();
 
 function cacheKey(
     documentId: string,
@@ -29,8 +30,8 @@ function cacheKey(
 }
 
 /**
- * Fetch the raw .docx bytes for a document, optionally targeting a specific
- * tracked-changes version. Results are cached so the DocxView can re-render
+ * Fetch a document's raw source bytes from /file (used for .docx and
+ * spreadsheets), optionally targeting a specific version. Results are cached so the DocxView can re-render
  * cheaply when switching between versions, and tab switches don't refetch.
  */
 export function useFetchDocxBytes(
@@ -77,13 +78,14 @@ export function useFetchDocxBytes(
         const pending =
             (cacheBytes ? inFlight.get(key) : undefined) ??
             (async () => {
+                const generation = generations.get(documentId) ?? 0;
                 // Private source bytes stay on the authenticated same-origin API.
                 const bin = await authenticatedFetch(url, {
                     signal: cacheBytes ? undefined : controller.signal,
                 });
                 if (!bin.ok) throw new Error(`HTTP ${bin.status}`);
                 const buf = await bin.arrayBuffer();
-                if (cacheBytes) bytesCache.set(key, buf);
+                if (cacheBytes && generation === (generations.get(documentId) ?? 0)) bytesCache.set(key, buf);
                 return buf;
             })();
         if (cacheBytes && !inFlight.has(key)) inFlight.set(key, pending);
@@ -125,6 +127,11 @@ export function invalidateDocxBytes(
     documentId: string,
     versionId?: string | null,
 ): void {
+    generations.set(documentId, (generations.get(documentId) ?? 0) + 1);
+    // A read started before a save must not serve stale bytes to a reopened tab.
+    for (const key of inFlight.keys()) {
+        if (key.startsWith(`${documentId}:`)) inFlight.delete(key);
+    }
     if (versionId !== undefined) {
         for (const key of Array.from(bytesCache.keys())) {
             if (key.startsWith(`${documentId}:${versionId ?? ""}:`)) {

@@ -41,6 +41,11 @@
 - [Backend unit-test coverage](testing-coverage.md)
 - [Mutation testing and the SSE load harness](test-depth.md)
 
+## Open-source acknowledgments
+
+- [Open-source credits](../CREDITS.md) — the libraries, tools, and
+  infrastructure behind Mike
+
 ## Historical design and investigation notes
 
 These files preserve the context of completed work. They are not current setup

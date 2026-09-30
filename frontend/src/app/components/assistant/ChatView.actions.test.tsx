@@ -1,3 +1,5 @@
+import { useImperativeHandle, type Ref } from "react";
+import type { ChatInputHandle } from "./ChatInput";
 import {
     act,
     fireEvent,
@@ -9,7 +11,14 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Chat, Document, Message } from "@/app/components/shared/types";
 import { ChatView } from "./ChatView";
-import { listDocumentVersions } from "@/app/lib/mikeApi";
+import {
+    listDocumentVersions,
+    getDocument,
+    renameProjectDocument,
+    renameLibraryDocument,
+    deleteDocument,
+    getDocumentFile,
+} from "@/app/lib/mikeApi";
 import { PageChromeContext } from "@/app/contexts/PageChromeContext";
 
 const { push, renameChat, deleteChat, setCurrentChatId, setNewChatMessages } =
@@ -20,6 +29,8 @@ const { push, renameChat, deleteChat, setCurrentChatId, setNewChatMessages } =
         setCurrentChatId: vi.fn(),
         setNewChatMessages: vi.fn(),
     }));
+
+const addDoc = vi.hoisted(() => vi.fn());
 
 const activeChat: Chat = {
     id: "chat-1",
@@ -58,6 +69,8 @@ vi.mock("@/app/contexts/ChatHistoryContext", () => ({
 }));
 const spreadsheet = {
     id: "excel-1",
+    can_edit: true,
+    can_delete: true,
     filename: "Budget.xlsx",
     file_type: "xlsx",
     current_version_id: "excel-v4",
@@ -65,14 +78,16 @@ const spreadsheet = {
 } as Document;
 vi.mock("./ChatInput", () => ({
     ChatInput: ({
-        onDocumentClick,
+        onDocumentClick, ref,
     }: {
         onDocumentClick?: (document: Document) => void;
-    }) => (
-        <button onClick={() => onDocumentClick?.(spreadsheet)}>
+        ref?: Ref<ChatInputHandle>;
+    }) => {
+        useImperativeHandle(ref, () => ({ addDoc, addFiles: vi.fn(), startWorkflow: vi.fn(), startWorkflowDocumentSelection: vi.fn() }));
+        return <button onClick={() => onDocumentClick?.(spreadsheet)}>
             Open Budget.xlsx
-        </button>
-    ),
+        </button>;
+    },
 }));
 vi.mock("@/app/contexts/AuthContext", () => ({
     useAuth: () => ({ user: { id: "user-1", email: "user@example.com" } }),
@@ -83,6 +98,11 @@ vi.mock("@/app/contexts/UserProfileContext", () => ({
 vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
     ...(await importOriginal<typeof import("@/app/lib/mikeApi")>()),
     listDocumentVersions: vi.fn(),
+    getDocument: vi.fn(),
+    renameProjectDocument: vi.fn(),
+    renameLibraryDocument: vi.fn(),
+    deleteDocument: vi.fn(),
+    getDocumentFile: vi.fn(),
     listQuickActions: vi.fn().mockResolvedValue([]),
 }));
 vi.mock("../shared/views/SpreadsheetView", () => ({
@@ -114,6 +134,24 @@ vi.mock("./AssistantMessage", () => ({
         <div data-testid="assistant-message" style={{ minHeight }} />
     ),
 }));
+vi.mock("@/app/components/modals/AddDocumentsModal", () => ({
+    AddDocumentsModal: ({
+        open,
+        onSelect,
+    }: {
+        open: boolean;
+        onSelect: (documents: Document[]) => void;
+    }) =>
+        open ? (
+            <button onClick={() => onSelect([spreadsheet])}>
+                Pick Budget.xlsx
+            </button>
+        ) : null,
+}));
+vi.mock("./QuickActionsModal", () => ({
+    QuickActionsModal: ({ open }: { open: boolean }) =>
+        open ? <div>Quick actions modal</div> : null,
+}));
 vi.mock("./AssistantWorkflowModal", () => ({
     AssistantWorkflowModal: () => null,
 }));
@@ -133,7 +171,7 @@ function renderView(
     messages: Message[] = [],
     mobileActionsContainer: HTMLElement | null = null,
     onInitialSubmit?: (message: Message) => void,
-    detach = vi.fn(),
+    onNewChat = vi.fn(),
 ) {
     render(
         <PageChromeContext.Provider value={{ mobileActionsContainer }}>
@@ -145,11 +183,11 @@ function renderView(
                 isResponseLoading={false}
                 handleChat={vi.fn().mockResolvedValue("chat-1")}
                 cancel={cancel}
-                detach={detach}
+                onNewChat={onNewChat}
             />
         </PageChromeContext.Provider>,
     );
-    return { cancel, detach };
+    return { cancel, onNewChat };
 }
 
 function openActions() {
@@ -211,7 +249,7 @@ describe("ChatView streaming scroll controls", () => {
                     isResponseLoading
                     handleChat={vi.fn()}
                     cancel={vi.fn()}
-                    detach={vi.fn()}
+                    onNewChat={vi.fn()}
                     onInitialSubmit={initial ? vi.fn() : undefined}
                 />
             </PageChromeContext.Provider>
@@ -246,7 +284,7 @@ describe("ChatView streaming scroll controls", () => {
                     isResponseLoading
                     handleChat={vi.fn()}
                     cancel={vi.fn()}
-                    detach={vi.fn()}
+                    onNewChat={vi.fn()}
                 />
             </PageChromeContext.Provider>
         );
@@ -339,8 +377,21 @@ describe("ChatView streaming scroll controls", () => {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getDocument).mockResolvedValue(spreadsheet);
     spreadsheet.id = "excel-1";
     spreadsheet.filename = "Budget.xlsx";
+    vi.mocked(listDocumentVersions).mockResolvedValue({
+        current_version_id: "excel-v4",
+        versions: [
+            {
+                id: "excel-v4",
+                version_number: 4,
+                filename: "Budget.xlsx",
+                source: "upload",
+                created_at: "2026-09-26",
+            },
+        ],
+    });
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
     Object.defineProperty(HTMLElement.prototype, "scrollTo", {
         configurable: true,
@@ -353,8 +404,8 @@ beforeEach(() => {
 describe("ChatView header actions", () => {
     it("overlays PageHeader pills and starts a new chat", () => {
         const cancel = vi.fn();
-        const detach = vi.fn();
-        renderView(cancel, [], null, undefined, detach);
+        const onNewChat = vi.fn();
+        renderView(cancel, [], null, undefined, onNewChat);
 
         expect(
             document.querySelector('[data-slot="chat-header-actions"]'),
@@ -365,33 +416,52 @@ describe("ChatView header actions", () => {
 
         fireEvent.click(screen.getByRole("button", { name: "New chat" }));
 
-        // New chat leaves the in-flight answer running (detach); only the
-        // Stop control aborts it, because the backend persists an aborted
-        // stream as a truncated "Cancelled by user." answer.
-        expect(detach).toHaveBeenCalled();
+        // New chat leaves the in-flight answer running; only the Stop
+        // control aborts it, because the backend persists an aborted stream
+        // as a truncated "Cancelled by user." answer.
+        expect(onNewChat).toHaveBeenCalled();
         expect(cancel).not.toHaveBeenCalled();
-        expect(setCurrentChatId).toHaveBeenCalledWith(null);
-        expect(setNewChatMessages).toHaveBeenCalledWith(null);
-        expect(push).toHaveBeenCalledWith("/assistant");
+        expect(push).not.toHaveBeenCalled();
     });
 
-    it("reduces the final assistant minimum height by the added header clearance", async () => {
-        renderView(vi.fn(), [
-            { id: "m1", role: "user", content: "Question" },
-            { id: "m2", role: "assistant", content: "Answer" },
-        ]);
+    it("sizes the final response from the scroll viewport so the latest question lands at the top offset", async () => {
+        // An 800px scroll viewport and a 44px user message. Scrolled to the
+        // bottom, the question must sit 76px below the top: 800 - 76 - 44 -
+        // two 32px list gaps (response, trailing anchor) - 116px padding.
+        const clientHeight = vi
+            .spyOn(HTMLElement.prototype, "clientHeight", "get")
+            .mockImplementation(function (this: HTMLElement) {
+                return this.firstElementChild?.getAttribute("data-slot") ===
+                    "chat-messages-content"
+                    ? 800
+                    : 0;
+            });
+        const offsetHeight = vi
+            .spyOn(HTMLElement.prototype, "offsetHeight", "get")
+            .mockReturnValue(44);
+        try {
+            renderView(vi.fn(), [
+                { id: "m1", role: "user", content: "Question" },
+                { id: "m2", role: "assistant", content: "Answer" },
+            ]);
 
-        await waitFor(() =>
-            expect(screen.getByTestId("assistant-message")).toHaveStyle({
-                minHeight: "calc(100dvh - 224px)",
-            }),
-        );
+            await waitFor(() =>
+                expect(screen.getByTestId("assistant-message")).toHaveStyle({
+                    minHeight: "500px",
+                }),
+            );
+        } finally {
+            clientHeight.mockRestore();
+            offsetHeight.mockRestore();
+        }
     });
 
     it("positions a detached chat after its full history replaces the live overlay", async () => {
         const handleChat = vi.fn().mockResolvedValue("chat-2");
         const view = (chatLoading: boolean, messages: Message[]) => (
-            <PageChromeContext.Provider value={{ mobileActionsContainer: null }}>
+            <PageChromeContext.Provider
+                value={{ mobileActionsContainer: null }}
+            >
                 <ChatView
                     chatId="chat-2"
                     chat={{ ...activeChat, id: "chat-2" }}
@@ -400,7 +470,7 @@ describe("ChatView header actions", () => {
                     chatLoading={chatLoading}
                     handleChat={handleChat}
                     cancel={vi.fn()}
-                    detach={vi.fn()}
+                    onNewChat={vi.fn()}
                 />
             </PageChromeContext.Provider>
         );
@@ -424,7 +494,11 @@ describe("ChatView header actions", () => {
         rerender(
             view(false, [
                 { id: "old-user", role: "user", content: "Older question" },
-                { id: "old-answer", role: "assistant", content: "Older answer" },
+                {
+                    id: "old-answer",
+                    role: "assistant",
+                    content: "Older answer",
+                },
                 ...liveOverlay,
             ]),
         );
@@ -485,6 +559,104 @@ describe("ChatView header actions", () => {
     });
 });
 
+describe("ChatView side panel and quick actions menu", () => {
+    it.each([false, true])(
+        "offers the side panel and quick actions (new chat: %s)",
+        async (initial) => {
+            renderView(vi.fn(), [], null, initial ? vi.fn() : undefined);
+
+            // Chat-only controls wait until a chat exists.
+            expect(
+                screen.queryByRole("button", { name: "New chat" }) !== null,
+            ).toBe(!initial);
+            openActions();
+            expect(
+                await screen.findByRole("menuitem", {
+                    name: "Open side panel",
+                }),
+            ).toBeInTheDocument();
+            expect(
+                screen.getByRole("menuitem", { name: "Edit quick actions" }),
+            ).toBeInTheDocument();
+            expect(
+                screen.queryByRole("menuitem", { name: "Share" }) !== null,
+            ).toBe(!initial);
+        },
+    );
+
+    it("opens a blank side panel whose Open Documents picker opens documents", async () => {
+        renderView(vi.fn(), [], null, vi.fn());
+
+        openActions();
+        fireEvent.click(
+            await screen.findByRole("menuitem", { name: "Open side panel" }),
+        );
+        fireEvent.click(
+            await screen.findByRole("button", { name: "Open Documents" }),
+        );
+        fireEvent.click(
+            screen.getByRole("button", { name: "Pick Budget.xlsx" }),
+        );
+
+        const viewer = await screen.findByTestId("spreadsheet-viewer");
+        expect(viewer).toHaveAttribute("data-document-id", "excel-1");
+        // The placeholder gives way; only the tab bar's + keeps the name.
+        expect(screen.queryByText("Open Documents")).not.toBeInTheDocument();
+        expect(
+            screen.queryByRole("button", { name: "Pick Budget.xlsx" }),
+        ).not.toBeInTheDocument();
+    });
+
+    it("keeps the panel open on its placeholder when the last tab closes", async () => {
+        renderView();
+
+        fireEvent.click(
+            screen.getByRole("button", { name: "Open Budget.xlsx" }),
+        );
+        await screen.findByTestId("spreadsheet-viewer");
+        fireEvent.click(
+            screen.getByRole("button", { name: "Close Budget.xlsx" }),
+        );
+
+        expect(
+            await screen.findByRole("button", { name: "Open Documents" }),
+        ).toBeInTheDocument();
+        expect(
+            screen.queryByTestId("spreadsheet-viewer"),
+        ).not.toBeInTheDocument();
+        expect(
+            screen.getByRole("button", { name: "Close panel" }),
+        ).toBeInTheDocument();
+    });
+
+    it("opens the picker from the + after the last tab", async () => {
+        renderView();
+
+        fireEvent.click(
+            screen.getByRole("button", { name: "Open Budget.xlsx" }),
+        );
+        await screen.findByTestId("spreadsheet-viewer");
+        expect(
+            screen.queryByRole("button", { name: "Pick Budget.xlsx" }),
+        ).not.toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole("button", { name: "Open Documents" }));
+        expect(
+            screen.getByRole("button", { name: "Pick Budget.xlsx" }),
+        ).toBeInTheDocument();
+    });
+
+    it("edits quick actions from the menu", async () => {
+        renderView();
+
+        openActions();
+        fireEvent.click(
+            await screen.findByRole("menuitem", { name: "Edit quick actions" }),
+        );
+        expect(screen.getByText("Quick actions modal")).toBeInTheDocument();
+    });
+});
+
 describe("Excel attachment previews", () => {
     it.each([false, true])(
         "opens an Excel input pill in the side panel (initial composer: %s)",
@@ -497,7 +669,7 @@ describe("Excel attachment previews", () => {
             expect(viewer).toHaveAttribute("data-document-id", "excel-1");
             expect(viewer).toHaveAttribute("data-version-id", "excel-v4");
             expect(screen.queryByTestId("pdf-viewer")).not.toBeInTheDocument();
-            expect(listDocumentVersions).not.toHaveBeenCalled();
+            expect(listDocumentVersions).toHaveBeenCalledWith("excel-1");
             // Repeated pill clicks activate the existing tab.
             fireEvent.click(
                 screen.getByRole("button", { name: "Open Budget.xlsx" }),
@@ -520,7 +692,7 @@ it("keeps an initial attachment preview open when the first message arrives", as
                 isResponseLoading={false}
                 handleChat={vi.fn().mockResolvedValue("chat-1")}
                 cancel={vi.fn()}
-                detach={vi.fn()}
+                onNewChat={vi.fn()}
                 onInitialSubmit={initial ? initialSubmit : undefined}
             />
         </PageChromeContext.Provider>
@@ -560,7 +732,7 @@ describe("ChatView composer gating", () => {
                 isResponseLoading={false}
                 handleChat={vi.fn().mockResolvedValue("chat-1")}
                 cancel={vi.fn()}
-                detach={vi.fn()}
+                onNewChat={vi.fn()}
                 canSend={false}
                 accessResolved={accessResolved}
             />
@@ -601,7 +773,7 @@ describe("rejected API key", () => {
                     isResponseLoading={false}
                     handleChat={vi.fn().mockResolvedValue("chat-1")}
                     cancel={vi.fn()}
-                    detach={vi.fn()}
+                    onNewChat={vi.fn()}
                     rejectedApiKey={{ model }}
                     onDismissInvalidApiKey={onDismiss}
                 />
@@ -655,7 +827,7 @@ describe("rejected API key", () => {
                     isResponseLoading={false}
                     handleChat={vi.fn().mockResolvedValue("chat-1")}
                     cancel={vi.fn()}
-                    detach={vi.fn()}
+                    onNewChat={vi.fn()}
                     rejectedApiKey={null}
                     onDismissInvalidApiKey={vi.fn()}
                 />
@@ -672,5 +844,139 @@ describe("rejected API key", () => {
             screen.getByRole("button", { name: "Dismiss warning" }),
         );
         expect(onDismiss).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("assistant document tab actions", () => {
+    it.each([false, true])("adds a tab's document to the composer (initial view: %s)", async (initial) => {
+        vi.mocked(getDocument).mockResolvedValue(spreadsheet);
+        renderView(vi.fn(), [], null, initial ? vi.fn() : undefined);
+        fireEvent.click(screen.getByRole("button", { name: "Open Budget.xlsx" }));
+        fireEvent.contextMenu(await screen.findByRole("tab", { name: "Budget.xlsx" }));
+        fireEvent.click(screen.getByRole("menuitem", { name: "Add to chat" }));
+        await waitFor(() => expect(addDoc).toHaveBeenCalledWith(spreadsheet));
+    });
+
+    it.each([null, "project-1"])(
+        "renames the persisted file in its owning scope %s",
+        async (projectId) => {
+            const file = { ...spreadsheet, project_id: projectId };
+            vi.mocked(getDocument).mockResolvedValue(file);
+            vi.mocked(renameProjectDocument).mockResolvedValue({
+                ...file,
+                filename: "Renamed.xlsx",
+            });
+            vi.mocked(renameLibraryDocument).mockResolvedValue({
+                ...file,
+                filename: "Renamed.xlsx",
+            });
+            renderView();
+            fireEvent.click(
+                screen.getByRole("button", { name: "Open Budget.xlsx" }),
+            );
+            const tab = await screen.findByRole("tab", { name: "Budget.xlsx" });
+            fireEvent.contextMenu(tab);
+            fireEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
+            const input = screen.getByRole("textbox", { name: "File name" });
+            fireEvent.change(input, { target: { value: "Renamed.xlsx" } });
+            fireEvent.keyDown(input, { key: "Enter" });
+            expect(
+                await screen.findByRole("tab", { name: "Renamed.xlsx" }),
+            ).toBeVisible();
+            if (projectId) {
+                expect(renameProjectDocument).toHaveBeenCalledWith(
+                    projectId,
+                    "excel-1",
+                    "Renamed.xlsx",
+                );
+                expect(renameLibraryDocument).not.toHaveBeenCalled();
+            } else {
+                expect(renameLibraryDocument).toHaveBeenCalledWith(
+                    "files",
+                    "excel-1",
+                    "Renamed.xlsx",
+                );
+                expect(renameProjectDocument).not.toHaveBeenCalled();
+            }
+        },
+    );
+
+    it("downloads the version represented by the tab", async () => {
+        vi.mocked(getDocumentFile).mockRejectedValue(
+            new Error("internal storage error"),
+        );
+        renderView();
+        fireEvent.click(
+            screen.getByRole("button", { name: "Open Budget.xlsx" }),
+        );
+        fireEvent.contextMenu(
+            await screen.findByRole("tab", { name: "Budget.xlsx" }),
+        );
+        fireEvent.click(screen.getByRole("menuitem", { name: "Download" }));
+        await waitFor(() =>
+            expect(getDocumentFile).toHaveBeenCalledWith("excel-1", "excel-v4"),
+        );
+        expect(
+            await screen.findByText(
+                "This file action could not be completed. Please try again.",
+            ),
+        ).toBeVisible();
+        expect(screen.queryByText("internal storage error")).toBeNull();
+    });
+
+    it("asks before deletion and cancellation preserves the file", async () => {
+        renderView();
+        fireEvent.click(screen.getByRole("button", { name: "Open Budget.xlsx" }));
+        fireEvent.contextMenu(await screen.findByRole("tab", { name: "Budget.xlsx" }));
+        fireEvent.click(await screen.findByRole("menuitem", { name: "Delete file" }));
+        expect(screen.getByRole("dialog", { name: "Delete file?" })).toBeVisible();
+        expect(deleteDocument).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+        expect(screen.getByRole("tab", { name: "Budget.xlsx" })).toBeVisible();
+        expect(deleteDocument).not.toHaveBeenCalled();
+    });
+
+    it("hides destructive actions when the document is read-only", async () => {
+        vi.mocked(getDocument).mockResolvedValue({ ...spreadsheet, can_edit: false, can_delete: false });
+        renderView();
+        fireEvent.click(screen.getByRole("button", { name: "Open Budget.xlsx" }));
+        await waitFor(() => expect(getDocument).toHaveBeenCalled());
+        fireEvent.contextMenu(await screen.findByRole("tab", { name: "Budget.xlsx" }));
+        expect(screen.queryByRole("menuitem", { name: "Delete file" })).toBeNull();
+        expect(screen.queryByRole("menuitem", { name: "Rename" })).toBeNull();
+        expect(deleteDocument).not.toHaveBeenCalled();
+    });
+
+    it("keeps the tab on a failed deletion and closes it after success", async () => {
+        vi.mocked(deleteDocument)
+            .mockRejectedValueOnce(new Error("private database details"))
+            .mockResolvedValueOnce(undefined);
+        renderView();
+        fireEvent.click(
+            screen.getByRole("button", { name: "Open Budget.xlsx" }),
+        );
+        fireEvent.contextMenu(
+            await screen.findByRole("tab", { name: "Budget.xlsx" }),
+        );
+        fireEvent.click(await screen.findByRole("menuitem", { name: "Delete file" }));
+        fireEvent.click(screen.getByRole("button", { name: "Delete file" }));
+        expect(
+            await screen.findByText(
+                "This file could not be deleted. Please try again.",
+            ),
+        ).toBeVisible();
+        expect(screen.getByRole("tab", { name: "Budget.xlsx" })).toBeVisible();
+        fireEvent.click(
+            screen.getByRole("button", { name: "Dismiss warning" }),
+        );
+        fireEvent.contextMenu(screen.getByRole("tab", { name: "Budget.xlsx" }));
+        fireEvent.click(await screen.findByRole("menuitem", { name: "Delete file" }));
+        fireEvent.click(screen.getByRole("button", { name: "Delete file" }));
+        await waitFor(() =>
+            expect(
+                screen.queryByRole("tab", { name: "Budget.xlsx" }),
+            ).toBeNull(),
+        );
+        expect(deleteDocument).toHaveBeenCalledWith("excel-1");
     });
 });

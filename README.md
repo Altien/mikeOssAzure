@@ -69,6 +69,7 @@ credentials.
 - [Tamper-evident exports](docs/tamper-evident-exports.md)
 - [Safe local testing](docs/safe-local-testing.md)
 - [Contributing](CONTRIBUTING.md)
+- [Open-source credits](CREDITS.md)
 - [Security policy](SECURITY.md)
 
 ## What this fork adds

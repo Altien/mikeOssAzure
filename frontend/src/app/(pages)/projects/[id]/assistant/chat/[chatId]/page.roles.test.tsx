@@ -51,6 +51,7 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
 
 vi.mock("next/navigation", () => ({
     useRouter: () => ({ push, replace: vi.fn() }),
+    usePathname: () => window.location.pathname,
 }));
 vi.mock("@/app/lib/usePathParams", () => ({
     usePathParams: () => ({ id: "p1", chatId: "c1" }),
@@ -180,6 +181,7 @@ function chatDetail(userId = "creator") {
 
 // Static export reads route IDs from the current URL through usePathParams.
 async function renderPage() {
+    window.history.replaceState(null, "", "/projects/p1/assistant/chat/c1");
     await act(async () => {
         render(<ProjectAssistantChatPage />);
     });
