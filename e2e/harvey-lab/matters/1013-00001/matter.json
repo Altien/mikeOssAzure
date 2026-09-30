@@ -1,0 +1,328 @@
+{
+  "matter_id": "1013-00001",
+  "client_id": "1013",
+  "matter_seq": "00001",
+  "extracted_at": "2026-09-15T20:37:03+00:00",
+  "source_documents": [
+    "Correspondence/closing-letter-to-client.docx",
+    "Transaction Documents/bridge-loan-agreement-execution.docx"
+  ],
+  "folders": [
+    "Closing",
+    "Correspondence",
+    "Diligence",
+    "Transaction Documents"
+  ],
+  "folder_tree": {
+    "Closing": 4,
+    "Correspondence": 1,
+    "Diligence": 1,
+    "Transaction Documents": 6
+  },
+  "documents": [
+    {
+      "path": "1013-00001/Closing/borrowers-counsel-legal-opinion.docx",
+      "folder": "Closing",
+      "name": "borrowers-counsel-legal-opinion.docx",
+      "ext": "docx",
+      "bytes": 48990
+    },
+    {
+      "path": "1013-00001/Closing/closing-checklist.xlsx",
+      "folder": "Closing",
+      "name": "closing-checklist.xlsx",
+      "ext": "xlsx",
+      "bytes": 13729
+    },
+    {
+      "path": "1013-00001/Closing/funds-flow-memorandum.xlsx",
+      "folder": "Closing",
+      "name": "funds-flow-memorandum.xlsx",
+      "ext": "xlsx",
+      "bytes": 16376
+    },
+    {
+      "path": "1013-00001/Closing/officers-certificate.docx",
+      "folder": "Closing",
+      "name": "officers-certificate.docx",
+      "ext": "docx",
+      "bytes": 48661
+    },
+    {
+      "path": "1013-00001/Correspondence/closing-letter-to-client.docx",
+      "folder": "Correspondence",
+      "name": "closing-letter-to-client.docx",
+      "ext": "docx",
+      "bytes": 50231
+    },
+    {
+      "path": "1013-00001/Diligence/internal-memo-deal-summary-key-issues.docx",
+      "folder": "Diligence",
+      "name": "internal-memo-deal-summary-key-issues.docx",
+      "ext": "docx",
+      "bytes": 67472
+    },
+    {
+      "path": "1013-00001/Transaction Documents/bridge-loan-agreement-execution.docx",
+      "folder": "Transaction Documents",
+      "name": "bridge-loan-agreement-execution.docx",
+      "ext": "docx",
+      "bytes": 91612
+    },
+    {
+      "path": "1013-00001/Transaction Documents/intercreditor-agreement-execution.docx",
+      "folder": "Transaction Documents",
+      "name": "intercreditor-agreement-execution.docx",
+      "ext": "docx",
+      "bytes": 63311
+    },
+    {
+      "path": "1013-00001/Transaction Documents/ip-security-agreement-execution.docx",
+      "folder": "Transaction Documents",
+      "name": "ip-security-agreement-execution.docx",
+      "ext": "docx",
+      "bytes": 50940
+    },
+    {
+      "path": "1013-00001/Transaction Documents/security-agreement-execution.docx",
+      "folder": "Transaction Documents",
+      "name": "security-agreement-execution.docx",
+      "ext": "docx",
+      "bytes": 62406
+    },
+    {
+      "path": "1013-00001/Transaction Documents/warrant-agreement-cobalt.docx",
+      "folder": "Transaction Documents",
+      "name": "warrant-agreement-cobalt.docx",
+      "ext": "docx",
+      "bytes": 57967
+    },
+    {
+      "path": "1013-00001/Transaction Documents/warrant-agreement-pinnacle.docx",
+      "folder": "Transaction Documents",
+      "name": "warrant-agreement-pinnacle.docx",
+      "ext": "docx",
+      "bytes": 63549
+    }
+  ],
+  "doc_counts": {
+    "docx": 10,
+    "xlsx": 2
+  },
+  "status_signals": {
+    "folder:closing": true,
+    "folder:post-closing": false,
+    "folder:early termination": false,
+    "folder:termination": false,
+    "folder:settlement": false,
+    "folder:appeal": false,
+    "folder:wind-down": false,
+    "file:closing-memo": false,
+    "file:final-invoice": false,
+    "file:matter-closing": false,
+    "file:closing-binder": false,
+    "file:engagement-terminat": false,
+    "file:disengagement": false
+  },
+  "doc_dates": {
+    "earliest": null,
+    "latest": null,
+    "all": []
+  },
+  "matter_name": "Genome Dx Therapeutics Inc. — $15,000,000 Senior Secured Bridge Loan Facility",
+  "matter_description": "Representation of Genome Dx Therapeutics Inc. as borrower's counsel in negotiating and closing a $15,000,000 senior secured bridge term loan facility with Pinnacle Venture Lending Corp. and Cobalt Life Sciences Fund III, L.P., secured by substantially all company assets and IP, bridging the company to an anticipated Series C equity financing.",
+  "matter_type": "venture debt / secured bridge loan financing (borrower's counsel)",
+  "client": {
+    "name": "Genome Dx Therapeutics Inc.",
+    "entity_type": "Delaware corporation",
+    "industry": "clinical-stage biotechnology (RNA-based diagnostics and therapeutics for neurodegenerative diseases)",
+    "contacts": [
+      {
+        "name": "Miriam Sato",
+        "title": "General Counsel and Secretary",
+        "email": null
+      },
+      {
+        "name": "Robert \"Rob\" Langford",
+        "title": "Chief Financial Officer",
+        "email": null
+      },
+      {
+        "name": "Dr. Ananya Mehta",
+        "title": "Chief Executive Officer and Co-Founder",
+        "email": null
+      }
+    ]
+  },
+  "counterparties": [
+    {
+      "name": "Pinnacle Venture Lending Corp.",
+      "role": "lender / administrative agent"
+    },
+    {
+      "name": "Cobalt Life Sciences Fund III, L.P.",
+      "role": "lender"
+    }
+  ],
+  "other_parties": [
+    {
+      "name": "Pacific Fiduciary Services Inc.",
+      "role": "collateral agent"
+    },
+    {
+      "name": "Hargrove, Finch & Calloway LLP",
+      "role": "lenders' counsel"
+    },
+    {
+      "name": "Ridgeline Capital Partners LLC",
+      "role": "existing equipment lender / intercreditor party"
+    },
+    {
+      "name": "First Basin National Bank",
+      "role": "deposit account bank"
+    },
+    {
+      "name": "Clearview & Associates LLP",
+      "role": "borrower's independent auditor"
+    },
+    {
+      "name": "National Registered Agents of Delaware Inc.",
+      "role": "registered agent"
+    },
+    {
+      "name": "Verdana Health Ventures Fund II, L.P.",
+      "role": "borrower's existing preferred equity holder / board observer (non-client party of interest)"
+    },
+    {
+      "name": "Sentinel Specialty Insurance Co.",
+      "role": "D&O insurer"
+    },
+    {
+      "name": "Commonwealth Mutual Insurance Group",
+      "role": "general commercial liability insurer"
+    }
+  ],
+  "firm": {
+    "responsible_partner": "Ian Blackwood",
+    "billing_partner": null,
+    "originating_partner": null,
+    "supervising_attorneys": [],
+    "associates": [
+      "Sophie Tremblay (Lead Associate)"
+    ],
+    "paralegals": [],
+    "other_staff": [],
+    "practice_group": "Banking & Finance",
+    "sub_practice": null,
+    "office": "San Francisco"
+  },
+  "practice_area": "Banking & Finance",
+  "sub_practice_area": "Mezzanine & Bridge Finance",
+  "dates": {
+    "engagement_letter": null,
+    "opened": null,
+    "conflicts_cleared": null,
+    "closed": null,
+    "key_deadlines": [
+      {
+        "date": "2026-03-06",
+        "what": "Signing Date - all principal transaction documents executed"
+      },
+      {
+        "date": "2026-03-09",
+        "what": "Deadline to order expedited good standing certificates"
+      },
+      {
+        "date": "2026-03-10",
+        "what": "Lien search results expected"
+      },
+      {
+        "date": "2026-03-11",
+        "what": "Target date for executed DACAs, insurance certificates, good standing certificates"
+      },
+      {
+        "date": "2026-03-12",
+        "what": "Final funds flow memorandum circulated; final pre-closing call"
+      },
+      {
+        "date": "2026-03-13",
+        "what": "Anticipated Closing and Funding Date"
+      },
+      {
+        "date": "2026-04-01",
+        "what": "First monthly interest payment due"
+      }
+    ]
+  },
+  "billing": {
+    "arrangement": null,
+    "rates": [],
+    "budget": null,
+    "retainer": null
+  },
+  "status": {
+    "value": "open",
+    "as_of": "2026-03-06",
+    "basis": "closing-letter-to-client.docx confirms all transaction documents were executed on the Signing Date (March 6, 2026) but funding remained subject to outstanding conditions precedent, with the anticipated Closing and Funding Date of March 13, 2026 still pending as of the letter; no funding-confirmation letter or final invoice is among the sources to confirm the loan actually funded or the matter concluded."
+  },
+  "jurisdictions": [
+    "Delaware",
+    "California"
+  ],
+  "regulators_or_courts": [],
+  "governing_law": null,
+  "deal_or_case": {
+    "transaction_value": "$15,000,000 (aggregate bridge loan commitment)",
+    "case_number": null,
+    "filing_numbers": [],
+    "significant_events": [
+      {
+        "date": "2024-08-01",
+        "what": "Borrower completed $42,000,000 Series B preferred stock financing led by Verdana Health Ventures Fund II, L.P."
+      },
+      {
+        "date": "2026-02-14",
+        "what": "FY2025 audit opinion issued by Clearview & Associates LLP (with going-concern qualification)"
+      },
+      {
+        "date": "2026-02-28",
+        "what": "Draft DACAs circulated to First Basin National Bank"
+      },
+      {
+        "date": "2026-03-04",
+        "what": "Draft Secretary's Certificate circulated for client review"
+      },
+      {
+        "date": "2026-03-06",
+        "what": "Signing Date - Bridge Loan Agreement and all ancillary documents executed"
+      },
+      {
+        "date": "2026-03-13",
+        "what": "Anticipated Closing and Funding Date"
+      }
+    ]
+  },
+  "keywords": [
+    "bridge loan",
+    "senior secured term loan",
+    "venture debt",
+    "biotechnology financing",
+    "intercreditor agreement",
+    "UCC-1 financing statement",
+    "IP security agreement",
+    "deposit account control agreement",
+    "warrant",
+    "Series C conversion option",
+    "going concern",
+    "clinical-stage biotech",
+    "RNA therapeutics"
+  ],
+  "evidence": {
+    "firm.responsible_partner": "closing-letter-to-client.docx: 'Ian Blackwood, the responsible partner on this matter, and Sophie Tremblay, lead associate...' and signature block 'Ian Blackwood Partner, Banking & Finance'",
+    "firm.billing_partner": "no billing partner is named in either source document; only a responsible partner and lead associate are identified",
+    "firm.practice_group": "closing-letter-to-client.docx: 'Ian Blackwood, Partner, Banking & Finance' and 'Sophie Tremblay, Associate, Banking & Finance'",
+    "firm.office": "closing-letter-to-client.docx letterhead: '555 California Street, 40th Floor San Francisco, CA 94104'",
+    "client.industry": "bridge-loan-agreement-execution.docx recitals: 'a clinical-stage biotechnology company engaged in the development of proprietary RNA-based diagnostic and therapeutic platforms targeting rare neurodegenerative diseases'",
+    "status.value": "closing-letter-to-client.docx Section 3 lists multiple 'Remaining Conditions Precedent to Funding' as of the Signing Date, with funding anticipated but not yet confirmed as of March 13, 2026"
+  }
+}

@@ -1,0 +1,433 @@
+{
+  "matter_id": "1003-00005",
+  "client_id": "1003",
+  "matter_seq": "00005",
+  "extracted_at": "2026-09-15T19:56:29+00:00",
+  "source_documents": [
+    "Engagement & Administrative/new-matter-opening-memorandum.docx",
+    "Engagement & Administrative/engagement-letter-hpe-fund-iv.docx",
+    "Engagement & Administrative/conflict-check-memorandum.docx"
+  ],
+  "folders": [
+    "Administrative",
+    "Correspondence",
+    "Debt",
+    "Diligence",
+    "Engagement & Administrative",
+    "Representation Letters",
+    "Tax Analysis",
+    "Tax Opinion",
+    "Transaction Documents"
+  ],
+  "folder_tree": {
+    "Administrative": 2,
+    "Administrative/Dormancy": 2,
+    "Correspondence": 6,
+    "Debt": 2,
+    "Debt/Capital Structure": 2,
+    "Diligence": 5,
+    "Engagement & Administrative": 5,
+    "Representation Letters": 3,
+    "Tax Analysis": 8,
+    "Tax Opinion": 3,
+    "Transaction Documents": 2
+  },
+  "documents": [
+    {
+      "path": "1003-00005/Administrative/Dormancy/letter-cross-to-yeung-engagement-status.docx",
+      "folder": "Administrative/Dormancy",
+      "name": "letter-cross-to-yeung-engagement-status.docx",
+      "ext": "docx",
+      "bytes": 49109
+    },
+    {
+      "path": "1003-00005/Administrative/Dormancy/matter-dormancy-memorandum.docx",
+      "folder": "Administrative/Dormancy",
+      "name": "matter-dormancy-memorandum.docx",
+      "ext": "docx",
+      "bytes": 63895
+    },
+    {
+      "path": "1003-00005/Correspondence/conference-call-summary-august-15.docx",
+      "folder": "Correspondence",
+      "name": "conference-call-summary-august-15.docx",
+      "ext": "docx",
+      "bytes": 51938
+    },
+    {
+      "path": "1003-00005/Correspondence/email-cross-to-mattingly-lender-consent-question.eml",
+      "folder": "Correspondence",
+      "name": "email-cross-to-mattingly-lender-consent-question.eml",
+      "ext": "eml",
+      "bytes": 6623
+    },
+    {
+      "path": "1003-00005/Correspondence/email-cross-to-yeung-business-purpose-concerns.eml",
+      "folder": "Correspondence",
+      "name": "email-cross-to-yeung-business-purpose-concerns.eml",
+      "ext": "eml",
+      "bytes": 7112
+    },
+    {
+      "path": "1003-00005/Correspondence/email-yeung-to-cross-indefinite-pause.eml",
+      "folder": "Correspondence",
+      "name": "email-yeung-to-cross-indefinite-pause.eml",
+      "ext": "eml",
+      "bytes": 4712
+    },
+    {
+      "path": "1003-00005/Correspondence/kickoff-call-agenda.docx",
+      "folder": "Correspondence",
+      "name": "kickoff-call-agenda.docx",
+      "ext": "docx",
+      "bytes": 64678
+    },
+    {
+      "path": "1003-00005/Correspondence/kickoff-call-summary-memo.docx",
+      "folder": "Correspondence",
+      "name": "kickoff-call-summary-memo.docx",
+      "ext": "docx",
+      "bytes": 59800
+    },
+    {
+      "path": "1003-00005/Debt/Capital Structure/credit-agreement-spin-covenant-analysis.docx",
+      "folder": "Debt/Capital Structure",
+      "name": "credit-agreement-spin-covenant-analysis.docx",
+      "ext": "docx",
+      "bytes": 59584
+    },
+    {
+      "path": "1003-00005/Debt/Capital Structure/indenture-spin-covenant-analysis.docx",
+      "folder": "Debt/Capital Structure",
+      "name": "indenture-spin-covenant-analysis.docx",
+      "ext": "docx",
+      "bytes": 58554
+    },
+    {
+      "path": "1003-00005/Diligence/diligence-tracker.xlsx",
+      "folder": "Diligence",
+      "name": "diligence-tracker.xlsx",
+      "ext": "xlsx",
+      "bytes": 21534
+    },
+    {
+      "path": "1003-00005/Diligence/email-nazari-to-weiss-tax-returns.eml",
+      "folder": "Diligence",
+      "name": "email-nazari-to-weiss-tax-returns.eml",
+      "ext": "eml",
+      "bytes": 7714
+    },
+    {
+      "path": "1003-00005/Diligence/email-simmons-to-chandrasekar-org-docs.eml",
+      "folder": "Diligence",
+      "name": "email-simmons-to-chandrasekar-org-docs.eml",
+      "ext": "eml",
+      "bytes": 6892
+    },
+    {
+      "path": "1003-00005/Diligence/initial-tax-diligence-request-list.docx",
+      "folder": "Diligence",
+      "name": "initial-tax-diligence-request-list.docx",
+      "ext": "docx",
+      "bytes": 59094
+    },
+    {
+      "path": "1003-00005/Diligence/supplemental-request-kestrel-acquisition.docx",
+      "folder": "Diligence",
+      "name": "supplemental-request-kestrel-acquisition.docx",
+      "ext": "docx",
+      "bytes": 54410
+    },
+    {
+      "path": "1003-00005/Engagement & Administrative/conflict-check-memorandum.docx",
+      "folder": "Engagement & Administrative",
+      "name": "conflict-check-memorandum.docx",
+      "ext": "docx",
+      "bytes": 51969
+    },
+    {
+      "path": "1003-00005/Engagement & Administrative/engagement-letter-hpe-fund-iv.docx",
+      "folder": "Engagement & Administrative",
+      "name": "engagement-letter-hpe-fund-iv.docx",
+      "ext": "docx",
+      "bytes": 53861
+    },
+    {
+      "path": "1003-00005/Engagement & Administrative/interim-invoice-22-7831-001.docx",
+      "folder": "Engagement & Administrative",
+      "name": "interim-invoice-22-7831-001.docx",
+      "ext": "docx",
+      "bytes": 43464
+    },
+    {
+      "path": "1003-00005/Engagement & Administrative/interim-invoice-22-7831-002.docx",
+      "folder": "Engagement & Administrative",
+      "name": "interim-invoice-22-7831-002.docx",
+      "ext": "docx",
+      "bytes": 46788
+    },
+    {
+      "path": "1003-00005/Engagement & Administrative/new-matter-opening-memorandum.docx",
+      "folder": "Engagement & Administrative",
+      "name": "new-matter-opening-memorandum.docx",
+      "ext": "docx",
+      "bytes": 56359
+    },
+    {
+      "path": "1003-00005/Representation Letters/email-cross-to-yeung-second-draft-rep-letter.eml",
+      "folder": "Representation Letters",
+      "name": "email-cross-to-yeung-second-draft-rep-letter.eml",
+      "ext": "eml",
+      "bytes": 10669
+    },
+    {
+      "path": "1003-00005/Representation Letters/representation-letter-first-draft.docx",
+      "folder": "Representation Letters",
+      "name": "representation-letter-first-draft.docx",
+      "ext": "docx",
+      "bytes": 67715
+    },
+    {
+      "path": "1003-00005/Representation Letters/representation-letter-second-draft-redline.docx",
+      "folder": "Representation Letters",
+      "name": "representation-letter-second-draft-redline.docx",
+      "ext": "docx",
+      "bytes": 78010
+    },
+    {
+      "path": "1003-00005/Tax Analysis/business-purpose-memorandum.docx",
+      "folder": "Tax Analysis",
+      "name": "business-purpose-memorandum.docx",
+      "ext": "docx",
+      "bytes": 69623
+    },
+    {
+      "path": "1003-00005/Tax Analysis/coi-368a1d-reorganization-analysis.docx",
+      "folder": "Tax Analysis",
+      "name": "coi-368a1d-reorganization-analysis.docx",
+      "ext": "docx",
+      "bytes": 64155
+    },
+    {
+      "path": "1003-00005/Tax Analysis/device-test-analysis-memo.docx",
+      "folder": "Tax Analysis",
+      "name": "device-test-analysis-memo.docx",
+      "ext": "docx",
+      "bytes": 64886
+    },
+    {
+      "path": "1003-00005/Tax Analysis/section-355-analysis-memo-first-draft.docx",
+      "folder": "Tax Analysis",
+      "name": "section-355-analysis-memo-first-draft.docx",
+      "ext": "docx",
+      "bytes": 80107
+    },
+    {
+      "path": "1003-00005/Tax Analysis/section-355b-atb-analysis-kestrel.docx",
+      "folder": "Tax Analysis",
+      "name": "section-355b-atb-analysis-kestrel.docx",
+      "ext": "docx",
+      "bytes": 61460
+    },
+    {
+      "path": "1003-00005/Tax Analysis/section-355d-disqualified-distribution-memo.docx",
+      "folder": "Tax Analysis",
+      "name": "section-355d-disqualified-distribution-memo.docx",
+      "ext": "docx",
+      "bytes": 62541
+    },
+    {
+      "path": "1003-00005/Tax Analysis/section-355e-plan-analysis-memo.docx",
+      "folder": "Tax Analysis",
+      "name": "section-355e-plan-analysis-memo.docx",
+      "ext": "docx",
+      "bytes": 68970
+    },
+    {
+      "path": "1003-00005/Tax Analysis/state-local-tax-considerations-memo.docx",
+      "folder": "Tax Analysis",
+      "name": "state-local-tax-considerations-memo.docx",
+      "ext": "docx",
+      "bytes": 57705
+    },
+    {
+      "path": "1003-00005/Tax Opinion/draft-tax-opinion-letter-first-draft.docx",
+      "folder": "Tax Opinion",
+      "name": "draft-tax-opinion-letter-first-draft.docx",
+      "ext": "docx",
+      "bytes": 66940
+    },
+    {
+      "path": "1003-00005/Tax Opinion/email-cross-to-yeung-chandrasekar-draft-opinion.eml",
+      "folder": "Tax Opinion",
+      "name": "email-cross-to-yeung-chandrasekar-draft-opinion.eml",
+      "ext": "eml",
+      "bytes": 9922
+    },
+    {
+      "path": "1003-00005/Tax Opinion/internal-comments-draft-opinion.docx",
+      "folder": "Tax Opinion",
+      "name": "internal-comments-draft-opinion.docx",
+      "ext": "docx",
+      "bytes": 67627
+    },
+    {
+      "path": "1003-00005/Transaction Documents/draft-tax-matters-provisions.docx",
+      "folder": "Transaction Documents",
+      "name": "draft-tax-matters-provisions.docx",
+      "ext": "docx",
+      "bytes": 68904
+    },
+    {
+      "path": "1003-00005/Transaction Documents/draft-tax-sharing-agreement-outline.docx",
+      "folder": "Transaction Documents",
+      "name": "draft-tax-sharing-agreement-outline.docx",
+      "ext": "docx",
+      "bytes": 74356
+    }
+  ],
+  "doc_counts": {
+    "docx": 28,
+    "eml": 7,
+    "xlsx": 1
+  },
+  "status_signals": {
+    "folder:closing": false,
+    "folder:post-closing": false,
+    "folder:early termination": false,
+    "folder:termination": false,
+    "folder:settlement": false,
+    "folder:appeal": false,
+    "folder:wind-down": false,
+    "file:closing-memo": false,
+    "file:final-invoice": false,
+    "file:matter-closing": false,
+    "file:closing-binder": false,
+    "file:engagement-terminat": false,
+    "file:disengagement": false
+  },
+  "doc_dates": {
+    "earliest": null,
+    "latest": null,
+    "all": []
+  },
+  "matter_name": "Harrowgate Private Equity Fund IV, L.P. - Tax Opinion for Spin-Off of Meridian Flow Technologies, Inc. from Veldran Industries Holdings, Inc.",
+  "matter_description": "Serve as tax counsel to render a 'should'-level tax opinion addressing whether the proposed pro rata spin-off of Veldran Industries Holdings, Inc.'s Precision Flow Solutions Division into a newly formed entity, Meridian Flow Technologies, Inc., qualifies as a tax-free distribution under IRC Section 355(a) and a reorganization under IRC Section 368(a)(1)(D); HPE Fund IV holds approximately 62.4% of Veldran.",
+  "matter_type": "Tax opinion / corporate spin-off (divisive reorganization) - tax counsel",
+  "client": {
+    "name": "Harrowgate Private Equity Fund IV, L.P.",
+    "entity_type": "Delaware limited partnership",
+    "industry": "Private equity",
+    "contacts": [
+      {
+        "name": "Christine Yeung",
+        "title": "General Counsel, Harrowgate Capital Advisors LLC",
+        "email": null
+      },
+      {
+        "name": "Diana Fenn",
+        "title": "Managing Partner & Chief Investment Officer, Harrowgate Capital Advisors LLC; Board Chair, Veldran Industries Holdings, Inc.",
+        "email": null
+      },
+      {
+        "name": "Tobias Rourke",
+        "title": "Partner, Head of Portfolio Operations, Harrowgate Capital Advisors LLC",
+        "email": null
+      }
+    ]
+  },
+  "counterparties": [],
+  "other_parties": [
+    {
+      "name": "Veldran Industries Holdings, Inc.",
+      "role": "co-client / distributing corporation (portfolio company)"
+    },
+    {
+      "name": "Meridian Flow Technologies, Inc.",
+      "role": "controlled corporation / SpinCo (planned, not yet incorporated)"
+    },
+    {
+      "name": "Pemberton Rathbone LLP",
+      "role": "auditor to Veldran"
+    }
+  ],
+  "firm": {
+    "responsible_partner": "Leonard Cross",
+    "billing_partner": "Sylvia Hartwell",
+    "originating_partner": null,
+    "supervising_attorneys": [],
+    "associates": [
+      "Garrett Simmons",
+      "Leila Nazari"
+    ],
+    "paralegals": [],
+    "other_staff": [],
+    "practice_group": "Tax",
+    "sub_practice": "Corporate Tax - Spin-Offs / Reorganizations",
+    "office": "New York"
+  },
+  "practice_area": "Tax",
+  "sub_practice_area": "Tax Opinions & Rulings",
+  "dates": {
+    "engagement_letter": "2022-04-11",
+    "opened": "2022-04-11",
+    "conflicts_cleared": "2022-04-11",
+    "closed": null,
+    "key_deadlines": [
+      {
+        "date": "2022",
+        "what": "Targeted record and distribution date for the Spin-Off (fourth quarter of 2022)"
+      }
+    ]
+  },
+  "billing": {
+    "arrangement": "hourly",
+    "rates": [],
+    "budget": "$850,000-$1,200,000 estimated total fees",
+    "retainer": null
+  },
+  "status": {
+    "value": "unknown",
+    "as_of": null,
+    "basis": "No closing documents among sources; only the new matter opening memorandum, engagement letter, and conflict check memorandum (all dated April 11, 2022) are available, all predating the targeted Q4 2022 closing of the spin-off, so it is unclear whether the opinion was delivered or the transaction closed."
+  },
+  "jurisdictions": [
+    "Delaware",
+    "Georgia",
+    "North Carolina"
+  ],
+  "regulators_or_courts": [
+    "Internal Revenue Service (IRS)"
+  ],
+  "governing_law": "Delaware / U.S. federal tax law",
+  "deal_or_case": {
+    "transaction_value": "Precision Flow Solutions Division (business to be spun off): FY2021 revenue approximately $820 million, EBITDA approximately $133 million",
+    "case_number": null,
+    "filing_numbers": [],
+    "significant_events": [
+      {
+        "date": "2022-04-11",
+        "what": "Matter opened; engagement letter and conflict check memorandum executed"
+      }
+    ]
+  },
+  "keywords": [
+    "spin-off",
+    "divisive reorganization",
+    "Section 355",
+    "Section 368(a)(1)(D) reorganization",
+    "tax opinion",
+    "should-level opinion",
+    "device test",
+    "active trade or business requirement",
+    "Section 355(e)",
+    "continuity of business enterprise",
+    "distributing corporation",
+    "controlled corporation",
+    "private letter ruling"
+  ],
+  "evidence": {
+    "status.value": "Only the new matter opening memorandum, engagement letter, and conflict check memorandum (all dated April 11, 2022) are among the sources; no document confirms whether the tax opinion was delivered or the spin-off closed.",
+    "client.contacts": "conflict-check-memorandum.docx: Diana Fenn listed as 'Managing Partner & CIO, Harrowgate Capital Advisors LLC; Board Chair, Veldran Industries Holdings, Inc.'"
+  }
+}

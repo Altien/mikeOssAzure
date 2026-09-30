@@ -1,0 +1,360 @@
+{
+  "matter_id": "1008-00009",
+  "client_id": "1008",
+  "matter_seq": "00009",
+  "extracted_at": "2026-09-15T20:33:38+00:00",
+  "source_documents": [
+    "Engagement/engagement-letter-lumos-breach-response.docx",
+    "Correspondence/email-allison-cho-notification-timeline-coordination.eml",
+    "Correspondence/response-to-garrison-oakley-demand-letter.docx"
+  ],
+  "folders": [
+    "Advice & Analysis",
+    "Closing",
+    "Correspondence",
+    "Engagement",
+    "Insurance",
+    "Notifications"
+  ],
+  "folder_tree": {
+    "Advice & Analysis": 3,
+    "Closing": 1,
+    "Correspondence": 2,
+    "Engagement": 2,
+    "Insurance": 1,
+    "Notifications": 3
+  },
+  "documents": [
+    {
+      "path": "1008-00009/Advice & Analysis/board-investor-notification-memo.docx",
+      "folder": "Advice & Analysis",
+      "name": "board-investor-notification-memo.docx",
+      "ext": "docx",
+      "bytes": 63030
+    },
+    {
+      "path": "1008-00009/Advice & Analysis/multi-jurisdictional-notification-analysis-memo.docx",
+      "folder": "Advice & Analysis",
+      "name": "multi-jurisdictional-notification-analysis-memo.docx",
+      "ext": "docx",
+      "bytes": 84218
+    },
+    {
+      "path": "1008-00009/Advice & Analysis/preliminary-incident-assessment-memo.docx",
+      "folder": "Advice & Analysis",
+      "name": "preliminary-incident-assessment-memo.docx",
+      "ext": "docx",
+      "bytes": 62308
+    },
+    {
+      "path": "1008-00009/Closing/post-incident-remediation-closeout-memo.docx",
+      "folder": "Closing",
+      "name": "post-incident-remediation-closeout-memo.docx",
+      "ext": "docx",
+      "bytes": 65966
+    },
+    {
+      "path": "1008-00009/Correspondence/email-allison-cho-notification-timeline-coordination.eml",
+      "folder": "Correspondence",
+      "name": "email-allison-cho-notification-timeline-coordination.eml",
+      "ext": "eml",
+      "bytes": 11499
+    },
+    {
+      "path": "1008-00009/Correspondence/response-to-garrison-oakley-demand-letter.docx",
+      "folder": "Correspondence",
+      "name": "response-to-garrison-oakley-demand-letter.docx",
+      "ext": "docx",
+      "bytes": 44323
+    },
+    {
+      "path": "1008-00009/Engagement/engagement-letter-lumos-breach-response.docx",
+      "folder": "Engagement",
+      "name": "engagement-letter-lumos-breach-response.docx",
+      "ext": "docx",
+      "bytes": 50391
+    },
+    {
+      "path": "1008-00009/Engagement/privilege-protocol-forensic-retention-memo.docx",
+      "folder": "Engagement",
+      "name": "privilege-protocol-forensic-retention-memo.docx",
+      "ext": "docx",
+      "bytes": 56577
+    },
+    {
+      "path": "1008-00009/Insurance/insurance-carrier-notice-letter.docx",
+      "folder": "Insurance",
+      "name": "insurance-carrier-notice-letter.docx",
+      "ext": "docx",
+      "bytes": 49509
+    },
+    {
+      "path": "1008-00009/Notifications/ag-notification-letter-template.docx",
+      "folder": "Notifications",
+      "name": "ag-notification-letter-template.docx",
+      "ext": "docx",
+      "bytes": 51753
+    },
+    {
+      "path": "1008-00009/Notifications/enterprise-customer-notification-letter-template.docx",
+      "folder": "Notifications",
+      "name": "enterprise-customer-notification-letter-template.docx",
+      "ext": "docx",
+      "bytes": 49710
+    },
+    {
+      "path": "1008-00009/Notifications/individual-notification-letter-template-us.docx",
+      "folder": "Notifications",
+      "name": "individual-notification-letter-template-us.docx",
+      "ext": "docx",
+      "bytes": 49650
+    }
+  ],
+  "doc_counts": {
+    "docx": 11,
+    "eml": 1
+  },
+  "status_signals": {
+    "folder:closing": true,
+    "folder:post-closing": false,
+    "folder:early termination": false,
+    "folder:termination": false,
+    "folder:settlement": false,
+    "folder:appeal": false,
+    "folder:wind-down": false,
+    "file:closing-memo": false,
+    "file:final-invoice": false,
+    "file:matter-closing": false,
+    "file:closing-binder": false,
+    "file:engagement-terminat": false,
+    "file:disengagement": false
+  },
+  "doc_dates": {
+    "earliest": null,
+    "latest": null,
+    "all": []
+  },
+  "matter_name": "Lumos Analytics Inc. — Insight Platform Data Security Incident Response",
+  "matter_description": "Outside counsel representation of Lumos Analytics Inc. in responding to a credential-stuffing data security incident affecting the Lumos Insight Platform, including forensic investigation coordination, multi-jurisdictional breach notification, regulatory communications, insurance coordination, and defense against a pre-litigation demand letter.",
+  "matter_type": "data breach / cyber incident response",
+  "client": {
+    "name": "Lumos Analytics Inc.",
+    "entity_type": "Delaware corporation",
+    "industry": "software / data analytics (SaaS platform)",
+    "contacts": [
+      {
+        "name": "Allison Cho",
+        "title": "General Counsel & Chief Privacy Officer",
+        "email": "allison.cho@lumosanalytics.com"
+      },
+      {
+        "name": "Jason Haddad",
+        "title": "Chief Information Security Officer",
+        "email": "jason.haddad@lumosanalytics.com"
+      },
+      {
+        "name": "Deepika Narayanan",
+        "title": "Chief Technology Officer",
+        "email": null
+      },
+      {
+        "name": "Brian Kowalski",
+        "title": "Vice President of Engineering",
+        "email": null
+      },
+      {
+        "name": "Fiona Albrecht",
+        "title": "Customer success / customer-facing contact",
+        "email": "fiona.albrecht@lumosanalytics.com"
+      }
+    ]
+  },
+  "counterparties": [
+    {
+      "name": "Unnamed putative class of Lumos Insight Platform users",
+      "role": "opposing party (pre-litigation demand)"
+    }
+  ],
+  "other_parties": [
+    {
+      "name": "Garrison & Oakley LLP",
+      "role": "opposing counsel (demand letter on behalf of putative class)"
+    },
+    {
+      "name": "Palisade Digital Forensics, Inc.",
+      "role": "forensic investigation vendor (retained at direction of counsel)"
+    },
+    {
+      "name": "Harmon Watts & Kendrick LLP",
+      "role": "UK/EU coordinating local counsel"
+    },
+    {
+      "name": "Threshold Public Relations LLC",
+      "role": "crisis communications advisor"
+    },
+    {
+      "name": "Sentinel Identity Services, Inc.",
+      "role": "notification mailing / credit monitoring vendor"
+    },
+    {
+      "name": "NexTier Cyber Insurance Group",
+      "role": "cyber liability insurer"
+    },
+    {
+      "name": "Ridgeline Capital Partners, LP",
+      "role": "Lumos principal equity holder (non-client)"
+    },
+    {
+      "name": "UK Information Commissioner's Office",
+      "role": "regulator"
+    },
+    {
+      "name": "State Attorneys General offices (34 states)",
+      "role": "regulator"
+    }
+  ],
+  "firm": {
+    "responsible_partner": "Rachel Bernstein",
+    "billing_partner": "Kevin Ostrowski",
+    "originating_partner": null,
+    "supervising_attorneys": [],
+    "associates": [
+      "Sara Hendricks (Lead Associate)",
+      "Priscilla Wynn (Working Associate)"
+    ],
+    "paralegals": [],
+    "other_staff": [],
+    "practice_group": "Privacy & Data Security",
+    "sub_practice": null,
+    "office": "San Francisco"
+  },
+  "practice_area": "IP & Technology",
+  "sub_practice_area": "Privacy & Data Security",
+  "dates": {
+    "engagement_letter": "2024-06-18",
+    "opened": "2024-06-18",
+    "conflicts_cleared": null,
+    "closed": null,
+    "key_deadlines": [
+      {
+        "date": "2024-07-31",
+        "what": "Client sign-off deadline on individual notification letter template"
+      },
+      {
+        "date": "2024-08-05",
+        "what": "Target send date for individual, enterprise, and UK notifications"
+      },
+      {
+        "date": "2024-08-14",
+        "what": "Colorado/Florida breach notification statutory deadline"
+      },
+      {
+        "date": "2024-08-29",
+        "what": "Maryland breach notification statutory deadline"
+      }
+    ]
+  },
+  "billing": {
+    "arrangement": "hourly",
+    "rates": [
+      {
+        "person": "Partners",
+        "rate": "$1,050-$1,250/hour"
+      },
+      {
+        "person": "Associates",
+        "rate": "$525-$750/hour"
+      },
+      {
+        "person": "Paralegals/Legal Assistants",
+        "rate": "$275-$375/hour"
+      }
+    ],
+    "budget": null,
+    "retainer": null
+  },
+  "status": {
+    "value": "open",
+    "as_of": "2024-09-12",
+    "basis": "Sources include an engagement letter, a mid-stream coordination email, and a response to a pre-litigation demand letter (Sept 12, 2024) declining settlement; no closing letter or final invoice among sources, and the matter (breach response plus potential litigation defense) was still active as of the latest document."
+  },
+  "jurisdictions": [
+    "California",
+    "all 50 U.S. states",
+    "District of Columbia",
+    "Guam",
+    "Puerto Rico",
+    "U.S. Virgin Islands",
+    "United Kingdom",
+    "European Economic Area"
+  ],
+  "regulators_or_courts": [
+    "State Attorneys General (34 states)",
+    "UK Information Commissioner's Office",
+    "U.S. Department of Health and Human Services (contingent)",
+    "Federal Trade Commission (contingent)"
+  ],
+  "governing_law": "California",
+  "deal_or_case": {
+    "transaction_value": null,
+    "case_number": null,
+    "filing_numbers": [
+      "NexTier Cyber Insurance Policy No. NXT-CYB-2024-07812"
+    ],
+    "significant_events": [
+      {
+        "date": "2024-06-15",
+        "what": "Credential-stuffing incident detected by Lumos SOC"
+      },
+      {
+        "date": "2024-06-18",
+        "what": "C&H engaged; ICO 72-hour notification filed by HWK"
+      },
+      {
+        "date": "2024-07-15",
+        "what": "Palisade Digital Forensics delivered final forensic investigation report (determination date for notification deadlines)"
+      },
+      {
+        "date": "2024-07-18",
+        "what": "Multi-jurisdictional breach notification analysis memo delivered"
+      },
+      {
+        "date": "2024-08-05",
+        "what": "Individual, enterprise customer, and UK/EU notifications sent"
+      },
+      {
+        "date": "2024-08-28",
+        "what": "Pre-litigation demand letter received from Garrison & Oakley LLP"
+      },
+      {
+        "date": "2024-09-12",
+        "what": "C&H responded to demand letter, declining pre-suit settlement discussions"
+      }
+    ]
+  },
+  "keywords": [
+    "data breach",
+    "credential stuffing",
+    "breach notification",
+    "GDPR",
+    "UK GDPR",
+    "state attorney general notification",
+    "cyber liability insurance",
+    "forensic investigation",
+    "litigation hold",
+    "credit monitoring",
+    "demand letter",
+    "privacy and data security",
+    "Lumos Insight Platform",
+    "panel counsel"
+  ],
+  "evidence": {
+    "firm.responsible_partner": "engagement-letter-lumos-breach-response.docx: staffing table 'Rachel Bernstein | Responsible Partner | Partner, Privacy & Data Security'",
+    "firm.billing_partner": "engagement-letter-lumos-breach-response.docx: staffing table 'Kevin Ostrowski | Billing Partner | Partner, Privacy & Data Security'",
+    "firm.practice_group": "engagement-letter-lumos-breach-response.docx staffing table and response-to-garrison-oakley-demand-letter.docx letterhead: 'Privacy & Data Security Practice Group'",
+    "firm.office": "engagement-letter-lumos-breach-response.docx: 'All four timekeepers identified above are based in the Firm's San Francisco office'",
+    "client.entity_type": "engagement-letter-lumos-breach-response.docx: 'Lumos Analytics Inc., a Delaware corporation headquartered in San Francisco, California'",
+    "client.industry": "engagement-letter-lumos-breach-response.docx: context of 'Lumos Insight Platform' with enterprise customer tenants and SaaS-style user accounts implies software/analytics platform",
+    "status.value": "response-to-garrison-oakley-demand-letter.docx (Sept 12, 2024) is the latest document and shows the matter still active, declining settlement rather than closing; no engagement termination or final invoice present"
+  }
+}

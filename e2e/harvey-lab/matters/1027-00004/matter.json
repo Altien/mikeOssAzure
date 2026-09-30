@@ -1,0 +1,336 @@
+{
+  "matter_id": "1027-00004",
+  "client_id": "1027",
+  "matter_seq": "00004",
+  "extracted_at": "2026-09-15T20:36:19+00:00",
+  "source_documents": [
+    "Engagement/engagement-letter-pcg.docx",
+    "Transaction Documents/assignment-and-assumption-of-contracts.docx"
+  ],
+  "folders": [
+    "Closing",
+    "Diligence",
+    "Engagement",
+    "Financing",
+    "Transaction Documents"
+  ],
+  "folder_tree": {
+    "Closing": 3,
+    "Diligence": 3,
+    "Diligence/Title": 2,
+    "Engagement": 1,
+    "Financing": 1,
+    "Transaction Documents": 4
+  },
+  "documents": [
+    {
+      "path": "1027-00004/Closing/buyers-closing-certificate.docx",
+      "folder": "Closing",
+      "name": "buyers-closing-certificate.docx",
+      "ext": "docx",
+      "bytes": 51594
+    },
+    {
+      "path": "1027-00004/Closing/closing-checklist.xlsx",
+      "folder": "Closing",
+      "name": "closing-checklist.xlsx",
+      "ext": "xlsx",
+      "bytes": 20529
+    },
+    {
+      "path": "1027-00004/Closing/settlement-statement-and-prorations-memo.xlsx",
+      "folder": "Closing",
+      "name": "settlement-statement-and-prorations-memo.xlsx",
+      "ext": "xlsx",
+      "bytes": 20348
+    },
+    {
+      "path": "1027-00004/Diligence/due-diligence-checklist.xlsx",
+      "folder": "Diligence",
+      "name": "due-diligence-checklist.xlsx",
+      "ext": "xlsx",
+      "bytes": 21393
+    },
+    {
+      "path": "1027-00004/Diligence/Title/title-commitment-review-memo.docx",
+      "folder": "Diligence/Title",
+      "name": "title-commitment-review-memo.docx",
+      "ext": "docx",
+      "bytes": 77045
+    },
+    {
+      "path": "1027-00004/Diligence/Title/title-objection-letter.docx",
+      "folder": "Diligence/Title",
+      "name": "title-objection-letter.docx",
+      "ext": "docx",
+      "bytes": 47086
+    },
+    {
+      "path": "1027-00004/Engagement/engagement-letter-pcg.docx",
+      "folder": "Engagement",
+      "name": "engagement-letter-pcg.docx",
+      "ext": "docx",
+      "bytes": 54429
+    },
+    {
+      "path": "1027-00004/Financing/loan-term-sheet-review-memo.docx",
+      "folder": "Financing",
+      "name": "loan-term-sheet-review-memo.docx",
+      "ext": "docx",
+      "bytes": 75377
+    },
+    {
+      "path": "1027-00004/Transaction Documents/assignment-and-assumption-of-contracts.docx",
+      "folder": "Transaction Documents",
+      "name": "assignment-and-assumption-of-contracts.docx",
+      "ext": "docx",
+      "bytes": 62798
+    },
+    {
+      "path": "1027-00004/Transaction Documents/bill-of-sale.docx",
+      "folder": "Transaction Documents",
+      "name": "bill-of-sale.docx",
+      "ext": "docx",
+      "bytes": 52658
+    },
+    {
+      "path": "1027-00004/Transaction Documents/post-closing-transition-agreement.docx",
+      "folder": "Transaction Documents",
+      "name": "post-closing-transition-agreement.docx",
+      "ext": "docx",
+      "bytes": 64227
+    },
+    {
+      "path": "1027-00004/Transaction Documents/purchase-and-sale-agreement.docx",
+      "folder": "Transaction Documents",
+      "name": "purchase-and-sale-agreement.docx",
+      "ext": "docx",
+      "bytes": 102166
+    }
+  ],
+  "doc_counts": {
+    "docx": 9,
+    "xlsx": 3
+  },
+  "status_signals": {
+    "folder:closing": true,
+    "folder:post-closing": false,
+    "folder:early termination": false,
+    "folder:termination": false,
+    "folder:settlement": false,
+    "folder:appeal": false,
+    "folder:wind-down": false,
+    "file:closing-memo": false,
+    "file:final-invoice": false,
+    "file:matter-closing": false,
+    "file:closing-binder": false,
+    "file:engagement-terminat": false,
+    "file:disengagement": false
+  },
+  "doc_dates": {
+    "earliest": null,
+    "latest": null,
+    "all": []
+  },
+  "matter_name": "PCG Delray Hotel — Acquisition of The Marisol Hotel, Delray Beach, FL",
+  "matter_description": "Representation of Pellegrino Capital Group LLC and its newly formed subsidiary PCG Delray Hotel LLC in the $35,000,000 direct asset acquisition of The Marisol - A Saltaire Hotel, a 42-key oceanfront boutique hotel in Delray Beach, Florida, from Saltaire Hospitality Holdings LLC, including related $24,500,000 acquisition financing from Meridian Coast Bank, N.A.",
+  "matter_type": "commercial real estate acquisition (hospitality asset) with related acquisition financing",
+  "client": {
+    "name": "Pellegrino Capital Group LLC",
+    "entity_type": "Florida limited liability company (single-family office); acquiring entity PCG Delray Hotel LLC is a newly formed Florida single-member LLC wholly owned by PCG",
+    "industry": "family office / hospitality and real estate investment",
+    "contacts": [
+      {
+        "name": "Veronica Suárez-Pellegrino, Esq.",
+        "title": "General Counsel, Pellegrino Capital Group LLC",
+        "email": null
+      },
+      {
+        "name": "Marco A. Pellegrino",
+        "title": "Founder & Managing Principal, Pellegrino Capital Group LLC (78% member)",
+        "email": null
+      }
+    ]
+  },
+  "counterparties": [
+    {
+      "name": "Saltaire Hospitality Holdings LLC",
+      "role": "seller"
+    },
+    {
+      "name": "Meridian Coast Bank, N.A.",
+      "role": "lender"
+    }
+  ],
+  "other_parties": [
+    {
+      "name": "Hargrove, Kessler & Blaine LLP (Patricia \"Trish\" Blaine, Esq.)",
+      "role": "seller's counsel"
+    },
+    {
+      "name": "Braddock Reeves LLP (Jonathan Ng, Esq.)",
+      "role": "lender's counsel"
+    },
+    {
+      "name": "Palmetto Title & Escrow Company (Denise Lafleur)",
+      "role": "escrow agent / title company"
+    },
+    {
+      "name": "Commonwealth Southern Title Insurance Company",
+      "role": "title insurance underwriter"
+    },
+    {
+      "name": "Crestline Surveying & Mapping, Inc. (George Tavares, PSM)",
+      "role": "surveyor"
+    },
+    {
+      "name": "Verdana Environmental Group LLC (Dr. Anita Robles, P.E.)",
+      "role": "environmental consultant"
+    },
+    {
+      "name": "Whitman Aldridge & Co. LLP (Helen Tsao, CPA)",
+      "role": "client's tax/accounting advisor"
+    },
+    {
+      "name": "Saylor & Beckett Valuation Services LLC (Martin Saylor, MAI)",
+      "role": "appraiser"
+    },
+    {
+      "name": "Harborview Risk Advisors LLC / Atlantic Keystone Insurance Company",
+      "role": "insurance broker / insurer"
+    },
+    {
+      "name": "Saltaire Management Co. LLC",
+      "role": "seller's affiliate hotel manager (Existing Management Agreement to be terminated)"
+    },
+    {
+      "name": "City of Delray Beach / Palm Beach County",
+      "role": "local governmental / regulatory authority"
+    }
+  ],
+  "firm": {
+    "responsible_partner": "Angela Fontaine",
+    "billing_partner": "Douglas Fairchild",
+    "originating_partner": null,
+    "supervising_attorneys": [
+      "Angela Fontaine",
+      "Douglas Fairchild"
+    ],
+    "associates": [
+      "Rafael Dominguez",
+      "Cynthia Ho"
+    ],
+    "paralegals": [],
+    "other_staff": [],
+    "practice_group": "Real Estate",
+    "sub_practice": null,
+    "office": "Miami, FL (1450 Brickell Avenue)"
+  },
+  "practice_area": "Real Estate",
+  "sub_practice_area": "Acquisitions & Dispositions",
+  "dates": {
+    "engagement_letter": "2025-06-20",
+    "opened": "2025-06-20",
+    "conflicts_cleared": null,
+    "closed": "2025-09-15",
+    "key_deadlines": [
+      {
+        "date": "2025-07-07",
+        "what": "Target execution date of the Purchase and Sale Agreement"
+      },
+      {
+        "date": "2025-08-07",
+        "what": "Title objection deadline"
+      },
+      {
+        "date": "2025-08-21",
+        "what": "Expiration of 45-day due diligence period"
+      },
+      {
+        "date": "2025-08-28",
+        "what": "Loan commitment deadline"
+      },
+      {
+        "date": "2025-09-15",
+        "what": "Targeted / actual Closing Date"
+      },
+      {
+        "date": "2025-11-14",
+        "what": "End of 60-day post-closing hotel operations transition period"
+      }
+    ]
+  },
+  "billing": {
+    "arrangement": null,
+    "rates": [],
+    "budget": null,
+    "retainer": null
+  },
+  "status": {
+    "value": "closed",
+    "as_of": "2025-09-15",
+    "basis": "The Assignment and Assumption of Contracts is dated as of the Effective Date/Closing Date of September 15, 2025 (matching the engagement letter's targeted Closing Date) and recites that the PSA transaction was consummated; this is a signed transaction/closing document rather than a firm closing letter, so status is inferred rather than confirmed by an explicit closing letter."
+  },
+  "jurisdictions": [
+    "Florida",
+    "Delaware"
+  ],
+  "regulators_or_courts": [
+    "City of Delray Beach",
+    "Palm Beach County",
+    "Florida Department of State, Division of Corporations",
+    "Florida Department of Business and Professional Regulation"
+  ],
+  "governing_law": "Florida (per Assignment and Assumption of Contracts §(f): governed by the laws of the State of Florida)",
+  "deal_or_case": {
+    "transaction_value": "$35,000,000 purchase price; $24,500,000 acquisition loan from Meridian Coast Bank, N.A. (70% LTV)",
+    "case_number": null,
+    "filing_numbers": [
+      "Loan Reference No. MCB-CRE-2025-07184",
+      "Palm Beach County Parcel ID 12-43-46-27-01-005-0010",
+      "Florida Fictitious Name Registration No. G19000042817",
+      "DBPR Liquor License No. BEV-5812947"
+    ],
+    "significant_events": [
+      {
+        "date": "2025-06-12",
+        "what": "Letter of Intent executed between PCG and Saltaire Hospitality Holdings LLC"
+      },
+      {
+        "date": "2025-06-20",
+        "what": "Engagement letter executed"
+      },
+      {
+        "date": "2025-07-07",
+        "what": "Purchase and Sale Agreement dated/executed"
+      },
+      {
+        "date": "2025-09-15",
+        "what": "Closing of acquisition; Assignment and Assumption of Contracts executed"
+      }
+    ]
+  },
+  "keywords": [
+    "hotel acquisition",
+    "boutique hotel",
+    "asset purchase agreement",
+    "acquisition financing",
+    "title insurance",
+    "ALTA survey",
+    "Phase I environmental site assessment",
+    "FIRPTA affidavit",
+    "assignment and assumption of contracts",
+    "hospitality transaction",
+    "Delray Beach",
+    "single-purpose entity",
+    "loan-to-value",
+    "post-closing transition agreement"
+  ],
+  "evidence": {
+    "firm.responsible_partner": "engagement-letter-pcg.docx §4: 'Angela Fontaine - Responsible Partner, Real Estate Practice Group'",
+    "firm.billing_partner": "engagement-letter-pcg.docx §4: 'Douglas Fairchild - Billing Partner, Real Estate Practice Group'",
+    "firm.practice_group": "engagement-letter-pcg.docx §4 labels all four staffed attorneys (Fontaine, Fairchild, Dominguez, Ho) 'Real Estate Practice Group'",
+    "billing.arrangement": "The engagement-letter-pcg.docx source text is truncated mid-Section 4 (Engagement Team) and does not include a Section 5/fees-and-billing section, so no billing rates, arrangement, or retainer are stated anywhere in the available sources",
+    "status.value": "assignment-and-assumption-of-contracts.docx recital D: 'as of the Closing Date, September 15, 2025' matching the engagement letter's targeted Closing Date of September 15, 2025 -- no explicit post-closing confirmation letter is among sources"
+  }
+}

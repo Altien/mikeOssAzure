@@ -1,0 +1,325 @@
+{
+  "matter_id": "1003-00001",
+  "client_id": "1003",
+  "matter_seq": "00001",
+  "extracted_at": "2026-09-15T19:55:11+00:00",
+  "source_documents": [
+    "Engagement/engagement-letter-harrowgate-hsr.docx",
+    "Administrative/matter-closing-memorandum.docx"
+  ],
+  "folders": [
+    "Administrative",
+    "Engagement",
+    "HSR Filing",
+    "Memos & Analysis"
+  ],
+  "folder_tree": {
+    "Administrative": 1,
+    "Engagement": 1,
+    "HSR Filing": 5,
+    "Memos & Analysis": 5
+  },
+  "documents": [
+    {
+      "path": "1003-00001/Administrative/matter-closing-memorandum.docx",
+      "folder": "Administrative",
+      "name": "matter-closing-memorandum.docx",
+      "ext": "docx",
+      "bytes": 62315
+    },
+    {
+      "path": "1003-00001/Engagement/engagement-letter-harrowgate-hsr.docx",
+      "folder": "Engagement",
+      "name": "engagement-letter-harrowgate-hsr.docx",
+      "ext": "docx",
+      "bytes": 52464
+    },
+    {
+      "path": "1003-00001/HSR Filing/hsr-filing-transmittal-letter.docx",
+      "folder": "HSR Filing",
+      "name": "hsr-filing-transmittal-letter.docx",
+      "ext": "docx",
+      "bytes": 42881
+    },
+    {
+      "path": "1003-00001/HSR Filing/hsr-form-acquiring-person-draft.docx",
+      "folder": "HSR Filing",
+      "name": "hsr-form-acquiring-person-draft.docx",
+      "ext": "docx",
+      "bytes": 61278
+    },
+    {
+      "path": "1003-00001/HSR Filing/hsr-withdrawal-letter.docx",
+      "folder": "HSR Filing",
+      "name": "hsr-withdrawal-letter.docx",
+      "ext": "docx",
+      "bytes": 40532
+    },
+    {
+      "path": "1003-00001/HSR Filing/item-4-document-collection-memo.docx",
+      "folder": "HSR Filing",
+      "name": "item-4-document-collection-memo.docx",
+      "ext": "docx",
+      "bytes": 58511
+    },
+    {
+      "path": "1003-00001/HSR Filing/supplemental-item-4-production-letter.docx",
+      "folder": "HSR Filing",
+      "name": "supplemental-item-4-production-letter.docx",
+      "ext": "docx",
+      "bytes": 47909
+    },
+    {
+      "path": "1003-00001/Memos & Analysis/antitrust-risk-assessment-memo.docx",
+      "folder": "Memos & Analysis",
+      "name": "antitrust-risk-assessment-memo.docx",
+      "ext": "docx",
+      "bytes": 61958
+    },
+    {
+      "path": "1003-00001/Memos & Analysis/ftc-meeting-preparation-memo.docx",
+      "folder": "Memos & Analysis",
+      "name": "ftc-meeting-preparation-memo.docx",
+      "ext": "docx",
+      "bytes": 60036
+    },
+    {
+      "path": "1003-00001/Memos & Analysis/second-request-compliance-cost-memo.docx",
+      "folder": "Memos & Analysis",
+      "name": "second-request-compliance-cost-memo.docx",
+      "ext": "docx",
+      "bytes": 67056
+    },
+    {
+      "path": "1003-00001/Memos & Analysis/second-request-strategy-memo.docx",
+      "folder": "Memos & Analysis",
+      "name": "second-request-strategy-memo.docx",
+      "ext": "docx",
+      "bytes": 66607
+    },
+    {
+      "path": "1003-00001/Memos & Analysis/termination-advisory-memo.docx",
+      "folder": "Memos & Analysis",
+      "name": "termination-advisory-memo.docx",
+      "ext": "docx",
+      "bytes": 57021
+    }
+  ],
+  "doc_counts": {
+    "docx": 12
+  },
+  "status_signals": {
+    "folder:closing": false,
+    "folder:post-closing": false,
+    "folder:early termination": false,
+    "folder:termination": false,
+    "folder:settlement": false,
+    "folder:appeal": false,
+    "folder:wind-down": false,
+    "file:closing-memo": true,
+    "file:final-invoice": false,
+    "file:matter-closing": true,
+    "file:closing-binder": false,
+    "file:engagement-terminat": false,
+    "file:disengagement": false
+  },
+  "doc_dates": {
+    "earliest": null,
+    "latest": null,
+    "all": []
+  },
+  "matter_name": "Harrowgate Private Equity Fund IV, L.P. - HSR Filing / Proposed Acquisition of Ridgemark Capital Advisors, LLC (Terminated)",
+  "matter_description": "Represent Harrowgate Capital Management LLC, as general partner of Harrowgate Private Equity Fund IV, L.P., in the Hart-Scott-Rodino premerger notification filing and antitrust risk assessment for HPE Fund IV's proposed $370,000,000 acquisition of 100% of Ridgemark Capital Advisors, LLC; the transaction was abandoned after the FTC issued a Second Request and the matter was closed as terminated.",
+  "matter_type": "HSR filing and antitrust clearance (M&A buy-side antitrust counsel) - transaction abandoned",
+  "client": {
+    "name": "Harrowgate Capital Management LLC (as general partner of Harrowgate Private Equity Fund IV, L.P.)",
+    "entity_type": "Delaware limited liability company",
+    "industry": "Private equity (middle-market financial services and asset management platform acquisitions)",
+    "contacts": [
+      {
+        "name": "Gavin Trask",
+        "title": "Managing Partner & Chairman, Harrowgate Capital Management LLC",
+        "email": null
+      },
+      {
+        "name": "Diane Ochoa",
+        "title": "Partner, Head of Financial Services Investments, Harrowgate Capital Management LLC",
+        "email": null
+      },
+      {
+        "name": "Marcus Hale",
+        "title": "Vice President, Deal Execution, Harrowgate Capital Management LLC",
+        "email": null
+      }
+    ]
+  },
+  "counterparties": [
+    {
+      "name": "Ridgemark Capital Advisors, LLC",
+      "role": "target"
+    },
+    {
+      "name": "Thornfield Growth Partners, LLC",
+      "role": "selling sponsor"
+    },
+    {
+      "name": "Jonathan Kessler",
+      "role": "seller (Founder & CEO of Ridgemark)"
+    },
+    {
+      "name": "Priya Narayanan",
+      "role": "seller (COO of Ridgemark)"
+    }
+  ],
+  "other_parties": [
+    {
+      "name": "Federal Trade Commission (FTC)",
+      "role": "regulator"
+    },
+    {
+      "name": "Antitrust Division, U.S. Department of Justice (DOJ)",
+      "role": "regulator"
+    },
+    {
+      "name": "Blackwell, Oakes & Hardin LLP",
+      "role": "counsel to target (Ridgemark)"
+    },
+    {
+      "name": "Lyle & Pennington LLP",
+      "role": "counsel to selling sponsor (Thornfield)"
+    },
+    {
+      "name": "Dunmore Asset Management LLC",
+      "role": "related HPE Fund IV portfolio company (source of competitive overlap)"
+    }
+  ],
+  "firm": {
+    "responsible_partner": "Howard Bellamy",
+    "billing_partner": "Elaine Forsythe",
+    "originating_partner": null,
+    "supervising_attorneys": [],
+    "associates": [
+      "Elliot Nguyen"
+    ],
+    "paralegals": [],
+    "other_staff": [],
+    "practice_group": "Antitrust & Competition",
+    "sub_practice": null,
+    "office": "New York"
+  },
+  "practice_area": "Regulatory & Investigations",
+  "sub_practice_area": "Antitrust & Competition",
+  "dates": {
+    "engagement_letter": "2024-06-05",
+    "opened": "2024-06-05",
+    "conflicts_cleared": null,
+    "closed": "2024-09-12",
+    "key_deadlines": [
+      {
+        "date": "2024-07-18",
+        "what": "Initial 30-day HSR statutory waiting period would have expired (mooted by Second Request issued July 16)"
+      }
+    ]
+  },
+  "billing": {
+    "arrangement": "hourly",
+    "rates": [],
+    "budget": null,
+    "retainer": null
+  },
+  "status": {
+    "value": "terminated early",
+    "as_of": "2024-09-12",
+    "basis": "matter-closing-memorandum.docx: 'MATTER STATUS: Closed - Terminated'; the Harrowgate Investment Committee voted on August 26, 2024 to abandon the acquisition, the MIPA was terminated August 30, 2024, and the HSR filing was formally withdrawn September 3, 2024."
+  },
+  "jurisdictions": [
+    "Delaware",
+    "Massachusetts"
+  ],
+  "regulators_or_courts": [
+    "Federal Trade Commission (FTC)",
+    "Antitrust Division, U.S. Department of Justice (DOJ)"
+  ],
+  "governing_law": null,
+  "deal_or_case": {
+    "transaction_value": "$370,000,000 total enterprise value ($328,000,000 equity purchase price)",
+    "case_number": null,
+    "filing_numbers": [
+      "FTC Transaction Number 2418-7603"
+    ],
+    "significant_events": [
+      {
+        "date": "2024-06-04",
+        "what": "Membership Interest Purchase Agreement (MIPA) executed"
+      },
+      {
+        "date": "2024-06-05",
+        "what": "Engagement letter executed"
+      },
+      {
+        "date": "2024-06-18",
+        "what": "HSR Notification and Report Forms filed for Acquiring and Acquired Persons"
+      },
+      {
+        "date": "2024-06-21",
+        "what": "FTC acknowledged receipt of filings; clearance assigned to FTC"
+      },
+      {
+        "date": "2024-07-08",
+        "what": "FTC voluntary access letter requesting supplemental Item 4(c)/4(d) documents"
+      },
+      {
+        "date": "2024-07-10",
+        "what": "C&H produced 23 supplemental documents"
+      },
+      {
+        "date": "2024-07-16",
+        "what": "FTC issued Second Request"
+      },
+      {
+        "date": "2024-07-22",
+        "what": "In-person meeting with FTC Mergers IV staff"
+      },
+      {
+        "date": "2024-08-26",
+        "what": "Harrowgate Investment Committee voted to abandon the acquisition"
+      },
+      {
+        "date": "2024-08-30",
+        "what": "MIPA formally terminated"
+      },
+      {
+        "date": "2024-09-03",
+        "what": "HSR withdrawal notification submitted to FTC"
+      },
+      {
+        "date": "2024-09-10",
+        "what": "$7.4 million reverse termination fee wired to Ridgemark"
+      },
+      {
+        "date": "2024-09-12",
+        "what": "Matter closing memorandum finalized"
+      }
+    ]
+  },
+  "keywords": [
+    "HSR Act",
+    "Hart-Scott-Rodino",
+    "Second Request",
+    "premerger notification",
+    "FTC",
+    "DOJ",
+    "antitrust clearance",
+    "investment adviser M&A",
+    "alternative credit SMA",
+    "reverse termination fee",
+    "abandoned transaction",
+    "membership interest purchase agreement",
+    "market concentration analysis",
+    "Item 4(c) 4(d) documents"
+  ],
+  "evidence": {
+    "status.value": "matter-closing-memorandum.docx: 'MATTER STATUS: Closed - Terminated'; 'the Harrowgate Investment Committee voted on August 26, 2024 to abandon the proposed acquisition.'",
+    "deal_or_case.filing_numbers": "matter-closing-memorandum.docx: 'FTC TRANSACTION NUMBER: 2418-7603'"
+  }
+}

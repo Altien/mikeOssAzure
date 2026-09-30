@@ -1,0 +1,364 @@
+{
+  "matter_id": "1029-00001",
+  "client_id": "1029",
+  "matter_seq": "00001",
+  "extracted_at": "2026-09-15T20:15:49+00:00",
+  "source_documents": [
+    "Engagement/engagement-letter-tmri.docx",
+    "Correspondence/email-indemnification-negotiation-update.eml",
+    "Correspondence/email-ip-publication-negotiation-update.eml",
+    "Analyses/memo-indemnification-analysis.docx"
+  ],
+  "folders": [
+    "Analyses",
+    "Closing",
+    "Correspondence",
+    "Engagement",
+    "Transaction Documents"
+  ],
+  "folder_tree": {
+    "Analyses": 3,
+    "Closing": 1,
+    "Correspondence": 4,
+    "Engagement": 1,
+    "Transaction Documents": 3
+  },
+  "documents": [
+    {
+      "path": "1029-00001/Analyses/memo-indemnification-analysis.docx",
+      "folder": "Analyses",
+      "name": "memo-indemnification-analysis.docx",
+      "ext": "docx",
+      "bytes": 70077
+    },
+    {
+      "path": "1029-00001/Analyses/memo-ip-publication-rights-analysis.docx",
+      "folder": "Analyses",
+      "name": "memo-ip-publication-rights-analysis.docx",
+      "ext": "docx",
+      "bytes": 75099
+    },
+    {
+      "path": "1029-00001/Analyses/negotiation-comparison-chart.xlsx",
+      "folder": "Analyses",
+      "name": "negotiation-comparison-chart.xlsx",
+      "ext": "xlsx",
+      "bytes": 19655
+    },
+    {
+      "path": "1029-00001/Closing/closing-checklist.xlsx",
+      "folder": "Closing",
+      "name": "closing-checklist.xlsx",
+      "ext": "xlsx",
+      "bytes": 11113
+    },
+    {
+      "path": "1029-00001/Correspondence/email-indemnification-negotiation-update.eml",
+      "folder": "Correspondence",
+      "name": "email-indemnification-negotiation-update.eml",
+      "ext": "eml",
+      "bytes": 10195
+    },
+    {
+      "path": "1029-00001/Correspondence/email-internal-signing-status-update.eml",
+      "folder": "Correspondence",
+      "name": "email-internal-signing-status-update.eml",
+      "ext": "eml",
+      "bytes": 7775
+    },
+    {
+      "path": "1029-00001/Correspondence/email-ip-publication-negotiation-update.eml",
+      "folder": "Correspondence",
+      "name": "email-ip-publication-negotiation-update.eml",
+      "ext": "eml",
+      "bytes": 11963
+    },
+    {
+      "path": "1029-00001/Correspondence/transmittal-letter-execution-version.docx",
+      "folder": "Correspondence",
+      "name": "transmittal-letter-execution-version.docx",
+      "ext": "docx",
+      "bytes": 41960
+    },
+    {
+      "path": "1029-00001/Engagement/engagement-letter-tmri.docx",
+      "folder": "Engagement",
+      "name": "engagement-letter-tmri.docx",
+      "ext": "docx",
+      "bytes": 48580
+    },
+    {
+      "path": "1029-00001/Transaction Documents/clinical-trial-agreement-execution.docx",
+      "folder": "Transaction Documents",
+      "name": "clinical-trial-agreement-execution.docx",
+      "ext": "docx",
+      "bytes": 70976
+    },
+    {
+      "path": "1029-00001/Transaction Documents/exhibit-a-study-budget.xlsx",
+      "folder": "Transaction Documents",
+      "name": "exhibit-a-study-budget.xlsx",
+      "ext": "xlsx",
+      "bytes": 11702
+    },
+    {
+      "path": "1029-00001/Transaction Documents/exhibit-b-protocol-synopsis.docx",
+      "folder": "Transaction Documents",
+      "name": "exhibit-b-protocol-synopsis.docx",
+      "ext": "docx",
+      "bytes": 59245
+    }
+  ],
+  "doc_counts": {
+    "docx": 6,
+    "eml": 3,
+    "xlsx": 3
+  },
+  "status_signals": {
+    "folder:closing": true,
+    "folder:post-closing": false,
+    "folder:early termination": false,
+    "folder:termination": false,
+    "folder:settlement": false,
+    "folder:appeal": false,
+    "folder:wind-down": false,
+    "file:closing-memo": false,
+    "file:final-invoice": false,
+    "file:matter-closing": false,
+    "file:closing-binder": false,
+    "file:engagement-terminat": false,
+    "file:disengagement": false
+  },
+  "doc_dates": {
+    "earliest": null,
+    "latest": null,
+    "all": []
+  },
+  "matter_name": "Thornwick Medical Research Institute, Inc. - Clinical Trial Agreement with Hargrove University Medical Center (Cadence-3 Trial)",
+  "matter_description": "Represent Thornwick Medical Research Institute, Inc. as trial sponsor in drafting, negotiating, and finalizing a Clinical Trial Agreement with Hargrove University Medical Center, Inc. for the Cadence-3 investigator-initiated feasibility study of the ThornValve MV-200 transcatheter mitral valve repair device, including negotiation of indemnification, intellectual property, publication rights, and insurance provisions.",
+  "matter_type": "healthcare / life sciences transactional (clinical trial agreement negotiation)",
+  "client": {
+    "name": "Thornwick Medical Research Institute, Inc.",
+    "entity_type": "Massachusetts nonprofit corporation (501(c)(3))",
+    "industry": "medical research / cardiovascular device development",
+    "contacts": [
+      {
+        "name": "Marcus D. Pruitt, J.D.",
+        "title": "General Counsel",
+        "email": "mpruitt@thornwick.org"
+      },
+      {
+        "name": "Dr. Elaine K. Sutherland, M.D.",
+        "title": "Vice President of Clinical Development / Chief Scientific Officer",
+        "email": null
+      }
+    ]
+  },
+  "counterparties": [
+    {
+      "name": "Hargrove University Medical Center, Inc.",
+      "role": "clinical trial site / counterparty to the CTA"
+    }
+  ],
+  "other_parties": [
+    {
+      "name": "Pemberton, Yates & Caldwell LLP",
+      "role": "opposing/counterparty's counsel"
+    },
+    {
+      "name": "Rebecca S. Norcross",
+      "role": "counterparty's counsel (Partner)"
+    },
+    {
+      "name": "Daniel F. Huang",
+      "role": "counterparty's counsel (Associate)"
+    },
+    {
+      "name": "Dr. Julian M. Castañeda, M.D., FACC",
+      "role": "Principal Investigator (HUMC)"
+    },
+    {
+      "name": "Dr. Hannah L. Forsberg, M.D.",
+      "role": "Sub-Investigator (HUMC)"
+    },
+    {
+      "name": "Commonwealth Specialty Underwriters, Inc.",
+      "role": "TMRI's clinical trial liability insurer"
+    },
+    {
+      "name": "Pinnacle Mutual Insurance Company",
+      "role": "HUMC's professional liability insurer"
+    },
+    {
+      "name": "Meridian Clinical Sciences, Inc.",
+      "role": "TMRI's contract research organization (separate engagement, out of scope)"
+    },
+    {
+      "name": "U.S. Food and Drug Administration",
+      "role": "regulator (IDE oversight, out of scope for this engagement)"
+    },
+    {
+      "name": "HUMC Institutional Review Board",
+      "role": "regulator/oversight body"
+    }
+  ],
+  "firm": {
+    "responsible_partner": "Joel Strauss",
+    "billing_partner": "Miriam Calloway",
+    "originating_partner": null,
+    "supervising_attorneys": [
+      "Joel Strauss",
+      "Miriam Calloway"
+    ],
+    "associates": [
+      "Christopher Aiken",
+      "Amy Whitfield"
+    ],
+    "paralegals": [],
+    "other_staff": [],
+    "practice_group": "Healthcare & Life Sciences",
+    "sub_practice": null,
+    "office": "Boston"
+  },
+  "practice_area": "Healthcare & Life Sciences",
+  "sub_practice_area": "Life Sciences Transactions",
+  "dates": {
+    "engagement_letter": "2026-01-15",
+    "opened": "2026-01-15",
+    "conflicts_cleared": null,
+    "closed": null,
+    "key_deadlines": [
+      {
+        "date": "2026-01-28",
+        "what": "First draft CTA circulated to HUMC's counsel"
+      },
+      {
+        "date": "2026-02-07",
+        "what": "HUMC's comprehensive redline received"
+      },
+      {
+        "date": "2026-02-12",
+        "what": "Indemnification negotiation call"
+      },
+      {
+        "date": "2026-02-14",
+        "what": "Second draft CTA to be circulated"
+      },
+      {
+        "date": "2026-02-21",
+        "what": "IP and publication rights negotiation call"
+      },
+      {
+        "date": "2026-02-24",
+        "what": "Target circulation of third (near-final) draft CTA"
+      },
+      {
+        "date": "2026-02-26",
+        "what": "Anticipated HUMC comments on third draft"
+      },
+      {
+        "date": "2026-03-02",
+        "what": "Target execution date for the CTA"
+      },
+      {
+        "date": "2026-03-15",
+        "what": "IDE supplement filing deadline with FDA (IDE No. G260012)"
+      },
+      {
+        "date": "2026-04-07",
+        "what": "Estimated first patient enrollment"
+      }
+    ]
+  },
+  "billing": {
+    "arrangement": "hourly",
+    "rates": [
+      {
+        "person": "Partners",
+        "rate": "$1,150/hr"
+      },
+      {
+        "person": "Senior Associates",
+        "rate": "$825/hr"
+      }
+    ],
+    "budget": null,
+    "retainer": null
+  },
+  "status": {
+    "value": "open",
+    "as_of": "2026-02-21",
+    "basis": "Sources are the January 15, 2026 engagement letter and two negotiation-update emails (February 12 and February 21, 2026) describing ongoing CTA negotiations, with the target execution date of March 2, 2026 still pending; no closing letter, executed CTA, or matter-closing communication is among the sources."
+  },
+  "jurisdictions": [
+    "Massachusetts",
+    "Connecticut"
+  ],
+  "regulators_or_courts": [
+    "U.S. Food and Drug Administration",
+    "HUMC Institutional Review Board"
+  ],
+  "governing_law": "Massachusetts",
+  "deal_or_case": {
+    "transaction_value": "$6,000,000 (total CTA value, per internal indemnification memorandum), funded through TMRI internal Grant Award No. TMRI-CV-2025-018",
+    "case_number": null,
+    "filing_numbers": [
+      "FDA IDE No. G260012",
+      "HUMC IRB Protocol No. HUMC-IRB-2025-0847",
+      "ClinicalTrials.gov ID NCT06198234"
+    ],
+    "significant_events": [
+      {
+        "date": "2025-12-18",
+        "what": "HUMC IRB approved the Cadence-3 Protocol"
+      },
+      {
+        "date": "2026-01-15",
+        "what": "Engagement letter executed"
+      },
+      {
+        "date": "2026-01-28",
+        "what": "First draft CTA circulated to HUMC's counsel"
+      },
+      {
+        "date": "2026-02-07",
+        "what": "HUMC's comprehensive redline of the CTA received"
+      },
+      {
+        "date": "2026-02-10",
+        "what": "Internal indemnification analysis memorandum issued"
+      },
+      {
+        "date": "2026-02-12",
+        "what": "Indemnification negotiation call; compromise reached on $15,000,000 cap, notice period, and other terms"
+      },
+      {
+        "date": "2026-02-21",
+        "what": "IP and publication rights negotiation call; compromises reached on Trial Data ownership, Foreground IP licensing, and publication review periods"
+      }
+    ]
+  },
+  "keywords": [
+    "clinical trial agreement",
+    "indemnification",
+    "intellectual property",
+    "publication rights",
+    "Investigational Device Exemption",
+    "IDE",
+    "IRB",
+    "Bayh-Dole Act",
+    "foreground IP",
+    "background IP",
+    "transcatheter mitral valve repair",
+    "investigator-initiated trial",
+    "insurance certificate",
+    "clinical trial sponsor",
+    "medical device",
+    "FDA regulatory"
+  ],
+  "evidence": {
+    "status.value": "email-ip-publication-negotiation-update.eml dated February 21, 2026 describes ongoing negotiation with 'Target Execution Date: The target execution date remains Monday, March 2, 2026'; no executed CTA or closing communication is present among sources.",
+    "matter_type": "engagement-letter-tmri.docx: 'Calderwood & Harkness will represent TMRI in its capacity as sponsor of an investigator-initiated clinical trial... Drafting, negotiation, and finalization of a Clinical Trial Agreement'",
+    "deal_or_case.transaction_value": "memo-indemnification-analysis.docx: 'The total CTA value is $6,000,000, funded through TMRI internal grant award TMRI-CV-2025-018.'"
+  }
+}
