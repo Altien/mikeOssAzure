@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { useReasoningDisclosure } from "@/shared/hooks/useReasoningDisclosure";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ChevronDown, Download, Loader2 } from "lucide-react";
@@ -22,7 +23,6 @@ const THINKING_PHRASES = [
     "Reviewing...",
     "Reasoning...",
 ];
-const REASONING_COLLAPSED_MAX_LINES = 6;
 const REASONING_COLLAPSED_MAX_HEIGHT_REM = 9;
 
 // ---------------------------------------------------------------------------
@@ -80,13 +80,15 @@ export function ReasoningBlock({
     isStreaming: boolean;
     showConnector?: boolean;
 }) {
-    const [isContentOpen, setIsContentOpen] = useState(isStreaming);
-    const [isExpanded, setIsExpanded] = useState(false);
-    const [userToggledContent, setUserToggledContent] = useState(false);
-    const [isOverflowing, setIsOverflowing] = useState(false);
-    const [hasMeasured, setHasMeasured] = useState(false);
+    const {
+        contentRef,
+        isContentOpen,
+        isExpanded,
+        isOverflowing,
+        setIsExpanded,
+        toggleContent,
+    } = useReasoningDisclosure(isStreaming);
     const [thinkingIndex, setThinkingIndex] = useState(0);
-    const contentRef = useRef<HTMLDivElement | null>(null);
 
     useEffect(() => {
         if (!isStreaming) return;
@@ -96,19 +98,6 @@ export function ReasoningBlock({
         return () => clearInterval(interval);
     }, [isStreaming]);
 
-    useEffect(() => {
-        const el = contentRef.current;
-        if (!el) return;
-        const lineHeight = parseFloat(getComputedStyle(el).lineHeight) || 24;
-        const maxHeight = lineHeight * REASONING_COLLAPSED_MAX_LINES;
-        const nextOverflowing = el.scrollHeight > maxHeight + 2;
-        setIsOverflowing(nextOverflowing);
-        setHasMeasured(true);
-        if (!userToggledContent) setIsContentOpen(isStreaming);
-        if (!nextOverflowing) setIsExpanded(false);
-    }, [isContentOpen, isStreaming, text, userToggledContent]);
-
-    const showContent = isContentOpen || (!userToggledContent && !hasMeasured);
     const isCollapsed = isContentOpen && isOverflowing && !isExpanded;
 
     return (
@@ -119,11 +108,8 @@ export function ReasoningBlock({
         >
             <button
                 type="button"
-                aria-expanded={showContent}
-                onClick={() => {
-                    setUserToggledContent(true);
-                    setIsContentOpen((v) => !v);
-                }}
+                aria-expanded={isContentOpen}
+                onClick={toggleContent}
                 className="flex items-center text-sm font-serif text-gray-500 hover:text-gray-600 transition-colors"
             >
                 <span className="font-medium">
@@ -137,7 +123,7 @@ export function ReasoningBlock({
                     className={`relative top-px ml-1 transition-transform duration-200 ${isContentOpen ? "" : "-rotate-90"}`}
                 />
             </button>
-            {showContent && (
+            {isContentOpen && (
                 <div className="mt-2">
                     <div
                         className={`relative ${isCollapsed ? "overflow-hidden" : ""}`}
