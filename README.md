@@ -64,6 +64,7 @@ credentials.
 - [Troubleshooting](docs/troubleshooting.md)
 - [MCP connectors](docs/connectors.md)
 - [Google Drive integration](docs/google-drive.md)
+- [Preset contract templates and publisher credits](docs/preset-templates.md)
 - [CourtListener integration](docs/courtlistener.md)
 - [Microsoft Word add-in](word-addin/README.md)
 - [Tamper-evident exports](docs/tamper-evident-exports.md)
@@ -145,6 +146,9 @@ Only placeholder-bearing `*.example` environment templates belong in Git.
 ## License and attribution
 
 AGPL-3.0-only. See [LICENSE](LICENSE).
+
+Bundled [public contract templates](docs/preset-templates.md#maintaining-the-catalog)
+retain their publishers' separate licenses and notices.
 
 The application is derived from
 [`willchen96/mike`](https://github.com/willchen96/mike). The Azure adaptation
