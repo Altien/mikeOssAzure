@@ -31,6 +31,7 @@ import {
 } from "../lib/llm";
 import { getUserModelSettings } from "../lib/userSettings";
 import { resolveSecret } from "../lib/envSecrets";
+import { asyncRoute } from "../lib/asyncRoute";
 import {
     checkProjectAccess,
     ensureReviewAccess,
@@ -532,7 +533,7 @@ async function missingModelApiKey(model: string, apiKeys: UserApiKeys) {
 }
 
 // GET /tabular-review
-tabularRouter.get("/", requireAuth, async (req, res) => {
+tabularRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const db = createServerSupabase();
@@ -556,7 +557,7 @@ tabularRouter.get("/", requireAuth, async (req, res) => {
     if (error) return void res.status(500).json({ detail: error.message });
 
     res.json(data ?? []);
-});
+}));
 
 // GET /tabular-review/ids (must come before /:reviewId routes)
 // Lightweight id + owner list for every review matching the current
@@ -572,7 +573,7 @@ tabularRouter.get("/", requireAuth, async (req, res) => {
 const TABULAR_REVIEW_IDS_PAGE_SIZE = 1000;
 const TABULAR_REVIEW_IDS_MAX_PAGES = 200; // guards a runaway loop, not a product limit
 
-tabularRouter.get("/ids", requireAuth, async (req, res) => {
+tabularRouter.get("/ids", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const db = createServerSupabase();
@@ -608,7 +609,7 @@ tabularRouter.get("/ids", requireAuth, async (req, res) => {
     }
 
     res.json(ids);
-});
+}));
 
 // POST /tabular-review
 tabularRouter.post("/", requireAuth, async (req, res) => {

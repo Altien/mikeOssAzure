@@ -10,6 +10,7 @@ import { singleFileUpload } from "../lib/upload";
 import { handleDocumentUpload } from "./documents";
 import { parsePaginationQuery, type PaginationParams } from "../lib/pagination";
 import { normalizeSearchTerm } from "../lib/search";
+import { asyncRoute } from "../lib/asyncRoute";
 
 export const libraryRouter = Router();
 
@@ -250,7 +251,7 @@ async function loadLibraryLevel(
 // GET /library/:kind
 // Directory mode is the default. Pass parent_folder_id to load one folder
 // level, or view=search for flat search/filter/sort results.
-libraryRouter.get("/:kind", requireAuth, async (req, res) => {
+libraryRouter.get("/:kind", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const kind = normalizeLibraryKind(req.params.kind);
   if (!kind) return void res.status(404).json({ detail: "Library not found" });
@@ -302,11 +303,11 @@ libraryRouter.get("/:kind", requireAuth, async (req, res) => {
     folders: result.folders,
     documentsHasMore: result.documentsHasMore,
   });
-});
+}));
 
 // POST /library/:kind/levels
 // Refresh several already-open directory levels through one bounded API call.
-libraryRouter.post("/:kind/levels", requireAuth, async (req, res) => {
+libraryRouter.post("/:kind/levels", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const kind = normalizeLibraryKind(req.params.kind);
   if (!kind) return void res.status(404).json({ detail: "Library not found" });
@@ -370,10 +371,10 @@ libraryRouter.post("/:kind/levels", requireAuth, async (req, res) => {
       documentsHasMore: result.documentsHasMore,
     })),
   });
-});
+}));
 
 // GET /library/:kind/filter-options
-libraryRouter.get("/:kind/filter-options", requireAuth, async (req, res) => {
+libraryRouter.get("/:kind/filter-options", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const kind = normalizeLibraryKind(req.params.kind);
   if (!kind) return void res.status(404).json({ detail: "Library not found" });
@@ -392,11 +393,11 @@ libraryRouter.get("/:kind/filter-options", requireAuth, async (req, res) => {
         )
       : [],
   });
-});
+}));
 
 // GET /library/:kind/ids
 // Complete ID-only result set for select-all across unloaded pages/folders.
-libraryRouter.get("/:kind/ids", requireAuth, async (req, res) => {
+libraryRouter.get("/:kind/ids", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const kind = normalizeLibraryKind(req.params.kind);
   if (!kind) return void res.status(404).json({ detail: "Library not found" });
@@ -422,7 +423,7 @@ libraryRouter.get("/:kind/ids", requireAuth, async (req, res) => {
     offset += rows.length;
   }
   res.json(ids);
-});
+}));
 
 // POST /library/:kind/documents/bulk-delete
 // One bounded backend operation replaces an unbounded browser request burst.

@@ -236,6 +236,7 @@ export async function completeAzureOpenAIText(params: {
     systemPrompt?: string;
     user: string;
     maxTokens?: number;
+    reasoningEffort?: "none" | "low" | "high" | "max";
     apiKeys?: { azureOpenai?: AzureOpenaiSettings | null };
 }): Promise<string> {
     const deployment = deploymentFromModelId(
@@ -252,6 +253,12 @@ export async function completeAzureOpenAIText(params: {
         model: deployment,
         messages,
         max_completion_tokens: params.maxTokens ?? 512,
+        ...(params.reasoningEffort
+            ? {
+                  reasoning_effort:
+                      params.reasoningEffort as unknown as "low" | "high",
+              }
+            : {}),
     });
     return resp.choices[0]?.message?.content ?? "";
 }

@@ -52,6 +52,7 @@ import {
     LiquidDropdownSurface,
 } from "@/app/components/ui/liquid-dropdown";
 import { cn } from "@/app/lib/utils";
+import { useAoaiDeployments } from "@/altien/models/aoaiDeployments";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -760,6 +761,7 @@ export function TRChatPanel({
     onChatIdChange,
 }: Props) {
     const { profile, updateModelPreference } = useUserProfile();
+    const { modelOptions: aoaiModelOptions } = useAoaiDeployments();
     const apiKeys = profile?.apiKeys;
     const currentModel = profile?.tabularModel ?? "gemini-3-flash-preview";
     const [apiKeyModalProvider, setApiKeyModalProvider] =
@@ -1129,7 +1131,10 @@ export function TRChatPanel({
 
     async function handleSubmit(trimmed: string) {
         if (!trimmed || isLoading) return;
-        if (apiKeys && !isModelAvailable(currentModel, apiKeys)) {
+        if (
+            apiKeys &&
+            !isModelAvailable(currentModel, apiKeys, aoaiModelOptions)
+        ) {
             setApiKeyModalProvider(getModelProvider(currentModel));
             return;
         }

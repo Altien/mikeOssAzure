@@ -52,16 +52,19 @@ function hours(value: number): number {
   return minutes(value * 60);
 }
 
-// ponytail: path-shape check, not a lookup against PUBLIC_DIR — API routes
-// never end in these extensions or live under /_next.
-const STATIC_ASSET =
-  /^\/_next\/|\.(js|css|map|png|jpe?g|gif|svg|ico|webp|woff2?|ttf|txt)$/i;
+// Only known static-export paths bypass the general limiter. An extension by
+// itself is not sufficient: dynamic routes can legitimately end in `.txt`
+// (for example `/install/items/:id`).
+const PUBLIC_ASSET =
+  /^\/(?:branding|icons)\/|^\/(?:apple-touch-icon\.png|file\.svg|globe\.svg|link-image\.jpg|next\.svg|vercel\.svg|window\.svg|workflow\.svg)$/i;
+const NEXT_RSC_PAYLOAD = /(?:^|\/)__next(?:\.|\/).*\.txt$/i;
 
 export function isStaticAsset(req: { method: string; path: string }): boolean {
   return (
     (req.method === "GET" || req.method === "HEAD") &&
-    !req.path.startsWith("/api/") &&
-    STATIC_ASSET.test(req.path)
+    (req.path.startsWith("/_next/") ||
+      PUBLIC_ASSET.test(req.path) ||
+      NEXT_RSC_PAYLOAD.test(req.path))
   );
 }
 

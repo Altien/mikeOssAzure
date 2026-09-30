@@ -16,6 +16,7 @@ describe("isStaticAsset (general rate-limit exemption)", () => {
         expect(get("/api/documents/report.txt")).toBe(false);
         expect(get("/projects/abc")).toBe(false);
         expect(get("/config")).toBe(false);
+        expect(get("/install/items/operator-guide.txt")).toBe(false);
         expect(isStaticAsset({ method: "POST", path: "/_next/x.js" })).toBe(false);
     });
 });

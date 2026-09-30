@@ -1,14 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { ApiKeyField } from "@/app/components/settings/ApiKeyField";
+import { AlertTriangle, CheckCircle2, ExternalLink } from "lucide-react";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { useQuickActionsPreference } from "@/app/components/assistant/quickActionsPreferences";
 import { SettingsSection } from "../SettingsSection";
 import { SettingsToggle } from "../SettingsToggle";
 
 export default function FeaturesPage() {
-    const { profile, updateApiKey, updateLegalResearchUs } = useUserProfile();
+    const { profile, updateLegalResearchUs } = useUserProfile();
     const { visibleActions, showAllQuickActions, hideAllQuickActions } =
         useQuickActionsPreference();
     const [saving, setSaving] = useState(false);
@@ -21,6 +21,11 @@ export default function FeaturesPage() {
     const courtListenerEnabled =
         optimisticLegalResearchUs ?? persistedLegalResearchUs;
     const quickActionsEnabled = Object.values(visibleActions).some(Boolean);
+    const courtListenerConfigured =
+        !!profile?.apiKeys.courtlistener.configured;
+    const installUrl =
+        (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") +
+        "/install";
 
     const handleCourtListenerChange = async (enabled: boolean) => {
         if (saving) return;
@@ -100,25 +105,46 @@ export default function FeaturesPage() {
                         </p>
                     )}
                     {courtListenerEnabled && (
-                        <ApiKeyField
-                            label="CourtListener API Key"
-                            placeholder="Token..."
-                            hasSavedKey={
-                                !!profile?.apiKeys.courtlistener.configured
-                            }
-                            isServerConfigured={
-                                profile?.apiKeys.courtlistener.source === "env"
-                            }
-                            onSave={(value) =>
-                                updateApiKey(
-                                    "courtlistener",
-                                    value.trim() || null,
-                                )
-                            }
-                            onRemove={() =>
-                                updateApiKey("courtlistener", null)
-                            }
-                        />
+                        // Upstream divergence (OSS-6, §2.3 item 3): dev stores
+                        // CourtListener as an organisation Key Vault secret;
+                        // the backend intentionally rejects personal key writes.
+                        <div className="border-t border-gray-200 px-4 py-5">
+                            <div className="flex items-start justify-between gap-4">
+                                <div>
+                                    <p className="text-sm font-medium text-gray-700">
+                                        CourtListener API key
+                                    </p>
+                                    <p className="mt-1 text-xs text-gray-500">
+                                        Key Vault: courtlistener-api-token
+                                    </p>
+                                </div>
+                                <div
+                                    className={`flex shrink-0 items-center gap-1.5 text-xs font-medium ${
+                                        courtListenerConfigured
+                                            ? "text-emerald-700"
+                                            : "text-amber-700"
+                                    }`}
+                                >
+                                    {courtListenerConfigured ? (
+                                        <CheckCircle2 className="h-4 w-4" />
+                                    ) : (
+                                        <AlertTriangle className="h-4 w-4" />
+                                    )}
+                                    {profile === null
+                                        ? "Checking..."
+                                        : courtListenerConfigured
+                                          ? "Configured for this organisation"
+                                          : "Administrator action required"}
+                                </div>
+                            </div>
+                            <a
+                                href={installUrl}
+                                className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-gray-700 underline underline-offset-4 hover:text-gray-950"
+                            >
+                                Open organisation setup
+                                <ExternalLink className="h-3.5 w-3.5" />
+                            </a>
+                        </div>
                     )}
                 </SettingsSection>
             </section>

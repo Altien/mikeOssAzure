@@ -74,6 +74,17 @@ describe("parseQuery", () => {
         });
     });
 
+    it("rejects impossible calendar dates", () => {
+        expect(parseQuery({ from: "2026-02-31" }, 50)).toEqual({
+            ok: false,
+            error: expect.stringContaining("from"),
+        });
+        expect(parseQuery({ to: "2026-99-01" }, 50)).toEqual({
+            ok: false,
+            error: expect.stringContaining("to"),
+        });
+    });
+
     it("accepts well-formed dates and trims free-text filters", () => {
         const result = parseQuery(
             {
@@ -136,6 +147,7 @@ function makeDb(
         order?: [string, { ascending: boolean; nullsFirst: boolean }];
         ilike?: [string, string];
         profileUserIds?: string[];
+        sharedWithOperand?: unknown;
     } = { eq: [] };
 
     function projectsBuilder() {
@@ -146,10 +158,12 @@ function makeDb(
                 mode = "owned";
                 return b;
             },
-            contains: () => {
+            contains: (_column: string, operand: unknown) => {
+                calls.sharedWithOperand = operand;
                 mode = "shared";
                 return b;
             },
+            neq: () => b,
             then: (resolve: (v: { data: { id: string }[] }) => unknown) =>
                 Promise.resolve({
                     data: (mode === "owned" ? owned : shared).map((id) => ({
@@ -238,12 +252,16 @@ describe("queryEvents visibility scoping", () => {
     });
 
     it("de-duplicates owned and shared project ids", async () => {
+        const fake = makeDb(["p1", "p2"], ["p2", "p3"]);
         const both = await accessibleProjectIds(
-            makeDb(["p1", "p2"], ["p2", "p3"]).db,
+            fake.db,
             "u1",
             "u1@example.com",
         );
         expect([...both].sort()).toEqual(["p1", "p2", "p3"]);
+        expect(fake.calls.sharedWithOperand).toBe(
+            JSON.stringify(["u1@example.com"]),
+        );
     });
 
     it("applies categorical filters and the requested sort", async () => {

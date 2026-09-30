@@ -8,6 +8,8 @@ import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import { normalizeDisplayName } from "../lib/userLookup";
+import { listAccessibleProjectIds } from "../lib/access";
+import { asyncRoute } from "../lib/asyncRoute";
 
 export const auditRouter = Router();
 auditRouter.use(requireAuth);
@@ -20,22 +22,18 @@ const EXPORT_LIMIT = 2000;
 const MAX_PAGE = 100_000;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+function isCalendarDate(value: string): boolean {
+  if (!DATE_RE.test(value)) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
 export async function accessibleProjectIds(
   db: ReturnType<typeof createServerSupabase>,
   userId: string,
   email: string | undefined,
 ): Promise<string[]> {
-  const ids = new Set<string>();
-  const own = await db.from("projects").select("id").eq("user_id", userId);
-  for (const row of (own.data ?? []) as { id: string }[]) ids.add(row.id);
-  if (email) {
-    const shared = await db
-      .from("projects")
-      .select("id")
-      .contains("shared_with", [email]);
-    for (const row of (shared.data ?? []) as { id: string }[]) ids.add(row.id);
-  }
-  return [...ids];
+  return listAccessibleProjectIds(userId, email, db);
 }
 
 type AuditQuery = {
@@ -86,9 +84,9 @@ export function parseQuery(
   // Date filters come from <input type="date"> and are compared as calendar
   // days. Reject anything that isn't a bare YYYY-MM-DD — a value like
   // "2026-07-30T12:00:00Z" would become "...ZT23:59:59.999Z" (F8) and 500.
-  if (from && !DATE_RE.test(from))
+  if (from && !isCalendarDate(from))
     return { ok: false, error: "Invalid 'from' date; expected YYYY-MM-DD" };
-  if (to && !DATE_RE.test(to))
+  if (to && !isCalendarDate(to))
     return { ok: false, error: "Invalid 'to' date; expected YYYY-MM-DD" };
   if (
     requestedSortBy &&
@@ -188,7 +186,7 @@ export async function queryEvents(
   };
 }
 
-auditRouter.get("/", async (req, res) => {
+auditRouter.get("/", asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const email = res.locals.userEmail as string | undefined;
   const db = createServerSupabase();
@@ -203,7 +201,7 @@ auditRouter.get("/", async (req, res) => {
     page: q.page,
     pageSize: PAGE_SIZE,
   });
-});
+}));
 
 export function csvCell(v: unknown): string {
   let s = v == null ? "" : String(v);
@@ -216,7 +214,7 @@ export function csvCell(v: unknown): string {
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-auditRouter.get("/export", async (req, res) => {
+auditRouter.get("/export", asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const email = res.locals.userEmail as string | undefined;
   const db = createServerSupabase();
@@ -248,4 +246,4 @@ auditRouter.get("/export", async (req, res) => {
     'attachment; filename="history-export.csv"',
   );
   res.send([header, ...rows].join("\n"));
-});
+}));

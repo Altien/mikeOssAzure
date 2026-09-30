@@ -10,6 +10,7 @@ import {
   contentSha256,
 } from "../lib/documentVersions";
 import { safeErrorLog } from "../lib/safeError";
+import { asyncRoute } from "../lib/asyncRoute";
 import {
   buildProjectExportManifest,
   projectManifestFilename,
@@ -254,7 +255,7 @@ const PROJECT_PAGINATION_QUERY_KEYS = [
   "owner_user_id",
 ];
 
-projectsRouter.get("/", requireAuth, async (req, res) => {
+projectsRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const includeDocuments = req.query.include === "documents";
@@ -359,7 +360,7 @@ projectsRouter.get("/", requireAuth, async (req, res) => {
       folders: foldersByProject.get(p.id) ?? [],
     })),
   );
-});
+}));
 
 // POST /projects
 projectsRouter.post("/", requireAuth, async (req, res) => {
@@ -442,7 +443,10 @@ async function handleProjectDirectorySearch(req: Request, res: Response) {
   ];
   if (userEmail) {
     projectQueries.push(
-      db.from("projects").select("*").contains("shared_with", [userEmail]),
+      db
+        .from("projects")
+        .select("*")
+        .contains("shared_with", JSON.stringify([userEmail])),
     );
   }
   const projectResults = await Promise.all(projectQueries);
@@ -523,7 +527,7 @@ async function handleProjectDirectorySearch(req: Request, res: Response) {
 // GET /projects/:projectId/directory
 // Returns one folder level so file pickers can expand projects without
 // downloading every document and subfolder for every project up front.
-projectsRouter.get("/:projectId/directory", requireAuth, async (req, res) => {
+projectsRouter.get("/:projectId/directory", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
@@ -546,10 +550,10 @@ projectsRouter.get("/:projectId/directory", requireAuth, async (req, res) => {
     folders: result.folders,
     documentsHasMore: result.documentsHasMore,
   });
-});
+}));
 
 // GET /projects/filter-options (must come before /:projectId routes)
-projectsRouter.get("/filter-options", requireAuth, async (req, res) => {
+projectsRouter.get("/filter-options", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const db = createServerSupabase();
@@ -579,7 +583,7 @@ projectsRouter.get("/filter-options", requireAuth, async (req, res) => {
       })
     : [];
   res.json({ practices, owners });
-});
+}));
 
 // GET /projects/ids (must come before /:projectId routes)
 // Lightweight id + owner list for every project matching the current
@@ -594,7 +598,7 @@ projectsRouter.get("/filter-options", requireAuth, async (req, res) => {
 const PROJECT_IDS_PAGE_SIZE = 1000;
 const PROJECT_IDS_MAX_PAGES = 200; // guards a runaway loop, not a product limit
 
-projectsRouter.get("/ids", requireAuth, async (req, res) => {
+projectsRouter.get("/ids", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const db = createServerSupabase();
@@ -626,7 +630,7 @@ projectsRouter.get("/ids", requireAuth, async (req, res) => {
   }
 
   res.json(ids);
-});
+}));
 
 // GET /projects/:projectId
 projectsRouter.get("/:projectId", requireAuth, async (req, res) => {
