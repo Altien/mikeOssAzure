@@ -239,6 +239,15 @@ Compose the material classes through the established primitives and constants:
 - `LiquidDropdownContent` / `LiquidDropdownSurface` — menus
 - `GlassIconButtonUI` — circular icon buttons
 
+### Scrollbars
+
+Scroll areas get a thin scrollbar with a transparent track from a global base
+rule in `globals.css`, so a classic scrollbar (mouse connected, Windows, Linux)
+does not draw an opaque gutter over a glass surface. Do not restyle scrollbars
+per component; an `overflow-auto` container needs no extra class. The
+spreadsheet (`.fortune-container`) and DOCX editor (`.docx-editor`) are
+excluded because they size and style their own scrollbars.
+
 ## UI primitives
 
 | Primitive | Location | Use it for |

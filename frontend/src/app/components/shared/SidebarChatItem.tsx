@@ -97,10 +97,12 @@ export function SidebarChatItem({
         setRenaming(true);
         try {
             await renameChat(chat.id, title);
+            setRenameOpen(false);
         } catch (error) {
             // The context put the old title back; without this the user
             // watches their edit silently revert — the rename twin of the
-            // surfaced delete failure below.
+            // surfaced delete failure below. The modal stays open so the
+            // typed title is still there to retry.
             setRenameError(
                 userFacingApiError(
                     error,
@@ -109,16 +111,14 @@ export function SidebarChatItem({
             );
         } finally {
             setRenaming(false);
-            setRenameOpen(false);
         }
     };
 
-    const handleTitleMouseEnter = (
-        event: React.MouseEvent<HTMLButtonElement>,
-    ) => {
+    // Runs on hover and on focus, so a keyboard user can read a clipped
+    // title too.
+    const revealTitle = (button: HTMLButtonElement) => {
         const text = titleTextRef.current;
         if (!text) return;
-        const button = event.currentTarget;
         const style = getComputedStyle(button);
         const available =
             button.clientWidth -
@@ -135,7 +135,7 @@ export function SidebarChatItem({
         });
     };
 
-    const handleTitleMouseLeave = () => {
+    const resetTitle = () => {
         setTitleSlide({ offset: 0, duration: TITLE_SLIDE_BACK_MS });
     };
 
@@ -169,8 +169,10 @@ export function SidebarChatItem({
                 <button
                     type="button"
                     onClick={onSelect}
-                    onMouseEnter={handleTitleMouseEnter}
-                    onMouseLeave={handleTitleMouseLeave}
+                    onMouseEnter={(e) => revealTitle(e.currentTarget)}
+                    onMouseLeave={resetTitle}
+                    onFocus={(e) => revealTitle(e.currentTarget)}
+                    onBlur={resetTitle}
                     className={cn(
                         "min-w-0 flex-1 overflow-hidden whitespace-nowrap py-1 pl-2 text-left text-xs",
                         isActive

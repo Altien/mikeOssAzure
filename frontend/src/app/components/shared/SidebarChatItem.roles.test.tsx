@@ -184,6 +184,11 @@ describe("SidebarChatItem role gates", () => {
         expect(
             await screen.findByText(/could not be renamed/i),
         ).toBeInTheDocument();
+        // The modal stays open with the typed title so it can be retried.
+        expect(screen.getByLabelText("Chat title")).toHaveValue("New title");
+        await waitFor(() =>
+            expect(screen.getByRole("button", { name: "Save" })).toBeEnabled(),
+        );
     });
 
     it("renames through the rename modal", async () => {

@@ -289,6 +289,23 @@
         @apply border-border outline-ring/50;
     }
 
+    /* Thin, track-less scrollbars on every scroll area, so a classic
+       (mouse / Windows) scrollbar does not draw an opaque gutter on glass
+       surfaces. The spreadsheet and DOCX editors size and style their own. */
+    * {
+        scrollbar-width: thin;
+        scrollbar-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent)
+            transparent;
+    }
+
+    .fortune-container,
+    .fortune-container *,
+    .docx-editor,
+    .docx-editor * {
+        scrollbar-width: auto;
+        scrollbar-color: auto;
+    }
+
     body {
         @apply bg-background text-foreground;
     }
@@ -301,14 +318,6 @@
 @layer utilities {
     .font-eb-garamond {
         font-family: var(--font-eb-garamond);
-    }
-
-    /* Thin, track-less scrollbar for scroll areas on glass surfaces, so a
-       classic (mouse / Windows) scrollbar does not draw an opaque gutter. */
-    .scrollbar-subtle {
-        scrollbar-width: thin;
-        scrollbar-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent)
-            transparent;
     }
 
     .sidebar-fade-in {

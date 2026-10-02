@@ -389,7 +389,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                 <div
                                     className={cn(
                                         RECENT_PROJECT_LIST_HEIGHT_CLASS,
-                                        "scrollbar-subtle overflow-y-auto",
+                                        "overflow-y-auto",
                                     )}
                                     onScroll={handleRecentProjectsScroll}
                                 >
@@ -495,7 +495,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                             </button>
                             <div
                                 className={cn(
-                                    "scrollbar-subtle min-h-0 flex-1 overflow-y-auto",
+                                    "min-h-0 flex-1 overflow-y-auto",
                                     historyCollapsed && "hidden",
                                 )}
                                 onScroll={handleChatHistoryScroll}
