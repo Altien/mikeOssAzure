@@ -164,3 +164,10 @@ Before committing changes that touch `.env*` files or env-var lookups:
 3. No tenant-specific identifiers (Entra GUIDs, deployment FQDNs,
    resource names) should appear in any tracked `.env*.example` or any
    committed source file. Use placeholders.
+
+## Branch Names
+
+Name branches after the change they contain, using a descriptive prefix such as
+`docs/`, `fix/`, `feat/`, `refactor/`, `test/`, or `chore/` (for example,
+`docs/shorten-readme-telemetry`). Never use `claude/` as a prefix. Upstream
+migration branches keep their established `upstream-sync/` prefix.
