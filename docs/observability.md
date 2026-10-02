@@ -33,3 +33,16 @@ historical [data audit](sentry-data-audit.md) and
 [issue review](sentry-issue-review-2026-09-23.md) describe the upstream
 installation at the time of review; their default-on claims do not apply to
 this Azure fork.
+
+Outage grouping (upstream #541): an unreachable API is one condition, not one
+issue per route. The browser sends a fetch `TypeError` as a single
+`api-unreachable` event with the pinned fingerprint `api-unreachable` and a
+`network_failure_count`, at most once per 60-second window, and nothing while
+`navigator.onLine` is false. Worker poll loops (uploads and the `db_jobs`
+runner) report the first failure of a class, stay quiet for repeats with a
+once-a-minute `console.warn` count, back off, and log recovery. A PostgREST
+`PGRST202`/`PGRST204`/`PGRST205` or Postgres `42P01` in a route answers
+`503 schema_out_of_date` with fixed text, reported once, plus an operator
+`console.warn` naming the numbered migrations. Upstream's Next `/api` gateway
+grouping (`upstream-unavailable`) does not apply: the static export has no
+gateway.

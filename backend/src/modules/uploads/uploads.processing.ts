@@ -20,6 +20,11 @@ import { pathToFileURL } from "node:url";
 import { recordAudit } from "../../lib/audit";
 import { convertedPdfKey, officeFileToPdf } from "../../lib/convert";
 import { reportError } from "../../lib/observability/sentry";
+import {
+  createPollFailureGate,
+  type PollFailureGate,
+} from "../../lib/observability/pollFailureGate";
+import { asReportableError } from "../../lib/httpError";
 import { shouldConvertToPdf } from "../../lib/documentTypes";
 import { uploadJobWallClockMs } from "../../lib/runtimeConfig";
 import {
@@ -87,6 +92,8 @@ type SealedFileArtifact = {
 
 export const UPLOAD_JOB_LEASE_SECONDS = 30 * 60;
 const UPLOAD_WORKER_POLL_MS = 1_000;
+/** Ceiling for the idle poll interval while every iteration keeps failing. */
+const UPLOAD_WORKER_MAX_BACKOFF_MS = 30_000;
 const UPLOAD_WORKER_HEARTBEAT_MS = 60_000;
 const UPLOAD_SESSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const UPLOAD_TEMP_RETENTION_MS = 2 * UPLOAD_JOB_LEASE_SECONDS * 1000;
@@ -524,18 +531,23 @@ async function claimNextUploadJob(
     target_lease_seconds: UPLOAD_JOB_LEASE_SECONDS,
     target_max_running_per_user: maxRunningPerUser,
   });
-  if (error) throw error;
+  // A PostgREST error is a plain object: give it a stack here and keep its
+  // `code` (PGRST202 = RPC missing, i.e. migrations not applied) on the
+  // cause chain, where the Sentry boundary reads it into failure_code.
+  if (error) throw asReportableError(error, claimNextUploadJob);
   return typeof data === "string" && data ? data : null;
 }
 
 function startUploadProcessingWorker(options: {
   maxRunningPerUser: number;
   runCleanup: boolean;
+  failures: PollFailureGate;
 }) {
   const workerId = `${hostname()}:${process.pid}:${randomUUID()}`;
   let stopped = false;
   let timer: NodeJS.Timeout | null = null;
   let lastCleanupAt = 0;
+  const failures = options.failures;
 
   const schedule = (delay: number) => {
     if (stopped) return;
@@ -560,20 +572,28 @@ function startUploadProcessingWorker(options: {
         options.maxRunningPerUser,
       );
       if (!jobId) {
+        failures.success();
         schedule(UPLOAD_WORKER_POLL_MS);
         return;
       }
       await processUploadJob(db, jobId, workerId);
+      failures.success();
       schedule(0);
-    } catch (error) {
+    } catch (thrown) {
       // Nothing above this loop: an error here means claiming or the job
       // wrapper itself broke, and without a report the worker just polls on.
-      reportError(error, {
-        tags: { component: "upload-worker", stage: "iteration" },
-        extra: { worker_id: workerId },
-      });
-      console.error("[upload-worker] iteration failed", { workerId, error });
-      schedule(UPLOAD_WORKER_POLL_MS);
+      const error = asReportableError(thrown);
+      const verdict = failures.failure(error);
+      if (verdict.report) {
+        reportError(error, {
+          tags: { component: "upload-worker", stage: "iteration" },
+          extra: { worker_id: workerId },
+        });
+        // The Error object itself, not its message: the console bridge
+        // recognises an already-reported object and files no duplicate.
+        console.error("[upload-worker] iteration failed", { workerId, error });
+      }
+      schedule(verdict.delayMs);
     }
   };
 
@@ -593,10 +613,21 @@ export function startUploadProcessingWorkers(options: {
     1,
     Math.min(concurrency, Math.floor(options.maxRunningPerUser)),
   );
+  // One report per failure class per PROCESS, quiet repeats, backed-off
+  // polling. Every loop hits the same database, so one broken RPC fails all
+  // of them on every tick; a gate per loop would still file `concurrency`
+  // reports, and none at all meant one per tick for hours (MIKE-BACKEND-K:
+  // 2,451 events from one worker thread).
+  const failures = createPollFailureGate({
+    label: "[upload-worker] iteration",
+    baseDelayMs: UPLOAD_WORKER_POLL_MS,
+    maxDelayMs: UPLOAD_WORKER_MAX_BACKOFF_MS,
+  });
   const stopWorkers = Array.from({ length: concurrency }, (_, index) =>
     startUploadProcessingWorker({
       maxRunningPerUser,
       runCleanup: index === 0,
+      failures,
     }),
   );
 

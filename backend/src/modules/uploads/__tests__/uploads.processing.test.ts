@@ -505,6 +505,76 @@ describe("upload processing", () => {
     }
   });
 
+  it("reports a claim loop that fails every tick once, with its code, and backs off (MIKE-BACKEND-K)", async () => {
+    vi.useFakeTimers();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+    const missingRpc = {
+      code: "PGRST202",
+      message: "Could not find the function public.claim_upload_processing_job",
+      details: null,
+      hint: null,
+    };
+    let claimError: typeof missingRpc | null = missingRpc;
+    const db = fakeDb();
+    db.rpc.mockImplementation(async (name: string) =>
+      name === "claim_upload_processing_job" && claimError
+        ? { data: null, error: claimError }
+        : { data: null, error: null },
+    );
+    mocks.createServerSupabase.mockReturnValue(db);
+    const claims = () =>
+      db.rpc.mock.calls.filter(([name]) => name === "claim_upload_processing_job")
+        .length;
+    const reports = () =>
+      mocks.reportError.mock.calls.filter(
+        ([, context]) =>
+          (context as { tags?: { component?: string } } | undefined)?.tags
+            ?.component === "upload-worker",
+      );
+
+    const stop = startUploadProcessingWorkers({
+      concurrency: 2,
+      maxRunningPerUser: 1,
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      // One report for the process, not one per tick per loop (~600).
+      expect(reports()).toHaveLength(1);
+      const [reported] = reports()[0];
+      expect(reported).toBeInstanceOf(Error);
+      expect(diagnosticErrorTags(reported).failure_code).toBe("PGRST202");
+      // The console copy carries the same object, so the bridge dedupes it.
+      const logged = consoleError.mock.calls.filter(
+        ([label]) => label === "[upload-worker] iteration failed",
+      );
+      expect(logged).toHaveLength(1);
+      expect((logged[0][1] as { error: unknown }).error).toBe(reported);
+      // Backed off to the 30 s ceiling instead of polling every second.
+      expect(claims()).toBeLessThan(40);
+      expect(consoleWarn).toHaveBeenCalledWith(
+        expect.stringMatching(/^\[upload-worker\] iteration still failing \(Error:PGRST202\)/),
+      );
+
+      claimError = null;
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(consoleLog).toHaveBeenCalledWith(
+        expect.stringMatching(/^\[upload-worker\] iteration recovered after \d+ consecutive failure/),
+      );
+
+      claimError = missingRpc;
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(reports()).toHaveLength(2);
+    } finally {
+      stop();
+      vi.useRealTimers();
+      consoleError.mockRestore();
+      consoleWarn.mockRestore();
+      consoleLog.mockRestore();
+    }
+  });
+
   it("expires stale sessions, queues durable cleanup, and deletes retained rows", async () => {
     const db = scriptedDb([
       { error: null },
