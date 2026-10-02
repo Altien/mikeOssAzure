@@ -114,8 +114,10 @@ export function SidebarChatItem({
         }
     };
 
-    // Runs on hover and on focus, so a keyboard user can read a clipped
-    // title too.
+    // Runs on hover and on keyboard focus, so a keyboard user can read a
+    // clipped title too. The title stays revealed until both have ended;
+    // focus from a click does not count, or the opened chat's row would stay
+    // slid after the pointer leaves.
     const revealTitle = (button: HTMLButtonElement) => {
         const text = titleTextRef.current;
         if (!text) return;
@@ -170,9 +172,16 @@ export function SidebarChatItem({
                     type="button"
                     onClick={onSelect}
                     onMouseEnter={(e) => revealTitle(e.currentTarget)}
-                    onMouseLeave={resetTitle}
-                    onFocus={(e) => revealTitle(e.currentTarget)}
-                    onBlur={resetTitle}
+                    onMouseLeave={(e) => {
+                        if (!e.currentTarget.matches(":focus-visible")) resetTitle();
+                    }}
+                    onFocus={(e) => {
+                        if (e.currentTarget.matches(":focus-visible"))
+                            revealTitle(e.currentTarget);
+                    }}
+                    onBlur={(e) => {
+                        if (!e.currentTarget.matches(":hover")) resetTitle();
+                    }}
                     className={cn(
                         "min-w-0 flex-1 overflow-hidden whitespace-nowrap py-1 pl-2 text-left text-xs",
                         isActive
