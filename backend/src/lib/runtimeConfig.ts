@@ -119,6 +119,32 @@ export function streamRunDeadlines(env: NodeJS.ProcessEnv = process.env): {
   };
 }
 
+/**
+ * Silence limits on the MODEL's response stream, handed to the AI SDK's
+ * `streamText({ timeout })`. `firstChunkMs` bounds the wait for the first
+ * output of each step (a reasoning model may think silently for a while, so it
+ * is generous); `chunkMs` bounds the gap between chunks once output is
+ * flowing, and re-arms on every chunk. They catch a stalled provider at the
+ * source; `streamRunDeadlines` stays as the run-level backstop.
+ */
+export function streamChunkTimeouts(env: NodeJS.ProcessEnv = process.env): {
+  firstChunkMs: number;
+  chunkMs: number;
+} {
+  return {
+    firstChunkMs: clamp(
+      envInt("STREAM_FIRST_CHUNK_TIMEOUT_MS", 2 * 60_000, env),
+      10_000,
+      30 * 60_000,
+    ),
+    chunkMs: clamp(
+      envInt("STREAM_CHUNK_TIMEOUT_MS", 60_000, env),
+      5_000,
+      30 * 60_000,
+    ),
+  };
+}
+
 function parsedUrl(value: string, name: string, errors: string[]): URL | null {
   try {
     const url = new URL(value);

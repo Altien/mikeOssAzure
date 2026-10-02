@@ -108,3 +108,22 @@ describe("toProviderStreamError", () => {
     expect(error.message).toBe("Gemini stream failed.");
   });
 });
+
+describe("asProviderStallError", () => {
+  const ctx = { label: "Mock", modelId: "m" };
+  it("recognises the SDK chunk timeouts", async () => {
+    const { asProviderStallError } = await import("./providerErrors");
+    for (const reason of [
+      "TimeoutError: Chunk timeout of 60000ms exceeded",
+      new DOMException("First chunk timeout of 120000ms exceeded", "TimeoutError"),
+    ]) {
+      expect(asProviderStallError(reason, ctx)?.message).toMatch(/stopped responding/);
+    }
+  });
+  it("ignores everything else", async () => {
+    const { asProviderStallError } = await import("./providerErrors");
+    expect(asProviderStallError("Stream aborted.", ctx)).toBeNull();
+    expect(asProviderStallError(new Error("boom"), ctx)).toBeNull();
+    expect(asProviderStallError(undefined, ctx)).toBeNull();
+  });
+});

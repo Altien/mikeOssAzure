@@ -10,7 +10,8 @@ import type {
   StreamChatParams,
   StreamChatResult,
 } from "./types";
-import { toProviderStreamError } from "./providerErrors";
+import { streamChunkTimeouts } from "../runtimeConfig";
+import { asProviderStallError, toProviderStreamError } from "./providerErrors";
 import { createRawLlmStreamRecorder, logRawLlmStream } from "./rawStreamLog";
 
 /**
@@ -481,6 +482,11 @@ export async function streamAiSdk(
       // lets the model synthesize results from the last permitted tool call.
       stopWhen: sdk.stepCountIs(Math.max(0, maxIterations) + 1),
       abortSignal: internalAbort.signal,
+      // Cut off a provider that stops sending, at the source. Tool execution
+      // is deliberately not bounded here: it runs through runTools, which
+      // does not observe the SDK's per-tool signal, so the run-level idle
+      // deadline in streamRuns.ts is what covers a hung tool.
+      timeout: streamChunkTimeouts(),
       reasoning:
         config.provider === "kimi" || config.supportsReasoning === false
           ? undefined
@@ -565,6 +571,10 @@ export async function streamAiSdk(
         case "error":
           throw guardAbortShaped(streamFailure(part.error, config));
         case "abort": {
+          const stalled = params.abortSignal?.aborted
+            ? null
+            : asProviderStallError(part.reason, config);
+          if (stalled) throw stalled;
           const error = new Error(part.reason || "Stream aborted.");
           error.name = "AbortError";
           throw error;
