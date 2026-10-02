@@ -94,6 +94,31 @@ export function uploadJobWallClockMs(
   );
 }
 
+/**
+ * Deadlines for one server-owned SSE run (chat, project chat, Word chat,
+ * tabular generation). `idleMs` aborts a run that has produced no output for
+ * that long (a hung provider or tool); it re-arms on every frame, so a long
+ * agentic run that keeps working is unaffected. `maxMs` is a wall-clock
+ * backstop for a run that never stops emitting.
+ */
+export function streamRunDeadlines(env: NodeJS.ProcessEnv = process.env): {
+  idleMs: number;
+  maxMs: number;
+} {
+  return {
+    idleMs: clamp(
+      envInt("STREAM_IDLE_TIMEOUT_MS", 5 * 60_000, env),
+      30_000,
+      60 * 60_000,
+    ),
+    maxMs: clamp(
+      envInt("STREAM_MAX_LIFETIME_MS", 4 * 60 * 60_000, env),
+      60_000,
+      24 * 60 * 60_000,
+    ),
+  };
+}
+
 function parsedUrl(value: string, name: string, errors: string[]): URL | null {
   try {
     const url = new URL(value);

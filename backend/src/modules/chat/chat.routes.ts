@@ -4,6 +4,7 @@ import {
     findAssistantTurnRun,
     claimAssistantTurnRun,
 } from "../../lib/assistantTurnRuns";
+import { stopOutcomeFrame } from "../../lib/streamRuns";
 // HTTP layer for the chat module.
 //
 // Route handlers parse params/query/body, call the chat.service functions,
@@ -952,7 +953,7 @@ chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                 // Readers still attached (Stop came from another tab, or
                 // this one is watching) learn the outcome the same way a
                 // reload would: the stored row ends "Cancelled by user."
-                write(`data: ${JSON.stringify({ type: "cancelled" })}\n\n`);
+                write(stopOutcomeFrame(run));
                 write("data: [DONE]\n\n");
                 return;
             }

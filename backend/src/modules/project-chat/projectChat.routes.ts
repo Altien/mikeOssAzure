@@ -2,6 +2,7 @@ import {
     attachAssistantTurnSse,
     claimAssistantTurnRun,
 } from "../../lib/assistantTurnRuns";
+import { stopOutcomeFrame } from "../../lib/streamRuns";
 // HTTP layer for the project-chat module.
 //
 // The route handler parses the request body, calls
@@ -414,7 +415,7 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                         );
                     }
                 }
-                write(`data: ${JSON.stringify({ type: "cancelled" })}\n\n`);
+                write(stopOutcomeFrame(run));
                 write("data: [DONE]\n\n");
                 return;
             }

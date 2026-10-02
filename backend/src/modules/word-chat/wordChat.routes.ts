@@ -8,6 +8,7 @@ import {
   findAssistantTurnRun,
   claimAssistantTurnRun,
 } from "../../lib/assistantTurnRuns";
+import { stopOutcomeFrame } from "../../lib/streamRuns";
 // HTTP layer for the word-chat module — the Word task pane's chat surface.
 //
 // Route handlers parse params/query/body, call the wordChat.service functions,
@@ -977,7 +978,7 @@ wordChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
       await updateChatActivity();
       // Readers still attached (Stop came from another pane, or this one is
       // only watching) learn the outcome the way a reopen would.
-      write(`data: ${JSON.stringify({ type: "cancelled" })}\n\n`);
+      write(stopOutcomeFrame(run));
       write("data: [DONE]\n\n");
       return;
     }
