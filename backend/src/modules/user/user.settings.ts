@@ -1,6 +1,8 @@
 import { createServerSupabase, type Db } from "../../lib/supabase";
 import { DEFAULT_TITLE_MODEL, OPENAI_LOW_MODELS, type UserApiKeys, type ReasoningLevel } from "../../lib/llm";
 import { getOrganisationApiKeys } from "./user.apiKeyStore";
+import { loadCustomInstructions } from "./user.customInstructions";
+import { safeError } from "../../lib/safeError";
 import { getAllUserRouterModels, ROUTER_SLUGS, type RouterModelSelections } from "../../lib/routerModels";
 import { normalizeOptionalModelPreference, normalizeReasoningLevel } from "../../lib/modelSelection";
 
@@ -24,6 +26,8 @@ export type UserModelSettings = {
         practiceSetting: string | null;
         professionalTitle: string | null;
         practiceAreas: string[];
+        /** Free-form instructions from Settings > Personalisation. */
+        customInstructions?: string;
     };
 };
 
@@ -45,12 +49,20 @@ export async function getUserModelSettings(
     db?: Db,
 ): Promise<UserModelSettings> {
     const client = db ?? createServerSupabase();
-    const [profileResult, api_keys, routerModels] = await Promise.all([
+    const [profileResult, api_keys, routerModels, customInstructions] = await Promise.all([
         client.from("user_profiles")
             .select("fast_model, tabular_model, memory_curator_model, last_selected_chat_model, last_selected_reasoning_level, legal_research_us, display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas")
             .eq("user_id", userId).single(),
         getOrganisationApiKeys(),
         getAllUserRouterModels(userId, client),
+        // Instructions are an enhancement: a failed read must not block chat.
+        loadCustomInstructions(client, userId).catch((error: unknown) => {
+            console.error(
+                "[user-settings] custom instructions load failed",
+                safeError(error),
+            );
+            return "";
+        }),
     ]);
     let data = profileResult.data;
     let profileError = profileResult.error;
@@ -106,6 +118,7 @@ export async function getUserModelSettings(
             practiceSetting: typeof data?.practice_setting === "string" ? data.practice_setting : null,
             professionalTitle: typeof data?.professional_title === "string" ? data.professional_title : null,
             practiceAreas: Array.isArray(data?.practice_areas) ? data.practice_areas.filter((a): a is string => typeof a === "string") : [],
+            customInstructions,
         },
         api_keys,
     };
