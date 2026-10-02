@@ -12,25 +12,25 @@ importers:
   .:
     dependencies:
       '@ai-sdk/anthropic':
-        specifier: ^4.0.58
+        specifier: ^4.0.65
         version: 4.0.71(zod@4.6.5)
       '@ai-sdk/azure':
         specifier: ^4.0.45
         version: 4.0.90(zod@4.6.5)
       '@ai-sdk/google':
-        specifier: ^4.0.76
+        specifier: ^4.0.82
         version: 4.0.87(zod@4.6.5)
       '@ai-sdk/openai':
-        specifier: ^4.0.71
+        specifier: ^4.0.77
         version: 4.0.83(zod@4.6.5)
       '@ai-sdk/openai-compatible':
-        specifier: ^3.0.53
+        specifier: ^3.0.57
         version: 3.0.62(zod@4.6.5)
       '@aws-sdk/client-s3':
-        specifier: ^3.1136.0
+        specifier: ^3.1141.0
         version: 3.1146.0
       '@aws-sdk/s3-request-presigner':
-        specifier: ^3.1136.0
+        specifier: ^3.1141.0
         version: 3.1146.0
       '@azure/identity':
         specifier: ^4.5.0
@@ -45,7 +45,7 @@ importers:
         specifier: ^1.50.1
         version: 1.52.0(@modelcontextprotocol/sdk@1.32.0(zod@4.6.5))
       '@modelcontextprotocol/sdk':
-        specifier: ^1.29.0
+        specifier: ^1.30.1
         version: 1.32.0(zod@4.6.5)
       '@openrouter/ai-sdk-provider':
         specifier: ^3.0.0
@@ -54,19 +54,19 @@ importers:
         specifier: 10.73.0
         version: 10.73.0(@opentelemetry/core@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/exporter-trace-otlp-http@0.221.0(@opentelemetry/api@1.9.1))
       '@supabase/supabase-js':
-        specifier: ^2.105.3
+        specifier: ^2.117.2
         version: 2.117.2(@opentelemetry/api@1.9.1)
       '@types/pg':
         specifier: ^8.20.0
         version: 8.23.1
       ai:
-        specifier: ^7.0.107
+        specifier: ^7.0.116
         version: 7.0.127(zod@4.6.5)
       applicationinsights:
         specifier: ^3.14.0
         version: 3.16.0
       bullmq:
-        specifier: ^6.3.8
+        specifier: ^6.3.9
         version: 6.3.11(ioredis@6.0.0)(pg@8.23.1)
       cookie-parser:
         specifier: ^1.4.7
@@ -75,10 +75,10 @@ importers:
         specifier: ^2.8.5
         version: 2.8.6
       docx:
-        specifier: ^9.5.0
+        specifier: ^9.7.2
         version: 9.8.1
       dotenv:
-        specifier: ^18.0.1
+        specifier: ^18.0.4
         version: 18.0.5
       express:
         specifier: ^4.21.2
@@ -126,7 +126,7 @@ importers:
         specifier: ^8.20.0
         version: 8.23.1
       undici:
-        specifier: ^8.10.2
+        specifier: ^8.11.2
         version: 8.11.2
       xlsx:
         specifier: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
@@ -166,25 +166,25 @@ importers:
         specifier: ^1.4.13
         version: 1.4.13
       '@types/node':
-        specifier: ^26.6.2
+        specifier: ^26.6.3
         version: 26.6.4
       '@types/supertest':
         specifier: ^7.2.1
         version: 7.2.1
       '@vitest/coverage-v8':
-        specifier: ^5.0.1
+        specifier: ^5.0.2
         version: 5.0.3(vitest@5.0.3)
       only-allow:
         specifier: ^1.2.1
         version: 1.2.2
       prettier:
-        specifier: ^3.9.8
+        specifier: ^3.9.9
         version: 3.9.9
       supertest:
-        specifier: ^7.2.2
+        specifier: ^7.3.0
         version: 7.3.1
       tsx:
-        specifier: ^4.19.3
+        specifier: ^4.23.15
         version: 4.23.15
       typescript:
         specifier: ^7.0.2
