@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { UserFacingError } from "../safeError";
 import { InvalidApiKeyError } from "./apiKeyErrors";
-import { toProviderStreamError } from "./providerErrors";
+import { asProviderStallError, toProviderStreamError } from "./providerErrors";
 
 const gemini = { label: "Gemini", modelId: "gemini-2.5-pro" };
 
@@ -111,8 +111,7 @@ describe("toProviderStreamError", () => {
 
 describe("asProviderStallError", () => {
   const ctx = { label: "Mock", modelId: "m" };
-  it("recognises the SDK chunk timeouts", async () => {
-    const { asProviderStallError } = await import("./providerErrors");
+  it("recognises the SDK chunk timeouts", () => {
     for (const reason of [
       "TimeoutError: Chunk timeout of 60000ms exceeded",
       new DOMException("First chunk timeout of 120000ms exceeded", "TimeoutError"),
@@ -120,8 +119,7 @@ describe("asProviderStallError", () => {
       expect(asProviderStallError(reason, ctx)?.message).toMatch(/stopped responding/);
     }
   });
-  it("ignores everything else", async () => {
-    const { asProviderStallError } = await import("./providerErrors");
+  it("ignores everything else", () => {
     expect(asProviderStallError("Stream aborted.", ctx)).toBeNull();
     expect(asProviderStallError(new Error("boom"), ctx)).toBeNull();
     expect(asProviderStallError(undefined, ctx)).toBeNull();
