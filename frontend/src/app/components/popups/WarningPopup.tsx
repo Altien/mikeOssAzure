@@ -80,7 +80,10 @@ export function WarningPopup({
                             )}
                         >
                             {!title && warningIcon}
-                            <span className="min-w-0">{message}</span>
+                            {/* Setup steps carry long redirect URIs; wrap them. */}
+                            <span className="min-w-0 [overflow-wrap:anywhere]">
+                                {message}
+                            </span>
                         </div>
                     )}
                     {children}

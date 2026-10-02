@@ -30,6 +30,7 @@ import {
   type EditAnnotation,
   devLog,
   resolveDocLabel,
+  TOOL_ERROR_MESSAGE,
 } from "./types";
 import {
   TOOLS,
@@ -97,7 +98,6 @@ export class AssistantStreamError extends Error {
 
 export const ASSISTANT_ERROR_MESSAGE =
   "The response could not be completed. Please try again.";
-const TOOL_ERROR_MESSAGE = "This tool could not complete its request.";
 
 /**
  * What to tell the client about a failed stream.
@@ -218,6 +218,12 @@ export async function runLLMStream(params: {
   /** Expose ask_inputs only to clients that can render and answer it. */
   includeAskInputs?: boolean;
   /**
+   * The surface continues a paused turn from an ask_inputs_response, so a
+   * connector write can wait there for the user's approval. Surfaces without
+   * that continuation refuse writes that need approval instead.
+   */
+  connectorApprovals?: boolean;
+  /**
    * May this turn WRITE documents (edit_document, replicate_document, the
    * generate_* family)? Defaults to true; pass false and those tools are
    * neither advertised to the model nor executed if it asks for one anyway.
@@ -284,6 +290,7 @@ export async function runLLMStream(params: {
     includeResearchTools = true,
     includeGoogleConnectors = false,
     includeAskInputs = true,
+    connectorApprovals = false,
     allowDocumentMutation = true,
     workflowStore,
     tabularStore,
@@ -672,6 +679,7 @@ export async function runLLMStream(params: {
           authorityTraceTurnState,
           skillResourceStore,
           nonce,
+          { connectorApprovals: connectorApprovals && includeAskInputs },
         );
         throwIfAborted(signal);
         for (const r of docsRead) {
