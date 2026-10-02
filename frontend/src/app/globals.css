@@ -303,6 +303,14 @@
         font-family: var(--font-eb-garamond);
     }
 
+    /* Thin, track-less scrollbar for scroll areas on glass surfaces, so a
+       classic (mouse / Windows) scrollbar does not draw an opaque gutter. */
+    .scrollbar-subtle {
+        scrollbar-width: thin;
+        scrollbar-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent)
+            transparent;
+    }
+
     .sidebar-fade-in {
         animation: sidebarFadeIn 0.3s ease-out forwards;
         animation-delay: 0.1s;
