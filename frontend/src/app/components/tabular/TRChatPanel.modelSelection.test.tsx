@@ -65,8 +65,8 @@ beforeAll(() => {
     );
 });
 
-describe("TRChatPanel Azure OpenAI deployment validation", () => {
-    it("blocks a saved deployment that is no longer discovered", async () => {
+describe("TRChatPanel model selection", () => {
+    it("blocks a new chat with no selected model before streaming", async () => {
         render(
             <TRChatPanel
                 reviewId="review-1"
@@ -80,7 +80,7 @@ describe("TRChatPanel Azure OpenAI deployment validation", () => {
         fireEvent.keyDown(input, { key: "Enter" });
 
         expect(
-            await screen.findByText("Model unavailable"),
+            await screen.findByText("Select a model"),
         ).toBeInTheDocument();
         await waitFor(() =>
             expect(streamTabularChatMock).not.toHaveBeenCalled(),
