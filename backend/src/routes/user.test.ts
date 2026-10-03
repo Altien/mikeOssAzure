@@ -295,6 +295,7 @@ describe("GET /api/user/profile — wiring and shape", () => {
       tabularModel: "gpt-5.4",
       mfaOnLogin: false,
       legalResearchUs: false,
+      quickActionsVisible: true,
       apiKeyStatus: {
         claude: true,
         gemini: false,

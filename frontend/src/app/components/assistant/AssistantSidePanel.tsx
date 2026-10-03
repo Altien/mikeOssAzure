@@ -82,7 +82,12 @@ export function mergeAssistantSidePanelTab(
     existing: AssistantSidePanelTab,
     incoming: AssistantSidePanelTab,
 ): AssistantSidePanelTab {
-    if (existing.kind === "case" || incoming.kind === "case") return incoming;
+    if (
+        existing.kind === "case" ||
+        incoming.kind === "case" ||
+        existing.kind === "authority_trace" ||
+        incoming.kind === "authority_trace"
+    ) return incoming;
     if (existing.documentId !== incoming.documentId) return incoming;
     if (existing.kind === "document" && incoming.kind === "document") {
         return existing;

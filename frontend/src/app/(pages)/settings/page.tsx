@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Trash2 } from "lucide-react";
+import { LogOut, Trash2 } from "lucide-react";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { FieldLabel } from "@/app/components/ui/form-field";
 import { SettingsTextInput } from "@/app/components/settings/SettingsTextInput";
@@ -43,6 +43,11 @@ export default function SettingsPage() {
     const [emailWarning, setEmailWarning] = useState<string | null>(null);
     const [deleteConfirm, setDeleteConfirm] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
+
+    const handleLogout = async () => {
+        await signOut();
+        router.push("/");
+    };
 
     useEffect(() => {
         if (profile?.displayName) {
