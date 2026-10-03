@@ -592,6 +592,7 @@ describe("OpenCode Go LLM adapter", () => {
                     },
                 },
             ],
+            maxIterations: 1,
             runTools,
             apiKeys: { "opencode-go": "oc-user-key" },
         });
@@ -608,6 +609,7 @@ describe("OpenCode Go LLM adapter", () => {
         const secondBody = JSON.parse(
             String((fetchMock.mock.calls[1]?.[1] as RequestInit).body),
         );
+        expect(secondBody).not.toHaveProperty("tools");
         expect(secondBody.messages).toEqual([
             { role: "user", content: "Find the contract" },
             {
