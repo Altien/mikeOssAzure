@@ -7,6 +7,7 @@ import React, {
     useState,
     ReactNode,
     useCallback,
+    useRef,
 } from "react";
 import { useAuth } from "@/app/contexts/AuthContext";
 import {
@@ -165,8 +166,22 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     const [loading, setLoading] = useState(true);
     const [apiKeysDegraded, setApiKeysDegraded] = useState(false);
     const userId = user?.id ?? null;
+    const identity = isAuthenticated ? userId : null;
+    const identityRef = useRef(identity);
+    const writeEpochRef = useRef(0);
+    const loadEpochRef = useRef(0);
+    if (identityRef.current !== identity) {
+        identityRef.current = identity;
+        writeEpochRef.current++;
+        loadEpochRef.current++;
+    }
 
     const loadProfile = useCallback(async () => {
+        const owner = identity;
+        const writeEpoch = writeEpochRef.current;
+        const loadEpoch = ++loadEpochRef.current;
+        const isCurrent = () => identityRef.current === owner &&
+            writeEpochRef.current === writeEpoch && loadEpochRef.current === loadEpoch;
         try {
             let profileData: ApiUserProfile;
             try {
@@ -177,9 +192,12 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 await new Promise((resolve) => setTimeout(resolve, 750));
                 profileData = await getUserProfile();
             }
-            setProfile(toProfile(profileData));
-            setApiKeysDegraded(false);
+            if (isCurrent()) {
+                setProfile(toProfile(profileData));
+                setApiKeysDegraded(false);
+            }
         } catch (error) {
+            if (!isCurrent()) return;
             console.warn(
                 "[profile] fetch failed after retry; API key availability is unknown and fails open",
                 error,
@@ -215,16 +233,17 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 apiKeys: emptyApiKeys(),
             });
         } finally {
-            setLoading(false);
+            if (isCurrent()) setLoading(false);
         }
-    }, []);
+    }, [identity]);
 
     useEffect(() => {
         if (isAuthenticated && userId) {
             setLoading(true);
-            loadProfile();
+            void loadProfile();
         } else {
             setProfile(null);
+            setApiKeysDegraded(false);
             setLoading(false);
         }
     }, [isAuthenticated, userId, loadProfile]);
@@ -282,9 +301,18 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     const updatePersonalisation = useCallback(
         async (details: PersonalisationDetails): Promise<boolean> => {
             if (!user) return false;
+            const owner = user.id;
+            if (identityRef.current !== owner) return false;
+            const epoch = ++writeEpochRef.current;
+            loadEpochRef.current++;
             try {
-                const updated = await updateUserProfile(details);
+                const updated = await updateUserProfile(details, () =>
+                    identityRef.current === owner && writeEpochRef.current === epoch,
+                );
+                if (identityRef.current !== owner || writeEpochRef.current !== epoch) return false;
+                loadEpochRef.current++;
                 setProfile(toProfile(updated));
+                setLoading(false);
                 return true;
             } catch {
                 return false;

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw-server";
@@ -133,6 +133,7 @@ function Probe() {
                 incr-credits
             </button>
             <button onClick={() => void ctx.reloadProfile()}>reload-profile</button>
+            <button onClick={() => void ctx.updatePersonalisation({ professionalTitle: "Partner" })}>set-personalisation</button>
         </div>
     );
 }
@@ -187,6 +188,8 @@ describe("UserProfileContext: bootstrap fetch on mount", () => {
             gemini: { configured: true, source: "env" },
             openai: { configured: false, source: null },
             openrouter: { configured: false, source: null },
+            vercel: { configured: false, source: null },
+            "opencode-go": { configured: false, source: null },
             courtlistener: { configured: false, source: null },
             // Dev (OSS-6 §2.3 item 3): organisation Kimi + Azure OpenAI.
             kimi: { configured: true, source: "env" },
@@ -391,6 +394,45 @@ describe("UserProfileContext: reloadProfile", () => {
         await waitFor(() =>
             expect(captured.filter((c) => c.method === "GET")).toHaveLength(2),
         );
+    });
+});
+
+describe("UserProfileContext: account and request fences", () => {
+    it("ignores an old account fetch and a save response after identity changes", async () => {
+        let releaseOldFetch!: (response: Response) => void;
+        let releaseSave!: (response: Response) => void;
+        const oldFetch = new Promise<Response>((resolve) => { releaseOldFetch = resolve; });
+        const pendingSave = new Promise<Response>((resolve) => { releaseSave = resolve; });
+        let fetchCount = 0;
+        let patchCount = 0;
+        server.use(
+            http.get("*/api/user/profile", () => {
+                fetchCount++;
+                if (fetchCount === 1) return oldFetch;
+                return HttpResponse.json({ ...PROFILE_FIXTURE, displayName: `User ${fetchCount}` });
+            }),
+            http.patch("*/api/user/profile", () => {
+                patchCount++;
+                return pendingSave;
+            }),
+        );
+        authedFor(TEST_USER);
+        const view = renderProbe();
+        await waitFor(() => expect(fetchCount).toBe(1));
+
+        authedFor({ id: "u-2", email: "two@example.com" });
+        view.rerender(<UserProfileProvider><Probe /></UserProfileProvider>);
+        await waitFor(() => expect(readProfile().displayName).toBe("User 2"));
+        await act(async () => { releaseOldFetch(HttpResponse.json({ ...PROFILE_FIXTURE, displayName: "Old user" })); });
+        expect(readProfile().displayName).toBe("User 2");
+
+        fireEvent.click(screen.getByText("set-personalisation"));
+        await waitFor(() => expect(patchCount).toBe(1));
+        authedFor({ id: "u-3", email: "three@example.com" });
+        view.rerender(<UserProfileProvider><Probe /></UserProfileProvider>);
+        await waitFor(() => expect(readProfile().displayName).toBe("User 3"));
+        await act(async () => { releaseSave(HttpResponse.json({ ...PROFILE_FIXTURE, displayName: "Stale save" })); });
+        expect(readProfile().displayName).toBe("User 3");
     });
 });
 
