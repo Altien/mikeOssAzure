@@ -28,7 +28,7 @@ interface AuthContextType {
   // supabase mode can do that; in entra/local modes the identity provider
   // owns the address, so updateEmail rejects with an explanatory error.
   updateEmail: (email: string) => Promise<User>;
-  setPassword: (password: string) => Promise<void>;
+  setPassword: (password: string, nonce?: string) => Promise<void>;
 }
 // Exported for the test harness (src/test/render.tsx) to inject auth state.
 export const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -210,9 +210,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return nextUser;
   };
 
-  const setPassword = async (password: string): Promise<void> => {
+  const setPassword = async (password: string, nonce?: string): Promise<void> => {
     if (config.authProvider !== "supabase") throw new Error("Password changes are available only with Supabase sign-in.");
-    await syncUserPasswordSet(password);
+    await syncUserPasswordSet(password, nonce);
     setUser((current) => current ? { ...current, hasPassword: true } : null);
   };
 

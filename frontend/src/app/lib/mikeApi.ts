@@ -123,8 +123,14 @@ export async function getAuthHeader(): Promise<Record<string, string>> {
 export async function apiRequest<T>(
     path: string,
     init?: RequestInit,
+    isCurrentAccount?: () => boolean,
 ): Promise<T> {
     const authHeaders = await getAuthHeader();
+    // Auth token acquisition can await a refresh. A settings save started by
+    // the previous account must not then use the next account's credential.
+    if (isCurrentAccount && !isCurrentAccount()) {
+        throw new Error("Account changed before the request was sent");
+    }
     const { headers: initHeaders, ...restInit } = init ?? {};
     const response = await fetch(`${API_BASE}${path}`, {
         cache: "no-store",
@@ -596,12 +602,12 @@ export async function updateUserProfile(payload: {
     openRouterModels?: string[];
     vercelModels?: string[];
     openCodeGoModels?: string[];
-}): Promise<UserProfile> {
+}, isCurrentAccount?: () => boolean): Promise<UserProfile> {
     return apiRequest<UserProfile>("/user/profile", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-    });
+    }, isCurrentAccount);
 }
 
 export async function completeUserOnboarding(
@@ -614,11 +620,11 @@ export async function completeUserOnboarding(
     });
 }
 
-export async function syncUserPasswordSet(password: string): Promise<UserProfile> {
+export async function syncUserPasswordSet(password: string, nonce?: string): Promise<UserProfile> {
     return apiRequest<UserProfile>("/user/security/password-set", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify(nonce ? { password, nonce } : { password }),
     });
 }
 

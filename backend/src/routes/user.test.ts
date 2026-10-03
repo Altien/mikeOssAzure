@@ -119,6 +119,8 @@ const TOUCHED_ENV = [
   "ENTRA_MEMBER_GROUP_IDS",
   "ENTRA_ADMIN_GROUP_IDS",
   "NODE_ENV",
+  "SUPABASE_URL",
+  "SUPABASE_PUBLISHABLE_DEFAULT_KEY",
 ] as const;
 const envSnapshot = {} as Record<string, string | undefined>;
 
@@ -172,10 +174,69 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   for (const k of TOUCHED_ENV) {
     if (envSnapshot[k] === undefined) delete process.env[k];
     else process.env[k] = envSnapshot[k];
   }
+});
+
+describe("POST /api/user/security/password-set", () => {
+  beforeEach(() => {
+    process.env.SUPABASE_URL = "https://auth.example.test";
+    process.env.SUPABASE_PUBLISHABLE_DEFAULT_KEY = "public-key";
+  });
+
+  it("keeps the marker unset when the current-user provider rejects the change", async () => {
+    const provider = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: "reauthentication_needed" }), { status: 422 }));
+    vi.stubGlobal("fetch", provider);
+    const { db, calls } = makeDb({});
+    createServerSupabaseMock.mockReturnValue(db);
+
+    const res = await request(makeApp()).post("/api/user/security/password-set")
+      .set("Authorization", "Bearer caller-token")
+      .send({ password: "securepass123" });
+
+    expect(res.status).toBe(422);
+    expect(calls.some(call => call.type === "update")).toBe(false);
+    expect(provider).toHaveBeenCalledWith(
+      new URL("https://auth.example.test/auth/v1/user"),
+      expect.objectContaining({
+        method: "PUT",
+        headers: expect.objectContaining({ Authorization: "Bearer caller-token", apikey: "public-key" }),
+      }),
+    );
+  });
+
+  it("rejects a provider response for a different user without setting the marker", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "another-user" }), { status: 200 })));
+    const { db, calls } = makeDb({});
+    createServerSupabaseMock.mockReturnValue(db);
+
+    const res = await request(makeApp()).post("/api/user/security/password-set")
+      .set("Authorization", "Bearer caller-token")
+      .send({ password: "securepass123", nonce: "123456" });
+
+    expect(res.status).toBe(502);
+    expect(calls.some(call => call.type === "update")).toBe(false);
+    expect(JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string)).toEqual({
+      password: "securepass123", nonce: "123456",
+    });
+  });
+
+  it("marks only after the provider confirms the authenticated user", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "user-1" }), { status: 200 })));
+    const { db, calls } = makeDb({ profile: { data: { user_id: "user-1", password_set_at: "2026-10-03T00:00:00Z" } } });
+    createServerSupabaseMock.mockReturnValue(db);
+
+    const res = await request(makeApp()).post("/api/user/security/password-set")
+      .set("Authorization", "Bearer caller-token")
+      .send({ password: "securepass123" });
+
+    expect(res.status).toBe(200);
+    expect(calls).toContainEqual(expect.objectContaining({ type: "update", patch: expect.objectContaining({ password_set_at: expect.any(String) }) }));
+    expect(calls).toContainEqual({ type: "eq", col: "user_id", val: "user-1" });
+  });
 });
 
 /**
@@ -294,6 +355,13 @@ describe("GET /api/user/profile — wiring and shape", () => {
     expect(res.body).toEqual({
       displayName: "Caller",
       organisation: "Acme",
+      jurisdiction: null,
+      practiceSetting: null,
+      professionalTitle: null,
+      practiceAreas: [],
+      onboardingComplete: true,
+      onboardingVersion: 0,
+      passwordSet: null,
       messageCreditsUsed: 12,
       creditsResetDate: future,
       creditsRemaining: 999999 - 12,
@@ -520,7 +588,7 @@ describe("GET /api/user/profile — wiring and shape", () => {
       .set("Authorization", "Bearer ok");
 
     expect(res.status).toBe(500);
-    expect(res.body).toEqual({ detail: "row not found" });
+    expect(res.body).toMatchObject({ code: "internal_error", detail: "Something went wrong. Please try again." });
   });
 });
 
@@ -696,7 +764,7 @@ describe("PATCH /api/user/profile — profile-field updates", () => {
       .send({ displayName: "X" });
 
     expect(res.status).toBe(500);
-    expect(res.body).toEqual({ detail: "tx conflict" });
+    expect(res.body).toMatchObject({ code: "internal_error", detail: "Something went wrong. Please try again." });
   });
 
   it("returns 500 when the post-update re-fetch errors", async () => {
@@ -711,7 +779,7 @@ describe("PATCH /api/user/profile — profile-field updates", () => {
       .send({ displayName: "X" });
 
     expect(res.status).toBe(500);
-    expect(res.body).toEqual({ detail: "re-fetch failed" });
+    expect(res.body).toMatchObject({ code: "internal_error", detail: "Something went wrong. Please try again." });
   });
 });
 
@@ -1023,7 +1091,7 @@ describe("POST /api/user/profile/credits/increment", () => {
       .set("Authorization", "Bearer ok");
 
     expect(res.status).toBe(500);
-    expect(res.body).toEqual({ detail: "boom" });
+    expect(res.body).toMatchObject({ code: "internal_error", detail: "Something went wrong. Please try again." });
   });
 });
 
@@ -1149,9 +1217,7 @@ describe("DELETE /api/user/account", () => {
       .set("Authorization", "Bearer ok");
 
     expect(res.status).toBe(500);
-    expect(res.body.detail).toBe(
-      "Failed to delete user data from chats: deadlock",
-    );
+    expect(res.body.detail).toBe("Something went wrong. Please try again.");
     expect(calls.filter((c) => c.type === "from")).toEqual([]);
   });
 
@@ -1167,9 +1233,7 @@ describe("DELETE /api/user/account", () => {
       .set("Authorization", "Bearer ok");
 
     expect(res.status).toBe(500);
-    expect(res.body.detail).toBe(
-      "Failed to delete user data from user_api_keys: permission denied",
-    );
+    expect(res.body.detail).toBe("Something went wrong. Please try again.");
     expect(
       (db as { auth: { admin: { deleteUser: ReturnType<typeof vi.fn> } } })
         .auth.admin.deleteUser,
@@ -1242,7 +1306,7 @@ describe("MCP connector routes", () => {
       .send({ name: "GH", serverUrl: "https://mcp.example.com" });
 
     expect(res.status).toBe(400);
-    expect(res.body.detail).toMatch(/mcp-connectors-encryption-key/);
+    expect(res.body.detail).toBe("Connector settings are invalid or the server could not be reached.");
   });
 
   it("oauth/start builds the redirect_uri WITH the /api prefix (regression: 93bc48b)", async () => {
@@ -1289,7 +1353,8 @@ describe("MCP connector routes", () => {
     expect(res.status).toBe(400);
     expect(res.headers["cross-origin-opener-policy"]).toBe("unsafe-none");
     expect(res.text).toContain("mcp_oauth_result");
-    expect(res.text).toContain("access_denied");
+    expect(res.text).toContain("mcp_oauth_result");
+    expect(res.text).not.toContain("access_denied");
   });
 
   it("refresh-tools maps McpOAuthRequiredError to 428 + code — NOT 401 (would trigger a spurious logout)", async () => {
@@ -1303,7 +1368,7 @@ describe("MCP connector routes", () => {
 
     expect(res.status).toBe(428);
     expect(res.body.code).toBe("oauth_required");
-    expect(res.body.detail).toMatch(/requires OAuth/);
+    expect(res.body.detail).toBe("This connector needs to be authorized again.");
   });
 
   it("refresh-tools maps other failures to 400", async () => {
@@ -1316,7 +1381,7 @@ describe("MCP connector routes", () => {
       .set("Authorization", "Bearer ok");
 
     expect(res.status).toBe(400);
-    expect(res.body.detail).toBe("connection refused");
+    expect(res.body.detail).toBe("Connector tools could not be refreshed.");
   });
 });
 
@@ -1404,6 +1469,6 @@ describe("GET /api/user/lookup", () => {
       .set("Authorization", "Bearer ok");
 
     expect(res.status).toBe(500);
-    expect(res.body.detail).toBe("db down");
+    expect(res.body.detail).toBe("Something went wrong. Please try again.");
   });
 });

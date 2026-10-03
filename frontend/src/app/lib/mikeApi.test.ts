@@ -218,6 +218,19 @@ afterEach(() => {
     vi.clearAllMocks();
 });
 
+it("does not send a profile save with a new account's token after async refresh", async () => {
+    let releaseToken!: (token: string) => void;
+    getBrowserAccessTokenMock.mockReturnValue(new Promise<string>((resolve) => {
+        releaseToken = resolve;
+    }));
+    let currentAccount = true;
+    const save = updateUserProfile({ professionalTitle: "Partner" }, () => currentAccount);
+    currentAccount = false;
+    releaseToken("new-account-token");
+    await expect(save).rejects.toThrow("Account changed before the request was sent");
+    expect(fetchMock).not.toHaveBeenCalled();
+});
+
 describe("MikeApiError / isMfaRequiredError", () => {
     it("carries status and code, defaulting code to null", () => {
         const withCode = new MikeApiError({
@@ -1943,9 +1956,10 @@ describe("thin endpoint wrappers", () => {
         },
         {
             name: "syncUserPasswordSet",
-            call: () => syncUserPasswordSet(),
+            call: () => syncUserPasswordSet("securepass123"),
             url: "/user/security/password-set",
             method: "POST",
+            body: { password: "securepass123" },
         },
         {
             name: "updateUserMfaOnLogin",

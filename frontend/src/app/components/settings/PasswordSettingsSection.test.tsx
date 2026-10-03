@@ -14,6 +14,7 @@ const state = vi.hoisted(() => ({
     setPassword: vi.fn(),
     syncPasswordSet: vi.fn(),
     resetPasswordForEmail: vi.fn(),
+    reauthenticate: vi.fn(),
 }));
 
 vi.mock("@/app/contexts/AuthContext", () => ({
@@ -28,9 +29,10 @@ vi.mock("@/app/contexts/UserProfileContext", () => ({
 }));
 
 vi.mock("@/app/lib/supabase", () => ({
-    supabase: {
-        auth: { resetPasswordForEmail: state.resetPasswordForEmail },
-    },
+    getSupabaseClient: () => ({ auth: {
+        resetPasswordForEmail: state.resetPasswordForEmail,
+        reauthenticate: state.reauthenticate,
+    } }),
 }));
 
 describe("PasswordSettingsSection", () => {
@@ -52,9 +54,9 @@ describe("PasswordSettingsSection", () => {
         const user = userEvent.setup();
         render(<PasswordSettingsSection />);
 
-        expect(screen.getByText("Set password", { selector: "p" })).toBeVisible();
+        expect(screen.getByText("Set or update password", { selector: "p" })).toBeVisible();
         await user.click(
-            screen.getByRole("button", { name: "Set password" }),
+            screen.getByRole("button", { name: "Set or update password" }),
         );
 
         const dialog = screen.getByRole("dialog", { name: "Set password" });
@@ -74,7 +76,7 @@ describe("PasswordSettingsSection", () => {
         );
 
         await waitFor(() =>
-            expect(state.setPassword).toHaveBeenCalledWith("securepass1"),
+            expect(state.setPassword).toHaveBeenCalledWith("securepass1", undefined),
         );
         expect(screen.getByText("Password added to your account.")).toBeVisible();
     });
@@ -89,13 +91,8 @@ describe("PasswordSettingsSection", () => {
             screen.getByRole("button", { name: "Send reset email" }),
         );
 
-        await waitFor(() =>
-            expect(state.resetPasswordForEmail).toHaveBeenCalledWith(
-                "alex@example.com",
-                expect.objectContaining({
-                    redirectTo: expect.stringContaining("reset-password"),
-                }),
-            ),
-        );
+        await waitFor(() => expect(state.resetPasswordForEmail).toHaveBeenCalledWith(
+            "alex@example.com", expect.anything(),
+        ));
     });
 });

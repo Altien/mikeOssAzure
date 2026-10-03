@@ -22,6 +22,9 @@ export function PasswordSettingsSection() {
     const [setPasswordOpen, setSetPasswordOpen] = useState(false);
     const [password, setPasswordValue] = useState("");
     const [confirmPassword, setConfirmPassword] = useState("");
+    const [reauthCode, setReauthCode] = useState("");
+    const [reauthSending, setReauthSending] = useState(false);
+    const [reauthStatus, setReauthStatus] = useState<string | null>(null);
     const [passwordSaving, setPasswordSaving] = useState(false);
     const [passwordSetError, setPasswordSetError] = useState<string | null>(
         null,
@@ -45,7 +48,7 @@ export function PasswordSettingsSection() {
 
         setPasswordSaving(true);
         try {
-            await setPassword(password);
+            await setPassword(password, reauthCode || undefined);
             const synced = await syncPasswordSet();
             if (!synced) {
                 throw new Error(
@@ -54,6 +57,8 @@ export function PasswordSettingsSection() {
             }
             setPasswordValue("");
             setConfirmPassword("");
+            setReauthCode("");
+            setReauthStatus(null);
             setSetPasswordOpen(false);
             setPasswordStatus("Password added to your account.");
         } catch (error) {
@@ -90,12 +95,28 @@ export function PasswordSettingsSection() {
         }
     }
 
+    async function sendReauthCode() {
+        setReauthSending(true);
+        setPasswordSetError(null);
+        try {
+            const { error } = await getSupabaseClient().auth.reauthenticate();
+            if (error) throw error;
+            setReauthStatus("A verification code was sent to your email.");
+        } catch {
+            setPasswordSetError("Unable to send a verification code. Try again shortly.");
+        } finally {
+            setReauthSending(false);
+        }
+    }
+
     function closeSetPassword() {
         if (passwordSaving) return;
         setSetPasswordOpen(false);
         setPasswordSetError(null);
         setPasswordValue("");
         setConfirmPassword("");
+        setReauthCode("");
+        setReauthStatus(null);
     }
 
     return (
@@ -197,6 +218,25 @@ export function PasswordSettingsSection() {
                             }
                             className={`w-full ${authInputClassName}`}
                         />
+                    </div>
+                    <div>
+                        <FieldLabel htmlFor="account-reauth-code">
+                            Verification code (if required by your sign-in provider)
+                        </FieldLabel>
+                        <Input
+                            id="account-reauth-code"
+                            inputMode="numeric"
+                            autoComplete="one-time-code"
+                            maxLength={6}
+                            value={reauthCode}
+                            onChange={(event) => setReauthCode(event.target.value.replace(/\D/g, ""))}
+                            className={`w-full ${authInputClassName}`}
+                        />
+                        <button type="button" onClick={() => void sendReauthCode()}
+                            disabled={reauthSending} className="mt-2 text-sm underline">
+                            {reauthSending ? "Sending..." : "Send verification code"}
+                        </button>
+                        {reauthStatus && <p className="mt-2 text-sm text-gray-500">{reauthStatus}</p>}
                     </div>
                     {passwordSetError && (
                         <p className="text-sm text-red-600" role="alert">

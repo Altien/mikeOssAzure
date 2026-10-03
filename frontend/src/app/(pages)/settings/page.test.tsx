@@ -25,6 +25,10 @@ vi.mock("next/navigation", () => ({
     useRouter: () => ({ push: state.push }),
 }));
 
+vi.mock("@/app/contexts/ConfigContext", () => ({
+    useConfig: () => ({ authProvider: "supabase" }),
+}));
+
 vi.mock("@/app/contexts/AuthContext", () => ({
     useAuth: () => ({
         user: state.user,
@@ -126,10 +130,7 @@ describe("SettingsPage Google email changes", () => {
             screen.getByRole("button", { name: "Update" }),
         );
 
-        const dialog = screen.getByRole("dialog", { name: "Change email" });
-        expect(dialog).toHaveTextContent(
-            "Your account was created with Google. To change your email, first add a password in Settings > Security > Password.",
-        );
+        expect(screen.getByText("Open Security settings to set or update a password before changing your email.")).toBeVisible();
         expect(state.updateEmail).not.toHaveBeenCalled();
 
         await user.click(

@@ -1,6 +1,5 @@
 import { isSupportedOpenCodeGoModel } from "../lib/llm/models";
 import crypto from "crypto";
-import { createClient } from "@supabase/supabase-js";
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
@@ -894,18 +893,39 @@ userRouter.post("/security/password-set", requireAuth, async (req, res) => {
   }
   const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
     ? req.body as Record<string, unknown> : null;
-  if (!body || Object.keys(body).some(key => key !== "password") ||
-      typeof body.password !== "string" || body.password.length < 10 || body.password.length > 1024) {
+  if (!body || Object.keys(body).some(key => key !== "password" && key !== "nonce") ||
+      typeof body.password !== "string" || body.password.length < 10 || body.password.length > 1024 ||
+      (body.nonce !== undefined && (typeof body.nonce !== "string" || !/^\d{6}$/.test(body.nonce)))) {
     return void res.status(400).json({ detail: "Enter a password of 10 to 1024 characters." });
   }
   const authUrl = process.env.SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SECRET_KEY;
-  if (!authUrl || !serviceKey) return void res.status(503).json({ detail: "Password management is unavailable." });
+  const publishableKey = process.env.SUPABASE_PUBLISHABLE_DEFAULT_KEY;
+  if (!authUrl || !publishableKey) return void res.status(503).json({ detail: "Password management is unavailable." });
   const userId = res.locals.userId as string;
   try {
-    const provider = createClient(authUrl, serviceKey, { auth: { persistSession: false } });
-    const { data, error } = await provider.auth.admin.updateUserById(userId, { password: body.password });
-    if (error || data.user?.id !== userId) {
+    // GoTrue's ordinary current-user update preserves its secure-password-
+    // change and reauthentication policy. Never use the admin update here.
+    const providerResponse = await fetch(new URL("auth/v1/user", `${authUrl.replace(/\/$/, "")}/`), {
+      method: "PUT",
+      headers: {
+        apikey: publishableKey,
+        Authorization: `Bearer ${res.locals.token as string}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body.nonce === undefined
+        ? { password: body.password }
+        : { password: body.password, nonce: body.nonce }),
+    });
+    if (!providerResponse.ok) {
+      return void res.status(providerResponse.status >= 400 && providerResponse.status < 500
+        ? providerResponse.status : 502).json({
+        detail: providerResponse.status === 403 || providerResponse.status === 422
+          ? "The sign-in provider requires a valid reauthentication code or rejected this password."
+          : "The sign-in provider could not update the password.",
+      });
+    }
+    const providerUser = await providerResponse.json() as { id?: unknown };
+    if (providerUser.id !== userId) {
       return void res.status(502).json({ detail: "The sign-in provider could not update the password." });
     }
     const db = createServerSupabase();

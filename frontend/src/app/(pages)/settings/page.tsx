@@ -443,6 +443,10 @@ export default function SettingsPage() {
                 title={emailWarning?.title}
                 message={emailWarning?.message}
                 onClose={() => setEmailWarning(null)}
+                primaryAction={{ label: "Go to Security", onClick: () => {
+                    setEmailWarning(null);
+                    router.push("/settings/security");
+                } }}
             />
         </div>
     );
