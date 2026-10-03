@@ -54,3 +54,23 @@ it("buildApp binds safe malformed-JSON errors and a request ID on /api", async (
     expect(response.body.request_id).toBe(response.headers["x-request-id"]);
     expect(response.text).not.toContain("private-token");
 });
+
+it("limits the full /api Word tool-result path independently and parses it at 2 MB", async () => {
+    const previous = process.env.RATE_LIMIT_GENERAL_MAX;
+    process.env.RATE_LIMIT_GENERAL_MAX = "1";
+    try {
+        const app = buildApp();
+        const first = await request(app).post("/api/word-chat/tool-result").send({});
+        const second = await request(app).post("/api/word-chat/tool-result").send({});
+        expect(first.status).not.toBe(429);
+        expect(second.status).not.toBe(429);
+
+        const oversized = await request(app)
+            .post("/api/word-chat/tool-result")
+            .send({ result: "x".repeat(2 * 1024 * 1024) });
+        expect(oversized.status).toBe(413);
+    } finally {
+        if (previous === undefined) delete process.env.RATE_LIMIT_GENERAL_MAX;
+        else process.env.RATE_LIMIT_GENERAL_MAX = previous;
+    }
+});
