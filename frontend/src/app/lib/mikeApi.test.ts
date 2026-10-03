@@ -219,6 +219,9 @@ const lastFetchCall = () => {
 
 beforeEach(() => {
     vi.stubGlobal("fetch", fetchMock);
+    // The prior deferred-token race test changes the mock implementation;
+    // each wrapper case needs its own initiating session token.
+    withSession("token-123");
 });
 
 afterEach(() => {
@@ -878,8 +881,9 @@ describe("streamTabularGeneration", () => {
         const { url, init } = lastFetchCall();
         expect(url).toBe("http://localhost:3001/api/tabular-review/r1/generate");
         expect(init.method).toBe("POST");
-        expect(init.headers).toEqual({
+        expect(init.headers).toMatchObject({
             "Content-Type": "application/json",
+            Authorization: "Bearer token-123",
         });
         expect(JSON.parse(init.body as string)).toEqual({
             expected_updated_at: "2026-08-22T10:00:00.000Z",
@@ -1598,7 +1602,7 @@ describe("tabular review chats", () => {
 
         await updateTabularChatModel("r1", "c1", "openai-gpt-5.2");
         let { url, init } = lastFetchCall();
-        expect(url).toBe("/api/tabular-review/r1/chats/c1");
+        expect(url).toBe("http://localhost:3001/api/tabular-review/r1/chats/c1");
         expect(init.keepalive).toBe(true);
         expect(JSON.parse(init.body as string)).toEqual({
             model: "openai-gpt-5.2",
@@ -1606,7 +1610,7 @@ describe("tabular review chats", () => {
 
         await updateTabularChatReasoningLevel("r1", "c1", "medium");
         ({ url, init } = lastFetchCall());
-        expect(url).toBe("/api/tabular-review/r1/chats/c1");
+        expect(url).toBe("http://localhost:3001/api/tabular-review/r1/chats/c1");
         expect(init.keepalive).toBe(true);
         expect(JSON.parse(init.body as string)).toEqual({
             reasoningLevel: "medium",
@@ -2580,9 +2584,10 @@ describe("thin endpoint wrappers", () => {
         } else {
             expect(init.body).toBeUndefined();
         }
-        expect(init.headers).toMatchObject({
-            Authorization: "Bearer token-123",
-        });
+        // The normal API wrapper uses the HttpOnly session cookie. A caller's
+        // transient token must not be copied into these request headers.
+        expect(init.credentials).toBe("include");
+        expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
     },
   );
 });
@@ -2605,7 +2610,7 @@ describe("unwrapping and blob wrappers", () => {
         fetchMock.mockResolvedValue(jsonResponse({ models }));
 
         await expect(load()).resolves.toEqual(models);
-        expect(lastFetchCall().url).toBe(`/api${path}`);
+        expect(lastFetchCall().url).toBe(`http://localhost:3001${path}`);
     });
 
     it("getPanelDocument fetches a normalized document by opaque ID", async () => {
