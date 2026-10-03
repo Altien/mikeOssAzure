@@ -301,28 +301,10 @@ export function useWordAssistantChat({
         // screen can paint. Publishes coalesce onto one rAF, and the flush
         // reads the live locals so it always commits the latest snapshot.
         let publishFrame: number | null = null;
-        // Redline projection re-parses the accumulated answer from index zero,
-        // so running it per SSE chunk costs O(n²) over a whole stream. Sealing
-        // only needs to be observed once per painted frame, so the projection
-        // rides the same flush as the transcript publish. The abort signal is
-        // deliberately not consulted: a cancelled stream's already-received
-        // sealed edits must still apply, exactly as they did when each chunk
-        // was processed synchronously.
-        let redlineParsePending = false;
         const flushAssistantEvents = (): void => {
           publishFrame = null;
           const messageId = assistantMessageId;
           const eventSnapshot = assistantEvents;
-          if (redlineParsePending) {
-            redlineParsePending = false;
-            if (sendIsCurrent() && !clientToolsSeen) {
-              editController.processLiveRedlines(
-                messageId,
-                streamedContent,
-                assistantMessageHasStableId,
-              );
-            }
-          }
           const citationSnapshot = assistantCitations;
           const editSnapshot = assistantEdits;
           setMessages((current) =>
@@ -356,11 +338,9 @@ export function useWordAssistantChat({
         // calls arrive strictly sequentially — the backend awaits each result
         // before forwarding the next.
         let nextToolBlockIndex = TOOL_EDIT_INDEX_BASE;
-        // Once the backend forwards a tool call, this turn's edits travel as
-        // tools; any <EDITS> block still appearing in the prose is quoted
-        // text (or a misbehaving model), never the edit channel, and must not
-        // be scraped into document mutations on top of the tool applies.
-        let clientToolsSeen = false;
+        // This send advertises client_tools through onClientToolCall below.
+        // Prose must never enter the legacy <EDITS> mutation path, including
+        // frames that arrive before the first forwarded tool call.
         // The terminal saves must not run while a tool call is still settling
         // its cards; runClientToolCall registers itself here and the save
         // paths await the set.
@@ -603,7 +583,6 @@ export function useWordAssistantChat({
               },
               onClientToolCall: (call) => {
                 if (!requestIsCurrent()) return;
-                clientToolsSeen = true;
                 const job = runClientToolCall(call);
                 pendingClientToolCalls.add(job);
                 void job.finally(() => pendingClientToolCalls.delete(job));
@@ -633,7 +612,6 @@ export function useWordAssistantChat({
               if (!requestIsCurrent()) return;
               streamedContent += chunk;
               assistantEvents = appendAssistantContent(assistantEvents, chunk);
-              redlineParsePending = true;
               publishAssistantEvents();
             },
           );
@@ -645,22 +623,6 @@ export function useWordAssistantChat({
             throw new DOMException("The request was aborted.", "AbortError");
           }
           if (!requestIsCurrent()) return;
-          if (!clientToolsSeen) {
-            editController.processLiveRedlines(
-              assistantMessageId,
-              streamedContent,
-              assistantMessageHasStableId,
-            );
-            // A malformed block (e.g. no usable replacement or format) never
-            // seals; settle its card on "incomplete" rather than leaving the
-            // receiving spinner up forever. Already-scheduled edits are
-            // skipped by the controller, so this cannot demote an applied
-            // change.
-            editController.markIncompleteRedlines(
-              assistantMessageId,
-              streamedContent,
-            );
-          }
           // Cover both the card lifecycles and the outcome POSTs: the saved
           // turn must carry final per-edit statuses.
           await awaitClientToolCalls();
@@ -682,12 +644,6 @@ export function useWordAssistantChat({
           const sessionIsCurrent = sendIsCurrent();
           if (controller.signal.aborted) {
             if (sessionIsCurrent) {
-              if (!clientToolsSeen) {
-                editController.markIncompleteRedlines(
-                  assistantMessageId,
-                  streamedContent,
-                );
-              }
               await awaitClientToolCalls();
               await editController.waitForMessageEdits(assistantMessageId);
             }
@@ -709,12 +665,6 @@ export function useWordAssistantChat({
             return;
           }
           if (!requestIsCurrent()) return;
-          if (!clientToolsSeen) {
-            editController.markIncompleteRedlines(
-              assistantMessageId,
-              streamedContent,
-            );
-          }
           await awaitClientToolCalls();
           await editController.waitForMessageEdits(assistantMessageId);
           if (!requestIsCurrent()) return;
