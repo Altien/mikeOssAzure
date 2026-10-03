@@ -553,10 +553,8 @@ const SERVER_KEY_SECRETS: Record<Exclude<Provider, "azureOpenai">, string> = {
 
 // Upstream divergence (sync-log: f39f175): upstream returns the 422
 // whenever the USER has no stored key for the model's provider. On dev a
-// missing user key is a fully supported state — the backend can hold an
-// org-level key in Key Vault, and Azure OpenAI can authenticate via
-// Managed Identity — so the 422 fires only when NO credential source
-// exists at all. Do not "simplify" this back to the user-key-only check.
+// missing user key is supported when the backend has an organisation key in
+// Key Vault or its configured fallback. Azure OpenAI requires an API key.
 async function missingModelApiKey(model: string, apiKeys: UserApiKeys) {
     const provider = providerForModel(model);
     if (provider === "azureOpenai") {
@@ -631,7 +629,7 @@ async function validateSelectedModel(
     }
 
     const { api_keys: apiKeys } = await getUserModelSettings(userId, db);
-    const missingKey = missingModelApiKey(selected, apiKeys);
+    const missingKey = await missingModelApiKey(selected, apiKeys);
     if (missingKey) {
         return {
             ok: false,

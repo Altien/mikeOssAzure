@@ -169,8 +169,8 @@ describe("getUserModelSettings on an un-migrated database", () => {
         });
     });
 
-    it("returns empty optional preferences when the retry also fails", async () => {
-        const settings = await getUserModelSettings(
+    it("reports a schema error when no compatible profile projection remains", async () => {
+        await expect(getUserModelSettings(
             "user-1",
             retryingProfileDb(
                 {
@@ -186,10 +186,6 @@ describe("getUserModelSettings on an un-migrated database", () => {
                     error: { code: "42703", message: "even older database" },
                 },
             ),
-        );
-
-        expect(settings.legal_research_us).toBe(true);
-        expect(settings.title_model).toBeNull();
-        expect(settings.tabular_model).toBeNull();
+        )).rejects.toThrow("Failed to read legacy user model settings");
     });
 });

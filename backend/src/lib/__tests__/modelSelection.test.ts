@@ -29,7 +29,8 @@ describe("titleModelForChat", () => {
         "openrouter/anthropic/claude-sonnet-4.5",
         "vercel/openai/gpt-5.4",
         "opencode-go/glm-5",
-        "ollama/llama3.2",
+        "kimi-k3",
+        "aoai:production",
     ])("reuses dynamic model %s", (chatModel) => {
         expect(titleModelForChat(chatModel)).toBe(chatModel);
     });

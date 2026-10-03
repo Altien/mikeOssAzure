@@ -60,6 +60,7 @@ const ORIGINAL_AUTH_PROVIDER = process.env.AUTH_PROVIDER;
 // and one plain document row the caller can read.
 const REVIEW = {
     id: "review-1",
+    model: "claude-sonnet-5",
     updated_at: "2026-08-22T10:00:00.000Z",
     user_id: "user-1",
     project_id: null,
@@ -142,8 +143,8 @@ beforeEach(() => {
     });
     upsertUserProfileMock.mockReset().mockResolvedValue(undefined);
     getUserModelSettingsMock.mockReset().mockResolvedValue({
-        tabular_model: "claude-sonnet-4-5",
-        fast_model: "claude-sonnet-4-5",
+        tabular_model: "claude-sonnet-5",
+        fast_model: "claude-sonnet-5",
         api_keys: { claude: "sk-test" },
     });
     createServerSupabaseMock.mockReset();
@@ -233,6 +234,7 @@ describe("row-model access filtering (CWE-639)", () => {
             .set("Authorization", "Bearer valid-token")
             .send({
                 title: "Grouped",
+                model: "claude-sonnet-5",
                 document_ids: ["doc-a", "doc-b", "doc-c", "doc-foreign"],
                 columns_config: [{ index: 0, name: "Parties", prompt: "Who?" }],
                 document_grouping: "folder",

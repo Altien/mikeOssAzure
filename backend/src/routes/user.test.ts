@@ -101,6 +101,10 @@ vi.mock("../lib/mcpConnectors", () => ({
 
 vi.mock("../lib/routerModels", () => ({
   ROUTER_SLUGS: ["openrouter", "vercel", "opencode-go"],
+  isRouterModelSelected: (model: string, selected: Record<string, string[]>) => {
+    const slug = ["openrouter", "vercel", "opencode-go"].find(prefix => model.startsWith(`${prefix}/`));
+    return !slug || selected[slug]?.includes(model.slice(slug.length + 1)) === true;
+  },
   getAllUserRouterModels: vi.fn(async () => ({ openrouter: [], vercel: [], "opencode-go": [] })),
   replaceUserRouterModels: vi.fn(async () => {}),
 }));
@@ -368,6 +372,8 @@ describe("GET /api/user/profile — wiring and shape", () => {
       tier: "pro",
       titleModel: "aoai:title-deploy",
       tabularModel: "gpt-5.4",
+      lastSelectedChatModel: null,
+      lastSelectedReasoningLevel: "high",
       mfaOnLogin: false,
       legalResearchUs: false,
       quickActionsVisible: true,
@@ -404,7 +410,7 @@ describe("GET /api/user/profile — wiring and shape", () => {
     expect(bodyStr).not.toContain("az-key");
   });
 
-  it("defaults titleModel to \"\" (no preference), tabularModel to the default, tier to Free", async () => {
+  it("leaves unset title and tabular model preferences explicit", async () => {
     const { db } = makeDb({
       profile: {
         data: {
@@ -428,7 +434,7 @@ describe("GET /api/user/profile — wiring and shape", () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
       titleModel: "",
-      tabularModel: "gemini-3-flash-preview",
+      tabularModel: null,
       tier: "Free",
       legalResearchUs: true,
       mfaOnLogin: false,
@@ -1054,12 +1060,12 @@ describe("organisation-managed provider credentials", () => {
 });
 
 describe("POST /api/user/profile/credits/increment", () => {
-  it("requires authentication", async () => {
+  it("rejects a request without the session CSRF proof", async () => {
     const res = await request(makeApp()).post(
       "/api/user/profile/credits/increment",
     );
 
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(403);
   });
 
   it("returns the new value (current + 1) and writes it back to the row", async () => {
@@ -1112,10 +1118,10 @@ describe("POST /api/user/profile/credits/increment", () => {
 // ── DELETE /api/user/account ───────────────────────────────────────────
 
 describe("DELETE /api/user/account", () => {
-  it("requires authentication", async () => {
+  it("rejects a request without the session CSRF proof", async () => {
     const res = await request(makeApp()).delete("/api/user/account");
 
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(403);
   });
 
   it("rejects with 403 in entra mode (account closure must go through tenant admin)", async () => {
