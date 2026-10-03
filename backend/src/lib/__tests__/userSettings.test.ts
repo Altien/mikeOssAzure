@@ -155,7 +155,7 @@ describe("getUserModelSettings on an un-migrated database", () => {
                 },
                 {
                     data: {
-                        title_model: "claude-haiku-4-5",
+                        fast_model: "claude-haiku-4-5",
                         tabular_model: "claude-sonnet-5",
                         legal_research_us: false,
                     },
@@ -164,7 +164,7 @@ describe("getUserModelSettings on an un-migrated database", () => {
             ),
         );
 
-        expect(settings.title_model).toBe("claude-haiku-4-5");
+        expect(settings.fast_model).toBe("claude-haiku-4-5");
         expect(settings.tabular_model).toBe("claude-sonnet-5");
         expect(settings.legal_research_us).toBe(false);
         expect(settings.personalisation).toMatchObject({
@@ -193,6 +193,6 @@ describe("getUserModelSettings on an un-migrated database", () => {
         );
 
         expect(settings.legal_research_us).toBe(true);
-        expect(settings.title_model).toBeTruthy();
+        expect(settings.fast_model).toBeTruthy();
     });
 });
