@@ -1193,16 +1193,20 @@ tabularRouter.post("/:reviewId/clear-cells", requireAuth, async (req, res) => {
     }
 
     try {
-        const { error } = await db
-            .from("tabular_cells")
-            .update({
-                content: null,
-                status: "pending",
-                generation_id: null,
-            })
-            .eq("review_id", reviewId)
-            .in("row_id", row_ids);
+        const { data: cleared, error } = await db.rpc(
+            "clear_tabular_review_cells",
+            {
+                target_review_id: reviewId,
+                target_generation_id: mutationId,
+                target_row_ids: row_ids,
+            },
+        );
         if (error) return void res.status(500).json({ detail: error.message });
+        if (cleared !== true)
+            return void res.status(409).json({
+                code: "review_stale",
+                detail: "The tabular review changed before cells could be cleared.",
+            });
         res.status(204).send();
     } finally {
         const { error } = await db.rpc("finish_tabular_review_generation", {
@@ -1364,21 +1368,26 @@ tabularRouter.post(
         }, TABULAR_GENERATION_HEARTBEAT_MS);
 
         try {
-            const { error: generatingError } = await db
-                .from("tabular_cells")
-                .update({
-                    status: "generating",
-                    content: null,
-                    generation_id: generationId,
-                })
-                .eq("review_id", reviewId)
-                .eq("row_id", row.id)
-                .eq("column_index", column_index);
+            const { data: claimed, error: generatingError } = await db.rpc(
+                "claim_tabular_review_cell",
+                {
+                    target_review_id: reviewId,
+                    target_generation_id: generationId,
+                    target_row_id: row.id,
+                    target_document_id: row.document_id,
+                    target_column_index: column_index,
+                },
+            );
             if (generatingError) {
                 return void res
                     .status(500)
                     .json({ detail: generatingError.message });
             }
+            if (claimed !== true)
+                return void res.status(409).json({
+                    code: "review_stale",
+                    detail: "The tabular review generation lease expired.",
+                });
 
             const markdown = await loadRowDocumentText(db, row);
             const result = await queryTabularCell(
@@ -1639,29 +1648,24 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
             // Mark only rows that have actually started as generating. Rows
             // still in the worker queue remain pending and can be resumed.
             for (const col of columnsToProcess) {
+                const { data: claimed, error } = await db.rpc(
+                    "claim_tabular_review_cell",
+                    {
+                        target_review_id: reviewId,
+                        target_generation_id: generationId,
+                        target_row_id: row.id,
+                        target_document_id: row.document_id,
+                        target_column_index: col.index,
+                    },
+                );
+                if (error) throw error;
+                if (claimed !== true) {
+                    generationAbort.abort();
+                    return;
+                }
                 write(
                     `data: ${JSON.stringify({ type: "cell_update", row_id: row.id, column_index: col.index, content: null, status: "generating" })}\n\n`,
                 );
-                const existingCell = cellMap.get(`${row.id}:${col.index}`);
-                if (existingCell) {
-                    await db
-                        .from("tabular_cells")
-                        .update({
-                            status: "generating",
-                            content: null,
-                            generation_id: generationId,
-                        })
-                        .eq("id", existingCell.id);
-                } else {
-                    await db.from("tabular_cells").insert({
-                        review_id: reviewId,
-                        row_id: row.id,
-                        document_id: row.document_id,
-                        column_index: col.index,
-                        status: "generating",
-                        generation_id: generationId,
-                    });
-                }
             }
 
             // Single LLM call for all columns, streaming one JSON line per

@@ -60,6 +60,7 @@ const ORIGINAL_AUTH_PROVIDER = process.env.AUTH_PROVIDER;
 // and one plain document row the caller can read.
 const REVIEW = {
     id: "review-1",
+    updated_at: "2026-08-22T10:00:00.000Z",
     user_id: "user-1",
     project_id: null,
     shared_with: [],
@@ -96,6 +97,12 @@ const ROW_SOURCES = [
 ];
 
 function respond(call: DbCall) {
+    if (call.op === "rpc") {
+        return {
+            data: call.table === "begin_tabular_review_generation" ? "started" : true,
+            error: null,
+        };
+    }
     if (call.op !== "select") return { data: [], error: null };
     switch (call.table) {
         case "tabular_reviews":
@@ -187,7 +194,8 @@ describe("row-model access filtering (CWE-639)", () => {
 
         const response = await request(makeApp())
             .post("/api/tabular-review/review-1/generate")
-            .set("Authorization", "Bearer valid-token");
+            .set("Authorization", "Bearer valid-token")
+            .send({ expected_updated_at: REVIEW.updated_at });
 
         expect(response.status).toBe(200);
         expect(streamChatWithToolsMock).toHaveBeenCalledTimes(1);
@@ -299,7 +307,8 @@ describe("review-row load failures answer 500 instead of hanging (sync-log 5f996
 
         const response = await request(makeApp())
             .post("/api/tabular-review/review-1/generate")
-            .set("Authorization", "Bearer valid-token");
+            .set("Authorization", "Bearer valid-token")
+            .send({ expected_updated_at: REVIEW.updated_at });
 
         expect(response.status).toBe(500);
         expect(streamChatWithToolsMock).not.toHaveBeenCalled();
@@ -323,7 +332,123 @@ describe("review-row load failures answer 500 instead of hanging (sync-log 5f996
         const updates = callsFor("tabular_cells", "update").map(
             (call) => (call.payload as { status: string }).status,
         );
-        expect(updates).toEqual(["generating", "error"]);
+        expect(callsFor("claim_tabular_review_cell", "rpc")).toHaveLength(1);
+        expect(updates).toEqual(["error"]);
+    });
+});
+
+describe("tabular generation leases", () => {
+    const runningReview = {
+        ...REVIEW,
+        active_generation_id: "22222222-2222-4222-8222-222222222222",
+        generation_lease_expires_at: "2099-01-01T00:00:00.000Z",
+    };
+
+    it("rejects clear and regenerate mutations while another generation owns the lease", async () => {
+        const { db, callsFor } = makeFakeDb((call) =>
+            call.table === "tabular_reviews" && call.op === "select"
+                ? { data: [runningReview], error: null }
+                : respond(call),
+        );
+        createServerSupabaseMock.mockReturnValue(db);
+
+        const clear = await request(makeApp())
+            .post("/api/tabular-review/review-1/clear-cells")
+            .set("Authorization", "Bearer valid-token")
+            .send({ row_ids: ["row-doc"] });
+        const regenerate = await request(makeApp())
+            .post("/api/tabular-review/review-1/regenerate-cell")
+            .set("Authorization", "Bearer valid-token")
+            .send({ row_id: "row-doc", column_index: 0 });
+
+        expect([clear.status, regenerate.status]).toEqual([409, 409]);
+        expect(clear.body.code).toBe("review_running");
+        expect(regenerate.body.code).toBe("review_running");
+        expect(callsFor("tabular_cells", "update")).toEqual([]);
+        expect(completeTextMock).not.toHaveBeenCalled();
+    });
+
+    it("honors an atomic running response after the initial clear-cells read", async () => {
+        const { db, callsFor } = makeFakeDb((call) =>
+            call.table === "begin_tabular_review_generation"
+                ? { data: "running", error: null }
+                : respond(call),
+        );
+        createServerSupabaseMock.mockReturnValue(db);
+
+        const response = await request(makeApp())
+            .post("/api/tabular-review/review-1/clear-cells")
+            .set("Authorization", "Bearer valid-token")
+            .send({ row_ids: ["row-doc"] });
+
+        expect(response.status).toBe(409);
+        expect(response.body.code).toBe("review_running");
+        expect(callsFor("begin_tabular_review_generation", "rpc")).toHaveLength(1);
+        expect(callsFor("tabular_cells", "update")).toEqual([]);
+    });
+
+    it("refuses a clear when its lease expires before the cell write", async () => {
+        const { db, callsFor } = makeFakeDb((call) =>
+            call.table === "clear_tabular_review_cells"
+                ? { data: false, error: null }
+                : respond(call),
+        );
+        createServerSupabaseMock.mockReturnValue(db);
+
+        const response = await request(makeApp())
+            .post("/api/tabular-review/review-1/clear-cells")
+            .set("Authorization", "Bearer valid-token")
+            .send({ row_ids: ["row-doc"] });
+
+        expect(response.status).toBe(409);
+        expect(response.body.code).toBe("review_stale");
+        expect(callsFor("tabular_cells", "update")).toEqual([]);
+        expect(callsFor("finish_tabular_review_generation", "rpc")).toHaveLength(1);
+    });
+
+    it("refuses a cell start after the review lease changes owner", async () => {
+        const { db, callsFor } = makeFakeDb((call) =>
+            call.table === "claim_tabular_review_cell"
+                ? { data: false, error: null }
+                : respond(call),
+        );
+        createServerSupabaseMock.mockReturnValue(db);
+
+        const response = await request(makeApp())
+            .post("/api/tabular-review/review-1/regenerate-cell")
+            .set("Authorization", "Bearer valid-token")
+            .send({ row_id: "row-doc", column_index: 0 });
+
+        expect(response.status).toBe(409);
+        expect(response.body.code).toBe("review_stale");
+        expect(callsFor("tabular_cells", "update")).toEqual([]);
+        expect(completeTextMock).not.toHaveBeenCalled();
+    });
+
+    it("claims before loading rows and cells, then releases after a failed snapshot", async () => {
+        const { db, calls } = makeFakeDb((call) =>
+            call.table === "tabular_cells" && call.op === "select"
+                ? { data: null, error: { message: "private cell snapshot failure" } }
+                : respond(call),
+        );
+        createServerSupabaseMock.mockReturnValue(db);
+
+        const response = await request(makeApp())
+            .post("/api/tabular-review/review-1/generate")
+            .set("Authorization", "Bearer valid-token")
+            .send({ expected_updated_at: REVIEW.updated_at });
+
+        expect(response.status).toBe(500);
+        const names = calls.map((call) => `${call.op}:${call.table}`);
+        const begin = names.indexOf("rpc:begin_tabular_review_generation");
+        const rows = names.indexOf("select:tabular_review_rows");
+        const cells = names.indexOf("select:tabular_cells");
+        const finish = names.indexOf("rpc:finish_tabular_review_generation");
+        expect(begin).toBeGreaterThanOrEqual(0);
+        expect(rows).toBeGreaterThan(begin);
+        expect(cells).toBeGreaterThan(rows);
+        expect(finish).toBeGreaterThan(cells);
+        expect(streamChatWithToolsMock).not.toHaveBeenCalled();
     });
 });
 
@@ -361,7 +486,8 @@ describe("tabular cell prompts (page and spreadsheet citations, sync-log 6ae1f98
 
         const response = await request(makeApp())
             .post("/api/tabular-review/review-1/generate")
-            .set("Authorization", "Bearer valid-token");
+            .set("Authorization", "Bearer valid-token")
+            .send({ expected_updated_at: REVIEW.updated_at });
 
         expect(response.status).toBe(200);
         expect(streamChatWithToolsMock).toHaveBeenCalled();
