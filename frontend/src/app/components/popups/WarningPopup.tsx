@@ -22,6 +22,7 @@ interface WarningPopupProps {
     children?: ReactNode;
     icon?: ReactNode;
     primaryAction?: WarningPopupAction;
+    secondaryAction?: WarningPopupAction;
     className?: string;
 }
 
@@ -33,6 +34,7 @@ export function WarningPopup({
     children,
     icon,
     primaryAction,
+    secondaryAction,
     className,
 }: WarningPopupProps) {
     if (!open) return null;
@@ -70,8 +72,19 @@ export function WarningPopup({
                         </div>
                     )}
                     {children}
-                    {primaryAction && (
-                        <div className="mt-2 flex items-center justify-end">
+                    {(primaryAction || secondaryAction) && (
+                        <div className="mt-2 flex items-center justify-end gap-2">
+                            {secondaryAction && (
+                                <PillButton
+                                    tone="white"
+                                    size="sm"
+                                    onClick={secondaryAction.onClick}
+                                    disabled={secondaryAction.disabled}
+                                >
+                                    {secondaryAction.label}
+                                </PillButton>
+                            )}
+                            {primaryAction && (
                             <PillButton
                                 tone="black"
                                 size="sm"
@@ -80,6 +93,7 @@ export function WarningPopup({
                             >
                                 {primaryAction.label}
                             </PillButton>
+                            )}
                         </div>
                     )}
                 </div>
