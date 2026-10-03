@@ -46,9 +46,7 @@ describe("createServerSupabase", () => {
   it("rejects missing server configuration", () => {
     delete process.env.SUPABASE_URL;
 
-    expect(() => createServerSupabase()).toThrow(
-      "SUPABASE_URL and SUPABASE_SECRET_KEY must be set",
-    );
+    expect(() => createServerSupabase()).toThrow("SUPABASE_URL is required");
     expect(createClient).not.toHaveBeenCalled();
   });
 });
