@@ -3,8 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ForgotPasswordPage from "./page";
 
-const { resetPasswordForEmail } = vi.hoisted(() => ({
+const { resetPasswordForEmail, runtime } = vi.hoisted(() => ({
     resetPasswordForEmail: vi.fn(),
+    runtime: { authProvider: "supabase", loading: false },
 }));
 
 vi.mock("@/app/lib/supabase", () => ({
@@ -18,6 +19,23 @@ vi.mock("@/app/components/site-logo", () => ({
 describe("ForgotPasswordPage", () => {
     beforeEach(() => {
         resetPasswordForEmail.mockReset();
+        runtime.authProvider = "supabase";
+        runtime.loading = false;
+    });
+
+    it.each(["entra", "local"])("keeps recovery with the %s provider", (provider) => {
+        runtime.authProvider = provider;
+        render(<ForgotPasswordPage />);
+        expect(screen.getByRole("link", { name: "Return to login" })).toBeInTheDocument();
+        expect(screen.queryByRole("textbox", { name: "Email" })).not.toBeInTheDocument();
+        expect(resetPasswordForEmail).not.toHaveBeenCalled();
+    });
+
+    it("waits for runtime configuration before mounting recovery", () => {
+        runtime.loading = true;
+        render(<ForgotPasswordPage />);
+        expect(screen.queryByRole("textbox", { name: "Email" })).not.toBeInTheDocument();
+        expect(resetPasswordForEmail).not.toHaveBeenCalled();
     });
 
     it("sends recovery through the shared callback", async () => {
@@ -65,4 +83,4 @@ describe("ForgotPasswordPage", () => {
     });
 });
 
-vi.mock("@/app/contexts/ConfigContext", () => ({ useConfig: () => ({ authProvider: "supabase" }), useConfigLoading: () => false }));
+vi.mock("@/app/contexts/ConfigContext", () => ({ useConfig: () => runtime, useConfigLoading: () => runtime.loading }));
