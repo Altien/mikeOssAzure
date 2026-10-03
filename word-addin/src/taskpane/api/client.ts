@@ -181,6 +181,7 @@ export async function getUserProfile(): Promise<UserProfile> {
 }
 
 export interface ApiKeyStatus {
+    azure_openai?: boolean;
     claude: boolean;
     gemini: boolean;
     openai: boolean;

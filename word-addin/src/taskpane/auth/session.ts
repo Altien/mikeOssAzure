@@ -21,6 +21,7 @@
  */
 import { EntraAuth, entraConfigProblem, type EntraToken } from "./entra";
 import { API_BASE_URL, API_ORIGIN, loadRuntimeConfig } from "./runtimeConfig";
+import { describeNetworkFailure } from "../lib/networkError";
 
 export type AuthMode = "entra" | "local" | "unsupported";
 
@@ -255,11 +256,17 @@ async function doRefresh(): Promise<string | null> {
 // ---------------------------------------------------------------------------
 
 async function signInLocal(email: string, generation: number): Promise<void> {
-  const res = await fetch(`${API_BASE_URL}/auth/local-login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email }),
-  });
+  const url = `${API_BASE_URL}/auth/local-login`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+  } catch (error) {
+    throw new Error(describeNetworkFailure(error, { method: "POST", url }), { cause: error });
+  }
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { detail?: string };
     throw new Error(body.detail ?? `Local login failed (${res.status})`);

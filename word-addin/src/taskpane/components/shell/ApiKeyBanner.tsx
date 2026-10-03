@@ -8,9 +8,9 @@ const DISMISS_KEY = "apiKeyBannerDismissed";
 // Read the substituted value directly — a `typeof process` guard is false in
 // the browser and would silently fall through to the default.
 const WEB_APP_URL: string =
-  process.env.REACT_APP_WEB_APP_URL || "https://app.mikeoss.com";
+  process.env.REACT_APP_WEB_APP_URL || window.location.origin;
 
-const API_KEYS_PAGE_URL = `${WEB_APP_URL.replace(/\/+$/, "")}/settings/api-keys`;
+const API_KEYS_PAGE_URL = `${WEB_APP_URL.replace(/\/+$/, "")}/install`;
 
 /**
  * Open the web app's API-keys page in the system browser. Office's
@@ -55,7 +55,7 @@ export function ApiKeyBanner(): React.ReactElement | null {
     getApiKeyStatus()
       .then((status: ApiKeyStatus) => {
         if (cancelled) return;
-        const anyConfigured = status.claude || status.gemini || status.openai;
+        const anyConfigured = status.claude || status.gemini || status.openai || status.azure_openai;
         setMissingKey(!anyConfigured);
       })
       .catch(() => {

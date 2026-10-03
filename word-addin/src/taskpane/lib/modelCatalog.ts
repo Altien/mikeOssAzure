@@ -38,7 +38,8 @@ export function isModelAvailable(
   modelId: string,
   status: ApiKeyStatus | null,
 ): boolean {
-  if (!status || modelId.startsWith("aoai:")) return true;
+  if (!status) return true;
+  if (modelId.startsWith("aoai:")) return !!status.azure_openai;
   const model = STATIC_MODELS.find((item) => item.id === modelId);
   if (!model || model.group === "Azure OpenAI") return true;
   if (model.group === "Anthropic") return !!status.claude;

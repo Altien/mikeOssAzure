@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
+import { makeFakeDb } from "../../test/helpers/fakeDb";
 
 type QueryError = { message: string } | null;
 type QueryResult = { data: unknown; error: QueryError };
@@ -23,88 +24,29 @@ const { dbState, recordedQueries } = vi.hoisted(() => ({
   recordedQueries: [] as RecordedQuery[],
 }));
 
-function resultForAwaitedQuery(table: string): QueryResult {
-  if (table === "word_chats") return dbState.chatList;
-  if (table === "word_chat_messages") return dbState.messages;
-  return { data: null, error: null };
-}
-
-function resultForSingleQuery(table: string): QueryResult {
-  if (table === "word_documents") return dbState.document;
-  if (table === "word_chats") return dbState.chatDetail;
-  return { data: null, error: null };
-}
-
-function makeQuery(table: string) {
-  const recorded: RecordedQuery = { table, filters: [] };
-  recordedQueries.push(recorded);
-
-  const query: Record<string, unknown> = {};
-  const chain = [
-    "select",
-    "insert",
-    "update",
-    "delete",
-    "upsert",
-    "neq",
-    "in",
-    "is",
-    "or",
-    "not",
-    "lt",
-    "gt",
-    "gte",
-    "lte",
-    "filter",
-    "order",
-    "limit",
-    "range",
-    "contains",
-  ];
-  for (const method of chain) query[method] = vi.fn(() => query);
-  query.eq = vi.fn((column: string, value: unknown) => {
-    recorded.filters.push({ column, value });
-    return query;
-  });
-  query.single = vi.fn(() => Promise.resolve(resultForSingleQuery(table)));
-  query.maybeSingle = vi.fn(() => Promise.resolve(resultForSingleQuery(table)));
-  query.then = (
-    resolve: (value: unknown) => unknown,
-    reject?: (reason: unknown) => unknown,
-  ) => Promise.resolve(resultForAwaitedQuery(table)).then(resolve, reject);
-  return query;
-}
-
 function mockSupabase() {
-  return {
-    from: vi.fn((table: string) => makeQuery(table)),
-    rpc: vi.fn(() => Promise.resolve({ data: null, error: null })),
-    auth: {
-      getUser: () =>
-        Promise.resolve({ data: { user: { id: "u1" } }, error: null }),
-    },
-  };
+  return makeFakeDb((call) => {
+    recordedQueries.push({ table: call.table, filters: call.filters.filter(([method]) => method === "eq").map(([, column, value]) => ({ column, value })) });
+    if (dbState.document.error?.message === "throw") throw new Error("unavailable");
+    if (call.table === "word_documents") return dbState.document;
+    if (call.table === "word_chats") return call.filters.some(([, column]) => column === "id") ? dbState.chatDetail : dbState.chatList;
+    if (call.table === "word_chat_messages") return dbState.messages;
+    return { data: [], error: null };
+  }).db;
 }
 
 vi.mock("../../lib/supabase", () => ({
   createServerSupabase: vi.fn(() => mockSupabase()),
 }));
 
-vi.mock("../../middleware/auth", () => ({
-  requireAuth: (
-    _req: unknown,
-    res: { locals: Record<string, unknown> },
-    next: () => void,
-  ) => {
-    res.locals.userId = "u1";
-    res.locals.userEmail = "u1@test.local";
-    next();
-  },
-  requireMfaIfEnrolled: (_req: unknown, _res: unknown, next: () => void) =>
-    next(),
-}));
-
-import { app } from "../../app";
+// Dev (sync-log: 9dbe9d59): exercise real Entra middleware and /api routes.
+// Tenant admission has its own suite; these cases focus on user/document scope.
+vi.mock("../../middleware/tenantAccess.js", () => ({ tenantAccess: (_req: unknown, _res: unknown, next: () => void) => next() }));
+vi.mock("../../lib/auth/providers/entra.js", () => ({ validateEntraToken: vi.fn(async () => ({ ok: true, principal: { userId: "u1", email: "u1@test.local", roles: ["member"] } })) }));
+vi.mock("../../lib/userSettings.js", () => ({ upsertUserProfile: vi.fn(async () => {}), getUserModelSettings: vi.fn(async () => ({api_keys: {}})) }));
+import { makeApp } from "../../test/helpers/buildTestApp";
+const previousProvider = process.env.AUTH_PROVIDER;
+afterEach(() => { if (previousProvider === undefined) delete process.env.AUTH_PROVIDER; else process.env.AUTH_PROVIDER = previousProvider; });
 
 const DOCUMENT_ID = "123e4567-e89b-42d3-a456-426614174000";
 const CHAT_ID = "41eb8f61-d7af-454e-b680-cd28bd65c742";
@@ -122,6 +64,7 @@ function resetDbState() {
 
 describe("Word chat history routes", () => {
   beforeEach(() => {
+    process.env.AUTH_PROVIDER = "entra";
     vi.clearAllMocks();
     recordedQueries.length = 0;
     resetDbState();
@@ -130,8 +73,8 @@ describe("Word chat history routes", () => {
   it("returns an empty list when the document row genuinely does not exist", async () => {
     dbState.document = { data: null, error: null };
 
-    const res = await request(app)
-      .get(`/word-chat?document_id=${DOCUMENT_ID}`)
+    const res = await request(makeApp())
+      .get(`/api/word-chat?document_id=${DOCUMENT_ID}`)
       .set(...AUTH);
 
     expect(res.status).toBe(200);
@@ -147,8 +90,8 @@ describe("Word chat history routes", () => {
       error: { message: "word_documents is unavailable" },
     };
 
-    const res = await request(app)
-      .get(`/word-chat?document_id=${DOCUMENT_ID}`)
+    const res = await request(makeApp())
+      .get(`/api/word-chat?document_id=${DOCUMENT_ID}`)
       .set(...AUTH);
 
     expect(res.status).toBe(500);
@@ -164,8 +107,8 @@ describe("Word chat history routes", () => {
       error: { message: "word_chats is unavailable" },
     };
 
-    const res = await request(app)
-      .get(`/word-chat?document_id=${DOCUMENT_ID}`)
+    const res = await request(makeApp())
+      .get(`/api/word-chat?document_id=${DOCUMENT_ID}`)
       .set(...AUTH);
 
     expect(res.status).toBe(500);
@@ -178,8 +121,8 @@ describe("Word chat history routes", () => {
       error: { message: "document lookup failed" },
     };
 
-    const res = await request(app)
-      .get(`/word-chat/${CHAT_ID}?document_id=${DOCUMENT_ID}`)
+    const res = await request(makeApp())
+      .get(`/api/word-chat/${CHAT_ID}?document_id=${DOCUMENT_ID}`)
       .set(...AUTH);
 
     expect(res.status).toBe(500);
@@ -192,8 +135,8 @@ describe("Word chat history routes", () => {
       error: { message: "chat lookup failed" },
     };
 
-    const res = await request(app)
-      .get(`/word-chat/${CHAT_ID}?document_id=${DOCUMENT_ID}`)
+    const res = await request(makeApp())
+      .get(`/api/word-chat/${CHAT_ID}?document_id=${DOCUMENT_ID}`)
       .set(...AUTH);
 
     expect(res.status).toBe(500);
@@ -211,8 +154,8 @@ describe("Word chat history routes", () => {
   });
 
   it("keeps a genuinely missing scoped chat as 404", async () => {
-    const res = await request(app)
-      .get(`/word-chat/${CHAT_ID}?document_id=${DOCUMENT_ID}`)
+    const res = await request(makeApp())
+      .get(`/api/word-chat/${CHAT_ID}?document_id=${DOCUMENT_ID}`)
       .set(...AUTH);
 
     expect(res.status).toBe(404);
@@ -220,8 +163,8 @@ describe("Word chat history routes", () => {
   });
 
   it("returns 404 before querying Postgres for a malformed chat id", async () => {
-    const res = await request(app)
-      .get(`/word-chat/not-a-uuid?document_id=${DOCUMENT_ID}`)
+    const res = await request(makeApp())
+      .get(`/api/word-chat/not-a-uuid?document_id=${DOCUMENT_ID}`)
       .set(...AUTH);
 
     expect(res.status).toBe(404);
@@ -229,3 +172,8 @@ describe("Word chat history routes", () => {
     expect(recordedQueries).toEqual([]);
   });
 });
+
+ it("returns 500 for a thrown lookup instead of hanging", async () => {
+ process.env.AUTH_PROVIDER = "entra"; resetDbState(); dbState.document.error = {message: "throw"};
+ const res = await request(makeApp()).get(`/api/word-chat?document_id=${DOCUMENT_ID}`).set(...AUTH); expect(res.status).toBe(500);
+ });

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Router } from "express";
+import { Router, type RequestHandler } from "express";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import {
@@ -30,6 +30,18 @@ import { getUserModelSettings } from "../lib/userSettings";
 import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
 
 export const wordChatRouter = Router();
+
+// Upstream divergence (sync-log: 9dbe9d59): Express 4 does not forward
+// rejected async setup calls. Return a bounded error instead of hanging.
+function wordHandler(handler: RequestHandler): RequestHandler {
+  return (req, res, next) => {
+    Promise.resolve(handler(req, res, next)).catch((error: unknown) => {
+      console.error("[word-chat] request failed", safeErrorLog(error));
+      if (res.headersSent) { res.end(); return; }
+      res.status(500).json({ detail: "Word chat request failed" });
+    });
+  };
+}
 
 type Db = ReturnType<typeof createServerSupabase>;
 type WordChatStorageMode = "cloud" | "local";
@@ -125,7 +137,7 @@ async function getAccessibleWordChat(
 }
 
 // GET /word-chat?document_id=<embedded document UUID>&limit=10
-wordChatRouter.get("/", requireAuth, async (req, res) => {
+wordChatRouter.get("/", requireAuth, wordHandler(async (req, res) => {
   const userId = res.locals.userId as string;
   const parsedDocumentId = parseDocumentId(req.query.document_id);
   if (!parsedDocumentId.ok) {
@@ -169,10 +181,10 @@ wordChatRouter.get("/", requireAuth, async (req, res) => {
     return void res.status(500).json({ detail: "Failed to load Word chats" });
   }
   res.json((data ?? []).map((chat) => ({ ...chat, project_id: null })));
-});
+}));
 
 // GET /word-chat/:chatId?document_id=<embedded document UUID>
-wordChatRouter.get("/:chatId", requireAuth, async (req, res) => {
+wordChatRouter.get("/:chatId", requireAuth, wordHandler(async (req, res) => {
   const userId = res.locals.userId as string;
   const parsedDocumentId = parseDocumentId(req.query.document_id);
   if (!parsedDocumentId.ok) {
@@ -227,10 +239,10 @@ wordChatRouter.get("/:chatId", requireAuth, async (req, res) => {
     chat,
     messages: withoutEmptyAssistantReservations(messages ?? []),
   });
-});
+}));
 
 // POST /word-chat — Word-specific streaming endpoint.
-wordChatRouter.post("/", requireAuth, async (req, res) => {
+wordChatRouter.post("/", requireAuth, wordHandler(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const body =
@@ -390,7 +402,7 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
     nonce,
     "word_chat_messages",
   );
-  const { api_keys: configuredApiKeys } = await getUserModelSettings(
+  const { api_keys: configuredApiKeys, fast_model: fastModel } = await getUserModelSettings(
     userId,
     db,
   );
@@ -475,6 +487,7 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
       includeAskInputs: false,
       model,
       apiKeys,
+      fastModel,
       signal: stream.signal,
       nonce,
       emitDone: false,
@@ -547,4 +560,4 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
   } finally {
     stream.finish();
   }
-});
+}));

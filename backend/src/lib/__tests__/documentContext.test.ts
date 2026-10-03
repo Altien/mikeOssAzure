@@ -397,6 +397,11 @@ describe("active Word document context", () => {
             undefined,
             undefined,
             undefined,
+            // Dev adds external source, authority trace and skill resource
+            // parameters before upstream's nonce (sync-log: 4a099ba2).
+            undefined,
+            undefined,
+            undefined,
             nonce,
         );
 
