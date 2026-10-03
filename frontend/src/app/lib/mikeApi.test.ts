@@ -1843,7 +1843,7 @@ describe("query and payload defaults", () => {
         await resolveProjectFolderPath("p1", ["NDAs"], null, "rename");
         let call = lastFetchCall();
         expect(call.url).toBe(
-            "http://localhost:3001/projects/p1/folder-paths/resolve",
+            "http://localhost:3001/api/projects/p1/folder-paths/resolve",
         );
         expect(JSON.parse(call.init.body as string)).toEqual({
             segments: ["NDAs"],
@@ -1859,7 +1859,7 @@ describe("query and payload defaults", () => {
         );
         call = lastFetchCall();
         expect(call.url).toBe(
-            "http://localhost:3001/library/templates/folder-paths/resolve",
+            "http://localhost:3001/api/library/templates/folder-paths/resolve",
         );
         expect(JSON.parse(call.init.body as string)).toEqual({
             segments: ["Executed", "2026"],

@@ -65,7 +65,8 @@ begin
     if folder_row.id is not null and segment_index = 1 then
       suffix := 2;
       loop
-        candidate_name := segment || ' (' || suffix || ')';
+        candidate_name := left(segment, 255 - length(' (' || suffix || ')'))
+          || ' (' || suffix || ')';
         exit when not exists (
           select 1 from public.project_subfolders
           where project_id = target_project_id
@@ -181,7 +182,8 @@ begin
     if folder_row.id is not null and segment_index = 1 then
       suffix := 2;
       loop
-        candidate_name := segment || ' (' || suffix || ')';
+        candidate_name := left(segment, 255 - length(' (' || suffix || ')'))
+          || ' (' || suffix || ')';
         exit when not exists (
           select 1 from public.library_folders
           where user_id = target_user_id
