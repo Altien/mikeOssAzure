@@ -40,3 +40,17 @@ it("permits configured Word add-in CORS preflights and rejects other origins", a
         else process.env.WORD_ADDIN_URL = previous;
     }
 });
+
+it("buildApp binds safe malformed-JSON errors and a request ID on /api", async () => {
+    const response = await request(buildApp())
+        .post("/api/chat")
+        .set("Content-Type", "application/json")
+        .send('{"private-token":');
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+        code: "invalid_json",
+        detail: "Request body must contain valid JSON.",
+    });
+    expect(response.body.request_id).toBe(response.headers["x-request-id"]);
+    expect(response.text).not.toContain("private-token");
+});
