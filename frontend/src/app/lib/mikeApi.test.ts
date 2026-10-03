@@ -1599,7 +1599,8 @@ describe("multipart upload endpoints", () => {
 
         const { url, init } = lastFetchCall();
         expect(url).toBe(
-            "http://localhost:3001/workflows/w1/reference-files",
+            // Dev keeps the API prefix for authenticated workflow uploads.
+            "http://localhost:3001/api/workflows/w1/reference-files",
         );
         expect(init.method).toBe("POST");
         expect(init.headers).toEqual({ Authorization: "Bearer token-123" });
@@ -1623,7 +1624,7 @@ describe("multipart upload endpoints", () => {
 
         const { url, init } = lastFetchCall();
         expect(url).toBe(
-            "http://localhost:3001/workflows/w1/reference-files/ref-1",
+            "http://localhost:3001/api/workflows/w1/reference-files/ref-1",
         );
         expect(init.method).toBe("PUT");
         expect(init.headers).toEqual({ Authorization: "Bearer token-123" });

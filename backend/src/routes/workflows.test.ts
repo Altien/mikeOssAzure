@@ -47,14 +47,18 @@ async function makeApp(contributions = false) {
     else delete process.env.WORKFLOW_CONTRIBUTIONS_ENABLED;
     vi.resetModules();
     const { workflowsRouter } = await import("./workflows");
+    const { quickActionsRouter } = await import("./quickActions");
     const app = express();
     app.use(express.json());
     app.use("/api/workflows", workflowsRouter);
+    app.use("/api/quick-actions", quickActionsRouter);
     return app;
 }
 
 function useDb(respond: (call: DbCall) => DbResult) {
-    const fake = makeFakeDb(respond);
+    // #309 installs defaults before listing; isolate this RPC from overview data.
+    const fake = makeFakeDb((call) => call.table === "install_missing_default_workflows"
+        ? { data: 0 } : respond(call));
     createServerSupabaseMock.mockReturnValue(fake.db);
     return fake;
 }
@@ -120,6 +124,52 @@ afterEach(() => {
 
 const auth = { Authorization: "Bearer ok" };
 
+// #309: private PostgREST has no identity RLS; keep route-level revocation checks.
+describe("quick action access", () => {
+    it("omits revoked workflow titles and scopes quick actions to the caller", async () => {
+        const fake = useDb((call) => {
+            if (call.table === "quick_actions") return { data: [
+                { id: "qa-owned", workflow_id: "wf-owned", user_id: USER_ID },
+                { id: "qa-revoked", workflow_id: "wf-revoked", user_id: USER_ID },
+                { id: "qa-shared", workflow_id: "wf-shared", user_id: USER_ID },
+            ] };
+            if (call.table === "workflows") return { data: [OWNED_ROW, SHARED_ROW,
+                { id: "wf-revoked", user_id: "other", title: "Private title" },
+            ] };
+            if (call.table === "workflow_shares") return { data: [{ workflow_id: "wf-shared" }] };
+            return { data: [] };
+        });
+        const res = await request(await makeApp()).get("/api/quick-actions").set(auth);
+        expect(res.status).toBe(200);
+        expect(res.body.map((action: { id: string }) => action.id)).toEqual(["qa-owned", "qa-shared"]);
+        expect(fake.callsFor("quick_actions")[0].filters).toContainEqual(["eq", "user_id", USER_ID]);
+        expect(fake.callsFor("workflow_shares")[0].filters).toContainEqual(["eq", "shared_with_email", USER_EMAIL]);
+        expect(JSON.stringify(res.body)).not.toContain("Private title");
+    });
+
+    it("returns 404 after updating a quick action whose workflow share was revoked", async () => {
+        const fake = useDb((call) => {
+            if (call.table === "quick_actions") return { data: { id: "qa-revoked", workflow_id: "wf-revoked", user_id: USER_ID } };
+            if (call.table === "workflows") return { data: [{ id: "wf-revoked", user_id: "other", title: "Private title" }] };
+            return { data: [] };
+        });
+        const res = await request(await makeApp()).patch("/api/quick-actions/qa-revoked").set(auth).send({ enabled: false });
+        expect(res.status).toBe(404);
+        expect(res.body).toEqual({ detail: "Quick action not found" });
+        expect(fake.callsFor("quick_actions", "update")[0].filters).toEqual([
+            ["eq", "id", "qa-revoked"], ["eq", "user_id", USER_ID],
+        ]);
+    });
+
+    it("rejects creating an action for an unshared foreign workflow", async () => {
+        const fake = useDb((call) => call.table === "workflows"
+            ? { data: [SHARED_ROW] } : { data: [] });
+        const res = await request(await makeApp()).post("/api/quick-actions").set(auth).send({ workflow_id: SHARED_ROW.id });
+        expect(res.status).toBe(404);
+        expect(fake.callsFor("quick_actions", "insert")).toHaveLength(0);
+    });
+});
+
 // ── GET /workflows ──────────────────────────────────────────────────────
 
 describe("GET /workflows", () => {
@@ -128,7 +178,7 @@ describe("GET /workflows", () => {
         expect(res.status).toBe(401);
     });
 
-    it("lists SYSTEM_WORKFLOWS plus owned and shared rows, all in metadata shape", async () => {
+    it("lists installed owned and shared workflows in metadata shape", async () => {
         const fake = useDb((call) =>
             call.op === "rpc"
                 ? { data: [OWNED_ROW, SHARED_ROW] }
@@ -140,20 +190,9 @@ describe("GET /workflows", () => {
             .set(auth);
 
         expect(res.status).toBe(200);
-        expect(res.body).toHaveLength(SYSTEM_WORKFLOWS.length + 2);
-
-        // System workflows first, read-only, straight from the generated module.
-        const system = res.body.slice(0, SYSTEM_WORKFLOWS.length);
-        expect(system.map((w: { id: string }) => w.id)).toEqual(
-            SYSTEM_WORKFLOWS.map((w) => w.id),
-        );
-        expect(system[0]).toMatchObject({
-            metadata: SYSTEM_WORKFLOWS[0].metadata,
-            allow_edit: false,
-            is_owner: false,
-        });
-
-        const [owned, shared] = res.body.slice(SYSTEM_WORKFLOWS.length);
+        // #309 defaults are editable DB copies, never prepended static rows.
+        expect(res.body).toHaveLength(2);
+        const [owned, shared] = res.body;
         expect(owned).toMatchObject({
             id: "wf-owned",
             user_id: USER_ID,
@@ -196,14 +235,14 @@ describe("GET /workflows", () => {
         });
 
         // Access filtering is the overview RPC's job, scoped to the caller.
-        const rpc = fake.calls.find((c) => c.op === "rpc");
+        const rpc = fake.calls.find((c) => c.table === "get_workflows_overview");
         expect(rpc).toMatchObject({
             table: "get_workflows_overview",
             payload: { p_user_id: USER_ID, p_user_email: USER_EMAIL, p_type: null },
         });
     });
 
-    it("filters system workflows by ?type and forwards the type to the RPC", async () => {
+    it("forwards the type to the owned/shared overview RPC", async () => {
         const fake = useDb((call) =>
             call.op === "rpc" ? { data: [] } : { data: [] },
         );
@@ -213,31 +252,28 @@ describe("GET /workflows", () => {
             .set(auth);
 
         expect(res.status).toBe(200);
-        const expected = SYSTEM_WORKFLOWS.filter((w) => w.metadata.type === "tabular");
-        expect(res.body.map((w: { id: string }) => w.id)).toEqual(
-            expected.map((w) => w.id),
-        );
-        expect(fake.calls.find((c) => c.op === "rpc")?.payload).toMatchObject({
+        expect(res.body).toEqual([]);
+        expect(fake.calls.find((c) => c.table === "get_workflows_overview")?.payload).toMatchObject({
             p_type: "tabular",
         });
     });
 
-    it("drops database rows that shadow a system workflow id", async () => {
-        const systemId = SYSTEM_WORKFLOWS[0].id;
+    it("marks only the caller's installed default workflow rows", async () => {
+        const defaultId = OWNED_ROW.id;
         useDb((call) =>
             call.op === "rpc"
-                ? { data: [{ ...OWNED_ROW, id: systemId, title: "Stale copy" }] }
-                : { data: [] },
+                ? { data: [OWNED_ROW, SHARED_ROW] }
+                : call.table === "default_workflow_installations"
+                  ? { data: [{ workflow_id: defaultId }] } : { data: [] },
         );
 
         const res = await request(await makeApp())
             .get("/api/workflows")
             .set(auth);
 
-        expect(res.body).toHaveLength(SYSTEM_WORKFLOWS.length);
-        expect(
-            res.body.filter((w: { id: string }) => w.id === systemId),
-        ).toHaveLength(1);
+        expect(res.body).toHaveLength(2);
+        expect(res.body[0]).toMatchObject({ id: defaultId, is_default: true });
+        expect(res.body[1]).toMatchObject({ id: SHARED_ROW.id, is_default: false });
     });
 
     it("returns 500 when the overview RPC errors", async () => {
