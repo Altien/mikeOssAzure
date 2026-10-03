@@ -511,6 +511,7 @@ userRouter.patch("/profile", requireAuth, async (req, res) => {
     { field: "kimi_api_key", provider: "kimi" },
     { field: "openrouter_api_key", provider: "openrouter" },
     { field: "vercel_api_key", provider: "vercel" },
+    { field: "opencode_api_key", provider: "opencode-go" },
     { field: "courtlistener_api_token", provider: "courtlistener" },
     { field: "azure_openai_endpoint", provider: "azure_openai" },
     { field: "azure_openai_api_key", provider: "azure_openai" },
@@ -586,16 +587,7 @@ userRouter.post("/profile/credits/increment", requireAuth, async (_req, res) => 
 // Provider credentials are deployment-wide in MikeOssAzure. Every user shares
 // the same backend and the same Key Vault-backed integrations; ordinary users
 // may choose models/features but must never own or replace provider secrets.
-const API_KEY_PROVIDERS = [
-  "claude",
-  "gemini",
-  "openai",
-  "kimi",
-  "openrouter",
-  "vercel",
-  "courtlistener",
-  "azure_openai",
-] as const;
+const API_KEY_PROVIDERS = Object.keys(ORGANISATION_CREDENTIALS) as OrganisationCredentialProvider[];
 type ApiKeyRouteProvider = (typeof API_KEY_PROVIDERS)[number];
 
 // Build the read-only organisation status the frontend expects. "env" is kept
@@ -611,7 +603,7 @@ async function buildApiKeyStatus(
     const credential = ORGANISATION_CREDENTIALS[provider];
     const values = await Promise.all(
       credential.secretNames.map((name) =>
-        provider === "openrouter" ? resolveProviderSecret(name) : resolveSecret(name)),
+        (provider === "openrouter" || provider === "opencode-go") ? resolveProviderSecret(name) : resolveSecret(name)),
     );
     const configured = provider === "vercel" ? !!(await resolveVercelApiKey()) : values.every(Boolean);
     status[provider] = configured;

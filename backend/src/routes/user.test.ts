@@ -100,12 +100,13 @@ vi.mock("../lib/mcpConnectors", () => ({
 }));
 
 vi.mock("../lib/routerModels", () => ({
-  getUserRouterModels: vi.fn(async () => []),
+  ROUTER_SLUGS: ["openrouter", "vercel", "opencode-go"],
+  getAllUserRouterModels: vi.fn(async () => ({ openrouter: [], vercel: [], "opencode-go": [] })),
   replaceUserRouterModels: vi.fn(async () => {}),
 }));
 import { makeApp } from "../test/helpers/buildTestApp";
 import { makeFakeDb } from "../test/helpers/fakeDb";
-import { getUserRouterModels, replaceUserRouterModels } from "../lib/routerModels";
+import { getAllUserRouterModels, replaceUserRouterModels } from "../lib/routerModels";
 
 const TOUCHED_ENV = [
   "AUTH_PROVIDER",
@@ -304,6 +305,7 @@ describe("GET /api/user/profile — wiring and shape", () => {
       quickActionsVisible: true,
       openRouterModels: [],
       vercelModels: [],
+      openCodeGoModels: [],
       apiKeyStatus: {
         claude: true,
         gemini: false,
@@ -311,6 +313,7 @@ describe("GET /api/user/profile — wiring and shape", () => {
         kimi: false,
         openrouter: false,
         vercel: false,
+        "opencode-go": false,
         courtlistener: false,
         azure_openai: true,
         // Legacy per-user rows report "user"; organisation secrets "env".
@@ -321,6 +324,7 @@ describe("GET /api/user/profile — wiring and shape", () => {
           kimi: null,
           openrouter: null,
           vercel: null,
+          "opencode-go": null,
           courtlistener: null,
           azure_openai: "user",
         },
@@ -481,6 +485,7 @@ describe("GET /api/user/profile — wiring and shape", () => {
       gemini: false,
       openrouter: false,
         vercel: false,
+        "opencode-go": false,
       courtlistener: false,
       openai: true,
       kimi: true,
@@ -490,6 +495,7 @@ describe("GET /api/user/profile — wiring and shape", () => {
         gemini: null,
         openrouter: null,
           vercel: null,
+          "opencode-go": null,
         courtlistener: null,
         openai: "env",
         kimi: "env",
@@ -536,7 +542,7 @@ describe("PATCH /api/user/profile — body validation", () => {
       "user-1", "openrouter", ["openai/gpt-5.4"], db,
     );
     expect(replaceUserRouterModels).toHaveBeenCalledWith("user-1", "vercel", [], db);
-    expect(getUserRouterModels).toHaveBeenCalledWith("user-1", "vercel", db);
+    expect(getAllUserRouterModels).toHaveBeenCalledWith("user-1", db);
   });
 
   it("rejects duplicate router IDs and organisation credential writes", async () => {
@@ -928,6 +934,7 @@ describe("organisation-managed provider credentials", () => {
     ["openai", "openai-api-key"],
     ["kimi", "moonshot-api-key"],
     ["openrouter", "openrouter-api-key"],
+    ["opencode-go", "opencode-api-key"],
     ["courtlistener", "courtlistener-api-token"],
     ["azure_openai", "azure-openai-endpoint"],
   ])(

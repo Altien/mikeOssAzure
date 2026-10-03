@@ -38,9 +38,9 @@ import {
 
 vi.mock("./routerModels", async () => ({
   ...(await vi.importActual<typeof import("./routerModels")>("./routerModels")),
-  getUserRouterModels: vi.fn(async () => []),
+  getAllUserRouterModels: vi.fn(async () => ({ openrouter: [], vercel: [], "opencode-go": [] })),
 }));
-import { getUserRouterModels } from "./routerModels";
+import { getAllUserRouterModels } from "./routerModels";
 
 /**
  * Tiny chainable fake for the two-phase upsertUserProfile flow and the
@@ -127,7 +127,7 @@ beforeEach(() => {
   delete process.env.AZURE_OPENAI_DEPLOYMENT;
   readEncryptedApiKeysMock.mockReset();
   createServerSupabaseMock.mockReset();
-  vi.mocked(getUserRouterModels).mockReset().mockResolvedValue([]);
+  vi.mocked(getAllUserRouterModels).mockReset().mockResolvedValue({ openrouter: [], vercel: [], "opencode-go": [] });
 });
 
 afterEach(() => {
@@ -141,8 +141,7 @@ afterEach(() => {
 describe("getUserModelSettings — fast model resolution chain", () => {
   it.each(["openrouter", "vercel"])("uses the first selected %s model for router-only accounts", async (provider) => {
     readEncryptedApiKeysMock.mockResolvedValue({ ...emptyKeys, [provider]: "org-key" });
-    vi.mocked(getUserRouterModels).mockImplementation(async (_userId, router) =>
-      router === provider ? ["openai/gpt-5.4", "anthropic/claude-sonnet-4.6"] : [],
+    vi.mocked(getAllUserRouterModels).mockImplementation(async () => ({ openrouter: [], vercel: [], "opencode-go": [], [provider]: ["openai/gpt-5.4", "anthropic/claude-sonnet-4.6"] }),
     );
     const { client } = makeClient({ selectSingle: { data: { fast_model: null } } });
     expect((await getUserModelSettings("u1", client as never)).fast_model)

@@ -21,6 +21,19 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("organisation router credential precedence", () => {
+    it("resolves OpenCode Go from Key Vault before env, then falls back when missing", async () => {
+        vi.stubEnv("OPENCODE_API_KEY", "local-opencode");
+        getSecret.mockImplementation(async (name: string) => ({
+            value: name === "opencode-api-key" ? "vault-opencode" : "__unset__",
+        }));
+        expect((await getOrganisationApiKeys())["opencode-go"]).toBe("vault-opencode");
+        flushConfigCache();
+        getSecret.mockResolvedValue({ value: "__unset__" });
+        expect((await getOrganisationApiKeys())["opencode-go"]).toBe("local-opencode");
+        flushConfigCache();
+        getSecret.mockRejectedValue(new Error("unavailable"));
+        expect((await getOrganisationApiKeys())["opencode-go"]).toBe("local-opencode");
+    });
     it("uses vault values for requests while preserving legacy config precedence", async () => {
         getSecret.mockImplementation(async (name: string) => ({
             value: name === "openrouter-api-key" ? "vault-router" : "__unset__",

@@ -235,7 +235,7 @@ describe("GET /api/models/vercel", () => {
 
 describe("GET /models/opencode-go", () => {
     beforeEach(() => {
-        getUserApiKeys.mockResolvedValue({ "opencode-go": "oc-user-key" });
+        getOrganisationApiKeys.mockResolvedValue({ "opencode-go": "oc-user-key" });
     });
 
     afterEach(() => {
@@ -245,11 +245,11 @@ describe("GET /models/opencode-go", () => {
     });
 
     it("requires a configured OpenCode Go key", async () => {
-        getUserApiKeys.mockResolvedValue({});
+        getOrganisationApiKeys.mockResolvedValue({});
         const fetchMock = vi.fn();
         vi.stubGlobal("fetch", fetchMock);
 
-        const response = await request(app).get("/models/opencode-go");
+        const response = await request(app).get("/api/models/opencode-go");
 
         expect(response.status).toBe(422);
         expect(response.body.code).toBe("missing_api_key");
@@ -285,7 +285,7 @@ describe("GET /models/opencode-go", () => {
         );
         vi.stubGlobal("fetch", fetchMock);
 
-        const response = await request(app).get("/models/opencode-go");
+        const response = await request(app).get("/api/models/opencode-go");
 
         expect(response.status).toBe(200);
         expect(response.body.models).toEqual([
@@ -311,7 +311,7 @@ describe("GET /models/opencode-go", () => {
             );
         vi.stubGlobal("fetch", fetchMock);
 
-        const response = await request(app).get("/models/opencode-go");
+        const response = await request(app).get("/api/models/opencode-go");
 
         expect(response.status).toBe(200);
         expect(fetchMock.mock.calls[0]?.[0]).toBe(
@@ -325,7 +325,7 @@ describe("GET /models/opencode-go", () => {
             vi.fn().mockResolvedValue(new Response("nope", { status: 401 })),
         );
 
-        const response = await request(app).get("/models/opencode-go");
+        const response = await request(app).get("/api/models/opencode-go");
 
         expect(response.status).toBe(502);
         expect(response.body.detail).toContain("(401)");

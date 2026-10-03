@@ -143,6 +143,14 @@ beforeEach(() => {
 });
 
 describe("PATCH /user/profile router model selections", () => {
+    it("keeps OpenCode Go credentials administrator-managed", async () => {
+        const response = await request(app).put("/api/user/api-keys/opencode-go")
+            .send({ api_key: "dummy-personal-key" });
+        expect(response.status).toBe(403);
+        expect(response.body).toMatchObject({ code: "organisation_api_key_required" });
+        expect(response.body.detail).toContain("opencode-api-key");
+        expect(replaceUserRouterModels).not.toHaveBeenCalled();
+    });
     it("accepts a catalog id that begins with the router's own slug", async () => {
         // OpenRouter's catalog really contains "openrouter/auto". Stripping
         // the router prefix before validating would leave "auto", fail the
@@ -224,7 +232,7 @@ describe("PATCH /user/profile router model selections", () => {
         // the other two routers are validated against would reject its whole
         // catalog.
         const response = await request(app)
-            .patch("/user/profile")
+            .patch("/api/user/profile")
             .send({ openCodeGoModels: ["glm-5", "opencode-go/kimi-k3"] });
 
         expect(response.status).toBe(200);
@@ -238,7 +246,7 @@ describe("PATCH /user/profile router model selections", () => {
 
     it("still rejects an OpenCode Go id containing whitespace", async () => {
         const response = await request(app)
-            .patch("/user/profile")
+            .patch("/api/user/profile")
             .send({ openCodeGoModels: ["not a model"] });
 
         expect(response.status).toBe(400);
@@ -250,7 +258,7 @@ describe("PATCH /user/profile router model selections", () => {
 
     it("rejects OpenCode Go models that require an unsupported protocol", async () => {
         const response = await request(app)
-            .patch("/user/profile")
+            .patch("/api/user/profile")
             .send({ openCodeGoModels: ["gpt-5.6-luna"] });
 
         expect(response.status).toBe(400);

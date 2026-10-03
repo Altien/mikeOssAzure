@@ -307,6 +307,24 @@ const items: ManifestItem[] = [
         },
     },
     {
+        id: "ai-opencode-go-key",
+        label: "OpenCode Go API key",
+        section: "AI providers",
+        required: false,
+        check: () => checkKvSecret("opencode-api-key", { redacted: true }),
+        fixedBy: {
+            type: "in-app-form",
+            submitTo: "kv",
+            fields: [{
+                name: "opencode-api-key",
+                label: "OpenCode Go API key",
+                type: "password",
+                required: true,
+                helpText: "Organisation-wide OpenCode Go key shared by this Mike installation.",
+            }],
+        },
+    },
+    {
         id: "ai-courtlistener-token",
         label: "CourtListener API token",
         section: "AI providers",

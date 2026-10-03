@@ -169,6 +169,7 @@ describe("organisation provider credentials", () => {
       "moonshot-api-key": "org-kimi",
       "openrouter-api-key": "org-openrouter",
       "ai-gateway-api-key": "org-vercel",
+      "opencode-api-key": "org-opencode",
       "courtlistener-api-token": "org-courtlistener",
       "azure-openai-endpoint": "https://org.openai.azure.com",
       "azure-openai-api-key": "org-azure",
@@ -189,6 +190,7 @@ describe("organisation provider credentials", () => {
       kimi: "org-kimi",
       openrouter: "org-openrouter",
       vercel: "org-vercel",
+      "opencode-go": "org-opencode",
       courtlistener: "org-courtlistener",
       azureOpenai: {
         endpoint: "https://org.openai.azure.com",
@@ -332,6 +334,7 @@ describe("getUserApiKeys — decryption + fallback", () => {
       openai: "sk-openai",
       openrouter: null,
       vercel: null,
+      "opencode-go": null,
       courtlistener: null,
       azureOpenai: null,
     });
@@ -645,6 +648,7 @@ describe("getConfiguredProviders", () => {
       openai: false,
       openrouter: false,
       vercel: false,
+      "opencode-go": false,
       courtlistener: false,
       azure_openai: true,
     });
@@ -674,6 +678,7 @@ describe("getConfiguredProviders", () => {
       openai: true,
       openrouter: false,
       vercel: false,
+      "opencode-go": false,
       courtlistener: false,
       azure_openai: true,
     });
@@ -693,6 +698,7 @@ describe("getConfiguredProviders", () => {
       openai: false,
       openrouter: false,
       vercel: false,
+      "opencode-go": false,
       courtlistener: false,
       azure_openai: false,
     });
