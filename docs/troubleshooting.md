@@ -1,58 +1,21 @@
 # Troubleshooting
 
-## A local account says “Email not confirmed”
+## Local services or database access fail
 
-Docker autoconfirms newly created accounts by default. Accounts created before
-autoconfirm was enabled remain unconfirmed. Confirm the existing message in
-[Mailpit](http://localhost:8025), or create a new local account.
+Use the health checks and service addresses in the [local stack runbook](runbook-local-stack.md). Confirm Postgres, PostgREST, Caddy, and Azurite are running and the backend has the correct local JWT and storage settings. Apply outstanding numbered migrations before retrying an API that reports missing columns, tables, or functions.
 
-To test confirmation deliberately, set `GOTRUE_MAILER_AUTOCONFIRM=false` in the
-root `.env` and recreate the Auth service:
+## Sign-in fails
 
-```bash
-docker compose up -d --force-recreate auth
-```
+Check the backend /config response for the intended auth provider. Local mode requires its development JWT configuration. For Entra, verify tenant, client ID, API audience/scope, and redirect URIs using the [Entra runbook](runbook-entra-local-auth.md). Browser configuration is loaded at runtime; verify requests reach the intended backend.
 
-## Production authentication email does not arrive
+## Models are unavailable
 
-Authentication email is sent by Supabase Auth. Check its email-provider
-settings and configure production SMTP in the Supabase dashboard.
+Check organisation-managed Key Vault or local environment credentials. Settings shows availability but does not accept user key writes. Azure OpenAI needs a valid endpoint, deployment, API version, and API key. Router models must be selected in Settings and require their router credential. Restart the local backend after environment changes.
 
-## Port 54322 is already allocated
+## Document conversion or upload fails
 
-Another local Postgres or Supabase stack is using Mike's default host port.
-Stop that stack or choose another mapping, for example:
+Check backend logs, Blob/Azurite configuration, the configured container, and LibreOffice availability. Use a small public document to isolate the failure.
 
-```bash
-DB_PORT=54323 docker compose up --build
-```
+## Word add-in fails
 
-## The model picker reports a missing key
-
-Add a key under **Settings > API Keys**, or configure it in
-`backend/.env` and restart the backend.
-
-For local Ollama models, confirm `ollama list` shows an installed model and the
-backend can reach the URL configured by `OLLAMA_BASE_URL`. Refresh Mike after
-installing a model.
-
-## CourtListener tools are unavailable
-
-See [CourtListener integration](courtlistener.md#troubleshooting) for API-token
-and optional bulk-data checks.
-
-## DOC or DOCX conversion fails
-
-Install LibreOffice and restart the backend so its conversion command is
-available on the process path.
-
-## Useful checks
-
-```bash
-npm run build --prefix backend
-npm run build --prefix frontend
-npm run lint --prefix frontend
-```
-
-For test commands and contribution expectations, see
-[Contributing](../CONTRIBUTING.md#testing).
+The [Word development guide](word-addin-development.md#troubleshooting) covers HTTPS certificate trust, port 3200, Entra sign-in, CORS, and tracked-change requirements.

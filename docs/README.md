@@ -3,7 +3,7 @@
 ## Run and deploy Mike
 
 - [Local development](local-development.md) — Docker Compose, local services,
-  registration, Ollama, and first-run setup
+  local or Entra authentication, and first-run setup
 - [Manual and production deployment](deployment.md) — managed infrastructure,
   environment variables, database upgrades, and deployment safety
 - [Troubleshooting](troubleshooting.md) — common local and production problems
@@ -23,9 +23,7 @@
 
 ## Testing and CI
 
-- [End-to-end tests in CI](e2e-ci.md)
 - [Backend unit-test coverage](testing-coverage.md)
-- [Frontend unit-test coverage](frontend-testing.md)
 - [Mutation testing and the SSE load harness](test-depth.md)
 
 ## Historical design and investigation notes
