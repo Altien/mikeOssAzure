@@ -136,7 +136,7 @@ function Probe() {
             <button onClick={() => void ctx.reloadProfile()}>reload-profile</button>
             <button onClick={() => void ctx.updatePersonalisation({ professionalTitle: "Partner" })}>set-personalisation</button>
             <button onClick={() => void ctx.updateDarkMode(true)}>dark-on</button>
-            <button onClick={() => void ctx.updateDarkMode(false)}>dark-off</button>
+            <button onClick={() => void ctx.updateDarkMode(false).catch(() => { document.body.dataset.darkError = "rejected"; })}>dark-off</button>
         </div>
     );
 }
@@ -421,6 +421,7 @@ describe("UserProfileContext: account and request fences", () => {
         await waitFor(() => expect(bodies).toEqual([{ darkMode: true }]));
         fireEvent.click(screen.getByText("dark-off"));
         await waitFor(() => expect(bodies).toHaveLength(2));
+        await waitFor(() => expect(document.body.dataset.darkError).toBe("rejected"));
         await waitFor(() => expect(readProfile().darkMode).toBe(true));
     });
     it("ignores an old account fetch and a save response after identity changes", async () => {

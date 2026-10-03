@@ -371,6 +371,7 @@ describe("GET /api/user/profile — wiring and shape", () => {
       mfaOnLogin: false,
       legalResearchUs: false,
       quickActionsVisible: true,
+      darkMode: false,
       openRouterModels: [],
       vercelModels: [],
       openCodeGoModels: [],
@@ -678,6 +679,19 @@ describe("PATCH /api/user/profile — body validation", () => {
 });
 
 describe("PATCH /api/user/profile — profile-field updates", () => {
+  it("persists a per-user dark mode boolean and returns the canonical value", async () => {
+    const { db, calls } = makeDb({ profile: { data: {
+      display_name: "Caller", organisation: null, message_credits_used: 0,
+      credits_reset_date: new Date(Date.now() + 86_400_000).toISOString(),
+      dark_mode: true,
+    } } });
+    createServerSupabaseMock.mockReturnValue(db);
+    const res = await request(makeApp()).patch("/api/user/profile")
+      .set("Authorization", "Bearer ok").send({ darkMode: true });
+    expect(res.status).toBe(200);
+    expect(calls.find((call) => call.type === "update")?.patch).toMatchObject({ dark_mode: true });
+    expect(res.body.darkMode).toBe(true);
+  });
   it("updates display_name and organisation, stamps updated_at, and returns the canonical post-update view", async () => {
     const future = new Date(Date.now() + 5 * 86_400_000).toISOString();
     const { db, calls } = makeDb({
