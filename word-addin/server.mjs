@@ -2,7 +2,7 @@ import http from "node:http";
 import https from "node:https";
 import path from "node:path";
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const defaultDistRoot = fileURLToPath(new URL("./dist/", import.meta.url));
@@ -24,12 +24,25 @@ function configuredBackend(input) {
       "WORD_ADDIN_BACKEND_ORIGIN must be an http(s) origin without credentials, path, query, or fragment",
     );
   }
+  if (process.env.NODE_ENV === "production" && backend.protocol !== "https:") throw new Error("Production Word proxy requires an HTTPS backend origin");
   return Object.freeze({
     protocol: backend.protocol,
     hostname: backend.hostname,
     port: backend.port || undefined,
     host: backend.host,
   });
+}
+
+function configuredPublicOrigin(input) {
+  if (!input) {
+    if (process.env.NODE_ENV === "production") throw new Error("WORD_ADDIN_PUBLIC_URL is required");
+    return null;
+  }
+  const url = new URL(input);
+  if (url.protocol !== "https:" || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
+    throw new Error("WORD_ADDIN_PUBLIC_URL must be an HTTPS origin");
+  }
+  return url.origin;
 }
 
 const MIME_TYPES = new Map([
@@ -163,6 +176,7 @@ export function createWordAddinServer(options = {}) {
   const backend = configuredBackend(
     options.backendOrigin ?? process.env.WORD_ADDIN_BACKEND_ORIGIN,
   );
+  const publicOrigin = configuredPublicOrigin(options.publicOrigin ?? process.env.WORD_ADDIN_PUBLIC_URL);
   return http.createServer((req, res) => {
     if (req.url === "/health") {
       res.writeHead(200, {
@@ -173,6 +187,15 @@ export function createWordAddinServer(options = {}) {
     }
     if (req.url === "/api" || req.url?.startsWith("/api/") || req.url === "/config" || req.url?.startsWith("/config?")) {
       proxyApi(req, res, backend);
+      return;
+    }
+    if ((req.url === "/manifest.xml" || req.url?.startsWith("/manifest.xml?")) && publicOrigin && (req.method === "GET" || req.method === "HEAD")) {
+      void readFile(path.join(distRoot, "manifest.xml"), "utf8").then(source => {
+        const rendered = source.replaceAll("https://localhost:3200", publicOrigin);
+        if (rendered.includes("https://localhost:3200")) throw new Error("Manifest substitution failed");
+        res.writeHead(200, { "cache-control": "private, no-store", "content-type": "application/xml; charset=utf-8", "x-content-type-options": "nosniff" });
+        res.end(req.method === "HEAD" ? undefined : rendered);
+      }).catch(() => { res.writeHead(503).end(); });
       return;
     }
     if (req.method !== "GET" && req.method !== "HEAD") {

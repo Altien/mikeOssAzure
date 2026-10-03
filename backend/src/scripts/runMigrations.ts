@@ -170,7 +170,7 @@ async function ensureAuthenticatorRole(databaseUrl: string): Promise<void> {
     );
   }
 
-  const client = new Client({ connectionString: databaseUrl, ssl: { rejectUnauthorized: false } });
+  const client = new Client({ connectionString: databaseUrl, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 15_000 });
   try {
     await client.connect();
     const existsRow = await client.query<{ exists: boolean }>(
@@ -210,7 +210,7 @@ async function provisionAuthSecrets(databaseUrl: string): Promise<void> {
     `https://${process.env.KEY_VAULT_NAME}.vault.azure.net/`,
     new DefaultAzureCredential({ managedIdentityClientId: process.env.AZURE_CLIENT_ID }),
   );
-  const client = new Client({ connectionString: databaseUrl, ssl: { rejectUnauthorized: false } });
+  const client = new Client({ connectionString: databaseUrl, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 15_000 });
   await client.connect();
   const lockKey = "mike-auth-secret-provision-v1";
   try {
@@ -219,18 +219,18 @@ async function provisionAuthSecrets(databaseUrl: string): Promise<void> {
       "auth-state-secret", "auth-session-encryption-secret", "auth-handoff-encryption-secret",
     ]) {
       let existing: string | undefined;
-      try { existing = (await vault.getSecret(name)).value; }
+      try { existing = (await vault.getSecret(name, { abortSignal: AbortSignal.timeout(15_000) })).value; }
       catch (error) {
         if ((error as { statusCode?: number }).statusCode !== 404) throw error;
       }
-      if (!existing) {
+      if (!existing || existing === "__unset__") {
         const created = randomBytes(32).toString("base64url");
-        await vault.setSecret(name, created);
+        await vault.setSecret(name, created, { abortSignal: AbortSignal.timeout(15_000) });
         console.log(`[migrate] auth secret created: ${name}`);
       } else {
         console.log(`[migrate] auth secret retained: ${name}`);
       }
-      const confirmed = (await vault.getSecret(name)).value;
+      const confirmed = (await vault.getSecret(name, { abortSignal: AbortSignal.timeout(15_000) })).value;
       if (!confirmed || confirmed === "__unset__") throw new Error(`Auth secret is unusable: ${name}`);
       if (name !== "auth-state-secret" && Buffer.from(confirmed, "base64url").length !== 32) {
         throw new Error(`Auth encryption secret has invalid length: ${name}`);

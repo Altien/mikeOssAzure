@@ -94,13 +94,6 @@ export async function startGoogleOAuth(next: string) {
     });
 }
 
-export async function exchangeAuthCode(code: string) {
-    return authRequest<{ user: AuthUser }>("/exchange", {
-        method: "POST",
-        body: JSON.stringify({ code }),
-    });
-}
-
 export async function requestPasswordReset(email: string) {
     return authRequest<void>("/password-reset", {
         method: "POST",

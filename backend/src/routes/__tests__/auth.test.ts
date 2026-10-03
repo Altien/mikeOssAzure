@@ -1,286 +1,116 @@
 import express from "express";
+import cookieParser from "cookie-parser";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const {
-  authClient,
-  createRequestSupabase,
-  clearRequestAuthCookies,
-  issueAuthHandoff,
-  consumeAuthHandoff,
-} = vi.hoisted(() => ({
-  authClient: {
-    auth: {
-      getUser: vi.fn(),
-      getSession: vi.fn(),
-      signInWithPassword: vi.fn(),
-      signUp: vi.fn(),
-      signInWithOAuth: vi.fn(),
-      exchangeCodeForSession: vi.fn(),
-      resetPasswordForEmail: vi.fn(),
-      signOut: vi.fn(),
-      setSession: vi.fn(),
-      mfa: {
-        verify: vi.fn(),
-        challengeAndVerify: vi.fn(),
-      },
-    },
-  },
-  createRequestSupabase: vi.fn(),
-  clearRequestAuthCookies: vi.fn(),
-  issueAuthHandoff: vi.fn(),
-  consumeAuthHandoff: vi.fn(),
-}));
+const mocks = vi.hoisted(() => {
+  const user = { id: "text-user-1", email: "lawyer@example.test", app_metadata: { provider: "google" } };
+  const session = { access_token: "private-access", refresh_token: "private-refresh", expires_in: 3600, user };
+  const auth = {
+    signInWithPassword: vi.fn(), signUp: vi.fn(), getUser: vi.fn(), signOut: vi.fn(),
+    updateUser: vi.fn(), reauthenticate: vi.fn(),
+    mfa: { listFactors: vi.fn(), getAuthenticatorAssuranceLevel: vi.fn(), enroll: vi.fn(), challenge: vi.fn(), verify: vi.fn(), challengeAndVerify: vi.fn(), unenroll: vi.fn() },
+  };
+  return { user, session, auth, createServerSession: vi.fn(), replaceServerSession: vi.fn(),
+    consumeAuthHandoff: vi.fn(), createOAuthState: vi.fn(), startSupabaseOAuth: vi.fn(),
+    readServerSession: vi.fn(), createCredentialClient: vi.fn(), getConfig: vi.fn(),
+  };
+});
 
-vi.mock("../../lib/authSession", () => ({
-  createRequestSupabase,
-  clearRequestAuthCookies,
-  publicAuthUser: (user: {
-    id: string;
-    email?: string;
-    new_email?: string;
-    app_metadata?: { provider?: string };
-  }) => ({
-    id: user.id,
-    email: user.email ?? "",
-    pendingEmail: user.new_email ?? null,
-    createdWithGoogle: user.app_metadata?.provider === "google",
-  }),
+vi.mock("../../lib/config", () => ({ getConfig: mocks.getConfig }));
+vi.mock("../../lib/auth/providers/supabaseSession", () => ({
+  createSupabaseAuthClient: () => ({ auth: mocks.auth }),
+  createCredentialClient: mocks.createCredentialClient,
+  startSupabaseOAuth: mocks.startSupabaseOAuth,
+  startSupabaseRecovery: vi.fn(),
+  exchangeSupabaseOAuth: vi.fn(),
+  supabaseCredential: (session: typeof mocks.session) => ({ provider: "supabase", userId: session.user.id, accessToken: session.access_token, refreshToken: session.refresh_token }),
+  supabaseExpiresAt: () => new Date(Date.now() + 3600_000),
+  publicSupabaseUser: (user: typeof mocks.user) => ({ id: user.id, email: user.email, pendingEmail: null, createdWithGoogle: user.app_metadata.provider === "google" }),
 }));
-vi.mock("../../lib/authHandoff", () => ({
-  issueAuthHandoff,
-  consumeAuthHandoff,
+vi.mock("../../lib/serverSession", () => ({
+  clearServerSessionCookie: vi.fn(), consumeAuthHandoff: mocks.consumeAuthHandoff,
+  consumeOAuthState: vi.fn(), createAuthHandoff: vi.fn(), createOAuthState: mocks.createOAuthState,
+  createServerSession: mocks.createServerSession, replaceServerSession: mocks.replaceServerSession,
+  readServerSession: mocks.readServerSession, revokeServerSession: vi.fn(),
 }));
-vi.mock("../../middleware/auth", () => ({
-  requireAuth: (
-    _req: unknown,
-    res: { locals: Record<string, unknown> },
-    next: () => void,
-  ) => {
-    res.locals.authClient = authClient;
-    res.locals.authSource = "cookie";
-    next();
-  },
+vi.mock("../../lib/auth/providers/supabase", () => ({
+  validateSupabaseToken: vi.fn(async () => ({ ok: true, principal: { userId: mocks.user.id, email: mocks.user.email, provider: "supabase" } })),
 }));
+vi.mock("../../lib/auth/providers/entra", () => ({ validateEntraToken: vi.fn() }));
+vi.mock("../../lib/auth/providers/local", () => ({ validateLocalToken: vi.fn() }));
+vi.mock("../../middleware/auth", () => ({ requireAuth: (_req: unknown, res: { locals: Record<string, unknown> }, next: () => void) => {
+  res.locals.userId = mocks.user.id; res.locals.token = "private-access";
+  res.locals.authSource = "cookie"; res.locals.principal = { userId: mocks.user.id, email: mocks.user.email, provider: "supabase" };
+  next();
+} }));
+vi.mock("../../middleware/tenantAccess", () => ({ tenantAccess: (_req: unknown, _res: unknown, next: () => void) => next() }));
+vi.mock("../../lib/userSettings", () => ({ upsertUserProfile: vi.fn(async () => undefined) }));
 
 import { authRouter } from "../auth";
-
 const app = express();
 app.use(express.json());
+app.use(cookieParser());
 app.use("/auth", authRouter);
 
-const origin = "https://app.example.test";
-const user = { id: "user-1", email: "lawyer@example.test" };
-const session = { access_token: "server-only-token" };
-const wordOrigin = "https://word.example.test";
-
-describe("auth routes", () => {
+describe("server-owned auth routes", () => {
   beforeEach(() => {
-    process.env.FRONTEND_URL = origin;
     process.env.NODE_ENV = "production";
-    delete process.env.WORD_ADDIN_URL;
-    createRequestSupabase.mockReset().mockReturnValue(authClient);
-    clearRequestAuthCookies.mockReset();
-    issueAuthHandoff.mockReset();
-    consumeAuthHandoff.mockReset();
-    for (const method of Object.values(authClient.auth)) {
-      if (typeof method === "function") method.mockReset();
-    }
-    for (const method of Object.values(authClient.auth.mfa)) {
-      method.mockReset();
-    }
+    process.env.FRONTEND_URL = "https://web.example.test";
+    process.env.WORD_ADDIN_URL = "https://word.example.test";
+    mocks.getConfig.mockReset().mockImplementation(async (name: string) => name === "auth-provider" ? "supabase" : "https://web.example.test");
+    for (const value of Object.values(mocks.auth)) if (typeof value === "function") value.mockReset();
+    for (const value of Object.values(mocks.auth.mfa)) value.mockReset();
+    for (const name of ["createServerSession", "replaceServerSession", "consumeAuthHandoff", "createOAuthState", "startSupabaseOAuth", "readServerSession", "createCredentialClient"] as const) mocks[name].mockReset();
+    mocks.createCredentialClient.mockResolvedValue({ auth: mocks.auth });
+    mocks.readServerSession.mockResolvedValue({ credential: { provider: "supabase", userId: mocks.user.id, accessToken: "private-access", refreshToken: "private-refresh" } });
   });
 
-  it("rejects an auth mutation from an untrusted origin", async () => {
-    const response = await request(app)
-      .post("/auth/login")
-      .set("Origin", "https://attacker.example")
-      .send({ email: "lawyer@example.test", password: "correct horse" });
-
+  it("rejects a login from an untrusted Origin before contacting the provider", async () => {
+    const response = await request(app).post("/auth/login").set("Origin", "https://attacker.example")
+      .send({ email: mocks.user.email, password: "long-password" });
     expect(response.status).toBe(403);
     expect(response.body.code).toBe("untrusted_origin");
-    expect(createRequestSupabase).not.toHaveBeenCalled();
+    expect(mocks.auth.signInWithPassword).not.toHaveBeenCalled();
   });
 
-  it("establishes a server session without returning tokens", async () => {
-    authClient.auth.signInWithPassword.mockResolvedValue({
-      data: { user, session },
-      error: null,
-    });
-
-    const response = await request(app)
-      .post("/auth/login")
-      .set("Origin", origin)
-      .send({ email: user.email, password: "correct horse" });
-
+  it("stores a provider session server-side and returns no reusable token", async () => {
+    mocks.auth.signInWithPassword.mockResolvedValue({ data: { user: mocks.user, session: mocks.session }, error: null });
+    const response = await request(app).post("/auth/login").set("Origin", "https://web.example.test")
+      .send({ email: mocks.user.email, password: "long-password" });
     expect(response.status).toBe(200);
-    expect(response.headers["cache-control"]).toBe("private, no-store");
-    expect(response.body).toEqual({
-      user: {
-        id: user.id,
-        email: user.email,
-        pendingEmail: null,
-        createdWithGoogle: false,
-      },
-    });
-    expect(JSON.stringify(response.body)).not.toContain("server-only-token");
+    expect(mocks.createServerSession).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ userId: mocks.user.id, accessToken: "private-access" }), expect.any(Date));
+    expect(response.body.user).toEqual({ id: mocks.user.id, email: mocks.user.email, pendingEmail: null, createdWithGoogle: true });
+    expect(JSON.stringify(response.body)).not.toContain("private-access");
+    expect(JSON.stringify(response.body)).not.toContain("private-refresh");
   });
 
-  it("keeps OAuth redirects on the requesting client origin", async () => {
-    authClient.auth.signInWithOAuth.mockResolvedValue({
-      data: { url: "https://accounts.google.test/authorize" },
-      error: null,
-    });
-
-    const response = await request(app)
-      .post("/auth/oauth")
-      .set("Origin", origin)
-      .send({
-        provider: "google",
-        callbackPath: "/oauth-dialog.html",
-        next: "//attacker.example/steal",
-      });
-
+  it("redeems only a trusted Word-origin one-use handoff", async () => {
+    mocks.consumeAuthHandoff.mockResolvedValue({ provider: "supabase", userId: mocks.user.id, accessToken: "private-access", refreshToken: "private-refresh" });
+    const body = { ticket: "a".repeat(43), requestId: "word-request-123456" };
+    const denied = await request(app).post("/auth/handoff").set("Origin", "https://attacker.example").send(body);
+    expect(denied.status).toBe(403);
+    const response = await request(app).post("/auth/handoff").set("Origin", "https://word.example.test").send(body);
     expect(response.status).toBe(200);
-    expect(authClient.auth.signInWithOAuth).toHaveBeenCalledWith({
-      provider: "google",
-      options: {
-        redirectTo:
-          "https://app.example.test/oauth-dialog.html?next=%2Fonboarding%2Fprofile",
-        skipBrowserRedirect: true,
-      },
-    });
+    expect(mocks.consumeAuthHandoff).toHaveBeenCalledWith(body.ticket, "https://word.example.test", body.requestId);
+    expect(JSON.stringify(response.body)).not.toContain("private-access");
   });
 
-  it("does not reveal whether a password-reset email exists", async () => {
-    authClient.auth.resetPasswordForEmail.mockRejectedValue(
-      new Error("account not found"),
-    );
-
-    const response = await request(app)
-      .post("/auth/password-reset")
-      .set("Origin", origin)
-      .send({ email: "unknown@example.test" });
-
-    expect(response.status).toBe(204);
-    expect(response.text).toBe("");
+  it("does not report a rejected ordinary-user password change as success", async () => {
+    mocks.auth.updateUser.mockResolvedValue({ data: { user: null }, error: new Error("reauthentication required") });
+    const response = await request(app).patch("/auth/password").set("Origin", "https://web.example.test")
+      .send({ password: "new-secure-password", nonce: "123456" });
+    expect(response.status).toBe(400);
+    expect(mocks.auth.updateUser).toHaveBeenCalledWith({ password: "new-secure-password", nonce: "123456" });
+    expect(mocks.createServerSession).not.toHaveBeenCalled();
   });
 
-  it("always clears local cookies during logout", async () => {
-    authClient.auth.signOut.mockRejectedValue(
-      new Error("upstream unavailable"),
-    );
-
-    const response = await request(app)
-      .post("/auth/logout")
-      .set("Origin", origin)
-      .send({ scope: "local" });
-
-    expect(response.status).toBe(204);
-    expect(clearRequestAuthCookies).toHaveBeenCalledTimes(1);
-  });
-
-  it.each([
-    [
-      "/auth/mfa/verify",
-      "verify",
-      { challengeId: "22222222-2222-4222-8222-222222222222" },
-    ],
-    ["/auth/mfa/challenge-and-verify", "challengeAndVerify", {}],
-  ] as const)(
-    "does not expose tokens from %s",
-    async (path, method, extraBody) => {
-      authClient.auth.mfa[method].mockResolvedValue({
-        data: {
-          access_token: "mfa-access-token",
-          refresh_token: "mfa-refresh-token",
-          user,
-        },
-        error: null,
-      });
-
-      const response = await request(app)
-        .post(path)
-        .set("Origin", origin)
-        .send({
-          factorId: "11111111-1111-4111-8111-111111111111",
-          code: "123456",
-          ...extraBody,
-        });
-
-      expect(response.status).toBe(200);
-      expect(response.body).toEqual({
-        user: {
-          id: user.id,
-          email: user.email,
-          pendingEmail: null,
-          createdWithGoogle: false,
-        },
-      });
-      expect(JSON.stringify(response.body)).not.toContain("mfa-access-token");
-      expect(JSON.stringify(response.body)).not.toContain("mfa-refresh-token");
-    },
-  );
-
-  it("exchanges Word OAuth sessions for an opaque handoff ticket", async () => {
-    process.env.WORD_ADDIN_URL = wordOrigin;
-    authClient.auth.exchangeCodeForSession.mockResolvedValue({
-      data: { user, session },
-      error: null,
-    });
-    issueAuthHandoff.mockResolvedValue("a".repeat(43));
-
-    const response = await request(app)
-      .post("/auth/exchange")
-      .set("Origin", wordOrigin)
-      .send({ code: "oauth-code", handoffRequestId: "request-id-123456" });
-
+  it("rotates the server credential after successful MFA without exposing elevated tokens", async () => {
+    mocks.auth.mfa.verify.mockResolvedValue({ data: { access_token: "elevated-access", refresh_token: "elevated-refresh", expires_in: 3600, user: mocks.user }, error: null });
+    const response = await request(app).post("/auth/mfa/verify").set("Origin", "https://web.example.test")
+      .send({ factorId: "factor-1", challengeId: "challenge-1", code: "123456" });
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ handoffTicket: "a".repeat(43) });
-    expect(JSON.stringify(response.body)).not.toContain("server-only-token");
-    expect(issueAuthHandoff).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: user.id,
-        requestId: "request-id-123456",
-        origin: wordOrigin,
-        session,
-      }),
-    );
-  });
-
-  it("redeems a Word handoff into an HttpOnly session without returning tokens", async () => {
-    process.env.WORD_ADDIN_URL = wordOrigin;
-    consumeAuthHandoff.mockResolvedValue({
-      userId: user.id,
-      accessToken: "handoff-access-token",
-      refreshToken: "handoff-refresh-token",
-    });
-    authClient.auth.setSession.mockResolvedValue({
-      data: { user, session },
-      error: null,
-    });
-
-    const response = await request(app)
-      .post("/auth/handoff")
-      .set("Origin", wordOrigin)
-      .send({ ticket: "b".repeat(43), requestId: "request-id-123456" });
-
-    expect(response.status).toBe(200);
-    expect(authClient.auth.setSession).toHaveBeenCalledWith({
-      access_token: "handoff-access-token",
-      refresh_token: "handoff-refresh-token",
-    });
-    expect(response.body).toEqual({
-      user: {
-        id: user.id,
-        email: user.email,
-        pendingEmail: null,
-        createdWithGoogle: false,
-      },
-    });
-    expect(JSON.stringify(response.body)).not.toContain("handoff-access-token");
-    expect(JSON.stringify(response.body)).not.toContain(
-      "handoff-refresh-token",
-    );
+    expect(mocks.replaceServerSession).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ accessToken: "elevated-access" }), expect.any(Date));
+    expect(JSON.stringify(response.body)).not.toContain("elevated-access");
   });
 });

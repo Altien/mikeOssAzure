@@ -142,7 +142,7 @@ export async function downloadAuthorityTraceExport(
   const query = options.forceDegraded ? "?force_degraded=true" : "";
   const response = await fetch(
     `${API_BASE}/authority-trace/runs/${encodeURIComponent(runId)}/${kind}.html${query}`,
-    { headers: authHeaders },
+    { headers: authHeaders, credentials: "include" },
   );
   bounceIfUnauthorized(response);
   if (!response.ok) {

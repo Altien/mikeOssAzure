@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+vi.hoisted(() => { process.env.NEXT_PUBLIC_API_BASE_URL = ""; });
 import {
     AuthApiError,
     challengeAndVerifyMfa,
     challengeMfa,
     clearLegacyBrowserAuthStorage,
     enrollMfa,
-    exchangeAuthCode,
     getAuthSession,
     getMfaAssurance,
     listMfaFactors,
@@ -154,13 +154,6 @@ describe("cookie auth client", () => {
             "/api/auth/oauth",
             "POST",
             { provider: "google", next: "/onboarding" },
-        ],
-        [
-            "code exchange",
-            () => exchangeAuthCode("oauth-code"),
-            "/api/auth/exchange",
-            "POST",
-            { code: "oauth-code" },
         ],
         [
             "email update",

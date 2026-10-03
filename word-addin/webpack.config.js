@@ -28,7 +28,7 @@ module.exports = async (_env, options) => {
   if (!isDev) {
     // Dev fork: no Supabase URL/key — sign-in is Entra (MSAL) and its tenant /
     // client / scope come from the backend's GET /config at runtime.
-    const required = ["REACT_APP_API_BASE_URL", "REACT_APP_WEB_APP_URL"];
+    const required = ["REACT_APP_API_BASE_URL"];
     const missing = required.filter((name) => !process.env[name]?.trim());
     if (missing.length > 0) {
       throw new Error(
@@ -117,7 +117,6 @@ module.exports = async (_env, options) => {
     entry: {
       taskpane: "./src/taskpane/index.tsx",
       commands: "./src/commands/commands.ts",
-      "auth-dialog": "./src/auth-dialog/auth-dialog.ts",
       "oauth-dialog": "./src/oauth-dialog/index.ts",
     },
     output: {
@@ -205,11 +204,6 @@ module.exports = async (_env, options) => {
         chunks: ["commands"],
       }),
       new HtmlWebpackPlugin({
-        filename: "auth-dialog.html",
-        template: "./src/auth-dialog/auth-dialog.html",
-        chunks: ["auth-dialog"],
-      }),
-      new HtmlWebpackPlugin({
         filename: "oauth-dialog.html",
         template: "./src/oauth-dialog/index.html",
         chunks: ["oauth-dialog"],
@@ -230,7 +224,7 @@ module.exports = async (_env, options) => {
         // account/api-keys page); it never fetches from it.
         REACT_APP_WEB_APP_URL: isDev
           ? process.env.REACT_APP_WEB_APP_URL || "http://localhost:3000"
-          : undefined,
+          : "",
       }),
     ],
     devServer: devServerConfig,

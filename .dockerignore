@@ -13,6 +13,7 @@
 backend/dist
 frontend/.next
 frontend/out
+word-addin/dist
 frontend/tsconfig.tsbuildinfo
 
 # Local-only state

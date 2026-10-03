@@ -81,6 +81,23 @@ async function requestSession(): Promise<AddinAuthUser | null> {
   return body.user;
 }
 
+async function bootstrapEntraSession(accessToken: string): Promise<void> {
+  const bootstrap = await fetch(`${API_BASE}/auth/bootstrap`, {
+    method: "POST", credentials: "include", headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!bootstrap.ok) throw new Error(await parseError(bootstrap));
+}
+
+async function requestOrBootstrapSession(generation: number): Promise<AddinAuthUser | null> {
+  const current = await requestSession();
+  if (current || generation !== _sessionGeneration || _mode !== "entra" || !_entra?.supportsNestedAuthentication) return current;
+  if (await OfficeRuntime.storage.getItem(SIGNED_OUT_KEY) === "1") return null;
+  const token = await _entra.acquireSilent();
+  if (!token || generation !== _sessionGeneration) return null;
+  await bootstrapEntraSession(token.accessToken);
+  return generation === _sessionGeneration ? requestSession() : null;
+}
+
 async function redeemAuthHandoff(
   ticket: string,
   requestId: string,
@@ -107,9 +124,7 @@ async function redeemAuthHandoff(
 }
 
 async function signInWithMicrosoftDialog(generation: number): Promise<void> {
-  const config = await loadRuntimeConfig();
-  const backendOrigin = config.backendOrigin;
-  if (!backendOrigin || new URL(backendOrigin).origin !== backendOrigin) throw new Error("Microsoft dialog sign-in has no trusted backend origin");
+  const backendOrigin = window.location.origin;
   const requestId = createOAuthRequestId();
   const dialogUrl = new URL("/oauth-dialog.html", window.location.origin);
   dialogUrl.searchParams.set("provider", "microsoft");
@@ -148,7 +163,7 @@ async function signInWithMicrosoftDialog(generation: number): Promise<void> {
 export function refreshSession(): Promise<AddinAuthUser | null> {
   const generation = _sessionGeneration;
   if (!_sessionPromise) {
-    _sessionPromise = requestSession().finally(() => {
+    _sessionPromise = requestOrBootstrapSession(generation).finally(() => {
       _sessionPromise = null;
     });
   }
@@ -201,10 +216,7 @@ export async function signIn(email?: string, password?: string): Promise<void> {
       }
       const token = await _entra.acquireInteractive();
       if (generation !== _sessionGeneration) return;
-      const bootstrap = await fetch(`${API_BASE}/auth/bootstrap`, {
-        method: "POST", credentials: "include", headers: { Authorization: `Bearer ${token.accessToken}` },
-      });
-      if (!bootstrap.ok) throw new Error(await parseError(bootstrap));
+      await bootstrapEntraSession(token.accessToken);
       const user = await requestSession();
       if (generation !== _sessionGeneration || !user) throw new Error("Word could not retain the sign-in cookie. Enable cookies for this add-in host.");
       await OfficeRuntime.storage.removeItem(SIGNED_OUT_KEY);
@@ -295,7 +307,7 @@ export async function signInWithGoogle(): Promise<void> {
             Office.EventType.DialogMessageReceived,
             (event) => {
               if (settled || !("message" in event)) return;
-              if (event.origin && event.origin !== expectedOrigin) {
+              if (event.origin !== expectedOrigin) {
                 close();
                 fail("Google sign-in returned from an unexpected origin.");
                 return;

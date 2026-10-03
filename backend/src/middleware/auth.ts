@@ -5,10 +5,10 @@ import { validateEntraToken } from "../lib/auth/providers/entra.js";
 import { tenantAccess } from "./tenantAccess.js";
 import { upsertUserProfile } from "../lib/userSettings.js";
 import { getConfig } from "../lib/config.js";
-import { createRequestSupabase } from "../lib/authSession.js";
 import { readServerSession, refreshServerSession } from "../lib/serverSession.js";
 import { requestOriginIsTrusted } from "../lib/origins.js";
 import { renewEntraCredential } from "../lib/auth/providers/entraRefresh.js";
+import { renewSupabaseCredential } from "../lib/auth/providers/supabaseSession.js";
 
 // Upstream divergence (sync-log: 3a10943): upstream added app-level MFA
 // enforcement here (enforceLoginMfaIfEnabled / requireMfaIfEnrolled) built
@@ -48,30 +48,37 @@ export async function requireAuth(
       return;
     }
     cookieSession = true;
-    if (provider === "supabase") {
-      try {
-        const client = createRequestSupabase(req, res);
-        const { data, error } = await client.auth.getSession();
-        if (!error) token = data.session?.access_token ?? "";
-        res.locals.authClient = client;
-      } catch {
-        res.status(503).json({ detail: "Auth session is unavailable" });
-        return;
-      }
-    } else {
+    {
       let session;
       try { session = await readServerSession(req); }
       catch { res.status(503).json({ detail: "Auth session is unavailable" }); return; }
       if (session?.credential.provider === provider) {
         if (Date.parse(session.row.token_expires_at) <= Date.now() + 60_000) {
-          if (provider !== "entra" || !session.credential.refreshToken) {
+          if (!session.credential.refreshToken || provider === "local") {
             res.status(401).json({ detail: "Invalid or expired session" });
             return;
           }
           try {
-            const renewed = await refreshServerSession(session, renewEntraCredential);
-            session = renewed ? await readServerSession(req) : null;
-          } catch { session = null; }
+            const renewed = await refreshServerSession(session, provider === "supabase" ? renewSupabaseCredential : renewEntraCredential);
+            const claimedVersion = session.row.version;
+            session = await readServerSession(req);
+            // A second replica can lose the CAS claim while the owner is
+            // refreshing. Do not turn that ordinary race into a 401/logout.
+            if (!renewed && session && Date.parse(session.row.token_expires_at) <= Date.now()) {
+              for (let attempt = 0; attempt < 10 && session && session.row.version <= claimedVersion; attempt++) {
+                await new Promise(resolve => setTimeout(resolve, 200));
+                session = await readServerSession(req);
+              }
+            }
+            if (session && Date.parse(session.row.token_expires_at) <= Date.now()) {
+              res.setHeader("Retry-After", "1");
+              res.status(503).json({ detail: "Auth session refresh is in progress" });
+              return;
+            }
+          } catch {
+            res.status(503).json({ detail: "Auth session is unavailable" });
+            return;
+          }
         }
         token = session?.credential.accessToken ?? "";
         sessionUserId = session?.credential.userId ?? null;
@@ -118,8 +125,8 @@ export async function requireAuth(
       result.principal.displayName,
     );
   } catch (error) {
-    const detail = error instanceof Error ? error.message : "Unable to initialize user profile";
-    res.status(500).json({ detail });
+    console.error("[auth/profile] profile initialization failed", error);
+    res.status(500).json({ detail: "Unable to initialize user profile" });
     return;
   }
 

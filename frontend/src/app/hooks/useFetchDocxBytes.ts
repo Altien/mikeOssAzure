@@ -90,6 +90,7 @@ export function useFetchDocxBytes(
                 // Stream bytes through the backend (avoids CORS on R2
                 // signed URLs).
                 const bin = await fetch(url, {
+                    credentials: "include",
                     headers: token ? { Authorization: `Bearer ${token}` } : {},
                 });
                 bounceIfUnauthorized(bin);

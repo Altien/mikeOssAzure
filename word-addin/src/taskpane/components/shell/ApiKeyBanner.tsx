@@ -1,30 +1,29 @@
 import React, { useEffect, useState } from "react";
 import { KeyRound, X } from "lucide-react";
 import { getApiKeyStatus, type ApiKeyStatus } from "../../api/mikeApi";
+import { loadRuntimeConfig } from "../../auth/runtimeConfig";
 
 const DISMISS_KEY = "apiKeyBannerDismissed";
 
 // The web app hosts the API-keys settings page; the task pane only links to it.
 // Read the substituted value directly — a `typeof process` guard is false in
 // the browser and would silently fall through to the default.
-const WEB_APP_URL: string =
-  process.env.REACT_APP_WEB_APP_URL || window.location.origin;
-
-const API_KEYS_PAGE_URL = `${WEB_APP_URL.replace(/\/+$/, "")}/install`;
-
 /**
  * Open the web app's API-keys page in the system browser. Office's
  * openBrowserWindow is the sanctioned way out of the task-pane webview
  * (window.open is blocked in some hosts); fall back to window.open when the
  * API isn't available (e.g. the hermetic e2e bundle or older hosts).
  */
-function openApiKeysPage(): void {
+async function openApiKeysPage(): Promise<void> {
+  const configured = (await loadRuntimeConfig()).frontendOrigin;
+  if (!configured || !/^https?:\/\//.test(configured)) return;
+  const target = `${new URL(configured).origin}/install`;
   const ui =
     typeof Office !== "undefined" ? Office.context?.ui : undefined;
   if (ui && typeof ui.openBrowserWindow === "function") {
-    ui.openBrowserWindow(API_KEYS_PAGE_URL);
+    ui.openBrowserWindow(target);
   } else {
-    window.open(API_KEYS_PAGE_URL, "_blank", "noopener,noreferrer");
+    window.open(target, "_blank", "noopener,noreferrer");
   }
 }
 
@@ -101,7 +100,7 @@ export function ApiKeyBanner(): React.ReactElement | null {
       </div>
       <button
         type="button"
-        onClick={openApiKeysPage}
+        onClick={() => { void openApiKeysPage(); }}
         className="mt-1.5 ml-[22px] rounded-md bg-amber-600 px-2 py-1 text-[11px] font-medium text-white transition-colors hover:bg-amber-700"
       >
         Set up API keys

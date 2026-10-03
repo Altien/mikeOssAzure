@@ -1615,6 +1615,7 @@ export async function streamChat(payload: {
     const authHeaders = await getAuthHeader();
     const response = await fetch(`${API_BASE}/chat`, {
         method: "POST",
+        credentials: "include",
         headers: {
             "Content-Type": "application/json",
             Accept: "text/event-stream",
@@ -1647,6 +1648,7 @@ export async function streamProjectChat(payload: {
     const authHeaders = await getAuthHeader();
     const response = await fetch(`${API_BASE}/projects/${projectId}/chat`, {
         method: "POST",
+        credentials: "include",
         headers: {
             "Content-Type": "application/json",
             Accept: "text/event-stream",
@@ -1811,6 +1813,7 @@ export async function streamTabularGeneration(
         `${API_BASE}/tabular-review/${reviewId}/generate`,
         {
             method: "POST",
+            credentials: "include",
             headers: { ...authHeaders, "Content-Type": "application/json" },
             body: JSON.stringify({ expected_updated_at: expectedUpdatedAt }),
             signal,
@@ -1832,6 +1835,7 @@ export async function streamTabularChat(
         `${API_BASE}/tabular-review/${reviewId}/chat`,
         {
             method: "POST",
+            credentials: "include",
             headers: { "Content-Type": "application/json", ...authHeaders },
             body: JSON.stringify({
                 messages,

@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import type { Request, Response } from "express";
 import { createServerSupabase } from "./supabase";
 import { getKeyVaultConfig } from "./config";
@@ -7,6 +7,7 @@ import { requestOriginIsWordAddin } from "./origins";
 const SESSION_NAME = "mike-session";
 const SESSION_DAYS = 30;
 const MAX_HANDOFF_SECONDS = 300;
+let lastCleanupAt = 0;
 type Provider = "entra" | "local" | "supabase";
 
 export interface ServerCredential {
@@ -29,12 +30,18 @@ interface SessionRow {
 
 let sessionKey: Buffer | null = null;
 let handoffKey: Buffer | null = null;
+let stateKey: Buffer | null = null;
 
 function decodeKey(value: string, name: string): Buffer {
   if (!value || value === "__unset__" || /replace|placeholder|change-me/i.test(value)) {
     throw new Error(`${name} is not configured`);
   }
   const decoded = Buffer.from(value, "base64url");
+  // Existing installations may have the old Bicep GUID state secret. Keep
+  // that value stable across rollout and derive a fixed HMAC key from it.
+  if (name === "auth-state-secret" && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value)) {
+    return createHash("sha256").update(`mike-auth-state-v1:${value}`).digest();
+  }
   if (decoded.length !== 32 || decoded.toString("base64url") !== value.replace(/=+$/, "")) {
     throw new Error(`${name} must be 32 random bytes in base64url form`);
   }
@@ -54,13 +61,15 @@ async function loadKey(name: string, envName: string): Promise<Buffer> {
 
 /** Required before listen: never mint a per-process fallback encryption key. */
 export async function initServerSessionKeys(): Promise<void> {
-  const [session, handoff] = await Promise.all([
+  const [session, handoff, state] = await Promise.all([
     loadKey("auth-session-encryption-secret", "AUTH_SESSION_ENCRYPTION_SECRET"),
     loadKey("auth-handoff-encryption-secret", "AUTH_HANDOFF_ENCRYPTION_SECRET"),
+    loadKey("auth-state-secret", "AUTH_STATE_SECRET"),
   ]);
-  if (session.equals(handoff)) throw new Error("Auth encryption keys must be distinct");
+  if (session.equals(handoff) || session.equals(state) || handoff.equals(state)) throw new Error("Auth keys must be distinct");
   sessionKey = session;
   handoffKey = handoff;
+  stateKey = state;
   // Schema readiness is also required before accepting any cookie traffic.
   const { error } = await createServerSupabase().from("auth_sessions").select("session_hash").limit(1);
   if (error) throw new Error("Auth session schema is unavailable");
@@ -91,6 +100,25 @@ function open<T>(encoded: string, kind: "session" | "handoff", aad: string): T {
 
 export function hashAuthToken(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function scheduleExpiredAuthCleanup(): void {
+  const now = Date.now();
+  if (now - lastCleanupAt < 5 * 60_000) return;
+  lastCleanupAt = now;
+  const db = createServerSupabase();
+  const cutoff = new Date(now).toISOString();
+  void Promise.all([
+    db.from("auth_sessions").delete().lt("expires_at", cutoff),
+    db.from("auth_handoff_tickets").delete().lt("expires_at", cutoff),
+    db.from("auth_oauth_states").delete().lt("expires_at", cutoff),
+  ]).then(results => { if (results.some(result => result.error)) lastCleanupAt = 0; })
+    .catch(() => { lastCleanupAt = 0; });
+}
+
+function hashOAuthToken(value: string): string {
+  if (!stateKey) throw new Error("Auth state key has not been initialized");
+  return createHmac("sha256", stateKey).update(value).digest("hex");
 }
 
 function cookieName(): string {
@@ -136,7 +164,13 @@ export async function createServerSession(req: Request, res: Response, credentia
     expires_at: new Date(Date.now() + SESSION_DAYS * 86400_000).toISOString(),
   });
   if (error) throw new Error("Unable to create auth session");
+  scheduleExpiredAuthCleanup();
   setServerSessionCookie(req, res, raw);
+}
+
+export async function replaceServerSession(req: Request, res: Response, credential: ServerCredential, tokenExpiresAt: Date): Promise<void> {
+  await revokeServerSession(req);
+  await createServerSession(req, res, credential, tokenExpiresAt);
 }
 
 export async function readServerSession(req: Request): Promise<{ row: SessionRow; credential: ServerCredential } | null> {
@@ -203,6 +237,7 @@ export async function createAuthHandoff(credential: ServerCredential, targetOrig
     expires_at: new Date(Date.now() + ttlSeconds * 1000).toISOString(),
   });
   if (error) throw new Error("Unable to create auth handoff");
+  scheduleExpiredAuthCleanup();
   return ticket;
 }
 
@@ -227,13 +262,14 @@ export async function createOAuthState(input: {
   returnUrl: string;
   targetOrigin: string;
   requestId?: string;
-}): Promise<string> {
-  const state = randomBytes(32).toString("base64url");
-  const hash = hashAuthToken(state);
+}, stateToken?: string): Promise<string> {
+  const state = stateToken ?? randomBytes(32).toString("base64url");
+  if (!/^[A-Za-z0-9_-]{40,128}$/.test(state)) throw new Error("Invalid OAuth state token");
+  const hash = hashOAuthToken(state);
   const { error } = await createServerSupabase().from("auth_oauth_states").insert({
     state_hash: hash,
     provider: input.provider,
-    browser_nonce_hash: hashAuthToken(input.browserNonce),
+    browser_nonce_hash: hashOAuthToken(input.browserNonce),
     code_verifier_cipher: seal(input.codeVerifier, "handoff", `${input.targetOrigin}:${hash}`),
     return_url: input.returnUrl,
     target_origin: input.targetOrigin,
@@ -241,6 +277,7 @@ export async function createOAuthState(input: {
     expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
   });
   if (error) throw new Error("Unable to create OAuth state");
+  scheduleExpiredAuthCleanup();
   return state;
 }
 
@@ -252,10 +289,10 @@ export async function consumeOAuthState(state: string, browserNonce: string): Pr
   requestId: string | null;
 } | null> {
   if (!/^[A-Za-z0-9_-]{40,128}$/.test(state) || !/^[A-Za-z0-9_-]{40,128}$/.test(browserNonce)) return null;
-  const hash = hashAuthToken(state);
+  const hash = hashOAuthToken(state);
   const { data, error } = await createServerSupabase().rpc("consume_auth_oauth_state", {
     p_state_hash: hash,
-    p_browser_nonce_hash: hashAuthToken(browserNonce),
+    p_browser_nonce_hash: hashOAuthToken(browserNonce),
   });
   if (error) throw new Error("Unable to consume OAuth state");
   const row = (data as {

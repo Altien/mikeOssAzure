@@ -3,11 +3,9 @@ import {
   GOOGLE_OAUTH_MESSAGE_TYPE,
   type GoogleOAuthDialogMessage,
 } from "../taskpane/auth/oauthProtocol";
+import { API_BASE_URL } from "../taskpane/auth/runtimeConfig";
 
-const API_BASE = (process.env.REACT_APP_API_BASE_URL || "/api").replace(
-  /\/+$/,
-  "",
-);
+const API_BASE = API_BASE_URL;
 const REQUEST_STORAGE_KEY = "mike-word-google-oauth-request";
 
 function setStatus(message: string): void {
@@ -141,6 +139,7 @@ async function runGoogleOAuth(): Promise<void> {
       provider: "google",
       callbackPath: "/oauth-dialog.html",
       next: "/assistant",
+      handoffRequestId: requestId,
     }),
   });
   if (!response.ok) {

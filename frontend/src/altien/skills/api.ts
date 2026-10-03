@@ -240,7 +240,7 @@ export async function downloadSkillPackage(
     const auth = await getAuthHeader();
     const response = await fetch(
         `${API_BASE}/altien/skills/versions/${encodeURIComponent(versionId)}/packages/${kind}`,
-        { headers: auth },
+        { headers: auth, credentials: "include" },
     );
     bounceIfUnauthorized(response);
     if (!response.ok) throw new Error(await response.text());
@@ -310,7 +310,7 @@ export async function downloadCleanRoomDeveloperArtifact(artifactId: string) {
     const auth = await getAuthHeader();
     const response = await fetch(
         `${API_BASE}/altien/skills/developer-artifacts/${encodeURIComponent(artifactId)}`,
-        { headers: auth },
+        { headers: auth, credentials: "include" },
     );
     bounceIfUnauthorized(response);
     if (!response.ok) throw new Error(await response.text());

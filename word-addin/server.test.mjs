@@ -34,6 +34,7 @@ before(async () => {
     path.join(staticRoot, "taskpane.html"),
     "<!doctype html><title>Mike Word</title>",
   );
+  await writeFile(path.join(staticRoot, "manifest.xml"), '<SourceLocation DefaultValue="https://localhost:3200/taskpane.html"/>');
 
   backend = http.createServer((req, res) => {
     observedRequest = {
@@ -84,7 +85,7 @@ test("streams the API while preserving auth headers and cookies", async () => {
 
   assert.equal(await response.text(), "data: first\n\ndata: second\n\n");
   assert.deepEqual(observedRequest, {
-    url: "/chat?mode=word",
+    url: "/api/chat?mode=word",
     cookie: "__Host-mike-session=incoming",
     origin: "https://word.example.test",
     forwardedHost: new URL(addinOrigin).host,
@@ -93,6 +94,23 @@ test("streams the API while preserving auth headers and cookies", async () => {
     "__Host-mike-session=one; Path=/; Secure; HttpOnly",
     "__Host-mike-session.1=two; Path=/; Secure; HttpOnly",
   ]);
+});
+
+test("proxies /config unchanged through the fixed backend target", async () => {
+  const response = await fetch(`${addinOrigin}/config`);
+  assert.equal(response.status, 200);
+  assert.equal(observedRequest.url, "/config");
+});
+
+test("renders a tenant origin into the portable manifest at request time", async () => {
+  const host = createWordAddinServer({ distRoot: staticRoot, backendOrigin, publicOrigin: "https://word.example.test" });
+  const origin = await listen(host);
+  try {
+    const response = await fetch(`${origin}/manifest.xml`);
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /https:\/\/word\.example\.test\/taskpane\.html/);
+    assert.equal(response.headers.get("cache-control"), "private, no-store");
+  } finally { await close(host); }
 });
 
 test("rejects backend configuration that is not an origin", () => {

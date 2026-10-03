@@ -8,12 +8,17 @@ import { requestOriginIsTrusted, requestOriginIsWordAddin } from "../lib/origins
 import {
   clearServerSessionCookie, consumeAuthHandoff, consumeOAuthState,
   createAuthHandoff, createOAuthState, createServerSession,
-  revokeServerSession, type ServerCredential,
+  revokeServerSession, replaceServerSession, type ServerCredential,
 } from "../lib/serverSession";
 import { requireAuth } from "../middleware/auth";
 import { tenantAccess } from "../middleware/tenantAccess";
 import { requireTrustedOrigin } from "../middleware/trustedOrigin";
 import { upsertUserProfile } from "../lib/userSettings";
+import {
+  createSupabaseAuthClient, exchangeSupabaseOAuth, publicSupabaseUser,
+  startSupabaseOAuth, startSupabaseRecovery, supabaseCredential, supabaseExpiresAt, createCredentialClient,
+} from "../lib/auth/providers/supabaseSession";
+import { readServerSession } from "../lib/serverSession";
 
 export const authRouter = Router();
 authRouter.use(requireTrustedOrigin);
@@ -25,6 +30,18 @@ async function authProvider(): Promise<string> {
 
 function frontendOrigin(): URL { return new URL(process.env.FRONTEND_URL || "http://localhost:3000"); }
 
+async function backendPublicOrigin(req: Request): Promise<string> {
+  const configured = process.env.API_PUBLIC_URL || await getConfig("backend-public-url").catch(() => "");
+  if (configured) {
+    const parsed = new URL(configured);
+    if (process.env.NODE_ENV === "production" && parsed.protocol !== "https:") throw new Error("Backend public URL must use HTTPS");
+    if (parsed.username || parsed.password || parsed.pathname !== "/" || parsed.search || parsed.hash) throw new Error("Backend public URL must be an origin");
+    return parsed.origin;
+  }
+  if (process.env.NODE_ENV === "production") throw new Error("Backend public URL is required");
+  return new URL(`${req.protocol}://${req.get("host")}`).origin;
+}
+
 function safeReturnUrl(raw: unknown): string {
   const base = frontendOrigin();
   const fallback = new URL("/assistant", base).toString();
@@ -35,7 +52,7 @@ function safeReturnUrl(raw: unknown): string {
   } catch { return fallback; }
 }
 
-async function entraConfiguration(req: Request) {
+async function entraConfiguration(req: Request, word = false) {
   const [tenantId, clientId, clientSecret, backendId, publicUrl] = await Promise.all([
     getConfig("entra-tenant-id"), getConfig("entra-client-id"),
     getConfig("entra-client-secret"), getConfig("entra-backend-client-id"),
@@ -45,7 +62,9 @@ async function entraConfiguration(req: Request) {
   return {
     tenantId, clientId, clientSecret,
     scopes: process.env.ENTRA_AUTH_SCOPES || `openid profile email offline_access api://${backendId}/access_as_user`,
-    redirectUri: process.env.ENTRA_REDIRECT_URI || `${publicUrl.replace(/\/+$/, "") || `${req.protocol}://${req.get("host")}`}/api/auth/openid-callback/microsoft`,
+    redirectUri: word
+      ? `${(process.env.WORD_ADDIN_URL || (process.env.NODE_ENV === "production" ? "" : "https://localhost:3200")).replace(/\/+$/, "")}/api/auth/openid-callback/microsoft`
+      : process.env.ENTRA_REDIRECT_URI || `${publicUrl.replace(/\/+$/, "") || `${req.protocol}://${req.get("host")}`}/api/auth/openid-callback/microsoft`,
   };
 }
 
@@ -59,8 +78,8 @@ export function buildEntraTokenForm(
   return form;
 }
 
-async function exchangeEntraCode(req: Request, code: string, verifier: string) {
-  const cfg = await entraConfiguration(req);
+async function exchangeEntraCode(req: Request, code: string, verifier: string, word = false) {
+  const cfg = await entraConfiguration(req, word);
   const response = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(cfg.tenantId)}/oauth2/v2.0/token`, {
     method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: buildEntraTokenForm({ clientId: cfg.clientId, clientSecret: cfg.clientSecret, scopes: cfg.scopes }, {
@@ -129,13 +148,14 @@ authRouter.get("/login-provider/:providerId", async (req, res) => {
     res.status(404).json({ detail: "Microsoft login is unavailable" }); return;
   }
   try {
-    const cfg = await entraConfiguration(req);
     const requestId = typeof req.query.requestId === "string" ? req.query.requestId : "";
     const wordOrigin = typeof req.query.wordOrigin === "string" ? req.query.wordOrigin : "";
     const word = !!requestId || !!wordOrigin;
     if (word && (!/^[A-Za-z0-9_-]{16,128}$/.test(requestId) || !requestOriginIsWordAddin(wordOrigin))) {
       res.status(400).json({ detail: "Invalid Word login request" }); return;
     }
+    const cfg = await entraConfiguration(req, word);
+    if (word && process.env.NODE_ENV === "production" && !process.env.WORD_ADDIN_URL) throw new Error("Word redirect is not configured");
     const nonce = randomBytes(32).toString("base64url");
     const verifier = randomBytes(32).toString("base64url");
     const state = await createOAuthState({
@@ -171,7 +191,7 @@ authRouter.get("/openid-callback/:providerId", async (req, res) => {
   try {
     const state = await consumeOAuthState(typeof req.query.state === "string" ? req.query.state : "", nonce);
     if (!state || state.provider !== "microsoft") { res.status(400).json({ detail: "Invalid or expired OpenID state" }); return; }
-    const tokens = await exchangeEntraCode(req, code, state.codeVerifier);
+    const tokens = await exchangeEntraCode(req, code, state.codeVerifier, !!state.requestId);
     const result = await validateEntraToken(tokens.accessToken);
     if (!result.ok) { res.status(401).json({ detail: "Microsoft identity validation failed" }); return; }
     const credential: ServerCredential = {
@@ -220,8 +240,15 @@ authRouter.post("/local-login", async (req, res) => {
   } catch { res.status(503).json({ detail: "Local login is unavailable" }); }
 });
 
-authRouter.get("/session", requireAuth, (_req, res) => {
+authRouter.get("/session", requireAuth, async (_req, res) => {
   res.setHeader("Cache-Control", "private, no-store");
+  if (res.locals.principal?.provider === "supabase") {
+    try {
+      const { data, error } = await createSupabaseAuthClient().auth.getUser(res.locals.token as string);
+      if (error || !data.user || data.user.id !== res.locals.userId) { res.status(401).json({ detail: "Invalid or expired session" }); return; }
+      res.json({ user: publicSupabaseUser(data.user) }); return;
+    } catch { res.status(503).json({ detail: "Auth session is unavailable" }); return; }
+  }
   res.json({ user: publicUser(res) });
 });
 
@@ -251,7 +278,17 @@ authRouter.post("/handoff", async (req, res) => {
 
 authRouter.post("/logout", async (req, res) => {
   if (!trusted(req, res)) return;
-  try { await revokeServerSession(req); }
+  try {
+    if ((await authProvider()) === "supabase") {
+      const current = await readServerSession(req);
+      if (current?.credential.provider === "supabase") {
+        const client = await createCredentialClient(current.credential);
+        const { error } = await client.auth.signOut({ scope: req.body?.scope === "global" ? "global" : "local" });
+        if (error) throw error;
+      }
+    }
+    await revokeServerSession(req);
+  }
   catch { res.status(503).json({ detail: "Unable to revoke session" }); return; }
   clearServerSessionCookie(req, res);
   const provider = await authProvider();
@@ -266,4 +303,265 @@ authRouter.post("/logout", async (req, res) => {
 authRouter.post("/refresh", requireAuth, (_req, res) => {
   res.setHeader("Cache-Control", "private, no-store");
   res.json({ user: publicUser(res) });
+});
+
+function validEmailPassword(body: unknown): { email: string; password: string } | null {
+  if (!body || typeof body !== "object") return null;
+  const value = body as Record<string, unknown>;
+  const email = typeof value.email === "string" ? value.email.trim().toLowerCase() : "";
+  const password = value.password;
+  return email.length <= 320 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && typeof password === "string" && password.length >= 8 && password.length <= 1024
+    ? { email, password } : null;
+}
+
+authRouter.post("/login", async (req, res) => {
+  if ((await authProvider()) !== "supabase") { res.status(404).end(); return; }
+  const input = validEmailPassword(req.body);
+  if (!input) { res.status(400).json({ code: "invalid_request", detail: "The authentication request is invalid." }); return; }
+  try {
+    const { data, error } = await createSupabaseAuthClient().auth.signInWithPassword(input);
+    if (error || !data.session || !data.user) { res.status(401).json({ detail: "Invalid email or password" }); return; }
+    const credential = supabaseCredential(data.session);
+    if (!(await admit(req, res, credential))) return;
+    await createServerSession(req, res, credential, supabaseExpiresAt(data.session));
+    res.json({ user: publicSupabaseUser(data.user) });
+  } catch { res.status(503).json({ detail: "Sign-in is unavailable" }); }
+});
+
+authRouter.post("/signup", async (req, res) => {
+  if ((await authProvider()) !== "supabase") { res.status(404).end(); return; }
+  const input = validEmailPassword(req.body);
+  if (!input) { res.status(400).json({ code: "invalid_request", detail: "The authentication request is invalid." }); return; }
+  try {
+    const { data, error } = await createSupabaseAuthClient().auth.signUp({
+      ...input, options: { emailRedirectTo: safeReturnUrl("/login?confirmed=1") },
+    });
+    if (error || !data.user) { res.status(400).json({ detail: error?.message || "Unable to create account" }); return; }
+    if (data.session) {
+      const credential = supabaseCredential(data.session);
+      if (!(await admit(req, res, credential))) return;
+      await createServerSession(req, res, credential, supabaseExpiresAt(data.session));
+    }
+    res.status(201).json({ user: publicSupabaseUser(data.user), requiresEmailConfirmation: !data.session });
+  } catch { res.status(503).json({ detail: "Account creation is unavailable" }); }
+});
+
+authRouter.post("/oauth", async (req, res) => {
+  if ((await authProvider()) !== "supabase" || req.body?.provider !== "google") { res.status(404).end(); return; }
+  const requestId = typeof req.body?.handoffRequestId === "string" ? req.body.handoffRequestId : "";
+  const word = !!requestId;
+  const wordOrigin = req.get("origin") || "";
+  if (word && (!/^[A-Za-z0-9_-]{16,128}$/.test(requestId) || !requestOriginIsWordAddin(wordOrigin))) {
+    res.status(400).json({ detail: "Invalid Word sign-in request" }); return;
+  }
+  try {
+    const nonce = randomBytes(32).toString("base64url");
+    const stateToken = randomBytes(32).toString("base64url");
+    const publicOrigin = word ? wordOrigin : await backendPublicOrigin(req);
+    const callback = new URL("/api/auth/oauth-callback/google", publicOrigin);
+    callback.searchParams.set("state", stateToken);
+    const { url, verifierState } = await startSupabaseOAuth(callback.toString());
+    await createOAuthState({
+      provider: "google", browserNonce: nonce, codeVerifier: verifierState,
+      returnUrl: safeReturnUrl(req.body?.next), targetOrigin: word ? wordOrigin : frontendOrigin().origin,
+      ...(word ? { requestId } : {}),
+    }, stateToken);
+    res.cookie(OAUTH_NONCE_COOKIE, nonce, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/api/auth", maxAge: 10 * 60_000 });
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json({ url });
+  } catch { res.status(503).json({ detail: "Google sign-in is unavailable" }); }
+});
+
+authRouter.get("/oauth-callback/google", async (req, res) => {
+  if ((await authProvider()) !== "supabase") { res.status(404).end(); return; }
+  const code = typeof req.query.code === "string" ? req.query.code : "";
+  const stateToken = typeof req.query.state === "string" ? req.query.state : "";
+  const nonce = req.cookies?.[OAUTH_NONCE_COOKIE];
+  res.clearCookie(OAUTH_NONCE_COOKIE, { path: "/api/auth", sameSite: "lax", secure: process.env.NODE_ENV === "production" });
+  res.setHeader("Cache-Control", "private, no-store");
+  if (!code || typeof nonce !== "string") { res.status(400).json({ detail: "Invalid Google callback" }); return; }
+  try {
+    const state = await consumeOAuthState(stateToken, nonce);
+    if (!state || state.provider !== "google") { res.status(400).json({ detail: "Invalid or expired Google state" }); return; }
+    const { user, session } = await exchangeSupabaseOAuth(code, state.codeVerifier);
+    const credential = supabaseCredential(session);
+    if (!(await admit(req, res, credential))) return;
+    if (state.requestId) {
+      if (!requestOriginIsWordAddin(state.targetOrigin)) { res.status(400).end(); return; }
+      const ticket = await createAuthHandoff(credential, state.targetOrigin, state.requestId);
+      const message = JSON.stringify({ type: "mike-google-oauth", requestId: state.requestId, status: "success", handoffTicket: ticket }).replace(/</g, "\\u003c");
+      res.type("html").send(`<!doctype html><meta charset="utf-8"><title>Mike sign-in</title><script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script><script>Office.onReady(() => Office.context.ui.messageParent(${message}, { targetOrigin: ${JSON.stringify(state.targetOrigin)} }));</script>`);
+      return;
+    }
+    await createServerSession(req, res, credential, supabaseExpiresAt(session));
+    res.redirect(state.returnUrl);
+  } catch { res.status(503).json({ detail: "Unable to complete Google sign-in" }); }
+});
+
+authRouter.post("/password-reset", async (req, res) => {
+  if ((await authProvider()) !== "supabase") { res.status(404).end(); return; }
+  const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 320) {
+    try {
+      const nonce = randomBytes(32).toString("base64url");
+      const stateToken = randomBytes(32).toString("base64url");
+      const callback = new URL("/api/auth/recovery-callback", await backendPublicOrigin(req));
+      callback.searchParams.set("state", stateToken);
+      const verifierState = await startSupabaseRecovery(email, callback.toString());
+      await createOAuthState({ provider: "recovery", browserNonce: nonce, codeVerifier: verifierState,
+        returnUrl: safeReturnUrl("/reset-password"), targetOrigin: frontendOrigin().origin }, stateToken);
+      res.cookie(OAUTH_NONCE_COOKIE, nonce, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/api/auth", maxAge: 10 * 60_000 });
+    }
+    catch { /* Account enumeration stays impossible. */ }
+  }
+  res.status(204).end();
+});
+
+authRouter.get("/recovery-callback", async (req, res) => {
+  if ((await authProvider()) !== "supabase") { res.status(404).end(); return; }
+  const code = typeof req.query.code === "string" ? req.query.code : "";
+  const stateToken = typeof req.query.state === "string" ? req.query.state : "";
+  const nonce = req.cookies?.[OAUTH_NONCE_COOKIE];
+  res.clearCookie(OAUTH_NONCE_COOKIE, { path: "/api/auth", sameSite: "lax", secure: process.env.NODE_ENV === "production" });
+  res.setHeader("Cache-Control", "private, no-store");
+  if (!code || typeof nonce !== "string") { res.status(400).json({ detail: "Invalid recovery callback" }); return; }
+  try {
+    const state = await consumeOAuthState(stateToken, nonce);
+    if (!state || state.provider !== "recovery") { res.status(400).json({ detail: "Invalid or expired recovery state" }); return; }
+    const { session } = await exchangeSupabaseOAuth(code, state.codeVerifier);
+    const credential = supabaseCredential(session);
+    if (!(await admit(req, res, credential))) return;
+    await createServerSession(req, res, credential, supabaseExpiresAt(session));
+    res.redirect(state.returnUrl);
+  } catch { res.status(503).json({ detail: "Unable to complete recovery" }); }
+});
+
+async function supabaseCurrent(req: Request, res: Response) {
+  if ((await authProvider()) !== "supabase" || res.locals.authSource !== "cookie") {
+    res.status(404).end(); return null;
+  }
+  const session = await readServerSession(req);
+  if (!session || session.credential.provider !== "supabase" || session.credential.userId !== res.locals.userId) {
+    res.status(401).json({ detail: "Invalid or expired session" }); return null;
+  }
+  return createCredentialClient(session.credential);
+}
+
+authRouter.patch("/email", requireAuth, async (req, res) => {
+  const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 320) { res.status(400).json({ detail: "Invalid email" }); return; }
+  try {
+    const auth = await supabaseCurrent(req, res); if (!auth) return;
+    const { data, error } = await auth.auth.updateUser({ email }, { emailRedirectTo: safeReturnUrl("/settings?emailChange=processed") });
+    if (error || !data.user) { res.status(400).json({ detail: error?.message || "Unable to update email" }); return; }
+    res.json({ user: publicSupabaseUser(data.user) });
+  } catch { res.status(503).json({ detail: "Unable to update email" }); }
+});
+
+authRouter.patch("/password", requireAuth, async (req, res) => {
+  const password = req.body?.password;
+  const nonce = req.body?.nonce;
+  if (typeof password !== "string" || password.length < 8 || password.length > 1024 || (nonce != null && typeof nonce !== "string")) {
+    res.status(400).json({ detail: "Invalid password request" }); return;
+  }
+  try {
+    const auth = await supabaseCurrent(req, res); if (!auth) return;
+    const { data, error } = await auth.auth.updateUser({ password, ...(nonce ? { nonce } : {}) });
+    if (error || !data.user) { res.status(400).json({ detail: error?.message || "Unable to update password" }); return; }
+    if (req.body?.signOut === true) {
+      const signedOut = await auth.auth.signOut({ scope: "global" });
+      if (signedOut.error) { res.status(503).json({ detail: "Password changed, but other sessions could not be revoked" }); return; }
+      await revokeServerSession(req);
+      clearServerSessionCookie(req, res);
+    }
+    res.json({ user: publicSupabaseUser(data.user) });
+  } catch { res.status(503).json({ detail: "Unable to update password" }); }
+});
+
+authRouter.post("/reauthenticate", requireAuth, async (req, res) => {
+  try {
+    const auth = await supabaseCurrent(req, res); if (!auth) return;
+    const { error } = await auth.auth.reauthenticate();
+    if (error) { res.status(400).json({ detail: error.message }); return; }
+    res.status(204).end();
+  } catch { res.status(503).json({ detail: "Unable to request reauthentication" }); }
+});
+
+authRouter.get("/mfa/factors", requireAuth, async (req, res) => {
+  try {
+    const auth = await supabaseCurrent(req, res); if (!auth) return;
+    const { data, error } = await auth.auth.mfa.listFactors();
+    if (error) { res.status(400).json({ detail: error.message }); return; }
+    res.json(data);
+  } catch { res.status(503).json({ detail: "MFA is unavailable" }); }
+});
+
+authRouter.get("/mfa/assurance", requireAuth, async (req, res) => {
+  try {
+    const auth = await supabaseCurrent(req, res); if (!auth) return;
+    const { data, error } = await auth.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (error) { res.status(400).json({ detail: error.message }); return; }
+    res.json(data);
+  } catch { res.status(503).json({ detail: "MFA is unavailable" }); }
+});
+
+authRouter.post("/mfa/enroll", requireAuth, async (req, res) => {
+  const friendlyName = typeof req.body?.friendlyName === "string" ? req.body.friendlyName.trim() : "";
+  if (!friendlyName || friendlyName.length > 100) { res.status(400).json({ detail: "Invalid factor name" }); return; }
+  try {
+    const auth = await supabaseCurrent(req, res); if (!auth) return;
+    const { data, error } = await auth.auth.mfa.enroll({ factorType: "totp", friendlyName });
+    if (error) { res.status(400).json({ detail: error.message }); return; }
+    res.status(201).json(data);
+  } catch { res.status(503).json({ detail: "MFA is unavailable" }); }
+});
+
+authRouter.post("/mfa/challenge", requireAuth, async (req, res) => {
+  const factorId = typeof req.body?.factorId === "string" ? req.body.factorId : "";
+  if (!/^[A-Za-z0-9-]{1,128}$/.test(factorId)) { res.status(400).json({ detail: "Invalid factor" }); return; }
+  try {
+    const auth = await supabaseCurrent(req, res); if (!auth) return;
+    const { data, error } = await auth.auth.mfa.challenge({ factorId });
+    if (error) { res.status(400).json({ detail: error.message }); return; }
+    res.json(data);
+  } catch { res.status(503).json({ detail: "MFA is unavailable" }); }
+});
+
+authRouter.post("/mfa/verify", requireAuth, async (req, res) => {
+  const { factorId, challengeId, code } = req.body || {};
+  if (typeof factorId !== "string" || typeof challengeId !== "string" || typeof code !== "string" || !/^\d{6,8}$/.test(code)) {
+    res.status(400).json({ detail: "Invalid verification request" }); return;
+  }
+  try {
+    const auth = await supabaseCurrent(req, res); if (!auth) return;
+    const { data, error } = await auth.auth.mfa.verify({ factorId, challengeId, code });
+    if (error || !data.access_token || !data.refresh_token || !data.user || data.user.id !== res.locals.userId) { res.status(401).json({ detail: error?.message || "MFA verification failed" }); return; }
+    await replaceServerSession(req, res, { provider: "supabase", userId: data.user.id, accessToken: data.access_token, refreshToken: data.refresh_token }, new Date(Date.now() + data.expires_in * 1000));
+    res.json({ user: publicSupabaseUser(data.user) });
+  } catch { res.status(503).json({ detail: "MFA is unavailable" }); }
+});
+
+authRouter.post("/mfa/challenge-and-verify", requireAuth, async (req, res) => {
+  const { factorId, code } = req.body || {};
+  if (typeof factorId !== "string" || typeof code !== "string" || !/^\d{6,8}$/.test(code)) {
+    res.status(400).json({ detail: "Invalid verification request" }); return;
+  }
+  try {
+    const auth = await supabaseCurrent(req, res); if (!auth) return;
+    const { data, error } = await auth.auth.mfa.challengeAndVerify({ factorId, code });
+    if (error || !data.access_token || !data.refresh_token || !data.user || data.user.id !== res.locals.userId) { res.status(401).json({ detail: error?.message || "MFA verification failed" }); return; }
+    await replaceServerSession(req, res, { provider: "supabase", userId: data.user.id, accessToken: data.access_token, refreshToken: data.refresh_token }, new Date(Date.now() + data.expires_in * 1000));
+    res.json({ user: publicSupabaseUser(data.user) });
+  } catch { res.status(503).json({ detail: "MFA is unavailable" }); }
+});
+
+authRouter.delete("/mfa/factors/:factorId", requireAuth, async (req, res) => {
+  const factorId = req.params.factorId;
+  if (!/^[A-Za-z0-9-]{1,128}$/.test(factorId)) { res.status(400).json({ detail: "Invalid factor" }); return; }
+  try {
+    const auth = await supabaseCurrent(req, res); if (!auth) return;
+    const { data, error } = await auth.auth.mfa.unenroll({ factorId });
+    if (error) { res.status(400).json({ detail: error.message }); return; }
+    res.json(data);
+  } catch { res.status(503).json({ detail: "MFA is unavailable" }); }
 });

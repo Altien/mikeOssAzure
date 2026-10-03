@@ -75,5 +75,6 @@ configRouter.get("/", async (_req, res) => {
             process.env.WORKFLOW_CONTRIBUTIONS_ENABLED === "true",
         entra: { tenantId, clientId, apiScope },
         backendOrigin,
+        frontendOrigin: process.env.FRONTEND_URL || "",
     });
 });

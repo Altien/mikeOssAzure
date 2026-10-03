@@ -8,13 +8,11 @@ import { SiteLogo } from "@/app/components/site-logo";
 import { PillButton } from "@/app/components/ui/pill-button";
 import { authGlassCardClassName } from "@/app/components/auth/authStyles";
 import { authErrorDescription, safeAuthNext } from "@/app/lib/authRedirects";
-import { exchangeAuthCode, getAuthSession } from "@/app/lib/authApi";
-import { useAuth } from "@/app/contexts/AuthContext";
+import { getAuthSession } from "@/app/lib/authApi";
 
 function AuthCallbackContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
-    const { refreshSession } = useAuth();
     const [error, setError] = useState<string | null>(null);
     const isErrorPreview =
         process.env.NODE_ENV !== "production" &&
@@ -38,29 +36,22 @@ function AuthCallbackContent() {
                 return;
             }
 
-            const code = searchParams.get("code");
-            if (code) {
-                try {
-                    await exchangeAuthCode(code);
-                    await refreshSession();
-                } catch {
-                    setError("This confirmation link is invalid or has expired.");
-                    return;
-                }
-            } else {
-                let session;
-                try {
-                    session = await getAuthSession();
-                } catch {
-                    setError("Authentication could not be completed. Please try again.");
-                    return;
-                }
-                if (!session) {
-                    setError(
-                        "This confirmation link is invalid or has expired.",
-                    );
-                    return;
-                }
+            // OAuth codes are exchanged only by the backend callback, which
+            // holds the one-use PKCE verifier and browser-bound state.
+            if (searchParams.has("code")) {
+                setError("This confirmation link is invalid or has expired.");
+                return;
+            }
+            let session;
+            try {
+                session = await getAuthSession();
+            } catch {
+                setError("Authentication could not be completed. Please try again.");
+                return;
+            }
+            if (!session) {
+                setError("This confirmation link is invalid or has expired.");
+                return;
             }
 
             if (!cancelled) {
@@ -72,7 +63,7 @@ function AuthCallbackContent() {
         return () => {
             cancelled = true;
         };
-    }, [isErrorPreview, refreshSession, router, searchParams]);
+    }, [isErrorPreview, router, searchParams]);
 
     return (
         <div className="relative flex min-h-dvh items-center justify-center bg-gray-50/80 px-6 py-10">

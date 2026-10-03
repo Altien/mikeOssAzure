@@ -111,6 +111,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 return;
             }
 
+            authGeneration.current += 1;
             void fetchAndApplySession().catch(() => {
                 setAuthError(SESSION_ERROR_MESSAGE);
             });
@@ -187,35 +188,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, [broadcastAuthState, fetchAndApplySession]);
 
     const refreshSession = useCallback(async () => {
+        const generation = authGeneration.current;
         try {
             const nextUser = await fetchAndApplySession();
+            if (generation !== authGeneration.current) return null;
             setAuthLoading(false);
             broadcastAuthState(nextUser ? "signed-in" : "signed-out");
             return nextUser;
         } catch (error) {
-            setAuthError(SESSION_ERROR_MESSAGE);
-            setAuthLoading(false);
+            if (generation === authGeneration.current) {
+                setAuthError(SESSION_ERROR_MESSAGE);
+                setAuthLoading(false);
+            }
             throw error;
         }
     }, [broadcastAuthState, fetchAndApplySession]);
 
     const signOut = async () => {
+        const generation = ++authGeneration.current;
         try {
             const result = await logout("local");
-            authGeneration.current += 1;
+            if (generation !== authGeneration.current) return;
             setUser(null);
             setAuthError(null);
             broadcastAuthState("signed-out");
             if (result.logoutUrl) window.location.assign(result.logoutUrl);
         } catch (error) {
-            setAuthError("Unable to sign out. Please try again.");
+            if (generation === authGeneration.current)
+                setAuthError("Unable to sign out. Please try again.");
             throw error;
         }
     };
 
     const signInLocal = async (email: string) => {
+        const generation = ++authGeneration.current;
         await loginLocal(email);
-        authGeneration.current += 1;
+        if (generation !== authGeneration.current) return;
         await fetchAndApplySession();
         broadcastAuthState("signed-in");
     };

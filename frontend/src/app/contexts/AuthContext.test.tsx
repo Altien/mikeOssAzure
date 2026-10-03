@@ -139,4 +139,21 @@ describe("AuthProvider", () => {
             expect(screen.getByTestId("user")).toHaveTextContent("signed-out"),
         );
     });
+
+    it("does not restore a user from a session response started before logout", async () => {
+        let resolveStale!: (value: typeof user) => void;
+        getAuthSession
+            .mockResolvedValueOnce(user)
+            .mockImplementationOnce(() => new Promise<typeof user>((resolve) => { resolveStale = resolve; }));
+        logout.mockResolvedValue({ logoutUrl: null });
+        render(<AuthProvider><Consumer /></AuthProvider>);
+        await screen.findByText(user.email);
+
+        fireEvent(window, new Event("focus"));
+        await waitFor(() => expect(getAuthSession).toHaveBeenCalledTimes(2));
+        fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+        await waitFor(() => expect(screen.getByTestId("user")).toHaveTextContent("signed-out"));
+        resolveStale(user);
+        await waitFor(() => expect(screen.getByTestId("user")).toHaveTextContent("signed-out"));
+    });
 });

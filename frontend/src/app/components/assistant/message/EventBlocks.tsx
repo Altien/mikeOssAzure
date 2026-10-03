@@ -422,6 +422,7 @@ export function DocDownloadBlock({
         try {
             const token = await getBrowserAccessToken();
             const resp = await fetch(href, {
+                credentials: "include",
                 headers: token ? { Authorization: `Bearer ${token}` } : {},
             });
             bounceIfUnauthorized(resp);
