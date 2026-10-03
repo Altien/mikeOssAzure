@@ -240,6 +240,12 @@ function toAiSdkTools(
 }
 
 function errorMessage(error: unknown, label: string): string {
+  // SDK adapters wrap failures from our validating fetch transform in an
+  // APICallError. Surface the actionable malformed/truncated tool cause.
+  if (error instanceof Error && error.cause) {
+    const cause = errorMessage(error.cause, label);
+    if (cause !== `${label} stream failed.`) return cause;
+  }
   if (error instanceof Error && error.message) return error.message;
   if (typeof error === "string" && error.trim()) return error;
   return `${label} stream failed.`;

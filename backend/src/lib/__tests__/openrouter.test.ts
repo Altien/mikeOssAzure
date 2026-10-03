@@ -255,6 +255,32 @@ describe("OpenRouter LLM adapter", () => {
         );
     });
 
+    it("batches simultaneous tool calls once and sends their results to a tool-disabled final turn", async () => {
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce(streamResponse([{ choices: [{ delta: { tool_calls: [
+                { index: 0, id: "a", type: "function", function: { name: "lookup", arguments: '{"term":"one"}' } },
+                { index: 1, id: "b", type: "function", function: { name: "lookup", arguments: '{"term":"two"}' } },
+            ] }, finish_reason: "tool_calls" }] }]))
+            .mockResolvedValueOnce(streamResponse([{ choices: [{ delta: { content: "Both checked" }, finish_reason: "stop" }] }]));
+        vi.stubGlobal("fetch", fetchMock);
+        const runTools = vi.fn().mockResolvedValue([
+            { tool_use_id: "a", content: "first" }, { tool_use_id: "b", content: "second" },
+        ]);
+        await expect(streamWithProvider({
+            model: "openrouter/anthropic/claude-sonnet-4.5", systemPrompt: "Help",
+            messages: [{ role: "user", content: "Check both" }],
+            tools: [functionTool("lookup")], maxIterations: 1, runTools,
+            apiKeys: { openrouter: "or-user-key" },
+        })).resolves.toEqual({ fullText: "Both checked" });
+        expect(runTools).toHaveBeenCalledOnce();
+        expect(runTools.mock.calls[0][0]).toEqual([
+            { id: "a", name: "lookup", input: { term: "one" } },
+            { id: "b", name: "lookup", input: { term: "two" } },
+        ]);
+        const finalBody = JSON.parse(String((fetchMock.mock.calls[1][1] as RequestInit).body));
+        expect(finalBody).not.toHaveProperty("tools");
+    });
+
     it("fails the stream instead of executing a tool with truncated arguments", async () => {
         // The upstream connection died mid-arguments: the JSON fragment can
         // never parse. Coercing it to {} would EXECUTE a side-effecting tool
@@ -520,7 +546,7 @@ describe("OpenCode Go LLM adapter", () => {
                 user: "Title this",
             }),
         ).rejects.toThrow(
-            "OpenCode Go API key is not configured. Set OPENCODE_API_KEY",
+            "OpenCode Go is not configured for this organisation",
         );
     });
 

@@ -56,10 +56,9 @@ export type UserApiKeys = {
     azureOpenai?: AzureOpenaiSettings | null;
 };
 
-// Azure OpenAI needs more than a single key — endpoint + (key or MI) +
-// deployment + apiVersion. `apiKey` is optional because the deployed
-// backend can fall back to its Managed Identity if it has been granted
-// access to the customer's AOAI resource.
+// Azure OpenAI needs endpoint, API key, deployment and API version. The
+// optional field represents legacy stored settings; inference currently
+// requires either that key or the organisation Key Vault credential.
 export type AzureOpenaiSettings = {
     endpoint: string;
     apiKey?: string | null;
