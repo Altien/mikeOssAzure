@@ -4,6 +4,7 @@ import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import { recordAudit } from "../lib/audit";
 import { sendInternalError } from "../lib/httpError";
+import { safeErrorLog } from "../lib/safeError";
 import { downloadFile } from "../lib/storage";
 import { attachActiveVersionPaths } from "../lib/documentVersions";
 import { docxToPdf, normalizeDocxZipPaths } from "../lib/convert";
