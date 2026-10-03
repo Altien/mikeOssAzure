@@ -98,9 +98,7 @@ export function CustomInstructionsSection() {
         ) : null}
       </div>
       <SettingsDescription>
-        Tell Mike how you would like it to respond, such as preferred tone,
-        formatting, or drafting conventions. These instructions apply to every
-        conversation.
+        Tell Mike how you would like it to respond in chats.
       </SettingsDescription>
 
       {loading ? (
