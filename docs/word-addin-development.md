@@ -102,7 +102,7 @@ The sections below explain each step the script automates, and the manual / web 
 
 ---
 
-## Sideloading manually (if `npm start` does not auto-load)
+## Sideloading manually (if `pnpm start` does not auto-load)
 
 ### Word desktop — macOS
 
@@ -264,7 +264,7 @@ The add-in requires WordApi 1.6. Confirm the Word host and build support that re
 
 **Document upload fails**
 
-- Confirm the Mike API is running (`npm run dev` in `backend/`) and reachable at `http://localhost:3001`
+- Confirm the Mike API is running (`pnpm dev` in `backend/`) and reachable at `http://localhost:3001`
 - Confirm the API's configured object-storage bucket exists
 - Check the backend logs for the specific error
 

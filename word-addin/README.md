@@ -3,7 +3,7 @@
 The Mike Word add-in brings document-aware chat, workflows, quick actions, and
 tracked-edit review into a Word task pane.
 
-It uses the same Mike account, API, Supabase project, model providers, and
+It uses the same Mike account, API, Entra identity, model providers, and
 workflow library as the web app. Word conversations are stored separately from
 the web assistant's chat history.
 
@@ -11,10 +11,10 @@ the web assistant's chat history.
 
 - Node.js 22 or newer
 - Microsoft Word desktop or Word on the web
-- A running Mike backend and Supabase environment configured according to the
+- A running Mike backend and local or Entra environment configured according to the
   [local development guide](../docs/local-development.md)
 - A Mike account
-- A model-provider API key or an Ollama model reachable by the backend
+- An organisation model-provider credential or Azure OpenAI deployment
 
 Sign-in uses Entra/MSAL (NAA or an Office dialog) and runtime `GET /config`; local development also supports `AUTH_PROVIDER=local`. Model credentials are managed by the organisation.
 
@@ -28,7 +28,7 @@ bash word-addin/scripts/dev.sh
 ```
 
 The script installs dependencies, creates `word-addin/.env`, installs the local
-HTTPS certificate, verifies Mike and Supabase, and launches the add-in in Word.
+HTTPS certificate, verifies the Mike API and its runtime auth configuration, and launches the add-in in Word.
 It is safe to run repeatedly.
 
 The first certificate installation may request your keychain or administrator
