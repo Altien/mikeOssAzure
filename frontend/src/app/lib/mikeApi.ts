@@ -612,12 +612,13 @@ export async function updateUserProfile(payload: {
 
 export async function completeUserOnboarding(
     payload: PersonalisationDetails = {},
+    isCurrentAccount?: () => boolean,
 ): Promise<UserProfile> {
     return apiRequest<UserProfile>("/user/onboarding", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-    });
+    }, isCurrentAccount);
 }
 
 export async function syncUserPasswordSet(password: string, nonce?: string): Promise<UserProfile> {

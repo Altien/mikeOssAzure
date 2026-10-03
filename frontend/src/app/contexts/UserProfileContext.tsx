@@ -168,13 +168,19 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     const userId = user?.id ?? null;
     const identity = isAuthenticated ? userId : null;
     const identityRef = useRef(identity);
+    const authEpochRef = useRef(0);
     const writeEpochRef = useRef(0);
     const loadEpochRef = useRef(0);
     if (identityRef.current !== identity) {
         identityRef.current = identity;
+        authEpochRef.current++;
         writeEpochRef.current++;
         loadEpochRef.current++;
     }
+    const accountGuard = useCallback((owner: string) => {
+        const epoch = authEpochRef.current;
+        return () => identityRef.current === owner && authEpochRef.current === epoch;
+    }, []);
 
     const loadProfile = useCallback(async () => {
         const owner = identity;
@@ -250,12 +256,13 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
 
     const updateDisplayName = useCallback(
         async (displayName: string): Promise<boolean> => {
-            if (!user) {
-                return false;
-            }
+            if (!user) return false;
+            const current = accountGuard(user.id);
+            if (!current()) return false;
 
             try {
-                const updated = await updateUserProfile({ displayName });
+                const updated = await updateUserProfile({ displayName }, current);
+                if (!current()) return false;
                 setProfile((prev) =>
                     prev ? { ...prev, ...toProfile(updated) } : null,
                 );
@@ -264,14 +271,17 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 return false;
             }
         },
-        [user],
+        [user, accountGuard],
     );
 
     const updateOrganisation = useCallback(
         async (organisation: string): Promise<boolean> => {
             if (!user) return false;
+            const current = accountGuard(user.id);
+            if (!current()) return false;
             try {
-                const updated = await updateUserProfile({ organisation });
+                const updated = await updateUserProfile({ organisation }, current);
+                if (!current()) return false;
                 setProfile((prev) =>
                     prev ? { ...prev, ...toProfile(updated) } : null,
                 );
@@ -281,21 +291,24 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 return false;
             }
         },
-        [user],
+        [user, accountGuard],
     );
 
     const completeOnboarding = useCallback(
         async (details: PersonalisationDetails = {}): Promise<boolean> => {
             if (!user) return false;
+            const current = accountGuard(user.id);
+            if (!current()) return false;
             try {
-                const updated = await completeUserOnboarding(details);
+                const updated = await completeUserOnboarding(details, current);
+                if (!current()) return false;
                 setProfile(toProfile(updated));
                 return true;
             } catch {
                 return false;
             }
         },
-        [user],
+        [user, accountGuard],
     );
 
     const updatePersonalisation = useCallback(
