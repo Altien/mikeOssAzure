@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getUserApiKeys, getUserRouterModels } = vi.hoisted(() => ({
-    getUserApiKeys: vi.fn(),
+const { getOrganisationApiKeys, getUserRouterModels } = vi.hoisted(() => ({
+    getOrganisationApiKeys: vi.fn(),
     getUserRouterModels: vi.fn(),
 }));
 
 vi.mock("../userApiKeys", () => ({
-    getUserApiKeys: (...args: unknown[]) => getUserApiKeys(...args),
+    getOrganisationApiKeys: (...args: unknown[]) => getOrganisationApiKeys(...args),
 }));
 
 vi.mock("../routerModels", async () => ({
@@ -40,7 +40,7 @@ const NO_KEYS = {
 
 beforeEach(() => {
     vi.clearAllMocks();
-    getUserApiKeys.mockResolvedValue(NO_KEYS);
+    getOrganisationApiKeys.mockResolvedValue(NO_KEYS);
     getUserRouterModels.mockImplementation(async (_user, router) =>
         router === "openrouter" ? ["allowed/model"] : [],
     );
@@ -51,13 +51,13 @@ describe("getUserModelSettings router-model allowlist", () => {
         const settings = await getUserModelSettings(
             "user-1",
             profileDb({
-                title_model: "openrouter/allowed/model",
+                fast_model: "openrouter/allowed/model",
                 tabular_model: "openrouter/allowed/model",
                 legal_research_us: true,
             }),
         );
 
-        expect(settings.title_model).toBe("openrouter/allowed/model");
+        expect(settings.fast_model).toBe("openrouter/allowed/model");
         expect(settings.tabular_model).toBe("openrouter/allowed/model");
     });
 
@@ -66,14 +66,14 @@ describe("getUserModelSettings router-model allowlist", () => {
         const settings = await getUserModelSettings(
             "user-1",
             profileDb({
-                title_model: "openrouter/pricy/frontier-model",
+                fast_model: "openrouter/pricy/frontier-model",
                 tabular_model: "vercel/pricy/frontier-model",
                 legal_research_us: true,
             }),
         );
 
         // Gemini env key present → cheap default title model; tabular default.
-        expect(settings.title_model).toBe("gemini-3.5-flash-lite");
+        expect(settings.fast_model).toBe("gemini-3.5-flash-lite");
         expect(settings.tabular_model).toBe("gemini-3-flash-preview");
         expect(warn).toHaveBeenCalled();
         warn.mockRestore();
@@ -83,13 +83,13 @@ describe("getUserModelSettings router-model allowlist", () => {
         const settings = await getUserModelSettings(
             "user-1",
             profileDb({
-                title_model: "claude-haiku-4-5",
+                fast_model: "claude-haiku-4-5",
                 tabular_model: "claude-sonnet-5",
                 legal_research_us: true,
             }),
         );
 
-        expect(settings.title_model).toBe("claude-haiku-4-5");
+        expect(settings.fast_model).toBe("claude-haiku-4-5");
         expect(settings.tabular_model).toBe("claude-sonnet-5");
     });
 });

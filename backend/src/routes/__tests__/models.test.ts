@@ -50,7 +50,7 @@ describe("GET /api/models/openrouter", () => {
             );
         vi.stubGlobal("fetch", fetchMock);
 
-        const response = await request(app).get("/models/openrouter");
+        const response = await request(app).get("/api/models/openrouter");
 
         expect(response.status).toBe(200);
         expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(

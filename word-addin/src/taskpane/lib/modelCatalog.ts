@@ -12,6 +12,7 @@ export type ModelGroup =
   | "Anthropic"
   | "Google"
   | "OpenAI"
+  | "Kimi"
   | "OpenRouter"
   | "Vercel AI Gateway"
   | "Local"
@@ -40,6 +41,7 @@ export const STATIC_MODELS: readonly ModelOption[] = [
   { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", group: "OpenAI" },
   { id: "gpt-5.5", label: "GPT-5.5", group: "OpenAI" },
   { id: "gpt-5.4", label: "GPT-5.4", group: "OpenAI" },
+  { id: "kimi-k3", label: "Kimi K3", group: "Kimi" },
 ];
 
 export const DEFAULT_MODEL_ID = "gemini-3-flash-preview";
@@ -146,11 +148,14 @@ export function isModelAvailable(
   if (!model || model.group === "Local") return false;
   if (model.group === "Anthropic") return !!status.claude;
   if (model.group === "Google") return !!status.gemini;
+  if (model.group === "Kimi") return !!status.kimi;
   return !!status.openai;
 }
 
 export function missingModelProvider(modelId: string): string {
+  if (modelId.startsWith("aoai:")) return "Azure OpenAI";
   const group = STATIC_MODELS.find((item) => item.id === modelId)?.group;
+  if (group === "Kimi") return "Kimi";
   if (modelId.startsWith("openrouter/") || group === "OpenRouter") {
     return "OpenRouter";
   }

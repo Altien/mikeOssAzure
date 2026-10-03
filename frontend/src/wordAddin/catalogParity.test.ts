@@ -61,6 +61,7 @@ describe("word add-in catalog parity", () => {
             ...MODELS.map((model) => model.id),
             "openrouter/openai/gpt-5.4",
             "ollama/llama3:8b",
+            "aoai:custom-deployment",
             "not-a-model",
         ]) {
             expect.soft(addinCanonicalModelId(id), id).toBe(
@@ -79,6 +80,7 @@ describe("word add-in catalog parity", () => {
             "openrouter/openrouter/auto",
             "vercel/openai/gpt-5.4",
             "ollama/llama3:8b",
+            "aoai:custom-deployment",
             "openrouter",
             "",
             "gpt-5.4-turbo-imaginary",
@@ -99,6 +101,7 @@ describe("word add-in catalog parity", () => {
             "vercel/openai/gpt-5.4",
             "vercel/vercel/v0-1.5-md",
             "ollama/llama3:8b",
+            "aoai:custom-deployment",
         ];
         for (const id of sharedIds) {
             expect(addinModelDisplayName(id)).toBe(modelDisplayName(id));
@@ -131,6 +134,8 @@ describe("word add-in catalog parity", () => {
             "claude",
             "gemini",
             "openai",
+            "kimi",
+            "azure_openai",
             "openrouter",
             "vercel",
         ] as const;
@@ -138,6 +143,7 @@ describe("word add-in catalog parity", () => {
             ...MODELS.map((model) => model.id),
             "openrouter/openai/gpt-5.4",
             "vercel/openai/gpt-5.4",
+            "aoai:custom-deployment",
         ];
         for (const configured of providers) {
             const addinStatus = {

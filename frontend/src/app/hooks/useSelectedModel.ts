@@ -17,7 +17,6 @@ const STORAGE_KEY = "mike.selectedModel";
 export function isAllowedModelId(id: string): boolean {
     return (
         ALLOWED_MODEL_IDS.has(id) ||
-        id.startsWith("ollama/") ||
         id.startsWith("aoai:") ||
         id.startsWith("openrouter/") ||
         id.startsWith("vercel/")

@@ -3,7 +3,6 @@ import { Check, ChevronDown } from "lucide-react";
 import { getAzureModels, type ApiKeyStatus } from "../../api/mikeApi";
 import {
   isModelAvailable,
-  modelDisplayName,
   openRouterModelOptions,
   vercelModelOptions,
   STATIC_MODELS,
@@ -22,6 +21,7 @@ const GROUPS: ModelGroup[] = [
   "Anthropic",
   "Google",
   "OpenAI",
+  "Kimi",
   "OpenRouter",
   "Vercel AI Gateway",
   "Azure OpenAI",

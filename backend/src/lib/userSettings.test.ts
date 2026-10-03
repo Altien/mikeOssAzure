@@ -36,7 +36,8 @@ import {
   upsertUserProfile,
 } from "./userSettings";
 
-vi.mock("./routerModels", () => ({
+vi.mock("./routerModels", async () => ({
+  ...(await vi.importActual<typeof import("./routerModels")>("./routerModels")),
   getUserRouterModels: vi.fn(async () => []),
 }));
 import { getUserRouterModels } from "./routerModels";

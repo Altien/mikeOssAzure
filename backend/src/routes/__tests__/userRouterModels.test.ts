@@ -56,7 +56,8 @@ vi.mock("../../lib/mcpConnectors", () => ({
     updateUserMcpConnector: vi.fn(),
 }));
 vi.mock("../../lib/userApiKeys", () => ({
-    getUserApiKeyStatus: (...args: unknown[]) => getUserApiKeyStatus(...args),
+    getUserApiKeys: vi.fn(async () => ({})),
+    resolveVercelApiKey: vi.fn(async () => ""),
     hasEnvApiKey: vi.fn(() => false),
     normalizeApiKeyProvider: vi.fn(),
     saveUserApiKey: vi.fn(),
@@ -74,7 +75,7 @@ const PROFILE_ROW = {
     // Far future so loadProfile's credit-reset branch never runs in tests.
     credits_reset_date: "2999-01-01T00:00:00.000Z",
     tier: "Free",
-    title_model: null,
+    fast_model: null,
     tabular_model: "gemini-3-flash-preview",
     mfa_on_login: false,
     legal_research_us: true,
@@ -107,7 +108,7 @@ import { userRouter, normalizeRouterModels } from "../user";
 
 const app = express();
 app.use(express.json());
-app.use("/user", userRouter);
+app.use("/api/user", userRouter);
 
 const API_KEY_STATUS = {
     claude: false,
@@ -139,7 +140,7 @@ describe("PATCH /user/profile router model selections", () => {
         // the router prefix before validating would leave "auto", fail the
         // vendor/model shape check, and 400 the whole profile PATCH.
         const response = await request(app)
-            .patch("/user/profile")
+            .patch("/api/user/profile")
             .send({ openRouterModels: ["openrouter/auto"] });
 
         expect(response.status).toBe(200);
@@ -153,7 +154,7 @@ describe("PATCH /user/profile router model selections", () => {
 
     it("accepts Vercel catalog ids that begin with the vercel slug", async () => {
         const response = await request(app)
-            .patch("/user/profile")
+            .patch("/api/user/profile")
             .send({ vercelModels: ["vercel/v0-1.5-md"] });
 
         expect(response.status).toBe(200);
@@ -167,7 +168,7 @@ describe("PATCH /user/profile router model selections", () => {
 
     it("still canonicalizes composer-form ids to the raw catalog id", async () => {
         const response = await request(app)
-            .patch("/user/profile")
+            .patch("/api/user/profile")
             .send({
                 openRouterModels: [
                     "openrouter/anthropic/claude-sonnet-4.5",
@@ -191,7 +192,7 @@ describe("PATCH /user/profile router model selections", () => {
         );
 
         const response = await request(app)
-            .patch("/user/profile")
+            .patch("/api/user/profile")
             .send({ openRouterModels: models });
 
         expect(response.status).toBe(400);
@@ -203,7 +204,7 @@ describe("PATCH /user/profile router model selections", () => {
 
     it("rejects ids that are not vendor/model shaped", async () => {
         const response = await request(app)
-            .patch("/user/profile")
+            .patch("/api/user/profile")
             .send({ openRouterModels: ["not a model"] });
 
         expect(response.status).toBe(400);

@@ -123,7 +123,7 @@ export async function getUserRouterModels(
                 console.warn(
                     "[router-models] user_router_models table is missing; " +
                         "treating router selections as empty until the " +
-                        "20260818_01 migration is applied",
+                        "0053_user_router_models migration is applied",
                 );
             }
             return [];
