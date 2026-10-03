@@ -60,6 +60,12 @@ export async function getConfig(secretName: string): Promise<string> {
     // do nothing after writing the value to KV.
     if (fromEnv !== undefined && fromEnv !== "" && fromEnv !== "__unset__") return fromEnv;
 
+    return getKeyVaultConfig(secretName);
+}
+
+// Read only Key Vault, sharing its cache with getConfig. Callers that require
+// vault-first credentials can make their environment fallback explicit.
+export async function getKeyVaultConfig(secretName: string): Promise<string> {
     const now = Date.now();
     const cached = cache.get(secretName);
     if (cached && now - cached.fetchedAt < TTL_MS) {

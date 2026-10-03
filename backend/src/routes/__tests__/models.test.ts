@@ -2,8 +2,8 @@ import express from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getUserApiKeys } = vi.hoisted(() => ({
-    getUserApiKeys: vi.fn(),
+const { getOrganisationApiKeys } = vi.hoisted(() => ({
+    getOrganisationApiKeys: vi.fn(),
 }));
 
 vi.mock("../../middleware/auth", () => ({
@@ -22,17 +22,17 @@ vi.mock("../../lib/supabase", () => ({
 }));
 
 vi.mock("../../lib/userApiKeys", () => ({
-    getUserApiKeys: (...args: unknown[]) => getUserApiKeys(...args),
+    getOrganisationApiKeys: (...args: unknown[]) => getOrganisationApiKeys(...args),
 }));
 
 import { modelsRouter } from "../models";
 
 const app = express();
-app.use("/models", modelsRouter);
+app.use("/api/models", modelsRouter);
 
-describe("GET /models/openrouter", () => {
+describe("GET /api/models/openrouter", () => {
     beforeEach(() => {
-        getUserApiKeys.mockResolvedValue({ openrouter: "or-user-key" });
+        getOrganisationApiKeys.mockResolvedValue({ openrouter: "or-organisation-key" });
     });
 
     afterEach(() => {
@@ -41,11 +41,11 @@ describe("GET /models/openrouter", () => {
     });
 
     it("requires a configured OpenRouter key", async () => {
-        getUserApiKeys.mockResolvedValue({});
+        getOrganisationApiKeys.mockResolvedValue({});
         const fetchMock = vi.fn();
         vi.stubGlobal("fetch", fetchMock);
 
-        const response = await request(app).get("/models/openrouter");
+        const response = await request(app).get("/api/models/openrouter");
 
         expect(response.status).toBe(422);
         expect(response.body.code).toBe("missing_api_key");
@@ -77,7 +77,7 @@ describe("GET /models/openrouter", () => {
         );
         vi.stubGlobal("fetch", fetchMock);
 
-        const response = await request(app).get("/models/openrouter");
+        const response = await request(app).get("/api/models/openrouter");
 
         expect(response.status).toBe(200);
         expect(response.body.models).toEqual([
@@ -90,7 +90,7 @@ describe("GET /models/openrouter", () => {
         ]);
         expect(fetchMock).toHaveBeenCalledWith(
             expect.stringContaining("https://openrouter.ai/api/v1/models?"),
-            { headers: { Authorization: "Bearer or-user-key" } },
+            { headers: { Authorization: "Bearer or-organisation-key" } },
         );
     });
 
@@ -104,7 +104,7 @@ describe("GET /models/openrouter", () => {
                 ),
         );
 
-        const response = await request(app).get("/models/openrouter");
+        const response = await request(app).get("/api/models/openrouter");
 
         expect(response.status).toBe(502);
         expect(response.body.detail).toContain(
@@ -113,9 +113,9 @@ describe("GET /models/openrouter", () => {
     });
 });
 
-describe("GET /models/vercel", () => {
+describe("GET /api/models/vercel", () => {
     beforeEach(() => {
-        getUserApiKeys.mockResolvedValue({ vercel: "vercel-user-key" });
+        getOrganisationApiKeys.mockResolvedValue({ vercel: "vercel-user-key" });
     });
 
     afterEach(() => {
@@ -124,11 +124,11 @@ describe("GET /models/vercel", () => {
     });
 
     it("requires a configured Vercel AI Gateway key", async () => {
-        getUserApiKeys.mockResolvedValue({});
+        getOrganisationApiKeys.mockResolvedValue({});
         const fetchMock = vi.fn();
         vi.stubGlobal("fetch", fetchMock);
 
-        const response = await request(app).get("/models/vercel");
+        const response = await request(app).get("/api/models/vercel");
 
         expect(response.status).toBe(422);
         expect(response.body.code).toBe("missing_api_key");
@@ -186,7 +186,7 @@ describe("GET /models/vercel", () => {
             ),
         );
 
-        const response = await request(app).get("/models/vercel");
+        const response = await request(app).get("/api/models/vercel");
 
         expect(response.status).toBe(200);
         expect(response.body.models).toEqual([

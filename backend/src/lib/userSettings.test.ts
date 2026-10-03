@@ -36,6 +36,11 @@ import {
   upsertUserProfile,
 } from "./userSettings";
 
+vi.mock("./routerModels", () => ({
+  getUserRouterModels: vi.fn(async () => []),
+}));
+import { getUserRouterModels } from "./routerModels";
+
 /**
  * Tiny chainable fake for the two-phase upsertUserProfile flow and the
  * single-row select used by getUserModelSettings.
@@ -121,6 +126,7 @@ beforeEach(() => {
   delete process.env.AZURE_OPENAI_DEPLOYMENT;
   readEncryptedApiKeysMock.mockReset();
   createServerSupabaseMock.mockReset();
+  vi.mocked(getUserRouterModels).mockReset().mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -132,6 +138,16 @@ afterEach(() => {
 });
 
 describe("getUserModelSettings — fast model resolution chain", () => {
+  it.each(["openrouter", "vercel"])("uses the first selected %s model for router-only accounts", async (provider) => {
+    readEncryptedApiKeysMock.mockResolvedValue({ ...emptyKeys, [provider]: "org-key" });
+    vi.mocked(getUserRouterModels).mockImplementation(async (_userId, router) =>
+      router === provider ? ["openai/gpt-5.4", "anthropic/claude-sonnet-4.6"] : [],
+    );
+    const { client } = makeClient({ selectSingle: { data: { fast_model: null } } });
+    expect((await getUserModelSettings("u1", client as never)).fast_model)
+      .toBe(`${provider}/openai/gpt-5.4`);
+  });
+
   it("uses an explicit fast_model preference when it's set and non-empty", async () => {
     readEncryptedApiKeysMock.mockResolvedValueOnce({
       ...emptyKeys,

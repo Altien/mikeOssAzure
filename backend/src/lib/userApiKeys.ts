@@ -24,7 +24,7 @@
 
 import crypto from "node:crypto";
 import { getConfig } from "./config";
-import { resolveSecret } from "./envSecrets";
+import { resolveSecret, resolveProviderSecret } from "./envSecrets";
 import { createServerSupabase } from "./supabase";
 import type { AzureOpenaiSettings, UserApiKeys } from "./llm";
 
@@ -64,7 +64,7 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
         resolveSecret("gemini-api-key"),
         resolveSecret("openai-api-key"),
         resolveSecret("moonshot-api-key"),
-        resolveSecret("openrouter-api-key"),
+        resolveProviderSecret("openrouter-api-key"),
         resolveVercelApiKey(),
         resolveSecret("courtlistener-api-token"),
         resolveSecret("azure-openai-endpoint"),
@@ -96,8 +96,7 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
 // Upstream divergence (sync-log: 972cf22): router credentials use the same
 // organization Key Vault boundary as other providers; never env-only reads.
 export async function resolveVercelApiKey(): Promise<string> {
-    return (await resolveSecret("ai-gateway-api-key")) ||
-        (await resolveSecret("vercel-ai-gateway-api-key"));
+    return resolveProviderSecret("ai-gateway-api-key", ["vercel-ai-gateway-api-key"]);
 }
 
 const ENCRYPTION_SECRET_NAME = "user-api-keys-encryption-key";
@@ -279,7 +278,7 @@ export async function getUserApiKeys(
     // COURTLISTENER_API_TOKEN — same env names upstream reads directly).
     const openrouter =
         decrypted.openrouter ??
-        (await resolveSecret("openrouter-api-key")) ??
+        (await resolveProviderSecret("openrouter-api-key")) ??
         null;
     const courtlistener =
         decrypted.courtlistener ??

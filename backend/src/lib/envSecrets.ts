@@ -16,7 +16,7 @@
 // fallback for secrets the install configurator writes directly (e.g.
 // gemini-api-key, azure-openai-*) where Bicep has no secretRef wiring.
 
-import { getConfig } from "./config.js";
+import { getConfig, getKeyVaultConfig } from "./config.js";
 
 const SECRET_PLACEHOLDER = "__unset__";
 
@@ -44,4 +44,25 @@ export async function resolveSecret(kvSecretName: string): Promise<string> {
     const trimmed = raw.trim();
     if (!trimmed || trimmed === SECRET_PLACEHOLDER) return "";
     return trimmed;
+}
+
+// New router credentials use Key Vault as the source of truth. Check every
+// vault alias before falling back to revision environment or local settings.
+// Existing getConfig/resolveSecret callers retain their env-first semantics.
+export async function resolveProviderSecret(
+    name: string,
+    aliases: string[] = [],
+): Promise<string> {
+    const names = [name, ...aliases];
+    if (process.env.KEY_VAULT_NAME) {
+        for (const secretName of names) {
+            const value = (await getKeyVaultConfig(secretName).catch(() => "")).trim();
+            if (value && value !== SECRET_PLACEHOLDER) return value;
+        }
+    }
+    for (const secretName of names) {
+        const value = readSecretEnv(secretName.toUpperCase().replaceAll("-", "_"));
+        if (value) return value;
+    }
+    return "";
 }

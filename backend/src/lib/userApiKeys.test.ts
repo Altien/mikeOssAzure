@@ -14,6 +14,7 @@ const { getConfigMock, createServerSupabaseMock } = vi.hoisted(() => ({
 
 vi.mock("./config", () => ({
   getConfig: getConfigMock,
+  getKeyVaultConfig: getConfigMock,
   flushConfigCache: vi.fn(),
 }));
 
@@ -114,6 +115,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   if (envSnapshot.NODE_ENV === undefined) delete process.env.NODE_ENV;
   else process.env.NODE_ENV = envSnapshot.NODE_ENV;
 });
@@ -166,12 +168,14 @@ describe("organisation provider credentials", () => {
       "openai-api-key": "org-openai",
       "moonshot-api-key": "org-kimi",
       "openrouter-api-key": "org-openrouter",
+      "ai-gateway-api-key": "org-vercel",
       "courtlistener-api-token": "org-courtlistener",
       "azure-openai-endpoint": "https://org.openai.azure.com",
       "azure-openai-api-key": "org-azure",
       "azure-openai-api-version": "2024-10-21",
       "azure-openai-deployment": "org-deployment",
     };
+    vi.stubEnv("KEY_VAULT_NAME", "test-vault");
     getConfigMock.mockImplementation((name: string) =>
       values[name]
         ? Promise.resolve(values[name])
@@ -184,6 +188,7 @@ describe("organisation provider credentials", () => {
       openai: "org-openai",
       kimi: "org-kimi",
       openrouter: "org-openrouter",
+      vercel: "org-vercel",
       courtlistener: "org-courtlistener",
       azureOpenai: {
         endpoint: "https://org.openai.azure.com",
@@ -326,6 +331,7 @@ describe("getUserApiKeys — decryption + fallback", () => {
       gemini: "sk-gemini",
       openai: "sk-openai",
       openrouter: null,
+      vercel: null,
       courtlistener: null,
       azureOpenai: null,
     });
@@ -638,6 +644,7 @@ describe("getConfiguredProviders", () => {
       gemini: false,
       openai: false,
       openrouter: false,
+      vercel: false,
       courtlistener: false,
       azure_openai: true,
     });
@@ -666,6 +673,7 @@ describe("getConfiguredProviders", () => {
       gemini: false,
       openai: true,
       openrouter: false,
+      vercel: false,
       courtlistener: false,
       azure_openai: true,
     });
@@ -684,6 +692,7 @@ describe("getConfiguredProviders", () => {
       gemini: false,
       openai: false,
       openrouter: false,
+      vercel: false,
       courtlistener: false,
       azure_openai: false,
     });

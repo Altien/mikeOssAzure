@@ -75,6 +75,7 @@ vi.mock("../lib/supabase", () => ({
 }));
 vi.mock("../lib/userApiKeys", () => ({
   getUserApiKeys: getUserApiKeysMock,
+  resolveVercelApiKey: vi.fn(async () => ""),
   setUserApiKey: setUserApiKeyMock,
   deleteUserApiKey: deleteUserApiKeyMock,
 }));
@@ -98,8 +99,13 @@ vi.mock("../lib/mcpConnectors", () => ({
   McpOAuthRequiredError: FakeMcpOAuthRequiredError,
 }));
 
+vi.mock("../lib/routerModels", () => ({
+  getUserRouterModels: vi.fn(async () => []),
+  replaceUserRouterModels: vi.fn(async () => {}),
+}));
 import { makeApp } from "../test/helpers/buildTestApp";
 import { makeFakeDb } from "../test/helpers/fakeDb";
+import { getUserRouterModels, replaceUserRouterModels } from "../lib/routerModels";
 
 const TOUCHED_ENV = [
   "AUTH_PROVIDER",
@@ -296,12 +302,15 @@ describe("GET /api/user/profile — wiring and shape", () => {
       mfaOnLogin: false,
       legalResearchUs: false,
       quickActionsVisible: true,
+      openRouterModels: [],
+      vercelModels: [],
       apiKeyStatus: {
         claude: true,
         gemini: false,
         openai: true,
         kimi: false,
         openrouter: false,
+        vercel: false,
         courtlistener: false,
         azure_openai: true,
         // Legacy per-user rows report "user"; organisation secrets "env".
@@ -311,6 +320,7 @@ describe("GET /api/user/profile — wiring and shape", () => {
           openai: "user",
           kimi: null,
           openrouter: null,
+          vercel: null,
           courtlistener: null,
           azure_openai: "user",
         },
@@ -470,6 +480,7 @@ describe("GET /api/user/profile — wiring and shape", () => {
       claude: true,
       gemini: false,
       openrouter: false,
+        vercel: false,
       courtlistener: false,
       openai: true,
       kimi: true,
@@ -478,6 +489,7 @@ describe("GET /api/user/profile — wiring and shape", () => {
         claude: "env",
         gemini: null,
         openrouter: null,
+          vercel: null,
         courtlistener: null,
         openai: "env",
         kimi: "env",
@@ -509,6 +521,38 @@ describe("GET /api/user/profile — wiring and shape", () => {
 // ── PATCH /api/user/profile ─────────────────────────────────────────────
 
 describe("PATCH /api/user/profile — body validation", () => {
+  it("persists normalized router selections for the authenticated user", async () => {
+    const { db } = makeDb({ profile: { data: {
+      user_id: "user-1",
+      credits_reset_date: new Date(Date.now() + 86_400_000).toISOString(),
+    } } });
+    createServerSupabaseMock.mockReturnValue(db);
+    const response = await request(makeApp())
+      .patch("/api/user/profile")
+      .set("Authorization", "Bearer ok")
+      .send({ openRouterModels: ["openrouter/openai/gpt-5.4"], vercelModels: [] });
+    expect(response.status).toBe(200);
+    expect(replaceUserRouterModels).toHaveBeenCalledWith(
+      "user-1", "openrouter", ["openai/gpt-5.4"], db,
+    );
+    expect(replaceUserRouterModels).toHaveBeenCalledWith("user-1", "vercel", [], db);
+    expect(getUserRouterModels).toHaveBeenCalledWith("user-1", "vercel", db);
+  });
+
+  it("rejects duplicate router IDs and organisation credential writes", async () => {
+    createServerSupabaseMock.mockReturnValue(makeDb({}).db);
+    const app = makeApp();
+    const duplicate = await request(app).patch("/api/user/profile")
+      .set("Authorization", "Bearer ok")
+      .send({ vercelModels: ["openai/gpt-5.4", "vercel/openai/gpt-5.4"] });
+    expect(duplicate.status).toBe(400);
+    expect(replaceUserRouterModels).not.toHaveBeenCalled();
+    const credential = await request(app).put("/api/user/api-keys/vercel")
+      .set("Authorization", "Bearer ok").send({ apiKey: "test-only-value" });
+    expect(credential.status).toBe(403);
+    expect(setUserApiKeyMock).not.toHaveBeenCalled();
+  });
+
   // OSS-6: upstream's validator — unknown fields are a 400 naming the field
   // (was dev's "No updatable profile fields provided").
   it("returns 400 naming an unsupported field", async () => {

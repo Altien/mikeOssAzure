@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { AlertCircle, Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 import { getAzureModels, type ApiKeyStatus } from "../../api/mikeApi";
 import {
   isModelAvailable,

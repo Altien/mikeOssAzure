@@ -1,4 +1,4 @@
-import { resolveSecret } from "../envSecrets";
+import { resolveProviderSecret } from "../envSecrets";
 import { resolveVercelApiKey } from "../userApiKeys";
 import type {
     LlmMessage,
@@ -50,7 +50,7 @@ type PartialToolCall = { id: string; name: string; arguments: string };
 async function apiKey(provider: RouterProvider, override?: string | null): Promise<string> {
     const key =
         override?.trim() ||
-        (provider === "vercel" ? await resolveVercelApiKey() : await resolveSecret("openrouter-api-key")) ||
+        (provider === "vercel" ? await resolveVercelApiKey() : await resolveProviderSecret("openrouter-api-key")) ||
         "";
     if (!key) {
         throw new Error(
@@ -58,7 +58,7 @@ async function apiKey(provider: RouterProvider, override?: string | null): Promi
                 provider === "vercel"
                     ? "Set AI_GATEWAY_API_KEY"
                     : "Set OPENROUTER_API_KEY"
-            } or add a user ${routerLabel(provider)} key.`,
+            } or configure the organisation credential in Key Vault.`,
         );
     }
     return key;

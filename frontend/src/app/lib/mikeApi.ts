@@ -611,7 +611,7 @@ export async function getOpenRouterModels(): Promise<RouterCatalogModel[]> {
 
 export async function getVercelModels(): Promise<RouterCatalogModel[]> {
     const { models } = await apiRequest<{ models: RouterCatalogModel[] }>(
-        "/api/models/vercel",
+        "/models/vercel",
     );
     return models;
 }

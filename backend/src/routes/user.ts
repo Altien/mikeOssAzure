@@ -3,7 +3,7 @@ import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
 import { resolveVercelApiKey, getUserApiKeys } from "../lib/userApiKeys";
-import { resolveSecret } from "../lib/envSecrets";
+import { resolveSecret, resolveProviderSecret } from "../lib/envSecrets";
 import { recordAudit } from "../lib/audit";
 import { DEFAULT_TABULAR_MODEL, resolveModel } from "../lib/llm/models";
 import {
@@ -210,7 +210,7 @@ async function buildProfileApiKeyStatus(
   for (const provider of providers) {
     const values = await Promise.all(
       ORGANISATION_CREDENTIALS[provider].secretNames.map((name) =>
-        resolveSecret(name),
+        provider === "openrouter" ? resolveProviderSecret(name) : resolveSecret(name),
       ),
     );
     const organisation = provider === "vercel" ? !!(await resolveVercelApiKey()) : values.every(Boolean);
@@ -435,7 +435,6 @@ function validateProfilePayload(
         const models = normalizeRouterModels(
             raw.openRouterModels,
             "openrouter",
-  "vercel",
         );
         if (models.length !== raw.openRouterModels.length) {
             return {
@@ -487,6 +486,7 @@ userRouter.patch("/profile", requireAuth, async (req, res) => {
     { field: "openai_api_key", provider: "openai" },
     { field: "kimi_api_key", provider: "kimi" },
     { field: "openrouter_api_key", provider: "openrouter" },
+    { field: "vercel_api_key", provider: "vercel" },
     { field: "courtlistener_api_token", provider: "courtlistener" },
     { field: "azure_openai_endpoint", provider: "azure_openai" },
     { field: "azure_openai_api_key", provider: "azure_openai" },
@@ -586,6 +586,7 @@ const API_KEY_PROVIDERS = [
   "openai",
   "kimi",
   "openrouter",
+  "vercel",
   "courtlistener",
   "azure_openai",
 ] as const;
@@ -603,9 +604,10 @@ async function buildApiKeyStatus(
   for (const provider of API_KEY_PROVIDERS) {
     const credential = ORGANISATION_CREDENTIALS[provider];
     const values = await Promise.all(
-      credential.secretNames.map((name) => resolveSecret(name)),
+      credential.secretNames.map((name) =>
+        provider === "openrouter" ? resolveProviderSecret(name) : resolveSecret(name)),
     );
-    const configured = values.every(Boolean);
+    const configured = provider === "vercel" ? !!(await resolveVercelApiKey()) : values.every(Boolean);
     status[provider] = configured;
     sources[provider] = configured ? "env" : null;
   }
