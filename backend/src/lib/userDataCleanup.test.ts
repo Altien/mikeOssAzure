@@ -187,6 +187,9 @@ describe("deleteUserAccountData", () => {
     );
     // OSS-6: the user's workflow_open_source_submissions rows are deleted
     // (upstream a5fe6d6; table added by 0041).
+    const routerDeletes = callsFor("user_router_models", "delete");
+    expect(routerDeletes).toHaveLength(1);
+    expect(filterValue(routerDeletes[0], "eq", "user_id")).toBe("u1");
     const submissionDeletes = callsFor(
       "workflow_open_source_submissions",
       "delete",

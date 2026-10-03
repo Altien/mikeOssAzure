@@ -323,6 +323,9 @@ export async function deleteUserAccountData(
     await deleteByIds(db, "documents", documentIds);
 
     const deletions = [
+        // Entra text IDs have no auth.users cascade; erase saved routing
+        // preferences explicitly with the rest of this account's data.
+        db.from("user_router_models").delete().eq("user_id", userId),
         db.from("tabular_review_chats").delete().eq("user_id", userId),
         db.from("tabular_reviews").delete().eq("user_id", userId),
         db.from("chats").delete().eq("user_id", userId),
