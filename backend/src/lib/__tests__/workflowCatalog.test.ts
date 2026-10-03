@@ -69,15 +69,15 @@ describe("workflow catalog identifiers", () => {
 describe("ensureDefaultWorkflows request-path cost", () => {
   beforeEach(() => resetEnsuredDefaultUsersForTests());
 
-  it("asks Postgres to install catalog defaults once per user per process", async () => {
+  it("asks Postgres on every request so newly published defaults reach existing users", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: 5, error: null });
     const db = { rpc } as never;
 
     await expect(ensureDefaultWorkflows("user-1", db)).resolves.toBe(5);
-    await expect(ensureDefaultWorkflows("user-1", db)).resolves.toBe(0);
+    await expect(ensureDefaultWorkflows("user-1", db)).resolves.toBe(5);
     await expect(ensureDefaultWorkflows("user-2", db)).resolves.toBe(5);
 
-    expect(rpc).toHaveBeenCalledTimes(2);
+    expect(rpc).toHaveBeenCalledTimes(3);
     expect(rpc).toHaveBeenCalledWith("install_missing_default_workflows", {
       p_user_id: "user-1",
     });

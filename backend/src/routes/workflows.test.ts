@@ -2,7 +2,6 @@ import express from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeFakeDb, type DbCall, type DbResult } from "../test/helpers/fakeDb";
-import { SYSTEM_WORKFLOWS } from "../lib/systemWorkflows";
 
 // Route tests for upstream's metadata-shaped workflows router (204d2d53,
 // adopted verbatim in OSS-6 C7). Upstream's own tests are Supabase-stubbed
@@ -133,7 +132,7 @@ describe("quick action access", () => {
                 { id: "qa-revoked", workflow_id: "wf-revoked", user_id: USER_ID },
                 { id: "qa-shared", workflow_id: "wf-shared", user_id: USER_ID },
             ] };
-            if (call.table === "workflows") return { data: [OWNED_ROW, SHARED_ROW,
+            if (call.table === "workflows") return { data: [{ ...OWNED_ROW, type: "assistant" }, SHARED_ROW,
                 { id: "wf-revoked", user_id: "other", title: "Private title" },
             ] };
             if (call.table === "workflow_shares") return { data: [{ workflow_id: "wf-shared" }] };
@@ -264,7 +263,7 @@ describe("GET /workflows", () => {
             call.op === "rpc"
                 ? { data: [OWNED_ROW, SHARED_ROW] }
                 : call.table === "default_workflow_installations"
-                  ? { data: [{ workflow_id: defaultId }] } : { data: [] },
+                  ? { data: [{ workflow_id: defaultId, default_key: "proofread" }] } : { data: [] },
         );
 
         const res = await request(await makeApp())
@@ -286,7 +285,7 @@ describe("GET /workflows", () => {
             .set(auth);
 
         expect(res.status).toBe(500);
-        expect(res.body).toEqual({ detail: "rpc down" });
+        expect(res.body).toEqual({ code: "internal_error", detail: "Something went wrong. Please try again." });
     });
 
     it("turns a thrown handler error into a 500 via the router error handler", async () => {
@@ -536,21 +535,23 @@ describe("PATCH /workflows/:id — app-layer access", () => {
 // ── GET /workflows/:id ──────────────────────────────────────────────────
 
 describe("GET /workflows/:id", () => {
-    it("serves a system workflow without touching the database", async () => {
-        const system = SYSTEM_WORKFLOWS[0];
+    it("serves a system workflow from the published database catalogue", async () => {
+        const fake = useDb((call) => call.table === "mike_workflows"
+            ? { data: { workflow_key: "proofread", title: "Proofread", type: "assistant", prompt_md: "Review the text", created_at: "2026-09-01", contributors: [], jurisdictions: [], content_hash: "hash" } }
+            : { data: [] });
 
         const res = await request(await makeApp())
-            .get(`/api/workflows/${system.id}`)
+            .get("/api/workflows/builtin-proofread")
             .set(auth);
 
         expect(res.status).toBe(200);
         expect(res.body).toMatchObject({
-            id: system.id,
-            metadata: system.metadata,
+            id: "builtin-proofread",
+            metadata: { title: "Proofread" },
             allow_edit: false,
             is_owner: false,
         });
-        expect(createServerSupabaseMock).not.toHaveBeenCalled();
+        expect(fake.callsFor("mike_workflows")[0].filters).toContainEqual(["eq", "workflow_key", "proofread"]);
     });
 
     it("the owner sees the latest open-source submission", async () => {
