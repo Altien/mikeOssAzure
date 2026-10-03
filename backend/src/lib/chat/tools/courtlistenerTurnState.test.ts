@@ -1,11 +1,21 @@
 import { describe, expect, it } from "vitest";
+import type { ExternalSourceCache } from "../../../altien/externalSources/cache";
 import {
   getCachedCaseOpinionTexts,
+  courtlistenerFetchedCaseMetadata,
   upsertCourtlistenerCases,
   type CourtlistenerTurnState,
 } from "./courtlistenerTurnState";
 
 describe("CourtListener turn state", () => {
+  it("retains cached source text and summary identity after helper extraction", () => {
+    const state: CourtlistenerTurnState = { casesByClusterId: new Map(), verificationArtifacts: new Map() };
+    const [record] = upsertCourtlistenerCases(state, [{ clusterId: 123, opinions: [{ opinionId: 7, text: "Partial" }] }]);
+    const cached = { source: { id: "courtlistener:cluster:123:opinion:7", text: "Complete cached opinion" }, cacheRecordId: "stored-source", summary: { text: "Summary", status: "ready", model: "fast" } };
+    const cache = { get: (id: string) => id === cached.source.id ? cached : undefined } as unknown as ExternalSourceCache;
+    expect(getCachedCaseOpinionTexts(state, 123, cache)[0].text).toBe("Complete cached opinion");
+    expect(courtlistenerFetchedCaseMetadata(record, 1, cache).opinions[0]).toMatchObject({ external_source_id: "stored-source", summary: "Summary", summary_model: "fast", char_count: 23 });
+  });
   it("uses the freshest non-empty opinion payload", () => {
     const state: CourtlistenerTurnState = { casesByClusterId: new Map(), verificationArtifacts: new Map() };
     upsertCourtlistenerCases(state, [
@@ -46,7 +56,7 @@ describe("CourtListener turn state", () => {
   });
 
   it("skips malformed script tags without double-decoding entities", () => {
-    const state: CourtlistenerTurnState = { casesByClusterId: new Map() };
+    const state: CourtlistenerTurnState = { casesByClusterId: new Map(), verificationArtifacts: new Map() };
     upsertCourtlistenerCases(state, [
       {
         clusterId: 789,

@@ -223,9 +223,7 @@ export function ChatView({
                     if (merged === existing) return prev;
                     const copy = prev.slice();
                     copy[idx] =
-                        tab.kind === "case" ||
                         tab.kind === "authority_trace" ||
-                        existing.kind === "case" ||
                         existing.kind === "authority_trace"
                             ? tab
                             : {

@@ -23,6 +23,12 @@ function documentTab(id = "document-1"): DocumentTab {
 }
 
 describe("mergeAssistantSidePanelTab", () => {
+    it("preserves Authority Trace tabs outside normalized source-document merging", () => {
+        const trace: AssistantSidePanelTab = { kind: "authority_trace", id: "trace", runId: "run", title: "Trace" };
+        expect(mergeAssistantSidePanelTab(documentTab(), trace)).toBe(trace);
+        const document = documentTab();
+        expect(mergeAssistantSidePanelTab(trace, document)).toBe(document);
+    });
     it("returns the existing tab for another plain-document link", () => {
         const existing = documentTab();
         const incoming = documentTab();
