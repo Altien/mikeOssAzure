@@ -15,7 +15,7 @@ set model = coalesce(
   (
     select profile.last_selected_chat_model
     from public.user_profiles as profile
-    where profile.user_id = chat.user_id
+    where profile.user_id::text = chat.user_id
   )
 )
 from public.tabular_reviews as review
