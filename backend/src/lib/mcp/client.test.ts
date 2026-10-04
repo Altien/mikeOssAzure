@@ -116,10 +116,10 @@ describe("mcpOAuthCallbackUrl", () => {
     );
   });
 
-  it("falls back to BACKEND_URL, then localhost with the configured port", () => {
+  it("never advertises an internal BACKEND_URL and uses localhost only in development", () => {
     process.env.BACKEND_URL = "https://backend.internal";
     expect(mcpOAuthCallbackUrl()).toBe(
-      "https://backend.internal/user/mcp-connectors/oauth/callback",
+      "http://localhost:3001/user/mcp-connectors/oauth/callback",
     );
 
     delete process.env.BACKEND_URL;

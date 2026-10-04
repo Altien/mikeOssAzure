@@ -9,6 +9,7 @@ import type {
     OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { createServerSupabase } from "../supabase";
+import { resolveProviderSecret } from "../envSecrets";
 import {
     authConfigPatch,
     base64Url,
@@ -85,7 +86,7 @@ async function fetchJson(url: string, init?: RequestInit) {
     let response!: Response;
     for (let hop = 0; hop <= 3; hop += 1) {
         await validateRemoteMcpUrl(target);
-        response = await fetch(target, { ...init, redirect: "manual" });
+        response = await guardedFetch(target, { ...init, redirect: "manual" });
         if (response.status < 300 || response.status >= 400) break;
         const location = response.headers.get("location");
         if (!location) break;
@@ -261,18 +262,13 @@ export function providerAuthorizationParams(
     return mcpOAuthProviderFor(serverUrl)?.authorizationParams ?? {};
 }
 
-function oauthClientEnvFor(serverUrl: string) {
+export async function oauthClientConfigFor(serverUrl: string) {
     const prefix = mcpOAuthProviderFor(serverUrl)?.envPrefix ?? "MCP_OAUTH";
+    const vaultName = (suffix: string) => `${prefix.replaceAll("_", "-")}-${suffix}`;
     return {
-        clientId:
-            process.env[`${prefix}_CLIENT_ID`] ||
-            process.env.MCP_OAUTH_CLIENT_ID,
-        clientSecret:
-            process.env[`${prefix}_CLIENT_SECRET`] ||
-            process.env.MCP_OAUTH_CLIENT_SECRET,
-        scope:
-            process.env[`${prefix}_SCOPE`] ||
-            process.env.MCP_OAUTH_DEFAULT_SCOPE,
+        clientId: await resolveProviderSecret(vaultName("CLIENT-ID"), ["MCP-OAUTH-CLIENT-ID"]),
+        clientSecret: await resolveProviderSecret(vaultName("CLIENT-SECRET"), ["MCP-OAUTH-CLIENT-SECRET"]),
+        scope: await resolveProviderSecret(vaultName("SCOPE"), ["MCP-OAUTH-DEFAULT-SCOPE"]),
     };
 }
 
@@ -306,14 +302,6 @@ async function registerOAuthClient(
                       : undefined,
           }
         : null;
-}
-
-function scopeForOAuth(serverUrl: string, metadata: OAuthMetadata) {
-    const configured = oauthClientEnvFor(serverUrl).scope;
-    if (configured) return configured;
-    return metadata.scopesSupported?.length
-        ? metadata.scopesSupported.join(" ")
-        : undefined;
 }
 
 export async function loadOAuthToken(connectorId: string, db: Db) {
@@ -522,6 +510,7 @@ export class DbMcpOAuthProvider implements OAuthClientProvider {
         private readonly mode: "initiate" | "use",
         private readonly redirectUri: string,
         private readonly stateToken = base64Url(crypto.randomBytes(32)),
+        private readonly configuredClient: { clientId?: string; clientSecret?: string; scope?: string } = {},
     ) {}
 
     get redirectUrl() {
@@ -529,7 +518,7 @@ export class DbMcpOAuthProvider implements OAuthClientProvider {
     }
 
     get clientMetadata(): OAuthClientMetadata {
-        const env = oauthClientEnvFor(this.connector.server_url);
+        const env = this.configuredClient;
         return {
             client_name: "Mike",
             redirect_uris: [this.redirectUri],
@@ -559,7 +548,7 @@ export class DbMcpOAuthProvider implements OAuthClientProvider {
                 ...(clientSecret ? { client_secret: clientSecret } : {}),
             };
         }
-        const env = oauthClientEnvFor(this.connector.server_url);
+        const env = this.configuredClient;
         if (!env.clientId) return undefined;
         return {
             client_id: env.clientId,
@@ -620,7 +609,7 @@ export class DbMcpOAuthProvider implements OAuthClientProvider {
                   existing.refresh_token_tag,
               )
             : null;
-        const env = oauthClientEnvFor(this.connector.server_url);
+        const env = this.configuredClient;
         const clientInfo = await this.clientInformation();
         const expiresIn =
             typeof tokens.expires_in === "number" ? tokens.expires_in : null;
@@ -759,8 +748,8 @@ export class DbMcpOAuthProvider implements OAuthClientProvider {
             await this.db
                 .from("user_mcp_oauth_tokens")
                 .update({
-                    ...tokenSecretPatch("access_token"),
-                    ...tokenSecretPatch("refresh_token"),
+                    ...(await tokenSecretPatch("access_token")),
+                    ...(await tokenSecretPatch("refresh_token")),
                     token_type: null,
                     scope: null,
                     expires_at: null,
@@ -778,14 +767,16 @@ export async function startUserMcpConnectorOAuth(
     db: Db = createServerSupabase(),
 ): Promise<{ authorizationUrl: string | null; alreadyAuthorized: boolean }> {
     const connector = await loadConnector(userId, connectorId, db);
+    const env = await oauthClientConfigFor(connector.server_url);
     const provider = new DbMcpOAuthProvider(
         db,
         connector,
         userId,
         "initiate",
         redirectUri,
+        undefined,
+        env,
     );
-    const env = oauthClientEnvFor(connector.server_url);
     // Some providers (Google, Slack) do not implement RFC 7591 dynamic client
     // registration, so without a pre-configured OAuth client the SDK's normal
     // "no client? register one" fallback dead-ends deep inside the flow with a
@@ -873,6 +864,7 @@ export async function completeMcpConnectorOAuthAuthorization(
     if (!decrypted) throw new Error("OAuth state could not be decrypted.");
     const config = JSON.parse(decrypted) as OAuthStateConfig;
     const connector = await loadConnector(row.user_id, row.connector_id, db);
+    const env = await oauthClientConfigFor(connector.server_url);
     const provider = new DbMcpOAuthProvider(
         db,
         connector,
@@ -880,6 +872,7 @@ export async function completeMcpConnectorOAuthAuthorization(
         "initiate",
         config.redirectUri,
         state,
+        env,
     );
     // Seed discovery on the code-exchange leg too: RFC 8707 wants the same
     // `resource` indicator in the token request as in the authorization

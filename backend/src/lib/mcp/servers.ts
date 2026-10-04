@@ -22,6 +22,7 @@ import {
     discoverOAuthMetadata,
     loadOAuthToken,
     McpOAuthRequiredError,
+    oauthClientConfigFor,
     startUserMcpConnectorOAuth,
 } from "./oauth";
 import {
@@ -59,6 +60,8 @@ async function withMcpClient<T>(
                   connector.user_id,
                   "use",
                   mcpOAuthCallbackUrl(),
+                  undefined,
+                  await oauthClientConfigFor(connector.server_url),
               )
             : undefined;
     const transport = new StreamableHTTPClientTransport(

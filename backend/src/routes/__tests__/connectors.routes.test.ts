@@ -41,11 +41,12 @@ vi.mock("../../lib/mcpConnectors", async (importOriginal) => {
     };
 });
 
-import { app } from "../../app";
+import { buildApp } from "../../app";
 import { ConnectorSetupError } from "../../lib/mcp/errors";
 import { McpOAuthRequiredError } from "../../lib/mcp/oauth";
 
 const ORIGINAL_API_PUBLIC_URL = process.env.API_PUBLIC_URL;
+const app = buildApp();
 
 beforeEach(() => {
     vi.clearAllMocks();
@@ -69,7 +70,7 @@ describe("POST /user/mcp-connectors/:id/oauth/start", () => {
             },
         );
 
-        const res = await request(app).post("/user/mcp-connectors/c1/oauth/start");
+        const res = await request(app).post("/api/user/mcp-connectors/c1/oauth/start");
 
         expect(res.status).toBe(400);
         expect(res.body.code).toBe("connector_setup_required");
@@ -88,7 +89,7 @@ describe("POST /user/mcp-connectors/:id/oauth/start", () => {
             ),
         );
 
-        const res = await request(app).post("/user/mcp-connectors/c1/oauth/start");
+        const res = await request(app).post("/api/user/mcp-connectors/c1/oauth/start");
 
         expect(res.status).toBe(400);
         expect(res.body).toEqual({
@@ -110,11 +111,11 @@ describe("POST /user/mcp-connectors/:id/refresh-tools", () => {
         );
 
         const res = await request(app).post(
-            "/user/mcp-connectors/c1/refresh-tools",
+            "/api/user/mcp-connectors/c1/refresh-tools",
         );
 
         expect(res.status).not.toBe(401);
-        expect(res.status).toBe(409);
+        expect(res.status).toBe(428);
         expect(res.body).toEqual({
             code: "oauth_required",
             detail: "This connector needs to be authorized again.",

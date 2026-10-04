@@ -10,10 +10,9 @@ import {
     refreshMcpConnectorTools,
     startMcpConnectorOAuth,
 } from "@/app/lib/mikeApi";
-import { needsMfaVerification } from "@/app/components/popups/MfaVerificationPopup";
 
 // Replace only the network functions the OAuth popup flow drives; keep the real
-// MikeApiError / isMfaRequiredError so `instanceof` checks in the page behave.
+// MikeApiError so `instanceof` checks in the page behave.
 vi.mock("@/app/lib/mikeApi", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/app/lib/mikeApi")>();
     return {
@@ -25,12 +24,6 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => {
         getMcpConnector: vi.fn(),
     };
 });
-
-// MFA gate off, and render nothing for the popup itself.
-vi.mock("@/app/components/popups/MfaVerificationPopup", () => ({
-    MfaVerificationPopup: () => null,
-    needsMfaVerification: vi.fn(),
-}));
 
 function makeSummary(
     overrides: Partial<McpConnectorSummary> = {},
@@ -100,7 +93,6 @@ describe("ConnectorsPage OAuth poll cancellation", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.useFakeTimers();
-        vi.mocked(needsMfaVerification).mockResolvedValue(false);
         vi.mocked(listMcpConnectors).mockResolvedValue([]);
         vi.mocked(createMcpConnector).mockResolvedValue(makeSummary());
         // Forces the OAuth popup branch of handleCreate.
@@ -247,7 +239,6 @@ describe("ConnectorsPage operator setup guidance", () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
-        vi.mocked(needsMfaVerification).mockResolvedValue(false);
         vi.mocked(listMcpConnectors).mockResolvedValue([]);
         vi.spyOn(window, "open").mockReturnValue({
             location: { href: "" },

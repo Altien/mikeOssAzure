@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const { getConfigMock } = vi.hoisted(() => ({ getConfigMock: vi.fn() }));
+const { getConfigMock, undiciFetchMock } = vi.hoisted(() => ({ getConfigMock: vi.fn(), undiciFetchMock: vi.fn() }));
 vi.mock("../config", () => ({ getConfig: getConfigMock }));
+vi.mock("undici", async (importOriginal) => ({ ...await importOriginal<typeof import("undici")>(), fetch: undiciFetchMock }));
 vi.mock("dns/promises", () => ({
     default: { lookup: vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]) },
     lookup: vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]),
@@ -29,14 +30,12 @@ function json(value: unknown) {
 }
 
 describe("MCP OAuth metadata discovery", () => {
-    const realFetch = globalThis.fetch;
-
     beforeEach(() => {
         getConfigMock.mockReturnValue({});
+        undiciFetchMock.mockReset();
     });
 
     afterEach(() => {
-        globalThis.fetch = realFetch;
         vi.restoreAllMocks();
     });
 
@@ -45,7 +44,7 @@ describe("MCP OAuth metadata discovery", () => {
         // prefixed one. Refusing to follow made the whole server unusable —
         // OAuth could never start, so the popup opened on about:blank.
         const seen: string[] = [];
-        globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+        undiciFetchMock.mockImplementation(async (input: RequestInfo | URL) => {
             const url = String(input instanceof Request ? input.url : input);
             seen.push(url);
             if (url.endsWith("/.well-known/oauth-protected-resource")) {
@@ -61,7 +60,7 @@ describe("MCP OAuth metadata discovery", () => {
                 return json(AUTH_SERVER);
             }
             return new Response(null, { status: 401 });
-        }) as typeof fetch;
+        });
 
         const metadata = await discoverOAuthMetadata("https://app.example.com/mcp");
 
@@ -74,7 +73,7 @@ describe("MCP OAuth metadata discovery", () => {
     });
 
     it("gives up rather than chasing a redirect loop", async () => {
-        globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+        undiciFetchMock.mockImplementation(async (input: RequestInfo | URL) => {
             const url = String(input instanceof Request ? input.url : input);
             if (url.endsWith("/.well-known/oauth-protected-resource")) {
                 return json({
@@ -83,7 +82,7 @@ describe("MCP OAuth metadata discovery", () => {
                 });
             }
             return redirect("/round/and/around");
-        }) as typeof fetch;
+        });
 
         await expect(
             discoverOAuthMetadata("https://app.example.com/mcp"),
@@ -92,22 +91,20 @@ describe("MCP OAuth metadata discovery", () => {
 });
 
 describe("the fetcher handed to the MCP SDK", () => {
-    const realFetch = globalThis.fetch;
     afterEach(() => {
-        globalThis.fetch = realFetch;
         vi.restoreAllMocks();
     });
 
     it("follows a redirected GET but never redirects a credential POST", async () => {
         const posts: string[] = [];
-        globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        undiciFetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = String(input instanceof Request ? input.url : input);
             if ((init?.method ?? "GET").toUpperCase() === "POST") {
                 posts.push(url);
                 return redirect("https://app.example.com/elsewhere");
             }
             return url.endsWith("/moved") ? json(AUTH_SERVER) : redirect("/moved");
-        }) as typeof fetch;
+        });
 
         const { guardedDiscoveryFetch } = await import("./client");
 
