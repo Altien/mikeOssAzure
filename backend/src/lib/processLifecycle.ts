@@ -63,13 +63,24 @@ export function listenOrFail(
   onListening: () => void,
   effects: LifecycleEffects = processEffects,
 ): Server {
-  return app.listen(port, (error) => {
-    if (error) {
-      void failBoot(error, "listen", effects);
-      return;
-    }
+  let settled = false;
+  let server: Server;
+  const onError = (error: Error) => {
+    if (settled) return;
+    settled = true;
+    void failBoot(error, "listen", effects);
+  };
+  server = app.listen(port, (error) => {
+    if (error) { onError(error); return; }
+    if (settled) return;
+    settled = true;
+    server.off("error", onError);
     onListening();
   });
+  // Express 4 emits a Server error; Express 5 also passes it to the callback.
+  // The settled guard keeps either path from reporting the bind failure twice.
+  if (!settled) server.once("error", onError);
+  return server;
 }
 
 /**
@@ -140,7 +151,7 @@ export function createShutdown({
     } catch (err) {
       clearTimeout(forceExit);
       effects.report(err, { tags: { component: "shutdown", stage } });
-      effects.logError("Error during graceful shutdown", err);
+      effects.logError("Error during graceful shutdown", safeErrorLog(err));
       await effects.flush();
       effects.exit(1);
     }

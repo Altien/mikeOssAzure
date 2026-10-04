@@ -65,7 +65,7 @@ describe("failBoot (MIKE-BACKEND-2 / -3)", () => {
         reportError(error, context);
         return Sentry.captureException(error);
       },
-      logError: (...args) => console.error(...args),
+      logError: (...args) => console.warn(...args),
       logInfo: () => {},
       flush: async () => {
         await Sentry.flush(2000);
@@ -88,7 +88,7 @@ describe("failBoot (MIKE-BACKEND-2 / -3)", () => {
     });
     expect(effects.logError).toHaveBeenCalledWith(
       expect.any(String),
-      failure,
+      expect.objectContaining({ name: "Error", message: "bad key" }),
     );
     expect(effects.exit).toHaveBeenCalledWith(1);
   });
