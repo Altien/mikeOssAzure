@@ -122,18 +122,13 @@ async function deleteDocumentVersionFiles(db: Db, documentIds: string[]) {
 }
 
 async function deleteUserStoragePrefix(userId: string) {
-    try {
-        const paths = new Set([
-            ...(await listFiles(`documents/${userId}/`)),
-            ...(await listFiles(`workflow-references/${userId}/`)),
-        ]);
-        await Promise.all(
-            [...paths].map((path) => deleteFile(path).catch(() => {})),
-        );
-    } catch {
-        // Version-linked objects are deleted above. Prefix cleanup is best-effort
-        // for orphaned files left behind by interrupted uploads.
-    }
+    const paths = new Set([
+        ...(await listFiles(`documents/${userId}/`)),
+        ...(await listFiles(`workflow-references/${userId}/`)),
+    ]);
+    // A failed listing or delete must leave the account job retryable. A
+    // successful erasure may not conceal orphaned uploads under these roots.
+    await Promise.all([...paths].map((path) => deleteFile(path)));
 }
 
 /**
@@ -414,6 +409,10 @@ export async function deleteUserAccountData(
         db.from("audit_events").delete().eq("user_id", userId),
         db.from("projects").delete().eq("user_id", userId),
         db.from("quick_actions").delete().eq("user_id", userId),
+        db.from("user_api_keys").delete().eq("user_id", userId),
+        db.from("user_mcp_tool_audit_logs").delete().eq("user_id", userId),
+        db.from("user_mcp_oauth_states").delete().eq("user_id", userId),
+        db.from("user_mcp_connectors").delete().eq("user_id", userId),
         db
             .from("workflow_reference_documents")
             .delete()
@@ -434,4 +433,11 @@ export async function deleteUserAccountData(
         .delete()
         .eq("user_id", userId);
     await throwIfError(workflowsError, "Failed to delete workflows");
+
+    // The tombstone in account_erasure_requests remains, but all mutable
+    // profile/session material and provider keys are removed.
+    for (const table of ["auth_sessions", "user_profiles"] as const) {
+        const { error } = await db.from(table).delete().eq("user_id", userId);
+        await throwIfError(error, `Failed to delete ${table}`);
+    }
 }

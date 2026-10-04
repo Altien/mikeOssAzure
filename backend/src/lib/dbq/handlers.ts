@@ -102,9 +102,8 @@ export async function handleAccountDelete(db: Db, job: DbJob): Promise<void> {
     if (!userId) return;
     const userEmail = (job.payload.userEmail as string | undefined) ?? null;
 
-    // The whole cascade is deletes — idempotent by nature, so a crash midway
-    // simply re-runs. The user's sessions were revoked by the route, so no new
-    // data can appear underneath us.
+    // The durable tombstone blocks already-issued bearer tokens and the
+    // request transaction revoked application sessions before job pickup.
     await deleteUserAccountData(db, userId, userEmail);
 
     // Erase the user's leftovers in the queue itself: export artifacts hold a
@@ -192,6 +191,11 @@ export async function handleAccountDelete(db: Db, job: DbJob): Promise<void> {
         if (error && !/not\s*found/i.test(error.message))
             throw new Error(`Failed to delete auth user: ${error.message}`);
     }
+    const { data: completed, error: completionError } = await db.rpc(
+        "complete_account_erasure", { p_user_id: userId },
+    );
+    if (completionError || !completed)
+        throw completionError ?? new Error("Erasure completion was not recorded");
 }
 
 export async function handleStorageCleanup(db: Db, job: DbJob): Promise<void> {

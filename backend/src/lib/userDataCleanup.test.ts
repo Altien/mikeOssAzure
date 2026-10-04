@@ -117,6 +117,8 @@ describe("deleteUserProjects", () => {
             { storage_path: "documents/u1/d1/orig.docx", pdf_storage_path: "documents/u1/d1/conv.pdf" },
           ],
         };
+      if (call.table === "db_jobs" && call.op === "insert")
+        return { data: { id: "storage-job-1" } };
       return {};
     });
 
@@ -129,9 +131,10 @@ describe("deleteUserProjects", () => {
     )!;
     expect(filterValue(projectSelect, "eq", "user_id")).toBe("u1");
     expect(filterValue(projectSelect, "in", "id")).toEqual(["p1", "p-not-mine"]);
-    // Both storage objects of the version deleted.
-    expect(deleteFileMock).toHaveBeenCalledWith("documents/u1/d1/orig.docx");
-    expect(deleteFileMock).toHaveBeenCalledWith("documents/u1/d1/conv.pdf");
+    // Both storage objects are handed to durable cleanup, not deleted inline.
+    const queued = calls.find((c) => c.table === "db_jobs" && c.op === "insert");
+    expect(queued).toBeDefined();
+    expect(deleteFileMock).not.toHaveBeenCalled();
     // Projects themselves deleted last.
     const deletes = calls.filter((c) => c.op === "delete").map((c) => c.table);
     expect(deletes[deletes.length - 1]).toBe("projects");
@@ -269,12 +272,11 @@ describe("deleteUserAccountData", () => {
     ).rejects.toThrow("Failed to load document storage paths: db down");
   });
 
-  it("prefix cleanup is best-effort: listFiles failure does not abort the deletion", async () => {
+  it("propagates prefix cleanup failure for durable retry", async () => {
     listFilesMock.mockRejectedValue(new Error("container listing denied"));
     const { db, callsFor } = makeFakeDb(baseRespond);
 
-    await deleteUserAccountData(db as never, "u1", null);
-
-    expect(callsFor("projects", "delete")).toHaveLength(1);
+    await expect(deleteUserAccountData(db as never, "u1", null))
+      .rejects.toThrow(/container listing denied/);
   });
 });

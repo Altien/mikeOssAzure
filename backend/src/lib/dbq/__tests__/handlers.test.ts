@@ -96,6 +96,8 @@ const JOB = (kind: string, payload: Record<string, unknown>): DbJob => ({
     max_attempts: 3,
     run_at: "",
     claimed_at: null,
+    claim_token: null,
+    lease_expires_at: null,
     finished_at: null,
     last_error: null,
     dedupe_key: null,
@@ -159,6 +161,13 @@ function makeDb(selectData: unknown[] = []) {
         deletes,
         trace,
         from,
+        rpc: vi.fn(async (name: string) => {
+            if (name === "complete_account_erasure") {
+                trace.push("account.complete");
+                return { data: true, error: null };
+            }
+            return { data: null, error: null };
+        }),
         auth: { admin: { deleteUser: authDeleteUser } },
     };
 }
@@ -226,7 +235,7 @@ describe("handleAccountDelete", () => {
         const db = makeDb([]);
         await handleAccountDelete(
             db as never,
-            JOB("account.delete", { userId: "u1", userEmail: "u@x.test" }),
+            JOB("account.delete", { userId: "u1", userEmail: "u@x.test", provider: "supabase" }),
         );
         expect(deleteUserAccountData).toHaveBeenCalledWith(db, "u1", "u@x.test");
         // Two purge deletes (payload->>userId and payload->base->>userId),
@@ -248,12 +257,13 @@ describe("handleAccountDelete", () => {
 
         await handleAccountDelete(
             db as never,
-            JOB("account.delete", { userId: "u1", userEmail: "u@x.test" }),
+            JOB("account.delete", { userId: "u1", userEmail: "u@x.test", provider: "supabase" }),
         );
 
         expect(db.auth.admin.deleteUser).toHaveBeenCalledWith("u1");
         expect(db.trace[0]).toBe("cascade");
-        expect(db.trace.at(-1)).toBe("auth.deleteUser");
+        expect(db.trace.indexOf("auth.deleteUser")).toBeGreaterThan(db.trace.indexOf("cascade"));
+        expect(db.trace.at(-1)).toBe("account.complete");
     });
 
     it("treats an already-deleted auth user as success (a retry got this far)", async () => {
@@ -265,7 +275,7 @@ describe("handleAccountDelete", () => {
         await expect(
             handleAccountDelete(
                 db as never,
-                JOB("account.delete", { userId: "u1" }),
+                JOB("account.delete", { userId: "u1", provider: "supabase" }),
             ),
         ).resolves.toBeUndefined();
     });
@@ -279,7 +289,7 @@ describe("handleAccountDelete", () => {
         await expect(
             handleAccountDelete(
                 db as never,
-                JOB("account.delete", { userId: "u1" }),
+                JOB("account.delete", { userId: "u1", provider: "supabase" }),
             ),
         ).rejects.toThrow(/gotrue unavailable/);
     });

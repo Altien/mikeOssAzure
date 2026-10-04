@@ -40,7 +40,7 @@ function makeDb(
         from(table: string) {
             const rowsOf = () => tables[table] ?? (tables[table] = []);
             let predicate: (row: Row) => boolean = () => true;
-            let mode: "select" | "delete" | "update" = "select";
+            let mode: "select" | "delete" | "update" | "insert" = "select";
             let patch: Row = {};
             const narrow = (next: (row: Row) => boolean) => {
                 const prev = predicate;
@@ -48,6 +48,19 @@ function makeDb(
             };
             const query: any = {
                 select: () => query,
+                insert: (value: Row) => {
+                    mode = "insert";
+                    patch = value;
+                    return query;
+                },
+                single: async () => {
+                    if (mode === "insert") {
+                        const row = { id: `queued-${rowsOf().length + 1}`, ...patch };
+                        rowsOf().push(row);
+                        return { data: row, error: null };
+                    }
+                    return { data: rowsOf().find(predicate) ?? null, error: null };
+                },
                 delete: () => {
                     mode = "delete";
                     return query;
@@ -277,8 +290,9 @@ describe("deleteUserProjects", () => {
         expect(ids(tables.tabular_cells)).toEqual(["cell-other"]);
         expect(ids(tables.project_subfolders)).toEqual(["f-other"]);
 
-        const deletedPaths = deleteFileMock.mock.calls.map(([path]) => path);
-        expect(deletedPaths.sort()).toEqual([
+        expect(deleteFileMock).not.toHaveBeenCalled();
+        const queuedPaths = (tables.db_jobs?.[0]?.payload as { keys?: string[] })?.keys ?? [];
+        expect(queuedPaths.sort()).toEqual([
             "documents/u1/d1/converted.pdf",
             "documents/u1/d1/source.pdf",
             // The read_document text cache lives outside the per-user
@@ -444,18 +458,15 @@ describe("deleteUserAccountData", () => {
         expect(listFilesMock).toHaveBeenCalledWith("exports/u1/");
     });
 
-    it("treats document/workflow prefix cleanup as best-effort", async () => {
+    it("propagates document/workflow prefix cleanup failure for durable retry", async () => {
         const { db, tables } = fixture();
-        // Orphan sweep failing is tolerable: version-linked files were
-        // already deleted (throwing) via the document_versions walk.
         listFilesMock.mockImplementation(async (prefix: string) => {
             if (prefix === "exports/u1/") return [];
             throw new Error("storage unavailable");
         });
         await expect(
             deleteUserAccountData(db, "u1", "u1@example.com"),
-        ).resolves.toBeUndefined();
-        expect(ids(tables.documents)).toEqual(["d-other"]);
+        ).rejects.toThrow(/storage unavailable/);
     });
 
     // The exports/ prefix is different in kind from the orphan sweep: each

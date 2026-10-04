@@ -125,6 +125,7 @@ const TOUCHED_ENV = [
   "NODE_ENV",
   "SUPABASE_URL",
   "SUPABASE_PUBLISHABLE_DEFAULT_KEY",
+  "DB_JOBS_ENABLED",
 ] as const;
 const envSnapshot = {} as Record<string, string | undefined>;
 
@@ -167,6 +168,7 @@ beforeEach(() => {
   upsertUserProfileMock.mockReset();
   upsertUserProfileMock.mockResolvedValue(undefined);
   createServerSupabaseMock.mockReset();
+  createServerSupabaseMock.mockImplementation(() => makeDb({}).db);
   getUserApiKeysMock.mockReset();
   getUserApiKeysMock.mockResolvedValue(emptyKeys);
   setUserApiKeyMock.mockReset();
@@ -264,6 +266,13 @@ function makeDb(opts: {
   let deleteCallIdx = 0;
   const db = {
     from: vi.fn((table: string) => {
+      if (table === "account_erasure_requests") {
+        const erasureQuery: Record<string, unknown> = {};
+        erasureQuery.select = () => erasureQuery;
+        erasureQuery.eq = () => erasureQuery;
+        erasureQuery.maybeSingle = () => Promise.resolve({ data: null, error: null });
+        return erasureQuery;
+      }
       calls.push({ type: "from", table });
       const b: Record<string, unknown> = {};
       b.select = (cols: string) => {
@@ -296,6 +305,7 @@ function makeDb(opts: {
         calls.push({ type: "single" });
         return Promise.resolve(opts.profile ?? { data: null, error: null });
       };
+      b.maybeSingle = () => Promise.resolve({ data: null, error: null });
       b.update = (patch: Record<string, unknown>) => {
         calls.push({ type: "update", patch });
         return b;
@@ -306,6 +316,9 @@ function makeDb(opts: {
       };
       return b;
     }),
+    rpc: vi.fn(async (name: string) => name === "request_account_erasure"
+      ? { data: "queued-erasure", error: null }
+      : { data: null, error: { message: "unexpected RPC" } }),
   };
   return { db, calls };
 }
@@ -1124,7 +1137,7 @@ describe("DELETE /api/user/account", () => {
     expect(res.status).toBe(403);
   });
 
-  it("rejects with 403 in entra mode (account closure must go through tenant admin)", async () => {
+  it("queues account erasure in Entra mode without deleting the IdP identity", async () => {
     process.env.AUTH_PROVIDER = "entra";
     // Satisfy the tenantAccess middleware so the request reaches the
     // route handler (which is what we actually want to test).
@@ -1135,101 +1148,68 @@ describe("DELETE /api/user/account", () => {
     });
     // The middleware looks up the tenant row before resolving roles.
     const tenantDb = {
-      from: vi.fn(() => {
+      from: vi.fn((table: string) => {
         const b: Record<string, unknown> = {};
         b.select = () => b;
         b.eq = () => b;
         b.maybeSingle = () =>
           Promise.resolve({
-            data: { tenant_id: "t1", status: "active" },
+            data: table === "account_erasure_requests" ? null : { tenant_id: "t1", status: "active" },
             error: null,
           });
         return b;
       }),
     };
-    createServerSupabaseMock.mockReturnValueOnce(tenantDb);
+    const { db } = makeDb({});
+    createServerSupabaseMock.mockReturnValueOnce(tenantDb).mockReturnValueOnce(tenantDb).mockReturnValue(db);
 
     const res = await request(makeApp())
       .delete("/api/user/account")
       .set("Authorization", "Bearer ok");
 
-    expect(res.status).toBe(403);
-    expect(res.body.detail).toMatch(/Self-service account deletion is not available on Entra/);
-    // The middleware's tenant query ran (1 createServerSupabase call), but
-    // the route handler MUST have bailed before opening its own client.
-    expect(createServerSupabaseMock).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(202);
+    expect(db.rpc).toHaveBeenCalledWith("request_account_erasure", {
+      p_user_id: "user-1", p_user_email: "caller@example.com", p_provider: "entra",
+    });
   });
 
-  // Dev's cascade (table rows + storage objects) lives in
-  // lib/userDataCleanup.deleteUserAccountData (upstream 3a10943); the
-  // route then removes the identity-adjacent tables it still owns and,
-  // in supabase mode, the auth user. These tests cover the route's
-  // orchestration; the cascade internals belong to userDataCleanup.
-
-  function withAuthAdmin(
-    db: Record<string, unknown>,
-    result: { error: { message: string } | null } = { error: null },
-  ) {
-    (db as { auth?: unknown }).auth = {
-      admin: { deleteUser: vi.fn(() => Promise.resolve(result)) },
-    };
-    return db;
-  }
-
-  it("runs the cascade, deletes identity tables, deletes the auth user, then 204s", async () => {
-    const { db, calls } = makeDb({
-      deleteResults: Array(2).fill({ error: null }),
-    });
-    withAuthAdmin(db);
+  it("atomically queues erasure and returns 202 without inline deletion", async () => {
+    const { db, calls } = makeDb({});
     createServerSupabaseMock.mockReturnValue(db);
 
     const res = await request(makeApp())
       .delete("/api/user/account")
       .set("Authorization", "Bearer ok");
 
-    expect(res.status).toBe(204);
-    expect(deleteUserAccountDataMock).toHaveBeenCalledWith(
-      db,
-      "user-1",
-      "caller@example.com",
-    );
-    const tablesInOrder = calls
-      .filter((c) => c.type === "from")
-      .map((c) => c.table);
-    expect(tablesInOrder).toEqual(["user_api_keys", "user_profiles"]);
-    expect(
-      (db as { auth: { admin: { deleteUser: ReturnType<typeof vi.fn> } } })
-        .auth.admin.deleteUser,
-    ).toHaveBeenCalledWith("user-1");
+    expect(res.status).toBe(202);
+    expect(db.rpc).toHaveBeenCalledWith("request_account_erasure", {
+      p_user_id: "user-1", p_user_email: "caller@example.com", p_provider: "supabase",
+    });
+    expect(deleteUserAccountDataMock).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
   });
 
-  it("lowercases the principal email before handing it to the cascade", async () => {
+  it("lowercases the principal email in the atomic request", async () => {
     validateSupabaseTokenMock.mockResolvedValueOnce({
       ok: true,
       principal: { ...callerPrincipal, email: "Caller@Example.COM" },
     });
     const { db } = makeDb({ deleteResults: Array(2).fill({ error: null }) });
-    withAuthAdmin(db);
     createServerSupabaseMock.mockReturnValue(db);
 
     const res = await request(makeApp())
       .delete("/api/user/account")
       .set("Authorization", "Bearer ok");
 
-    expect(res.status).toBe(204);
-    expect(deleteUserAccountDataMock).toHaveBeenCalledWith(
-      db,
-      "user-1",
-      "caller@example.com",
-    );
+    expect(res.status).toBe(202);
+    expect(db.rpc).toHaveBeenCalledWith("request_account_erasure", expect.objectContaining({
+      p_user_email: "caller@example.com",
+    }));
   });
 
-  it("returns 500 with the thrown message when the cascade fails, and touches no identity tables", async () => {
-    deleteUserAccountDataMock.mockRejectedValueOnce(
-      new Error("Failed to delete user data from chats: deadlock"),
-    );
+  it("returns 500 when atomic enqueue fails, and touches no identity tables", async () => {
     const { db, calls } = makeDb({});
-    withAuthAdmin(db);
+    db.rpc.mockResolvedValueOnce({ data: null, error: { message: "queue unavailable" } });
     createServerSupabaseMock.mockReturnValue(db);
 
     const res = await request(makeApp())
@@ -1241,23 +1221,17 @@ describe("DELETE /api/user/account", () => {
     expect(calls.filter((c) => c.type === "from")).toEqual([]);
   });
 
-  it("returns 500 naming the identity table when its delete fails, and never reaches the auth user", async () => {
-    const { db } = makeDb({
-      deleteResults: [{ error: { message: "permission denied" } }],
-    });
-    withAuthAdmin(db);
+  it("returns 503 when jobs are disabled without queuing deletion", async () => {
+    process.env.DB_JOBS_ENABLED = "false";
+    const { db } = makeDb({});
     createServerSupabaseMock.mockReturnValue(db);
 
     const res = await request(makeApp())
       .delete("/api/user/account")
       .set("Authorization", "Bearer ok");
 
-    expect(res.status).toBe(500);
-    expect(res.body.detail).toBe("Something went wrong. Please try again.");
-    expect(
-      (db as { auth: { admin: { deleteUser: ReturnType<typeof vi.fn> } } })
-        .auth.admin.deleteUser,
-    ).not.toHaveBeenCalled();
+    expect(res.status).toBe(503);
+    expect(db.rpc).not.toHaveBeenCalled();
   });
 });
 
@@ -1269,7 +1243,7 @@ describe("MCP connector routes", () => {
       ok: true,
       principal: callerPrincipal,
     });
-    createServerSupabaseMock.mockReturnValue({});
+    createServerSupabaseMock.mockReturnValue(makeDb({}).db);
     listUserMcpConnectorsMock.mockReset();
     createUserMcpConnectorMock.mockReset();
     startUserMcpConnectorOAuthMock.mockReset();
@@ -1428,7 +1402,7 @@ describe("GET /api/user/lookup", () => {
     expect(missing.status).toBe(400);
     expect(missing.body.detail).toBe("email is required");
     expect(blank.status).toBe(400);
-    expect(createServerSupabaseMock).not.toHaveBeenCalled();
+    expect(createServerSupabaseMock).toHaveBeenCalledTimes(2); // auth tombstone checks precede route validation
   });
 
   it("reports an existing profile with its normalised email and display name", async () => {
@@ -1478,10 +1452,9 @@ describe("GET /api/user/lookup", () => {
   });
 
   it("returns 500 (not a hung request) when the profile query fails", async () => {
-    const { db } = makeFakeDb(() => ({
-      data: null,
-      error: { message: "db down" },
-    }));
+    const { db } = makeFakeDb((call) => call.table === "account_erasure_requests"
+      ? { data: null, error: null }
+      : { data: null, error: { message: "db down" } });
     createServerSupabaseMock.mockReturnValue(db);
 
     const res = await request(makeApp())

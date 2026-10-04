@@ -12,6 +12,7 @@ import { resolveModel } from "../lib/llm/models";
 import { REASONING_LEVELS } from "../lib/llm";
 import { normalizeOptionalModelPreference, normalizeReasoningLevel } from "../lib/modelSelection";
 import { enqueueDbJob } from "../lib/dbq/enqueue";
+import { dbJobsEnabled } from "../lib/dbq/runner";
 import {
     EXPORT_TYPES,
     MAX_ZIP_EXPORT_DOCUMENTS,
@@ -1343,15 +1344,10 @@ userRouter.patch(
     },
 );
 
-// DELETE /user/account
-// DELETE /user/account. Entra identity is tenant-owned; self-service
-// closure remains unavailable until the application erasure admission guard
-// can prevent an already-issued Entra credential from recreating rows.
+// DELETE /user/account. Erase application data for every supported provider;
+// the worker deletes a provider identity only in hosted Supabase mode.
 userRouter.delete("/account", requireAuth, async (_req, res) => {
-  const provider = process.env.AUTH_PROVIDER ?? "supabase";
-  if (provider === "entra") {
-    return void res.status(403).json({ detail: "Contact your tenant administrator to request account closure and data erasure." });
-  }
+  const provider = (process.env.AUTH_PROVIDER ?? "supabase").toLowerCase();
   if (process.env.DB_JOBS_ENABLED === "false") {
     return void res.status(503).json({ detail: "Account erasure is temporarily unavailable." });
   }
@@ -1359,14 +1355,14 @@ userRouter.delete("/account", requireAuth, async (_req, res) => {
   const userEmail = (res.locals.userEmail as string | undefined)?.toLowerCase();
   const db = createServerSupabase();
   try {
-    // Durable job first. The worker removes the provider identity only after
-    // the application cascade; a failed enqueue must leave this retryable.
-    await enqueueDbJob(db, {
-      kind: "account.delete",
-      payload: { userId, userEmail: userEmail ?? null, provider },
-      dedupeKey: "account.delete:" + userId,
-      maxAttempts: 20,
+    // One SQL transaction persists the tombstone, revokes all app sessions,
+    // and enqueues erasure. A failed request leaves neither half applied.
+    const { data, error } = await db.rpc("request_account_erasure", {
+      p_user_id: userId,
+      p_user_email: userEmail ?? null,
+      p_provider: provider,
     });
+    if (error || !data) throw error ?? new Error("Erasure was not scheduled");
     res.status(202).json({ status: "scheduled" });
   } catch (error) {
     console.error("[user/account] erasure enqueue failed", { userId, error: errorMessage(error) });
@@ -1520,6 +1516,8 @@ userRouter.post(
     "/exports",
     requireAuth,
     async (req, res) => {
+        if (!dbJobsEnabled())
+            return void res.status(503).json({ detail: "Exports are temporarily unavailable." });
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
         const body = (req.body ?? {}) as {

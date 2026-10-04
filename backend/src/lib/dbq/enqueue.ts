@@ -1,4 +1,3 @@
-import { deleteFile } from "../storage";
 import { enqueueAppJobDelivery } from "../queue/appJobsQueue";
 import { redisEnabled } from "./driver";
 import type { Db } from "./types";
@@ -106,10 +105,8 @@ export async function liveDbJobExists(
 }
 
 /**
- * Durably delete storage objects: enqueue a storage.cleanup job, falling
- * back to today's best-effort inline deletes if the enqueue itself fails.
- * Never throws — callers use this on paths where cleanup must not fail the
- * user's request (the DB rows are already deleted by the time this runs).
+ * Durably delete storage objects. An unavailable queue is an error: an inline
+ * best-effort fallback could report success while permanently leaking bytes.
  */
 export async function enqueueStorageCleanup(
     db: Db,
@@ -117,23 +114,9 @@ export async function enqueueStorageCleanup(
     prefixes: string[] = [],
 ): Promise<void> {
     if (keys.length === 0 && prefixes.length === 0) return;
-    try {
-        await enqueueDbJob(db, {
-            kind: "storage.cleanup",
-            payload: { keys, prefixes },
-            maxAttempts: 8,
-        });
-    } catch (err) {
-        console.error(
-            "[dbq] storage.cleanup enqueue failed; falling back to inline deletes:",
-            err instanceof Error ? err.message : err,
-        );
-        for (const key of keys) {
-            try {
-                await deleteFile(key);
-            } catch {
-                // Best-effort by definition here.
-            }
-        }
-    }
+    await enqueueDbJob(db, {
+        kind: "storage.cleanup",
+        payload: { keys, prefixes },
+        maxAttempts: 8,
+    });
 }

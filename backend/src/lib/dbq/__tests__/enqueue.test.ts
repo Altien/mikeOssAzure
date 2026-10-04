@@ -104,19 +104,19 @@ describe("enqueueStorageCleanup", () => {
         expect(db.inserts).toHaveLength(0);
     });
 
-    it("falls back to inline best-effort deletes when the enqueue fails", async () => {
+    it("surfaces enqueue failure so cleanup cannot be reported successful", async () => {
         const db = makeDb({
             insertResult: {
                 data: null,
                 error: { code: "XX000", message: "db down" },
             },
         });
-        await enqueueStorageCleanup(db as never, ["a.pdf", "b.pdf"]);
-        expect(deleteFile).toHaveBeenCalledTimes(2);
+        await expect(enqueueStorageCleanup(db as never, ["a.pdf", "b.pdf"]))
+            .rejects.toThrow(/db down/);
+        expect(deleteFile).not.toHaveBeenCalled();
     });
 
-    it("never throws even when the inline fallback also fails", async () => {
-        deleteFile.mockRejectedValueOnce(new Error("storage down"));
+    it("does not attempt an unsafe inline fallback", async () => {
         const db = makeDb({
             insertResult: {
                 data: null,
@@ -125,7 +125,7 @@ describe("enqueueStorageCleanup", () => {
         });
         await expect(
             enqueueStorageCleanup(db as never, ["a.pdf"]),
-        ).resolves.toBeUndefined();
-        expect(deleteFile).toHaveBeenCalledTimes(1);
+        ).rejects.toThrow(/db down/);
+        expect(deleteFile).not.toHaveBeenCalled();
     });
 });

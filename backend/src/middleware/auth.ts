@@ -4,6 +4,7 @@ import { validateLocalToken } from "../lib/auth/providers/local.js";
 import { validateEntraToken } from "../lib/auth/providers/entra.js";
 import { tenantAccess } from "./tenantAccess.js";
 import { upsertUserProfile } from "../lib/userSettings.js";
+import { createServerSupabase } from "../lib/supabase.js";
 import { getConfig } from "../lib/config.js";
 import { readServerSession, refreshServerSession } from "../lib/serverSession.js";
 import { requestOriginIsTrusted } from "../lib/origins.js";
@@ -109,6 +110,25 @@ export async function requireAuth(
   }
   if (sessionUserId && result.principal.userId !== sessionUserId) {
     res.status(401).json({ detail: "Invalid or expired session" });
+    return;
+  }
+
+  // A revoked cookie is insufficient for Entra: an already-issued bearer
+  // token remains valid at the IdP. The durable tombstone blocks both token
+  // transports before profile seeding or any application write can run.
+  try {
+    const { data: erasure, error: erasureError } = await createServerSupabase()
+      .from("account_erasure_requests")
+      .select("status")
+      .eq("user_id", result.principal.userId)
+      .maybeSingle();
+    if (erasureError) throw erasureError;
+    if (erasure) {
+      res.status(410).json({ detail: "This account has been closed." });
+      return;
+    }
+  } catch {
+    res.status(503).json({ detail: "Account status is unavailable" });
     return;
   }
 

@@ -87,7 +87,8 @@ vi.mock("../../lib/dbq/runner", async (importOriginal) => {
     return { ...actual, dbJobsEnabled: () => dbJobsEnabled() };
 });
 
-import { app } from "../../app";
+import { buildApp } from "../../app";
+const app = buildApp();
 
 const AUTH = ["Authorization", "Bearer test"] as const;
 
@@ -101,7 +102,7 @@ describe("async exports", () => {
         dbJobsEnabled.mockReturnValue(false);
 
         const res = await request(app)
-            .post("/user/exports")
+            .post("/api/user/exports")
             .set(...AUTH)
             .send({ type: "documents-zip", params: { document_ids: ["d1"] } });
 

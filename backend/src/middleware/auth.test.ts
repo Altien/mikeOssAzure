@@ -16,6 +16,15 @@ vi.mock("./tenantAccess.js", () => ({
 vi.mock("../lib/userSettings.js", () => ({
   upsertUserProfile: vi.fn(),
 }));
+vi.mock("../lib/supabase.js", () => ({
+  createServerSupabase: () => ({
+    from: () => ({
+      select: () => ({
+        eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }),
+      }),
+    }),
+  }),
+}));
 vi.mock("../lib/serverSession.js", () => ({ readServerSession: vi.fn(), refreshServerSession: vi.fn() }));
 vi.mock("../lib/auth/providers/entraRefresh.js", () => ({ renewEntraCredential: vi.fn() }));
 vi.mock("../lib/auth/providers/supabaseSession.js", () => ({ renewSupabaseCredential: vi.fn() }));
