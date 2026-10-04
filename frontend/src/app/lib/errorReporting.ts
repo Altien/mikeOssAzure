@@ -1,6 +1,6 @@
 /**
  * Error reporting for the web app: a thin, testable layer over the Sentry
- * SDK. Application code calls these helpers instead of `@sentry/nextjs`
+ * SDK. Application code calls these helpers instead of `@sentry/react`
  * directly so the PII policy (see `@/shared/lib/sentryEvent`) and the
  * explicit opt-out rule live in one place.
  */
@@ -238,8 +238,7 @@ export function browserSentryOptions(env: {
     tracesSampleRate?: string;
     nodeEnv?: string;
 }): Sentry.BrowserOptions {
-    // ON BY DEFAULT: the Mike project's own DSN unless NEXT_PUBLIC_SENTRY_DISABLED
-    // or a DSN of your own is baked in at build time (README, "Telemetry").
+    // Runtime /config supplies this deployment's DSN; an empty value is off.
     const { dsn } = resolveDsn({
         disabled: env.disabled,
         dsn: env.dsn,

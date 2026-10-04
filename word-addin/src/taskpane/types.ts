@@ -189,6 +189,8 @@ export interface QuickAction {
  * type-check.
  */
 export interface ApiKeyStatus {
+  azure_openai?: boolean;
+  kimi?: boolean;
   claude: boolean;
   gemini: boolean;
   openai: boolean;

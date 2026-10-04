@@ -34,7 +34,7 @@ const RAW_API_ORIGIN: string =
   "";
 
 /** Backend origin, no trailing slash (same meaning as NEXT_PUBLIC_API_BASE_URL). */
-export const API_ORIGIN: string = RAW_API_ORIGIN.replace(/\/+$/, "");
+export const API_ORIGIN: string = RAW_API_ORIGIN.replace(/\/api\/?$/, "").replace(/\/+$/, "");
 
 /** Base for API routes — the dev backend mounts every router under /api. */
 export const API_BASE_URL = `${API_ORIGIN}/api`;

@@ -489,7 +489,6 @@ describe("project chat workspace lifecycle", () => {
             render(
                 <Suspense fallback="Loading">
                     <ProjectAssistantChatPage
-                        params={Promise.resolve({ id: "p1", chatId: "c1" })}
                     />
                 </Suspense>,
             );

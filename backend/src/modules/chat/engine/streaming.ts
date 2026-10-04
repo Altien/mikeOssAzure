@@ -782,7 +782,7 @@ export async function runLLMStream(params: {
         tags: { component: "chat-stream" },
         ...(safeToDisplay ? { level: "warning" as const } : {}),
       });
-      console.error("[chat/stream] model stream failed", safeErrorLog(err));
+      console.warn("[chat/stream] model stream failed", safeErrorLog(err));
       const message = safeToDisplay ? err.message : ASSISTANT_ERROR_MESSAGE;
       events.push({
         type: "error",

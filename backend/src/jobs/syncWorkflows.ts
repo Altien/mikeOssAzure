@@ -1,4 +1,3 @@
-import "../instrument";
 import { createServerSupabase } from "../lib/supabase";
 import { flushSentry, reportError } from "../lib/observability/sentry";
 import { syncWorkflowCatalog } from "../lib/workflowCatalogSync";

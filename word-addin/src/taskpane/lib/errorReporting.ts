@@ -1,7 +1,7 @@
 /**
  * Error reporting for the Word add-in. Same policy as the web app (see
  * frontend/src/app/lib/errorReporting.ts and the shared scrubber it uses):
- * on by default with a community privacy policy, every console.error bridged,
+ * enabled only by this deployment's runtime config, with every console.error bridged,
  * explicit reports deduplicated against the bridge.
  *
  * The add-in adds one thing the web app does not have: the Office host. A
@@ -31,7 +31,7 @@ export type ReportContext = {
 };
 
 const scrubber = createEventScrubber({
-  install: installKind(process.env.REACT_APP_SENTRY_INSTALL),
+  install: installKind(undefined),
 });
 
 export const scrubEvent = scrubber.scrubEvent;
@@ -52,8 +52,7 @@ export function addinSentryOptions(
     nodeEnv?: string;
   },
 ): Sentry.BrowserOptions {
-  // ON BY DEFAULT: the Mike project's own DSN unless REACT_APP_SENTRY_DISABLED
-  // or a DSN of your own is baked in at build time (README, "Telemetry").
+  // Runtime /config supplies this deployment's DSN; an empty value is off.
   const { dsn } = resolveDsn({
     disabled: env.disabled,
     dsn: env.dsn,
@@ -85,13 +84,7 @@ export function addinSentryOptions(
 /** Initialise once per bundle entry (task pane, commands, OAuth dialog). */
 export function initAddinErrorReporting(surface: AddinSurface, runtimeDsn = ""): boolean {
   const options = addinSentryOptions(surface, {
-    disabled: process.env.REACT_APP_SENTRY_DISABLED,
     dsn: runtimeDsn,
-    install: process.env.REACT_APP_SENTRY_INSTALL,
-    environment: process.env.REACT_APP_SENTRY_ENVIRONMENT,
-    release: process.env.REACT_APP_SENTRY_RELEASE,
-    gitSha: process.env.REACT_APP_GIT_SHA,
-    tracesSampleRate: process.env.REACT_APP_SENTRY_TRACES_SAMPLE_RATE,
     nodeEnv: process.env.NODE_ENV,
   });
   if (!options.enabled) return false;

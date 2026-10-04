@@ -12,7 +12,7 @@ const state = vi.hoisted(() => ({
     scopes: [] as FakeScope[],
 }));
 
-vi.mock("@sentry/nextjs", () => ({
+vi.mock("@sentry/react", () => ({
     isEnabled: () => state.enabled,
     captureException: vi.fn(() => "exc-1"),
     captureMessage: vi.fn(() => "msg-1"),
@@ -33,18 +33,16 @@ vi.mock("@sentry/nextjs", () => ({
     },
 }));
 
-import * as Sentry from "@sentry/nextjs";
+import * as Sentry from "@sentry/react";
 import {
     browserSentryOptions,
     reportApiFailure,
     reportError,
     scrubEvent,
-    serverSentryOptions,
     setReportingUser,
     reportNetworkFailure,
     trackPendingRequest,
 } from "./errorReporting";
-import { MIKE_SENTRY_DSN } from "@/shared/lib/sentryEvent";
 
 afterEach(() => {
     state.enabled = false;
@@ -173,10 +171,10 @@ describe("setReportingUser", () => {
 });
 
 describe("browserSentryOptions", () => {
-    it("is ON BY DEFAULT with the Mike project DSN and never turns on PII or replay", () => {
+    it("is disabled until the deployment provides a DSN and never turns on PII or replay", () => {
         const options = browserSentryOptions({ nodeEnv: "test" });
-        expect(options.enabled).toBe(true);
-        expect(options.dsn).toBe(MIKE_SENTRY_DSN.frontend);
+        expect(options.enabled).toBe(false);
+        expect(options.dsn).toBeUndefined();
         expect(options.environment).toBe("self-hosted");
         expect(options.release).toBeUndefined();
         expect(options.sendDefaultPii).toBe(false);
@@ -225,66 +223,8 @@ describe("browserSentryOptions", () => {
 });
 
 describe("release tagging", () => {
-    it("falls back to the git sha for both the browser and the server options", () => {
-        expect(browserSentryOptions({ dsn: "https://k@o.ingest.sentry.io/1", gitSha: "abcdef1234567890" }).release).toBe(
-            "mike@abcdef123456",
-        );
-        expect(
-            serverSentryOptions("server", {
-                NODE_ENV: "test",
-                SENTRY_DSN: "https://k@o.ingest.sentry.io/1",
-                GIT_SHA: "abcdef1234567890",
-            } as NodeJS.ProcessEnv).release,
-        ).toBe("mike@abcdef123456");
-        expect(
-            serverSentryOptions("server", {
-                NODE_ENV: "test",
-                SENTRY_RELEASE: "mike@3.1.0",
-                GIT_SHA: "abcdef1234567890",
-            } as NodeJS.ProcessEnv).release,
-        ).toBe("mike@3.1.0");
-    });
-});
-
-describe("serverSentryOptions", () => {
-    it("reads runtime env and tags the runtime", () => {
-        const options = serverSentryOptions("edge", {
-            SENTRY_DSN: "https://k@o1.ingest.sentry.io/3",
-            SENTRY_ENVIRONMENT: "prod",
-            SENTRY_RELEASE: "r1",
-            SENTRY_TRACES_SAMPLE_RATE: "0.1",
-        } as unknown as NodeJS.ProcessEnv);
-        expect(options.enabled).toBe(true);
-        expect(options.environment).toBe("prod");
-        expect(options.release).toBe("r1");
-        expect(options.tracesSampleRate).toBe(0.1);
-        expect(options.initialScope).toEqual({
-            tags: { service: "mike-frontend", runtime: "edge", install: "community", diagnostics_version: "2" },
-        });
-        expect(options.beforeSend).toBe(scrubEvent);
-    });
-
-    it("is ON BY DEFAULT without config, off with SENTRY_DISABLED, official only when marked", () => {
-        const options = serverSentryOptions(
-            "server",
-            {} as unknown as NodeJS.ProcessEnv,
-        );
-        expect(options.enabled).toBe(true);
-        expect(options.dsn).toBe(MIKE_SENTRY_DSN.frontend);
-        expect(options.release).toBeUndefined();
-        expect(options.environment).toBe("self-hosted");
-        const withNodeEnv = serverSentryOptions("server", {
-            NODE_ENV: "production",
-        } as unknown as NodeJS.ProcessEnv);
-        expect(withNodeEnv.environment).toBe("self-hosted");
-        const off = serverSentryOptions("server", {
-            SENTRY_DISABLED: "true",
-        } as unknown as NodeJS.ProcessEnv);
-        expect(off.enabled).toBe(false);
-        const official = serverSentryOptions("server", {
-            SENTRY_INSTALL: "official",
-        } as unknown as NodeJS.ProcessEnv);
-        expect((official.initialScope as { tags: { install: string } }).tags.install).toBe("official");
+    it("uses the browser git sha", () => {
+        expect(browserSentryOptions({ dsn: "https://k@o.ingest.sentry.io/1", gitSha: "abcdef1234567890" }).release).toBe("mike@abcdef123456");
     });
 });
 

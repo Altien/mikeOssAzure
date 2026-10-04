@@ -3,8 +3,7 @@
 //
 // Design rules, in priority order:
 //
-//   1. ON BY DEFAULT for community installs; SENTRY_DISABLED=true opts out.
-//      An explicit DSN overrides Mike's project. Test processes stay disabled
+//   1. Disabled unless this deployment supplies a DSN. Test processes stay disabled
 //      unless SENTRY_ALLOW_IN_TESTS=true is explicitly set.
 //   2. NEVER LEAK DOCUMENT CONTENT OR CREDENTIALS. This is a legal platform:
 //      request bodies carry privileged documents and chat transcripts, and
@@ -522,9 +521,7 @@ function parseRate(raw: string | undefined, fallback: number): number {
 }
 
 export function sentryConfiguration(env: NodeJS.ProcessEnv = process.env) {
-  // ON BY DEFAULT: without SENTRY_DISABLED or a DSN of your own, errors go
-  // to the Mike project's Sentry as a community install (see the README's
-  // Telemetry section). Only Mike's own deployment sets SENTRY_INSTALL.
+  // This deployment explicitly configures a DSN; no upstream default address.
   const resolved = resolveDsn({
     disabled: env.SENTRY_DISABLED,
     dsn: env.SENTRY_DSN,
@@ -835,12 +832,7 @@ export function initSentry(
     beforeSend: scrubEvent,
   });
   initialized = true;
-  if (config.dsnSource === "default") {
-    console.log(
-      `[sentry] enabled for ${role} → Mike project Sentry (${config.install} install). ` +
-        "Opt out with SENTRY_DISABLED=true or point SENTRY_DSN at your own project.",
-    );
-  } else {
+  if (config.dsnSource !== "default") {
     console.log(
       `[sentry] enabled for ${role} (environment ${config.environment}` +
         `${config.release ? `, release ${config.release}` : ""})`,

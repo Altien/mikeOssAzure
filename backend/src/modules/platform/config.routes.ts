@@ -26,7 +26,7 @@
 // operator rotates a value.
 
 import { Router } from "express";
-import { getConfig } from "../../lib/config";
+import { getConfig, getKeyVaultConfig } from "../../lib/config";
 
 export const configRouter = Router();
 
@@ -35,6 +35,10 @@ async function configValue(name: string): Promise<string> {
 }
 
 configRouter.get("/", async (_req, res) => {
+    const [frontendTelemetryDsn, wordTelemetryDsn] = await Promise.all([
+        getKeyVaultConfig("sentry-frontend-dsn").catch(() => ""),
+        getKeyVaultConfig("sentry-word-dsn").catch(() => ""),
+    ]);
     const provider = (process.env.AUTH_PROVIDER ?? "supabase").toLowerCase();
     const authProvider =
         provider === "entra" || provider === "local" ? provider : "supabase";
@@ -76,7 +80,7 @@ configRouter.get("/", async (_req, res) => {
         entra: { tenantId, clientId, apiScope },
         backendOrigin,
         frontendOrigin: process.env.FRONTEND_URL || "",
-        sentryDsn: process.env.SENTRY_FRONTEND_DSN || "",
-        wordSentryDsn: process.env.SENTRY_WORD_DSN || "",
+        sentryDsn: frontendTelemetryDsn || process.env.SENTRY_FRONTEND_DSN || "",
+        wordSentryDsn: wordTelemetryDsn || process.env.SENTRY_WORD_DSN || "",
     });
 });

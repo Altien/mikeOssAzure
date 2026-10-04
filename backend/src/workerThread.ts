@@ -14,7 +14,7 @@ import { startAllWorkers, stopAllWorkers } from "./workerRuntime";
 import { flushSentry, reportError } from "./lib/observability/sentry";
 import { initSentry } from "./lib/observability/sentry";
 
-initSentry("worker");
+initSentry("worker-thread");
 void startAllWorkers().then(() => {
     parentPort?.postMessage("ready");
     console.log("[worker-thread] background workers started");

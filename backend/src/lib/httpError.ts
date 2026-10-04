@@ -82,7 +82,7 @@ export function sendInternalError(
   console.error("[http/internal-error]", {
     requestId,
     method: res.req?.method,
-    path: res.req?.originalUrl,
+    route: requestRoutePattern(res.req),
     error: safeErrorLog(error),
   });
 

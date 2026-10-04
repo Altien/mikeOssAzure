@@ -1,5 +1,9 @@
 # Sentry data audit
 
+This records the upstream source audit. The Azure fork's current configuration
+is documented in [observability](observability.md): reporting is opt-in through
+deployment Key Vault/runtime config and never uses a built-in maintainer DSN.
+
 ## Current policy after the audit fixes
 
 The final transport boundary now applies the same explicit allowlist in all

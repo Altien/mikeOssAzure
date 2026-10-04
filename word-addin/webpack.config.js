@@ -156,6 +156,7 @@ module.exports = async (_env, options) => {
         // same SVGs and emits content-hashed copies for the add-in bundle.
         "@icons": path.resolve(__dirname, "..", "frontend", "public", "icons"),
         "@mike/edit-card-ui": frontendSharedUi("EditCardUI.tsx"),
+        "@mike/sentry-event": frontendShared("lib", "sentryEvent.ts"),
         "@mike/edit-cards-section-ui": frontendSharedUi(
           "EditCardsSectionUI.tsx",
         ),

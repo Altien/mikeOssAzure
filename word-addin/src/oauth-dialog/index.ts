@@ -3,7 +3,10 @@ import {
   GOOGLE_OAUTH_MESSAGE_TYPE,
   type GoogleOAuthDialogMessage,
 } from "../taskpane/auth/oauthProtocol";
-import { API_BASE_URL } from "../taskpane/auth/runtimeConfig";
+import { API_BASE_URL, loadRuntimeConfig } from "../taskpane/auth/runtimeConfig";
+import { initAddinErrorReporting } from "../taskpane/lib/errorReporting";
+
+void loadRuntimeConfig().then((config) => initAddinErrorReporting("oauth-dialog", config.wordSentryDsn)).catch(() => {});
 
 const API_BASE = API_BASE_URL;
 const REQUEST_STORAGE_KEY = "mike-word-google-oauth-request";

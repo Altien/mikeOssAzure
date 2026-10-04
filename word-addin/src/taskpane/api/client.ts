@@ -313,18 +313,6 @@ export async function updateLastSelectedReasoningLevel(
   });
 }
 
-export interface ApiKeyStatus {
-    kimi?: boolean;
-    azure_openai?: boolean;
-    claude: boolean;
-    gemini: boolean;
-    openai: boolean;
-    openrouter: boolean;
-    vercel: boolean;
-    "opencode-go": boolean;
-    courtlistener: boolean;
-}
-
 export async function getApiKeyStatus(): Promise<ApiKeyStatus> {
   return apiRequest<ApiKeyStatus>("/user/api-keys");
 }

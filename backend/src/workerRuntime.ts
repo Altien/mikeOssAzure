@@ -29,6 +29,8 @@ import { initServerSessionKeys } from "./lib/serverSession";
 import { initDownloadSigningSecret } from "./lib/downloadTokens";
 import { initManifestSigningKey, manifestPublicKey } from "./lib/manifestSigning";
 import { enforceDocumentLifecycleMigration } from "./lib/dbq/lifecycleGuard";
+import { reportError } from "./lib/observability/sentry";
+import { safeErrorLog } from "./lib/safeError";
 
 const SWEEP_INTERVAL_MS = (() => {
     const raw = Number(process.env.STALE_SWEEP_INTERVAL_MS);
@@ -142,7 +144,7 @@ export async function startAllWorkers(): Promise<void> {
             })
             .catch((err) => {
                 reportError(err, { tags: { component: "stale-sweep" } });
-                console.error("[stale-sweep] failed", err);
+                console.warn("[stale-sweep] failed", safeErrorLog(err));
             });
     initialSweep = setTimeout(runSweep, 30_000);
     initialSweep.unref();
@@ -155,7 +157,7 @@ export async function startAllWorkers(): Promise<void> {
     const runMcpRefresh = () =>
         void runMcpTokenRefreshSweep().catch((err) => {
             reportError(err, { tags: { component: "mcp-refresh-sweep" } });
-            console.error("[mcp-refresh-sweep] failed", err);
+            console.warn("[mcp-refresh-sweep] failed", safeErrorLog(err));
         });
     mcpRefreshTimer = setInterval(runMcpRefresh, MCP_REFRESH_SWEEP_INTERVAL_MS);
     mcpRefreshTimer.unref();

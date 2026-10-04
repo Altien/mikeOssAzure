@@ -87,9 +87,9 @@ afterEach(() => {
 });
 
 describe("sentryConfiguration", () => {
-  it("is ON BY DEFAULT: the Mike project DSN, a community install, environment self-hosted", () => {
+  it("is disabled until this deployment configures a DSN", () => {
     const config = sentryConfiguration({ NODE_ENV: "production" } as NodeJS.ProcessEnv);
-    expect(config.enabled).toBe(true);
+    expect(config.enabled).toBe(false);
     expect(config.dsn).toBe(MIKE_SENTRY_DSN.backend);
     expect(config.dsnSource).toBe("default");
     expect(config.install).toBe("community");

@@ -79,7 +79,7 @@ export function protectInternalErrorResponses(
     console.error("[http/sanitized-internal-error]", {
       requestId,
       method: req.method,
-      path: req.originalUrl,
+      route,
       status: res.statusCode,
       error: safeErrorLog(errorBody?.detail ?? body),
     });

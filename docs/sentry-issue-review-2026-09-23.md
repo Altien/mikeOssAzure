@@ -1,5 +1,9 @@
 # Sentry open-issue review — 2026-09-23 UTC
 
+Historical upstream issue snapshot. The Azure fork uses opt-in deployment
+telemetry as described in [observability](observability.md); these issue counts
+are not evidence of Azure deployment behavior.
+
 Snapshot: `mike-xp`, `is:unresolved`, 90-day window, all projects, limit 100.
 The latest refresh returned 28 issues (14 backend, 14 frontend, none in the
 Word add-in): 24 non-test issues and four historical synthetic/probe issues.
