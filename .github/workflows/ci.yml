@@ -46,6 +46,8 @@ jobs:
 
   word-addin:
     runs-on: ubuntu-latest
+    env:
+      REACT_APP_API_BASE_URL: /api
     defaults:
       run:
         working-directory: word-addin
