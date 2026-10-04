@@ -13,6 +13,7 @@ import { McpConnectorDetailsModal } from "@/app/components/settings/McpConnector
 import {
   WarningPopup,
 } from "@/app/components/popups/WarningPopup";
+import {
   type McpConnectorSummary,
   MikeApiError,
   isConnectorSetupError,
