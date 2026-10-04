@@ -10,6 +10,7 @@ import {
   decryptString,
   stateHash,
 } from "../mcp/client";
+import { resolveProviderSecret } from "../envSecrets";
 import { googleDriveOAuthEnv } from "./googleDrive";
 import { googleDriveRequest } from "./googleDriveHttp";
 
@@ -30,15 +31,10 @@ export const GOOGLE_PROVIDERS = {
   },
 } as const;
 export class GoogleWorkspaceError extends Error {}
-export function googleWorkspaceEnv() {
-  if (
-    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_ID?.trim() ||
-    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET?.trim()
-  )
-    return {
-      clientId: process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_ID?.trim(),
-      clientSecret: process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET?.trim(),
-    };
+export async function googleWorkspaceEnv() {
+  const clientId = await resolveProviderSecret("google-workspace-oauth-client-id");
+  const clientSecret = await resolveProviderSecret("google-workspace-oauth-client-secret");
+  if (clientId || clientSecret) return { clientId, clientSecret };
   return googleDriveOAuthEnv();
 }
 export function requiredScopes(
@@ -48,19 +44,19 @@ export function requiredScopes(
   const config = GOOGLE_PROVIDERS[provider];
   return ["openid", "email", ...config.read, ...(write ? config.write : [])];
 }
-export function encryptFields(prefix: string, value: string) {
-  const enc = encryptString(value);
+export async function encryptFields(prefix: string, value: string) {
+  const enc = await encryptString(value);
   return {
     [`encrypted_${prefix}`]: enc.encrypted,
     [`${prefix}_iv`]: enc.iv,
     [`${prefix}_tag`]: enc.tag,
   };
 }
-export function decryptFields(
+export async function decryptFields(
   row: Record<string, unknown>,
   prefix: string,
-): string {
-  const value = decryptString(
+): Promise<string> {
+  const value = await decryptString(
     String(row[`encrypted_${prefix}`]),
     String(row[`${prefix}_iv`]),
     String(row[`${prefix}_tag`]),
@@ -99,7 +95,7 @@ export async function workspaceStatus(
   userId: string,
   provider: GoogleProvider,
 ): Promise<Omit<GoogleWorkspaceStatus, "redirectUri">> {
-  const env = googleWorkspaceEnv();
+  const env = await googleWorkspaceEnv();
   const configured = !!(env.clientId && env.clientSecret);
   try {
     const row = await loadWorkspaceGrant(db, userId, provider);
@@ -137,7 +133,7 @@ export async function startWorkspaceOAuth(
   redirectUri: string,
   write = false,
 ) {
-  const env = googleWorkspaceEnv();
+  const env = await googleWorkspaceEnv();
   if (!env.clientId || !env.clientSecret)
     throw new GoogleWorkspaceError(
       "Configure a Google OAuth client on this server first.",
@@ -154,7 +150,7 @@ export async function startWorkspaceOAuth(
     user_id: userId,
     provider,
     state_hash: stateHash(state),
-    ...encryptFields("state_config", JSON.stringify({ verifier, redirectUri })),
+    ...await encryptFields("state_config", JSON.stringify({ verifier, redirectUri })),
     write_enabled: write,
     expires_at: new Date(Date.now() + 600_000).toISOString(),
   });
@@ -175,7 +171,7 @@ export async function startWorkspaceOAuth(
   }).toString();
   return { authorizationUrl: url.toString() };
 }
-function tokenPatch(
+async function tokenPatch(
   token: Record<string, unknown>,
   provider: GoogleProvider,
   write: boolean,
@@ -207,9 +203,9 @@ function tokenPatch(
       "Required Google permissions were not granted. Reconnect and grant the requested access.",
     );
   return {
-    ...encryptFields("access_token", token.access_token),
+    ...await encryptFields("access_token", token.access_token),
     ...(typeof token.refresh_token === "string" && token.refresh_token
-      ? encryptFields("refresh_token", token.refresh_token)
+      ? await encryptFields("refresh_token", token.refresh_token)
       : {}),
     scope,
     expires_at: new Date(Date.now() + token.expires_in * 1000).toISOString(),
@@ -235,11 +231,11 @@ export async function completeWorkspaceOAuth(
     throw new GoogleWorkspaceError(
       "Authorization expired or was cancelled. Connect again.",
     );
-  const config = JSON.parse(decryptFields(data, "state_config")) as {
+  const config = JSON.parse(await decryptFields(data, "state_config")) as {
     verifier: string;
     redirectUri: string;
   };
-  const env = googleWorkspaceEnv();
+  const env = await googleWorkspaceEnv();
   if (!env.clientId || !env.clientSecret)
     throw new Error("Google OAuth not configured");
   const response = await workspaceRequest(
@@ -265,7 +261,7 @@ export async function completeWorkspaceOAuth(
     throw new GoogleWorkspaceError(
       "Google authorization did not provide offline access. Reconnect.",
     );
-  const patch = tokenPatch(token, provider, data.write_enabled === true);
+  const patch = await tokenPatch(token, provider, data.write_enabled === true);
   const identityResponse = await workspaceRequest(
     "https://openidconnect.googleapis.com/v1/userinfo",
     { headers: { Authorization: `Bearer ${token.access_token}` } },
@@ -341,8 +337,8 @@ export async function workspaceAccessToken(
       "Google connection changed or is disconnected. Reconnect and request a new action.",
     );
   if (Date.parse(String(row.expires_at)) - Date.now() > 60_000)
-    return decryptFields(row, "access_token");
-  const env = googleWorkspaceEnv();
+    return await decryptFields(row, "access_token");
+  const env = await googleWorkspaceEnv();
   if (!env.clientId || !env.clientSecret)
     throw new GoogleWorkspaceError("Google OAuth is not configured.");
   const response = await workspaceRequest(
@@ -351,7 +347,7 @@ export async function workspaceAccessToken(
       method: "POST",
       body: new URLSearchParams({
         grant_type: "refresh_token",
-        refresh_token: decryptFields(row, "refresh_token"),
+        refresh_token: await decryptFields(row, "refresh_token"),
         client_id: env.clientId,
         client_secret: env.clientSecret,
       }),
@@ -374,7 +370,7 @@ export async function workspaceAccessToken(
   }
   const { data: saved, error } = await db
     .from("user_google_workspace_tokens")
-    .update(tokenPatch(token, provider, row.write_enabled === true, row))
+    .update(await tokenPatch(token, provider, row.write_enabled === true, row))
     .eq("user_id", userId)
     .eq("provider", provider)
     .eq("grant_id", row.grant_id)
@@ -389,7 +385,7 @@ export async function workspaceAccessToken(
       current.grant_id === row.grant_id &&
       Date.parse(String(current?.expires_at)) - Date.now() > 60_000
     )
-      return decryptFields(current, "access_token");
+      return await decryptFields(current, "access_token");
     throw new GoogleWorkspaceError(
       "Google connection changed. Please try again.",
     );

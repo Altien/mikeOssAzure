@@ -13,9 +13,9 @@ import type { Db } from "../../mcp/types";
 import { driveDb } from "./googleDriveDb";
 const makeDb = (options: Parameters<typeof driveDb>[0]) => driveDb(options).db;
 
-function encryptedTokenRow(overrides: Partial<Record<string, unknown>> = {}) {
-    const access = encryptString("access-token-1");
-    const refresh = encryptString("refresh-token-1");
+async function encryptedTokenRow(overrides: Partial<Record<string, unknown>> = {}) {
+    const access = await encryptString("access-token-1");
+    const refresh = await encryptString("refresh-token-1");
     return {
         user_id: "user-1",
         encrypted_access_token: access.encrypted,
@@ -44,7 +44,7 @@ beforeEach(() => {
     delete process.env.GOOGLE_MCP_OAUTH_CLIENT_ID;
     delete process.env.GOOGLE_MCP_OAUTH_CLIENT_SECRET;
     // encryptString/decryptString derive their AES key from this secret.
-    process.env.MCP_CONNECTORS_ENCRYPTION_SECRET ??= "test-encryption-secret";
+    process.env.MCP_CONNECTORS_ENCRYPTION_KEY ??= "test-encryption-secret";
 });
 
 afterEach(() => {
@@ -188,7 +188,7 @@ describe("buildGoogleDriveTools", () => {
     it("offers the three read-only tools once connected", async () => {
         const tools = (await buildGoogleDriveTools(
             "user-1",
-            makeDb({ tokenRow: encryptedTokenRow() }),
+            makeDb({ tokenRow: await encryptedTokenRow() }),
         )) as { function: { name: string } }[];
         expect(tools.map((t) => t.function.name)).toEqual([
             "google_drive_search",
@@ -237,7 +237,7 @@ describe("executeGoogleDriveToolCall", () => {
             "user-1",
             "google_drive_search",
             { query: "I485 'summary'" },
-            makeDb({ tokenRow: encryptedTokenRow() }),
+            makeDb({ tokenRow: await encryptedTokenRow() }),
         );
         const parsed = JSON.parse(content);
         expect(parsed.ok).toBe(true);
@@ -269,7 +269,7 @@ describe("executeGoogleDriveToolCall", () => {
             "user-1",
             "google_drive_read_file",
             { file_id: "doc1" },
-            makeDb({ tokenRow: encryptedTokenRow() }),
+            makeDb({ tokenRow: await encryptedTokenRow() }),
         );
         const parsed = JSON.parse(content);
         expect(parsed.ok).toBe(true);
@@ -279,7 +279,7 @@ describe("executeGoogleDriveToolCall", () => {
     it("drops the token row and reports reconnect when the refresh grant is revoked", async () => {
         const deletes: string[] = [];
         const db = makeDb({
-            tokenRow: encryptedTokenRow({
+            tokenRow: await encryptedTokenRow({
                 // Expired, forcing a refresh attempt.
                 expires_at: new Date(Date.now() - 1000).toISOString(),
             }),

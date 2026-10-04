@@ -27,6 +27,7 @@ import {
     encryptString,
     stateHash,
 } from "../mcp/client";
+import { resolveProviderSecret } from "../envSecrets";
 import { ConnectorSetupError } from "../mcp/errors";
 import type { Db } from "../supabase";
 import type { McpToolEvent } from "../mcp/types";
@@ -67,25 +68,14 @@ export class GoogleDriveAuthRequiredError extends GoogleDriveUserError {
  * connectors when a dedicated one isn't set — one Cloud Console setup serves
  * both features.
  */
-export function googleDriveOAuthEnv(): {
-    clientId?: string;
-    clientSecret?: string;
-} {
-    // Select a complete profile; never mix a Drive client ID with an MCP secret.
-    const dedicated = !!(
-        process.env.GOOGLE_DRIVE_OAUTH_CLIENT_ID?.trim() ||
-        process.env.GOOGLE_DRIVE_OAUTH_CLIENT_SECRET?.trim()
-    );
-    return dedicated
-        ? {
-              clientId: process.env.GOOGLE_DRIVE_OAUTH_CLIENT_ID?.trim(),
-              clientSecret:
-                  process.env.GOOGLE_DRIVE_OAUTH_CLIENT_SECRET?.trim(),
-          }
-        : {
-              clientId: process.env.GOOGLE_MCP_OAUTH_CLIENT_ID?.trim(),
-              clientSecret: process.env.GOOGLE_MCP_OAUTH_CLIENT_SECRET?.trim(),
-          };
+export async function googleDriveOAuthEnv(): Promise<{ clientId?: string; clientSecret?: string }> {
+    const dedicatedId = await resolveProviderSecret("google-drive-oauth-client-id");
+    const dedicatedSecret = await resolveProviderSecret("google-drive-oauth-client-secret");
+    if (dedicatedId || dedicatedSecret) return { clientId: dedicatedId, clientSecret: dedicatedSecret };
+    return {
+        clientId: await resolveProviderSecret("google-mcp-oauth-client-id"),
+        clientSecret: await resolveProviderSecret("google-mcp-oauth-client-secret"),
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -117,7 +107,7 @@ export async function startGoogleDriveOAuth(
     redirectUri: string,
     db: Db = createServerSupabase(),
 ): Promise<{ authorizationUrl: string }> {
-    const env = googleDriveOAuthEnv();
+    const env = await googleDriveOAuthEnv();
     if (!env.clientId || !env.clientSecret) {
         throw new ConnectorSetupError(
             googleDriveSetupInstructions(redirectUri),
@@ -136,7 +126,7 @@ export async function startGoogleDriveOAuth(
         crypto.createHash("sha256").update(codeVerifier).digest(),
     );
     const stateToken = base64Url(crypto.randomBytes(24));
-    const encrypted = encryptString(
+    const encrypted = await encryptString(
         JSON.stringify({ codeVerifier, redirectUri } satisfies StateConfig),
     );
     const { error } = await db.from("google_drive_oauth_states").insert({
@@ -181,14 +171,14 @@ export async function completeGoogleDriveOAuth(
     if (error) throw error;
     if (!data) throw new Error("OAuth state is invalid or expired.");
 
-    const decrypted = decryptString(
+    const decrypted = await decryptString(
         String(data.encrypted_state_config),
         String(data.state_config_iv),
         String(data.state_config_tag),
     );
     if (!decrypted) throw new Error("OAuth state could not be decrypted.");
     const config = JSON.parse(decrypted) as StateConfig;
-    const env = googleDriveOAuthEnv();
+    const env = await googleDriveOAuthEnv();
     if (!env.clientId || !env.clientSecret) {
         throw new Error("Google Drive OAuth client is not configured.");
     }
@@ -224,7 +214,7 @@ export async function completeGoogleDriveOAuth(
             "Google Drive read access and offline access are required. Please reconnect and grant access.",
         );
     }
-    const patch = tokenPatch(token);
+    const patch = await tokenPatch(token);
     const { data: completed, error: saveError } = await db.rpc(
         "complete_google_drive_oauth",
         {
@@ -240,7 +230,7 @@ export async function completeGoogleDriveOAuth(
     return { userId };
 }
 
-function tokenSecretPatch(prefix: string, value?: string | null) {
+async function tokenSecretPatch(prefix: string, value?: string | null) {
     if (!value) {
         return {
             [`encrypted_${prefix}`]: null,
@@ -248,7 +238,7 @@ function tokenSecretPatch(prefix: string, value?: string | null) {
             [`${prefix}_tag`]: null,
         };
     }
-    const encrypted = encryptString(value);
+    const encrypted = await encryptString(value);
     return {
         [`encrypted_${prefix}`]: encrypted.encrypted,
         [`${prefix}_iv`]: encrypted.iv,
@@ -263,7 +253,7 @@ function hasDriveScope(scope: unknown): boolean {
     );
 }
 
-function tokenPatch(token: Record<string, unknown>, existing?: TokenRow) {
+async function tokenPatch(token: Record<string, unknown>, existing?: TokenRow) {
     if (
         typeof token.access_token !== "string" ||
         !token.access_token ||
@@ -279,9 +269,9 @@ function tokenPatch(token: Record<string, unknown>, existing?: TokenRow) {
             "Google Drive read permission is missing. Reconnect Google Drive.",
         );
     return {
-        ...tokenSecretPatch("access_token", token.access_token),
+        ...await tokenSecretPatch("access_token", token.access_token),
         ...(typeof token.refresh_token === "string" && token.refresh_token
-            ? tokenSecretPatch("refresh_token", token.refresh_token)
+            ? await tokenSecretPatch("refresh_token", token.refresh_token)
             : {
                   encrypted_refresh_token: existing?.encrypted_refresh_token,
                   refresh_token_iv: existing?.refresh_token_iv,
@@ -348,7 +338,7 @@ export async function getGoogleDriveStatus(
     userId: string,
     db: Db = createServerSupabase(),
 ): Promise<GoogleDriveStatus> {
-    const env = googleDriveOAuthEnv();
+    const env = await googleDriveOAuthEnv();
     const configured = !!(env.clientId && env.clientSecret);
     let row: TokenRow | null;
     try {
@@ -411,14 +401,14 @@ async function getAccessToken(userId: string, db: Db): Promise<string> {
 
     const expiresAt = row.expires_at ? Date.parse(row.expires_at) : 0;
     const fresh = expiresAt - Date.now() > TOKEN_REFRESH_LEEWAY_MS;
-    const accessToken = decryptString(
+    const accessToken = await decryptString(
         row.encrypted_access_token,
         row.access_token_iv,
         row.access_token_tag,
     );
     if (fresh && accessToken) return accessToken;
 
-    const refreshToken = decryptString(
+    const refreshToken = await decryptString(
         row.encrypted_refresh_token,
         row.refresh_token_iv,
         row.refresh_token_tag,
@@ -429,7 +419,7 @@ async function getAccessToken(userId: string, db: Db): Promise<string> {
         );
     }
 
-    const env = googleDriveOAuthEnv();
+    const env = await googleDriveOAuthEnv();
     if (!env.clientId || !env.clientSecret) {
         throw new GoogleDriveAuthRequiredError(
             "Google Drive OAuth client is not configured.",
@@ -468,7 +458,7 @@ async function getAccessToken(userId: string, db: Db): Promise<string> {
     // overwrite a new grant from another tab / another Google account.
     const { data: updated, error } = await db
         .from("user_google_drive_tokens")
-        .update(tokenPatch(token, row))
+        .update(await tokenPatch(token, row))
         .eq("user_id", userId)
         .eq("encrypted_access_token", row.encrypted_access_token)
         .select("user_id")
@@ -481,7 +471,7 @@ async function getAccessToken(userId: string, db: Db): Promise<string> {
             Date.parse(current.expires_at ?? "") - Date.now() >
                 TOKEN_REFRESH_LEEWAY_MS
         ) {
-            const access = decryptString(
+            const access = await decryptString(
                 current.encrypted_access_token,
                 current.access_token_iv,
                 current.access_token_tag,

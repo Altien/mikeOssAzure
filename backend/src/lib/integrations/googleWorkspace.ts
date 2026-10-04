@@ -118,7 +118,7 @@ export async function executeGoogleWorkspaceToolCall(
           user_id: userId,
           provider,
           grant_id: grant.grant_id,
-          ...encryptFields("payload", serialized),
+          ...await encryptFields("payload", serialized),
           expires_at: new Date(Date.now() + 600_000).toISOString(),
         })
         .select("id,expires_at")
@@ -166,7 +166,7 @@ export async function listWorkspaceActions(
     .order("created_at", { ascending: false })
     .limit(50);
   if (error) throw error;
-  return (data ?? []).map((row) => ({
+  return Promise.all((data ?? []).map(async (row) => ({
     id: row.id,
     provider: row.provider,
     status:
@@ -176,8 +176,8 @@ export async function listWorkspaceActions(
     expiresAt: row.expires_at,
     createdAt: row.created_at,
     resultMessage: row.result_message,
-    proposal: JSON.parse(decryptFields(row, "payload")),
-  }));
+    proposal: JSON.parse(await decryptFields(row, "payload")),
+  })));
 }
 export async function rejectWorkspaceAction(
   db: Db,
@@ -218,7 +218,7 @@ export async function approveWorkspaceAction(
   let message = "Action could not be completed. Request a new proposal.";
   let attempted = false;
   try {
-    const action = JSON.parse(decryptFields(row, "payload")) as WorkspaceAction;
+    const action = JSON.parse(await decryptFields(row, "payload")) as WorkspaceAction;
     const token = await workspaceAccessToken(
       db,
       userId,

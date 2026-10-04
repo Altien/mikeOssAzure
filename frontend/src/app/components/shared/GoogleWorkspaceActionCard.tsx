@@ -1,11 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { GoogleWorkspaceActionReview } from "@mike/contracts";
-import { MfaVerificationPopup } from "@/app/components/popups/MfaVerificationPopup";
 import {
   decideGoogleWorkspaceAction,
-  isMfaRequiredError,
   listGoogleWorkspaceActions,
 } from "@/app/lib/mikeApi";
 import { userFacingApiError } from "@/app/lib/userFacingError";
@@ -156,8 +154,6 @@ export function InlineGoogleWorkspaceAction({ actionId }: { actionId: string }) 
   const [action, setAction] = useState<GoogleWorkspaceActionReview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [mfa, setMfa] = useState(false);
-  const retryRef = useRef<(() => Promise<void>) | null>(null);
 
   const refresh = useCallback(async () => {
     const result = await listGoogleWorkspaceActions();
@@ -194,21 +190,11 @@ export function InlineGoogleWorkspaceAction({ actionId }: { actionId: string }) 
     try {
       await run();
     } catch (cause) {
-      if (isMfaRequiredError(cause)) {
-        retryRef.current = run;
-        setMfa(true);
-      } else {
-        setError(
-          userFacingApiError(
-            cause,
-            "Could not complete this decision. Refresh and check its status before retrying.",
-          ),
-        );
-        try {
-          await refresh();
-        } catch {
-          // Preserve the original decision error.
-        }
+      setError(userFacingApiError(cause, "Could not complete this decision. Refresh and check its status before retrying."));
+      try {
+        await refresh();
+      } catch {
+        // Preserve the original decision error.
       }
     } finally {
       setBusy(false);
@@ -234,27 +220,6 @@ export function InlineGoogleWorkspaceAction({ actionId }: { actionId: string }) 
           {error}
         </p>
       )}
-      <MfaVerificationPopup
-        open={mfa}
-        onCancel={() => {
-          setMfa(false);
-          retryRef.current = null;
-        }}
-        onVerified={() => {
-          setMfa(false);
-          const retry = retryRef.current;
-          retryRef.current = null;
-          if (retry)
-            void retry().catch((cause) =>
-              setError(
-                userFacingApiError(
-                  cause,
-                  "Could not complete the verified action.",
-                ),
-              ),
-            );
-        }}
-      />
     </div>
   );
 }

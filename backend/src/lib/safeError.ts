@@ -63,6 +63,7 @@ export function safeErrorLog(error: unknown): {
     name: null,
     message: safeErrorMessage(error),
   };
+}
 
 /** Diagnostics for credential-bearing integrations: never serialize provider
  * messages, response bodies, database details, URLs, or exception stacks. */

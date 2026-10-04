@@ -789,7 +789,6 @@ describe("Google Drive connection lifecycle", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.useFakeTimers();
-        vi.mocked(needsMfaVerification).mockResolvedValue(false);
         vi.mocked(listMcpConnectors).mockResolvedValue([]);
         vi.mocked(getGoogleDriveStatus).mockResolvedValue(ready);
         vi.mocked(startGoogleDriveOAuth).mockResolvedValue({

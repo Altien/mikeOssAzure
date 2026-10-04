@@ -12,10 +12,8 @@ import {
   disconnectGoogleWorkspace,
   listGoogleWorkspaceActions,
   decideGoogleWorkspaceAction,
-  isMfaRequiredError,
 } from "@/app/lib/mikeApi";
 import { userFacingApiError } from "@/app/lib/userFacingError";
-import { MfaVerificationPopup } from "@/app/components/popups/MfaVerificationPopup";
 import { GoogleWorkspaceActionCard } from "@/app/components/shared/GoogleWorkspaceActionCard";
 import { GoogleConnectionCard } from "./GoogleConnectionCard";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
@@ -289,8 +287,6 @@ export function GoogleWorkspacePanel({
   );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [mfa, setMfa] = useState(false);
-  const retryRef = useRef<(() => Promise<void>) | null>(null);
   const refresh = useCallback(async () => {
     try {
       const result = await listGoogleWorkspaceActions();
@@ -302,16 +298,7 @@ export function GoogleWorkspacePanel({
   useEffect(() => {
     void refresh();
   }, [refresh]);
-  const sensitive: Sensitive = async (action, retry = action) => {
-    try {
-      await action();
-    } catch (e) {
-      if (isMfaRequiredError(e)) {
-        retryRef.current = retry;
-        setMfa(true);
-      } else throw e;
-    }
-  };
+  const sensitive: Sensitive = async (action) => { await action(); };
   const decide = async (id: string, decision: "approve" | "reject") => {
     setError(null);
     setBusy(id);
@@ -394,27 +381,6 @@ export function GoogleWorkspacePanel({
           )}
         </section>
       </details>
-      <MfaVerificationPopup
-        open={mfa}
-        onCancel={() => {
-          setMfa(false);
-          retryRef.current = null;
-        }}
-        onVerified={() => {
-          setMfa(false);
-          const retry = retryRef.current;
-          retryRef.current = null;
-          if (retry)
-            void sensitive(retry).catch((e) =>
-              setError(
-                userFacingApiError(
-                  e,
-                  "Could not complete the verified action.",
-                ),
-              ),
-            );
-        }}
-      />
     </>
   );
 }

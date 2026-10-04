@@ -33,7 +33,7 @@ let fetchMock = vi.fn<typeof fetch>();
 beforeEach(() => {
   vi.stubEnv("GOOGLE_WORKSPACE_OAUTH_CLIENT_ID", "test-client");
   vi.stubEnv("GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET", "test-secret");
-  vi.stubEnv("MCP_CONNECTORS_ENCRYPTION_SECRET", "test-encryption-key");
+  vi.stubEnv("MCP_CONNECTORS_ENCRYPTION_KEY", "test-encryption-key");
   vi.spyOn(console, "error").mockImplementation(() => {});
   fetchMock = vi.fn<typeof fetch>();
   vi.stubGlobal("fetch", fetchMock);
@@ -261,7 +261,7 @@ describe("Google Workspace opt-in and OAuth", () => {
       json({ access_token: "fresh", expires_in: 3600 }),
     );
     expect(await workspaceAccessToken(s.db, "u1", "gmail")).toBe("fresh");
-    expect(decryptFields(row, "refresh_token")).toBe("refresh-secret");
+    expect(await decryptFields(row, "refresh_token")).toBe("refresh-secret");
     row.expires_at = "2000-01-01";
     fetchMock.mockImplementationOnce(async () => {
       await disconnectWorkspace(s.db, "u1", "gmail");
@@ -665,7 +665,7 @@ describe("additional Google service regression coverage", () => {
       "https://mike.test/api/callback",
     );
     const config = JSON.parse(
-      decryptFields(s.tables.google_workspace_oauth_states[0], "state_config"),
+      await decryptFields(s.tables.google_workspace_oauth_states[0], "state_config"),
     );
     fetchMock
       .mockImplementationOnce(async (_url, init) => {

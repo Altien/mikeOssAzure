@@ -19,15 +19,6 @@ vi.mock("@/app/lib/mikeApi", async (original) => ({
   listGoogleWorkspaceActions: vi.fn(),
   decideGoogleWorkspaceAction: vi.fn(),
 }));
-vi.mock("@/app/components/popups/MfaVerificationPopup", () => ({
-  MfaVerificationPopup: ({
-    open,
-    onVerified,
-  }: {
-    open: boolean;
-    onVerified: () => void;
-  }) => (open ? <button onClick={onVerified}>Verify test MFA</button> : null),
-}));
 const base = {
   configured: true,
   schemaReady: true,
@@ -213,39 +204,18 @@ describe("opt-in Google connections and action review", () => {
       ),
     );
   });
-  it("reopens OAuth after MFA instead of reusing a closed popup", async () => {
-    const popups = [
-      { location: { href: "" }, close: vi.fn() },
-      { location: { href: "" }, close: vi.fn() },
-    ];
-    vi.spyOn(window, "open")
-      .mockReturnValueOnce(popups[0] as unknown as Window)
-      .mockReturnValueOnce(popups[1] as unknown as Window);
-    vi.mocked(api.startGoogleWorkspaceOAuth)
-      .mockRejectedValueOnce(
-        new api.MikeApiError({
-          status: 403,
-          message: "MFA",
-          code: "mfa_verification_required",
-        }),
-      )
-      .mockResolvedValueOnce({
-        authorizationUrl: "https://accounts.google.com/auth?state=state",
-      });
+  it("does not retry OAuth automatically after the identity provider rejects the start", async () => {
+    const popup = { location: { href: "" }, close: vi.fn() };
+    vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+    vi.mocked(api.startGoogleWorkspaceOAuth).mockRejectedValueOnce(
+      new api.MikeApiError({ status: 403, message: "Additional sign-in required", code: "authentication_failed" }),
+    );
     await openPanel();
     await screen.findAllByText("Not connected");
     fireEvent.click(screen.getByRole("button", { name: "Add Gmail" }));
-    await screen.findByRole("button", { name: "Verify test MFA" });
-    vi.mocked(api.getGoogleWorkspaceStatus).mockResolvedValue({
-      ...base,
-      connected: true,
-      grantId: "new",
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Verify test MFA" }));
-    await waitFor(() => expect(window.open).toHaveBeenCalledTimes(2));
-    await waitFor(() =>
-      expect(popups[1].location.href).toContain("accounts.google.com"),
-    );
+    await screen.findByText(/Additional sign-in required/);
+    expect(api.startGoogleWorkspaceOAuth).toHaveBeenCalledTimes(1);
+    expect(window.open).toHaveBeenCalledTimes(1);
   });
   it("opens Google directly on Add and cancels consent from the card", async () => {
     vi.spyOn(window, "open").mockReturnValue({ location: { href: "" }, close: vi.fn() } as unknown as Window);

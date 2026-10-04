@@ -644,6 +644,7 @@ chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                 allowDocumentMutation,
                 workflowStore,
                 includeResearchTools: legalResearchUs,
+                includeGoogleConnectors: true,
                 model: selectedModel,
                 reasoning: selectedReasoningLevel,
                 apiKeys,

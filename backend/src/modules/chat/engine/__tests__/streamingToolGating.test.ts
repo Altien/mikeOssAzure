@@ -24,6 +24,7 @@ const { streamChatWithTools, runToolCalls } = vi.hoisted(() => ({
     courtlistenerEvents: [],
     caseCitationEvents: [],
     mcpEvents: [],
+    authorityTraceEvents: [],
   })),
 }));
 
@@ -123,6 +124,7 @@ describe("runLLMStream document-mutation gating", () => {
       courtlistenerEvents: [],
       caseCitationEvents: [],
       mcpEvents: [],
+      authorityTraceEvents: [],
     } as never);
     streamChatWithTools.mockImplementationOnce(
       async (params: { runTools?: RunToolsFn }) => {
@@ -219,5 +221,23 @@ describe("runLLMStream document-mutation gating", () => {
       (call) => call.function.name,
     );
     expect(dispatched).toEqual(["edit_document"]);
+  });
+
+  it("refuses forged Google proposals when the caller has no approval UI", async () => {
+    let result: { tool_use_id: string; content: string }[] | undefined;
+    streamChatWithTools.mockImplementation(async (params: { runTools?: RunToolsFn }) => {
+      result = await params.runTools?.([
+        { id: "google", name: "gmail_propose_send", input: { body: "private Word text" } },
+      ]);
+      return { fullText: "" };
+    });
+
+    await runLLMStream({ ...baseParams(), includeAskInputs: false });
+
+    expect(runToolCalls.mock.calls[0]?.[0]).toEqual([]);
+    expect(result?.[0]).toEqual({
+      tool_use_id: "google",
+      content: JSON.stringify({ error: "Tool 'gmail_propose_send' is not available." }),
+    });
   });
 });

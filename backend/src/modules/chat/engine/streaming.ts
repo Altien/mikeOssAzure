@@ -213,6 +213,8 @@ export async function runLLMStream(params: {
   allowedToolNames?: string[];
   skillResourceStore?: import("../../../altien/skills/resources").SkillResourceStore;
   includeResearchTools?: boolean;
+  /** Only web chat surfaces with an approval UI may create Google proposals. */
+  includeGoogleConnectors?: boolean;
   /** Expose ask_inputs only to clients that can render and answer it. */
   includeAskInputs?: boolean;
   /**
@@ -280,6 +282,7 @@ export async function runLLMStream(params: {
     allowedToolNames,
     skillResourceStore,
     includeResearchTools = true,
+    includeGoogleConnectors = false,
     includeAskInputs = true,
     allowDocumentMutation = true,
     workflowStore,
@@ -301,7 +304,9 @@ export async function runLLMStream(params: {
     unsafeWrite(sanitizeAssistantSseChunk(chunk));
   const researchTools = includeResearchTools ? COURTLISTENER_TOOLS : [];
   const mcpTools = await buildUserMcpTools(userId, db);
-  const googleDriveTools = await buildGoogleDriveTools(userId, db);
+  const googleDriveTools = includeGoogleConnectors
+    ? await buildGoogleDriveTools(userId, db)
+    : [];
   const conversationTools = includeAskInputs
     ? TOOLS
     : TOOLS.filter((tool) => tool.function.name !== "ask_inputs");
@@ -310,7 +315,7 @@ export async function runLLMStream(params: {
     ...baseTools,
     ...mcpTools,
     ...googleDriveTools,
-    ...(await buildGoogleWorkspaceTools(userId, db)),
+    ...(includeGoogleConnectors ? await buildGoogleWorkspaceTools(userId, db) : []),
     ...(extraTools ?? []),
     ...(clientTools?.schemas ?? []),
   ];
@@ -611,6 +616,13 @@ export async function runLLMStream(params: {
         const serverCalls = clientTools
           ? permittedCalls.filter((c) => !clientTools.owns(c.name))
           : permittedCalls;
+        const authorizedServerCalls = includeGoogleConnectors
+          ? serverCalls
+          : serverCalls.filter((c) =>
+              !c.name.startsWith("google_drive_") &&
+              !c.name.startsWith("gmail_") &&
+              !c.name.startsWith("google_calendar_"),
+            );
         if (clientTools) {
           for (const call of permittedCalls) {
             if (!clientTools.owns(call.name)) continue;
@@ -622,7 +634,7 @@ export async function runLLMStream(params: {
           }
         }
 
-        const toolCalls: ToolCall[] = serverCalls.map((c) => ({
+        const toolCalls: ToolCall[] = authorizedServerCalls.map((c) => ({
           id: c.id,
           function: {
             name: c.name,

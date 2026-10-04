@@ -1,9 +1,9 @@
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import request from "supertest";
+import express from "express";
 import type { Response } from "express";
 const mocks = vi.hoisted(() => ({
   auth: true,
-  mfa: true,
   start: vi.fn(),
   complete: vi.fn(),
   status: vi.fn(),
@@ -18,11 +18,6 @@ vi.mock("../../middleware/auth", () => ({
   requireAuth: (_r: unknown, res: Response, next: () => void) => {
     if (!mocks.auth) return void res.status(401).end();
     res.locals.userId = "owner";
-    next();
-  },
-  requireMfaIfEnrolled: (_r: unknown, res: Response, next: () => void) => {
-    if (!mocks.mfa)
-      return void res.status(403).json({ code: "mfa_verification_required" });
     next();
   },
 }));
@@ -43,12 +38,14 @@ vi.mock("../../lib/integrations/googleWorkspace", () => ({
   buildGoogleWorkspaceTools: vi.fn().mockResolvedValue([]),
   isGoogleWorkspaceTool: () => false,
 }));
-import { app } from "../../app";
+import { userRouter } from "../../modules/user/user.routes";
+const app = express();
+app.use(express.json());
+app.use("/user", userRouter);
 const action = "12345678-1234-1234-1234-123456789abc";
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.auth = true;
-  mocks.mfa = true;
   vi.stubEnv("API_PUBLIC_URL", "http://localhost:3000/api");
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
@@ -82,7 +79,7 @@ describe("Google Workspace routes", () => {
   it.each(["google-drive", "gmail", "google-calendar"])(
     "relays %s callbacks to the fixed frontend and rejects unauthenticated completion",
     async (provider) => {
-      vi.stubEnv("FRONTEND_URL", "https://app.mike.test");
+      vi.stubEnv("FRONTEND_URL", "https://other-origin.example.test");
       mocks.auth = false;
       const relay = await request(app)
         .get(`/user/integrations/${provider}/oauth/callback`)
@@ -90,15 +87,13 @@ describe("Google Workspace routes", () => {
         .set("Host", "attacker.test");
       expect(relay.status).toBe(303);
       expect(relay.headers.location).toBe(
-        `https://app.mike.test/api/user/integrations/${provider}/oauth/finish?state=s&code=c`,
+        `http://localhost:3000/api/user/integrations/${provider}/oauth/finish?state=s&code=c`,
       );
       expect(relay.headers["cache-control"]).toBe("no-store");
       expect(relay.headers["referrer-policy"]).toBe("no-referrer");
       const finish = `/user/integrations/${provider}/oauth/finish?state=s&code=c`;
       expect((await request(app).get(finish)).status).toBe(401);
       mocks.auth = true;
-      mocks.mfa = false;
-      expect((await request(app).get(finish)).status).toBe(403);
       expect(mocks.complete).not.toHaveBeenCalled();
     },
   );
@@ -139,12 +134,9 @@ describe("Google Workspace routes", () => {
     "/user/integrations/google-calendar/oauth/start",
     `/user/google-actions/${action}/approve`,
     `/user/google-actions/${action}/reject`,
-  ])("requires authentication and MFA for %s", async (path) => {
+  ])("requires authentication for %s", async (path) => {
     mocks.auth = false;
     expect((await request(app).post(path)).status).toBe(401);
-    mocks.auth = true;
-    mocks.mfa = false;
-    expect((await request(app).post(path)).status).toBe(403);
     expect(mocks.approve).not.toHaveBeenCalled();
     expect(mocks.start).not.toHaveBeenCalled();
   });

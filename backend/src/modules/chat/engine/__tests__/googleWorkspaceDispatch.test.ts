@@ -3,7 +3,7 @@ import { runToolCalls } from "../tools/toolDispatcher";
 import { workspaceDb } from "../../../../lib/integrations/__tests__/googleWorkspaceDb";
 import { encryptFields } from "../../../../lib/integrations/googleWorkspaceAuth";
 beforeEach(() => {
-  vi.stubEnv("MCP_CONNECTORS_ENCRYPTION_SECRET", "test-secret");
+  vi.stubEnv("MCP_CONNECTORS_ENCRYPTION_KEY", "test-secret");
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 afterEach(() => {
@@ -20,7 +20,7 @@ it("dispatches a read and a proposal through the real chat tool loop, but never 
     account_email: "other@example.com",
     write_enabled: true,
     expires_at: "2099-01-01",
-    ...encryptFields("access_token", "test-token"),
+    ...await encryptFields("access_token", "test-token"),
   });
   const fetchMock = vi.fn(
     async () => new Response(JSON.stringify({ messages: [{ id: "m1" }] })),

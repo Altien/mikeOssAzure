@@ -223,6 +223,7 @@ export type AssistantEvent =
           connector_name: string;
           tool_name: string;
           openai_tool_name: string;
+          google_action_id?: string;
           status: "ok" | "error";
           error?: string;
           isStreaming?: boolean;

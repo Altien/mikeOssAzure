@@ -1,7 +1,8 @@
 import crypto from "crypto";
 import dns from "dns/promises";
 import net from "net";
-import { getConfig } from "../config";
+import { getKeyVaultConfig } from "../config";
+import { readSecretEnv } from "../envSecrets";
 import { Agent, fetch as undiciFetch } from "undici";
 import { isBlockedIp } from "../privateIp";
 import { configuredApiPublicUrl } from "../runtimeConfig";
@@ -25,7 +26,7 @@ import {
 //  process.env.USER_API_KEYS_ENCRYPTION_SECRET` and derived the key with a
 // synchronous `scryptSync`. On dev, secrets are Key-Vault-primary
 // (internal design notes §2.4): the secret is resolved through `getConfig()`
-// (Key Vault canonical, env-var fallback for local dev), so the key
+// (Key Vault first, env-var fallback for local dev), so the key
 // accessor is async and cached as a Promise — mirroring
 // `lib/userApiKeys.ts`'s `getEncryptionKey()`. All encrypt/decrypt helpers
 // below are therefore async. Do NOT "simplify" these back to a sync
@@ -42,16 +43,17 @@ let keyPromise: Promise<Buffer> | null = null;
 async function encryptionKey(): Promise<Buffer> {
     if (!keyPromise) {
         keyPromise = (async () => {
-            // getConfig() looks up MCP_CONNECTORS_ENCRYPTION_KEY in env first
-            // (local dev / transition), then Key Vault. Fall back to the
-            // user-api-keys secret so a single configured secret can cover
-            // both subsystems, matching upstream's env fallback intent.
-            let secret = await getConfig(ENCRYPTION_SECRET_NAME).catch(() => "");
+            // Keep existing connector ciphertext readable: prefer the
+            // dedicated vault key, then its local env fallback, before the
+            // legacy user-api-keys fallback pair.
+            let secret = await getKeyVaultConfig(ENCRYPTION_SECRET_NAME).catch(() => "");
+            if (!secret) secret = readSecretEnv("MCP_CONNECTORS_ENCRYPTION_KEY");
             if (!secret) {
-                secret = await getConfig("user-api-keys-encryption-key").catch(
+                secret = await getKeyVaultConfig("user-api-keys-encryption-key").catch(
                     () => "",
                 );
             }
+            if (!secret) secret = readSecretEnv("USER_API_KEYS_ENCRYPTION_KEY");
             if (!secret) {
                 throw new Error(
                     `MCP connectors encryption secret (${ENCRYPTION_SECRET_NAME}) ` +
@@ -60,7 +62,10 @@ async function encryptionKey(): Promise<Buffer> {
                 );
             }
             return crypto.scryptSync(secret, "mike-user-mcp-v1", 32);
-        })();
+        })().catch((error) => {
+            keyPromise = null;
+            throw error;
+        });
     }
     return keyPromise;
 }

@@ -14,7 +14,7 @@ import { driveDb } from "./googleDriveDb";
 beforeEach(() => {
     vi.stubEnv("GOOGLE_DRIVE_OAUTH_CLIENT_ID", "test-client");
     vi.stubEnv("GOOGLE_DRIVE_OAUTH_CLIENT_SECRET", "test-secret");
-    vi.stubEnv("MCP_CONNECTORS_ENCRYPTION_SECRET", "test-encryption-key");
+    vi.stubEnv("MCP_CONNECTORS_ENCRYPTION_KEY", "test-encryption-key");
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
 });
@@ -65,7 +65,7 @@ describe("Google Drive OAuth lifecycle", () => {
         const state = await begin(store);
         expect(JSON.stringify(store.states)).not.toContain(state);
         const config = JSON.parse(
-            decryptString(
+            await decryptString(
                 String(store.states[0].encrypted_state_config),
                 String(store.states[0].state_config_iv),
                 String(store.states[0].state_config_tag),
@@ -90,7 +90,7 @@ describe("Google Drive OAuth lifecycle", () => {
         expect(JSON.stringify(row)).not.toContain("access-secret");
         expect(JSON.stringify(row)).not.toContain("refresh-secret");
         expect(
-            decryptString(
+            await decryptString(
                 String(row.encrypted_refresh_token),
                 String(row.refresh_token_iv),
                 String(row.refresh_token_tag),

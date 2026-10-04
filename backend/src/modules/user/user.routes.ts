@@ -90,11 +90,12 @@ function backendPublicUrl(req: {
 }
 
 function frontendUrl(path = "/settings/connectors") {
-    const base = (process.env.FRONTEND_URL ?? "http://localhost:3000").replace(
-        /\/+$/,
-        "",
-    );
-    return `${base}${path}`;
+    // The static web app and /api share the session-cookie origin on Dev.
+    const api = configuredApiPublicUrl();
+    const origin = api
+        ? new URL(api).origin
+        : new URL(process.env.FRONTEND_URL ?? "http://localhost:3000").origin;
+    return new URL(path, origin).toString();
 }
 
 function shortHash(value: string) {

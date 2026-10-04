@@ -1,9 +1,10 @@
 import path from "path";
+import { pathToFileURL } from "node:url";
 
 export const STANDARD_FONT_DATA_URL = (() => {
   try {
     const pkgPath = require.resolve("pdfjs-dist/package.json");
-    return path.join(path.dirname(pkgPath), "standard_fonts") + path.sep;
+    return pathToFileURL(path.join(path.dirname(pkgPath), "standard_fonts") + path.sep).href;
   } catch {
     return undefined;
   }
