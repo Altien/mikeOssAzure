@@ -253,8 +253,8 @@ async function getDocumentIdsForAccountDeletion(
 /**
  * Re-anchor the content the departing user left inside organization projects.
  * Their rows survive with `user_id = NULL` — the content belongs to the
- * organization, and its FKs are ON DELETE SET NULL so the auth.users cascade
- * that follows this cleanup will not take them.
+ * organization, and their nullable profile FKs will not take them when the
+ * application profile is deleted.
  */
 async function detachOrgProjectContent(
     db: Db,
@@ -435,22 +435,55 @@ async function collectDocumentVersionPaths(
     return [...paths];
 }
 
-// Best-effort by design: the rows are already gone by the time this runs,
-// so a failed removal must not abort the surrounding cleanup — it would
-// strand the caller in a worse state (rows half-deleted, account kept)
-// than the orphaned bytes it was trying to avoid.
-async function deleteStorageFiles(paths: string[]) {
-    await Promise.all(paths.map((path) => deleteFile(path).catch(() => {})));
+async function claimedStoragePaths(db: Db, paths: string[]): Promise<Set<string>> {
+    const claimed = new Set<string>();
+    for (const batch of chunks(paths)) {
+        const [originals, pdfs] = await Promise.all([
+            db.from("document_versions").select("storage_path, pdf_storage_path").in("storage_path", batch),
+            db.from("document_versions").select("storage_path, pdf_storage_path").in("pdf_storage_path", batch),
+        ]);
+        await throwIfError(originals.error, "Failed to classify stored versions");
+        await throwIfError(pdfs.error, "Failed to classify stored version PDFs");
+        for (const row of [...(originals.data ?? []), ...(pdfs.data ?? [])] as { storage_path?: string | null; pdf_storage_path?: string | null }[]) {
+            if (row.storage_path) claimed.add(row.storage_path);
+            if (row.pdf_storage_path) claimed.add(row.pdf_storage_path);
+        }
+    }
+    return claimed;
 }
 
-async function deleteUserStoragePrefix(userId: string) {
+async function deleteOrphanedUserStorage(db: Db, userId: string) {
     const paths = new Set([
         ...(await listFiles(`documents/${userId}/`)),
         ...(await listFiles(`workflow-references/${userId}/`)),
     ]);
-    // A failed listing or delete must leave the account job retryable. A
-    // successful erasure may not conceal orphaned uploads under these roots.
-    await Promise.all([...paths].map((path) => deleteFile(path)));
+    const claimed = await claimedStoragePaths(db, [...paths]);
+    await Promise.all([...paths].filter((path) => !claimed.has(path)).map((path) => deleteFile(path)));
+}
+
+async function stageAccountStoragePaths(db: Db, userId: string, paths: string[]) {
+    for (const batch of chunks(paths)) {
+        if (batch.length === 0) continue;
+        const { error } = await db.from("account_erasure_storage_paths").upsert(
+            batch.map((storage_path) => ({ user_id: userId, storage_path })),
+            { onConflict: "user_id,storage_path", ignoreDuplicates: true },
+        );
+        await throwIfError(error, "Failed to stage account storage cleanup");
+    }
+}
+
+async function deleteStagedAccountStorage(db: Db, userId: string) {
+    const { data, error } = await db.from("account_erasure_storage_paths")
+        .select("storage_path").eq("user_id", userId);
+    await throwIfError(error, "Failed to load staged account storage cleanup");
+    const paths = uniqueStrings((data ?? []).map((row) => row.storage_path));
+    const claimed = await claimedStoragePaths(db, paths);
+    // A surviving organization document owns its bytes even if a stale
+    // account-deletion attempt staged the same storage key earlier.
+    await Promise.all(paths.filter((path) => !claimed.has(path)).map((path) => deleteFile(path)));
+    const { error: clearError } = await db.from("account_erasure_storage_paths")
+        .delete().eq("user_id", userId);
+    await throwIfError(clearError, "Failed to clear staged account storage cleanup");
 }
 
 /**
@@ -593,21 +626,13 @@ export async function deleteUserOrganizations(
                     //
                     // Deleting the membership row HERE is what the
                     // org_members_protect_last_admin trigger exists to refuse.
-                    // Both of its stand-aside conditions are still false at
-                    // this moment: the organizations row is present (we just
-                    // decided to keep it) and the member's auth.users row is
-                    // present (routes/user.ts deletes the auth user only
-                    // AFTER this cleanup returns). The trigger raises 23514,
-                    // throwIfError turns that into a 500, and the account
-                    // deletion dies half-finished — storage swept, personal
-                    // rows gone, account still there.
+                    // The organization and the member's application profile
+                    // are still present, so the last-admin guard rejects an
+                    // ordinary membership delete.
                     //
-                    // So leave the row alone and let the FK do it. org_members
-                    // .user_id is `references auth.users(id) on delete
-                    // cascade`, and the trigger's second escape hatch fires
-                    // exactly for that cascade ("the member's auth row is
-                    // already gone"). The membership disappears moments later
-                    // with nobody having to argue with the invariant.
+                    // The profile FK cascades this membership after creator
+                    // attribution has been detached; the trigger permits
+                    // precisely that profile-deletion cascade.
                     continue;
                 }
             }
@@ -848,13 +873,13 @@ export async function deleteUserAccountData(
         orgProjectIds,
     );
 
-    // Collected up front — the version rows cascade away with their
-    // documents below, taking the only record of these paths with them —
-    // but not DELETED until every row is gone; see deleteStorageFiles.
+    // The outbox survives version-row and profile deletion. A crashed job can
+    // retry without losing the only record of guest-upload and text-cache keys.
     const doomedVersionPaths = await collectDocumentVersionPaths(
         db,
         documentIds,
     );
+    await stageAccountStoragePaths(db, userId, doomedVersionPaths);
 
     await Promise.all([
         // Direct project access is a grant row, so revoking this person's
@@ -926,10 +951,18 @@ export async function deleteUserAccountData(
         .eq("user_id", userId);
     await throwIfError(workflowsError, "Failed to delete workflows");
 
+    // Hand off surviving organization administration before deleting the
+    // application profile. Its FK cascade removes only a sole-member row for
+    // an organization that still owns content, after creator attribution has
+    // been detached above; ordinary departures keep the last-admin guard.
+    await deleteUserOrganizations(db, userId, userEmail);
+
     // The tombstone in account_erasure_requests remains, but all mutable
     // profile/session material and provider keys are removed.
     for (const table of ["auth_sessions", "user_profiles"] as const) {
         const { error } = await db.from(table).delete().eq("user_id", userId);
         await throwIfError(error, `Failed to delete ${table}`);
     }
+    await deleteStagedAccountStorage(db, userId);
+    await deleteOrphanedUserStorage(db, userId);
 }

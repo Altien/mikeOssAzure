@@ -248,6 +248,22 @@ describe("access helpers", () => {
         ).resolves.toMatchObject({ ok: true, projectRole: "editor" });
     });
 
+    it("revokes an uploader's access when the workflow share is removed", async () => {
+        const asset = { user_id: "uploader", project_id: null, workflow_id: "retained-workflow" };
+        const granted = makeDb({
+            workflows: [{ id: "retained-workflow", user_id: "owner", org_id: null }],
+            workflow_shares: [{ workflow_id: "retained-workflow", shared_with_email: "uploader@example.com", role: "editor" }],
+        });
+        expect(await ensureDocAccess(asset, "uploader", "uploader@example.com", granted))
+            .toMatchObject({ ok: true, projectRole: "editor" });
+        const revoked = makeDb({
+            workflows: [{ id: "retained-workflow", user_id: "owner", org_id: null }],
+            workflow_shares: [],
+        });
+        expect(await ensureDocAccess(asset, "uploader", "uploader@example.com", revoked))
+            .toEqual({ ok: false });
+    });
+
     it("allows direct review sharing without project access", async () => {
         await expect(
             ensureReviewAccess(

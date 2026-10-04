@@ -46,6 +46,8 @@ import {
   userExportFilename,
 } from "../lib/userDataExport";
 import { findProfileUserByEmail } from "../lib/userLookup";
+import { acceptInvitation, declineInvitation, listMyInvitations } from "../lib/orgs";
+import { sendOrgFailure } from "./orgs";
 import {
     getAllUserRouterModels,
     replaceUserRouterModels,
@@ -653,6 +655,35 @@ function validateProfilePayload(
 
   return { ok: true, update, routerModels };
 }
+
+// Invitations are addressed to the admitted actor's verified provider email.
+userRouter.get("/invitations", requireAuth, async (_req, res) => {
+    const result = await listMyInvitations(createServerSupabase(), {
+        userEmail: res.locals.userEmail as string | undefined,
+    });
+    if (!result.ok) return sendOrgFailure(res, result);
+    res.json(result.invitations);
+});
+
+userRouter.post("/invitations/:invitationId/accept", requireAuth, async (req, res) => {
+    const result = await acceptInvitation(createServerSupabase(), {
+        userId: res.locals.userId as string,
+        userEmail: res.locals.userEmail as string | undefined,
+        invitationId: req.params.invitationId,
+    });
+    if (!result.ok) return sendOrgFailure(res, result);
+    res.json({ org_id: result.org_id, role: result.role });
+});
+
+userRouter.post("/invitations/:invitationId/decline", requireAuth, async (req, res) => {
+    const result = await declineInvitation(createServerSupabase(), {
+        userId: res.locals.userId as string,
+        userEmail: res.locals.userEmail as string | undefined,
+        invitationId: req.params.invitationId,
+    });
+    if (!result.ok) return sendOrgFailure(res, result);
+    res.status(204).send();
+});
 
 // GET /user/profile
 userRouter.get("/profile", requireAuth, async (_req, res) => {

@@ -40,8 +40,9 @@ function makeDb(
         from(table: string) {
             const rowsOf = () => tables[table] ?? (tables[table] = []);
             let predicate: (row: Row) => boolean = () => true;
-            let mode: "select" | "delete" | "update" | "insert" = "select";
+            let mode: "select" | "delete" | "update" | "insert" | "upsert" = "select";
             let patch: Row = {};
+            let upsertRows: Row[] = [];
             const narrow = (next: (row: Row) => boolean) => {
                 const prev = predicate;
                 predicate = (row) => prev(row) && next(row);
@@ -51,6 +52,11 @@ function makeDb(
                 insert: (value: Row) => {
                     mode = "insert";
                     patch = value;
+                    return query;
+                },
+                upsert: (values: Row[]) => {
+                    mode = "upsert";
+                    upsertRows = values;
                     return query;
                 },
                 single: async () => {
@@ -117,11 +123,21 @@ function makeDb(
                             tables[table] = rowsOf().filter(
                                 (row) => !predicate(row),
                             );
+                            if (table === "documents") {
+                                const removedIds = new Set(removed.map((row) => row.id));
+                                tables.document_versions = (tables.document_versions ?? [])
+                                    .filter((row) => !removedIds.has(row.document_id));
+                            }
                             // Supabase returns the deleted rows when the call
                             // chains .select(); the grant cleanup uses that to
                             // learn which projects need their mirror rebuilt.
                             result = { data: removed, error: null };
                         }
+                    } else if (mode === "upsert") {
+                        for (const row of upsertRows) {
+                            if (!rowsOf().some((existing) => existing.user_id === row.user_id && existing.storage_path === row.storage_path)) rowsOf().push({ ...row });
+                        }
+                        result = { data: null, error: null };
                     } else if (mode === "update") {
                         for (const row of rowsOf().filter(predicate)) {
                             Object.assign(row, patch);
@@ -358,6 +374,24 @@ describe("deleteUserProjects", () => {
 // ---------------------------------------------------------------------------
 
 describe("deleteUserAccountData", () => {
+    it("retries version-key cleanup after rows and profile were already deleted", async () => {
+        const { db, tables } = makeDb({
+            documents: [{ id: "d1", user_id: "u1", project_id: null }],
+            document_versions: [{ id: "v1", document_id: "d1", storage_path: "documents/u1/d1/source.pdf", pdf_storage_path: null }],
+            user_profiles: [{ user_id: "u1" }],
+        });
+        deleteFileMock.mockRejectedValueOnce(new Error("storage unavailable"));
+        await expect(deleteUserAccountData(db, "u1")).rejects.toThrow("storage unavailable");
+        expect(tables.document_versions).toEqual([]);
+        expect(tables.account_erasure_storage_paths.map((row) => row.storage_path).sort()).toEqual([
+            "documents/u1/d1/source.pdf",
+            "extracted-text/v1.txt",
+        ]);
+        deleteFileMock.mockResolvedValue(undefined as never);
+        await expect(deleteUserAccountData(db, "u1")).resolves.toBeUndefined();
+        expect(tables.account_erasure_storage_paths).toEqual([]);
+    });
+
     const fixture = (options: { deleteErrors?: Record<string, string> } = {}) =>
         makeDb({
             projects: [

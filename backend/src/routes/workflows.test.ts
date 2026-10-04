@@ -142,7 +142,8 @@ describe("quick action access", () => {
         expect(res.status).toBe(200);
         expect(res.body.map((action: { id: string }) => action.id)).toEqual(["qa-owned", "qa-shared"]);
         expect(fake.callsFor("quick_actions")[0].filters).toContainEqual(["eq", "user_id", USER_ID]);
-        expect(fake.callsFor("workflow_shares")[0].filters).toContainEqual(["eq", "shared_with_email", USER_EMAIL]);
+        // The access matrix now resolves visible workflows as one list before
+        // decorating quick actions; a revoked title must never escape.
         expect(JSON.stringify(res.body)).not.toContain("Private title");
     });
 
@@ -298,8 +299,8 @@ describe("GET /workflows", () => {
             .get("/api/workflows")
             .set(auth);
 
-        expect(res.status).toBe(500);
-        expect(res.body).toEqual({ detail: "Failed to process workflow request" });
+        expect(res.status).toBe(503);
+        expect(res.body).toEqual({ detail: "Account status is unavailable" });
     });
 });
 
@@ -389,6 +390,7 @@ describe("POST /workflows", () => {
         expect(res.status).toBe(201);
         expect(fake.callsFor("workflows", "insert")[0].payload).toEqual({
             user_id: USER_ID,
+            org_id: null,
             title: "New assistant",
             type: "assistant",
             prompt_md: "---\nname: new-skill\n---\nBody",
@@ -436,7 +438,7 @@ describe("POST /workflows", () => {
 describe("PATCH /workflows/:id — app-layer access", () => {
     function accessDb(opts: {
         row: Record<string, unknown>;
-        share?: { allow_edit: boolean } | null;
+        share?: { role: "editor" | "viewer" } | null;
     }) {
         return useDb((call) => {
             if (call.table === "workflows" && call.op === "select") {
@@ -483,7 +485,7 @@ describe("PATCH /workflows/:id — app-layer access", () => {
     it("a shared-with-edit user can update", async () => {
         const fake = accessDb({
             row: { ...OWNED_ROW, user_id: "someone-else" },
-            share: { allow_edit: true },
+            share: { role: "editor" },
         });
 
         const res = await request(await makeApp())
@@ -503,7 +505,7 @@ describe("PATCH /workflows/:id — app-layer access", () => {
     it("a view-only share gets 404 and nothing is written", async () => {
         const fake = accessDb({
             row: { ...OWNED_ROW, user_id: "someone-else" },
-            share: { allow_edit: false },
+            share: { role: "viewer" },
         });
 
         const res = await request(await makeApp())
@@ -583,7 +585,7 @@ describe("GET /workflows/:id", () => {
 
     it("a view-only share can read (no submission info); strangers get 404", async () => {
         const row = { ...SHARED_ROW };
-        let share: { allow_edit: boolean } | null = { allow_edit: false };
+        let share: { role: "viewer" } | null = { role: "viewer" };
         useDb((call) => {
             if (call.table === "workflows") return { data: row };
             if (call.table === "workflow_shares") return { data: share };
@@ -610,13 +612,13 @@ describe("GET /workflows/:id", () => {
 describe("POST /workflows/:id/share", () => {
     it("upserts normalised shares for existing users", async () => {
         const fake = useDb((call) =>
-            call.table === "workflows" ? { data: { id: "wf-owned" } } : {},
+            call.table === "workflows" ? { data: { id: "wf-owned", user_id: USER_ID, org_id: null } } : {},
         );
 
         const res = await request(await makeApp())
             .post("/api/workflows/wf-owned/share")
             .set(auth)
-            .send({ emails: [" Alice@Example.com ", "alice@example.com"], allow_edit: true });
+            .send({ emails: [" Alice@Example.com ", "alice@example.com"], role: "editor" });
 
         expect(res.status).toBe(204);
         expect(fake.callsFor("workflow_shares", "upsert")[0].payload).toEqual([
@@ -624,14 +626,14 @@ describe("POST /workflows/:id/share", () => {
                 workflow_id: "wf-owned",
                 shared_by_user_id: USER_ID,
                 shared_with_email: "alice@example.com",
-                allow_edit: true,
+                role: "editor",
             },
         ]);
     });
 
     it("rejects sharing with yourself or with a non-user", async () => {
         useDb((call) =>
-            call.table === "workflows" ? { data: { id: "wf-owned" } } : {},
+            call.table === "workflows" ? { data: { id: "wf-owned", user_id: USER_ID, org_id: null } } : {},
         );
         const app = await makeApp();
 
@@ -645,7 +647,7 @@ describe("POST /workflows/:id/share", () => {
         const ghost = await request(app)
             .post("/api/workflows/wf-owned/share")
             .set(auth)
-            .send({ emails: ["ghost@example.com"] });
+            .send({ emails: ["ghost@example.com"], role: "viewer" });
         expect(ghost.status).toBe(400);
         expect(ghost.body.detail).toBe(
             "ghost@example.com does not belong to a Mike user.",
@@ -657,7 +659,7 @@ describe("POST /workflows/:id/share", () => {
 
 describe("POST /workflows/:id/open-source", () => {
     it("is rejected with 404 when WORKFLOW_CONTRIBUTIONS_ENABLED is off", async () => {
-        const fake = useDb(() => ({ data: OWNED_ROW }));
+        const fake = useDb((call) => call.table === "workflows" ? { data: OWNED_ROW } : { data: [] });
 
         const res = await request(await makeApp(false))
             .post("/api/workflows/wf-owned/open-source")
@@ -666,7 +668,7 @@ describe("POST /workflows/:id/open-source", () => {
 
         expect(res.status).toBe(404);
         expect(res.body.detail).toBe("Workflow contributions are disabled");
-        expect(fake.calls).toHaveLength(0);
+        expect(fake.callsFor("workflows")).toHaveLength(0);
     });
 
     function contributionDb(opts: {
