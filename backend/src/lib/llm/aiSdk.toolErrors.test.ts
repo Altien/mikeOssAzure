@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { stopNotice, streamAiSdk } from "./aiSdk";
+import { streamAiSdk } from "./aiSdk";
 import { UserFacingError } from "../safeError";
 import type { NormalizedToolCall } from "./types";
 import {
@@ -56,7 +56,7 @@ describe("success path is untouched", () => {
     expect(model.doStreamCalls.length).toBe(2);
   });
 
-  it("the iteration cap retains the upstream stop notice and ends the loop", async () => {
+  it("allows one tool-disabled synthesis after the configured tool-call rounds", async () => {
     const model = await makeModel([
       callStep("c1", "read_document", { doc_id: "doc-0" }),
       callStep("c2", "read_document", { doc_id: "doc-1" }),
@@ -66,12 +66,13 @@ describe("success path is untouched", () => {
       { ...base, runTools: okRunTools, maxIterations: 2 },
       config(model),
     );
-    expect(res.fullText).toBe(stopNotice(2, 2, "tool-calls"));
+    expect(res.fullText).toBe("never");
     await tick();
-    expect(model.doStreamCalls.length).toBe(2);
+    expect(model.doStreamCalls.length).toBe(3);
+    expect(model.doStreamCalls[2]?.toolChoice).toEqual({ type: "none" });
   });
 
-  it("retains the upstream default of 16 rounds and streams its stop notice", async () => {
+  it("retains the default 16 tool rounds plus one final synthesis", async () => {
     const model = await makeModel([
       ...Array.from({ length: 16 }, (_, i) =>
         callStep(`c${i}`, "read_document", { doc_id: `doc-${i}` }),
@@ -92,8 +93,9 @@ describe("success path is untouched", () => {
       },
       config(model),
     );
-    expect(model.doStreamCalls).toHaveLength(16);
-    expect(result.fullText).toBe(stopNotice(16, 16, "tool-calls"));
+    expect(model.doStreamCalls).toHaveLength(17);
+    expect(model.doStreamCalls[16]?.toolChoice).toEqual({ type: "none" });
+    expect(result.fullText).toBe("must not run past the default cap");
     expect(deltas.join("")).toBe(result.fullText);
   });
 

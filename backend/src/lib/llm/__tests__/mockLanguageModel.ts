@@ -103,7 +103,7 @@ export async function makeModel(steps: Array<ReturnType<typeof step> | Error>) {
 
 export function config(model: MockLanguageModelV3): AiSdkAdapterConfig {
   return {
-    provider: "ollama",
+    provider: "openai",
     label: "Mock",
     model: model as never,
     modelId: "mock-model",
