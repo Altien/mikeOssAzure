@@ -35,6 +35,8 @@ describe("shared AI SDK step preparation", () => {
         });
     });
 
+});
+
 describe("stopNotice", () => {
   it("says nothing when the model finished on its own", () => {
     expect(stopNotice(3, DEFAULT_MAX_ITERATIONS, "stop")).toBe("");
