@@ -27,7 +27,7 @@ alter table public.tabular_reviews
 update public.tabular_reviews as review
 set model = profile.tabular_model
 from public.user_profiles as profile
-where review.user_id = profile.user_id
+where review.user_id = profile.user_id::text
   and review.model is null
   and nullif(btrim(profile.tabular_model), '') is not null;
 
