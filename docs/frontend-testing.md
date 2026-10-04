@@ -49,13 +49,14 @@ sends four content replies or eight reasoning replies through a browser
 collapses and resizes a live disclosure. Both cases run in the general assistant,
 project assistant and tabular-review chat (six browser scenarios).
 It uses the real Next.js/React renderer, fails on browser console errors and
-uncaught exceptions, and requires no model-provider key. It runs in the regular
-production Playwright suite on every PR. The separate **Assistant streaming
-(development)** job reruns it on `next dev`, because React's
-passive-update-depth warning is development-only; that job runs nightly, on
-manual dispatch, and on PRs labelled `stress` (see
-[e2e-ci.md](e2e-ci.md#development-stress-jobs)). Add the label to PRs that touch
-streaming or render loops.
+uncaught exceptions, and requires no model-provider key. It belongs to the
+Playwright `synthetic` project (specs that mock every `/api` call in the
+browser), which CI runs as **Assistant streaming (production)** on every PR,
+without the Supabase/API stack. **Assistant streaming (development)** reruns it
+on `next dev`, because React's passive-update-depth warning is
+development-only; that job runs nightly, on manual dispatch, and on PRs
+labelled `stress` (see [e2e-ci.md](e2e-ci.md#development-stress-jobs)). Add the
+label to PRs that touch streaming or render loops.
 
 Run it against the documented local stack with:
 
