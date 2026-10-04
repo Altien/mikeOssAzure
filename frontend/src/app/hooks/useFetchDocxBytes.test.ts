@@ -1,24 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw-server";
 
-const { mockGetBrowserAccessToken, mockBounceIfUnauthorized } = vi.hoisted(() => ({
-    mockGetBrowserAccessToken: vi.fn(),
-    mockBounceIfUnauthorized: vi.fn(),
-}));
-
-vi.mock("@/app/lib/auth-token", () => ({
-    getBrowserAccessToken: mockGetBrowserAccessToken,
-    bounceIfUnauthorized: mockBounceIfUnauthorized,
-}));
-
 import { useFetchDocxBytes, invalidateDocxBytes } from "./useFetchDocxBytes";
 
 beforeEach(() => {
-    mockGetBrowserAccessToken.mockReset();
-    mockGetBrowserAccessToken.mockResolvedValue("tok");
-    mockBounceIfUnauthorized.mockReset();
     // Each test runs against a fresh cache surface — eviction is per-
     // documentId so we wipe by pattern.
     invalidateDocxBytes("cache-test");
@@ -38,16 +25,15 @@ describe("useFetchDocxBytes: idle / disabled", () => {
         expect(result.current.bytes).toBeNull();
         expect(result.current.loading).toBe(false);
         expect(result.current.error).toBeNull();
-        expect(result.current.downloadUrl).toBeNull();
     });
 });
 
 describe("useFetchDocxBytes: fetch lifecycle", () => {
-    it("fetches bytes, exposes them, and sets downloadUrl on success", async () => {
+    it("fetches private source bytes through the authenticated API", async () => {
         let receivedAuth: string | null = null;
         const bytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04]); // ZIP/.docx magic
         server.use(
-            http.get("*/api/single-documents/:id/docx", ({ request }) => {
+            http.get("*/api/single-documents/:id/file", ({ request }) => {
                 receivedAuth = request.headers.get("Authorization");
                 return new HttpResponse(bytes);
             }),
@@ -57,17 +43,15 @@ describe("useFetchDocxBytes: fetch lifecycle", () => {
 
         await waitFor(() => expect(result.current.bytes).not.toBeNull());
         expect(new Uint8Array(result.current.bytes!)).toEqual(bytes);
-        expect(result.current.downloadUrl).toMatch(/\/api\/single-documents\/d1\/docx$/);
         expect(result.current.loading).toBe(false);
         expect(result.current.error).toBeNull();
-        expect(receivedAuth).toBe("Bearer tok");
-        expect(mockBounceIfUnauthorized).toHaveBeenCalled();
+        expect(receivedAuth).toBeNull();
     });
 
     it("encodes versionId into the query string", async () => {
         let receivedSearch: string | null = null;
         server.use(
-            http.get("*/api/single-documents/:id/docx", ({ request }) => {
+            http.get("*/api/single-documents/:id/file", ({ request }) => {
                 receivedSearch = new URL(request.url).search;
                 return new HttpResponse(new Uint8Array([1]));
             }),
@@ -80,16 +64,16 @@ describe("useFetchDocxBytes: fetch lifecycle", () => {
         expect(receivedSearch).toBe("?version_id=v%20with%20%2Fslash");
     });
 
-    it("propagates the HTTP error message", async () => {
+    it("keeps server error details out of the document viewer", async () => {
         server.use(
-            http.get("*/api/single-documents/:id/docx", () =>
+            http.get("*/api/single-documents/:id/file", () =>
                 HttpResponse.text("oops", { status: 500 }),
             ),
         );
 
         const { result } = renderHook(() => useFetchDocxBytes("err-doc"));
 
-        await waitFor(() => expect(result.current.error).toBe("HTTP 500"));
+        await waitFor(() => expect(result.current.error).toBe("This document could not be loaded. Please try again."));
         expect(result.current.bytes).toBeNull();
         expect(result.current.loading).toBe(false);
     });
@@ -100,7 +84,7 @@ describe("useFetchDocxBytes: cache", () => {
         const bytes = new Uint8Array([0xaa, 0xbb]);
         let fetchCount = 0;
         server.use(
-            http.get("*/api/single-documents/:id/docx", () => {
+            http.get("*/api/single-documents/:id/file", () => {
                 fetchCount += 1;
                 return new HttpResponse(bytes);
             }),
@@ -126,7 +110,7 @@ describe("useFetchDocxBytes: cache", () => {
     it("different versionIds for the same document are separate cache entries", async () => {
         let fetchCount = 0;
         server.use(
-            http.get("*/api/single-documents/:id/docx", () => {
+            http.get("*/api/single-documents/:id/file", () => {
                 fetchCount += 1;
                 return new HttpResponse(
                     new Uint8Array([fetchCount]),
@@ -148,7 +132,7 @@ describe("useFetchDocxBytes: cache", () => {
     it("refetchKey forces a new entry even with identical doc+version", async () => {
         let fetchCount = 0;
         server.use(
-            http.get("*/api/single-documents/:id/docx", () => {
+            http.get("*/api/single-documents/:id/file", () => {
                 fetchCount += 1;
                 return new HttpResponse(new Uint8Array([fetchCount]));
             }),
@@ -171,7 +155,7 @@ describe("useFetchDocxBytes: cache", () => {
     it("invalidateDocxBytes(docId, versionId) evicts that single tuple", async () => {
         let fetchCount = 0;
         server.use(
-            http.get("*/api/single-documents/:id/docx", () => {
+            http.get("*/api/single-documents/:id/file", () => {
                 fetchCount += 1;
                 return new HttpResponse(new Uint8Array([fetchCount]));
             }),
@@ -193,7 +177,7 @@ describe("useFetchDocxBytes: cache", () => {
     it("invalidateDocxBytes(docId) evicts every version of that document", async () => {
         let fetchCount = 0;
         server.use(
-            http.get("*/api/single-documents/:id/docx", () => {
+            http.get("*/api/single-documents/:id/file", () => {
                 fetchCount += 1;
                 return new HttpResponse(new Uint8Array([fetchCount]));
             }),
@@ -234,7 +218,7 @@ describe("useFetchDocxBytes: in-flight dedupe", () => {
         });
 
         server.use(
-            http.get("*/api/single-documents/:id/docx", async () => {
+            http.get("*/api/single-documents/:id/file", async () => {
                 fetchCount += 1;
                 await gate;
                 return new HttpResponse(new Uint8Array([0xff]));
@@ -258,9 +242,9 @@ describe("useFetchDocxBytes: in-flight dedupe", () => {
 });
 
 describe("useFetchDocxBytes: documentId transitions to null", () => {
-    it("clears bytes + downloadUrl when documentId is set to null", async () => {
+    it("clears bytes when documentId is set to null", async () => {
         server.use(
-            http.get("*/api/single-documents/:id/docx", () =>
+            http.get("*/api/single-documents/:id/file", () =>
                 new HttpResponse(new Uint8Array([0xab])),
             ),
         );
@@ -274,6 +258,5 @@ describe("useFetchDocxBytes: documentId transitions to null", () => {
         rerender({ id: null });
 
         expect(result.current.bytes).toBeNull();
-        expect(result.current.downloadUrl).toBeNull();
     });
 });
