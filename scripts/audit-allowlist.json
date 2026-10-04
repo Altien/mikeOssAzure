@@ -1,10 +1,34 @@
 [
-    {
-        "ghsa": "GHSA-xcpc-8h2w-3j85",
-        "reason": "adm-zip 0.5.12 memory-exhaustion on a crafted ZIP, pulled into word-addin only by office-addin-debugging/office-addin-manifest (devDependencies used to sideload the add-in on a developer's machine). Never bundled by webpack, never part of the shipped task pane, and the only ZIPs it opens are the manifest bundles we produce ourselves. npm's only 'fix' is a downgrade to office-addin-debugging 4.6.7, outside the declared ^5.0.12 range. REMOVE WHEN: the office-addin-* chain ships adm-zip >=0.6.0 inside that range (the weekly dev-dep Dependabot bump will carry it)."
-    },
-    {
-        "ghsa": "GHSA-ph9p-34f9-6g65",
-        "reason": "tmp 0.0.33 path traversal via prefix/postfix, reachable in word-addin only through @inquirer/editor -> external-editor, i.e. the interactive prompts of @microsoft/teamsapp-cli under office-addin-debugging — a devDependency, and the prefixes are literals inside that CLI rather than anything this repo or a document supplies. Same downgrade-only 'fix' as adm-zip above. REMOVE WHEN: external-editor resolves tmp >0.2.5 (or the teamsapp-cli chain drops external-editor) inside office-addin-debugging's declared range."
-    }
+  {
+    "ghsa": "GHSA-xcpc-8h2w-3j85",
+    "reason": "adm-zip 0.5.12 memory-exhaustion on a crafted ZIP, pulled into word-addin only by office-addin-debugging/office-addin-manifest (devDependencies used to sideload the add-in on a developer's machine). Never bundled by webpack, never part of the shipped task pane, and the only ZIPs it opens are the manifest bundles we produce ourselves. npm's only 'fix' is a downgrade to office-addin-debugging 4.6.7, outside the declared ^5.0.12 range. REMOVE WHEN: the office-addin-* chain ships adm-zip >=0.6.0 inside that range (the weekly dev-dep Dependabot bump will carry it)."
+  },
+  {
+    "ghsa": "GHSA-ph9p-34f9-6g65",
+    "reason": "tmp 0.0.33 path traversal via prefix/postfix, reachable in word-addin only through @inquirer/editor -> external-editor, i.e. the interactive prompts of @microsoft/teamsapp-cli under office-addin-debugging — a devDependency, and the prefixes are literals inside that CLI rather than anything this repo or a document supplies. Same downgrade-only 'fix' as adm-zip above. REMOVE WHEN: external-editor resolves tmp >0.2.5 (or the teamsapp-cli chain drops external-editor) inside office-addin-debugging's declared range."
+  },
+  {
+    "ghsa": "GHSA-vfj7-8cjw-p6xm",
+    "reason": "braces 3.0.3 is reached only through frontend ESLint and Word webpack-dev-server development tooling. The advisory names >=3.0.4 as patched, but npm registry currently publishes only 3.0.3; pnpm cannot resolve 3.0.4. No document or request input reaches these repo-owned glob patterns. REMOVE WHEN braces 3.0.4 or a patched parent is published, then re-resolve both pnpm locks."
+  },
+  {
+    "ghsa": "GHSA-7q85-xj36-vmfc",
+    "reason": "adm-zip 0.5.x is reachable only through office-addin-debugging and its manifest/sideload development tooling, never the shipped task pane. The fixed 0.6.1 is outside that tool chain's 0.5.x contract; forcing an untested pre-1.0 minor could break sideloading. REMOVE WHEN office-addin-debugging and its children accept adm-zip >=0.6.1."
+  },
+  {
+    "ghsa": "GHSA-rcw4-f5rp-g42v",
+    "reason": "Same adm-zip 0.5.x Office sideload/manifest development-tool chain as GHSA-7q85-xj36-vmfc; fixed 0.6.1 is outside the parent range. REMOVE WHEN the Office tooling accepts adm-zip >=0.6.1."
+  },
+  {
+    "ghsa": "GHSA-j5f4-cc29-5x44",
+    "reason": "Same adm-zip 0.5.x Office sideload/manifest development-tool chain as GHSA-7q85-xj36-vmfc; fixed 0.6.1 is outside the parent range. REMOVE WHEN the Office tooling accepts adm-zip >=0.6.1."
+  },
+  {
+    "ghsa": "GHSA-8238-w5pm-2374",
+    "reason": "Same adm-zip 0.5.x Office sideload/manifest development-tool chain as GHSA-7q85-xj36-vmfc; fixed 0.6.1 is outside the parent range. REMOVE WHEN the Office tooling accepts adm-zip >=0.6.1."
+  },
+  {
+    "ghsa": "GHSA-86w9-cpqp-85rv",
+    "reason": "node-forge 1.4.0 occurs only under office-addin-dev-certs/mkcert and Teams add-in development tooling. The advisory names 1.4.1 as fixed, but npm registry currently publishes only 1.4.0. No production task-pane certificate parsing uses it. REMOVE WHEN 1.4.1 or a patched parent is published."
+  }
 ]

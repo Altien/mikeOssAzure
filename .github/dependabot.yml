@@ -6,7 +6,7 @@
 # Advisory Database and opens a PR bumping the affected package to the
 # patched version, usually within hours of the CVE landing. Review, check
 # CI is green, merge: the gate is green again without anyone running
-# `npm audit fix` by hand.
+# a manual lockfile edit.
 #
 # One repo setting is needed for the CVE-fix PRs (this file alone only
 # schedules version bumps): Settings → Advanced Security →
@@ -17,24 +17,7 @@
 
 version: 2
 updates:
-  # Repo root — Playwright e2e tooling with its own package-lock.json
-  - package-ecosystem: "npm"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-    open-pull-requests-limit: 10
-    groups:
-      security-fixes:
-        applies-to: security-updates
-        patterns: ["*"]
-      dev-dependencies:
-        applies-to: version-updates
-        dependency-type: "development"
-      production-dependencies:
-        applies-to: version-updates
-        dependency-type: "production"
-
+  # pnpm workspaces use Dependabot's npm ecosystem identifier.
   # Backend workspace
   - package-ecosystem: "npm"
     directory: "/backend"

@@ -91,11 +91,6 @@
     "vitest": "^4.1.10",
     "wrangler": "^4.90.0"
   },
-  "pnpm": {
-    "overrides": {
-      "eslint-plugin-react-hooks": "~7.0.1"
-    }
-  },
   "license": "AGPL-3.0-only",
   "packageManager": "pnpm@11.1.2"
 }
