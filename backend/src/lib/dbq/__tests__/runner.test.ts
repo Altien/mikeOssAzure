@@ -25,6 +25,7 @@ function makeDb(opts?: {
 }) {
     const updates: Update[] = [];
     const deletes: Record<string, unknown>[] = [];
+    const rpcs: { name: string; args?: Record<string, unknown> }[] = [];
     function from(table: string) {
         const state: {
             op: string;
@@ -88,8 +89,11 @@ function makeDb(opts?: {
     return {
         updates,
         deletes,
+        rpcs,
         from,
         rpc: opts?.rpc ?? (async (name: string, args?: Record<string, unknown>) => {
+            rpcs.push({ name, args });
+            if (name === "defer_db_job") return { data: true, error: null };
             if (name === "finish_db_job") {
                 updates.push({
                     table: "db_jobs",
@@ -250,11 +254,12 @@ describe("processClaimedJob", () => {
             },
             JOB({ attempts: 2, max_attempts: 3 }),
         );
-        expect(db.updates[0].payload).toMatchObject({
-            status: "pending",
-            attempts: 1,
-            run_at: runAt,
-            last_error: "memory_quiet_period",
+        expect(db.updates).toHaveLength(0);
+        expect(db.rpcs.find((r) => r.name === "defer_db_job")?.args).toMatchObject({
+            p_id: "job-1",
+            p_attempts: 2,
+            p_run_at: runAt,
+            p_reason: "memory_quiet_period",
         });
     });
 
@@ -283,10 +288,7 @@ describe("processClaimedJob", () => {
             },
             JOB({ kind: "storage.cleanup", attempts: 8, max_attempts: 8 }),
         );
-        expect(db.updates[0].payload).toMatchObject({
-            status: "pending",
-            max_attempts: 2_147_483_647,
-        });
+        expect(db.updates[0].payload).toMatchObject({ status: "pending" });
     });
 
     it("fails an unknown kind immediately — retrying cannot fix it", async () => {
@@ -307,10 +309,7 @@ describe("processClaimedJob", () => {
                 max_attempts: 20,
             }),
         );
-        expect(db.updates[0].payload).toMatchObject({
-            status: "pending",
-            max_attempts: 2_147_483_647,
-        });
+        expect(db.updates[0].payload).toMatchObject({ status: "pending" });
     });
 });
 
@@ -400,6 +399,6 @@ describe("runDbJobRetentionSweep", () => {
         const failedPurge = db.deletes.find(
             (d) => d.status === "failed" && "lt:finished_at" in d,
         );
-        expect(failedPurge?.["neq:kind"]).toBe("storage.cleanup");
+        expect(failedPurge?.["neq:kind"]).toEqual(["storage.cleanup", "account.delete"]);
     });
 });

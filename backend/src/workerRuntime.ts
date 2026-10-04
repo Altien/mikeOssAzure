@@ -103,7 +103,7 @@ export async function startAllWorkers(): Promise<void> {
     if (renewError) throw new Error("DB job renewal RPC is unavailable");
     const { error: finishError } = await db.rpc("finish_db_job", {
         p_id: missingJob, p_attempts: 0, p_claim_token: missingClaim,
-        p_status: "completed", p_last_error: null, p_result: null, p_run_at: null,
+        p_status: "done", p_last_error: null, p_result: null, p_run_at: null,
     });
     if (finishError) throw new Error("DB job terminal RPC is unavailable");
 

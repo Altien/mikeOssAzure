@@ -125,7 +125,14 @@ export async function processClaimedJob(
     const handler = handlers[job.kind];
     if (!handler) {
         clearInterval(heartbeat);
-        await finish("failed", `unknown job kind: ${job.kind}`);
+        // During a rolling deploy, an older worker may claim a cleanup job
+        // before it knows the handler. Keep private object cleanup retryable.
+        await finish(
+            retryUntilSuccess ? "pending" : "failed",
+            `unknown job kind: ${job.kind}`,
+            null,
+            retryUntilSuccess ? new Date(Date.now() + 60_000).toISOString() : null,
+        );
         console.error("[dbq] unknown job kind", { id: job.id, kind: job.kind });
         return;
     }
@@ -146,10 +153,17 @@ export async function processClaimedJob(
         const delayMs = deferred
             ? Math.max(1_000, (Number.isFinite(deferredAt) ? deferredAt : Date.now() + 60_000) - Date.now())
             : retryDelayMs(job.attempts);
-        const owned = await finish(
-            spent ? "failed" : "pending", message, null,
-            spent ? null : new Date(Date.now() + delayMs).toISOString(),
-        );
+        const runAt = new Date(Date.now() + delayMs).toISOString();
+        const owned = deferred
+            ? await (async () => {
+                if (leaseLost) return false;
+                const { data, error } = await db.rpc("defer_db_job", {
+                    ...identity, p_run_at: runAt, p_reason: message,
+                });
+                if (error) throw new Error(`Unable to defer DB job: ${error.message}`);
+                return data === true;
+              })()
+            : await finish(spent ? "failed" : "pending", message, null, spent ? null : runAt);
         if (!owned) {
             console.warn("[dbq] claim lost before retry transition", { id: job.id });
             return;
