@@ -43,7 +43,6 @@ describe("ApiKeyMissingPopup", () => {
             <ApiKeyMissingPopup
                 open={false}
                 onClose={() => {}}
-                provider="claude"
             />,
         );
 
@@ -56,30 +55,28 @@ describe("ApiKeyMissingPopup", () => {
             <ApiKeyMissingPopup
                 open={true}
                 onClose={() => {}}
-                provider="claude"
             />,
         );
 
         expect(screen.getByText("API key required")).toBeInTheDocument();
         expect(
             screen.getByText(
-                /Claude is not configured for this organisation.*administrator.*\/install/i,
+                /No models are configured for this organisation.*administrator.*organisation credential/i,
             ),
         ).toBeInTheDocument();
     });
 
-    it("falls back to 'this provider' when provider is null", () => {
+    it("uses provider-agnostic copy", () => {
         render(
             <ApiKeyMissingPopup
                 open={true}
                 onClose={() => {}}
-                provider={null}
             />,
         );
 
         expect(
             screen.getByText(
-                /this provider is not configured for this organisation/i,
+                /No models are configured for this organisation/i,
             ),
         ).toBeInTheDocument();
     });
@@ -89,7 +86,6 @@ describe("ApiKeyMissingPopup", () => {
             <ApiKeyMissingPopup
                 open={true}
                 onClose={() => {}}
-                provider="openai"
                 message="Custom override copy."
             />,
         );
@@ -105,7 +101,6 @@ describe("ApiKeyMissingPopup", () => {
             <ApiKeyMissingPopup
                 open={true}
                 onClose={onClose}
-                provider="claude"
             />,
         );
 
@@ -122,7 +117,6 @@ describe("ApiKeyMissingPopup", () => {
             <ApiKeyMissingPopup
                 open={true}
                 onClose={onClose}
-                provider="claude"
             />,
         );
 
@@ -140,13 +134,12 @@ describe("ApiKeyMissingPopup", () => {
             <ApiKeyMissingPopup
                 open={true}
                 onClose={onClose}
-                provider="openai"
             />,
         );
 
         await userEvent.click(screen.getByText("API key required"));
         await userEvent.click(
-            screen.getByText(/OpenAI is not configured for this organisation/),
+            screen.getByText(/No models are configured for this organisation/),
         );
 
         expect(onClose).not.toHaveBeenCalled();
