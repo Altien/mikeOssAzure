@@ -66,7 +66,7 @@ empty storage state also allow a run without backend/auth setup:
 
 ```bash
 CI=1 PLAYWRIGHT_BASE_URL=http://localhost:3000 npm run test:e2e -- \
-  e2e/assistant-streaming.spec.ts --project=chromium --no-deps
+  e2e/assistant-streaming.spec.ts --project=synthetic
 ```
 
 For scroll state, observe the viewport and content size and respond to scroll
