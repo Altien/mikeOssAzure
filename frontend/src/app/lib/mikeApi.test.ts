@@ -920,7 +920,7 @@ describe("streamTabularGenerationResume", () => {
         await streamTabularGenerationResume("r1", controller.signal);
 
         const { url, init } = lastFetchCall();
-        expect(url).toBe("/api/tabular-review/r1/generate/stream");
+        expect(url).toBe("http://localhost:3001/api/tabular-review/r1/generate/stream");
         // A GET with no expected_updated_at: resuming observes a run, it never
         // starts one, so it cannot 409 review_running/review_stale.
         expect(init.method).toBeUndefined();
@@ -1231,7 +1231,7 @@ describe("listWorkflows", () => {
 
         await listWorkflows();
 
-        expect(lastFetchCall().url).toBe("/api/workflows");
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/workflows");
     });
 });
 
@@ -2982,7 +2982,7 @@ describe("dev divergences", () => {
 
         const { blob, filename } = await downloadUserExport("exp/1");
 
-        expect(lastFetchCall().url).toBe("/api/user/exports/exp%2F1/download");
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/user/exports/exp%2F1/download");
         expect(filename).toBe("history.csv");
         expect(await blob.text()).toBe("csv-bytes");
     });
