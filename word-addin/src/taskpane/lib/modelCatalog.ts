@@ -179,8 +179,9 @@ export function underlyingProviderGroup(
   return "Other providers";
 }
 
-export function isAllowedModelId(id: string): boolean {
+export function isAllowedModelId(id: string, configuredIds: readonly string[] = []): boolean {
   return (
+    configuredIds.includes(id) ||
     ALLOWED_MODEL_IDS.has(id) ||
     id.startsWith("aoai:") ||
     ROUTER_SLUGS.some((slug) => id.startsWith(`${slug}/`))
@@ -190,7 +191,9 @@ export function isAllowedModelId(id: string): boolean {
 export function isModelAvailable(
   modelId: string,
   status: ApiKeyStatus | null,
+  configuredIds: readonly string[] = [],
 ): boolean {
+  if (configuredIds.includes(modelId)) return true;
   if (modelId.startsWith("ollama/")) return true;
   // Unknown status (the key-status preflight failed even after a retry) fails
   // OPEN: the backend authoritatively rejects a model it cannot serve, so

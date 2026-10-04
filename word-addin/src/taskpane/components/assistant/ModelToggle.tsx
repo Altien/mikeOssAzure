@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ModelToggleUI, nearestReasoningLevelForModel, reasoningLevelsForModel, type ReasoningLevel } from "@mike/model-toggle-ui";
-import { getAzureModels, type ApiKeyStatus } from "../../api/mikeApi";
+import { getAzureModels, type ApiKeyStatus, type ConfiguredModelOption } from "../../api/mikeApi";
 import {
   isModelAvailable,
   openCodeGoModelOptions,
@@ -18,6 +18,7 @@ export function ModelToggle({
   openRouterModels,
   vercelModels,
   openCodeGoModels,
+  configuredModels,
   compact = false,
   onNoModelsClick,
   reasoningLevel,
@@ -32,6 +33,7 @@ export function ModelToggle({
   openRouterModels: string[];
   vercelModels: string[];
   openCodeGoModels: string[];
+  configuredModels: readonly ConfiguredModelOption[];
   compact?: boolean;
   onNoModelsClick?: () => void;
   reasoningLevel?: ReasoningLevel;
@@ -55,18 +57,19 @@ export function ModelToggle({
     const openRouterOptions = openRouterModelOptions(openRouterModels);
     const vercelOptions = vercelModelOptions(vercelModels);
     const openCodeGoOptions = openCodeGoModelOptions(openCodeGoModels);
-    const localOptions = azureModels;
-    return [
+    const otherModels = [
       ...STATIC_MODELS,
       ...openRouterOptions,
       ...vercelOptions,
       ...openCodeGoOptions,
-      ...localOptions,
-    ].filter(
+      ...azureModels,
+    ];
+    const configuredIds = new Set(configuredModels.map((model) => model.id));
+    return [...otherModels.filter((model) => !configuredIds.has(model.id)), ...configuredModels].filter(
       (model) =>
-        model.group === "Local" || isModelAvailable(model.id, keyStatus),
+        model.source === "Configured" || model.group === "Local" || isModelAvailable(model.id, keyStatus),
     );
-  }, [keyStatus, azureModels, openRouterModels, vercelModels, openCodeGoModels]);
+  }, [keyStatus, azureModels, openRouterModels, vercelModels, openCodeGoModels, configuredModels]);
   const selected = models.find((model) => model.id === value);
   const supportedReasoningLevels = reasoningLevelsForModel(value);
   const normalizedReasoningLevel = reasoningLevel

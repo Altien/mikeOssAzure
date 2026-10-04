@@ -3,7 +3,7 @@
  * test runner (the add-in package has no unit-test runner of its own).
  */
 import { describe, expect, it, vi } from "vitest";
-import { isModelAvailable } from "../../../word-addin/src/taskpane/lib/modelCatalog";
+import { isAllowedModelId, isModelAvailable } from "../../../word-addin/src/taskpane/lib/modelCatalog";
 import { loadWithRetry } from "../../../word-addin/src/taskpane/lib/composerPreflight";
 import type { ApiKeyStatus } from "../../../word-addin/src/taskpane/api/client";
 
@@ -18,6 +18,12 @@ const NO_KEYS: ApiKeyStatus = {
 } as ApiKeyStatus;
 
 describe("isModelAvailable fail-open", () => {
+    it("accepts only authenticated configured catalog IDs beyond static models", () => {
+        expect(isAllowedModelId("custom-cloud")).toBe(false);
+        expect(isAllowedModelId("custom-cloud", ["custom-cloud"])).toBe(true);
+        expect(isModelAvailable("custom-cloud", NO_KEYS)).toBe(false);
+        expect(isModelAvailable("custom-cloud", NO_KEYS, ["custom-cloud"])).toBe(true);
+    });
     it("allows sends while key status is unknown (null)", () => {
         // A flaky WKWebView preflight must not brick the composer: the
         // backend still rejects models it cannot serve.

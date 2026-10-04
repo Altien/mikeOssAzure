@@ -124,6 +124,25 @@ export async function getAzureModels(): Promise<AzureModelOption[]> {
   return (body.deployments ?? []).map((d) => ({ id: `aoai:${d.name}`, label: d.model ? `${d.name} (${d.model})` : d.name, group: "Azure OpenAI" }));
 }
 
+export interface ConfiguredModelOption {
+  id: string;
+  label: string;
+  group: "Configured";
+  location: "cloud" | "local";
+  source: "Configured";
+}
+
+/** Authenticated, secret-free catalog from the same /api transport as Word chat. */
+export async function getConfiguredModels(): Promise<ConfiguredModelOption[]> {
+  const res = await fetchWithRefresh(`${BASE_URL}/models/configured`, {
+    cache: "no-store",
+    headers: { Accept: "application/json", ...(await getAuthHeaders()) },
+  });
+  if (!res.ok) return [];
+  const body = (await res.json()) as { models?: ConfiguredModelOption[] };
+  return body.models ?? [];
+}
+
 interface WordChatServerMessage {
   id: string;
   role: "user" | "assistant";

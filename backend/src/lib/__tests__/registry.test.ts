@@ -167,34 +167,34 @@ describe("configuredModelSummaries", () => {
 });
 
 describe("apiKeyForConfiguredModel", () => {
-    it("prefers an inline key", () => {
+    it("prefers an inline key", async () => {
         expect(
-            apiKeyForConfiguredModel({ ...CLOUD_DEEPSEEK, apiKey: "inline" }),
+            await apiKeyForConfiguredModel({ ...CLOUD_DEEPSEEK, apiKey: "inline" }),
         ).toBe("inline");
     });
 
-    it("falls back to the named environment variable", () => {
+    it("falls back to the named environment variable", async () => {
         process.env.DEEPSEEK_API_KEY = "from-env";
-        expect(apiKeyForConfiguredModel(CLOUD_DEEPSEEK)).toBe("from-env");
+        expect(await apiKeyForConfiguredModel(CLOUD_DEEPSEEK)).toBe("from-env");
     });
 
-    it("reads the user's key when the model names a provider slot", () => {
+    it("reads a resolved organisation credential when the model names a provider slot", async () => {
         expect(
-            apiKeyForConfiguredModel(
+            await apiKeyForConfiguredModel(
                 { ...CLOUD_DEEPSEEK, apiKeyProvider: "openai" },
                 { openai: "user-key" },
             ),
         ).toBe("user-key");
     });
 
-    it("returns null when no key is available", () => {
+    it("returns null when no key is available", async () => {
         delete process.env.DEEPSEEK_API_KEY;
-        expect(apiKeyForConfiguredModel(CLOUD_DEEPSEEK)).toBeNull();
+        expect(await apiKeyForConfiguredModel(CLOUD_DEEPSEEK)).toBeNull();
     });
 });
 
 describe("configured endpoint availability", () => {
-    it("treats a declaration with no key source as keyless", () => {
+    it("treats a declaration with no key source as keyless", async () => {
         const keylessCloud: ConfiguredModel = {
             ...CLOUD_DEEPSEEK,
             id: "keyless-cloud",
@@ -203,7 +203,7 @@ describe("configured endpoint availability", () => {
         configure({ models: [keylessCloud] });
 
         expect(configuredModelRequiresApiKey(keylessCloud)).toBe(false);
-        expect(configuredEndpointSummaries()).toEqual([
+        expect(await configuredEndpointSummaries()).toEqual([
             {
                 id: "keyless-cloud",
                 label: "keyless-cloud",
@@ -213,13 +213,13 @@ describe("configured endpoint availability", () => {
         ]);
     });
 
-    it("hides a model whose declared key source is unresolved", () => {
+    it("hides a model whose declared key source is unresolved", async () => {
         delete process.env.DEEPSEEK_API_KEY;
         expect(configuredModelRequiresApiKey(CLOUD_DEEPSEEK)).toBe(true);
-        expect(configuredEndpointSummaries()[1]?.available).toBe(false);
+        expect((await configuredEndpointSummaries())[1]?.available).toBe(false);
 
         process.env.DEEPSEEK_API_KEY = "available";
-        expect(configuredEndpointSummaries()[1]?.available).toBe(true);
+        expect((await configuredEndpointSummaries())[1]?.available).toBe(true);
     });
 });
 

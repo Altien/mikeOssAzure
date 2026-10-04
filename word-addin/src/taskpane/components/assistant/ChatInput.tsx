@@ -10,12 +10,14 @@ import { WorkflowModal } from "../workflows/WorkflowModal";
 import { ChatInput as ChatInputShell } from "../../../shared/chat/ChatInput";
 import {
   getApiKeyStatus,
+  getConfiguredModels,
   failedUploadMessage,
   getUserProfile,
   listWorkflows,
   uploadStandaloneDocuments,
   UploadBatchError,
   type ApiKeyStatus,
+  type ConfiguredModelOption,
   type UploadOutcome,
   type UploadProgress,
 } from "../../api/mikeApi";
@@ -115,6 +117,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
     const [openRouterModels, setOpenRouterModels] = useState<string[]>([]);
     const [vercelModels, setVercelModels] = useState<string[]>([]);
     const [openCodeGoModels, setOpenCodeGoModels] = useState<string[]>([]);
+    const [configuredModels, setConfiguredModels] = useState<ConfiguredModelOption[]>([]);
+    const configuredModelIds = React.useMemo(() => configuredModels.map((item) => item.id), [configuredModels]);
     const [profileLastSelectedModel, setProfileLastSelectedModel] = useState<
       string | null
     >(null);
@@ -127,6 +131,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
         ? { openRouterModels, vercelModels, openCodeGoModels }
         : null,
       apiKeyStatus: keyStatus,
+      configuredModelIds,
     });
     const [modelError, setModelError] = useState<string | null>(null);
     const [profileLastSelectedReasoningLevel, setProfileLastSelectedReasoningLevel] =
@@ -256,6 +261,15 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
         cancelled = true;
       };
     }, []);
+
+    useEffect(() => {
+      let cancelled = false;
+      setConfiguredModels([]);
+      void getConfiguredModels()
+        .then((models) => { if (!cancelled) setConfiguredModels(models); })
+        .catch(() => { if (!cancelled) setConfiguredModels([]); });
+      return () => { cancelled = true; };
+    }, [sessionKey]);
 
     useEffect(() => {
       uploadGenerationRef.current += 1;
@@ -406,9 +420,9 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
         setModelError("Select a model before sending your message.");
         return;
       }
-      if (!isModelAvailable(model, keyStatus)) {
+      if (!isModelAvailable(model, keyStatus, configuredModelIds)) {
         setModelError(
-          `Add a ${missingModelProvider(model)} API key before using this model.`,
+          `${missingModelProvider(model)} is unavailable. Ask an administrator to check the organisation credential.`,
         );
         return;
       }
@@ -618,6 +632,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
                     openRouterModels={openRouterModels}
                     vercelModels={vercelModels}
                     openCodeGoModels={openCodeGoModels}
+                    configuredModels={configuredModels}
                     compact={compactControls}
                     reasoningLevel={resolvedReasoningLevel}
                     onReasoningChange={(next) => {

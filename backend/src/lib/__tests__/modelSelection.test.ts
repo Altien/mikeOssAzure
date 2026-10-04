@@ -168,14 +168,14 @@ describe("configured model selection", () => {
         resetModelRegistryCache();
     });
 
-    it("allows a keyless configured model", () => {
-        expect(hasApiKeyForModel("keyless-compatible", {})).toBe(true);
+    it("allows a keyless configured model", async () => {
+        expect(await hasApiKeyForModel("keyless-compatible", {})).toBe(true);
     });
 
-    it("requires a declared user key", () => {
-        expect(hasApiKeyForModel("user-key-compatible", {})).toBe(false);
+    it("requires a declared organisation key", async () => {
+        expect(await hasApiKeyForModel("user-key-compatible", {})).toBe(false);
         expect(
-            hasApiKeyForModel("user-key-compatible", { openai: "user-key" }),
+            await hasApiKeyForModel("user-key-compatible", { openai: "user-key" }),
         ).toBe(true);
     });
 

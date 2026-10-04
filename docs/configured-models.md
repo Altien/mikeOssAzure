@@ -42,9 +42,9 @@ array:
 | `label` | no | Display name. Defaults to the id. |
 | `apiModel` | no | Model name to send upstream, when it differs from `id`. |
 | `baseUrl` | yes | The endpoint's OpenAI-compatible base URL. |
-| `apiKey` | no | Literal key. Prefer `apiKeyEnv`. |
-| `apiKeyEnv` | no | Environment variable holding the key. |
-| `apiKeyProvider` | no | Use the requesting user's saved key for that provider. |
+| `apiKey` | no | Explicit operator-declared literal key. Prefer `apiKeyEnv` so Key Vault can supply it. |
+| `apiKeyEnv` | no | Named key source: a canonical Key Vault secret is checked first, then this environment variable. |
+| `apiKeyProvider` | no | Use the organisation-managed credential for that provider. |
 | `tolerateTextToolCalls` | no | Override the tolerance default. |
 | `maxTokensField` | no | Output-token request field: `max_tokens` (default) or `max_completion_tokens`. |
 
@@ -63,8 +63,8 @@ serves an OpenAI-compatible API. For example, a base URL ending in `/v1` must
 accept the usual chat-completions requests; the public homepage of a model
 provider is not enough.
 
-Usable declarations are returned by `GET /models/configured` and appear in the
-chat, tabular-review, and model-preference selectors. The response contains
+Usable declarations are returned by authenticated `GET /api/models/configured` and appear in the
+web chat, tabular review, Word chat, and model-preference selectors. The response contains
 only display metadata; endpoint URLs and credentials remain server-side.
 
 Declared models are served through the same AI SDK provider layer as

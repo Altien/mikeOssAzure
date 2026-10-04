@@ -18,6 +18,7 @@ interface SelectedModelSources {
   } | null;
   /** Null means the key-status request failed and availability fails open. */
   apiKeyStatus: ApiKeyStatus | null;
+  configuredModelIds?: readonly string[];
 }
 
 function usableStoredModel(
@@ -26,7 +27,7 @@ function usableStoredModel(
 ): string | null {
   if (!value) return null;
   const model = canonicalModelId(value);
-  if (!isAllowedModelId(model)) return null;
+  if (!isAllowedModelId(model, sources.configuredModelIds)) return null;
   const router = ROUTER_SLUGS.find((slug) => model.startsWith(`${slug}/`));
   if (router && sources.routerSelections) {
     const selections = {
@@ -38,7 +39,7 @@ function usableStoredModel(
       return null;
     }
   }
-  return isModelAvailable(model, sources.apiKeyStatus) ? model : null;
+  return isModelAvailable(model, sources.apiKeyStatus, sources.configuredModelIds) ? model : null;
 }
 
 /** Resolve the saved chat model first, then the profile's shared last-selected. */
@@ -82,13 +83,14 @@ export function useSelectedModel(
     openRouterModels,
     vercelModels,
     openCodeGoModels,
+    sources.configuredModelIds,
   ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setModel = useCallback((raw: string): void => {
     const next = canonicalModelId(raw);
     manualSelection.current = true;
-    setModelState(isAllowedModelId(next) ? next : "");
+    setModelState(isAllowedModelId(next, sources.configuredModelIds) ? next : "");
     setSettingsResolved(true);
-  }, []);
+  }, [sources.configuredModelIds]);
   return [model, setModel, settingsResolved];
 }
