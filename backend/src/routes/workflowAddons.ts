@@ -283,7 +283,7 @@ workflowAddonsRouter.post(
           .eq("id", documentId);
         if (readyError) throw readyError;
       }
-    } catch {
+    } catch (error) {
       // Rollback order matters: drop the workflow row first, so nothing can
       // reference the half-made copies, then hand the object deletes to the
       // durable storage.cleanup job. The previous Promise.all of best-effort
@@ -296,7 +296,7 @@ workflowAddonsRouter.post(
         .eq("id", workflow.id)
         .eq("user_id", userId);
       await enqueueStorageCleanup(db, createdStoragePaths);
-      return void sendInternalError(res, referenceError);
+      return void sendInternalError(res, error);
     }
 
     res.status(201).json({

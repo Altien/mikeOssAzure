@@ -74,6 +74,29 @@ export async function ensureDocAccess(
     userEmail: string | null | undefined,
     db: Db,
 ): Promise<{ ok: true; isOwner: boolean; canEdit: boolean } | { ok: false }> {
+    // Workflow access is authoritative even when an asset's original uploader
+    // later loses the share. The document's user_id is provenance, not a grant.
+    if (doc.workflow_id) {
+        const { data: workflow, error: workflowError } = await db
+            .from("workflows")
+            .select("user_id")
+            .eq("id", doc.workflow_id)
+            .maybeSingle();
+        if (workflowError || !workflow) return { ok: false };
+        if (workflow.user_id === userId) {
+            return { ok: true, isOwner: true, canEdit: true };
+        }
+        const normalizedEmail = (userEmail ?? "").trim().toLowerCase();
+        if (!normalizedEmail) return { ok: false };
+        const { data: share, error: shareError } = await db
+            .from("workflow_shares")
+            .select("allow_edit")
+            .eq("workflow_id", doc.workflow_id)
+            .eq("shared_with_email", normalizedEmail)
+            .maybeSingle();
+        if (shareError || !share) return { ok: false };
+        return { ok: true, isOwner: false, canEdit: share.allow_edit === true };
+    }
     if (doc.user_id === userId) {
         return { ok: true, isOwner: true, canEdit: true };
     }
@@ -86,23 +109,6 @@ export async function ensureDocAccess(
         );
         if (access.ok) {
             return { ok: true, isOwner: false, canEdit: true };
-        }
-    }
-    if (doc.workflow_id) {
-        const normalizedEmail = (userEmail ?? "").trim().toLowerCase();
-        if (!normalizedEmail) return { ok: false };
-        const { data: share } = await db
-            .from("workflow_shares")
-            .select("allow_edit")
-            .eq("workflow_id", doc.workflow_id)
-            .eq("shared_with_email", normalizedEmail)
-            .maybeSingle();
-        if (share) {
-            return {
-                ok: true,
-                isOwner: false,
-                canEdit: share.allow_edit === true,
-            };
         }
     }
     return { ok: false };

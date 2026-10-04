@@ -21,6 +21,7 @@ function makeQuery(result: QueryResult) {
   builder.contains = chain;
   builder.neq = chain;
   builder.single = chain;
+  builder.maybeSingle = chain;
   builder.then = (
     onFulfilled: (value: QueryResult) => unknown,
     onRejected?: (reason: unknown) => unknown,
@@ -129,6 +130,22 @@ describe("checkProjectAccess", () => {
 });
 
 describe("ensureDocAccess", () => {
+  it("uses current workflow sharing even for the original uploader", async () => {
+    const doc = { user_id: "uploader", project_id: null, workflow_id: "workflow" };
+    const revoked = makeFakeDb({
+      workflows: [{ data: { user_id: "owner" } }],
+      workflow_shares: [{ data: null }],
+    });
+    expect(await ensureDocAccess(doc, "uploader", "uploader@example.com", revoked))
+      .toEqual({ ok: false });
+
+    const editor = makeFakeDb({
+      workflows: [{ data: { user_id: "owner" } }],
+      workflow_shares: [{ data: { allow_edit: true } }],
+    });
+    expect(await ensureDocAccess(doc, "uploader", "uploader@example.com", editor))
+      .toEqual({ ok: true, isOwner: false, canEdit: true });
+  });
   it("short-circuits when the caller owns the doc", async () => {
     const db = makeFakeDb({});
 
@@ -139,7 +156,7 @@ describe("ensureDocAccess", () => {
       db,
     );
 
-    expect(result).toEqual({ ok: true, isOwner: true });
+    expect(result).toEqual({ ok: true, isOwner: true, canEdit: true });
   });
 
   it("denies when the doc has no project_id and the caller is not the owner", async () => {
@@ -170,7 +187,7 @@ describe("ensureDocAccess", () => {
       db,
     );
 
-    expect(result).toEqual({ ok: true, isOwner: false });
+    expect(result).toEqual({ ok: true, isOwner: false, canEdit: true });
   });
 
   it("denies when the doc's project is not accessible", async () => {

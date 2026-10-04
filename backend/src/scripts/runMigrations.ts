@@ -264,7 +264,7 @@ async function main() {
   );
   console.log(
     `[migrate] catalogue active: ${result.workflows} workflows, ` +
-      `${result.references} references, source ${result.sourceCommit}`,
+      `${result.assets} assets, source ${result.sourceCommit}`,
   );
 }
 

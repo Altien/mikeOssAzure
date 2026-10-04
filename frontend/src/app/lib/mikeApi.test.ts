@@ -84,7 +84,6 @@ import {
     getWorkflow,
     getWorkflowAddon,
   getWorkflowFilterOptions,
-    getWorkflowReferenceUrl,
     hideWorkflow,
     isMfaRequiredError,
     listChats,
