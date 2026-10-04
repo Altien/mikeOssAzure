@@ -10,7 +10,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { Transform } from "node:stream";
@@ -131,6 +131,28 @@ const UPLOAD_TEMP_RETENTION_MS = 2 * UPLOAD_JOB_LEASE_SECONDS * 1000;
 class ChangedDocumentError extends AppError {
   constructor() {
     super("upload.document_changed", "document_changed");
+  }
+}
+
+class InvalidPdfFileError extends Error {
+  constructor() {
+    super("invalid_pdf_file");
+    this.name = "InvalidPdfFileError";
+  }
+}
+
+async function validatePdfHeader(filePath: string): Promise<void> {
+  const handle = await open(filePath, "r");
+  try {
+    // Require the signature within the first KiB; \s also accepts a UTF-8 BOM.
+    // This is a bounded signature check, not a parser.
+    const prefix = Buffer.alloc(1024);
+    const { bytesRead } = await handle.read(prefix, 0, prefix.length, 0);
+    if (!/^\s*%PDF-/.test(prefix.toString("utf8", 0, bytesRead))) {
+      throw new InvalidPdfFileError();
+    }
+  } finally {
+    await handle.close();
   }
 }
 
@@ -532,6 +554,7 @@ async function prepareUploadFile(
   const artifact = await requireSealedFile(file);
   const slug = claimToken.replace(/-/g, "");
   try {
+    if (file.file_type === "pdf") await validatePdfHeader(artifact.filePath);
     // An email is stored as the Markdown it converts to. size_bytes stays that
     // of the sealed upload, which the publish RPC checks against the manifest;
     // publishEmailParts corrects it once the row exists.
@@ -677,6 +700,14 @@ export async function processUploadJob(
       if (error instanceof ChangedDocumentError) {
         uploadEvent("document_changed");
         await finish(null, "document_changed");
+        return;
+      }
+      // Upstream ceedace6: a file that is not a PDF cannot succeed on retry.
+      // Dev records it terminally through the publish RPC (migration 0243)
+      // instead of upstream's direct job/file updates, and does not report it.
+      if (error instanceof InvalidPdfFileError) {
+        uploadEvent("invalid_pdf_file");
+        await finish(null, "invalid_pdf_file");
         return;
       }
       console.error("[upload-worker] file processing failed", {

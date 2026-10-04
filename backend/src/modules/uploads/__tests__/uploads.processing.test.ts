@@ -245,6 +245,8 @@ function scriptedDb(results: QueryResult[]) {
   };
 }
 
+const pdfBytes = Buffer.from("%PDF-1.7\n");
+
 const baseFile = {
   id: "22222222-2222-4222-8222-222222222222",
   session_id: "11111111-1111-4111-8111-111111111111",
@@ -253,7 +255,7 @@ const baseFile = {
   filename: "contract.pdf",
   file_type: "pdf",
   content_type: "application/pdf",
-  expected_size_bytes: 4,
+  expected_size_bytes: pdfBytes.length,
   sealed_storage_path: "upload-sessions/user/session/file/sealed",
   target_folder_id: null,
   status: "uploaded",
@@ -278,7 +280,7 @@ describe("upload processing", () => {
     processingTempRoot = await mkdtemp(join(tmpdir(), "mike-upload-test-"));
     process.env.UPLOAD_PROCESSING_TEMP_DIR = processingTempRoot;
     mocks.createFileReadStream.mockImplementation(() =>
-      Readable.from([Buffer.from([1, 2, 3, 4])]),
+      Readable.from([pdfBytes]),
     );
     mocks.copyFile.mockResolvedValue(undefined);
     mocks.officeFileToPdf.mockResolvedValue("/tmp/converted.pdf");
@@ -306,7 +308,7 @@ describe("upload processing", () => {
       if (name === "renew_upload_processing_job") return { data: true, error: null };
       if (name === "finish_upload_processing_job") {
         expect(args).toMatchObject({ p_token: claimToken, p_attempt: 1, p_failure: null,
-          p_payload: { kind: "document_create", size_bytes: 4 } });
+          p_payload: { kind: "document_create", size_bytes: pdfBytes.length } });
         return { data: { status: "completed" }, error: null };
       }
       throw new Error("unexpected RPC: " + name);
@@ -355,7 +357,9 @@ describe("upload processing", () => {
     const emailFile = {
       ...baseFile,
       filename: "Deal.eml.md",
-      file_type: "pdf",
+      // Real email uploads carry file_type "eml"; a "pdf" fixture would now
+      // fail the PDF header check (upstream ceedace6).
+      file_type: "eml",
       content_type: "message/rfc822",
     };
     const placement = {
@@ -548,9 +552,56 @@ describe("upload processing", () => {
     expect(db.remaining).toHaveLength(0);
   });
 
+  // Upstream ceedace6: PDF uploads must carry a PDF header. Dev publishes
+  // through the claim-token RPC, so an invalid file is finished terminally
+  // with p_failure "invalid_pdf_file" (migration 0243) before any copy.
+  function pdfHeaderJob(bytes: Buffer) {
+    mocks.createFileReadStream.mockImplementation(() => Readable.from([bytes]));
+    const db = scriptedDb([
+      { data: { id: "job-1", session_id: baseSession.id, file_id: baseFile.id, attempts: 1,
+        locked_by: "worker-1", claim_token: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }, error: null },
+      { data: baseSession, error: null },
+      { data: { ...baseFile, expected_size_bytes: bytes.length }, error: null },
+    ]);
+    const failures: unknown[] = [];
+    db.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
+      if (name === "renew_upload_processing_job") return { data: true, error: null };
+      if (name === "finish_upload_processing_job") {
+        failures.push(args.p_failure);
+        return { data: args.p_failure ? { status: "error" } : { status: "completed" }, error: null };
+      }
+      throw new Error("unexpected RPC: " + name);
+    });
+    return { db, failures };
+  }
+
+  it.each(["", " \t\r\n\f", "\uFEFF", " \n\uFEFF\t"])(
+    "accepts a PDF header with leading prefix %j",
+    async (prefix) => {
+      const { db, failures } = pdfHeaderJob(Buffer.concat([Buffer.from(prefix), pdfBytes]));
+      await processUploadJob(db as never, "job-1", "worker-1");
+      expect(failures).toEqual([null]);
+      expect(mocks.copyFile).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(["", "plain text", "PK\u0003\u0004Office bytes", "%PDF", "junk%PDF-1.7", " \uFEFF\n"])(
+    "finishes non-PDF bytes %j terminally before destination writes",
+    async (content) => {
+      const { db, failures } = pdfHeaderJob(Buffer.from(content));
+      await processUploadJob(db as never, "job-1", "worker-1");
+      expect(failures).toEqual(["invalid_pdf_file"]);
+      expect(mocks.copyFile).not.toHaveBeenCalled();
+      expect(mocks.uploadFileFromPath).not.toHaveBeenCalled();
+      expect(mocks.officeFileToPdf).not.toHaveBeenCalled();
+      expect(mocks.recordAudit).not.toHaveBeenCalled();
+      expect(db.remaining).toHaveLength(0);
+    },
+  );
+
   describe("editor-save compare-and-swap (sync 6e3ef6fa)", () => {
     const claimToken = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-    const sealedHash = createHash("sha256").update(Buffer.from([1, 2, 3, 4])).digest("hex");
+    const sealedHash = createHash("sha256").update(pdfBytes).digest("hex");
     const startedFrom = "a".repeat(64);
     const replaceSession = {
       ...baseSession,
