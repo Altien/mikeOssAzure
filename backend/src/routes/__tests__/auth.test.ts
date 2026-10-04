@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => {
     mfa: { listFactors: vi.fn(), getAuthenticatorAssuranceLevel: vi.fn(), enroll: vi.fn(), challenge: vi.fn(), verify: vi.fn(), challengeAndVerify: vi.fn(), unenroll: vi.fn() },
   };
   return { user, session, auth, createServerSession: vi.fn(), replaceServerSession: vi.fn(),
-    consumeAuthHandoff: vi.fn(), createOAuthState: vi.fn(), startSupabaseOAuth: vi.fn(),
+    consumeAuthHandoff: vi.fn(), createOAuthState: vi.fn(), startSupabaseOAuth: vi.fn(), startSupabaseSSO: vi.fn(),
     readServerSession: vi.fn(), createCredentialClient: vi.fn(), getConfig: vi.fn(),
   };
 });
@@ -22,6 +22,7 @@ vi.mock("../../lib/auth/providers/supabaseSession", () => ({
   createSupabaseAuthClient: () => ({ auth: mocks.auth }),
   createCredentialClient: mocks.createCredentialClient,
   startSupabaseOAuth: mocks.startSupabaseOAuth,
+  startSupabaseSSO: mocks.startSupabaseSSO,
   startSupabaseRecovery: vi.fn(),
   exchangeSupabaseOAuth: vi.fn(),
   supabaseCredential: (session: typeof mocks.session) => ({ provider: "supabase", userId: session.user.id, accessToken: session.access_token, refreshToken: session.refresh_token }),
@@ -58,12 +59,30 @@ describe("server-owned auth routes", () => {
     process.env.NODE_ENV = "production";
     process.env.FRONTEND_URL = "https://web.example.test";
     process.env.WORD_ADDIN_URL = "https://word.example.test";
+    delete process.env.SSO_ENABLED;
+    delete process.env.SSO_ALLOWED_DOMAINS;
     mocks.getConfig.mockReset().mockImplementation(async (name: string) => name === "auth-provider" ? "supabase" : "https://web.example.test");
     for (const value of Object.values(mocks.auth)) if (typeof value === "function") value.mockReset();
     for (const value of Object.values(mocks.auth.mfa)) value.mockReset();
-    for (const name of ["createServerSession", "replaceServerSession", "consumeAuthHandoff", "createOAuthState", "startSupabaseOAuth", "readServerSession", "createCredentialClient"] as const) mocks[name].mockReset();
+    for (const name of ["createServerSession", "replaceServerSession", "consumeAuthHandoff", "createOAuthState", "startSupabaseOAuth", "startSupabaseSSO", "readServerSession", "createCredentialClient"] as const) mocks[name].mockReset();
     mocks.createCredentialClient.mockResolvedValue({ auth: mocks.auth });
     mocks.readServerSession.mockResolvedValue({ credential: { provider: "supabase", userId: mocks.user.id, accessToken: "private-access", refreshToken: "private-refresh" } });
+  });
+
+  it("starts Supabase SSO only for an allowed email domain with server-owned PKCE state", async () => {
+    process.env.SSO_ENABLED = "true";
+    process.env.SSO_ALLOWED_DOMAINS = "example.test";
+    mocks.startSupabaseSSO.mockResolvedValue({ url: "https://idp.example.test/start", verifierState: "private-verifier" });
+    const denied = await request(app).post("/auth/oauth").set("Origin", "https://web.example.test")
+      .send({ provider: "sso", email: "lawyer@other.test" });
+    expect(denied.status).toBe(400);
+    expect(mocks.startSupabaseSSO).not.toHaveBeenCalled();
+    const accepted = await request(app).post("/auth/oauth").set("Origin", "https://web.example.test")
+      .send({ provider: "sso", email: "lawyer@example.test", next: "/onboarding/profile" });
+    expect(accepted.status).toBe(200);
+    expect(mocks.startSupabaseSSO).toHaveBeenCalledWith("example.test", expect.stringContaining("/api/auth/oauth-callback/sso?state="));
+    expect(mocks.createOAuthState).toHaveBeenCalledWith(expect.objectContaining({ provider: "sso", codeVerifier: "private-verifier" }), expect.any(String));
+    expect(JSON.stringify(accepted.body)).not.toContain("private-verifier");
   });
 
   it("rejects a login from an untrusted Origin before contacting the provider", async () => {
