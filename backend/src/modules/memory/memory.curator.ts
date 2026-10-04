@@ -85,7 +85,7 @@ export const MEMORY_CURATOR_WRITE_TOOL: OpenAIToolSchema = {
   },
 };
 
-export function memoryCuratorModelForChat(args: {
+export async function memoryCuratorModelForChat(args: {
   chatModel: string;
   memoryCuratorModel?: string | null;
   environmentOverride?: string | null;
@@ -95,14 +95,14 @@ export function memoryCuratorModelForChat(args: {
    * model is already verified against these keys by the caller.
    */
   apiKeys?: UserApiKeys;
-}): string {
+}): Promise<string> {
   const preferred =
     args.environmentOverride?.trim() ||
     args.memoryCuratorModel ||
     args.chatModel;
   if (!args.apiKeys || preferred === args.chatModel) return preferred;
   const canonical = resolveModel(preferred, "");
-  if (canonical && hasApiKeyForModel(canonical, args.apiKeys)) {
+  if (canonical && await hasApiKeyForModel(canonical, args.apiKeys)) {
     return canonical;
   }
   console.warn("[memory] curator model unavailable; using the chat model", {
@@ -1256,7 +1256,7 @@ export async function handleMemoryConsolidation(
     db,
   });
   if (!resolved.ok) throw new Error("Memory curator has no available model");
-  const model = memoryCuratorModelForChat({
+  const model = await memoryCuratorModelForChat({
     chatModel: resolved.model,
     memoryCuratorModel: settings.memory_curator_model,
     environmentOverride: process.env.MEMORY_CURATOR_MODEL,

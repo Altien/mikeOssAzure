@@ -1298,14 +1298,14 @@ $$;
 revoke all on function public.memory_project_is_private(uuid)
   from public, web_anon, authenticated;
 
-revoke all on function public.memory_source_allows_app_memory(text, uuid, uuid, uuid)
+revoke all on function public.memory_source_allows_app_memory(text, uuid, text, uuid)
   from public, web_anon, authenticated;
 
 grant execute on function public.memory_project_is_private(uuid)
   to service_role;
 
 grant execute
-  on function public.memory_source_allows_app_memory(text, uuid, uuid, uuid)
+  on function public.memory_source_allows_app_memory(text, uuid, text, uuid)
   to service_role;
 
 

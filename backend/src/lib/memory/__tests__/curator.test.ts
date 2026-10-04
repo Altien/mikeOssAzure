@@ -17,9 +17,9 @@ import {
 } from "../files";
 
 describe("memory curator model selection", () => {
-  it("prefers the environment override, then the user's memory preference", () => {
+  it("prefers the environment override, then the user's memory preference", async () => {
     expect(
-      memoryCuratorModelForChat({
+      await memoryCuratorModelForChat({
         chatModel: "gpt-5.6-sol",
         memoryCuratorModel: "gpt-5.6-luna",
         environmentOverride: " claude-haiku-4-5 ",
@@ -27,36 +27,36 @@ describe("memory curator model selection", () => {
     ).toBe("claude-haiku-4-5");
 
     expect(
-      memoryCuratorModelForChat({
+      await memoryCuratorModelForChat({
         chatModel: "gpt-5.6-sol",
         memoryCuratorModel: "gpt-5.6-luna",
       }),
     ).toBe("gpt-5.6-luna");
   });
 
-  it("falls back to the conversation's selected chat model", () => {
+  it("falls back to the conversation's selected chat model", async () => {
     expect(
-      memoryCuratorModelForChat({
+      await memoryCuratorModelForChat({
         chatModel: "gpt-5.6-sol",
       }),
     ).toBe("gpt-5.6-sol");
   });
 
-  it("ignores a preferred model the actor holds no key for", () => {
+  it("ignores a preferred model the actor holds no key for", async () => {
     // A stale preference or a deployment-wide override for another provider
     // must not fail every curator run for this user; the verified chat
     // model is the safe choice.
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       expect(
-        memoryCuratorModelForChat({
+        await memoryCuratorModelForChat({
           chatModel: "gpt-5.6-sol",
           memoryCuratorModel: "claude-haiku-4-5",
           apiKeys: { openai: "sk-test" },
         }),
       ).toBe("gpt-5.6-sol");
       expect(
-        memoryCuratorModelForChat({
+        await memoryCuratorModelForChat({
           chatModel: "gpt-5.6-sol",
           environmentOverride: "claude-haiku-4-5",
           apiKeys: { openai: "sk-test", claude: "sk-ant" },
