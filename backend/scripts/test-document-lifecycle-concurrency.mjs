@@ -1,13 +1,16 @@
-// Disposable local PostgreSQL only. Requires psql and an applied schema.
+// Disposable local PostgreSQL only. Requires psql and all numbered migrations.
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import assert from "node:assert/strict";
 
-const url = new URL(process.env.SUPABASE_TEST_DB_URL ?? "postgres://invalid");
+const url = new URL(process.env.POSTGRES_TEST_DB_URL ?? "postgres://invalid");
 if (!["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) {
   throw new Error(
-    "SUPABASE_TEST_DB_URL must name a disposable loopback database",
+    "POSTGRES_TEST_DB_URL must name a disposable loopback database",
   );
+}
+if (!/(?:test|tmp|disposable)/i.test(url.pathname)) {
+  throw new Error("POSTGRES_TEST_DB_URL must name a disposable test database");
 }
 const env = {
   ...process.env,
@@ -46,7 +49,7 @@ const create = (id, first = false) =>
   `select public.create_document_version('${doc}', '${JSON.stringify({ id, source: "user_upload", storage_path: `test/${id}`, ...(first ? { version_number: 1 } : {}) })}'::jsonb);`;
 try {
   await query(
-    `insert into public.documents(id) values('${doc}'); ${create(ids[0], true)}`,
+    `insert into public.documents(id,user_id,status) values('${doc}','entra|tenant|lifecycle-concurrency','ready'); ${create(ids[0], true)}`,
   );
   let locked;
   const lockReady = new Promise((resolve) => {
