@@ -36,7 +36,7 @@ importers:
         specifier: ^2.1.1
         version: 2.1.1
       lucide-react:
-        specifier: ^1.41.0
+        specifier: ^1.45.0
         version: 1.50.0(@types/react@19.3.0)(react@19.3.0)
       react:
         specifier: ^19.2.8
@@ -61,19 +61,19 @@ importers:
         specifier: ^4.1.18
         version: 4.3.3
       '@types/node':
-        specifier: ^26.4.1
+        specifier: ^26.5.1
         version: 26.6.4
       '@types/office-js':
-        specifier: ^1.0.608
+        specifier: ^1.0.609
         version: 1.0.611
       '@types/office-runtime':
         specifier: ^1.0.40
         version: 1.0.40
       '@types/react':
-        specifier: ^19.2.0
+        specifier: ^19.3.0
         version: 19.3.0
       '@types/react-dom':
-        specifier: ^19.2.0
+        specifier: ^19.3.0
         version: 19.3.0(@types/react@19.3.0)
       '@typescript/native':
         specifier: npm:typescript@^7.0.2
@@ -85,11 +85,11 @@ importers:
         specifier: ^5.6.8
         version: 5.6.8(webpack@5.111.1)
       office-addin-debugging:
-        specifier: ^6.1.2
-        version: 6.1.2(@microsoft/m365agentstoolkit-cli@1.1.17(@types/node@26.6.4)(zod@4.6.5))(@types/node@26.6.4)
+        specifier: ^7.0.0
+        version: 7.0.1(@microsoft/m365agentstoolkit-cli@1.1.17(@types/node@26.6.4)(zod@4.6.5))(@types/node@26.6.4)
       office-addin-dev-certs:
-        specifier: ^2.0.9
-        version: 2.0.10
+        specifier: ^3.0.0
+        version: 3.0.1
       postcss:
         specifier: ^8.5.28
         version: 8.5.28
@@ -595,9 +595,6 @@ packages:
 
   '@leichtgewicht/ip-codec@2.0.5':
     resolution: {integrity: sha512-Vo+PSpZG2/fmgmiNzYK9qWRh8h/CHrwD0mo1h1DzL4yzHNSfWYujGTYsWGreD000gcgmZ7K4Ys6Tx9TxtsKdDw==}
-
-  '@microsoft/app-manifest@1.0.8':
-    resolution: {integrity: sha512-y5SGD0FkJmUFJSOlA5zxhAdGeOiO+s+z/+qPFKJO9sPx3eXuT2cgGSx7UtnmsK3YNvzGQwA3vd1bJw3z4Md2Ug==}
 
   '@microsoft/app-manifest@1.1.2':
     resolution: {integrity: sha512-uXdmYzhIcchi3Tc9Sh3pTDMe55zy7ge19bnYCGB1gzuyha85Ii7wfdTruwEhqseaX9pwsWDRB5Ot/ltv0rCONw==}
@@ -3388,20 +3385,20 @@ packages:
     resolution: {integrity: sha512-W67iLl4J2EXEGTbfeHCffrjDfitvLANg0UlX3wFUUSTx92KXRFegMHUVgSqE+wvhAbi4WqjGg9czysTV2Epbew==}
     engines: {node: '>= 0.4'}
 
-  office-addin-cli@2.0.10:
-    resolution: {integrity: sha512-SfNM7vuEGqboHd+VQpm50DqNAbpJNtfvt5wIVSXj8O0KqiA4e4Hc/vi0dOcV0XTzVZ/uLobPoV9ieqKF70N8uA==}
+  office-addin-cli@3.0.1:
+    resolution: {integrity: sha512-8bklQAMMf+ZLUr+yfNTNNA73feizf0qOapXbToZ0hr4oiA9rTEebIbO29Uh80gqQNiPRaGGny7IZq/M2RG60ug==}
     hasBin: true
 
-  office-addin-debugging@6.1.2:
-    resolution: {integrity: sha512-4HED21BvZaDJAipZSWeSth9uSsTmTWQD44Hm1lbC1ayb+rPGfVUjbYirpZ0kp9Wj1JTsMhR4VYqGCgaWyGOYBw==}
+  office-addin-debugging@7.0.1:
+    resolution: {integrity: sha512-iXsROz9kwYteJwG7OHIBm7qipcscinnkD4LRqkYXz1iUeUAW/4bkQRzC1rKTlMZADlEnmzyGxeJTw6hQvvB8Ew==}
     hasBin: true
 
-  office-addin-dev-certs@2.0.10:
-    resolution: {integrity: sha512-njHuhfhVo7+df8risRjGp7PWivdE+KhG5B57kBov8YXSt4nrBoEE+i6tYHCj0WrULcgH+aHNUzVAVig3/E2Nzw==}
+  office-addin-dev-certs@3.0.1:
+    resolution: {integrity: sha512-4ndnqbeQLUexNvwpx2HRIQAsh5hAvv2phgh/YQcZYUrr5gXYCtD//pK35ZVSxCb/L7CNI2ExyaLJ6OmBk5y/Nw==}
     hasBin: true
 
-  office-addin-dev-settings@3.1.2:
-    resolution: {integrity: sha512-IOgyE3XC+B/57nyUxfUv5bLMdNaQFBXuI76PxRZUzeSmzlnQGC0WuS74FCP8AK/Z83rSQSwStEOo3WgOKo1FsQ==}
+  office-addin-dev-settings@4.0.1:
+    resolution: {integrity: sha512-3UXjdGCpQN38Ztbaw2xB0OuIORfOtZcibO0+UDBrqGR4Fu9X8EF6u18V38BH8d3Hi7Zti72FzZyvPMP2bmEA8w==}
     hasBin: true
     peerDependencies:
       '@microsoft/m365agentstoolkit-cli': ^1.1.11
@@ -3414,8 +3411,12 @@ packages:
     resolution: {integrity: sha512-kxV247eRDdGhBKOZYBhAvgzm/PveXdUXvZR5bi0mDYWFeY6wHoDuCSjRw00khRR///1ZvgixfvS4CqSfezyptQ==}
     hasBin: true
 
-  office-addin-node-debugger@1.0.10:
-    resolution: {integrity: sha512-HM/9s5JSP2EGwlzqtM1SUBdt3eav5U8P4+WAMR/7kJpSrg+vs71ierATEKQaf5jUFdQpu/PeoJz7fLt/PM6xyg==}
+  office-addin-manifest@3.0.1:
+    resolution: {integrity: sha512-1gHBxW+Bri23UCNK7x3D1qhogsSUFiRE5q8NR+lI1MwKE35Jq8nUrNKO0ZgT7WiEfxl4ZcZlmylGrsvMVoooLw==}
+    hasBin: true
+
+  office-addin-node-debugger@2.0.1:
+    resolution: {integrity: sha512-KzskgCi9bA/9wuIucc8BNDoVz0u5W/er77aMaErYsSvu4zo0Jv37f+LqxNz1vvCseymlhtLLi/zATDcA5Lucfw==}
     hasBin: true
 
   office-addin-project@1.0.10:
@@ -3424,6 +3425,10 @@ packages:
 
   office-addin-usage-data@2.1.1:
     resolution: {integrity: sha512-MUbcqOodtlOUNhLKjSdqeLBHFVd7Qh5pUODqmQe2VLBKk7PuRgl4dCk6bp2dU79vl6BcDyrRERpkyVnQg6zdFg==}
+    hasBin: true
+
+  office-addin-usage-data@3.0.1:
+    resolution: {integrity: sha512-nso5kikrl9MH+4aqDiIZtc5i8RCd6VsoQZu4CrDm75wLLXYoBnwl3Wux+XvM42AytJi94qyFuR5rp/+Er5o6Sg==}
     hasBin: true
 
   on-finished@2.4.1:
@@ -5108,16 +5113,6 @@ snapshots:
 
   '@leichtgewicht/ip-codec@2.0.5': {}
 
-  '@microsoft/app-manifest@1.0.8':
-    dependencies:
-      '@types/fs-extra': 11.0.4
-      '@types/strip-bom': 4.0.1
-      ajv: 8.20.0
-      ajv-draft-04: 1.0.0(ajv@8.20.0)
-      ajv-formats: 3.0.1(ajv@8.20.0)
-      node-fetch: 3.3.2
-      strip-bom: 5.0.0
-
   '@microsoft/app-manifest@1.1.2':
     dependencies:
       '@types/fs-extra': 11.0.4
@@ -5930,20 +5925,20 @@ snapshots:
   '@types/body-parser@1.19.6':
     dependencies:
       '@types/connect': 3.4.38
-      '@types/node': 25.9.9
+      '@types/node': 26.6.4
 
   '@types/bonjour@3.5.13':
     dependencies:
-      '@types/node': 25.9.9
+      '@types/node': 26.6.4
 
   '@types/connect-history-api-fallback@1.5.4':
     dependencies:
       '@types/express-serve-static-core': 4.19.9
-      '@types/node': 25.9.9
+      '@types/node': 26.6.4
 
   '@types/connect@3.4.38':
     dependencies:
-      '@types/node': 25.9.9
+      '@types/node': 26.6.4
 
   '@types/debug@4.1.13':
     dependencies:
@@ -5957,14 +5952,14 @@ snapshots:
 
   '@types/express-serve-static-core@4.19.9':
     dependencies:
-      '@types/node': 25.9.9
+      '@types/node': 26.6.4
       '@types/qs': 6.15.1
       '@types/range-parser': 1.2.7
       '@types/send': 1.2.1
 
   '@types/express-serve-static-core@5.1.3':
     dependencies:
-      '@types/node': 25.9.9
+      '@types/node': 26.6.4
       '@types/qs': 6.15.1
       '@types/range-parser': 1.2.7
       '@types/send': 1.2.1
@@ -5985,7 +5980,7 @@ snapshots:
   '@types/fs-extra@11.0.4':
     dependencies:
       '@types/jsonfile': 6.1.4
-      '@types/node': 25.9.9
+      '@types/node': 26.6.4
 
   '@types/hast@3.0.5':
     dependencies:
@@ -5999,7 +5994,7 @@ snapshots:
 
   '@types/jsonfile@6.1.4':
     dependencies:
-      '@types/node': 25.9.9
+      '@types/node': 26.6.4
 
   '@types/linkify-it@3.0.5': {}
 
@@ -6029,7 +6024,7 @@ snapshots:
 
   '@types/mute-stream@0.0.4':
     dependencies:
-      '@types/node': 25.9.9
+      '@types/node': 26.6.4
 
   '@types/node@20.19.43':
     dependencies:
@@ -6062,11 +6057,11 @@ snapshots:
   '@types/send@0.17.6':
     dependencies:
       '@types/mime': 1.3.5
-      '@types/node': 25.9.9
+      '@types/node': 26.6.4
 
   '@types/send@1.2.1':
     dependencies:
-      '@types/node': 25.9.9
+      '@types/node': 26.6.4
 
   '@types/serve-index@1.9.4':
     dependencies:
@@ -6075,13 +6070,13 @@ snapshots:
   '@types/serve-static@1.15.10':
     dependencies:
       '@types/http-errors': 2.0.5
-      '@types/node': 25.9.9
+      '@types/node': 26.6.4
       '@types/send': 0.17.6
 
   '@types/serve-static@2.2.0':
     dependencies:
       '@types/http-errors': 2.0.5
-      '@types/node': 25.9.9
+      '@types/node': 26.6.4
 
   '@types/strip-bom@4.0.1':
     dependencies:
@@ -6097,7 +6092,7 @@ snapshots:
 
   '@types/ws@8.18.2':
     dependencies:
-      '@types/node': 25.9.9
+      '@types/node': 26.6.4
 
   '@typescript/typescript-aix-ppc64@7.0.2':
     optional: true
@@ -7459,7 +7454,7 @@ snapshots:
 
   jest-worker@27.5.1:
     dependencies:
-      '@types/node': 25.9.9
+      '@types/node': 26.6.4
       merge-stream: 2.0.0
       supports-color: 8.1.1
 
@@ -8223,7 +8218,7 @@ snapshots:
 
   object-inspect@1.13.4: {}
 
-  office-addin-cli@2.0.10:
+  office-addin-cli@3.0.1:
     dependencies:
       commander: 13.1.0
       node-fetch: 2.7.0
@@ -8231,17 +8226,17 @@ snapshots:
     transitivePeerDependencies:
       - encoding
 
-  office-addin-debugging@6.1.2(@microsoft/m365agentstoolkit-cli@1.1.17(@types/node@26.6.4)(zod@4.6.5))(@types/node@26.6.4):
+  office-addin-debugging@7.0.1(@microsoft/m365agentstoolkit-cli@1.1.17(@types/node@26.6.4)(zod@4.6.5))(@types/node@26.6.4):
     dependencies:
-      adm-zip: 0.5.12
+      adm-zip: 0.6.1
       commander: 13.1.0
       node-fetch: 2.7.0
-      office-addin-cli: 2.0.10
-      office-addin-dev-certs: 2.0.10
-      office-addin-dev-settings: 3.1.2(@microsoft/m365agentstoolkit-cli@1.1.17(@types/node@26.6.4)(zod@4.6.5))(@types/node@26.6.4)
-      office-addin-manifest: 2.1.6
-      office-addin-node-debugger: 1.0.10
-      office-addin-usage-data: 2.1.1
+      office-addin-cli: 3.0.1
+      office-addin-dev-certs: 3.0.1
+      office-addin-dev-settings: 4.0.1(@microsoft/m365agentstoolkit-cli@1.1.17(@types/node@26.6.4)(zod@4.6.5))(@types/node@26.6.4)
+      office-addin-manifest: 3.0.1
+      office-addin-node-debugger: 2.0.1
+      office-addin-usage-data: 3.0.1
     transitivePeerDependencies:
       - '@microsoft/m365agentstoolkit-cli'
       - '@types/node'
@@ -8249,26 +8244,26 @@ snapshots:
       - encoding
       - utf-8-validate
 
-  office-addin-dev-certs@2.0.10:
+  office-addin-dev-certs@3.0.1:
     dependencies:
       commander: 13.1.0
       fs-extra: 11.4.1
       mkcert: 3.2.0
-      office-addin-cli: 2.0.10
-      office-addin-usage-data: 2.1.1
+      office-addin-cli: 3.0.1
+      office-addin-usage-data: 3.0.1
     transitivePeerDependencies:
       - encoding
 
-  office-addin-dev-settings@3.1.2(@microsoft/m365agentstoolkit-cli@1.1.17(@types/node@26.6.4)(zod@4.6.5))(@types/node@26.6.4):
+  office-addin-dev-settings@4.0.1(@microsoft/m365agentstoolkit-cli@1.1.17(@types/node@26.6.4)(zod@4.6.5))(@types/node@26.6.4):
     dependencies:
       '@microsoft/m365agentstoolkit-cli': 1.1.17(@types/node@26.6.4)(zod@4.6.5)
-      adm-zip: 0.5.12
+      adm-zip: 0.6.1
       commander: 13.1.0
       fs-extra: 11.4.1
       inquirer: 12.11.1(@types/node@26.6.4)
       junk: 3.1.0
-      office-addin-manifest: 2.1.6
-      office-addin-usage-data: 2.1.1
+      office-addin-manifest: 3.0.1
+      office-addin-usage-data: 3.0.1
       open: 6.4.0
       whatwg-url: 14.2.0
       winreg: 1.2.4
@@ -8284,7 +8279,7 @@ snapshots:
 
   office-addin-manifest@2.1.6:
     dependencies:
-      '@microsoft/app-manifest': 1.0.8
+      '@microsoft/app-manifest': 1.1.2
       adm-zip: 0.5.16
       chalk: 2.4.2
       commander: 13.1.0
@@ -8296,11 +8291,25 @@ snapshots:
     transitivePeerDependencies:
       - encoding
 
-  office-addin-node-debugger@1.0.10:
+  office-addin-manifest@3.0.1:
+    dependencies:
+      '@microsoft/app-manifest': 1.1.2
+      adm-zip: 0.6.1
+      chalk: 2.4.2
+      commander: 13.1.0
+      fs-extra: 7.0.1
+      node-fetch: 2.7.0
+      office-addin-usage-data: 3.0.1
+      uuid: 14.0.2
+      xml2js: 0.5.0
+    transitivePeerDependencies:
+      - encoding
+
+  office-addin-node-debugger@2.0.1:
     dependencies:
       commander: 13.1.0
       node-fetch: 2.7.0
-      office-addin-usage-data: 2.1.1
+      office-addin-usage-data: 3.0.1
       ws: 7.5.13
     transitivePeerDependencies:
       - bufferutil
@@ -8321,6 +8330,10 @@ snapshots:
       - encoding
 
   office-addin-usage-data@2.1.1:
+    dependencies:
+      commander: 13.1.0
+
+  office-addin-usage-data@3.0.1:
     dependencies:
       commander: 13.1.0
 
