@@ -1,25 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw-server";
 
-const { mockGetBrowserAccessToken, mockBounceIfUnauthorized } = vi.hoisted(() => ({
-    mockGetBrowserAccessToken: vi.fn(),
-    mockBounceIfUnauthorized: vi.fn(),
-}));
-
-vi.mock("@/app/lib/auth-token", () => ({
-    getBrowserAccessToken: mockGetBrowserAccessToken,
-    bounceIfUnauthorized: mockBounceIfUnauthorized,
-}));
-
 import { useFetchSingleDoc } from "./useFetchSingleDoc";
-
-beforeEach(() => {
-    mockGetBrowserAccessToken.mockReset();
-    mockGetBrowserAccessToken.mockResolvedValue("tok");
-    mockBounceIfUnauthorized.mockReset();
-});
 
 describe("useFetchSingleDoc: disabled when documentId is missing", () => {
     it("does not fetch when documentId is null", () => {
@@ -50,7 +34,6 @@ describe("useFetchSingleDoc: content-type branching", () => {
         if (result.current.result?.type === "pdf") {
             expect(new Uint8Array(result.current.result.buffer)).toEqual(bytes);
         }
-        expect(mockBounceIfUnauthorized).toHaveBeenCalledOnce();
     });
 
     it("returns a docx result (no buffer) when content-type is NOT application/pdf", async () => {
@@ -204,18 +187,16 @@ describe("useFetchSingleDoc: error handling", () => {
         errSpy.mockRestore();
     });
 
-    it("calls bounceIfUnauthorized on every response (delegating 401 handling)", async () => {
+    it("does not expose a 401 response body in the viewer", async () => {
         server.use(
             http.get("*/api/single-documents/:id/display", () =>
-                new HttpResponse(new Uint8Array([0]), {
-                    headers: { "Content-Type": "application/pdf" },
-                }),
+                HttpResponse.text("private auth details", { status: 401 }),
             ),
         );
 
         const { result } = renderHook(() => useFetchSingleDoc("doc-1"));
         await waitFor(() => expect(result.current.loading).toBe(false));
-
-        expect(mockBounceIfUnauthorized).toHaveBeenCalledOnce();
+        expect(result.current.error).toBe("Failed to load document.");
+        expect(result.current.result).toBeNull();
     });
 });
