@@ -300,6 +300,8 @@ function makeQuery(table: string) {
             }
             if (!activeUpdate && didSelect && table === "chat_messages" && selectedFields === "content")
                 return { data: [], error: null };
+            if (!activeUpdate && didSelect && ["mike_workflows", "workflows", "workflow_shares"].includes(table))
+                return { data: [], error: null };
             return result;
         };
         return resolveQuery().then(resolve, reject);
@@ -1856,7 +1858,7 @@ describe("PATCH /word-chat/:chatId/model", () => {
         const chatId = "6f783e59-35c4-4ddc-896a-94aa4d05a768";
         const documentId = "6f783e59-35c4-4ddc-896a-94aa4d05a767";
         const res = await request(app)
-            .patch(`/word-chat/${chatId}/model`)
+            .patch(`/api/word-chat/${chatId}/model`)
             .query({ document_id: documentId })
             .set("Authorization", "Bearer test")
             .send({ model: "gemini-3-flash-preview" });
@@ -3010,7 +3012,7 @@ describe("chat grants, deletion and roster", () => {
 
         const res = await request(app)
             .get(
-                "/chat?before_updated_at=2026-09-21T12%3A00%3A00.000Z&before_id=6f783e59-35c4-4ddc-896a-94aa4d05a768",
+                "/api/chat?before_updated_at=2026-09-21T12%3A00%3A00.000Z&before_id=6f783e59-35c4-4ddc-896a-94aa4d05a768",
             )
             .set("Authorization", "Bearer test");
 
@@ -3187,7 +3189,7 @@ describe("server-owned turns: resume, stop, concurrency", () => {
         // Attach from the second frame: the replay skips chat_id, then the
         // live tail arrives once the generation is released.
         const tail = request(app)
-            .get(`/chat/chat-1/turn/${turnId.id}/stream?from=2`)
+            .get(`/api/chat/chat-1/turn/${turnId.id}/stream?from=2`)
             .set("Authorization", "Bearer test");
         setTimeout(() => held.release(), 30);
         const resumed = await tail;
@@ -3257,13 +3259,13 @@ describe("server-owned turns: resume, stop, concurrency", () => {
         const turnId = (findAssistantReservation()?.value as { id: string }).id;
 
         const unknown = await request(app)
-            .post(`/chat/chat-1/turn/not-a-turn/stop`)
+            .post(`/api/chat/chat-1/turn/not-a-turn/stop`)
             .set("Authorization", "Bearer test");
         expect(unknown.status).toBe(404);
         expect(unknown.body.code).toBe("turn_not_found");
 
         const stopped = await request(app)
-            .post(`/chat/chat-1/turn/${turnId}/stop`)
+            .post(`/api/chat/chat-1/turn/${turnId}/stop`)
             .set("Authorization", "Bearer test");
         expect(stopped.status).toBe(200);
         expect(stopped.body).toEqual({ stopped: true, finished: false });
@@ -3281,11 +3283,11 @@ describe("server-owned turns: resume, stop, concurrency", () => {
         // Stopping again is a no-op that says so; the run is kept briefly
         // for late readers, and a replay of it ends at once.
         const again = await request(app)
-            .post(`/chat/chat-1/turn/${turnId}/stop`)
+            .post(`/api/chat/chat-1/turn/${turnId}/stop`)
             .set("Authorization", "Bearer test");
         expect(again.body).toEqual({ stopped: false, finished: true });
         const replay = await request(app)
-            .get(`/chat/chat-1/turn/${turnId}/stream`)
+            .get(`/api/chat/chat-1/turn/${turnId}/stream`)
             .set("Authorization", "Bearer test");
         expect(replay.status).toBe(200);
         expect(records(replay.text)[0]).toContain('"type":"chat_id"');
@@ -3302,11 +3304,11 @@ describe("server-owned turns: resume, stop, concurrency", () => {
         await held.started;
         const turnId = (findAssistantReservation()?.value as { id: string }).id;
         const wrongChat = await request(app)
-            .get(`/chat/chat-2/turn/${turnId}/stream`)
+            .get(`/api/chat/chat-2/turn/${turnId}/stream`)
             .set("Authorization", "Bearer test");
         expect(wrongChat.status).toBe(404);
         const unknown = await request(app)
-            .get(`/chat/chat-1/turn/nope/stream`)
+            .get(`/api/chat/chat-1/turn/nope/stream`)
             .set("Authorization", "Bearer test");
         expect(unknown.status).toBe(404);
         expect(unknown.body.code).toBe("turn_not_found");

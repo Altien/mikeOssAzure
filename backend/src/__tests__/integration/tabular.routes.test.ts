@@ -170,8 +170,8 @@ vi.mock("../../middleware/auth", async () => {
     return authMock();
 });
 
-vi.mock("../../modules/chat/engine/index", async (importOriginal) => ({
-    ...(await importOriginal<typeof import("../../modules/chat/engine/index")>()),
+vi.mock("../../modules/chat/engine/streaming", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../../modules/chat/engine/streaming")>()),
     runLLMStream: (...args: unknown[]) => runLLMStream(...args),
 }));
 
@@ -229,6 +229,7 @@ const AUTH = ["Authorization", "Bearer test"] as const;
 describe("tabular.routes", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        vi.stubGlobal("fetch", vi.fn(() => { throw new Error("Unexpected network request in tabular route test"); }));
         resetSupabaseState();
         // Default: caller is the owner with full access.
         ensureReviewAccess.mockResolvedValue({
@@ -271,6 +272,7 @@ describe("tabular.routes", () => {
             missing: [],
         });
     });
+    afterEach(() => vi.unstubAllGlobals());
 
     // ── GET /tabular-review (overview) ────────────────────────────────────
     describe("GET /tabular-review", () => {
@@ -2500,7 +2502,7 @@ describe("tabular.routes", () => {
             // had already seen, then tails the live frames to the end.
             const tail = request(app)
                 .get(
-                    `/tabular-review/r1/chats/review-chat-1/turn/${activeTurn.id}/stream?from=2`,
+                    `/api/tabular-review/r1/chats/review-chat-1/turn/${activeTurn.id}/stream?from=2`,
                 )
                 .set(...AUTH);
             setTimeout(() => held.release(), 30);
@@ -2596,7 +2598,7 @@ describe("tabular.routes", () => {
 
             const unknown = await request(app)
                 .post(
-                    "/tabular-review/r1/chats/review-chat-1/turn/not-a-turn/stop",
+                    "/api/tabular-review/r1/chats/review-chat-1/turn/not-a-turn/stop",
                 )
                 .set(...AUTH);
             expect(unknown.status).toBe(404);
@@ -2604,7 +2606,7 @@ describe("tabular.routes", () => {
 
             const stopped = await request(app)
                 .post(
-                    `/tabular-review/r1/chats/review-chat-1/turn/${turnId}/stop`,
+                    `/api/tabular-review/r1/chats/review-chat-1/turn/${turnId}/stop`,
                 )
                 .set(...AUTH);
             expect(stopped.status).toBe(200);
@@ -2626,7 +2628,7 @@ describe("tabular.routes", () => {
             // briefly so a late reader still gets the terminal frames.
             const again = await request(app)
                 .post(
-                    `/tabular-review/r1/chats/review-chat-1/turn/${turnId}/stop`,
+                    `/api/tabular-review/r1/chats/review-chat-1/turn/${turnId}/stop`,
                 )
                 .set(...AUTH);
             expect(again.body).toEqual({ stopped: false, finished: true });
@@ -2641,7 +2643,7 @@ describe("tabular.routes", () => {
 
             const wrongChat = await request(app)
                 .get(
-                    `/tabular-review/r1/chats/review-chat-2/turn/${turnId}/stream`,
+                    `/api/tabular-review/r1/chats/review-chat-2/turn/${turnId}/stream`,
                 )
                 .set(...AUTH);
             // The chat row the gate loads still says review-chat-1, so the
@@ -2672,7 +2674,7 @@ describe("tabular.routes", () => {
             });
             const hidden = await request(app)
                 .get(
-                    `/tabular-review/r1/chats/review-chat-1/turn/${turnId}/stream`,
+                    `/api/tabular-review/r1/chats/review-chat-1/turn/${turnId}/stream`,
                 )
                 .set(...AUTH);
             expect(hidden.status).toBe(404);
@@ -2691,7 +2693,7 @@ describe("tabular.routes", () => {
             };
             const refused = await request(app)
                 .post(
-                    `/tabular-review/r1/chats/review-chat-1/turn/${turnId}/stop`,
+                    `/api/tabular-review/r1/chats/review-chat-1/turn/${turnId}/stop`,
                 )
                 .set(...AUTH);
             expect(refused.status).toBe(403);
