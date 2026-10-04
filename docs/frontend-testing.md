@@ -51,8 +51,8 @@ project assistant and tabular-review chat (six browser scenarios).
 It uses the real Next.js/React renderer, fails on browser console errors and
 uncaught exceptions, and requires no model-provider key. It belongs to the
 Playwright `synthetic` project (specs that mock every `/api` call in the
-browser), which CI runs as **Assistant streaming (production)** on every PR,
-without the Supabase/API stack. **Assistant streaming (development)** reruns it
+browser), which CI runs as the **Assistant streaming (production, …)** jobs on
+every PR, without the Supabase/API stack. The **development** variants rerun it
 on `next dev`, because React's passive-update-depth warning is
 development-only; that job runs nightly, on manual dispatch, and on PRs
 labelled `stress` (see [e2e-ci.md](e2e-ci.md#development-stress-jobs)). Add the
