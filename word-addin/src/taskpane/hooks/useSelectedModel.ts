@@ -29,7 +29,7 @@ function usableStoredModel(
   const model = canonicalModelId(value);
   if (!isAllowedModelId(model, sources.configuredModelIds)) return null;
   const router = ROUTER_SLUGS.find((slug) => model.startsWith(`${slug}/`));
-  if (router && sources.routerSelections) {
+  if (router && !sources.configuredModelIds?.includes(model) && sources.routerSelections) {
     const selections = {
       openrouter: sources.routerSelections.openRouterModels,
       vercel: sources.routerSelections.vercelModels,
