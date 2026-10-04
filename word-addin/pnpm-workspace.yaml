@@ -4,5 +4,7 @@
 # Build scripts of office-addin-debugging's transitive deps are not needed
 # for the dev server / sideload flow.
 allowBuilds:
+  '@azure/msal-node-extensions': false
+  '@microsoft/m365agentstoolkit-cli': false
   '@microsoft/teamsapp-cli': false
   keytar: false
