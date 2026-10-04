@@ -428,7 +428,7 @@ describe("upload processing", () => {
     expect(mocks.uploadFileFromPath).not.toHaveBeenCalled();
   });
 
-  it("marks a failed created document and safely queues the job for retry", async () => {
+  it("sends a failed file to the atomic retry RPC without publishing domain rows", async () => {
     mocks.createFileReadStream.mockImplementation(() =>
       Readable.from(
         (async function* () {
@@ -444,42 +444,26 @@ describe("upload processing", () => {
           file_id: baseFile.id,
           attempts: 1,
           locked_by: "worker-1",
+          claim_token: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         },
         error: null,
       },
       { data: baseSession, error: null },
       { data: baseFile, error: null },
-      { data: { id: "job-1" }, error: null },
-      { error: null },
-      { data: { id: "job-1" }, error: null },
-      { error: null },
-      { error: null },
-      { data: { id: "job-1" }, error: null },
-      { data: { id: "job-1" }, error: null },
-      { error: null },
     ]);
+    db.rpc.mockImplementation(async (name: string) => ({
+      data: name === "renew_upload_processing_job" ? true : { status: "retry" },
+      error: null,
+    }));
 
     await processUploadJob(db as never, "job-1", "worker-1");
 
-    expect(db.calls).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          table: "documents",
-          operation: "update",
-          payload: expect.objectContaining({ status: "error" }),
-        }),
-        expect.objectContaining({
-          table: "upload_processing_jobs",
-          operation: "update",
-          payload: expect.objectContaining({ status: "queued" }),
-        }),
-        expect.objectContaining({
-          table: "upload_session_files",
-          operation: "update",
-          payload: expect.objectContaining({ status: "uploaded" }),
-        }),
-      ]),
-    );
+    expect(db.rpc).toHaveBeenCalledWith("finish_upload_processing_job", expect.objectContaining({
+      p_failure: "processing_failed", p_token: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    }));
+    expect(db.calls.map((call) => call.table)).toEqual([
+      "upload_processing_jobs", "upload_sessions", "upload_session_files",
+    ]);
     expect(db.remaining).toHaveLength(0);
   });
 
@@ -492,13 +476,14 @@ describe("upload processing", () => {
           file_id: baseFile.id,
           attempts: 1,
           locked_by: "worker-1",
+          claim_token: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         },
         error: null,
       },
       { data: baseSession, error: null },
       { data: baseFile, error: null },
-      { data: null, error: null },
     ]);
+    db.rpc.mockResolvedValue({ data: false, error: null });
 
     await expect(
       processUploadJob(db as never, "job-1", "worker-1"),
@@ -553,48 +538,23 @@ describe("upload processing", () => {
     }
   });
 
-  it("expires stale sessions, removes temporary objects, and deletes retained rows", async () => {
+  it("expires stale sessions, queues durable cleanup, and deletes retained rows", async () => {
     const db = scriptedDb([
       { error: null },
       { error: null },
-      {
-        data: [
-          {
-            id: "job-exhausted",
-            session_id: "session-exhausted",
-            file_id: "file-exhausted",
-          },
-        ],
-        error: null,
-      },
-      { error: null },
-      { error: null },
       { data: [{ id: "session-clean" }], error: null },
-      {
-        data: [
-          {
-            staging_storage_path: "staging-object",
-            sealed_storage_path: "sealed-object",
-          },
-        ],
-        error: null,
-      },
-      { error: null },
       { data: [{ id: "old-session" }], error: null },
       { error: null },
     ]);
 
     await cleanupUploadSessions(db as never);
 
-    expect(mocks.deleteFile).toHaveBeenCalledWith("staging-object");
-    expect(mocks.deleteFile).toHaveBeenCalledWith("sealed-object");
+    expect(db.rpc).toHaveBeenCalledWith("queue_upload_session_cleanup", { p_session_id: "session-clean" });
+    expect(db.rpc).toHaveBeenCalledWith("expire_exhausted_upload_jobs", {
+      p_lease_seconds: 1800, p_limit: 20,
+    });
     expect(db.calls).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          table: "upload_processing_jobs",
-          operation: "update",
-          payload: expect.objectContaining({ status: "error" }),
-        }),
         expect.objectContaining({
           table: "upload_sessions",
           operation: "delete",

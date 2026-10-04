@@ -61,19 +61,14 @@ type UploadJobRow = {
   file_id: string;
   attempts: number;
   locked_by: string | null;
+  claim_token: string;
 };
 
-export const UPLOAD_JOB_MAX_ATTEMPTS = 3;
 export const UPLOAD_JOB_LEASE_SECONDS = 30 * 60;
 const UPLOAD_WORKER_POLL_MS = 1_000;
 const UPLOAD_WORKER_HEARTBEAT_MS = 60_000;
 const UPLOAD_SESSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const UPLOAD_TEMP_RETENTION_MS = 2 * UPLOAD_JOB_LEASE_SECONDS * 1000;
-const TERMINAL_UPLOAD_ERROR_CODES = new Set([
-  "direct_upload_failed",
-  "size_mismatch",
-  "content_type_mismatch",
-]);
 
 type SealedFileArtifact = {
   directory: string;
@@ -599,68 +594,63 @@ export async function processUploadFile(
   }
 }
 
-async function heartbeatJob(db: Db, jobId: string, workerId: string) {
-  const { data, error } = await db
-    .from("upload_processing_jobs")
-    .update({
-      locked_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", jobId)
-    .eq("status", "running")
-    .eq("locked_by", workerId)
-    .select("id")
-    .maybeSingle();
-  if (error || !data) throw error ?? new Error("upload_job_lease_lost");
-}
-
-async function refreshUploadSessionStatus(
-  db: Db,
-  sessionId: string,
-): Promise<void> {
-  const { error } = await db.rpc("refresh_upload_session_status", {
-    target_session_id: sessionId,
-  });
-  if (error) throw error;
-}
-
-async function markCreatedDocumentFailed(
+// Prepare immutable, claim-specific storage objects before publishing any
+// document/reference row. A reclaimed worker may finish its copy or PDF work,
+// but only the current claim can publish these paths in one database RPC.
+async function prepareUploadFile(
   db: Db,
   session: UploadSessionRow,
   file: UploadFileRow,
-): Promise<void> {
-  if (session.purpose !== "document_create") return;
-  const { error } = await db
-    .from("documents")
-    .update({ status: "error", updated_at: new Date().toISOString() })
-    .eq("id", file.resource_id)
-    .eq("user_id", session.user_id)
-    .eq("status", "processing");
-  if (error) throw error;
-}
-
-async function removeFailedCreatedDocument(
-  db: Db,
-  session: UploadSessionRow,
-  file: UploadFileRow,
-): Promise<void> {
-  if (session.purpose !== "document_create") return;
-  await Promise.all([
-    deleteFile(
-      storageKey(session.user_id, file.resource_id, file.filename),
-    ).catch(() => {}),
-    deleteFile(convertedPdfKey(session.user_id, file.resource_id)).catch(
-      () => {},
-    ),
-  ]);
-  const { error } = await db
-    .from("documents")
-    .delete()
-    .eq("id", file.resource_id)
-    .eq("user_id", session.user_id)
-    .eq("status", "error")
-    .is("current_version_id", null);
-  if (error) throw error;
+  claimToken: string,
+): Promise<Record<string, unknown>> {
+  const artifact = await requireSealedFile(file);
+  const slug = claimToken.replace(/-/g, "");
+  try {
+    if (session.purpose === "document_create") {
+      const scope = session.destination.scope as "standalone" | "project" | "library";
+      const documentId = file.resource_id;
+      const sourcePath = versionStorageKey(session.user_id, documentId, slug, file.filename);
+      await copyFile(file.sealed_storage_path, sourcePath);
+      const pdfPath = await buildPdfRendition({ sourceFilePath: artifact.filePath,
+        workingDirectory: artifact.directory, fileType: file.file_type,
+        userId: session.user_id, documentId, versionSlug: slug, sourceStoragePath: sourcePath });
+      return { kind: session.purpose, source_path: sourcePath, pdf_path: pdfPath,
+        size_bytes: artifact.size, sha256: artifact.sha256,
+        page_count: file.file_type === "pdf" ? await countPdfPages(artifact.filePath) : null,
+        project_id: scope === "project" ? session.destination.project_id : null,
+        folder_id: scope === "project" ? (file.target_folder_id ?? session.destination.folder_id ?? null) : null,
+        library_kind: scope === "library" ? session.destination.library_kind : "file",
+        library_folder_id: scope === "library" ? (file.target_folder_id ?? session.destination.folder_id ?? null) : null,
+      };
+    }
+    if (session.purpose === "document_version_create" || session.purpose === "document_version_replace") {
+      const documentId = session.destination.document_id as string;
+      const sourcePath = versionStorageKey(session.user_id, documentId, slug, file.filename);
+      await copyFile(file.sealed_storage_path, sourcePath);
+      const pdfPath = await buildPdfRendition({ sourceFilePath: artifact.filePath,
+        workingDirectory: artifact.directory, fileType: file.file_type,
+        userId: session.user_id, documentId, versionSlug: slug, sourceStoragePath: sourcePath });
+      return { kind: session.purpose, source_path: sourcePath, pdf_path: pdfPath,
+        size_bytes: artifact.size, sha256: artifact.sha256,
+        page_count: file.file_type === "pdf" ? await countPdfPages(artifact.filePath) : null,
+        filename: session.purpose === "document_version_create"
+          ? ((session.destination.filename as string | undefined)?.trim() || file.filename) : file.filename };
+    }
+    const workflowId = session.destination.workflow_id as string;
+    const { data: workflow, error: workflowError } = await db.from("workflows")
+      .select("id, user_id").eq("id", workflowId).single();
+    if (workflowError || !workflow) throw workflowError ?? new Error("workflow_not_found");
+    const ownerId = (workflow.user_id as string | null) ?? session.user_id;
+    const referenceId = session.purpose === "workflow_reference_replace"
+      ? session.destination.reference_id as string : file.resource_id;
+    const sourcePath = workflowReferenceKey(ownerId, workflowId, referenceId,
+      `${artifact.sha256}-${slug}`, file.filename);
+    await copyFile(file.sealed_storage_path, sourcePath);
+    return { kind: session.purpose, source_path: sourcePath,
+      size_bytes: artifact.size, sha256: artifact.sha256, owner_id: ownerId };
+  } finally {
+    await removeTemporaryArtifact(artifact.directory);
+  }
 }
 
 export async function processUploadJob(
@@ -668,191 +658,74 @@ export async function processUploadJob(
   jobId: string,
   workerId: string,
 ): Promise<void> {
-  const { data: job, error: jobError } = await db
-    .from("upload_processing_jobs")
-    .select("id, session_id, file_id, attempts, locked_by")
-    .eq("id", jobId)
-    .eq("status", "running")
-    .eq("locked_by", workerId)
-    .single();
-  if (jobError || !job) throw jobError ?? new Error("upload_job_not_found");
+  const { data: job, error: jobError } = await db.from("upload_processing_jobs")
+    .select("id, session_id, file_id, attempts, locked_by, claim_token")
+    .eq("id", jobId).eq("status", "running").eq("locked_by", workerId).single();
+  if (jobError || !job || !job.claim_token) throw jobError ?? new Error("upload_job_not_found");
   const typedJob = job as UploadJobRow;
-  const { data: session, error: sessionError } = await db
-    .from("upload_sessions")
+  const { data: session, error: sessionError } = await db.from("upload_sessions")
     .select("id, user_id, user_email, purpose, destination, status")
-    .eq("id", typedJob.session_id)
-    .single();
-  if (sessionError || !session) {
-    throw sessionError ?? new Error("upload_session_not_found");
-  }
+    .eq("id", typedJob.session_id).single();
+  if (sessionError || !session) throw sessionError ?? new Error("upload_session_not_found");
   const typedSession = session as UploadSessionRow;
-  const { data: fileRow, error: filesError } = await db
-    .from("upload_session_files")
-    .select("*")
-    .eq("session_id", typedSession.id)
-    .eq("id", typedJob.file_id)
-    .single();
-  if (filesError || !fileRow) {
-    throw filesError ?? new Error("upload_session_file_not_found");
-  }
-  const file = fileRow as UploadFileRow;
-  const terminalUploadFailure =
-    file.status === "error" &&
-    !!file.error_code &&
-    TERMINAL_UPLOAD_ERROR_CODES.has(file.error_code);
-
-  const startedAt = Date.now();
-  const wallClockMs = uploadJobWallClockMs();
-  const heartbeat: NodeJS.Timeout = setInterval(() => {
-    // Past the wall-clock budget, stop renewing the lease. A wedged job then
-    // ages out and claim_upload_processing_job can steal it for a retry
-    // instead of the slot being held forever.
-    if (Date.now() - startedAt >= wallClockMs) {
-      clearInterval(heartbeat);
-      return;
-    }
-    void heartbeatJob(db, jobId, workerId).catch((error) => {
-      console.error("[upload-worker] heartbeat failed", { jobId, error });
+  const { data: file, error: fileError } = await db.from("upload_session_files")
+    .select("*").eq("id", typedJob.file_id).eq("session_id", typedSession.id).single();
+  if (fileError || !file) throw fileError ?? new Error("upload_session_file_not_found");
+  const typedFile = file as UploadFileRow;
+  const renew = async () => {
+    const { data, error } = await db.rpc("renew_upload_processing_job", {
+      p_job_id: jobId, p_worker_id: workerId, p_attempt: typedJob.attempts,
+      p_token: typedJob.claim_token, p_lease_seconds: UPLOAD_JOB_LEASE_SECONDS,
     });
+    if (error || data !== true) throw error ?? new Error("upload_job_lease_lost");
+  };
+  const finish = async (payload: Record<string, unknown> | null, failure: string | null) => {
+    const { data, error } = await db.rpc("finish_upload_processing_job", {
+      p_job_id: jobId, p_worker_id: workerId, p_attempt: typedJob.attempts,
+      p_token: typedJob.claim_token, p_payload: payload, p_failure: failure,
+      p_lease_seconds: UPLOAD_JOB_LEASE_SECONDS,
+    });
+    if (error || !data) throw error ?? new Error("upload_job_lease_lost");
+    return data as { status: string; result?: unknown };
+  };
+  const startedAt = Date.now();
+  const heartbeat = setInterval(() => {
+    if (Date.now() - startedAt >= uploadJobWallClockMs()) return;
+    void renew().catch((error) => console.error("[upload-worker] heartbeat failed", { jobId, error }));
   }, UPLOAD_WORKER_HEARTBEAT_MS);
   heartbeat.unref();
-
-  let failed = false;
   try {
-    if (file.status !== "completed" && !terminalUploadFailure) {
-      await heartbeatJob(db, jobId, workerId);
-      const { error: statusError } = await db
-        .from("upload_session_files")
-        .update({
-          status: "processing",
-          error_code: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", file.id)
-        .eq("session_id", typedSession.id);
-      if (statusError) throw statusError;
-
-      let result: unknown;
-      try {
-        result = await processUploadFile(db, typedSession, file);
-      } catch (error) {
-        // A failed timer heartbeat makes ownership uncertain. Re-prove the
-        // lease before recording even a failure result.
-        await heartbeatJob(db, jobId, workerId);
-        failed = true;
-        console.error("[upload-worker] file processing failed", {
-          jobId,
-          sessionId: typedSession.id,
-          fileId: file.id,
-          purpose: typedSession.purpose,
-          error,
-        });
-        const { error: updateError } = await db
-          .from("upload_session_files")
-          .update({
-            status: "error",
-            error_code: "processing_failed",
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", file.id)
-          .eq("session_id", typedSession.id);
-        if (updateError) throw updateError;
-        await markCreatedDocumentFailed(db, typedSession, file);
-        await heartbeatJob(db, jobId, workerId);
-      }
-
-      if (!failed) {
-        // Long conversions may outlive a lease heartbeat. Re-prove ownership
-        // before publishing the result or deleting the sealed source object.
-        await heartbeatJob(db, jobId, workerId);
-        const { error } = await db
-          .from("upload_session_files")
-          .update({
-            status: "completed",
-            result,
-            error_code: null,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", file.id)
-          .eq("session_id", typedSession.id);
-        if (error) throw error;
-        await deleteFile(file.sealed_storage_path).catch(() => {});
-        await heartbeatJob(db, jobId, workerId);
-      }
+    await renew();
+    let payload: Record<string, unknown>;
+    try {
+      payload = await prepareUploadFile(db, typedSession, typedFile, typedJob.claim_token);
+    } catch (error) {
+      console.error("[upload-worker] file processing failed", {
+        jobId, sessionId: typedSession.id, fileId: typedFile.id,
+        purpose: typedSession.purpose, error,
+      });
+      await finish(null, "processing_failed");
+      return;
+    }
+    if (Date.now() - startedAt >= uploadJobWallClockMs()) {
+      throw new Error("upload_job_wall_clock_exceeded");
+    }
+    await renew();
+    const published = await finish(payload, null);
+    if (published.status !== "completed") throw new Error("upload_job_not_published");
+    if (typedSession.purpose === "document_create") {
+      await recordAudit(db, {
+        userId: typedSession.user_id, userEmail: typedSession.user_email,
+        action: "document.uploaded", title: typedFile.filename,
+        surface: typedSession.destination.scope === "project" ? "project" : "assistant",
+        projectId: typedSession.destination.scope === "project"
+          ? typedSession.destination.project_id as string : null,
+        documentId: typedFile.resource_id,
+      });
     }
   } finally {
     clearInterval(heartbeat);
   }
-
-  const now = new Date().toISOString();
-  if (failed && typedJob.attempts < UPLOAD_JOB_MAX_ATTEMPTS) {
-    const retryAt = new Date(
-      Date.now() + typedJob.attempts * 5_000,
-    ).toISOString();
-    const { data: retried, error: retryError } = await db
-      .from("upload_processing_jobs")
-      .update({
-        status: "queued",
-        available_at: retryAt,
-        locked_at: null,
-        locked_by: null,
-        error_code: "file_processing_failed",
-        updated_at: now,
-      })
-      .eq("id", jobId)
-      .eq("locked_by", workerId)
-      .select("id")
-      .maybeSingle();
-    if (retryError || !retried) {
-      throw retryError ?? new Error("upload_job_lease_lost");
-    }
-    const { error: fileRetryError } = await db
-      .from("upload_session_files")
-      .update({
-        status: "uploaded",
-        error_code: null,
-        updated_at: now,
-      })
-      .eq("id", typedJob.file_id)
-      .eq("session_id", typedSession.id)
-      .eq("status", "error")
-      .eq("error_code", "processing_failed");
-    if (fileRetryError) throw fileRetryError;
-    await refreshUploadSessionStatus(db, typedSession.id);
-    return;
-  }
-
-  const partialFailure = failed || terminalUploadFailure;
-  if (partialFailure) {
-    if (failed) await removeFailedCreatedDocument(db, typedSession, file);
-    const { data: failedFiles } = await db
-      .from("upload_session_files")
-      .select("sealed_storage_path")
-      .eq("session_id", typedSession.id)
-      .eq("status", "error");
-    for (const failedFile of failedFiles ?? []) {
-      if (failedFile.sealed_storage_path) {
-        await deleteFile(failedFile.sealed_storage_path).catch(() => {});
-      }
-    }
-  }
-  const { data: finished, error: finishError } = await db
-    .from("upload_processing_jobs")
-    .update({
-      status: "completed",
-      locked_at: null,
-      locked_by: null,
-      error_code: partialFailure ? "partial_failure" : null,
-      updated_at: now,
-    })
-    .eq("id", jobId)
-    .eq("locked_by", workerId)
-    .select("id")
-    .maybeSingle();
-  if (finishError || !finished) {
-    throw finishError ?? new Error("upload_job_lease_lost");
-  }
-  await refreshUploadSessionStatus(db, typedSession.id);
 }
 
 export async function cleanupUploadSessions(db: Db): Promise<void> {
@@ -883,43 +756,10 @@ export async function cleanupUploadSessions(db: Db): Promise<void> {
     .lt("updated_at", verificationCutoff);
   if (verificationError) throw verificationError;
 
-  const staleLease = new Date(
-    now.getTime() - UPLOAD_JOB_LEASE_SECONDS * 1000,
-  ).toISOString();
-  const { data: exhaustedJobs, error: exhaustedError } = await db
-    .from("upload_processing_jobs")
-    .select("id, session_id, file_id")
-    .eq("status", "running")
-    .gte("attempts", UPLOAD_JOB_MAX_ATTEMPTS)
-    .lt("locked_at", staleLease)
-    .limit(20);
+  const { error: exhaustedError } = await db.rpc("expire_exhausted_upload_jobs", {
+    p_lease_seconds: UPLOAD_JOB_LEASE_SECONDS, p_limit: 20,
+  });
   if (exhaustedError) throw exhaustedError;
-  for (const job of exhaustedJobs ?? []) {
-    const { error: jobError } = await db
-      .from("upload_processing_jobs")
-      .update({
-        status: "error",
-        locked_at: null,
-        locked_by: null,
-        error_code: "retry_limit_exceeded",
-        updated_at: nowIso,
-      })
-      .eq("id", job.id)
-      .eq("status", "running");
-    if (jobError) throw jobError;
-    const { error: fileError } = await db
-      .from("upload_session_files")
-      .update({
-        status: "error",
-        error_code: "processing_failed",
-        updated_at: nowIso,
-      })
-      .eq("id", job.file_id)
-      .eq("session_id", job.session_id)
-      .eq("status", "processing");
-    if (fileError) throw fileError;
-    await refreshUploadSessionStatus(db, job.session_id);
-  }
 
   const { data: sessions, error: sessionsError } = await db
     .from("upload_sessions")
@@ -929,31 +769,10 @@ export async function cleanupUploadSessions(db: Db): Promise<void> {
     .limit(20);
   if (sessionsError) throw sessionsError;
   for (const session of sessions ?? []) {
-    const { data: files, error: filesError } = await db
-      .from("upload_session_files")
-      .select("status, staging_storage_path, sealed_storage_path")
-      .eq("session_id", session.id);
-    if (filesError) throw filesError;
-    for (const file of files ?? []) {
-      // A session can expire while an earlier file is already queued or being
-      // processed. Never remove its sealed source out from under the worker.
-      if (["uploaded", "processing", "completed"].includes(file.status)) {
-        continue;
-      }
-      await Promise.all([
-        file.staging_storage_path
-          ? deleteFile(file.staging_storage_path).catch(() => {})
-          : Promise.resolve(),
-        file.sealed_storage_path
-          ? deleteFile(file.sealed_storage_path).catch(() => {})
-          : Promise.resolve(),
-      ]);
-    }
-    const { error } = await db
-      .from("upload_sessions")
-      .update({ cleaned_at: nowIso, updated_at: nowIso })
-      .eq("id", session.id)
-      .is("cleaned_at", null);
+    // The RPC queues both immediate and post-signature-expiry prefix sweeps in
+    // the same transaction as cleaned_at. Files already processing are left
+    // alone; their atomic publish queues their own object cleanup.
+    const { error } = await db.rpc("queue_upload_session_cleanup", { p_session_id: session.id });
     if (error) throw error;
   }
 
