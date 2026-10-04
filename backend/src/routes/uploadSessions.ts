@@ -8,7 +8,7 @@ import {
   type Request,
   type Response,
 } from "express";
-import type { ParamsFlatDictionary } from "express-serve-static-core";
+import type { ParamsDictionary } from "express-serve-static-core";
 
 import {
   can,
@@ -108,7 +108,7 @@ uploadSessionsRouter.param("fileId", (_req, res, next, value) => {
 
 type Db = ReturnType<typeof createServerSupabase>;
 type AsyncRoute = (
-  req: Request<ParamsFlatDictionary>,
+  req: Request<ParamsDictionary>,
   res: Response,
 ) => Promise<unknown>;
 
@@ -143,7 +143,7 @@ type UploadSessionFileRow = UploadSessionFile & {
 
 function asyncRoute(handler: AsyncRoute) {
   return (
-    req: Request<ParamsFlatDictionary>,
+    req: Request<ParamsDictionary>,
     res: Response,
     next: NextFunction,
   ) => {

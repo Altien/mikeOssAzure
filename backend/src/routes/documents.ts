@@ -1028,7 +1028,7 @@ documentsRouter.get(
 // POST /single-documents/:documentId/edits/:editId/reject
 async function handleEditResolution(
   req: import("express").Request<
-    import("express-serve-static-core").ParamsFlatDictionary
+    import("express-serve-static-core").ParamsDictionary
   >,
   res: import("express").Response,
   mode: "accept" | "reject",

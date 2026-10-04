@@ -4,7 +4,7 @@ import {
   type Request,
   type Response,
 } from "express";
-import type { ParamsFlatDictionary } from "express-serve-static-core";
+import type { ParamsDictionary } from "express-serve-static-core";
 import { randomUUID } from "node:crypto";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
@@ -143,13 +143,13 @@ type WorkflowAccess = {
 } | null;
 
 type AsyncRoute = (
-  req: Request<ParamsFlatDictionary>,
+  req: Request<ParamsDictionary>,
   res: Response,
 ) => Promise<unknown>;
 
 function asyncRoute(handler: AsyncRoute) {
   return (
-    req: Request<ParamsFlatDictionary>,
+    req: Request<ParamsDictionary>,
     res: Response,
     next: NextFunction,
   ) => {
@@ -743,7 +743,7 @@ workflowsRouter.post(
 );
 
 async function handleWorkflowUpdate(
-  req: Request<ParamsFlatDictionary>,
+  req: Request<ParamsDictionary>,
   res: Response,
 ) {
   const userId = res.locals.userId as string;
