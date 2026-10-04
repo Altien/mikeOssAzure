@@ -10,11 +10,10 @@ import { UserFacingError } from "../safeError";
  */
 export class InvalidApiKeyError extends UserFacingError {
   constructor(providerLabel: string) {
-    // Deliberately not "your key": requiredKey() falls back to the
-    // deployment's environment key, so a revoked platform key would otherwise
-    // tell every user to fix a key they never set.
+    // Credentials are managed by the organisation; do not send the user to
+    // personal-key settings when a vault or deployment key is rejected.
     super(
-      `The ${providerLabel} API key was rejected. If you added your own key, check it in Settings → Bring Your Own Keys; otherwise contact your administrator.`,
+      `The ${providerLabel} API key was rejected. Ask an administrator to check the organisation credential in setup.`,
     );
     this.name = "InvalidApiKeyError";
   }

@@ -1,4 +1,4 @@
-import { UserFacingError } from "../userFacingError";
+import { UserFacingError } from "../safeError";
 import { asInvalidApiKeyError } from "./apiKeyErrors";
 
 type ProviderContext = { label: string; modelId: string };

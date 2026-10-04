@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { UserFacingError } from "../userFacingError";
+import { UserFacingError } from "../safeError";
 import { InvalidApiKeyError } from "./apiKeyErrors";
 import { toProviderStreamError } from "./providerErrors";
 
