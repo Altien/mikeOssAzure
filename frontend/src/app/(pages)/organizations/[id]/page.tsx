@@ -1,13 +1,9 @@
 "use client";
 
-import { use } from "react";
 import { OrganizationWorkspace } from "@/app/components/organizations/OrganizationWorkspace";
+import { usePathParams } from "@/app/lib/usePathParams";
 
-export default function OrganizationPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = use(params);
+export default function OrganizationPage() {
+  const { id } = usePathParams<"id">("/organizations/:id");
   return <OrganizationWorkspace orgId={id} />;
 }
