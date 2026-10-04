@@ -19,7 +19,7 @@ import {
     updateAuthPassword,
     type AuthUser,
 } from "@/app/lib/authApi";
-import { AUTH_SESSION_INVALIDATED_EVENT } from "@/app/lib/authEvents";
+import { AUTH_SESSION_INVALIDATED_EVENT, advanceAuthEpoch } from "@/app/lib/authEvents";
 import { setReportingUser } from "@/app/lib/errorReporting";
 
 type User = AuthUser;
@@ -56,6 +56,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [authError, setAuthError] = useState<string | null>(null);
     const channelRef = useRef<BroadcastChannel | null>(null);
     const authGeneration = useRef(0);
+    const identityRef = useRef<string | null>(null);
     const sessionRequestRef = useRef<{ generation: number; promise: Promise<User | null> } | null>(null);
 
     const broadcastAuthState = useCallback(
@@ -96,6 +97,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         const nextUser = await sessionRequestRef.current.promise;
         if (generation !== authGeneration.current) return null;
+        if (identityRef.current !== nextUser?.id) {
+            identityRef.current = nextUser?.id ?? null;
+            advanceAuthEpoch();
+        }
         setUser(nextUser);
         setAuthError(null);
         return nextUser;
@@ -113,6 +118,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const applySyncMessage = (message: AuthSyncMessage) => {
             if (message.state === "signed-out") {
                 authGeneration.current += 1;
+                identityRef.current = null;
+                advanceAuthEpoch();
                 setUser(null);
                 setAuthError(null);
                 setAuthLoading(false);
@@ -120,6 +127,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
 
             authGeneration.current += 1;
+            advanceAuthEpoch();
             void fetchAndApplySession().catch(() => {
                 setAuthError(SESSION_ERROR_MESSAGE);
             });
@@ -149,6 +157,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         };
         const onInvalidated = () => {
             authGeneration.current += 1;
+            identityRef.current = null;
+            advanceAuthEpoch();
             setUser(null);
             setAuthError(EXPIRED_SESSION_MESSAGE);
             setAuthLoading(false);
@@ -214,6 +224,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const signOut = useCallback(async () => {
         const generation = ++authGeneration.current;
+        identityRef.current = null;
+        advanceAuthEpoch();
         try {
             const result = await logout("local");
             if (generation !== authGeneration.current) return;
@@ -230,6 +242,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const signInLocal = useCallback(async (email: string) => {
         const generation = ++authGeneration.current;
+        advanceAuthEpoch();
         await loginLocal(email);
         if (generation !== authGeneration.current) return;
         await fetchAndApplySession();

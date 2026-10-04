@@ -1,5 +1,6 @@
 import type { Message } from "@/app/components/shared/types";
 import { getChat } from "./mikeApi";
+import { currentAuthEpoch, subscribeAuthEpoch } from "./authEvents";
 
 /**
  * In-flight assistant turns, keyed by chat id, that survive same-tab
@@ -54,6 +55,14 @@ type RegistryListener = (
 
 const turns = new Map<string, Set<TurnRecord>>();
 const listeners = new Set<RegistryListener>();
+const activeHandles = new Set<{ ownerEpoch: number; cancel: () => void; finish: () => void }>();
+subscribeAuthEpoch(() => {
+  for (const handle of [...activeHandles]) {
+    if (handle.ownerEpoch === currentAuthEpoch()) continue;
+    handle.cancel();
+    handle.finish();
+  }
+});
 
 /** Membership changes only: a turn appearing in, or leaving, a chat. */
 export function subscribeAssistantTurns(listener: RegistryListener) {
@@ -91,6 +100,7 @@ export function beginAssistantTurn(
     cancel: () => void;
   },
 ) {
+  const ownerEpoch = currentAuthEpoch();
   let resolve!: () => void;
   const record: TurnRecord = {
     chatId: undefined,
@@ -122,6 +132,7 @@ export function beginAssistantTurn(
     notify(chatId, "finish", record);
   };
   const identify = (id: string, messageId?: string) => {
+    if (ownerEpoch !== currentAuthEpoch()) return;
     if (record.finished) return;
     if (messageId && record.assistant.id !== messageId) {
       record.assistant = { ...record.assistant, id: messageId };
@@ -136,7 +147,8 @@ export function beginAssistantTurn(
     notify(id, "begin", record);
   };
   if (initialChatId) identify(initialChatId);
-  return {
+  const handle = {
+    ownerEpoch,
     turn: record as LiveAssistantTurn,
     identify,
     cancel() {
@@ -144,16 +156,19 @@ export function beginAssistantTurn(
     },
     /** Replace the assistant message. Ignored once the turn has finished. */
     update(updater: (message: Message) => Message) {
+      if (ownerEpoch !== currentAuthEpoch()) return;
       if (record.finished) return;
       record.assistant = updater(record.assistant);
       publish();
     },
     setLoadingCitations(loading: boolean) {
+      if (ownerEpoch !== currentAuthEpoch()) return;
       if (record.finished || record.loadingCitations === loading) return;
       record.loadingCitations = loading;
       publish();
     },
     finish() {
+      activeHandles.delete(handle);
       if (record.finished) return;
       record.finished = true;
       record.loadingCitations = false;
@@ -162,6 +177,8 @@ export function beginAssistantTurn(
       resolve();
     },
   };
+  activeHandles.add(handle);
+  return handle;
 }
 
 export type AssistantTurnHandle = ReturnType<typeof beginAssistantTurn>;
@@ -219,6 +236,7 @@ export function withLiveTurn(
  * backend has written the cancellation row.
  */
 export async function loadAssistantChat(chatId: string) {
+  const ownerEpoch = currentAuthEpoch();
   let changed = false;
   const expectedMessages = new Set<string>();
   let persistenceDeadline = 0;
@@ -235,6 +253,7 @@ export async function loadAssistantChat(chatId: string) {
       changed = false;
       try {
         const result = await getChat(chatId);
+        if (ownerEpoch !== currentAuthEpoch()) throw new Error("Authentication changed during chat recovery");
         if (changed) continue;
         // Stop closes the socket before the backend saves the cancellation.
         // A returning reader must not adopt the empty reserved row in that
@@ -249,6 +268,7 @@ export async function loadAssistantChat(chatId: string) {
         }
         await new Promise((resolve) => setTimeout(resolve, 100));
       } catch (error) {
+        if (ownerEpoch !== currentAuthEpoch()) throw error;
         // An invalidated read can fail while a new turn is being saved.
         // Retry that read, but preserve ordinary load failures for the page.
         if (!changed) throw error;

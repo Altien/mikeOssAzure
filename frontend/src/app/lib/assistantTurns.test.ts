@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Message } from "@/app/components/shared/types";
 import { getChat } from "./mikeApi";
+import { advanceAuthEpoch } from "./authEvents";
 import {
   beginAssistantTurn,
   cancelAssistantTurn,
@@ -22,6 +23,30 @@ const assistant = (text: string, id?: string): Message => ({
 });
 const begin = (chatId: string | undefined, cancel = vi.fn()) =>
   beginAssistantTurn(chatId, { userMessage: user(), assistant: assistant(""), cancel });
+
+describe("auth-scoped detached turns", () => {
+  it("cancels and hides an old turn across logout or account change", () => {
+    const cancel = vi.fn();
+    const old = begin("shared-chat-id", cancel);
+    expect(hasAssistantTurn("shared-chat-id")).toBe(true);
+    advanceAuthEpoch();
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(hasAssistantTurn("shared-chat-id")).toBe(false);
+    old.update(() => assistant("stale"));
+    old.identify("new-user-chat");
+    expect(getAssistantTurn("new-user-chat")).toBeNull();
+    expect(old.turn.finished).toBe(true);
+  });
+  it("rejects a history response started under a prior auth epoch", async () => {
+    let resolve!: (value: typeof history) => void;
+    getChatMock.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+    const read = loadAssistantChat("shared-chat-id");
+    advanceAuthEpoch();
+    resolve(history);
+    await expect(read).rejects.toThrow("Authentication changed during chat recovery");
+    getChatMock.mockReset();
+  });
+});
 
 describe("assistant turn history loading", () => {
   it("returns the current history while a turn is still streaming into the chat", async () => {
