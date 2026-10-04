@@ -434,6 +434,8 @@ const COMPLETES_TEXTLESS_TURN = {
   reasoning: false,
   ask_inputs: true,
   ask_inputs_response: false,
+  authority_trace_extraction: true,
+  authority_trace_verification: true,
   doc_read: false,
   doc_find: false,
   doc_created: true,
