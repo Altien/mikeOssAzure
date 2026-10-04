@@ -20,7 +20,7 @@ type Update = {
 
 // Chainable double recording db_jobs updates/deletes; rpc is injectable.
 function makeDb(opts?: {
-    rpc?: () => Promise<{ data: unknown; error: { message: string } | null }>;
+    rpc?: (name: string, args?: Record<string, unknown>) => Promise<{ data: unknown; error: { message: string } | null }>;
     selectData?: unknown[];
 }) {
     const updates: Update[] = [];
@@ -82,9 +82,27 @@ function makeDb(opts?: {
         updates,
         deletes,
         from,
-        rpc:
-            opts?.rpc ??
-            (async () => ({ data: [], error: null })),
+        rpc: opts?.rpc ?? (async (name: string, args?: Record<string, unknown>) => {
+            if (name === "finish_db_job") {
+                updates.push({
+                    table: "db_jobs",
+                    id: args?.p_id as string,
+                    filters: {
+                        p_id: args?.p_id,
+                        p_attempts: args?.p_attempts,
+                        p_claim_token: args?.p_claim_token,
+                    },
+                    payload: {
+                        status: args?.p_status,
+                        result: args?.p_result,
+                        last_error: args?.p_last_error,
+                        run_at: args?.p_run_at,
+                    },
+                });
+                return { data: true, error: null };
+            }
+            return { data: [], error: null };
+        }),
     };
 }
 
@@ -97,6 +115,8 @@ const JOB = (over: Partial<DbJob> = {}): DbJob => ({
     max_attempts: 3,
     run_at: "2026-08-21T00:00:00Z",
     claimed_at: "2026-08-21T00:00:01Z",
+    claim_token: "11111111-1111-4111-8111-111111111111",
+    lease_expires_at: "2026-08-21T00:10:01Z",
     finished_at: null,
     last_error: null,
     dedupe_key: null,
@@ -120,12 +140,11 @@ describe("processClaimedJob fencing", () => {
     // dead, just paused. Addressing a terminal write by id alone lets that
     // zombie mark `done` a job that is running right now, or drag a finished
     // job back to `pending` and run it a second time. `claimed_at` + `attempts`
-    // name one specific claim, so only the current claimant can finalize.
+    // the UUID claim token names one specific claim and SQL finalizes it atomically.
     const FENCE = {
-        id: "job-1",
-        status: "running",
-        attempts: 1,
-        claimed_at: "2026-08-21T00:00:01Z",
+        p_id: "job-1",
+        p_attempts: 1,
+        p_claim_token: "11111111-1111-4111-8111-111111111111",
     };
 
     it("fences the done write to this claim", async () => {
@@ -165,7 +184,7 @@ describe("processClaimedJob fencing", () => {
             JOB({ attempts: 3, max_attempts: 3 }),
         );
         expect(db.updates[0].payload.status).toBe("failed");
-        expect(db.updates[0].filters).toEqual({ ...FENCE, attempts: 3 });
+        expect(db.updates[0].filters).toEqual({ ...FENCE, p_attempts: 3 });
     });
 
     it("fences the unknown-kind write to this claim", async () => {
@@ -247,7 +266,7 @@ describe("runDbJobTick", () => {
 
     it("processes every claimed job even when one handler rejects unexpectedly", async () => {
         const jobs = [JOB({ id: "a" }), JOB({ id: "b" })];
-        const db = makeDb({ rpc: async () => ({ data: jobs, error: null }) });
+        const db = makeDb({ rpc: async (name) => ({ data: name === "claim_db_jobs" ? jobs : true, error: null }) });
         const seen: string[] = [];
         await runDbJobTick(db as never, {
             "test.kind": async (_db, job) => {

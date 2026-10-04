@@ -1,113 +1,108 @@
 import { describe, it, expect } from "vitest";
 import { spawn } from "node:child_process";
+import { createServer } from "node:http";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
-// `node dist/worker.js` is the documented standalone-worker topology
-// (WORKERS_MODE=none on the API, workers on their own container). Everything
-// startAllWorkers() creates is deliberately unref'd — it has to be, because
-// the same code runs inside the API process — and a signal handler is not a
-// handle, so without one ref'd handle of its own the entrypoint starts the
-// runner, logs "running", and exits immediately. In Redis mode BullMQ's open
-// sockets hide this; in Postgres mode (the default transport) nothing does.
-//
-// This spawns the real entrypoint against a Supabase URL that does not answer
-// — the runner logs claim failures and keeps polling, which is exactly the
-// behaviour under test — and asserts it is still alive a second later.
 const backendRoot = path.resolve(__dirname, "../..");
-const ALIVE_AFTER_MS = 1_500;
+const secret = (byte: number) => Buffer.alloc(32, byte).toString("base64url");
+
+async function withStubDb(fn: (url: string) => Promise<void>) {
+    // Worker readiness probes auth_sessions, db_jobs and the claim RPC. The
+    // server gives the real PostgREST client a responsive schema endpoint,
+    // isolating the entrypoint's keepalive and dotenv behavior.
+    const server = createServer((req, res) => {
+        res.setHeader("Content-Type", "application/json");
+        res.end(req.url?.includes("/rpc/claim_db_jobs") ? "[]" : "[]");
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+        const address = server.address();
+        if (!address || typeof address === "string") throw new Error("No test listener");
+        await fn(`http://127.0.0.1:${address.port}`);
+    } finally {
+        await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+}
+
+function workerEnv(url: string): Record<string, string> {
+    return {
+        ...process.env as Record<string, string>,
+        AUTH_PROVIDER: "local",
+        QUEUE_DRIVER: "postgres",
+        DB_JOBS_POLL_MS: "60000",
+        SUPABASE_URL: url,
+        SUPABASE_SECRET_KEY: "test-key",
+        AUTH_SESSION_ENCRYPTION_SECRET: secret(1),
+        AUTH_HANDOFF_ENCRYPTION_SECRET: secret(2),
+        AUTH_STATE_SECRET: secret(3),
+    };
+}
+
+async function assertWorkerReady(cwd: string, env: Record<string, string>) {
+    const child = spawn(process.execPath, [
+        "--import", pathToFileURL(path.join(backendRoot, "node_modules/tsx/dist/loader.mjs")).href,
+        path.join(backendRoot, "src/worker.ts"),
+    ], { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    child.stdout?.on("data", chunk => { output += String(chunk); });
+    child.stderr?.on("data", chunk => { output += String(chunk); });
+    const exited = new Promise<number | null>(resolve => child.on("exit", resolve));
+    try {
+        const outcome = await Promise.race([
+            exited,
+            new Promise<"ready">(resolve => {
+                const timer = setInterval(() => {
+                    if (output.includes("Mike worker process running")) {
+                        clearInterval(timer);
+                        resolve("ready");
+                    }
+                }, 25);
+                setTimeout(() => { clearInterval(timer); resolve("ready"); }, 8_000);
+            }),
+        ]);
+        expect(outcome, output).toBe("ready");
+        expect(output).toContain("Mike worker process running");
+        expect(child.exitCode, output).toBeNull();
+    } finally {
+        child.kill("SIGKILL");
+        await exited;
+    }
+}
 
 describe("standalone worker entrypoint", () => {
-    it("stays alive in Postgres mode instead of exiting immediately", async () => {
-        const child = spawn(
-            process.execPath,
-            [
-                path.join(backendRoot, "node_modules/tsx/dist/cli.mjs"),
-                path.join(backendRoot, "src/worker.ts"),
-            ],
-            {
-                cwd: backendRoot,
-                stdio: "ignore",
-                env: {
-                    ...process.env,
-                    QUEUE_DRIVER: "postgres",
-                    DB_JOBS_POLL_MS: "60000",
-                    SUPABASE_URL: "http://127.0.0.1:9",
-                    SUPABASE_SECRET_KEY: "not-a-real-key",
-                },
-            },
-        );
-
-        const exited = new Promise<number | null>((resolve) =>
-            child.on("exit", (code) => resolve(code)),
-        );
-        const stillRunning = Symbol("alive");
-        const outcome = await Promise.race([
-            exited,
-            new Promise<symbol>((resolve) =>
-                setTimeout(() => resolve(stillRunning), ALIVE_AFTER_MS),
-            ),
-        ]);
-
-        child.kill("SIGKILL");
-        expect(
-            outcome,
-            "the worker process exited instead of staying up to poll",
-        ).toBe(stillRunning);
+    it("stays alive in Postgres mode after its required readiness probes", async () => {
+        await withStubDb(async url => {
+            await assertWorkerReady(backendRoot, workerEnv(url));
+        });
     }, 20_000);
 
-    // Bare-metal deployments configure the backend through backend/.env, not
-    // through a container's environment block — and the API entrypoint reads
-    // it (app.ts imports dotenv/config first). The worker entrypoint must do
-    // the same, or `node dist/worker.js` dies at boot on the Supabase config
-    // check on exactly the installs the split topology is documented for.
-    // Compose masks the gap, so this spawns the worker with NO Supabase
-    // variables in the environment and only a .env file in cwd to read.
-    it("reads .env from the working directory like the API entrypoint", async () => {
-        const workDir = mkdtempSync(path.join(os.tmpdir(), "worker-dotenv-"));
-        writeFileSync(
-            path.join(workDir, ".env"),
-            [
-                "QUEUE_DRIVER=postgres",
-                "DB_JOBS_POLL_MS=60000",
-                "SUPABASE_URL=http://127.0.0.1:9",
-                "SUPABASE_SECRET_KEY=not-a-real-key",
-                "",
-            ].join("\n"),
-        );
-
-        const env = { ...process.env };
-        delete env.SUPABASE_URL;
-        delete env.SUPABASE_SECRET_KEY;
-        delete env.QUEUE_DRIVER;
-        delete env.REDIS_URL;
-
-        const child = spawn(
-            process.execPath,
-            [
-                path.join(backendRoot, "node_modules/tsx/dist/cli.mjs"),
-                path.join(backendRoot, "src/worker.ts"),
-            ],
-            { cwd: workDir, stdio: "ignore", env },
-        );
-
-        const exited = new Promise<number | null>((resolve) =>
-            child.on("exit", (code) => resolve(code)),
-        );
-        const stillRunning = Symbol("alive");
-        const outcome = await Promise.race([
-            exited,
-            new Promise<symbol>((resolve) =>
-                setTimeout(() => resolve(stillRunning), ALIVE_AFTER_MS),
-            ),
-        ]);
-
-        child.kill("SIGKILL");
-        rmSync(workDir, { recursive: true, force: true });
-        expect(
-            outcome,
-            "the worker exited at boot — .env was not loaded",
-        ).toBe(stillRunning);
+    it("loads required configuration from a bare-metal .env", async () => {
+        await withStubDb(async url => {
+            const workDir = mkdtempSync(path.join(os.tmpdir(), "worker-dotenv-"));
+            const config = workerEnv(url);
+            writeFileSync(path.join(workDir, ".env"), [
+                "AUTH_PROVIDER", "QUEUE_DRIVER", "DB_JOBS_POLL_MS",
+                "SUPABASE_URL", "SUPABASE_SECRET_KEY",
+                "AUTH_SESSION_ENCRYPTION_SECRET", "AUTH_HANDOFF_ENCRYPTION_SECRET",
+                "AUTH_STATE_SECRET",
+            ].map(key => `${key}=${config[key]}`).join("\n") + "\n");
+            const env = { ...process.env as Record<string, string> };
+            for (const key of Object.keys(config)) {
+                if (key in env && [
+                    "AUTH_PROVIDER", "QUEUE_DRIVER", "DB_JOBS_POLL_MS",
+                    "SUPABASE_URL", "SUPABASE_SECRET_KEY",
+                    "AUTH_SESSION_ENCRYPTION_SECRET", "AUTH_HANDOFF_ENCRYPTION_SECRET",
+                    "AUTH_STATE_SECRET",
+                ].includes(key)) delete env[key];
+            }
+            try {
+                await assertWorkerReady(workDir, env);
+            } finally {
+                rmSync(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+            }
+        });
     }, 20_000);
 });

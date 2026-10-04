@@ -12,6 +12,8 @@ export interface DbJob {
     max_attempts: number;
     run_at: string;
     claimed_at: string | null;
+    claim_token: string | null;
+    lease_expires_at: string | null;
     finished_at: string | null;
     last_error: string | null;
     dedupe_key: string | null;

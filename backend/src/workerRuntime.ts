@@ -92,6 +92,17 @@ export async function startAllWorkers(): Promise<void> {
     if (tableError) throw new Error("DB job schema is unavailable");
     const { error: claimError } = await db.rpc("claim_db_jobs", { p_limit: 0, p_stale_seconds: 600 });
     if (claimError) throw new Error("DB job claim RPC is unavailable");
+    const missingJob = "00000000-0000-4000-8000-000000000000";
+    const missingClaim = "00000000-0000-4000-8000-000000000001";
+    const { error: renewError } = await db.rpc("renew_db_job", {
+        p_id: missingJob, p_attempts: 0, p_claim_token: missingClaim,
+    });
+    if (renewError) throw new Error("DB job renewal RPC is unavailable");
+    const { error: finishError } = await db.rpc("finish_db_job", {
+        p_id: missingJob, p_attempts: 0, p_claim_token: missingClaim,
+        p_status: "completed", p_last_error: null, p_result: null, p_run_at: null,
+    });
+    if (finishError) throw new Error("DB job terminal RPC is unavailable");
 
     // BullMQ workers: conversion/extraction when their flags are on, plus
     // the app-jobs delivery worker — all only when the Redis driver is

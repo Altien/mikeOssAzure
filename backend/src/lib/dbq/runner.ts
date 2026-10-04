@@ -71,74 +71,77 @@ export async function processClaimedJob(
     handlers: DbJobHandlers,
     job: DbJob,
 ): Promise<void> {
-    /**
-     * FENCING TOKEN. Every write below is addressed to "the job as THIS claim
-     * left it", not merely to the row id.
-     *
-     * A job whose worker went quiet past the stale threshold is reclaimed —
-     * that is the crash-recovery design, and it is also how two live runners
-     * end up holding the same job. The zombie is not necessarily dead: a paused
-     * VM, a long GC, a wedged network call can all come back. When it does, an
-     * `.eq("id", job.id)` write lands on top of whatever the current claimant
-     * has since done — marking `done` a job that is running right now, or
-     * dragging a finished job back to `pending` and running it a second time.
-     *
-     * `claimed_at` and `attempts` are both set by the claim, so together they
-     * name one specific claim of one specific row; with `status = 'running'`
-     * they let exactly one claimant finalize.
-     */
-    const fence = <T extends { eq(column: string, value: unknown): T }>(
-        query: T,
-    ): T =>
-        query
-            .eq("id", job.id)
-            .eq("status", "running")
-            .eq("attempts", job.attempts)
-            .eq("claimed_at", job.claimed_at);
+    // A UUID is stable across PostgREST/JavaScript timestamp precision loss.
+    // SQL renews lease_expires_at and finishes only this claim token.
+    if (!job.claim_token) throw new Error("DB job claim has no fence token");
+    const identity = {
+        p_id: job.id,
+        p_attempts: job.attempts,
+        p_claim_token: job.claim_token,
+    };
+    let leaseLost = false;
+    let renewing = false;
+    const deadline = Date.now() + 30 * 60_000;
+    const heartbeat = setInterval(() => {
+        if (renewing || leaseLost) return;
+        if (Date.now() >= deadline) {
+            leaseLost = true;
+            return;
+        }
+        renewing = true;
+        void Promise.resolve(db.rpc("renew_db_job", {
+            ...identity,
+            p_lease_seconds: STALE_SECONDS,
+        })).then(({ data, error }) => {
+            if (error || data !== true) leaseLost = true;
+        }).catch(() => { leaseLost = true; }).finally(() => { renewing = false; });
+    }, 60_000);
+    heartbeat.unref?.();
+    const finish = async (
+        status: "done" | "pending" | "failed",
+        lastError: string | null = null,
+        result: Record<string, unknown> | null = null,
+        runAt: string | null = null,
+    ): Promise<boolean> => {
+        if (leaseLost) return false;
+        const { data, error } = await db.rpc("finish_db_job", {
+            ...identity,
+            p_status: status,
+            p_last_error: lastError,
+            p_result: result,
+            p_run_at: runAt,
+        });
+        if (error) throw new Error(`Unable to finish DB job: ${error.message}`);
+        return data === true;
+    };
 
     const handler = handlers[job.kind];
     if (!handler) {
-        await fence(
-            db.from("db_jobs").update({
-                status: "failed",
-                finished_at: new Date().toISOString(),
-                last_error: `unknown job kind: ${job.kind}`,
-            }),
-        );
+        clearInterval(heartbeat);
+        await finish("failed", `unknown job kind: ${job.kind}`);
         console.error("[dbq] unknown job kind", { id: job.id, kind: job.kind });
         return;
     }
 
     try {
         const result = await handler(db, job);
-        await fence(
-            db.from("db_jobs").update({
-                status: "done",
-                finished_at: new Date().toISOString(),
-                last_error: null,
-                ...(result ? { result } : {}),
-            }),
-        );
+        clearInterval(heartbeat);
+        if (!await finish("done", null, result ?? null))
+            console.warn("[dbq] claim lost before completion", { id: job.id });
     } catch (err) {
+        clearInterval(heartbeat);
         const message =
             err instanceof Error ? err.message : String(err ?? "unknown");
         const spent = job.attempts >= job.max_attempts;
         const delayMs = retryDelayMs(job.attempts);
-        await fence(
-            db.from("db_jobs").update(
-                spent
-                    ? {
-                          status: "failed",
-                          finished_at: new Date().toISOString(),
-                          last_error: message,
-                      }
-                    : {
-                          status: "pending",
-                          run_at: new Date(Date.now() + delayMs).toISOString(),
-                          last_error: message,
-                      },
-            ),
+        const owned = await finish(
+            spent ? "failed" : "pending", message, null,
+            spent ? null : new Date(Date.now() + delayMs).toISOString(),
         );
+        if (!owned) {
+            console.warn("[dbq] claim lost before retry transition", { id: job.id });
+            return;
+        }
         if (spent) {
             const hook = DB_JOB_FAILURE_HOOKS[job.kind];
             if (hook) {
@@ -197,9 +200,17 @@ export async function runDbJobTick(
     const jobs = (data ?? []) as DbJob[];
     // allSettled defensively: processClaimedJob handles its own errors, but
     // one job's unexpected rejection must never abandon the rest of a batch.
-    await Promise.allSettled(
+    const outcomes = await Promise.allSettled(
         jobs.map((job) => processClaimedJob(db, handlers, job)),
     );
+    for (const [index, outcome] of outcomes.entries()) {
+        if (outcome.status === "rejected") {
+            console.error("[dbq] job transition failed", {
+                id: jobs[index]?.id,
+                reason: outcome.reason instanceof Error ? outcome.reason.message : "unknown",
+            });
+        }
+    }
     return jobs.length;
 }
 
@@ -267,6 +278,8 @@ export async function runDbJobRetentionSweep(
         .from("db_jobs")
         .delete()
         .eq("status", "failed")
+        .neq("kind", "storage.cleanup")
+        .neq("kind", "account.delete")
         .lt("finished_at", failedCutoff);
 }
 
