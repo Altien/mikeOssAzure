@@ -578,7 +578,7 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
         expect(reportNetworkFailure).toHaveBeenCalledOnce();
         expect(reportNetworkFailure).toHaveBeenCalledWith(failure, {
             method: "POST",
-            url: "/api/projects",
+            url: "http://localhost:3001/api/projects",
         });
         expect(reportApiFailure).not.toHaveBeenCalled();
     });
@@ -1005,7 +1005,7 @@ describe("API transport cancellation", () => {
 
         expect(reportNetworkFailure).toHaveBeenCalledExactlyOnceWith(error, {
             method: "POST",
-            url: "/api/chat",
+            url: "http://localhost:3001/api/chat",
         });
     });
 });
@@ -3014,7 +3014,7 @@ describe("unwrapping and blob wrappers", () => {
         fetchMock.mockResolvedValue(jsonResponse({ models }));
 
         await expect(getConfiguredModels()).resolves.toEqual(models);
-        expect(lastFetchCall().url).toBe("/api/models/configured");
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/models/configured");
     });
 
     it.each([

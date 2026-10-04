@@ -18,13 +18,13 @@ import {
 } from "@/app/lib/auth-token";
 import { isPanelDocument } from "@/app/components/shared/types";
 import { authenticatedFetch } from "@/app/lib/authEvents";
-import { reportNetworkFailure, trackPendingRequest } from "@/app/lib/errorReporting";
+import { reportApiFailure, reportNetworkFailure, trackPendingRequest } from "@/app/lib/errorReporting";
 const apiFetch: typeof fetch = async (input, init) => {
     const release = trackPendingRequest();
     try {
         return await authenticatedFetch(input, init);
     } catch (error) {
-        if (init?.signal?.aborted || (error instanceof Error && error.name === "AbortError")) throw error;
+        if (init?.signal?.aborted || (typeof error === "object" && error !== null && "name" in error && error.name === "AbortError")) throw error;
         reportNetworkFailure(error, { method: init?.method ?? "GET", url: String(input) });
         throw error;
     } finally {
@@ -2366,7 +2366,7 @@ export async function streamChat(payload: {
 }): Promise<Response> {
     const { signal, ...body } = payload;
     const authHeaders = await getAuthHeader();
-    const response = await fetch(`${API_BASE}/chat`, {
+    const response = await apiFetch(`${API_BASE}/chat`, {
         method: "POST",
         credentials: "include",
         headers: {
