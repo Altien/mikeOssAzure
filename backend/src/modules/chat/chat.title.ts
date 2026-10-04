@@ -1,7 +1,7 @@
 import { completeText, type UserApiKeys } from "../../lib/llm";
 import { providerFailureStatus } from "../../lib/llm/providerErrors";
 import { reportError } from "../../lib/observability/sentry";
-import { UserFacingError } from "../../lib/userFacingError";
+import { UserFacingError } from "../../lib/safeError";
 
 const CAUSE_CHAIN_DEPTH = 8;
 
