@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { Transform, type TransformCallback } from "node:stream";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import {
@@ -9,16 +10,17 @@ import {
 } from "express";
 
 import { ensureDocAccess, checkProjectAccess } from "../lib/access";
-import { mapWithConcurrency } from "../lib/concurrency";
 import { sendInternalError } from "../lib/httpError";
 import { uploadSessionRateLimitConfiguration } from "../lib/runtimeConfig";
 import {
   copyFile,
-  deleteFile,
   getSignedUploadUrl,
   headFile,
   StorageOperationError,
   storageEnabled,
+  uploadTransport,
+  stageUploadPart,
+  sealUploadParts,
 } from "../lib/storage";
 import { createServerSupabase } from "../lib/supabase";
 import {
@@ -26,7 +28,6 @@ import {
   uploadSessionExpiresAt,
   UploadSessionValidationError,
   UPLOAD_URL_TTL_SECONDS,
-  UPLOAD_VERIFICATION_LEASE_SECONDS,
   type ParsedUploadSessionRequest,
   type UploadSessionFile,
 } from "../lib/uploadSessions";
@@ -63,7 +64,22 @@ const uploadSessionPollingLimiter = rateLimit({
   },
 });
 
+const uploadPartLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  // A full 2 GiB session has 256 chunks; allow three bounded retries plus
+  // ordinary use without the generic JSON-control limiter cutting it short.
+  max: 1024,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (_req, res) => String(res.locals.userId),
+});
+
 const sessionIdSchema = z.string().uuid();
+const UPLOAD_PART_BYTES = 8 * 1024 * 1024;
+const partIndexSchema = z.coerce.number().int().min(0).max(12);
+function partBlockId(claimToken: string): string {
+  return Buffer.from(claimToken.replace(/-/g, ""), "hex").toString("base64");
+}
 const fileCompletionRequestSchema = z
   .object({ failed: z.boolean().default(false) })
   .strict();
@@ -101,6 +117,10 @@ type UploadSessionRow = {
 
 type UploadSessionFileRow = UploadSessionFile & {
   session_id: string;
+  upload_transport: "direct" | "authenticated_parts";
+  upload_generation: string;
+  verification_token: string | null;
+  verification_lease_until: string | null;
   observed_size_bytes: number | null;
   etag: string | null;
   status: string;
@@ -355,10 +375,25 @@ function signedUrlTtl(expiresAt: string): number {
 async function signPendingFiles(
   files: Array<UploadSessionFileRow | UploadSessionFile>,
   expiresAt: string,
+  sessionId: string,
 ) {
   const ttl = signedUrlTtl(expiresAt);
   return await Promise.all(
     files.map(async (file) => {
+      if (uploadTransport() === "authenticated_parts") {
+        const persisted = file as UploadSessionFileRow;
+        return {
+          ...publicFile(file),
+          upload: {
+            transport: "authenticated_parts" as const,
+            method: "PUT" as const,
+            path: `/upload-sessions/${sessionId}/files/${file.id}/parts`,
+            generation: persisted.upload_generation,
+            chunk_size: UPLOAD_PART_BYTES,
+            expires_at: expiresAt,
+          },
+        };
+      }
       const url = await getSignedUploadUrl(
         file.staging_storage_path,
         file.content_type,
@@ -369,6 +404,7 @@ async function signPendingFiles(
       return {
         ...publicFile(file),
         upload: {
+          transport: "direct" as const,
           method: "PUT" as const,
           url,
           // Content-Length is part of the signature but is deliberately absent
@@ -382,84 +418,129 @@ async function signPendingFiles(
   );
 }
 
+// Blob is private to the backend's managed identity. Each authenticated chunk
+// is claimed before streaming; a late, timed-out request stages under its own
+// block ID and cannot replace a newer receipt or sealed object.
+uploadSessionsRouter.put(
+  "/:sessionId/files/:fileId/parts/:partIndex",
+  requireAuth,
+  uploadPartLimiter,
+  asyncRoute(async (req, res) => {
+    if (uploadTransport() !== "authenticated_parts") {
+      return void res.status(404).json({ detail: "Upload part not found" });
+    }
+    const partIndex = partIndexSchema.safeParse(req.params.partIndex);
+    const generation = sessionIdSchema.safeParse(req.header("X-Upload-Generation"));
+    const contentLength = Number(req.header("Content-Length"));
+    if (!partIndex.success || !generation.success || !Number.isSafeInteger(contentLength)
+      || contentLength < 1 || contentLength > UPLOAD_PART_BYTES
+      || req.header("Content-Type") !== "application/octet-stream") {
+      return void res.status(400).json({ detail: "Invalid upload part" });
+    }
+    const userId = res.locals.userId as string;
+    const db = createServerSupabase();
+    const session = await loadOwnedSession(db, req.params.sessionId, userId);
+    if (!session) return void res.status(404).json({ detail: "Upload session not found" });
+    const file = (await loadSessionFiles(db, session.id)).find((row) => row.id === req.params.fileId);
+    if (!file) return void res.status(404).json({ detail: "Upload file not found" });
+    const { data: claim, error } = await db.rpc("claim_upload_part", {
+      p_session_id: session.id, p_file_id: file.id, p_user_id: userId,
+      p_generation: generation.data, p_part_index: partIndex.data, p_size: contentLength,
+    });
+    if (error) {
+      if (/upload_part_(not_allowed|index_invalid|size_invalid)/.test(error.message ?? "")) {
+        return void res.status(409).json({ detail: "Upload part is no longer available" });
+      }
+      return void sendInternalError(res, error);
+    }
+    if (claim?.status === "completed") return void res.status(200).json({ status: "completed" });
+    if (claim?.status !== "claimed" || !sessionIdSchema.safeParse(claim.claim_token).success) {
+      return void res.status(409).json({ detail: "Upload part is already in progress" });
+    }
+    const claimToken = claim.claim_token as string;
+    const aborter = new AbortController();
+    let bytes = 0;
+    const meter = new Transform({
+      transform(chunk: Buffer, _encoding: BufferEncoding, callback: TransformCallback) {
+        bytes += chunk.length;
+        if (bytes > contentLength) callback(new Error("upload_part_too_large"));
+        else callback(null, chunk);
+      },
+    });
+    req.on("aborted", () => aborter.abort());
+    req.pipe(meter);
+    try {
+      await stageUploadPart(file.staging_storage_path, partBlockId(claimToken), meter, contentLength, aborter.signal);
+      if (bytes !== contentLength || req.aborted) {
+        return void res.status(400).json({ detail: "Incomplete upload part" });
+      }
+      const { data: completed, error: completeError } = await db.rpc("complete_upload_part", {
+        p_session_id: session.id, p_file_id: file.id, p_user_id: userId,
+        p_generation: generation.data, p_part_index: partIndex.data, p_claim_token: claimToken,
+      });
+      if (completeError) return void sendInternalError(res, completeError);
+      if (!completed) return void res.status(409).json({ detail: "Upload part claim expired" });
+      await extendSessionExpiry(db, session.id);
+      res.json({ status: "completed" });
+    } finally {
+      req.unpipe(meter);
+      meter.destroy();
+    }
+  }),
+);
+
 async function verifyAndSealSessionFiles(
   db: Db,
   session: UploadSessionRow,
-  files: UploadSessionFileRow[],
-): Promise<boolean[]> {
-  // Every result write is conditioned on the file still being the 'verifying'
-  // claim this call made. Losing that claim — a reset or a stolen lease — must
-  // never overwrite the newer state, so it is reported as "not sealed" rather
-  // than as an error.
-  const writeSealResult = async (
-    file: UploadSessionFileRow,
-    payload: Record<string, unknown>,
-  ): Promise<boolean> => {
-    const { data, error } = await db
-      .from("upload_session_files")
-      .update({ ...payload, updated_at: new Date().toISOString() })
-      .eq("id", file.id)
-      .eq("session_id", session.id)
-      .eq("status", "verifying")
-      .select("id")
-      .maybeSingle();
+  file: UploadSessionFileRow,
+  userId: string,
+  token: string,
+): Promise<boolean> {
+  const finish = async (status: string, observedSize: number | null = null,
+    etag: string | null = null, sealedPath: string | null = null,
+    errorCode: string | null = null): Promise<boolean> => {
+    const { data, error } = await db.rpc("finish_upload_verification", {
+      p_session_id: session.id, p_file_id: file.id, p_user_id: userId,
+      p_claim_token: token, p_status: status, p_observed_size: observedSize,
+      p_etag: etag, p_sealed_path: sealedPath, p_error_code: errorCode,
+    });
     if (error) throw error;
-    return !!data;
+    return data === true;
   };
 
-  return await mapWithConcurrency(files, 5, async (file) => {
-    const sealed = await headFile(file.sealed_storage_path);
-    if (sealed?.size === file.expected_size_bytes) {
-      return await writeSealResult(file, {
-        status: "uploaded",
-        observed_size_bytes: sealed.size,
-        etag: sealed.etag,
-        error_code: null,
-      });
+  if (file.upload_transport === "authenticated_parts") {
+    const { data: receipts, error } = await db.from("upload_session_parts")
+      .select("part_index, claim_token, size_bytes")
+      .eq("file_id", file.id).eq("generation", file.upload_generation)
+      .eq("status", "completed").order("part_index", { ascending: true });
+    if (error) throw error;
+    const expected = Math.ceil(file.expected_size_bytes / UPLOAD_PART_BYTES);
+    if ((receipts ?? []).length !== expected || receipts?.some((part, index) => part.part_index !== index)) {
+      return await finish("pending_upload");
     }
+    const existing = await headFile(file.staging_storage_path);
+    if (!existing) {
+      await sealUploadParts(file.staging_storage_path, receipts!.map((part) => partBlockId(part.claim_token)), file.content_type);
+    }
+  }
+  const staged = await headFile(file.staging_storage_path);
+  if (!staged) return await finish("pending_upload");
+  if (staged.size !== file.expected_size_bytes || staged.contentType !== file.content_type) {
+    return await finish("error", staged.size, staged.etag, null,
+      staged.size !== file.expected_size_bytes ? "size_mismatch" : "content_type_mismatch");
+  }
+  if (!staged.etag) throw new StorageOperationError("missing staging ETag");
 
-    const staged = await headFile(file.staging_storage_path);
-    if (!staged) {
-      await writeSealResult(file, { status: "pending_upload" });
-      return false;
-    }
-    if (
-      staged.size !== file.expected_size_bytes ||
-      (staged.contentType && staged.contentType !== file.content_type)
-    ) {
-      const errorCode =
-        staged.size !== file.expected_size_bytes
-          ? "size_mismatch"
-          : "content_type_mismatch";
-      await deleteFile(file.staging_storage_path).catch(() => {});
-      await writeSealResult(file, {
-        status: "error",
-        observed_size_bytes: staged.size,
-        etag: staged.etag,
-        error_code: errorCode,
-      });
-      return false;
-    }
-
-    await copyFile(file.staging_storage_path, file.sealed_storage_path);
-    const copied = await headFile(file.sealed_storage_path);
-    if (!copied || copied.size !== file.expected_size_bytes) {
-      throw new Error("Failed to verify sealed upload object");
-    }
-    await deleteFile(file.staging_storage_path);
-    return await writeSealResult(file, {
-      status: "uploaded",
-      observed_size_bytes: copied.size,
-      etag: copied.etag,
-      error_code: null,
-    });
-  });
-}
-
-function verificationLeaseCutoff(): string {
-  return new Date(
-    Date.now() - UPLOAD_VERIFICATION_LEASE_SECONDS * 1000,
-  ).toISOString();
+  // Every verifier copies to a unique immutable candidate. Its DB CAS decides
+  // which candidate is visible to the worker, so lease expiry cannot publish
+  // an old object's bytes over a newer claim.
+  const candidatePath = `${file.sealed_storage_path}/claims/${token}`;
+  await copyFile(file.staging_storage_path, candidatePath, staged.etag);
+  const copied = await headFile(candidatePath);
+  if (!copied || !copied.etag || copied.size !== file.expected_size_bytes || copied.contentType !== file.content_type) {
+    throw new Error("Failed to verify sealed upload object");
+  }
+  return await finish("uploaded", copied.size, copied.etag, candidatePath);
 }
 
 async function refreshSessionStatus(db: Db, sessionId: string): Promise<void> {
@@ -515,37 +596,26 @@ async function completeSessionFile(
   failed: boolean,
 ): Promise<FileCompletionResult> {
   if (failed) {
-    if (file.status === "verifying") {
-      const { data: recovered, error } = await db
-        .from("upload_session_files")
-        .update({
-          status: "pending_upload",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", file.id)
-        .eq("session_id", session.id)
-        .eq("status", "verifying")
-        .lte("updated_at", verificationLeaseCutoff())
-        .select("id")
-        .maybeSingle();
-      if (error) throw error;
-      if (!recovered) return "in_progress";
-    }
+    if (file.status === "verifying" && file.verification_lease_until &&
+      new Date(file.verification_lease_until).getTime() > Date.now()) return "in_progress";
     if (file.status === "pending_upload" || file.status === "verifying") {
-      await Promise.all([
-        deleteFile(file.staging_storage_path).catch(() => {}),
-        deleteFile(file.sealed_storage_path).catch(() => {}),
-      ]);
-      const { error } = await db
+      let failQuery = db
         .from("upload_session_files")
         .update({
           status: "error",
-          error_code: "direct_upload_failed",
+          verification_token: null,
+          verification_lease_until: null,
+          error_code: "upload_failed",
           updated_at: new Date().toISOString(),
         })
         .eq("id", file.id)
         .eq("session_id", session.id)
-        .in("status", ["pending_upload", "verifying"]);
+        .eq("status", file.status)
+        .eq("upload_generation", file.upload_generation);
+      failQuery = file.verification_token
+        ? failQuery.eq("verification_token", file.verification_token)
+        : failQuery.is("verification_token", null);
+      const { error } = await failQuery;
       if (error) throw error;
     }
     await refreshSessionStatus(db, session.id);
@@ -563,40 +633,19 @@ async function completeSessionFile(
     return "resolved";
   }
   if (file.status === "verifying") {
-    const { data: recovered, error } = await db
-      .from("upload_session_files")
-      .update({
-        status: "pending_upload",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", file.id)
-      .eq("session_id", session.id)
-      .eq("status", "verifying")
-      .lte("updated_at", verificationLeaseCutoff())
-      .select("id")
-      .maybeSingle();
-    if (error) throw error;
-    if (!recovered) return "in_progress";
+    if (file.verification_lease_until &&
+      new Date(file.verification_lease_until).getTime() > Date.now()) return "in_progress";
   }
-
-  const { data: claimed, error: claimError } = await db
-    .from("upload_session_files")
-    .update({ status: "verifying", updated_at: new Date().toISOString() })
-    .eq("id", file.id)
-    .eq("session_id", session.id)
-    .eq("status", "pending_upload")
-    .select("*")
-    .maybeSingle();
+  const { data: claimed, error: claimError } = await db.rpc("claim_upload_verification", {
+    p_session_id: session.id, p_file_id: file.id, p_user_id: userId,
+  });
   if (claimError) throw claimError;
-  if (!claimed) return "in_progress";
-
-  const [verified] = await verifyAndSealSessionFiles(db, session, [
-    claimed as UploadSessionFileRow,
-  ]);
-  if (!verified) {
+  if (!claimed) return file.status === "pending_upload" ? "incomplete" : "in_progress";
+  const verified = await verifyAndSealSessionFiles(db, session, file, userId, claimed as string);
+  const currentFiles = await loadSessionFiles(db, session.id);
+  const current = currentFiles.find((candidate) => candidate.id === file.id);
+  if (!verified || current?.status !== "uploaded") {
     await refreshSessionStatus(db, session.id);
-    const currentFiles = await loadSessionFiles(db, session.id);
-    const current = currentFiles.find((candidate) => candidate.id === file.id);
     return current?.status === "error" ? "resolved" : "incomplete";
   }
   await queueFileProcessing(db, session.id, userId, file.id);
@@ -643,8 +692,9 @@ uploadSessionsRouter.post(
       target_purpose: manifest.purpose,
       target_destination: manifest.destination,
       target_expires_at: expiresAt,
-      target_files: manifest.files,
+      target_files: manifest.files.map((file) => ({ ...file, upload_transport: uploadTransport() })),
       target_hourly_session_limit: uploadRateLimits.sessionCreationMaxPerHour,
+      target_user_email: userEmail ?? null,
     });
     if (error) {
       if (error.message?.includes("upload_session_rate_limit_exceeded")) {
@@ -670,7 +720,7 @@ uploadSessionsRouter.post(
     }
 
     try {
-      const files = await signPendingFiles(manifest.files, expiresAt);
+      const files = await signPendingFiles(await loadSessionFiles(db, sessionId), expiresAt, sessionId);
       res.status(201).json({
         session: {
           id: sessionId,
@@ -742,39 +792,16 @@ uploadSessionsRouter.post(
       return void res.status(410).json({ detail: "Upload session expired" });
     }
 
-    const files = await loadSessionFiles(db, session.id);
-    const pendingFiles = files.filter((file) =>
-      ["pending_upload", "verifying"].includes(file.status),
-    );
-    if (pendingFiles.some((file) => file.status === "pending_upload")) {
-      const { error } = await db
-        .from("upload_session_files")
-        .update({
-          status: "pending_upload",
-          error_code: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("session_id", session.id)
-        .eq("status", "pending_upload");
-      if (error) return void sendInternalError(res, error);
-    }
-    if (pendingFiles.some((file) => file.status === "verifying")) {
-      // Only reclaim a verification lease that has already expired. A fresh
-      // one means another request is still sealing that file.
-      const { error } = await db
-        .from("upload_session_files")
-        .update({
-          status: "pending_upload",
-          error_code: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("session_id", session.id)
-        .eq("status", "verifying")
-        .lte("updated_at", verificationLeaseCutoff());
-      if (error) return void sendInternalError(res, error);
-    }
+    // Recover only expired verification leases. Active claims and their
+    // immutable candidates stay untouched; part receipts remain resumable.
+    const { error: reclaimError } = await db.rpc("reclaim_expired_upload_verifications", {
+      p_session_id: session.id, p_user_id: userId,
+    });
+    if (reclaimError) return void sendInternalError(res, reclaimError);
+    const pendingFiles = (await loadSessionFiles(db, session.id))
+      .filter((file) => file.status === "pending_upload");
     res.json({
-      files: await signPendingFiles(pendingFiles, session.expires_at),
+      files: await signPendingFiles(pendingFiles, session.expires_at, session.id),
     });
   }),
 );
@@ -863,41 +890,9 @@ uploadSessionsRouter.delete(
     if (!session) {
       return void res.status(404).json({ detail: "Upload session not found" });
     }
-    const staleVerification =
-      session.status === "verifying" &&
-      new Date(session.updated_at).getTime() <=
-        Date.now() - UPLOAD_VERIFICATION_LEASE_SECONDS * 1000;
-    if (session.status !== "pending_upload" && !staleVerification) {
-      return void res
-        .status(409)
-        .json({ detail: "Upload session cannot be cancelled" });
-    }
-    const files = await loadSessionFiles(db, session.id);
-    if (
-      files.some((file) =>
-        ["uploaded", "processing", "completed"].includes(file.status),
-      )
-    ) {
-      return void res.status(409).json({
-        detail: "Files already being processed cannot be cancelled",
-      });
-    }
-    const now = new Date().toISOString();
-    let cancellationQuery = db
-      .from("upload_sessions")
-      .update({ status: "cancelled", cancelled_at: now, updated_at: now })
-      .eq("id", session.id)
-      .eq("user_id", userId)
-      .eq("status", staleVerification ? "verifying" : "pending_upload");
-    if (staleVerification) {
-      cancellationQuery = cancellationQuery.lte(
-        "updated_at",
-        verificationLeaseCutoff(),
-      );
-    }
-    const { data: cancelled, error } = await cancellationQuery
-      .select("id")
-      .maybeSingle();
+    const { data: cancelled, error } = await db.rpc("cancel_upload_session", {
+      p_session_id: session.id, p_user_id: userId,
+    });
     if (error) return void sendInternalError(res, error);
     if (!cancelled) {
       return void res.status(409).json({
@@ -906,18 +901,6 @@ uploadSessionsRouter.delete(
       });
     }
 
-    await mapWithConcurrency(files, 5, async (file) => {
-      await Promise.all([
-        deleteFile(file.staging_storage_path).catch(() => {}),
-        deleteFile(file.sealed_storage_path).catch(() => {}),
-      ]);
-    });
-    const { error: cleanupError } = await db
-      .from("upload_sessions")
-      .update({ cleaned_at: new Date().toISOString() })
-      .eq("id", session.id)
-      .eq("status", "cancelled");
-    if (cleanupError) return void sendInternalError(res, cleanupError);
     res.status(204).end();
   }),
 );

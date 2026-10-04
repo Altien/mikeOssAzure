@@ -6,6 +6,7 @@ vi.mock("@/app/lib/supabase", () => ({
 }));
 
 import {
+    API_BASE,
     UploadBatchError,
     failedUploadMessage,
     replaceDocumentVersionFile,
@@ -23,7 +24,7 @@ import {
 import { uploadProcessingPollDelayMs } from "@/shared/api/uploadSessionClient";
 
 const fetchMock = vi.fn();
-const API_URL = "/api";
+const API_URL = API_BASE;
 
 type Manifest = {
     purpose: string;
@@ -44,6 +45,7 @@ function json(body: unknown, status = 200) {
 }
 
 function installSuccessfulSessionServer(options?: {
+    privateParts?: boolean;
     storageUpload?: (
         url: string,
         init: RequestInit,
@@ -76,6 +78,7 @@ function installSuccessfulSessionServer(options?: {
         }
     >();
     const storageRequests: Array<{ url: string; init: RequestInit }> = [];
+    const partRequests: Array<{ url: string; init: RequestInit }> = [];
     let activeStorageUploads = 0;
     let maximumStorageUploads = 0;
     let statusRequestCount = 0;
@@ -94,7 +97,13 @@ function installSuccessfulSessionServer(options?: {
             status: "pending_upload",
             error_code: null,
             result: null,
-            upload: {
+            upload: options?.privateParts ? {
+                transport: "authenticated_parts",
+                method: "PUT",
+                path: `/upload-sessions/session-1/files/${file.client_id}/parts`,
+                generation: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                chunk_size: 8 * 1024 * 1024,
+            } : {
                 method: "PUT",
                 url: uploadUrl(file.client_id),
                 headers: { "Content-Type": "application/pdf" },
@@ -195,6 +204,10 @@ function installSuccessfulSessionServer(options?: {
                     files: uploadFiles(sessionManifests.get(refresh[1]!)!),
                 });
             }
+            if (options?.privateParts && url.includes("/parts/") && init?.method === "PUT") {
+                partRequests.push({ url, init });
+                return json({ status: "completed" });
+            }
             if (url.startsWith("https://storage.test/")) {
                 storageRequests.push({ url, init: init ?? {} });
                 activeStorageUploads += 1;
@@ -282,6 +295,7 @@ function installSuccessfulSessionServer(options?: {
     return {
         manifests,
         storageRequests,
+        partRequests,
         maximumStorageUploads: () => maximumStorageUploads,
         statusRequestCount: () => statusRequestCount,
     };
@@ -301,6 +315,28 @@ describe("direct upload sessions", () => {
             data: { session: { access_token: "token-123" } },
         });
         vi.stubGlobal("fetch", fetchMock);
+    });
+
+    it("streams private Blob uploads as authenticated 8 MiB API parts", async () => {
+        const server = installSuccessfulSessionServer({ privateParts: true });
+        const file = new File([new Uint8Array(8 * 1024 * 1024 + 1)], "private.pdf", {
+            type: "application/pdf",
+        });
+        const outcomes = await uploadFilesWithSession<{ id: string }>({
+            purpose: "document_create", destination: { scope: "standalone" }, files: [{ file }],
+        });
+        expect(outcomes[0]?.status).toBe("completed");
+        expect(server.storageRequests).toHaveLength(0);
+        expect(server.partRequests).toHaveLength(2);
+        expect(server.partRequests.map(({ init }) => (init.body as Blob).size)).toEqual([8 * 1024 * 1024, 1]);
+        for (const { url, init } of server.partRequests) {
+            expect(url).toContain(`${API_URL}/upload-sessions/`);
+            expect(init.credentials).toBe("include");
+            expect(init.headers).toMatchObject({
+                "Content-Type": "application/octet-stream",
+                "X-Upload-Generation": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            });
+        }
     });
 
     it("uploads at most three files concurrently and returns every outcome", async () => {

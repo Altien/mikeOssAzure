@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   rpc: vi.fn(),
   getSignedUploadUrl: vi.fn(),
+  files: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock("../../middleware/auth", () => ({
@@ -20,12 +21,18 @@ vi.mock("../../middleware/auth", () => ({
 }));
 
 vi.mock("../../lib/supabase", () => ({
-  createServerSupabase: () => ({ rpc: mocks.rpc }),
+  createServerSupabase: () => ({
+    rpc: mocks.rpc,
+    from: () => ({
+      select: () => ({ eq: () => ({ order: async () => ({ data: mocks.files, error: null }) }) }),
+    }),
+  }),
 }));
 
 vi.mock("../../lib/storage", () => ({
   storageEnabled: true,
   getSignedUploadUrl: mocks.getSignedUploadUrl,
+  uploadTransport: () => "direct",
   copyFile: vi.fn(),
   deleteFile: vi.fn(),
   headFile: vi.fn(),
@@ -52,7 +59,16 @@ function manifest(fileCount = 1) {
 describe("upload session routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.rpc.mockResolvedValue({ error: null });
+    mocks.files = [];
+    mocks.rpc.mockImplementation(async (name: string, args: { target_files?: Array<Record<string, unknown>> }) => {
+      if (name === "create_upload_session") {
+        mocks.files = (args.target_files ?? []).map((file) => ({
+          ...file, upload_generation: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          status: "pending_upload", error_code: null, result: null,
+        }));
+      }
+      return { error: null };
+    });
     mocks.getSignedUploadUrl.mockResolvedValue("https://upload.example/signed");
   });
 

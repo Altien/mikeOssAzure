@@ -38,6 +38,7 @@ import { skillsRouter } from "./altien/skills/router";
 import { auditRouter } from "./routes/audit";
 import { handleUnhandledError, protectInternalErrorResponses } from "./middleware/internalErrorResponse";
 import { configuredAllowedOrigins as configuredOrigins } from "./lib/origins";
+import { envInt } from "./lib/runtimeConfig";
 
 // ── Rate-limit configuration (from upstream ba6f771) ───────────────────────
 
@@ -219,7 +220,7 @@ export function buildApp(): express.Express {
         callback(null, !origin || allowedOrigins.has(origin));
       },
       credentials: true,
-      allowedHeaders: ["Authorization", "Content-Type"],
+      allowedHeaders: ["Authorization", "Content-Type", "X-Upload-Generation"],
       methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     }),
   );
@@ -228,14 +229,24 @@ export function buildApp(): express.Express {
   // the route mounts below. Bundled-frontend assets are exempt: one page
   // load fetches dozens of JS/CSS chunks, which exhausted the 300/15 min
   // budget after ~20 page loads (OSS-6 smoke, 2026-09-30).
+  const uploadPartPath = /^\/api\/upload-sessions\/[^/]+\/files\/[^/]+\/parts\/\d+$/;
   app.use((req, res, next) =>
-    isStaticAsset(req) ? next() : generalLimiter(req, res, next),
+    isStaticAsset(req) || (req.method === "PUT" && uploadPartPath.test(req.path))
+      ? next() : generalLimiter(req, res, next),
   );
 
   // Parse this return channel before the general 50 MB parser. Its full
   // /api path also gives it a separate limiter budget under static hosting.
   app.post(TOOL_RESULT_PATH, toolResultLimiter, express.json({ limit: "2mb" }));
-  app.use(express.json({ limit: JSON_BODY_LIMIT }));
+  const jsonParser = express.json({ limit: JSON_BODY_LIMIT });
+  // Blob parts are bounded streams. Never let the global JSON parser buffer a
+  // mislabeled 8 MiB part (or the global 50 MiB ceiling) before ownership and
+  // part-size checks in the upload router.
+  app.use((req, res, next) =>
+    req.method === "PUT" && uploadPartPath.test(req.path)
+      ? next()
+      : jsonParser(req, res, next),
+  );
   // /install posts form-encoded bodies (the bootstrap-token paste form).
   // Limit is small — the only field is a token + maybe a few config values.
   app.use(express.urlencoded({ extended: false, limit: "32kb" }));

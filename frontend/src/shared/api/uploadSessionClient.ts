@@ -152,9 +152,16 @@ type UploadSessionFileResponse = {
     error_code: string | null;
     result: unknown;
     upload?: {
+        transport?: "direct";
         method: "PUT";
         url: string;
         headers: Record<string, string>;
+    } | {
+        transport: "authenticated_parts";
+        method: "PUT";
+        path: string;
+        generation: string;
+        chunk_size: number;
     };
 };
 
@@ -465,14 +472,33 @@ async function runUploadSession<T>(args: {
                         lastError = new Error("Upload URL is unavailable");
                         continue;
                     }
-                    let response: Response;
+                    let response: Response | null = null;
                     try {
-                        response = await fetchStorage(descriptor.upload.url, {
-                            method: descriptor.upload.method,
-                            headers: descriptor.upload.headers,
-                            body: input.file,
-                            signal: storageAttemptSignal(args.signal),
-                        });
+                        if (descriptor.upload.transport === "authenticated_parts") {
+                            const upload = descriptor.upload;
+                            if (upload.chunk_size !== 8 * 1024 * 1024) {
+                                throw new Error("Unsupported upload chunk size");
+                            }
+                            for (let offset = 0, index = 0; offset < input.file.size; offset += upload.chunk_size, index += 1) {
+                                const chunk = input.file.slice(offset, offset + upload.chunk_size);
+                                await apiRequest(`${upload.path}/${index}`, {
+                                    method: "PUT",
+                                    headers: {
+                                        "Content-Type": "application/octet-stream",
+                                        "X-Upload-Generation": upload.generation,
+                                    },
+                                    body: chunk,
+                                    signal: storageAttemptSignal(args.signal),
+                                });
+                            }
+                        } else {
+                            response = await fetchStorage(descriptor.upload.url, {
+                                method: descriptor.upload.method,
+                                headers: descriptor.upload.headers,
+                                body: input.file,
+                                signal: storageAttemptSignal(args.signal),
+                            });
+                        }
                     } catch (error) {
                         // A caller abort ends the batch; the per-attempt
                         // timeout is just another failed attempt.
@@ -480,7 +506,7 @@ async function runUploadSession<T>(args: {
                         lastError = error;
                         continue;
                     }
-                    if (response.ok) {
+                    if (response === null || response.ok) {
                         reportProgress({
                             clientId: input.clientId,
                             filename: input.file.name,

@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   deleteFile: vi.fn(),
   getSignedUploadUrl: vi.fn(),
   headFile: vi.fn(),
+  stageUploadPart: vi.fn(),
+  uploadTransport: vi.fn(),
   rpc: vi.fn(),
   session: null as Record<string, unknown> | null,
   files: [] as Array<Record<string, unknown>>,
@@ -99,6 +101,8 @@ vi.mock("../../lib/supabase", () => ({
 vi.mock("../../lib/storage", () => ({
   storageEnabled: true,
   getSignedUploadUrl: mocks.getSignedUploadUrl,
+  uploadTransport: mocks.uploadTransport,
+  stageUploadPart: mocks.stageUploadPart,
   copyFile: mocks.copyFile,
   deleteFile: mocks.deleteFile,
   headFile: mocks.headFile,
@@ -137,6 +141,10 @@ describe("upload session completion", () => {
         observed_size_bytes: null,
         staging_storage_path: "staging-key",
         sealed_storage_path: "sealed-key",
+        upload_transport: "direct",
+        upload_generation: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        verification_token: null,
+        verification_lease_until: null,
         status: "pending_upload",
         error_code: null,
         result: null,
@@ -144,20 +152,71 @@ describe("upload session completion", () => {
       },
     ];
     mocks.copyFile.mockResolvedValue(undefined);
+    mocks.uploadTransport.mockReturnValue("direct");
     mocks.deleteFile.mockResolvedValue(undefined);
     mocks.getSignedUploadUrl.mockResolvedValue(
       "https://upload.example/refreshed",
     );
-    mocks.rpc.mockImplementation(async (name: string) =>
-      name === "queue_upload_session_file_processing"
-        ? { data: "job-1", error: null }
-        : { data: "pending_upload", error: null },
+    mocks.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
+      if (name === "reclaim_expired_upload_verifications") {
+        for (const file of mocks.files) {
+          if (file.status === "verifying" && file.verification_lease_until &&
+            new Date(file.verification_lease_until as string).getTime() <= Date.now()) {
+            file.status = "pending_upload";
+            file.verification_token = null;
+            file.verification_lease_until = null;
+          }
+        }
+        return { data: 0, error: null };
+      }
+      if (name === "queue_upload_session_file_processing") return { data: "job-1", error: null };
+      if (name === "claim_upload_verification") {
+        const file = mocks.files.find((row) => row.id === args.p_file_id);
+        if (!file || file.status !== "pending_upload") return { data: null, error: null };
+        file.status = "verifying";
+        file.verification_token = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        return { data: file.verification_token, error: null };
+      }
+      if (name === "finish_upload_verification") {
+        const file = mocks.files.find((row) => row.id === args.p_file_id);
+        if (!file || file.status !== "verifying" || file.verification_token !== args.p_claim_token) return { data: false, error: null };
+        Object.assign(file, { status: args.p_status, observed_size_bytes: args.p_observed_size,
+          etag: args.p_etag, sealed_storage_path: args.p_sealed_path ?? file.sealed_storage_path,
+          error_code: args.p_error_code, verification_token: null });
+        return { data: true, error: null };
+      }
+      return { data: "pending_upload", error: null };
+    });
+  });
+
+  it("accepts a bounded private Blob part only under the authenticated generation claim", async () => {
+    mocks.uploadTransport.mockReturnValue("authenticated_parts");
+    mocks.files[0]!.upload_transport = "authenticated_parts";
+    mocks.stageUploadPart.mockImplementation(async (_key, _blockId, stream) => {
+      for await (const _chunk of stream) { /* consume the bounded request */ }
+    });
+    mocks.rpc.mockImplementation(async (name: string) => ({
+      data: name === "claim_upload_part"
+        ? { status: "claimed", claim_token: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" }
+        : true,
+      error: null,
+    }));
+    const response = await request(app)
+      .put("/upload-sessions/22222222-2222-4222-8222-222222222222/files/33333333-3333-4333-8333-333333333333/parts/0")
+      .set("X-Upload-Generation", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+      .set("Content-Type", "application/octet-stream")
+      .send(Buffer.from("abcd"));
+    expect(response.status).toBe(200);
+    expect(mocks.stageUploadPart).toHaveBeenCalledWith(
+      "staging-key", expect.any(String), expect.anything(), 4, expect.anything(),
     );
+    expect(mocks.rpc).toHaveBeenCalledWith("complete_upload_part", expect.objectContaining({
+      p_generation: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", p_part_index: 0,
+    }));
   });
 
   it("verifies, seals, and queues a file without sending its bytes to Express", async () => {
     mocks.headFile
-      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({
         size: 4,
         etag: "staged-etag",
@@ -174,8 +233,8 @@ describe("upload session completion", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(mocks.copyFile).toHaveBeenCalledWith("staging-key", "sealed-key");
-    expect(mocks.deleteFile).toHaveBeenCalledWith("staging-key");
+    expect(mocks.copyFile).toHaveBeenCalledWith("staging-key", "sealed-key/claims/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "staged-etag");
+    expect(mocks.deleteFile).not.toHaveBeenCalledWith("staging-key");
     expect(mocks.rpc).toHaveBeenCalledWith(
       "queue_upload_session_file_processing",
       {
@@ -203,7 +262,6 @@ describe("upload session completion", () => {
       sealed_storage_path: "later-sealed-key",
     });
     mocks.headFile
-      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({
         size: 4,
         etag: "staged-etag",
@@ -249,18 +307,17 @@ describe("upload session completion", () => {
     expect(mocks.copyFile).not.toHaveBeenCalled();
   });
 
-  it("cancels a pending session and deletes both temporary object keys", async () => {
+  it("cancels a pending session through the atomic cleanup RPC", async () => {
     const response = await request(app).delete(
       "/upload-sessions/22222222-2222-4222-8222-222222222222",
     );
 
     expect(response.status).toBe(204);
-    expect(mocks.deleteFile).toHaveBeenCalledWith("staging-key");
-    expect(mocks.deleteFile).toHaveBeenCalledWith("sealed-key");
-    expect(mocks.session).toMatchObject({
-      status: "cancelled",
-      cleaned_at: expect.any(String),
+    expect(mocks.rpc).toHaveBeenCalledWith("cancel_upload_session", {
+      p_session_id: "22222222-2222-4222-8222-222222222222",
+      p_user_id: "11111111-1111-4111-8111-111111111111",
     });
+    expect(mocks.deleteFile).not.toHaveBeenCalled();
   });
 
   it("refreshes PUT URLs for files that have not been verified", async () => {
@@ -284,6 +341,7 @@ describe("upload session completion", () => {
   it("does not reclaim a verifying file whose lease is still fresh", async () => {
     mocks.files[0]!.status = "verifying";
     mocks.files[0]!.updated_at = new Date().toISOString();
+    mocks.files[0]!.verification_lease_until = new Date(Date.now() + 60_000).toISOString();
 
     const response = await request(app).post(
       "/upload-sessions/22222222-2222-4222-8222-222222222222/urls",
@@ -293,9 +351,10 @@ describe("upload session completion", () => {
     expect(mocks.files[0]).toMatchObject({ status: "verifying" });
   });
 
-  it("reclaims a verifying file whose lease has expired", async () => {
+  it("reclaims only a verification lease that has expired", async () => {
     mocks.files[0]!.status = "verifying";
     mocks.files[0]!.updated_at = "2000-01-01T00:00:00.000Z";
+    mocks.files[0]!.verification_lease_until = "2000-01-01T00:00:00.000Z";
 
     const response = await request(app).post(
       "/upload-sessions/22222222-2222-4222-8222-222222222222/urls",
@@ -306,10 +365,9 @@ describe("upload session completion", () => {
   });
 
   it("does not publish a seal result after its verification claim is stolen", async () => {
-    mocks.headFile.mockImplementationOnce(async () => {
-      mocks.files[0]!.status = "pending_upload";
-      return { size: 4, etag: "sealed-etag", contentType: "application/pdf" };
-    });
+    mocks.headFile.mockResolvedValueOnce({ size: 4, etag: "staged-etag", contentType: "application/pdf" })
+      .mockResolvedValueOnce({ size: 4, etag: "sealed-etag", contentType: "application/pdf" });
+    mocks.copyFile.mockImplementationOnce(async () => { mocks.files[0]!.status = "pending_upload"; });
 
     const response = await request(app).post(
       "/upload-sessions/22222222-2222-4222-8222-222222222222/files/33333333-3333-4333-8333-333333333333/complete",
@@ -326,7 +384,6 @@ describe("upload session completion", () => {
 
   it("extends the session deadline after a file is sealed and queued", async () => {
     mocks.headFile
-      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({
         size: 4,
         etag: "staged-etag",
@@ -384,7 +441,7 @@ describe("upload session completion", () => {
   });
 
   it("records and removes an object larger than its reservation", async () => {
-    mocks.headFile.mockResolvedValueOnce(null).mockResolvedValueOnce({
+    mocks.headFile.mockResolvedValueOnce({
       size: 5,
       etag: "oversized-etag",
       contentType: "application/pdf",
@@ -399,7 +456,7 @@ describe("upload session completion", () => {
       status: "error",
       error_code: "size_mismatch",
     });
-    expect(mocks.deleteFile).toHaveBeenCalledWith("staging-key");
+    expect(mocks.deleteFile).not.toHaveBeenCalledWith("staging-key");
     expect(mocks.rpc).not.toHaveBeenCalledWith(
       "queue_upload_session_file_processing",
       expect.anything(),
@@ -433,7 +490,7 @@ describe("upload session completion", () => {
         expect.objectContaining({
           client_id: "client-2",
           status: "error",
-          error_code: "direct_upload_failed",
+          error_code: "upload_failed",
         }),
       ]),
     );
@@ -482,7 +539,7 @@ describe("upload session completion", () => {
   });
 
   it("records an uploaded object with the wrong content type", async () => {
-    mocks.headFile.mockResolvedValueOnce(null).mockResolvedValueOnce({
+    mocks.headFile.mockResolvedValueOnce({
       size: 4,
       etag: "staged-etag",
       contentType: "text/plain",
@@ -497,7 +554,7 @@ describe("upload session completion", () => {
       status: "error",
       error_code: "content_type_mismatch",
     });
-    expect(mocks.deleteFile).toHaveBeenCalledWith("staging-key");
+    expect(mocks.deleteFile).not.toHaveBeenCalledWith("staging-key");
   });
 
   it("allows a stale verifying session to be cancelled", async () => {
@@ -509,6 +566,6 @@ describe("upload session completion", () => {
     );
 
     expect(response.status).toBe(204);
-    expect(mocks.session).toMatchObject({ status: "cancelled" });
+    expect(mocks.rpc).toHaveBeenCalledWith("cancel_upload_session", expect.any(Object));
   });
 });
