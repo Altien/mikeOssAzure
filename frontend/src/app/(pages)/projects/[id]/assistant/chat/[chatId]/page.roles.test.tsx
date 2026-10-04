@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { Suspense, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { MikeApiError } from "@/app/lib/mikeApi";
 import ProjectAssistantChatPage from "./page";
 
@@ -51,6 +51,9 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
 
 vi.mock("next/navigation", () => ({
     useRouter: () => ({ push, replace: vi.fn() }),
+}));
+vi.mock("@/app/lib/usePathParams", () => ({
+    usePathParams: () => ({ id: "p1", chatId: "c1" }),
 }));
 
 vi.mock("@/app/contexts/AuthContext", () => ({
@@ -175,17 +178,10 @@ function chatDetail(userId = "creator") {
     };
 }
 
-// The page reads its route params with React's `use()`, which suspends until
-// the promise settles — so it needs a boundary and a first await.
+// Static export reads route IDs from the current URL through usePathParams.
 async function renderPage() {
     await act(async () => {
-        render(
-            <Suspense fallback={null}>
-                <ProjectAssistantChatPage
-                    params={Promise.resolve({ id: "p1", chatId: "c1" })}
-                />
-            </Suspense>,
-        );
+        render(<ProjectAssistantChatPage />);
     });
     await screen.findByText("Rename");
 }

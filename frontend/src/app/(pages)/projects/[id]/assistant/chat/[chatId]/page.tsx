@@ -673,7 +673,6 @@ export default function ProjectAssistantChatPage() {
             .then(({ chat, messages: loaded, skillBinding }) => {
                 if (cancelled) return;
                 setChatTitle(chat.title);
-                setChatOwnerId(chat.user_id ?? null);
                 skillRuntime.setBinding(skillBinding ?? null); // Dev (OSS-6)
                 setChatModel(chat.model ?? null);
                 setChatReasoningLevel(chat.reasoning_level ?? null);
