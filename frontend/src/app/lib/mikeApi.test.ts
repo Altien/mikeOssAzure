@@ -1745,10 +1745,10 @@ describe("tabular cell operations", () => {
 describe("query and payload defaults", () => {
     it("getDocumentFile appends version_id only when a version is requested", async () => {
         expect(getDocumentFileUrl("d 1")).toBe(
-            "/api/single-documents/d%201/file",
+            `${API_BASE}/single-documents/d%201/file`,
         );
         expect(getDocumentFileUrl("d 1", "v 1")).toBe(
-            "/api/single-documents/d%201/file?version_id=v%201",
+            `${API_BASE}/single-documents/d%201/file?version_id=v%201`,
         );
 
         fetchMock
@@ -1766,13 +1766,13 @@ describe("query and payload defaults", () => {
             );
 
         const current = await getDocumentFile("d1");
-        expect(lastFetchCall().url).toBe("/api/single-documents/d1/file");
+        expect(lastFetchCall().url).toBe(`${API_BASE}/single-documents/d1/file`);
         expect(current.filename).toBe("current.docx");
         expect(await current.blob.text()).toBe("current");
 
         const selected = await getDocumentFile("d 1", "v 1");
         expect(lastFetchCall().url).toBe(
-            "/api/single-documents/d%201/file?version_id=v%201",
+            `${API_BASE}/single-documents/d%201/file?version_id=v%201`,
         );
         expect(selected.filename).toBeNull();
         expect(await selected.blob.text()).toBe("selected");
