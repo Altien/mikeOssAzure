@@ -27,10 +27,10 @@ importers:
         specifier: ^3.0.57
         version: 3.0.62(zod@4.6.5)
       '@aws-sdk/client-s3':
-        specifier: ^3.1141.0
+        specifier: ^3.1146.0
         version: 3.1146.0
       '@aws-sdk/s3-request-presigner':
-        specifier: ^3.1141.0
+        specifier: ^3.1146.0
         version: 3.1146.0
       '@azure/identity':
         specifier: ^4.5.0
@@ -45,7 +45,7 @@ importers:
         specifier: ^1.50.1
         version: 1.52.0(@modelcontextprotocol/sdk@1.32.0(zod@4.6.5))
       '@modelcontextprotocol/sdk':
-        specifier: ^1.30.1
+        specifier: ^1.32.0
         version: 1.32.0(zod@4.6.5)
       '@openrouter/ai-sdk-provider':
         specifier: ^3.0.0
@@ -87,7 +87,7 @@ importers:
         specifier: ^8.5.1
         version: 8.7.0(express@4.22.3)
       fast-xml-parser:
-        specifier: ^5.7.1
+        specifier: ^5.11.2
         version: 5.11.2
       helmet:
         specifier: ^8.1.0
@@ -108,7 +108,7 @@ importers:
         specifier: ^1.6.0
         version: 1.8.2
       mammoth:
-        specifier: ^1.12.3
+        specifier: ^1.13.0
         version: 1.13.0
       multer:
         specifier: ^1.4.5-lts.2
