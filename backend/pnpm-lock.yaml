@@ -166,13 +166,13 @@ importers:
         specifier: ^1.4.13
         version: 1.4.13
       '@types/node':
-        specifier: ^26.6.3
+        specifier: ^26.6.4
         version: 26.6.4
       '@types/supertest':
         specifier: ^7.2.1
         version: 7.2.1
       '@vitest/coverage-v8':
-        specifier: ^5.0.2
+        specifier: ^5.0.3
         version: 5.0.3(vitest@5.0.3)
       only-allow:
         specifier: ^1.2.1
@@ -181,7 +181,7 @@ importers:
         specifier: ^3.9.9
         version: 3.9.9
       supertest:
-        specifier: ^7.3.0
+        specifier: ^7.3.1
         version: 7.3.1
       tsx:
         specifier: ^4.23.15
