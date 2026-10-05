@@ -61,10 +61,10 @@ importers:
         specifier: ^4.1.18
         version: 4.3.3
       '@types/node':
-        specifier: ^26.6.3
+        specifier: ^26.6.4
         version: 26.6.4
       '@types/office-js':
-        specifier: ^1.0.610
+        specifier: ^1.0.611
         version: 1.0.611
       '@types/office-runtime':
         specifier: ^1.0.40
