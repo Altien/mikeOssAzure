@@ -146,6 +146,9 @@ export function SidebarProjectItem({
     );
     const [loadingMore, setLoadingMore] = useState(false);
     const reviewCountRef = useRef(data?.reviews.length ?? 0);
+    // Bumped whenever a refresh replaces the list. A "See more" page that
+    // started before then used offsets from the old list, so it is dropped.
+    const listGenerationRef = useRef(0);
     reviewCountRef.current = data?.reviews.length ?? 0;
     // Navigating inside the active project (a new chat, a new review)
     // refreshes its list; other projects keep what they loaded.
@@ -157,6 +160,7 @@ export function SidebarProjectItem({
         loadProjectItems(project.id, reviewCountRef.current, controller.signal)
             .then((next) => {
                 if (controller.signal.aborted) return;
+                listGenerationRef.current += 1;
                 projectItemsCache.set(project.id, next);
                 setData(next);
                 setLoadError(false);
@@ -179,15 +183,19 @@ export function SidebarProjectItem({
         const nextCount = visibleCount + PROJECT_RECENT_ITEM_PAGE_SIZE;
         if (data.hasMoreReviews) {
             setLoadingMore(true);
+            const generation = listGenerationRef.current;
             try {
                 const page = await fetchReviewPage(
                     project.id,
                     data.reviews.length,
                     REVIEW_PAGE_SIZE,
                 );
-                // Merge into the latest state: a refresh (say, a new chat in
-                // this project) can land while this page is in flight, and
-                // the list captured at click time would undo it.
+                // A refresh landed while this page was in flight; its
+                // offset no longer matches. The refreshed list keeps its own
+                // hasMoreReviews, so the next "See more" fetches again.
+                if (generation !== listGenerationRef.current) return;
+                // Merge into the latest state rather than the list captured
+                // at click time.
                 setData((current) => {
                     if (!current) return current;
                     const seen = new Set(
