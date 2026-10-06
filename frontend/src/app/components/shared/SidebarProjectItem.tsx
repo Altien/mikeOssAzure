@@ -322,11 +322,15 @@ export function SidebarProjectItem({
                                 </span>
                             </li>
                         ))
-                    ) : (loadError && data === null) ||
-                      (data?.incomplete && items?.length === 0) ? (
-                        // Nothing to show: a total failure, or one request
-                        // failed and the other came back empty.
-                        retryRow("Could not load items.")
+                    ) : (loadError || data?.incomplete) &&
+                      (items === null || items.length === 0) ? (
+                        // Nothing to show: a failed load or refresh, or one
+                        // request failed and the other came back empty.
+                        retryRow(
+                            loadError && data !== null
+                                ? "Could not refresh items."
+                                : "Could not load items.",
+                        )
                     ) : items && items.length === 0 ? (
                         <li className="flex min-h-7 items-center pl-2 pr-2 text-xs text-gray-500">
                             No chats or reviews yet
@@ -372,8 +376,12 @@ export function SidebarProjectItem({
                                     </li>
                                 );
                             })}
-                            {data?.incomplete &&
-                                retryRow("Some items could not be loaded.")}
+                            {/* A refresh that failed keeps the items it
+                                had; a partial load shows what did load. */}
+                            {loadError
+                                ? retryRow("Could not refresh items.")
+                                : data?.incomplete &&
+                                  retryRow("Some items could not be loaded.")}
                             {canSeeMore && (
                                 <li>
                                     <button

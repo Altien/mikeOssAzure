@@ -368,6 +368,41 @@ describe("SidebarProjectItem", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps the loaded items and offers a retry when a refresh fails", async () => {
+    const current = project();
+    const { rerender } = renderItem(current, {
+      pathname: `/projects/${current.id}`,
+    });
+    await screen.findByRole("link", { name: "Chat: Due diligence" });
+
+    vi.mocked(listProjectChats).mockRejectedValueOnce(new Error("boom"));
+    vi.mocked(listTabularReviews).mockRejectedValueOnce(new Error("boom"));
+    rerender(
+      <SidebarProjectItem
+        project={current}
+        pathname={`/projects/${current.id}/assistant`}
+        expanded
+        onExpandedChange={vi.fn()}
+        onOpenProject={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not refresh items.",
+    );
+    expect(
+      screen.getByRole("link", { name: "Chat: Due diligence" }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole("link", { name: "Tabular review: Lease review" }),
+    ).toBeInTheDocument();
+  });
+
   it("offers a retry when both requests fail", async () => {
     vi.mocked(listProjectChats).mockRejectedValueOnce(new Error("boom"));
     vi.mocked(listTabularReviews).mockRejectedValueOnce(new Error("boom"));
