@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { FieldLabel } from "@/app/components/ui/form-field";
+import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { SettingsTextInput } from "@/app/components/settings/SettingsTextInput";
 import { settingsGlassIconButtonClassName } from "@/app/(pages)/settings/settingsStyles";
 
@@ -34,6 +35,7 @@ export function ApiKeyField({
     const [isEditing, setIsEditing] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [saved, setSaved] = useState(false);
+    const [warningMessage, setWarningMessage] = useState<string | null>(null);
 
     useEffect(() => {
         setValue("");
@@ -51,10 +53,10 @@ export function ApiKeyField({
                 setSaved(true);
                 setTimeout(() => setSaved(false), 2000);
             } else {
-                alert(`Failed to save ${label}.`);
+                setWarningMessage(`Failed to save ${label}. Please try again.`);
             }
         } catch {
-            alert(`Failed to save ${label}.`);
+            setWarningMessage(`Failed to save ${label}. Please try again.`);
         } finally {
             setIsSaving(false);
         }
@@ -64,15 +66,18 @@ export function ApiKeyField({
         setIsSaving(true);
         try {
             const ok = await onRemove();
-            if (!ok) alert(`Failed to remove ${label}.`);
+            if (!ok) {
+                setWarningMessage(`Failed to remove ${label}. Please try again.`);
+            }
         } catch {
-            alert(`Failed to remove ${label}.`);
+            setWarningMessage(`Failed to remove ${label}. Please try again.`);
         } finally {
             setIsSaving(false);
         }
     };
 
     return (
+        <>
         <div className="px-4 py-5">
             <FieldLabel>{label}</FieldLabel>
             {description && (
@@ -140,5 +145,13 @@ export function ApiKeyField({
                 </div>
             </div>
         </div>
+        {/* Upstream #498: failures surface in a warning popup, not window.alert. */}
+        <WarningPopup
+            open={!!warningMessage}
+            title="API key update failed"
+            message={warningMessage}
+            onClose={() => setWarningMessage(null)}
+        />
+        </>
     );
 }
