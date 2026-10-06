@@ -152,7 +152,9 @@ describe("aiSdkFetch", () => {
       {
         // This local transport test only needs an existing provider
         // discriminant; every response is supplied by the fetch mock above.
-        provider: "ollama",
+        // Dev drift: Dev's Provider union has no "ollama"; use its
+        // OpenAI-compatible discriminant instead.
+        provider: "openai-compatible",
         label: "OpenAI-compatible test",
         model: openAICompatible("example/model"),
         modelId: "example/model",

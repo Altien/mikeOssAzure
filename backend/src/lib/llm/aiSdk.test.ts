@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { streamTextMock } = vi.hoisted(() => ({
-    streamTextMock: vi.fn(() => ({ stream: { async *[Symbol.asyncIterator]() {} } })),
+    streamTextMock: vi.fn((_options: unknown) => ({ stream: { async *[Symbol.asyncIterator]() {} } })),
 }));
 vi.mock("ai", () => ({
     streamText: streamTextMock,
@@ -14,6 +14,15 @@ import { streamAiSdk, DEFAULT_MAX_ITERATIONS, maxOutputTokensFor, stopNotice } f
 describe("shared AI SDK step preparation", () => {
     it("composes the CourtListener reminder with final tool disablement and forwards abort", async () => {
         const abort = new AbortController();
+        // Dev drift: since upstream #465 the SDK receives an internal signal
+        // linked to the caller's, so assert forwarding while the stream runs.
+        let forwardedWhileRunning: boolean | undefined;
+        streamTextMock.mockImplementationOnce((opts: unknown) => {
+            const signal = (opts as { abortSignal: AbortSignal }).abortSignal;
+            abort.abort();
+            forwardedWhileRunning = signal.aborted;
+            return { stream: { async *[Symbol.asyncIterator]() {} } };
+        });
         await streamAiSdk({
             model: "gpt-5.4", systemPrompt: "Base instructions", messages: [],
             maxIterations: 1, abortSignal: abort.signal,
@@ -26,7 +35,8 @@ describe("shared AI SDK step preparation", () => {
             stopWhen: { count: number };
             prepareStep: (args: { steps: Array<{ toolCalls: Array<{ toolName: string }> }> }) => Record<string, unknown>;
         };
-        expect(options.abortSignal).toBe(abort.signal);
+        expect(options.abortSignal).toBeInstanceOf(AbortSignal);
+        expect(forwardedWhileRunning).toBe(true);
         expect(options.stopWhen.count).toBe(2);
         expect(options.prepareStep({ steps: [] })).toEqual({});
         expect(options.prepareStep({ steps: [{ toolCalls: [{ toolName: "courtlistener_read_case" }] }] })).toMatchObject({
