@@ -6,6 +6,7 @@ import {
   rm,
   utimes,
 } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -337,6 +338,100 @@ describe("upload processing", () => {
       "upload_processing_jobs", "upload_sessions", "upload_session_files",
     ]);
     expect(db.remaining).toHaveLength(0);
+  });
+
+  describe("editor-save compare-and-swap (sync 6e3ef6fa)", () => {
+    const claimToken = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const sealedHash = createHash("sha256").update(Buffer.from([1, 2, 3, 4])).digest("hex");
+    const startedFrom = "a".repeat(64);
+    const replaceSession = {
+      ...baseSession,
+      purpose: "document_version_replace" as const,
+      destination: {
+        document_id: baseFile.resource_id,
+        version_id: "55555555-5555-4555-8555-555555555555",
+        expected_content_sha256: startedFrom,
+        generate_pdf: false,
+      },
+    };
+    const docxFile = { ...baseFile, filename: "contract.docx", file_type: "docx",
+      content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" };
+    const job = { id: "job-1", session_id: baseSession.id, file_id: baseFile.id, attempts: 1,
+      locked_by: "worker-1", claim_token: claimToken };
+
+    it("passes the observed baseline to the publish RPC and skips the PDF rendition", async () => {
+      const db = scriptedDb([
+        { data: job, error: null },
+        { data: replaceSession, error: null },
+        { data: docxFile, error: null },
+        { data: { storage_path: "documents/old.docx", content_sha256: startedFrom }, error: null },
+      ]);
+      db.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
+        if (name === "renew_upload_processing_job") return { data: true, error: null };
+        expect(args).toMatchObject({ p_failure: null, p_payload: {
+          kind: "document_version_replace",
+          expected_storage_path: "documents/old.docx",
+          expected_content_sha256: startedFrom,
+          pdf_path: null,
+          sha256: sealedHash,
+        } });
+        return { data: { status: "completed" }, error: null };
+      });
+      await processUploadJob(db as never, "job-1", "worker-1");
+      expect(mocks.officeFileToPdf).not.toHaveBeenCalled();
+      expect(mocks.copyFile).toHaveBeenCalledOnce();
+    });
+
+    it("fails terminally as document_changed before staging when the version moved on", async () => {
+      const db = scriptedDb([
+        { data: job, error: null },
+        { data: replaceSession, error: null },
+        { data: docxFile, error: null },
+        { data: { storage_path: "documents/newer.docx", content_sha256: "b".repeat(64) }, error: null },
+      ]);
+      db.rpc.mockImplementation(async (name: string) => ({
+        data: name === "renew_upload_processing_job" ? true : { status: "error", error_code: "document_changed" },
+        error: null,
+      }));
+      await processUploadJob(db as never, "job-1", "worker-1");
+      expect(db.rpc).toHaveBeenCalledWith("finish_upload_processing_job", expect.objectContaining({
+        p_failure: "document_changed", p_payload: null,
+      }));
+      expect(mocks.copyFile).not.toHaveBeenCalled();
+    });
+
+    it("hashes an unhashed legacy version from storage before comparing", async () => {
+      const db = scriptedDb([
+        { data: job, error: null },
+        { data: { ...replaceSession, destination: { ...replaceSession.destination,
+          expected_content_sha256: sealedHash } }, error: null },
+        { data: docxFile, error: null },
+        { data: { storage_path: "documents/legacy.docx", content_sha256: null }, error: null },
+      ]);
+      db.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
+        if (name === "renew_upload_processing_job") return { data: true, error: null };
+        expect(args).toMatchObject({ p_failure: null, p_payload: {
+          expected_storage_path: "documents/legacy.docx", expected_content_sha256: null } });
+        return { data: { status: "completed" }, error: null };
+      });
+      await processUploadJob(db as never, "job-1", "worker-1");
+      expect(mocks.createFileReadStream).toHaveBeenCalledWith("documents/legacy.docx");
+    });
+
+    it("treats a lost publish comparison as a recorded terminal outcome", async () => {
+      const db = scriptedDb([
+        { data: job, error: null },
+        { data: replaceSession, error: null },
+        { data: docxFile, error: null },
+        { data: { storage_path: "documents/old.docx", content_sha256: startedFrom }, error: null },
+      ]);
+      db.rpc.mockImplementation(async (name: string) => ({
+        data: name === "renew_upload_processing_job" ? true : { status: "error", error_code: "document_changed" },
+        error: null,
+      }));
+      await expect(processUploadJob(db as never, "job-1", "worker-1")).resolves.toBeUndefined();
+      expect(db.rpc).toHaveBeenCalledTimes(3);
+    });
   });
 
   it("stops before processing when the database lease has been lost", async () => {

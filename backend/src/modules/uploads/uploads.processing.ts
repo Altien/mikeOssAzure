@@ -99,6 +99,53 @@ const UPLOAD_TEMP_RETENTION_MS = 2 * UPLOAD_JOB_LEASE_SECONDS * 1000;
  * stop, mark the file failed, and clean up whatever bytes this job wrote —
  * never to recreate the row.
  */
+class ChangedDocumentError extends Error {
+  constructor() {
+    super("document_changed");
+    this.name = "ChangedDocumentError";
+  }
+}
+
+/**
+ * Upstream sync 6e3ef6fa (#559): an editor save names the content hash it
+ * started from. Refuse before staging anything when the version has already
+ * moved on, and hand the observed path/hash to the publish RPC, which repeats
+ * the comparison atomically (migration 0098). An unhashed legacy version is
+ * hashed from its stored bytes. A version already holding these exact bytes
+ * (a concurrent identical save) is not a conflict.
+ */
+async function observeReplacementBaseline(
+  db: Db,
+  session: UploadSessionRow,
+  artifact: SealedFileArtifact,
+): Promise<Record<string, unknown>> {
+  const expectedHash = session.destination.expected_content_sha256;
+  if (typeof expectedHash !== "string") return {};
+  const { data: current, error } = await db
+    .from("document_versions")
+    .select("storage_path, content_sha256")
+    .eq("id", session.destination.version_id as string)
+    .eq("document_id", session.destination.document_id as string)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (error) throw error;
+  if (!current) throw new Error("version_not_found");
+  const storedHash = (current.content_sha256 as string | null) ?? null;
+  let currentHash = storedHash;
+  if (!currentHash) {
+    const hash = createHash("sha256");
+    for await (const chunk of await createFileReadStream(current.storage_path as string))
+      hash.update(chunk as Buffer);
+    currentHash = hash.digest("hex");
+  }
+  if (currentHash !== expectedHash && currentHash !== artifact.sha256)
+    throw new ChangedDocumentError();
+  return {
+    expected_storage_path: current.storage_path,
+    expected_content_sha256: storedHash,
+  };
+}
+
 async function countPdfPages(filePath: string): Promise<number | null> {
   let loadingTask:
     | {
@@ -280,12 +327,19 @@ async function prepareUploadFile(
     }
     if (session.purpose === "document_version_create" || session.purpose === "document_version_replace") {
       const documentId = session.destination.document_id as string;
+      const baseline = session.purpose === "document_version_replace"
+        ? await observeReplacementBaseline(db, session, artifact)
+        : {};
       const sourcePath = versionStorageKey(session.user_id, documentId, slug, file.filename);
       await copyFile(file.sealed_storage_path, sourcePath);
-      const pdfPath = await buildPdfRendition({ sourceFilePath: artifact.filePath,
+      // Editor saves persist only the source; the replacement retires the old
+      // rendition. An uploaded PDF is already its own rendition.
+      const skipPdf = session.purpose === "document_version_replace"
+        && session.destination.generate_pdf === false && file.file_type !== "pdf";
+      const pdfPath = skipPdf ? null : await buildPdfRendition({ sourceFilePath: artifact.filePath,
         workingDirectory: artifact.directory, fileType: file.file_type,
         userId: session.user_id, documentId, versionSlug: slug, sourceStoragePath: sourcePath });
-      return { kind: session.purpose, source_path: sourcePath, pdf_path: pdfPath,
+      return { kind: session.purpose, ...baseline, source_path: sourcePath, pdf_path: pdfPath,
         size_bytes: artifact.size, sha256: artifact.sha256,
         page_count: file.file_type === "pdf" ? await countPdfPages(artifact.filePath) : null,
         filename: session.purpose === "document_version_create"
@@ -355,6 +409,11 @@ export async function processUploadJob(
     try {
       payload = await prepareUploadFile(db, typedSession, typedFile, typedJob.claim_token);
     } catch (error) {
+      // A stale editor save cannot succeed on retry (sync 6e3ef6fa).
+      if (error instanceof ChangedDocumentError) {
+        await finish(null, "document_changed");
+        return;
+      }
       console.error("[upload-worker] file processing failed", {
         jobId, sessionId: typedSession.id, fileId: typedFile.id,
         purpose: typedSession.purpose, error,
@@ -367,6 +426,9 @@ export async function processUploadJob(
     }
     await renew();
     const published = await finish(payload, null);
+    // The publish RPC lost its compare-and-swap and recorded the terminal
+    // document_changed outcome itself.
+    if (published.status === "error") return;
     if (published.status !== "completed") throw new Error("upload_job_not_published");
     if (typedSession.purpose === "document_create") {
       await recordAudit(db, {
