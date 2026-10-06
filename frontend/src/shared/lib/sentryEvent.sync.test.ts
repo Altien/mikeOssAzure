@@ -41,7 +41,8 @@ describe("shared-redaction block", () => {
 
 it('retains the fixed vocabulary of every Express mount without parameter names', () => {
     const app = readFileSync(path.resolve(__dirname, '../../../../backend/src/app.ts'), 'utf8');
-    const routes = [...app.matchAll(/app\.(?:use|get)\("([^"]+)"/g)].map(match => match[1]);
+    // Dev drift: Dev's app.ts ends with the static-export shell fallback app.get("*"), which is not an API mount.
+    const routes = [...app.matchAll(/app\.(?:use|get)\("([^"]+)"/g)].map(match => match[1]).filter(route => route !== '*');
     expect(routes.length).toBeGreaterThan(20);
     for (const route of routes) {
         expect(diagnosticRoute(route)).toBe(route.replace(/:[^/]+/g, ':id'));
