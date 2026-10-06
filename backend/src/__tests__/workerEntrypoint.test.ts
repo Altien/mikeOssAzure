@@ -15,7 +15,9 @@ async function withStubDb(fn: (url: string) => Promise<void>) {
     // isolating the entrypoint's keepalive and dotenv behavior.
     const server = createServer((req, res) => {
         res.setHeader("Content-Type", "application/json");
-        res.end(req.url?.includes("/rpc/claim_db_jobs") ? "[]" : "[]");
+        // Dev drift: upstream #295's document-lifecycle boot gate must see the
+        // required contract version before workers start.
+        res.end(req.url?.includes("/rpc/document_lifecycle_version") ? "2" : "[]");
     });
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
     try {

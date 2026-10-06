@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 // ---------------------------------------------------------------------------
@@ -16,13 +16,29 @@ import { resolve } from "node:path";
 // ---------------------------------------------------------------------------
 
 const ROOT = resolve(__dirname, "../../..");
+// Dev drift: Dev has no schema.sql and ships upstream's
+// 20260904_01_organization_access.sql as numbered 0083; the numbered history
+// is the schema for fresh and existing databases. Later forward corrections
+// (0093, ...) are checked for the email-predicate rule below.
+const ORG_ACCESS_MIGRATION = "migrations/0083_organization_access.sql";
 const SOURCES = {
-    "migrations/20260904_01_organization_access.sql": readFileSync(
-        resolve(ROOT, "migrations/20260904_01_organization_access.sql"),
-        "utf8",
-    ),
-    "schema.sql": readFileSync(resolve(ROOT, "schema.sql"), "utf8"),
+    [ORG_ACCESS_MIGRATION]: readFileSync(resolve(ROOT, ORG_ACCESS_MIGRATION), "utf8"),
 };
+const SCHEMA = SOURCES[ORG_ACCESS_MIGRATION];
+const LATER_MIGRATIONS = readdirSync(resolve(ROOT, "migrations"))
+    .filter((f) => /^\d{4}_.*\.sql$/.test(f) && f > "0083_")
+    .map((f) => [f, readFileSync(resolve(ROOT, "migrations", f), "utf8")] as const);
+
+it.each(LATER_MIGRATIONS)("%s compares p_user_email case-insensitively", (_name, sql) => {
+    const offenders = sql
+        .split("\n")
+        .filter(
+            (line) =>
+                /@>\s*jsonb_build_array\(\s*p_user_email\s*\)/.test(line) ||
+                /(=|<>|like|ilike)\s*p_user_email\b/i.test(line),
+        );
+    expect(offenders).toEqual([]);
+});
 
 describe.each(Object.entries(SOURCES))("%s", (_name, sql) => {
     it("compares p_user_email case-insensitively everywhere", () => {
@@ -90,8 +106,8 @@ describe.each(Object.entries(SOURCES))("%s", (_name, sql) => {
 });
 
 it("the final schema and access-grant migration contain no jsonb share predicate", () => {
-    const latest = SOURCES["migrations/20260904_01_organization_access.sql"];
-    for (const sql of [SOURCES["schema.sql"], latest]) {
+    const latest = SOURCES[ORG_ACCESS_MIGRATION];
+    for (const sql of [SCHEMA, latest]) {
         expect(sql).not.toMatch(/shared_with\s+@>/);
         expect(sql).toContain("tabular_review_access_grants");
         expect(sql).toContain("chat_access_grants");
@@ -100,15 +116,16 @@ it("the final schema and access-grant migration contain no jsonb share predicate
 });
 
 it("keeps organization scope exclusive to projects and workflows", () => {
-    const schema = SOURCES["schema.sql"];
-    const migration = SOURCES["migrations/20260904_01_organization_access.sql"];
+    const schema = SCHEMA;
+    const migration = SOURCES[ORG_ACCESS_MIGRATION];
 
     expect(schema).not.toContain("create table if not exists public.chat_org_access_overrides");
     expect(schema).not.toContain(
         "create table if not exists public.tabular_review_org_access_overrides",
     );
-    expect(schema).toContain("constraint chats_org_requires_project");
-    expect(schema).toContain("constraint tabular_reviews_org_requires_project");
+    // Dev drift: numbered migration adds these via ALTER TABLE ... ADD CONSTRAINT.
+    expect(schema).toMatch(/constraint chats_org_requires_project/i);
+    expect(schema).toMatch(/constraint tabular_reviews_org_requires_project/i);
     expect(migration).not.toContain("public.chat_org_access_overrides");
     expect(migration).not.toContain("public.tabular_review_org_access_overrides");
     expect(migration).toContain("chats_org_requires_project");
@@ -116,8 +133,8 @@ it("keeps organization scope exclusive to projects and workflows", () => {
 });
 
 it("makes organization Admin ownership immutable in SQL", () => {
-    const migration = SOURCES["migrations/20260904_01_organization_access.sql"];
-    for (const sql of [SOURCES["schema.sql"], migration]) {
+    const migration = SOURCES[ORG_ACCESS_MIGRATION];
+    for (const sql of [SCHEMA, migration]) {
         const adminBranches = [...sql.matchAll(/when m\.role = 'admin' then 'owner'/g)];
         expect(adminBranches).toHaveLength(2);
         expect(sql).toContain("Organization admins always have owner access");
