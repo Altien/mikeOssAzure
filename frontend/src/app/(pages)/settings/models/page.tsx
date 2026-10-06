@@ -32,7 +32,10 @@ import { SettingsSection } from "../SettingsSection";
 import { useAoaiDeployments, type AoaiDeployment } from "@/altien/models/aoaiDeployments";
 import { useConfiguredModels } from "@/app/hooks/useConfiguredModels";
 
-type ModelPreferenceField = "titleModel" | "tabularModel";
+type ModelPreferenceField =
+    | "titleModel"
+    | "tabularModel"
+    | "memoryCuratorModel";
 
 export default function ModelPreferencesPage() {
     const { profile, updateModelPreference } = useUserProfile();
@@ -149,6 +152,37 @@ export default function ModelPreferencesPage() {
                             emptyOptionLabel="No default model"
                             onChange={(id) =>
                                 handleModelChange("tabularModel", id)
+                            }
+                        />
+                    </div>
+                    {/* Upstream #451 (1672f736) memory curation preference,
+                        ported into Dev's settings layout with AOAI options. */}
+                    <div className="px-4 py-5">
+                        <FieldLabel>Memory curation model</FieldLabel>
+                        <p className="text-xs text-gray-400 mb-2">
+                            Used after conversations to identify durable
+                            information worth keeping. By default, memory uses
+                            the model selected for the chat.
+                        </p>
+                        <ModelPreferenceDropdown
+                            value={canonicalModelId(
+                                optimisticValues.memoryCuratorModel ??
+                                    profile?.memoryCuratorModel ??
+                                    "",
+                            )}
+                            options={mergeConfiguredModelOptions(configuredModels, [
+                                ...SETTINGS_MODELS,
+                                ...selectedOpenRouterOptions,
+                                ...selectedVercelOptions,
+                                ...selectedOpenCodeGoOptions,
+                                ...aoai.modelOptions,
+                            ])}
+                            apiKeys={profile?.apiKeys}
+                            isSaving={savingField === "memoryCuratorModel"}
+                            isSaved={savedField === "memoryCuratorModel"}
+                            emptyOptionLabel="Automatic — use chat model"
+                            onChange={(id) =>
+                                handleModelChange("memoryCuratorModel", id)
                             }
                         />
                     </div>

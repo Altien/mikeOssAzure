@@ -13,6 +13,7 @@ import { WarningPopup } from "@/app/components/popups/WarningPopup";
 // run directly after the confirm popup.
 import {
     deleteAllChats,
+    deleteAllMemories,
     deleteAllProjects,
     deleteAllTabularReviews,
     downloadUserExport,
@@ -22,7 +23,9 @@ import {
 } from "@/app/lib/mikeApi";
 import { SettingsSection } from "../SettingsSection";
 
-type DeleteDataAction = "chats" | "tabular-reviews" | "projects";
+// Upstream #451 (1672f736) adds memory export/delete; ported into Dev's
+// settings layout without the Supabase MFA step-up (see note above).
+type DeleteDataAction = "chats" | "tabular-reviews" | "projects" | "memory";
 
 const isDev = process.env.NODE_ENV !== "production";
 const devLog = (...args: Parameters<typeof console.log>) => {
@@ -51,6 +54,11 @@ const DELETE_DATA_COPY: Record<
         message:
             "This will permanently delete all projects you own, including their documents, chats, and tabular reviews. This action cannot be undone.",
     },
+    memory: {
+        title: "Delete all memory?",
+        message:
+            "This permanently deletes your app memory and memories for private projects you created. Project collaborators will also lose those memories. Memory remains enabled and can be rebuilt from future conversations. This action cannot be undone.",
+    },
 };
 
 export default function PrivacyDataPage() {
@@ -63,6 +71,7 @@ export default function PrivacyDataPage() {
     const [isExportingChats, setIsExportingChats] = useState(false);
     const [isExportingTabularReviews, setIsExportingTabularReviews] =
         useState(false);
+    const [isExportingMemory, setIsExportingMemory] = useState(false);
     const [warningMessage, setWarningMessage] = useState<string | null>(null);
 
     const downloadBlob = (blob: Blob, filename: string) => {
@@ -145,6 +154,19 @@ export default function PrivacyDataPage() {
         }
     };
 
+    const handleExportMemoryData = async () => {
+        devLog("[privacy-data] export memory requested");
+        setIsExportingMemory(true);
+        try {
+            await runAsyncExport("memory-zip", "mike-memory-export.zip");
+        } catch (error) {
+            devLog("[privacy-data] export memory failed", { error });
+            setWarningMessage("Failed to export memory. Please try again.");
+        } finally {
+            setIsExportingMemory(false);
+        }
+    };
+
     const handleDeleteData = async (action: DeleteDataAction) => {
         devLog("[privacy-data] delete requested", { action });
         setDeletingAction(action);
@@ -155,6 +177,8 @@ export default function PrivacyDataPage() {
                 await loadChats();
             } else if (action === "tabular-reviews") {
                 await deleteAllTabularReviews();
+            } else if (action === "memory") {
+                await deleteAllMemories();
             } else {
                 await deleteAllProjects();
                 setCurrentChatId(null);
@@ -251,6 +275,31 @@ export default function PrivacyDataPage() {
                             {isExportingAccount ? "Exporting..." : "Export"}
                         </PillButtonUI>
                     </div>
+                    <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="space-y-1">
+                            <p className="text-sm font-medium text-gray-700">
+                                Export memory
+                            </p>
+                            <p className="text-sm text-gray-500">
+                                Download your app memory and every project
+                                memory you can access as Markdown files in a
+                                ZIP archive.
+                            </p>
+                        </div>
+                        <PillButtonUI
+                            tone="black"
+                            size="sm"
+                            aria-label="Export memory"
+                            onClick={handleExportMemoryData}
+                            disabled={isExportingMemory}
+                            className="shrink-0"
+                        >
+                            {!isExportingMemory && (
+                                <Download className="h-4 w-4 shrink-0" />
+                            )}
+                            {isExportingMemory ? "Exporting..." : "Export"}
+                        </PillButtonUI>
+                    </div>
                 </SettingsSection>
             </section>
 
@@ -324,6 +373,28 @@ export default function PrivacyDataPage() {
                             Delete
                         </PillButtonUI>
                     </div>
+                    <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="space-y-1">
+                            <p className="text-sm font-medium text-gray-700">
+                                Delete all memory
+                            </p>
+                            <p className="text-sm text-gray-500">
+                                Permanently delete your app memory and memories
+                                for private projects you created.
+                            </p>
+                        </div>
+                        <PillButtonUI
+                            tone="danger"
+                            size="sm"
+                            aria-label="Delete all memory"
+                            onClick={() => setPendingDeleteAction("memory")}
+                            disabled={!!deletingAction}
+                            className="w-full shrink-0 sm:w-auto"
+                        >
+                            <Trash2 className="h-4 w-4 shrink-0" />
+                            Delete
+                        </PillButtonUI>
+                    </div>
                 </SettingsSection>
             </section>
             <ConfirmPopup
@@ -345,7 +416,7 @@ export default function PrivacyDataPage() {
             />
             <WarningPopup
                 open={!!warningMessage}
-                title="Request failed"
+                title="Action failed"
                 message={warningMessage}
                 onClose={() => setWarningMessage(null)}
             />
