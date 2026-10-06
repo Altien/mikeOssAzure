@@ -542,7 +542,21 @@ function isMissingObject(error: unknown): boolean {
 }
 
 export async function deleteFile(key: string): Promise<void> {
-  await requireProvider("delete").remove(key);
+  // Mutating op: an unconfigured provider must fail loudly (see AGENTS.md).
+  const provider = requireProvider("delete");
+  // An empty key names no object. Sent anyway, the SDK either rejects it
+  // (a missing URI label) or, on some stores, addresses the bucket itself.
+  if (!key) return;
+  try {
+    await provider.remove(key);
+  } catch (error) {
+    if (isMissingObject(error)) return;
+    if (error instanceof StorageOperationError) throw error;
+    // Same shape as HEAD/copy/download failures: the operation is named and
+    // the SDK error is the cause, where the Sentry privacy boundary reads
+    // storage_operation and failure_code.
+    throw new StorageOperationError("delete", { cause: error });
+  }
 }
 
 /**
