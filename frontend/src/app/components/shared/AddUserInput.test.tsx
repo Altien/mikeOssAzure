@@ -10,11 +10,15 @@ const { lookupUserByEmailMock } = vi.hoisted(() => ({
     lookupUserByEmailMock: vi.fn(),
 }));
 
-vi.mock("@/app/lib/mikeApi", () => ({
+// Dev drift: AddUserInput now maps errors via userFacingApiError, which needs
+// the real MikeApiError / reportedUpstreamMessage exports.
+vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("@/app/lib/mikeApi")>()),
     lookupUserByEmail: lookupUserByEmailMock,
 }));
 
 import { AddUserInput } from "./AddUserInput";
+import { MikeApiError } from "@/app/lib/mikeApi";
 
 beforeEach(() => {
     lookupUserByEmailMock.mockReset();
@@ -129,7 +133,11 @@ describe("AddUserInput", () => {
     });
 
     it("surfaces a lookup failure message", async () => {
-        lookupUserByEmailMock.mockRejectedValueOnce(new Error("Lookup failed"));
+        // Dev drift: upstream a104acce sanitizes errors — only intentional 4xx
+        // MikeApiError messages are shown verbatim.
+        lookupUserByEmailMock.mockRejectedValueOnce(
+            new MikeApiError({ message: "Lookup failed", status: 404 }),
+        );
         render(<AddUserInput onAdd={() => {}} />);
 
         await userEvent.type(
@@ -138,5 +146,20 @@ describe("AddUserInput", () => {
         );
 
         expect(await screen.findByText("Lookup failed")).toBeInTheDocument();
+    });
+
+    it("hides a raw transport error behind the generic fallback", async () => {
+        lookupUserByEmailMock.mockRejectedValueOnce(new Error("ECONNRESET internals"));
+        render(<AddUserInput onAdd={() => {}} />);
+
+        await userEvent.type(
+            screen.getByPlaceholderText("Add by email..."),
+            "alice@example.com{Enter}",
+        );
+
+        expect(
+            await screen.findByText("Could not add this user. Try again."),
+        ).toBeInTheDocument();
+        expect(screen.queryByText(/ECONNRESET/)).toBeNull();
     });
 });
