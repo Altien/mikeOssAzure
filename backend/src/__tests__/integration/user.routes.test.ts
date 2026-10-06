@@ -261,7 +261,10 @@ vi.mock("../../modules/user/user.dataExport", () => ({
         `mike-${kind}-export-${userId.slice(0, 8)}.json`,
 }));
 
-import { app } from "../../app";
+// Dev drift: app.ts exports a side-effect-free buildApp(), not a module-level app,
+// and mounts this router at /api/user (request paths below carry the /api prefix).
+import { buildApp } from "../../app";
+const app = buildApp();
 
 const AUTH = ["Authorization", "Bearer test"] as const;
 
@@ -280,7 +283,8 @@ function profileRow(overrides: Record<string, unknown> = {}) {
         message_credits_used: 3,
         credits_reset_date: "2999-01-01T00:00:00.000Z",
         tier: "Pro",
-        title_model: null,
+        // Dev drift: Dev's column is fast_model (49c30337), not upstream's title_model.
+        fast_model: null,
         tabular_model: "gemini-3-flash-preview",
         memory_curator_model: null,
         last_selected_chat_model: null,
@@ -352,7 +356,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .get("/user/profile")
+                .get("/api/user/profile")
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
@@ -391,7 +395,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .get("/user/profile")
+                .get("/api/user/profile")
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
@@ -399,8 +403,9 @@ describe("user.routes", () => {
         });
 
         it("keeps existing preferences before the memory curator migration", async () => {
+            // Dev drift: titleModel is read from fast_model in Dev.
             const preMigrationRow = profileRow({
-                title_model: "gpt-5.4-mini",
+                fast_model: "gpt-5.4-mini",
             });
             delete (preMigrationRow as Record<string, unknown>)
                 .memory_curator_model;
@@ -417,7 +422,7 @@ describe("user.routes", () => {
             ];
 
             const res = await request(app)
-                .get("/user/profile")
+                .get("/api/user/profile")
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
@@ -433,7 +438,8 @@ describe("user.routes", () => {
             // project_memory_default therefore fails with the identical 42703
             // and the cascade falls further than it should, dropping
             // preference columns the database actually has.
-            const preMigrationRow = profileRow({ title_model: "gpt-5.4-mini" });
+            // Dev drift: titleModel is read from fast_model in Dev.
+            const preMigrationRow = profileRow({ fast_model: "gpt-5.4-mini" });
             delete (preMigrationRow as Record<string, unknown>)
                 .memory_curator_model;
             delete (preMigrationRow as Record<string, unknown>)
@@ -448,7 +454,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .get("/user/profile")
+                .get("/api/user/profile")
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
@@ -478,7 +484,7 @@ describe("user.routes", () => {
                 message_credits_used: 3,
                 credits_reset_date: "2999-01-01T00:00:00.000Z",
                 tier: "Pro",
-                title_model: null,
+                fast_model: null, // Dev drift: Dev column name (49c30337)
                 tabular_model: "gemini-3-flash-preview",
                 mfa_on_login: false,
                 legal_research_us: false,
@@ -497,7 +503,7 @@ describe("user.routes", () => {
             ];
 
             const res = await request(app)
-                .get("/user/profile")
+                .get("/api/user/profile")
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
@@ -532,7 +538,7 @@ describe("user.routes", () => {
             ];
 
             const res = await request(app)
-                .get("/user/profile")
+                .get("/api/user/profile")
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
@@ -552,7 +558,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .get("/user/profile")
+                .get("/api/user/profile")
                 .set(...AUTH);
 
             expect(res.status).toBe(500);
@@ -569,7 +575,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .patch("/user/profile")
+                .patch("/api/user/profile")
                 .set(...AUTH)
                 .send({ darkMode: true });
 
@@ -579,7 +585,7 @@ describe("user.routes", () => {
 
         it("rejects a non-boolean darkMode", async () => {
             const res = await request(app)
-                .patch("/user/profile")
+                .patch("/api/user/profile")
                 .set(...AUTH)
                 .send({ darkMode: "yes" });
 
@@ -594,7 +600,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .patch("/user/profile")
+                .patch("/api/user/profile")
                 .set(...AUTH)
                 .send({ projectMemoryDefault: false });
 
@@ -607,7 +613,7 @@ describe("user.routes", () => {
 
         it("rejects a non-boolean projectMemoryDefault value", async () => {
             const res = await request(app)
-                .patch("/user/profile")
+                .patch("/api/user/profile")
                 .set(...AUTH)
                 .send({ projectMemoryDefault: "yes" });
 
@@ -619,7 +625,7 @@ describe("user.routes", () => {
 
         it("rejects the removed transparentTables preference", async () => {
             const res = await request(app)
-                .patch("/user/profile")
+                .patch("/api/user/profile")
                 .set(...AUTH)
                 .send({ transparentTables: false });
 
@@ -634,7 +640,7 @@ describe("user.routes", () => {
     describe("POST /user/profile", () => {
         it("ensures the profile row and returns ok", async () => {
             const res = await request(app)
-                .post("/user/profile")
+                .post("/api/user/profile")
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
@@ -647,7 +653,7 @@ describe("user.routes", () => {
     describe("GET /user/api-keys", () => {
         it("returns the boolean key-status map", async () => {
             const res = await request(app)
-                .get("/user/api-keys")
+                .get("/api/user/api-keys")
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
@@ -661,42 +667,42 @@ describe("user.routes", () => {
 
     // ── PUT /user/api-keys/:provider (crypto + MFA guard) ─────────────────
     describe("PUT /user/api-keys/:provider", () => {
-        it("stores the key via the encryption helper and returns status", async () => {
+        // Dev drift: provider credentials are organisation-owned (Key Vault
+        // first, org fallback keys); Dev refuses every personal key write with
+        // 403 organisation_api_key_required and never reaches saveUserApiKey.
+        // The detail is provider-specific (names the Key Vault secret), so
+        // only its organisation framing is pinned.
+        const ORG_KEY_REFUSAL = {
+            code: "organisation_api_key_required",
+            detail: expect.stringContaining("organisation"),
+        };
+
+        it("refuses a personal key write without reaching the encryption helper", async () => {
             const res = await request(app)
-                .put("/user/api-keys/claude")
+                .put("/api/user/api-keys/claude")
                 .set(...AUTH)
                 .send({ api_key: "sk-secret-value" });
 
-            expect(res.status).toBe(200);
-            expect(res.body).toEqual(STATUS);
-            // The plaintext key must go through saveUserApiKey (the encryption
-            // boundary), keyed by provider + value, never persisted by the route.
-            expect(saveUserApiKey).toHaveBeenCalledWith(
-                "u1",
-                "claude",
-                "sk-secret-value",
-                expect.anything(),
-            );
+            expect(res.status).toBe(403);
+            expect(res.body).toEqual(ORG_KEY_REFUSAL);
+            expect(saveUserApiKey).not.toHaveBeenCalled();
+            expect(JSON.stringify(res.body)).not.toContain("sk-");
         });
 
-        it("deletes the key when api_key is omitted (null value)", async () => {
+        it("refuses the delete form (api_key omitted) as well", async () => {
             const res = await request(app)
-                .put("/user/api-keys/openai")
+                .put("/api/user/api-keys/openai")
                 .set(...AUTH)
                 .send({});
 
-            expect(res.status).toBe(200);
-            expect(saveUserApiKey).toHaveBeenCalledWith(
-                "u1",
-                "openai",
-                null,
-                expect.anything(),
-            );
+            expect(res.status).toBe(403);
+            expect(res.body).toEqual(ORG_KEY_REFUSAL);
+            expect(saveUserApiKey).not.toHaveBeenCalled();
         });
 
         it("returns 400 for an unsupported provider", async () => {
             const res = await request(app)
-                .put("/user/api-keys/bogus")
+                .put("/api/user/api-keys/bogus")
                 .set(...AUTH)
                 .send({ api_key: "x" });
 
@@ -705,49 +711,49 @@ describe("user.routes", () => {
             expect(saveUserApiKey).not.toHaveBeenCalled();
         });
 
-        it("stores a user key when the provider is also configured by the server env", async () => {
+        // Dev drift: upstream #498 (90472a30) allows personal overrides of a
+        // server-configured provider; Dev keeps the organisation-owned refusal.
+        it("refuses a personal override even when the server env configures the provider", async () => {
             hasEnvApiKey.mockReturnValue(true);
 
             const res = await request(app)
-                .put("/user/api-keys/claude")
-                .set(...AUTH)
-                .send({ api_key: "sk-x" });
-
-            expect(res.status).toBe(200);
-            expect(saveUserApiKey).toHaveBeenCalledWith(
-                "u1",
-                "claude",
-                "sk-x",
-                expect.anything(),
-            );
-        });
-
-        it("returns 500 when saving the key throws", async () => {
-            saveUserApiKey.mockRejectedValue(new Error("kms unavailable"));
-
-            const res = await request(app)
-                .put("/user/api-keys/claude")
-                .set(...AUTH)
-                .send({ api_key: "sk-x" });
-
-            expect(res.status).toBe(500);
-            expect(res.body.detail).toBe("Something went wrong. Please try again.");
-        });
-
-        it("is rejected with 403 mfa_verification_required when MFA is unsatisfied", async () => {
-            requireMfaIfEnrolled.mockImplementation(rejectMfa);
-
-            const res = await request(app)
-                .put("/user/api-keys/claude")
+                .put("/api/user/api-keys/claude")
                 .set(...AUTH)
                 .send({ api_key: "sk-x" });
 
             expect(res.status).toBe(403);
-            expect(res.body).toEqual({
-                code: "mfa_verification_required",
-                detail: "MFA verification required",
-            });
-            // Guarded: the crypto path is never reached.
+            expect(res.body).toEqual(ORG_KEY_REFUSAL);
+            expect(saveUserApiKey).not.toHaveBeenCalled();
+        });
+
+        // Dev drift: the save path is unreachable in Dev, so a failing
+        // encryption helper can never surface as a 500 from this route.
+        it("still refuses (403, not 500) when the encryption helper would throw", async () => {
+            saveUserApiKey.mockRejectedValue(new Error("kms unavailable"));
+
+            const res = await request(app)
+                .put("/api/user/api-keys/claude")
+                .set(...AUTH)
+                .send({ api_key: "sk-x" });
+
+            expect(res.status).toBe(403);
+            expect(res.body).toEqual(ORG_KEY_REFUSAL);
+        });
+
+        // Dev drift: no app-level requireMfaIfEnrolled guard — MFA/step-up is
+        // enforced by Entra Conditional Access (middleware/auth.ts divergence,
+        // sync-log 3a10943). The route refuses on credential ownership instead.
+        it("does not consult the app-level MFA guard (Entra owns step-up)", async () => {
+            requireMfaIfEnrolled.mockImplementation(rejectMfa);
+
+            const res = await request(app)
+                .put("/api/user/api-keys/claude")
+                .set(...AUTH)
+                .send({ api_key: "sk-x" });
+
+            expect(res.status).toBe(403);
+            expect(res.body).toEqual(ORG_KEY_REFUSAL);
+            expect(requireMfaIfEnrolled).not.toHaveBeenCalled();
             expect(saveUserApiKey).not.toHaveBeenCalled();
         });
     });
@@ -762,7 +768,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .patch("/user/profile")
+                .patch("/api/user/profile")
                 .set(...AUTH)
                 .send({ lastSelectedChatModel: "gpt-5.6-sol" });
 
@@ -782,7 +788,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .patch("/user/profile")
+                .patch("/api/user/profile")
                 .set(...AUTH)
                 .send({ memoryCuratorModel: "gpt-5.4-mini" });
 
@@ -797,7 +803,7 @@ describe("user.routes", () => {
 
         it("rejects an unsupported memory curator model", async () => {
             const res = await request(app)
-                .patch("/user/profile")
+                .patch("/api/user/profile")
                 .set(...AUTH)
                 .send({ memoryCuratorModel: "unknown-model" });
 
@@ -812,7 +818,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .patch("/user/profile")
+                .patch("/api/user/profile")
                 .set(...AUTH)
                 .send({
                     openRouterModels: [
@@ -842,7 +848,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .patch("/user/profile")
+                .patch("/api/user/profile")
                 .set(...AUTH)
                 .send({ vercelModels: ["openai/gpt-5.4"] });
 
@@ -859,7 +865,7 @@ describe("user.routes", () => {
 
         it("rejects a non-boolean Quick Actions visibility preference", async () => {
             const res = await request(app)
-                .patch("/user/profile")
+                .patch("/api/user/profile")
                 .set(...AUTH)
                 .send({ quickActionsVisible: "yes" });
 
@@ -876,7 +882,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .patch("/user/profile")
+                .patch("/api/user/profile")
                 .set(...AUTH)
                 .send({
                     jurisdiction: null,
@@ -905,7 +911,7 @@ describe("user.routes", () => {
                 };
 
                 const res = await request(app)
-                    .patch("/user/profile")
+                    .patch("/api/user/profile")
                     .set(...AUTH)
                     .send({ [field]: "x".repeat(250) });
 
@@ -926,7 +932,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .post("/user/onboarding")
+                .post("/api/user/onboarding")
                 .set(...AUTH)
                 .send({
                     jurisdiction: " Singapore ",
@@ -954,7 +960,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .get("/user/profile")
+                .get("/api/user/profile")
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
@@ -971,7 +977,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .post("/user/onboarding")
+                .post("/api/user/onboarding")
                 .set(...AUTH)
                 .send({ practiceAreas: [] });
 
@@ -980,7 +986,7 @@ describe("user.routes", () => {
 
         it("rejects an invalid jurisdiction when one is supplied", async () => {
             const res = await request(app)
-                .post("/user/onboarding")
+                .post("/api/user/onboarding")
                 .set(...AUTH)
                 .send({ jurisdiction: "" });
 
@@ -990,7 +996,7 @@ describe("user.routes", () => {
 
         it("requires a valid professional setting", async () => {
             const res = await request(app)
-                .post("/user/onboarding")
+                .post("/api/user/onboarding")
                 .set(...AUTH)
                 .send({
                     jurisdiction: "Singapore",
@@ -1011,7 +1017,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .post("/user/onboarding")
+                .post("/api/user/onboarding")
                 .set(...AUTH)
                 .send({
                     jurisdiction: "Singapore",
@@ -1024,44 +1030,36 @@ describe("user.routes", () => {
     });
 
     describe("POST /user/security/password-set", () => {
-        it("records and returns verified password capability", async () => {
-            supabaseState.tables.user_profiles = {
-                data: profileRow({
-                    password_set_at: "2026-08-21T12:00:00.000Z",
-                }),
-                error: null,
-            };
-            supabaseRpc.mockResolvedValue({
-                data: "2026-08-21T12:00:00.000Z",
-                error: null,
-            });
-
-            const res = await request(app)
-                .post("/user/security/password-set")
-                .set(...AUTH)
-                .send({});
-
-            expect(res.status).toBe(200);
-            expect(res.body.passwordSet).toBe(true);
-            expect(supabaseRpc).toHaveBeenCalledWith(
-                "sync_user_password_set",
-                { p_user_id: "u1" },
-            );
-        });
-
-        it("rejects the marker when Supabase has no password", async () => {
+        // Dev drift: Dev records the marker only after the sign-in provider
+        // accepts an ordinary password update ({ password, nonce? } body), not
+        // via upstream's body-less sync_user_password_set RPC. The provider
+        // round-trip is unit-tested in modules/user/__tests__/user.passwordProvider.test.ts.
+        it("rejects a body-less request instead of syncing the marker", async () => {
             supabaseState.tables.user_profiles = {
                 data: profileRow(),
                 error: null,
             };
-            supabaseRpc.mockResolvedValue({ data: null, error: null });
 
             const res = await request(app)
-                .post("/user/security/password-set")
+                .post("/api/user/security/password-set")
                 .set(...AUTH)
                 .send({});
 
-            expect(res.status).toBe(409);
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toBe("Enter a password of 10 to 1024 characters.");
+            expect(supabaseRpc).not.toHaveBeenCalled();
+            expect(supabaseState.updates.user_profiles ?? []).toHaveLength(0);
+        });
+
+        it("rejects a too-short password without recording the marker", async () => {
+            const res = await request(app)
+                .post("/api/user/security/password-set")
+                .set(...AUTH)
+                .send({ password: "short" });
+
+            expect(res.status).toBe(400);
+            expect(supabaseRpc).not.toHaveBeenCalled();
+            expect(supabaseState.updates.user_profiles ?? []).toHaveLength(0);
         });
     });
 
@@ -1069,7 +1067,7 @@ describe("user.routes", () => {
     describe("data export endpoints", () => {
         it("GET /user/export returns the account export as a JSON attachment", async () => {
             const res = await request(app)
-                .get("/user/export")
+                .get("/api/user/export")
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
@@ -1088,7 +1086,7 @@ describe("user.routes", () => {
 
         it("GET /user/chats/export returns the chats export", async () => {
             const res = await request(app)
-                .get("/user/chats/export")
+                .get("/api/user/chats/export")
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
@@ -1101,7 +1099,7 @@ describe("user.routes", () => {
 
         it("GET /user/tabular-reviews/export returns the reviews export", async () => {
             const res = await request(app)
-                .get("/user/tabular-reviews/export")
+                .get("/api/user/tabular-reviews/export")
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
@@ -1116,23 +1114,25 @@ describe("user.routes", () => {
             buildUserAccountExport.mockRejectedValue(new Error("export boom"));
 
             const res = await request(app)
-                .get("/user/export")
+                .get("/api/user/export")
                 .set(...AUTH);
 
             expect(res.status).toBe(500);
             expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
 
-        it("GET /user/export is rejected when MFA is unsatisfied", async () => {
+        // Dev drift: no app-level requireMfaIfEnrolled guard — Entra
+        // Conditional Access owns MFA/step-up (middleware/auth.ts, sync-log 3a10943).
+        it("GET /user/export does not consult the app-level MFA guard", async () => {
             requireMfaIfEnrolled.mockImplementation(rejectMfa);
 
             const res = await request(app)
-                .get("/user/export")
+                .get("/api/user/export")
                 .set(...AUTH);
 
-            expect(res.status).toBe(403);
-            expect(res.body.code).toBe("mfa_verification_required");
-            expect(buildUserAccountExport).not.toHaveBeenCalled();
+            expect(res.status).toBe(200);
+            expect(requireMfaIfEnrolled).not.toHaveBeenCalled();
+            expect(buildUserAccountExport).toHaveBeenCalledTimes(1);
         });
     });
 
@@ -1140,7 +1140,7 @@ describe("user.routes", () => {
     describe("data deletion endpoints", () => {
         it("DELETE /user/chats invokes deleteAllUserChats and returns 204", async () => {
             const res = await request(app)
-                .delete("/user/chats")
+                .delete("/api/user/chats")
                 .set(...AUTH);
 
             expect(res.status).toBe(204);
@@ -1152,7 +1152,7 @@ describe("user.routes", () => {
 
         it("DELETE /user/projects invokes deleteUserProjects and returns 204", async () => {
             const res = await request(app)
-                .delete("/user/projects")
+                .delete("/api/user/projects")
                 .set(...AUTH);
 
             expect(res.status).toBe(204);
@@ -1164,7 +1164,7 @@ describe("user.routes", () => {
 
         it("DELETE /user/tabular-reviews invokes the cleanup helper and returns 204", async () => {
             const res = await request(app)
-                .delete("/user/tabular-reviews")
+                .delete("/api/user/tabular-reviews")
                 .set(...AUTH);
 
             expect(res.status).toBe(204);
@@ -1176,7 +1176,7 @@ describe("user.routes", () => {
 
         it("DELETE /user/memories wipes app and private-project memory", async () => {
             const res = await request(app)
-                .delete("/user/memories")
+                .delete("/api/user/memories")
                 .set(...AUTH);
 
             expect(res.status).toBe(204);
@@ -1191,30 +1191,30 @@ describe("user.routes", () => {
         // the auth user is what destroys the rows recording where the account's
         // files live. It must therefore happen LAST — inside the job, after the
         // cascade — never in this request.
+        // Dev drift: Dev's durable erasure (user.account.ts) is ONE
+        // request_account_erasure RPC that tombstones the identity, revokes app
+        // sessions and queues the job in a single transaction, answering 202
+        // { status: "scheduled" } — not upstream's db_jobs insert + Supabase
+        // admin signOut + 204.
         it("DELETE /user/account schedules the cascade and does NOT delete the auth user yet", async () => {
-            supabaseState.tables.db_jobs = {
-                data: { id: "job-1" },
-                error: null,
-            };
+            supabaseRpc.mockResolvedValue({ data: "job-1", error: null });
 
             const res = await request(app)
-                .delete("/user/account")
+                .delete("/api/user/account")
                 .set(...AUTH);
 
-            expect(res.status).toBe(204);
-            // Durable job queued...
-            const jobInserts = (supabaseState.inserts.db_jobs ?? []) as Record<
-                string,
-                unknown
-            >[];
-            expect(jobInserts).toHaveLength(1);
-            expect(jobInserts[0]).toMatchObject({ kind: "account.delete" });
-            // ...auth user still present, so the cascade can still read the
-            // storage paths it is about to delete.
+            expect(res.status).toBe(202);
+            expect(res.body).toEqual({ status: "scheduled" });
+            expect(supabaseRpc).toHaveBeenCalledWith(
+                "request_account_erasure",
+                expect.objectContaining({
+                    p_user_id: "u1",
+                    p_user_email: "u1@test.local",
+                }),
+            );
+            // Auth user still present, and no destructive work in-request.
             expect(adminDeleteUser).not.toHaveBeenCalled();
-            // Sessions are revoked immediately all the same: the account is
-            // unusable from the moment this returns.
-            expect(adminSignOut).toHaveBeenCalledWith("test-token", "global");
+            expect(deleteUserAccountData).not.toHaveBeenCalled();
         });
 
         // SOLE-ADMIN REFUSAL. Deleting this account would either hand the
@@ -1227,7 +1227,7 @@ describe("user.routes", () => {
             ]);
 
             const res = await request(app)
-                .delete("/user/account")
+                .delete("/api/user/account")
                 .set(...AUTH);
 
             expect(res.status).toBe(409);
@@ -1257,7 +1257,7 @@ describe("user.routes", () => {
             ]);
 
             const res = await request(app)
-                .delete("/user/account")
+                .delete("/api/user/account")
                 .set(...AUTH);
 
             expect(res.status).toBe(409);
@@ -1265,29 +1265,29 @@ describe("user.routes", () => {
             expect(adminDeleteUser).not.toHaveBeenCalled();
         });
 
-        it("DELETE /user/account runs inline when no runner will drain the queue", async () => {
+        // Dev drift: Dev has no inline erasure fallback — without a queue
+        // runner the request fails closed (500) before anything is destroyed.
+        it("DELETE /user/account refuses (500) when no runner will drain the queue", async () => {
             dbJobsEnabled.mockReturnValue(false);
 
             const res = await request(app)
-                .delete("/user/account")
+                .delete("/api/user/account")
                 .set(...AUTH);
 
-            expect(res.status).toBe(204);
-            // Data first, auth last — main's ordering, done synchronously.
-            expect(deleteUserAccountData).toHaveBeenCalledWith(
-                expect.anything(),
-                "u1",
-                "u1@test.local",
-            );
-            expect(supabaseState.inserts.db_jobs ?? []).toHaveLength(0);
+            expect(res.status).toBe(500);
+            expect(deleteUserAccountData).not.toHaveBeenCalled();
+            expect(adminDeleteUser).not.toHaveBeenCalled();
+            expect(supabaseRpc).not.toHaveBeenCalled();
         });
 
+        // Dev drift: passes in Dev because the inline path is refused outright
+        // (see above), so the auth-user delete is never attempted.
         it("DELETE /user/account returns 500 when the inline auth-user delete errors", async () => {
             dbJobsEnabled.mockReturnValue(false);
             supabaseState.adminDeleteUser = { error: { message: "auth boom" } };
 
             const res = await request(app)
-                .delete("/user/account")
+                .delete("/api/user/account")
                 .set(...AUTH);
 
             expect(res.status).toBe(500);
@@ -1297,13 +1297,14 @@ describe("user.routes", () => {
         it("DELETE /user/account returns 500 when the cascade cannot be scheduled", async () => {
             // Nothing has been destroyed yet, so the request is cleanly
             // retriable — it must not answer 204.
-            supabaseState.tables.db_jobs = {
+            // Dev drift: scheduling is the request_account_erasure RPC in Dev.
+            supabaseRpc.mockResolvedValue({
                 data: null,
                 error: { code: "08006", message: "connection lost" },
-            };
+            });
 
             const res = await request(app)
-                .delete("/user/account")
+                .delete("/api/user/account")
                 .set(...AUTH);
 
             expect(res.status).toBe(500);
@@ -1315,35 +1316,39 @@ describe("user.routes", () => {
             deleteAllUserChats.mockRejectedValue(new Error("cascade failed"));
 
             const res = await request(app)
-                .delete("/user/chats")
+                .delete("/api/user/chats")
                 .set(...AUTH);
 
             expect(res.status).toBe(500);
             expect(res.body.detail).toBe("Something went wrong. Please try again.");
         });
 
-        it("DELETE /user/account is rejected when MFA is unsatisfied (no cleanup)", async () => {
+        // Dev drift: no app-level requireMfaIfEnrolled guard — Entra
+        // Conditional Access owns MFA/step-up (middleware/auth.ts, sync-log 3a10943).
+        it("DELETE /user/account does not consult the app-level MFA guard", async () => {
             requireMfaIfEnrolled.mockImplementation(rejectMfa);
+            supabaseRpc.mockResolvedValue({ data: "job-1", error: null });
 
             const res = await request(app)
-                .delete("/user/account")
+                .delete("/api/user/account")
                 .set(...AUTH);
 
-            expect(res.status).toBe(403);
-            expect(res.body.code).toBe("mfa_verification_required");
+            expect(res.status).toBe(202);
+            expect(requireMfaIfEnrolled).not.toHaveBeenCalled();
             expect(deleteUserAccountData).not.toHaveBeenCalled();
         });
 
-        it("DELETE /user/memories is rejected when MFA is unsatisfied", async () => {
+        // Dev drift: no app-level requireMfaIfEnrolled guard (see above).
+        it("DELETE /user/memories does not consult the app-level MFA guard", async () => {
             requireMfaIfEnrolled.mockImplementation(rejectMfa);
 
             const res = await request(app)
-                .delete("/user/memories")
+                .delete("/api/user/memories")
                 .set(...AUTH);
 
-            expect(res.status).toBe(403);
-            expect(res.body.code).toBe("mfa_verification_required");
-            expect(deleteUserPrivateMemories).not.toHaveBeenCalled();
+            expect(res.status).toBe(204);
+            expect(requireMfaIfEnrolled).not.toHaveBeenCalled();
+            expect(deleteUserPrivateMemories).toHaveBeenCalledTimes(1);
         });
     });
 
@@ -1356,7 +1361,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .patch("/user/security/mfa-login")
+                .patch("/api/user/security/mfa-login")
                 .set(...AUTH)
                 .send({ enabled: true });
 
@@ -1380,7 +1385,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .patch("/user/security/mfa-login")
+                .patch("/api/user/security/mfa-login")
                 .set(...AUTH)
                 .send({ enabled: true });
 
@@ -1390,23 +1395,30 @@ describe("user.routes", () => {
 
         it("returns 400 on a non-boolean enabled field", async () => {
             const res = await request(app)
-                .patch("/user/security/mfa-login")
+                .patch("/api/user/security/mfa-login")
                 .set(...AUTH)
                 .send({ enabled: "yes" });
 
             expect(res.status).toBe(400);
         });
 
-        it("is rejected with 403 when MFA is unsatisfied", async () => {
+        // Dev drift: no app-level requireMfaIfEnrolled guard — Entra
+        // Conditional Access owns MFA/step-up (middleware/auth.ts, sync-log 3a10943).
+        it("does not consult the app-level MFA guard", async () => {
             requireMfaIfEnrolled.mockImplementation(rejectMfa);
+            supabaseState.tables.user_profiles = {
+                data: profileRow({ mfa_on_login: false }),
+                error: null,
+            };
 
             const res = await request(app)
-                .patch("/user/security/mfa-login")
+                .patch("/api/user/security/mfa-login")
                 .set(...AUTH)
                 .send({ enabled: false });
 
-            expect(res.status).toBe(403);
-            expect(res.body.code).toBe("mfa_verification_required");
+            expect(res.status).toBe(200);
+            expect(res.body).toMatchObject({ mfaOnLogin: false });
+            expect(requireMfaIfEnrolled).not.toHaveBeenCalled();
         });
     });
 });

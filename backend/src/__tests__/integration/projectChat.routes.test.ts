@@ -153,6 +153,32 @@ vi.mock("../../modules/chat/engine/index", async (importOriginal) => {
     };
 });
 
+// Dev drift: Dev-only altien modules close an import cycle
+// (engine/tools/toolDispatcher -> altien/externalSources/chatDispatcher ->
+// chat.service -> engine/index), so chat.service is evaluated while the
+// engine mock above is still resolving and binds the REAL engine exports.
+// project-chat reaches the engine only through the chat.service facade, so
+// apply the same overrides there too. The original namespace is only
+// partially initialised when this factory runs (same cycle), so it is read
+// lazily through a Proxy rather than spread.
+vi.mock("../../modules/chat/chat.service", async (importOriginal) => {
+    const actual = await importOriginal<Record<string, unknown>>();
+    const overrides: Record<string, unknown> = {
+        buildProjectDocContext: (...args: unknown[]) =>
+            buildProjectDocContext(...args),
+        enrichWithPriorEvents: vi.fn(async (messages: unknown) => messages),
+        buildWorkflowStore: vi.fn(async () => new Map()),
+        buildMessages: (...args: unknown[]) => buildMessages(...args),
+        runLLMStream: (...args: unknown[]) => runLLMStream(...args),
+    };
+    return new Proxy(actual, {
+        get: (target, key) =>
+            typeof key === "string" && key in overrides
+                ? overrides[key]
+                : Reflect.get(target, key),
+    });
+});
+
 vi.mock("../../modules/user/user.settings", () => ({
     getUserModelSettings: vi.fn(async () => ({
         legal_research_us: false,
@@ -184,7 +210,10 @@ vi.mock("../../lib/access", () => ({
   resolveContentOrgId: vi.fn(async () => ({ ok: true, orgId: null })),
 }));
 
-import { app } from "../../app";
+// Dev drift: app.ts exports a side-effect-free buildApp(), not a module-level app,
+// and mounts this router at /api/projects/:projectId/chat (paths below carry /api).
+import { buildApp } from "../../app";
+const app = buildApp();
 import { resetAssistantTurnRunsForTests } from "../../lib/assistantTurnRuns";
 import { spotlight } from "../../modules/chat/engine/index";
 import { createServerSupabase } from "../../lib/supabase";
@@ -229,7 +258,7 @@ describe("POST /projects/:projectId/chat", () => {
         checkProjectAccess.mockResolvedValue({ ok: false });
 
         const res = await request(app)
-            .post("/projects/p1/chat")
+            .post("/api/projects/p1/chat")
             .set("Authorization", "Bearer test")
             .send(VALID_BODY);
 
@@ -241,7 +270,7 @@ describe("POST /projects/:projectId/chat", () => {
 
     it("streams SSE on the happy path with project access granted", async () => {
         const res = await request(app)
-            .post("/projects/p1/chat")
+            .post("/api/projects/p1/chat")
             .set("Authorization", "Bearer test")
             .send(VALID_BODY);
 
@@ -309,6 +338,8 @@ describe("POST /projects/:projectId/chat", () => {
         const userSettings = await import("../../modules/user/user.settings.js");
         vi.mocked(userSettings.getUserModelSettings).mockResolvedValueOnce({
             legal_research_us: false,
+            // Dev drift: UserModelSettings also carries Dev's fast_model.
+            fast_model: "test-model",
             title_model: null,
             memory_curator_model: null,
             last_selected_reasoning_level: null,
@@ -318,7 +349,7 @@ describe("POST /projects/:projectId/chat", () => {
         });
 
         const res = await request(app)
-            .post("/projects/p1/chat")
+            .post("/api/projects/p1/chat")
             .set("Authorization", "Bearer test")
             .send({ messages: VALID_BODY.messages });
 
@@ -330,7 +361,7 @@ describe("POST /projects/:projectId/chat", () => {
 
     it("normalizes validated request fields before using them", async () => {
         const res = await request(app)
-            .post("/projects/p1/chat")
+            .post("/api/projects/p1/chat")
             .set("Authorization", "Bearer test")
             .send({
                 messages: [
@@ -442,7 +473,7 @@ describe("POST /projects/:projectId/chat", () => {
         "returns 400 before any side effect for a malformed request",
         async (body, detail) => {
             const res = await request(app)
-                .post("/projects/p1/chat")
+                .post("/api/projects/p1/chat")
                 .set("Authorization", "Bearer test")
                 .send(body);
 
@@ -470,7 +501,7 @@ describe("POST /projects/:projectId/chat", () => {
         });
 
         await request(app)
-            .post("/projects/p1/chat")
+            .post("/api/projects/p1/chat")
             .set("Authorization", "Bearer test")
             .send({
                 ...VALID_BODY,
@@ -553,7 +584,7 @@ describe("POST /projects/:projectId/chat", () => {
         vi.mocked(createServerSupabase).mockReturnValueOnce(db as never);
 
         const res = await request(app)
-            .post("/projects/p1/chat")
+            .post("/api/projects/p1/chat")
             .set("Authorization", "Bearer test")
             .send({ ...VALID_BODY, chat_id: "chat-1" });
 
@@ -569,7 +600,7 @@ describe("POST /projects/:projectId/chat", () => {
         runLLMStream.mockRejectedValue(new Error("upstream LLM failure"));
 
         const res = await request(app)
-            .post("/projects/p1/chat")
+            .post("/api/projects/p1/chat")
             .set("Authorization", "Bearer test")
             .send(VALID_BODY);
 
@@ -612,7 +643,7 @@ describe("POST /projects/:projectId/chat", () => {
         });
 
         const res = await request(app)
-            .post("/projects/p1/chat")
+            .post("/api/projects/p1/chat")
             .set("Authorization", "Bearer test")
             .send({ ...VALID_BODY, chat_id: "chat-1" });
 
@@ -645,7 +676,7 @@ describe("POST /projects/:projectId/chat", () => {
         });
 
         const res = await request(app)
-            .post("/projects/p1/chat")
+            .post("/api/projects/p1/chat")
             .set("Authorization", "Bearer test")
             .send({ ...VALID_BODY, chat_id: "chat-1" });
 
@@ -664,7 +695,7 @@ describe("POST /projects/:projectId/chat", () => {
         });
 
         const res = await request(app)
-            .post("/projects/p1/chat")
+            .post("/api/projects/p1/chat")
             .set("Authorization", "Bearer test")
             .send({ ...VALID_BODY, chat_id: "chat-1" });
 
@@ -684,7 +715,7 @@ describe("POST /projects/:projectId/chat", () => {
         });
 
         const res = await request(app)
-            .post("/projects/p1/chat")
+            .post("/api/projects/p1/chat")
             .set("Authorization", "Bearer test")
             .send(VALID_BODY);
 
@@ -723,7 +754,7 @@ describe("POST /projects/:projectId/chat", () => {
         });
 
         const res = await request(app)
-            .post("/projects/p1/chat")
+            .post("/api/projects/p1/chat")
             .set("Authorization", "Bearer test")
             .send({ ...VALID_BODY, chat_id: "chat-1" });
 
@@ -752,7 +783,7 @@ describe("POST /projects/:projectId/chat", () => {
         });
 
         const res = await request(app)
-            .post("/projects/p1/chat")
+            .post("/api/projects/p1/chat")
             .set("Authorization", "Bearer test")
             .send({ ...VALID_BODY, chat_id: "chat-1" });
 
@@ -776,7 +807,7 @@ describe("POST /projects/:projectId/chat", () => {
         });
 
         const res = await request(app)
-            .post("/projects/p1/chat")
+            .post("/api/projects/p1/chat")
             .set("Authorization", "Bearer test")
             .send({ ...VALID_BODY, chat_id: "chat-1" });
 
