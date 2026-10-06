@@ -12,7 +12,7 @@ import { checkSchemaVersion } from "./lib/schemaCheck";
 import { initServerSessionKeys } from "./lib/serverSession";
 import { closeStreamRunCluster, initStreamRunCluster, streamRunCluster } from "./lib/streamRunCluster";
 import { installStreamRunRelayHandler } from "./lib/streamRuns";
-import { submitClientToolResult } from "./modules/chat/engine/tools/wordClientTools";
+import { submitClientToolResult } from "./modules/chat/chat.service";
 import { enforceDocumentLifecycleMigration } from "./lib/dbq/lifecycleGuard";
 import { startAllWorkers, stopAllWorkers } from "./workerRuntime";
 import { flushSentry, reportError } from "./lib/observability/sentry";
@@ -74,6 +74,10 @@ async function start(): Promise<void> {
   if (telemetryDsn) process.env.SENTRY_DSN = telemetryDsn;
   initSentry("api");
   await initServerSessionKeys();
+  // Fail fast on the document-lifecycle contract (upstream order: before any
+  // other database-dependent startup) so a missing migration is reported as
+  // such rather than as a stream-run connection failure.
+  await enforceDocumentLifecycleMigration();
   await initStreamRunCluster();
   installStreamRunRelayHandler(async (payload) => {
     if (!payload || typeof payload !== "object") return false;
@@ -88,7 +92,6 @@ async function start(): Promise<void> {
   });
   await initDownloadSigningSecret();
   await initManifestSigningKey();
-  await enforceDocumentLifecycleMigration();
   const signingKey = manifestPublicKey();
   if (signingKey) console.log(`Export manifests signed with key ${signingKey.key_id}`);
 
