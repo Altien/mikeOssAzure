@@ -15,7 +15,9 @@ vi.mock("../../lib/access", async (original) => ({
   ...(await original<typeof import("../../lib/access")>()),
   checkProjectAccess: state.access,
 }));
-import { app } from "../../app";
+// Dev drift: app.ts exports a side-effect-free buildApp(), not a module-level app.
+import { buildApp } from "../../app";
+const app = buildApp();
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -51,14 +53,15 @@ const enrichedFields = {
   page_count: activeVersion.page_count,
   content_sha256: activeVersion.content_sha256,
 };
+// Dev drift: Dev mounts the projects/library routers under /api/....
 const paths = [
-  "/projects/p/documents/doc",
-  "/library/files/documents/doc",
-  "/library/templates/documents/doc",
+  "/api/projects/p/documents/doc",
+  "/api/library/files/documents/doc",
+  "/api/library/templates/documents/doc",
 ];
 
 describe.each(paths)("rename response compatibility: %s", (path) => {
-  const isProject = !path.startsWith("/library");
+  const isProject = !path.startsWith("/api/library");
   it("returns the saved document in the existing response shape", async () => {
     const fake = scriptedDb([
       { table: "documents", data: doc },

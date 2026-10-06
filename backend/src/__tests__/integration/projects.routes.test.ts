@@ -68,7 +68,10 @@ vi.mock("../../lib/documentVersions", () => ({
     loadActiveVersion: vi.fn(async () => null),
 }));
 
-import { app } from "../../app";
+// Dev drift: app.ts exports a side-effect-free buildApp(), not a module-level app.
+// Dev drift: Dev mounts every API router under /api/... (request paths below).
+import { buildApp } from "../../app";
+const app = buildApp();
 import crypto from "crypto";
 import { manifestPublicKey } from "../../lib/manifestSigning";
 import { createServerSupabase, type Db } from "../../lib/supabase";
@@ -168,7 +171,7 @@ describe("projects.routes", () => {
                 );
 
                 const res = await request(app)
-                    .patch("/projects/p1/documents/doc-1")
+                    .patch("/api/projects/p1/documents/doc-1")
                     .set(...AUTH)
                     .send({ filename: "Renamed document" });
 
@@ -198,7 +201,7 @@ describe("projects.routes", () => {
             };
 
             const res = await request(app)
-                .patch("/projects/p1/documents/doc-1")
+                .patch("/api/projects/p1/documents/doc-1")
                 .set(...AUTH)
                 .send({ filename: "Renamed.pdf" });
 
@@ -225,7 +228,7 @@ describe("projects.routes", () => {
             };
 
       const res = await request(app)
-        .get("/projects")
+        .get("/api/projects")
         .set(...AUTH);
 
             expect(res.status).toBe(200);
@@ -259,7 +262,7 @@ describe("projects.routes", () => {
                 error: null,
             };
 
-            const res = await request(app).get("/projects").set(...AUTH);
+            const res = await request(app).get("/api/projects").set(...AUTH);
 
             expect(res.status).toBe(200);
             expect(res.body).toEqual([
@@ -304,7 +307,7 @@ describe("projects.routes", () => {
             };
 
             const res = await request(app)
-                .get("/projects?include=documents")
+                .get("/api/projects?include=documents")
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
@@ -319,7 +322,7 @@ describe("projects.routes", () => {
             supabaseState.rpc = { data: null, error: { message: "boom" } };
 
       const res = await request(app)
-        .get("/projects")
+        .get("/api/projects")
         .set(...AUTH);
 
             expect(res.status).toBe(500);
@@ -333,7 +336,7 @@ describe("projects.routes", () => {
             supabaseState.rpc = { data: [], error: null };
 
       await request(app)
-        .get("/projects")
+        .get("/api/projects")
         .set(...AUTH);
 
             expect(captured.args).toEqual({
@@ -348,7 +351,7 @@ describe("projects.routes", () => {
 
             await request(app)
                 .get(
-                    "/projects?limit=10&scope=mine&sort_key=name&sort_direction=asc" +
+                    "/api/projects?limit=10&scope=mine&sort_key=name&sort_direction=asc" +
                         "&search=acme&practice=Litigation&owner_user_id=u2",
                 )
                 .set(...AUTH);
@@ -375,7 +378,7 @@ describe("projects.routes", () => {
       };
 
       const res = await request(app)
-        .get("/projects?view=summary&limit=11&offset=10")
+        .get("/api/projects?view=summary&limit=11&offset=10")
         .set(...AUTH);
 
       expect(res.status).toBe(200);
@@ -393,7 +396,7 @@ describe("projects.routes", () => {
 
     it("uses the projects collection for directory search", async () => {
       const res = await request(app)
-        .get("/projects?view=directory-search")
+        .get("/api/projects?view=directory-search")
         .set(...AUTH);
 
       expect(res.status).toBe(200);
@@ -402,7 +405,7 @@ describe("projects.routes", () => {
 
     it("no longer exposes a separate project directory search route", async () => {
       const res = await request(app)
-        .get("/projects/directory/search?search=Agreement")
+        .get("/api/projects/directory/search?search=Agreement")
         .set(...AUTH);
 
       expect(res.status).toBe(404);
@@ -506,7 +509,7 @@ describe("projects.routes", () => {
       );
 
       const res = await request(app)
-        .get("/projects?view=directory-search&search=Matter")
+        .get("/api/projects?view=directory-search&search=Matter")
         .set(...AUTH);
 
       expect(res.status).toBe(200);
@@ -523,7 +526,7 @@ describe("projects.routes", () => {
       );
 
       const res = await request(app)
-        .get("/projects?view=directory-search&search=Matter")
+        .get("/api/projects?view=directory-search&search=Matter")
         .set(...AUTH);
 
       expect(res.status).toBe(200);
@@ -543,7 +546,7 @@ describe("projects.routes", () => {
       );
 
       const res = await request(app)
-        .get("/projects?view=directory-search&search=Matter")
+        .get("/api/projects?view=directory-search&search=Matter")
         .set(...AUTH);
 
       expect(res.status).toBe(200);
@@ -570,7 +573,7 @@ describe("projects.routes", () => {
             });
 
       const res = await request(app)
-        .get("/projects/ids")
+        .get("/api/projects/ids")
         .set(...AUTH);
 
             expect(res.status).toBe(200);
@@ -583,7 +586,7 @@ describe("projects.routes", () => {
             supabaseState.rpc = { data: null, error: { message: "boom" } };
 
       const res = await request(app)
-        .get("/projects/ids")
+        .get("/api/projects/ids")
         .set(...AUTH);
 
             expect(res.status).toBe(500);
@@ -605,7 +608,7 @@ describe("projects.routes", () => {
       };
 
       const res = await request(app)
-        .get("/projects/filter-options")
+        .get("/api/projects/filter-options")
         .set(...AUTH);
 
       expect(res.status).toBe(200);
@@ -644,7 +647,7 @@ describe("projects.routes", () => {
       };
 
       const res = await request(app)
-        .get("/library/templates/folders/nested")
+        .get("/api/library/templates/folders/nested")
         .set(...AUTH);
 
       expect(res.status).toBe(200);
@@ -658,7 +661,7 @@ describe("projects.routes", () => {
       supabaseState.tables.library_folders = { data: [], error: null };
 
       const res = await request(app)
-        .get("/library/files/folders/missing")
+        .get("/api/library/files/folders/missing")
         .set(...AUTH);
 
       expect(res.status).toBe(404);
@@ -677,7 +680,7 @@ describe("projects.routes", () => {
 
       const res = await request(app)
         .get(
-          "/library/templates?view=search&limit=1&offset=2&search=Agreement" +
+          "/api/library/templates?view=search&limit=1&offset=2&search=Agreement" +
             "&file_type=docx&sort_key=name&sort_direction=asc",
         )
         .set(...AUTH);
@@ -708,7 +711,7 @@ describe("projects.routes", () => {
 
     it("no longer exposes a separate Library search route", async () => {
       const res = await request(app)
-        .get("/library/templates/search?search=Agreement")
+        .get("/api/library/templates/search?search=Agreement")
         .set(...AUTH);
 
       expect(res.status).toBe(404);
@@ -722,7 +725,7 @@ describe("projects.routes", () => {
       };
 
       const res = await request(app)
-        .get("/library/files/filter-options")
+        .get("/api/library/files/filter-options")
         .set(...AUTH);
 
       expect(res.status).toBe(200);
@@ -749,7 +752,7 @@ describe("projects.routes", () => {
       };
 
       const res = await request(app)
-        .post("/projects/p1/folder-paths/resolve")
+        .post("/api/projects/p1/folder-paths/resolve")
         .set(...AUTH)
         .send({
           segments: ["NDAs"],
@@ -788,7 +791,7 @@ describe("projects.routes", () => {
       });
 
       const res = await request(app)
-        .post("/projects/p1/folder-paths/resolve")
+        .post("/api/projects/p1/folder-paths/resolve")
         .set(...AUTH)
         .send({
           segments: ["NDAs"],
@@ -824,7 +827,7 @@ describe("projects.routes", () => {
       };
 
       const res = await request(app)
-        .post("/projects/p1/folder-paths/resolve")
+        .post("/api/projects/p1/folder-paths/resolve")
         .set(...AUTH)
         .send({ segments: ["NDAs"] });
 
@@ -850,7 +853,7 @@ describe("projects.routes", () => {
       };
 
       const res = await request(app)
-        .post("/library/files/folder-paths/resolve")
+        .post("/api/library/files/folder-paths/resolve")
         .set(...AUTH)
         .send({ segments: ["NDAs"] });
 
@@ -865,8 +868,8 @@ describe("projects.routes", () => {
     });
 
     it.each([
-      ["project", "/projects/p1/folder-paths/resolve"],
-      ["library", "/library/files/folder-paths/resolve"],
+      ["project", "/api/projects/p1/folder-paths/resolve"],
+      ["library", "/api/library/files/folder-paths/resolve"],
     ])("does not expose raw %s folder RPC errors", async (_scope, path) => {
       const rawError =
         "Could not find resolve_project_folder_path in the schema cache";
@@ -898,7 +901,7 @@ describe("projects.routes", () => {
       const captured = captureRpcArgs();
 
       const res = await request(app)
-        .post("/library/files/folder-paths/resolve")
+        .post("/api/library/files/folder-paths/resolve")
         .set(...AUTH)
         .send({ segments: ["NDAs", 42] });
 
@@ -912,7 +915,7 @@ describe("projects.routes", () => {
     describe("POST /projects", () => {
         it("returns 400 when name is missing/blank", async () => {
             const res = await request(app)
-                .post("/projects")
+                .post("/api/projects")
                 .set(...AUTH)
                 .send({ name: "   " });
 
@@ -922,7 +925,7 @@ describe("projects.routes", () => {
 
         it("rejects the retired shared_with input", async () => {
             const res = await request(app)
-                .post("/projects")
+                .post("/api/projects")
                 .set(...AUTH)
                 .send({ name: "Beta", shared_with: ["U1@Test.Local"] });
 
@@ -943,7 +946,7 @@ describe("projects.routes", () => {
             };
 
             const res = await request(app)
-                .post("/projects")
+                .post("/api/projects")
                 .set(...AUTH)
                 .send({
                     name: "  Gamma  ",
@@ -981,7 +984,7 @@ describe("projects.routes", () => {
             };
 
             const res = await request(app)
-                .post("/projects")
+                .post("/api/projects")
                 .set(...AUTH)
                 .send({ name: "Quiet" });
 
@@ -1007,7 +1010,7 @@ describe("projects.routes", () => {
             };
 
             const res = await request(app)
-                .post("/projects")
+                .post("/api/projects")
                 .set(...AUTH)
                 .send({ name: "Legacy" });
 
@@ -1021,7 +1024,7 @@ describe("projects.routes", () => {
                 error: null,
             };
             const res = await request(app)
-                .post("/projects")
+                .post("/api/projects")
                 .set(...AUTH)
                 .send({ name: "Private", memory_enabled: false });
             expect(res.status).toBe(201);
@@ -1042,7 +1045,7 @@ describe("projects.routes", () => {
             };
 
             const res = await request(app)
-                .post("/projects")
+                .post("/api/projects")
                 .set(...AUTH)
                 .send({ name: "Delta" });
 
@@ -1057,7 +1060,7 @@ describe("projects.routes", () => {
             supabaseState.tables.projects = { data: null, error: null };
 
       const res = await request(app)
-        .get("/projects/p1")
+        .get("/api/projects/p1")
         .set(...AUTH);
 
             expect(res.status).toBe(404);
@@ -1075,7 +1078,7 @@ describe("projects.routes", () => {
             };
 
       const res = await request(app)
-        .get("/projects/p1")
+        .get("/api/projects/p1")
         .set(...AUTH);
 
             expect(res.status).toBe(404);
@@ -1110,7 +1113,7 @@ describe("projects.routes", () => {
             supabaseState.tables.project_subfolders = { data: [], error: null };
 
       const res = await request(app)
-        .get("/projects/p1")
+        .get("/api/projects/p1")
         .set(...AUTH);
 
             expect(res.status).toBe(200);
@@ -1137,7 +1140,7 @@ describe("projects.routes", () => {
             };
 
       const res = await request(app)
-        .get("/projects/p1")
+        .get("/api/projects/p1")
         .set(...AUTH);
 
             expect(res.status).toBe(200);
@@ -1199,7 +1202,7 @@ describe("projects.routes", () => {
                 seedDirectProject(projectRole);
 
                 const res = await request(app)
-                    .get("/projects/p1/people")
+                    .get("/api/projects/p1/people")
                     .set(...AUTH);
 
                 expect(res.status).toBe(200);
@@ -1222,7 +1225,7 @@ describe("projects.routes", () => {
             checkProjectAccess.mockResolvedValue({ ok: false });
 
             const res = await request(app)
-                .get("/projects/p1/people")
+                .get("/api/projects/p1/people")
                 .set(...AUTH);
 
             expect(res.status).toBe(404);
@@ -1233,7 +1236,7 @@ describe("projects.routes", () => {
             seedDirectProject("viewer");
 
             const res = await request(app)
-                .get("/projects/p1/access")
+                .get("/api/projects/p1/access")
                 .set(...AUTH);
 
             expect(res.status).toBe(403);
@@ -1267,7 +1270,7 @@ describe("projects.routes", () => {
 
         it("allows a project owner (204)", async () => {
             const res = await request(app)
-                .delete("/projects/p1/folders/f1")
+                .delete("/api/projects/p1/folders/f1")
                 .set(...AUTH);
             expect(res.status).toBe(204);
         });
@@ -1275,7 +1278,7 @@ describe("projects.routes", () => {
         it("allows an editor — folder work is editor-level (204)", async () => {
             checkProjectAccess.mockResolvedValue(roleAccess("editor"));
             const res = await request(app)
-                .delete("/projects/p1/folders/f1")
+                .delete("/api/projects/p1/folders/f1")
                 .set(...AUTH);
             expect(res.status).toBe(204);
         });
@@ -1283,7 +1286,7 @@ describe("projects.routes", () => {
         it("blocks a viewer with a refusal, not a fake 404", async () => {
             checkProjectAccess.mockResolvedValue(roleAccess("viewer"));
             const res = await request(app)
-                .delete("/projects/p1/folders/f1")
+                .delete("/api/projects/p1/folders/f1")
                 .set(...AUTH);
             expect(res.status).toBe(403);
             expect(res.body.detail).toBe(
@@ -1294,7 +1297,7 @@ describe("projects.routes", () => {
         it("still answers 404 when the project is invisible", async () => {
             checkProjectAccess.mockResolvedValue({ ok: false });
             const res = await request(app)
-                .delete("/projects/p1/folders/f1")
+                .delete("/api/projects/p1/folders/f1")
                 .set(...AUTH);
             expect(res.status).toBe(404);
             expect(res.body.detail).toBe("Project not found");
@@ -1315,7 +1318,7 @@ describe("projects.routes", () => {
             });
 
             const res = await request(app)
-                .post("/projects/p1/folders")
+                .post("/api/projects/p1/folders")
                 .set(...AUTH)
                 .send({ name: "Closing" });
 
@@ -1330,7 +1333,7 @@ describe("projects.routes", () => {
             checkProjectAccess.mockResolvedValue({ ok: false });
 
             const res = await request(app)
-                .post("/projects/p1/folders")
+                .post("/api/projects/p1/folders")
                 .set(...AUTH)
                 .send({ name: "Closing" });
 
@@ -1372,7 +1375,7 @@ describe("projects.routes", () => {
             });
 
             const res = await request(app)
-                .get("/projects/p1/chats")
+                .get("/api/projects/p1/chats")
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
@@ -1406,7 +1409,7 @@ describe("projects.routes", () => {
             });
 
             const res = await request(app)
-                .get("/projects/p1/chats")
+                .get("/api/projects/p1/chats")
                 .set(...AUTH);
 
             expect(
@@ -1425,7 +1428,7 @@ describe("projects.routes", () => {
             });
 
             const res = await request(app)
-                .get("/projects/p1/chats")
+                .get("/api/projects/p1/chats")
                 .set(...AUTH);
 
             // Child rows inherit the project role; child grants are ignored.
@@ -1441,7 +1444,7 @@ describe("projects.routes", () => {
             checkProjectAccess.mockResolvedValue({ ok: false });
 
             const res = await request(app)
-                .get("/projects/p1/documents")
+                .get("/api/projects/p1/documents")
                 .set(...AUTH);
 
             expect(res.status).toBe(404);
@@ -1456,7 +1459,7 @@ describe("projects.routes", () => {
             };
 
             const res = await request(app)
-                .get("/projects/p1/documents")
+                .get("/api/projects/p1/documents")
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
@@ -1469,7 +1472,7 @@ describe("projects.routes", () => {
     describe("PATCH /projects/:projectId", () => {
         it("rejects the retired shared_with input", async () => {
             const res = await request(app)
-                .patch("/projects/p1")
+                .patch("/api/projects/p1")
                 .set(...AUTH)
                 .send({ shared_with: ["u1@test.local"] });
 
@@ -1483,7 +1486,7 @@ describe("projects.routes", () => {
             supabaseState.tables.projects = { data: null, error: null };
 
             const res = await request(app)
-                .patch("/projects/p1")
+                .patch("/api/projects/p1")
                 .set(...AUTH)
                 .send({ name: "Renamed" });
 
@@ -1501,7 +1504,7 @@ describe("projects.routes", () => {
             deleteProjectsByIds.mockResolvedValue(0);
 
       const res = await request(app)
-        .delete("/projects/p1")
+        .delete("/api/projects/p1")
         .set(...AUTH);
 
             expect(res.status).toBe(404);
@@ -1519,7 +1522,7 @@ describe("projects.routes", () => {
             });
 
       const res = await request(app)
-        .delete("/projects/p1")
+        .delete("/api/projects/p1")
         .set(...AUTH);
 
             expect(res.status).toBe(204);
@@ -1543,7 +1546,7 @@ describe("projects.routes", () => {
                 });
 
                 const res = await request(app)
-                    .delete("/projects/p1")
+                    .delete("/api/projects/p1")
                     .set(...AUTH);
 
                 expect(res.status).toBe(403);
@@ -1559,7 +1562,7 @@ describe("projects.routes", () => {
             checkProjectAccess.mockResolvedValue({ ok: false });
 
             const res = await request(app)
-                .delete("/projects/p1")
+                .delete("/api/projects/p1")
                 .set(...AUTH);
 
             expect(res.status).toBe(404);
@@ -1571,7 +1574,7 @@ describe("projects.routes", () => {
             deleteProjectsByIds.mockRejectedValue(new Error("cascade failed"));
 
       const res = await request(app)
-        .delete("/projects/p1")
+        .delete("/api/projects/p1")
         .set(...AUTH);
 
             expect(res.status).toBe(500);
@@ -1639,7 +1642,7 @@ describe("projects.routes", () => {
             checkProjectAccess.mockResolvedValue({ ok: false });
 
             const res = await request(app)
-                .get("/projects/p1/export")
+                .get("/api/projects/p1/export")
                 .set(...AUTH);
 
             expect(res.status).toBe(404);
@@ -1650,7 +1653,7 @@ describe("projects.routes", () => {
             seedProjectWithOneVersion();
 
             const res = await request(app)
-                .get("/projects/p1/export")
+                .get("/api/projects/p1/export")
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
@@ -1668,7 +1671,7 @@ describe("projects.routes", () => {
             seedProjectWithOneVersion();
 
             const res = await request(app)
-                .get("/projects/p1/export")
+                .get("/api/projects/p1/export")
                 .set(...AUTH);
 
             expect(res.body.signature).toBeNull();
@@ -1682,7 +1685,7 @@ describe("projects.routes", () => {
                 seedProjectWithOneVersion();
 
                 const res = await request(app)
-                    .get("/projects/p1/export")
+                    .get("/api/projects/p1/export")
                     .set(...AUTH);
 
                 // Checked the way a recipient would: pin the published key,
@@ -1722,7 +1725,7 @@ describe("projects.routes", () => {
             };
 
             const res = await request(app)
-                .get("/projects/p1/export")
+                .get("/api/projects/p1/export")
                 .set(...AUTH);
 
             expect(res.status).toBe(500);
