@@ -230,11 +230,9 @@ describe("useAssistantChat: SSE event handling", () => {
         expect(mockRouterReplace).toHaveBeenCalledWith(
             "/assistant/chat/newly-minted",
         );
-        // First message + fresh chat → title generation kicks off.
-        expect(mockGenerateTitle).toHaveBeenCalledWith(
-            "newly-minted",
-            "first msg",
-        );
+        // Dev drift: upstream #295 dropped client-side title generation; the
+        // server now emits a chat_title frame (handled via onChatTitle).
+        expect(mockGenerateTitle).not.toHaveBeenCalled();
     });
 
     it("routes to the project chat URL when projectId is set", async () => {
@@ -375,10 +373,10 @@ describe("useAssistantChat: SSE event handling", () => {
             text: "ok",
             isStreaming: true,
         });
+        // Dev drift: upstream #295 moved SSE parsing into lib/sse.ts, which warns with a structured payload.
         expect(warnSpy).toHaveBeenCalledWith(
-            expect.stringContaining("failed to parse SSE line"),
-            "data: not-json",
-            expect.any(Error),
+            expect.stringContaining("skipping malformed frame"),
+            { line: "data: not-json", error: expect.any(Error) },
         );
         warnSpy.mockRestore();
     });
@@ -396,7 +394,8 @@ describe("useAssistantChat: error path", () => {
 
         const last = result.current.messages[result.current.messages.length - 1];
         expect(last.role).toBe("assistant");
-        expect(last.error).toBe("HTTP 500: boom");
+        // Dev drift: upstream #450 shows a generic message (Sentry gets the real error).
+        expect(last.error).toBe("Sorry, something went wrong.");
         expect(result.current.isResponseLoading).toBe(false);
     });
 
@@ -413,7 +412,8 @@ describe("useAssistantChat: error path", () => {
         });
 
         const last = result.current.messages[result.current.messages.length - 1];
-        expect(last.error).toBe("No response body");
+        // Dev drift: upstream #450 shows a generic message (Sentry gets the real error).
+        expect(last.error).toBe("Sorry, something went wrong.");
     });
 });
 
