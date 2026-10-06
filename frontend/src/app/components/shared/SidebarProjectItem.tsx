@@ -72,6 +72,8 @@ type ProjectItemsData = {
     chats: Chat[];
     reviews: TabularReview[];
     hasMoreReviews: boolean;
+    /** One of the two requests failed; the other list is still shown. */
+    incomplete: boolean;
 };
 
 // Survives the sidebar remounting, so reopening a project shows its last
@@ -115,6 +117,8 @@ async function loadProjectItems(
         reviews: reviews.status === "fulfilled" ? reviews.value.reviews : [],
         hasMoreReviews:
             reviews.status === "fulfilled" && reviews.value.hasMore,
+        incomplete:
+            chats.status === "rejected" || reviews.status === "rejected",
     };
 }
 
@@ -218,6 +222,22 @@ export function SidebarProjectItem({
         setVisibleCount(nextCount);
     };
 
+    const retryRow = (message: string) => (
+        <li className="flex min-h-7 flex-wrap items-center gap-x-2 pl-2 pr-2 text-xs text-gray-500">
+            <span role="alert">{message}</span>
+            <button
+                type="button"
+                onClick={() => {
+                    setLoadError(false);
+                    setReloadKey((key) => key + 1);
+                }}
+                className="font-medium text-gray-700 hover:text-gray-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+            >
+                Retry
+            </button>
+        </li>
+    );
+
     const listId = `sidebar-project-items-${project.id}`;
     // Sub-rows are not indented: they share the project row's pl-2, 16px
     // icon box and gap-3. A curved arrow fills the box under the folder
@@ -302,20 +322,11 @@ export function SidebarProjectItem({
                                 </span>
                             </li>
                         ))
-                    ) : loadError && data === null ? (
-                        <li className="flex min-h-7 flex-wrap items-center gap-x-2 pl-2 pr-2 text-xs text-gray-500">
-                            <span role="alert">Could not load items.</span>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setLoadError(false);
-                                    setReloadKey((key) => key + 1);
-                                }}
-                                className="font-medium text-gray-700 hover:text-gray-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-                            >
-                                Retry
-                            </button>
-                        </li>
+                    ) : (loadError && data === null) ||
+                      (data?.incomplete && items?.length === 0) ? (
+                        // Nothing to show: a total failure, or one request
+                        // failed and the other came back empty.
+                        retryRow("Could not load items.")
                     ) : items && items.length === 0 ? (
                         <li className="flex min-h-7 items-center pl-2 pr-2 text-xs text-gray-500">
                             No chats or reviews yet
@@ -361,6 +372,8 @@ export function SidebarProjectItem({
                                     </li>
                                 );
                             })}
+                            {data?.incomplete &&
+                                retryRow("Some items could not be loaded.")}
                             {canSeeMore && (
                                 <li>
                                     <button

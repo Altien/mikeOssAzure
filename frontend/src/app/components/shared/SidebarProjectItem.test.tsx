@@ -332,10 +332,37 @@ describe("SidebarProjectItem", () => {
     ).toBeInTheDocument();
   });
 
-  it("still lists chats when only the reviews request fails", async () => {
-    vi.mocked(listTabularReviews).mockRejectedValue(new Error("boom"));
+  it("still lists chats when only the reviews request fails, with a retry", async () => {
+    vi.mocked(listTabularReviews).mockRejectedValueOnce(new Error("boom"));
     renderItem(project());
 
+    expect(
+      await screen.findByRole("link", { name: "Chat: Due diligence" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Some items could not be loaded.",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(
+      await screen.findByRole("link", { name: "Tabular review: Lease review" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("offers a retry instead of the empty state when one request fails", async () => {
+    vi.mocked(listProjectChats).mockRejectedValueOnce(new Error("boom"));
+    vi.mocked(listTabularReviews).mockResolvedValueOnce([]);
+    renderItem(project());
+
+    expect(
+      await screen.findByRole("button", { name: "Retry" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("No chats or reviews yet"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(
       await screen.findByRole("link", { name: "Chat: Due diligence" }),
     ).toBeInTheDocument();
