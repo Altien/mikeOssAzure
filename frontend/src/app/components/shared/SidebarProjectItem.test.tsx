@@ -205,6 +205,62 @@ describe("SidebarProjectItem", () => {
     );
   });
 
+  it("keeps a refreshed chat list when a See more page lands afterwards", async () => {
+    // See more starts a review-page request; navigating inside the active
+    // project refreshes the list (here: a new chat) before that request
+    // finishes. The late page must merge into the refreshed list, not into
+    // the list that was on screen when See more was clicked.
+    const current = project();
+    const firstPage = Array.from({ length: 11 }, (_, index) =>
+      review(`r${index}`, `Review ${index}`, `2026-09-${10 + index}T00:00:00Z`),
+    );
+    let finishPage: (rows: TabularReview[]) => void = () => {};
+    vi.mocked(listProjectChats).mockResolvedValue([]);
+    vi.mocked(listTabularReviews).mockImplementation(
+      (_projectId, options) =>
+        options?.offset
+          ? new Promise((resolve) => (finishPage = resolve))
+          : Promise.resolve(firstPage),
+    );
+    const { rerender } = renderItem(current, {
+      pathname: `/projects/${current.id}`,
+    });
+    await screen.findByRole("link", { name: "Tabular review: Review 9" });
+
+    fireEvent.click(screen.getByRole("button", { name: "See more" }));
+    await waitFor(() =>
+      expect(listTabularReviews).toHaveBeenCalledWith(
+        current.id,
+        expect.objectContaining({ offset: 10 }),
+      ),
+    );
+
+    vi.mocked(listProjectChats).mockResolvedValue([
+      chat("c-new", "New matter chat", "2026-10-05T00:00:00Z"),
+    ]);
+    rerender(
+      <SidebarProjectItem
+        project={current}
+        pathname={`/projects/${current.id}/assistant/chat/c-new`}
+        expanded
+        onExpandedChange={vi.fn()}
+        onOpenProject={vi.fn()}
+      />,
+    );
+    await screen.findByRole("link", { name: "Chat: New matter chat" });
+
+    // Recent enough to sort into the visible rows once it lands.
+    finishPage([review("r-late", "Late page review", "2026-10-04T00:00:00Z")]);
+    expect(
+      await screen.findByRole("link", {
+        name: "Tabular review: Late page review",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Chat: New matter chat" }),
+    ).toBeInTheDocument();
+  });
+
   it("shows an empty state", async () => {
     vi.mocked(listProjectChats).mockResolvedValue([]);
     vi.mocked(listTabularReviews).mockResolvedValue([]);

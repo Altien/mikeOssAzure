@@ -185,17 +185,27 @@ export function SidebarProjectItem({
                     data.reviews.length,
                     REVIEW_PAGE_SIZE,
                 );
-                const seen = new Set(data.reviews.map((review) => review.id));
-                const next = {
-                    ...data,
-                    reviews: [
-                        ...data.reviews,
-                        ...page.reviews.filter((review) => !seen.has(review.id)),
-                    ],
-                    hasMoreReviews: page.hasMore,
-                };
-                projectItemsCache.set(project.id, next);
-                setData(next);
+                // Merge into the latest state: a refresh (say, a new chat in
+                // this project) can land while this page is in flight, and
+                // the list captured at click time would undo it.
+                setData((current) => {
+                    if (!current) return current;
+                    const seen = new Set(
+                        current.reviews.map((review) => review.id),
+                    );
+                    const next = {
+                        ...current,
+                        reviews: [
+                            ...current.reviews,
+                            ...page.reviews.filter(
+                                (review) => !seen.has(review.id),
+                            ),
+                        ],
+                        hasMoreReviews: page.hasMore,
+                    };
+                    projectItemsCache.set(project.id, next);
+                    return next;
+                });
             } catch {
                 // Show what has loaded; the next "See more" retries.
             } finally {
