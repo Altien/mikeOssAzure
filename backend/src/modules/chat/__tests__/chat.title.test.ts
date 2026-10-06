@@ -9,7 +9,8 @@ vi.mock("../../../lib/llm", () => ({ completeText }));
 vi.mock("../../../lib/observability/sentry", () => ({ reportError }));
 
 import { generateAssistantChatTitle, logChatTitleFailure } from "../chat.title";
-import { UserFacingError } from "../../../lib/userFacingError";
+// Dev drift: Dev's UserFacingError lives in lib/safeError (see d9659266).
+import { UserFacingError } from "../../../lib/safeError";
 
 describe("logChatTitleFailure", () => {
     const apiCallError = (statusCode: number) =>
