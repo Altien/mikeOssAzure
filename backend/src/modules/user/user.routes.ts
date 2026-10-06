@@ -27,7 +27,7 @@ import { recordAudit } from "../../lib/audit";
 import { sendInternalError } from "../../lib/httpError";
 import { dbJobsEnabled } from "../../lib/dbq/runner";
 import { buildContentDisposition } from "../../lib/storage";
-import { normalizeApiKeyProvider } from "./user.apiKeyStore";
+import { normalizeApiKeyProvider, type ApiKeyProvider } from "./user.apiKeyStore";
 import { completeUserMcpConnectorOAuth } from "../../lib/mcpConnectors";
 import { conciseMcpErrorMessage } from "../../lib/mcp/errors";
 import {
@@ -328,6 +328,39 @@ userRouter.get("/api-keys", requireAuth, asyncRoute(async (_req, res) => {
     res.json(status);
 }));
 
+// Dev: provider credentials are organisation-managed in Key Vault; the refusal
+// names the secret an administrator sets on /install (restored after #295).
+const ORGANISATION_CREDENTIALS: Record<
+    ApiKeyProvider,
+    { label: string; secretNames: readonly string[] }
+> = {
+    claude: { label: "Anthropic", secretNames: ["anthropic-api-key"] },
+    gemini: { label: "Gemini", secretNames: ["gemini-api-key"] },
+    openai: { label: "OpenAI", secretNames: ["openai-api-key"] },
+    kimi: { label: "Kimi K3", secretNames: ["moonshot-api-key"] },
+    openrouter: { label: "OpenRouter", secretNames: ["openrouter-api-key"] },
+    "opencode-go": { label: "OpenCode Go", secretNames: ["opencode-api-key"] },
+    vercel: { label: "Vercel AI Gateway", secretNames: ["ai-gateway-api-key"] },
+    courtlistener: {
+        label: "CourtListener",
+        secretNames: ["courtlistener-api-token"],
+    },
+    azure_openai: {
+        label: "Azure OpenAI",
+        secretNames: ["azure-openai-endpoint", "azure-openai-api-key"],
+    },
+};
+
+function organisationCredentialDetail(provider: ApiKeyProvider): string {
+    const credential = ORGANISATION_CREDENTIALS[provider];
+    const secrets = credential.secretNames.join(" and ");
+    return (
+        `${credential.label} credentials are managed once per organisation. ` +
+        "Ask an administrator to open /install and configure the organisation " +
+        `credential (Key Vault secret: ${secrets}).`
+    );
+}
+
 // PUT /user/api-keys/:provider
 userRouter.put(
     "/api-keys/:provider",
@@ -348,7 +381,7 @@ userRouter.put(
             if (result.kind === "env_configured")
                 return void res.status(403).json({
                     code: "organisation_api_key_required",
-                    detail: "Provider credentials are managed for the organisation in Key Vault.",
+                    detail: organisationCredentialDetail(provider),
                 });
             return void sendInternalError(res, result.error);
         }
