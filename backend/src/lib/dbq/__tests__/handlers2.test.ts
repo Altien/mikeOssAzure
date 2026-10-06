@@ -74,6 +74,9 @@ const JOB = (kind: string, payload: Record<string, unknown>): DbJob => ({
     max_attempts: 3,
     run_at: "",
     claimed_at: null,
+    // Dev drift: DbJob carries the claim-token fence and lease.
+    claim_token: null,
+    lease_expires_at: null,
     finished_at: null,
     last_error: null,
     dedupe_key: null,

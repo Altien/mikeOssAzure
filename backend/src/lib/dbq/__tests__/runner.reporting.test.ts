@@ -56,6 +56,7 @@ const JOB = (over: Partial<DbJob> = {}): DbJob => ({
     created_at: "2026-08-21T00:00:00Z",
     // Dev: processClaimedJob requires the claim fence token.
     claim_token: "11111111-1111-4111-8111-111111111111",
+    lease_expires_at: null,
     ...over,
 });
 

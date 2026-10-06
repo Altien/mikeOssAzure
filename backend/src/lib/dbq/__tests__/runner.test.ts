@@ -216,7 +216,9 @@ describe("processClaimedJob fencing", () => {
         );
         expect(db.updates[0].payload.status).toBe("failed");
         expect(db.updates[0].payload.last_error).toBe("refused by the domain");
-        expect(db.updates[0].payload.finished_at).toBeTruthy();
+        // Dev drift: Dev finishes through the fenced finish_db_job RPC, which
+        // stamps finished_at server-side (0075); no run_at means terminal.
+        expect(db.updates[0].payload.run_at).toBeNull();
         expect(db.updates[0].filters).toEqual(FENCE);
     });
 
@@ -421,7 +423,12 @@ describe("runDbJobRetentionSweep", () => {
         const failedPurge = db.deletes.find(
             (d) => d.status === "failed" && "lt:finished_at" in d,
         );
-        expect(failedPurge?.["neq:kind"]).toEqual(["storage.cleanup", "account.delete"]);
+        // Dev drift: Dev also retains failed account.delete rows (retryable erasure).
+        expect(failedPurge?.["neq:kind"]).toEqual([
+            "storage.cleanup",
+            "account.delete",
+            "document.cleanup",
+        ]);
     });
 
     // memory_consolidation_results rows exist only so a retried

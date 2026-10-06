@@ -47,6 +47,9 @@ const CLAIMED: DbJob = {
     max_attempts: 3,
     run_at: "",
     claimed_at: "",
+    // Dev drift: processClaimedJob requires the claim-token fence (0075).
+    claim_token: "11111111-1111-4111-8111-111111111111",
+    lease_expires_at: null,
     finished_at: null,
     last_error: null,
     dedupe_key: null,
@@ -66,6 +69,12 @@ function makeDb(opts: {
         rpcCalls,
         rpc(fn: string, args: Record<string, unknown>) {
             rpcCalls.push([fn, args]);
+            // Dev drift: Dev finishes claimed jobs through the fenced
+            // finish_db_job RPC (0075) rather than a db_jobs UPDATE.
+            if (fn === "finish_db_job") {
+                updates.push({ status: args.p_status, last_error: args.p_last_error, run_at: args.p_run_at });
+                return Promise.resolve({ data: true, error: null });
+            }
             return Promise.resolve(
                 opts.claimError
                     ? { data: null, error: { message: opts.claimError } }
