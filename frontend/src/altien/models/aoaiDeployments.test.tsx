@@ -24,6 +24,7 @@ import {
     toAoaiModelOptions,
     useAoaiDeployments,
 } from "./aoaiDeployments";
+import { INTERNAL_ERROR_MESSAGE } from "@/app/lib/mikeApi";
 
 function authedFor(user: { id: string; email: string } | null) {
     mockUseAuth.mockReturnValue({
@@ -148,9 +149,14 @@ describe("AoaiDeploymentsProvider", () => {
         );
 
         renderProbe();
+        // Dev drift: upstream a104acce sanitizes 5xx details; the raw
+        // backend "temporary" detail is never shown to the user.
         await waitFor(() =>
-            expect(screen.getByTestId("error")).toHaveTextContent("temporary"),
+            expect(screen.getByTestId("error")).toHaveTextContent(
+                INTERNAL_ERROR_MESSAGE,
+            ),
         );
+        expect(screen.getByTestId("error")).not.toHaveTextContent("temporary");
 
         await userEvent.click(screen.getByText("reload"));
 
