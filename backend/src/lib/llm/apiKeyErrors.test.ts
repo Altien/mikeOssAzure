@@ -144,7 +144,9 @@ describe("asInvalidApiKeyError", () => {
 
     expect(mapped).toBeInstanceOf(InvalidApiKeyError);
     expect(mapped?.message).toContain("Anthropic");
-    expect(mapped?.message).toContain("Settings");
+    // Dev drift: credentials are organisation-managed (Key Vault), so the
+    // message points at an administrator/setup, not personal Settings.
+    expect(mapped?.message).toContain("administrator");
     expect(mapped?.message).not.toContain("x-api-key");
   });
 
