@@ -796,8 +796,9 @@ describe("rejected API key", () => {
         expect(alert).toHaveTextContent(
             /The Anthropic \(Claude\) API key was rejected/,
         );
+        // Dev drift: Dev has no per-user BYOK settings; the popup points at organisation setup (/install).
         expect(
-            within(alert).getByRole("button", { name: "Go to settings" }),
+            within(alert).getByRole("button", { name: "Open organisation setup" }),
         ).toBeInTheDocument();
     });
 
