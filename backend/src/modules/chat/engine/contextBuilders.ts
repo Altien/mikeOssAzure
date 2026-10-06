@@ -104,6 +104,12 @@ export type UserPersonalisation = {
   practiceAreas: string[];
   /** Free-form instructions the user wrote in Settings > Personalisation. */
   customInstructions?: string;
+  /** Response style the user chose in Settings > Personalisation. */
+  responseStyle?: {
+    verbosity: "concise" | "balanced" | "detailed";
+    formatting: "balanced" | "less" | "more";
+    tone: "formal" | "balanced" | "plain";
+  };
 };
 
 const PRACTICE_SETTING_LABELS: Record<string, string> = {
@@ -125,10 +131,50 @@ export function buildUserPersonalisationPrompt(
   if (!profile) return "";
   return [
     buildUserProfileFactsPrompt(profile, nonce),
+    buildResponseStylePrompt(profile.responseStyle),
     buildCustomInstructionsPrompt(profile.customInstructions, nonce),
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+const RESPONSE_STYLE_GUIDANCE: Record<string, Record<string, string>> = {
+  verbosity: {
+    concise:
+      "Length: the user prefers concise answers. Lead with the answer and keep explanation to what the question needs. Skip preamble, restatement, and optional background, but keep every caveat, risk, and citation that matters.",
+    detailed:
+      "Length: the user prefers detailed answers. Explain the reasoning behind conclusions, cover relevant exceptions, alternatives, and practical next steps, and cite supporting passages fully. Stay organised and do not pad.",
+  },
+  formatting: {
+    less:
+      "Headers and lists: use fewer of them. Write mainly in prose paragraphs and add headings, bullet points, or tables only when the content genuinely needs them, such as numbered steps or a side-by-side comparison.",
+    more:
+      "Headers and lists: use more of them. Organise answers for scanning with headings for distinct parts, bullet points for lists of points or steps, and tables for comparisons, keeping each bullet tight.",
+  },
+  tone: {
+    formal:
+      "Tone: formal and legal. Write in a formal, professional register with precise legal terminology, suitable for a client, counterparty, or court without edits. Avoid contractions, colloquialisms, and casual phrasing.",
+    plain:
+      "Tone: plain and simple. Prefer short sentences and everyday words, explain any legal term of art the first time it appears, and avoid legalese without losing accuracy.",
+  },
+};
+
+/**
+ * States the user's chosen response style. The values come from fixed
+ * server-validated sets, so this text is system-authored rather than fenced.
+ * 'balanced' is the default for every setting and adds nothing.
+ */
+function buildResponseStylePrompt(
+  style: UserPersonalisation["responseStyle"],
+): string {
+  if (!style) return "";
+  const lines = (["verbosity", "formatting", "tone"] as const)
+    .map((field) => RESPONSE_STYLE_GUIDANCE[field][style[field]])
+    .filter(Boolean);
+  if (lines.length === 0) return "";
+  return `USER RESPONSE STYLE:
+${lines.map((line) => `- ${line}`).join("\n")}
+The user's latest message takes precedence if it asks for something different.`;
 }
 
 /**

@@ -699,6 +699,88 @@ describe("user.routes", () => {
         });
     });
 
+    describe("response style", () => {
+        it("returns the stored style", async () => {
+            supabaseState.tables.user_profiles = {
+                data: {
+                    response_verbosity: "detailed",
+                    response_formatting: "less",
+                    response_tone: "formal",
+                },
+                error: null,
+            };
+
+            const res = await request(app)
+                .get("/user/response-style")
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual({
+                verbosity: "detailed",
+                formatting: "less",
+                tone: "formal",
+            });
+            expect(res.headers["cache-control"]).toBe("private, no-store");
+        });
+
+        it("reads as the default before the migration is applied", async () => {
+            supabaseState.missingColumns = ["response_verbosity"];
+
+            const res = await request(app)
+                .get("/user/response-style")
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual({
+                verbosity: "balanced",
+                formatting: "balanced",
+                tone: "balanced",
+            });
+        });
+
+        it("saves only the field that changed", async () => {
+            supabaseState.tables.user_profiles = {
+                data: {
+                    response_verbosity: "balanced",
+                    response_formatting: "balanced",
+                    response_tone: "plain",
+                },
+                error: null,
+            };
+
+            const res = await request(app)
+                .put("/user/response-style")
+                .set(...AUTH)
+                .send({ tone: "plain" });
+
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual({
+                verbosity: "balanced",
+                formatting: "balanced",
+                tone: "plain",
+            });
+            expect(supabaseState.updates.user_profiles).toHaveLength(1);
+            const [update] = supabaseState.updates.user_profiles as Record<
+                string,
+                unknown
+            >[];
+            expect(update).toMatchObject({ response_tone: "plain" });
+            expect(update).not.toHaveProperty("response_verbosity");
+            expect(update).not.toHaveProperty("response_formatting");
+        });
+
+        it("rejects an unknown value", async () => {
+            const res = await request(app)
+                .put("/user/response-style")
+                .set(...AUTH)
+                .send({ formatting: "fancy" });
+
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toMatch(/formatting must be one of/);
+            expect(supabaseState.updates.user_profiles).toBeUndefined();
+        });
+    });
+
     describe("POST /user/profile", () => {
         it("ensures the profile row and returns ok", async () => {
             const res = await request(app)

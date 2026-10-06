@@ -65,6 +65,9 @@ describe("getUserModelSettings router-model allowlist", () => {
                 professional_title: "Partner",
                 practice_areas: ["Litigation"],
                 custom_instructions: "Use British spelling.",
+                response_verbosity: "concise",
+                response_formatting: "less",
+                response_tone: "formal",
             }),
         );
 
@@ -76,6 +79,11 @@ describe("getUserModelSettings router-model allowlist", () => {
             professionalTitle: "Partner",
             practiceAreas: ["Litigation"],
             customInstructions: "Use British spelling.",
+            responseStyle: {
+                verbosity: "concise",
+                formatting: "less",
+                tone: "formal",
+            },
         });
     });
 

@@ -965,6 +965,36 @@ export async function updateCustomInstructions(
     });
 }
 
+/** Mirrors RESPONSE_STYLE_OPTIONS in the backend user module. */
+export const RESPONSE_STYLE_OPTIONS = {
+    verbosity: ["concise", "balanced", "detailed"],
+    formatting: ["balanced", "less", "more"],
+    tone: ["formal", "balanced", "plain"],
+} as const;
+
+export type ResponseStyleField = keyof typeof RESPONSE_STYLE_OPTIONS;
+
+export type ResponseStyle = {
+    [Field in ResponseStyleField]: (typeof RESPONSE_STYLE_OPTIONS)[Field][number];
+};
+
+export async function getResponseStyle(
+    signal?: AbortSignal,
+): Promise<ResponseStyle> {
+    return apiRequest<ResponseStyle>("/user/response-style", { signal });
+}
+
+/** Sends only the changed fields; the response is the full saved style. */
+export async function updateResponseStyle(
+    update: Partial<ResponseStyle>,
+): Promise<ResponseStyle> {
+    return apiRequest<ResponseStyle>("/user/response-style", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(update),
+    });
+}
+
 export async function completeUserOnboarding(
     payload: PersonalisationDetails = {},
     isCurrentAccount?: () => boolean,

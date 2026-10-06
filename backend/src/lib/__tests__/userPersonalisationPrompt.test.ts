@@ -144,4 +144,84 @@ describe("buildUserPersonalisationPrompt", () => {
       ),
     ).toBe("");
   });
+
+  const emptyProfile = {
+    displayName: null,
+    organisation: null,
+    jurisdiction: null,
+    practiceSetting: null,
+    professionalTitle: null,
+    practiceAreas: [],
+  };
+
+  const defaultStyle = {
+    verbosity: "balanced",
+    formatting: "balanced",
+    tone: "balanced",
+  } as const;
+
+  it("adds a line for each non-default response style setting", () => {
+    const prompt = buildUserPersonalisationPrompt(
+      {
+        ...emptyProfile,
+        responseStyle: {
+          verbosity: "concise",
+          formatting: "more",
+          tone: "plain",
+        },
+      },
+      "nonce-1",
+    );
+    expect(prompt).toContain("USER RESPONSE STYLE");
+    expect(prompt).toContain("- Length: the user prefers concise answers");
+    expect(prompt).toContain("- Headers and lists: use more of them");
+    expect(prompt).toContain("- Tone: plain and simple");
+  });
+
+  it("includes only the settings that differ from the default", () => {
+    const prompt = buildUserPersonalisationPrompt(
+      { ...emptyProfile, responseStyle: { ...defaultStyle, tone: "formal" } },
+      "nonce-1",
+    );
+    expect(prompt).toContain("- Tone: formal and legal");
+    expect(prompt).not.toContain("Length:");
+    expect(prompt).not.toContain("Headers and lists:");
+
+    const detailedLess = buildUserPersonalisationPrompt(
+      {
+        ...emptyProfile,
+        responseStyle: {
+          ...defaultStyle,
+          verbosity: "detailed",
+          formatting: "less",
+        },
+      },
+      "nonce-1",
+    );
+    expect(detailedLess).toContain("prefers detailed answers");
+    expect(detailedLess).toContain("use fewer of them");
+  });
+
+  it("adds nothing when every setting is the default", () => {
+    expect(
+      buildUserPersonalisationPrompt(
+        { ...emptyProfile, responseStyle: defaultStyle },
+        "nonce-1",
+      ),
+    ).toBe("");
+  });
+
+  it("puts response style before custom instructions", () => {
+    const prompt = buildUserPersonalisationPrompt(
+      {
+        ...emptyProfile,
+        responseStyle: { ...defaultStyle, verbosity: "concise" },
+        customInstructions: "Use British spelling.",
+      },
+      "nonce-1",
+    );
+    expect(prompt.indexOf("USER RESPONSE STYLE")).toBeLessThan(
+      prompt.indexOf("USER CUSTOM INSTRUCTIONS"),
+    );
+  });
 });

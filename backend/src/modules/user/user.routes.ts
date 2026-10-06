@@ -56,6 +56,7 @@ import {
     exportUserTabularReviews,
     getApiKeyStatus,
     getCustomInstructions,
+    getResponseStyle,
     getMcpConnector,
     getUserExportStatus,
     getUserProfile,
@@ -77,6 +78,8 @@ import {
     validateProfilePayload,
     validateCustomInstructionsPayload,
     saveCustomInstructions,
+    validateResponseStylePayload,
+    saveResponseStyle,
 } from "./user.service";
 
 export const userRouter = Router();
@@ -286,6 +289,31 @@ userRouter.put("/custom-instructions", requireAuth, asyncRoute(async (req, res) 
         createServerSupabase(),
         userId,
         parsed.content,
+    );
+    if (!result.ok) return void sendServiceFailure(res, result);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json(result.data);
+}));
+
+// GET /user/response-style
+userRouter.get("/response-style", requireAuth, asyncRoute(async (_req, res) => {
+    const userId = res.locals.userId as string;
+    const result = await getResponseStyle(createServerSupabase(), userId);
+    if (!result.ok) return void sendServiceFailure(res, result);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json(result.data);
+}));
+
+// PUT /user/response-style
+userRouter.put("/response-style", requireAuth, asyncRoute(async (req, res) => {
+    const parsed = validateResponseStylePayload(req.body);
+    if (!parsed.ok) return void res.status(400).json({ detail: parsed.detail });
+
+    const userId = res.locals.userId as string;
+    const result = await saveResponseStyle(
+        createServerSupabase(),
+        userId,
+        parsed.update,
     );
     if (!result.ok) return void sendServiceFailure(res, result);
     res.setHeader("Cache-Control", "private, no-store");

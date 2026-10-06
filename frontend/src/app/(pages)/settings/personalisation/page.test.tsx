@@ -11,6 +11,12 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/app/lib/mikeApi")>()),
   getCustomInstructions: vi.fn(async () => ({ content: "" })),
   updateCustomInstructions: vi.fn(async (content: string) => ({ content })),
+  getResponseStyle: vi.fn(async () => ({
+    verbosity: "balanced",
+    formatting: "balanced",
+    tone: "balanced",
+  })),
+  updateResponseStyle: vi.fn(async (style: unknown) => style),
 }));
 
 vi.mock("@/app/components/ui/markdown-editor", () => ({
@@ -37,13 +43,30 @@ describe("PersonalisationPage", () => {
     updatePersonalisation.mockResolvedValue(true);
   });
 
+  it("shows the background, response style, and custom instruction sections", async () => {
+    render(<PersonalisationPage />);
+
+    expect(
+      screen.getByRole("heading", { name: "Your background" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Response style" }),
+    ).toBeInTheDocument();
+    for (const setting of ["Verbosity", "Headers and Lists", "Tone"]) {
+      expect(
+        await screen.findByRole("button", { name: setting }),
+      ).toBeInTheDocument();
+    }
+  });
+
   it("updates the user's professional profile", async () => {
     const user = userEvent.setup();
     const { container } = render(<PersonalisationPage />);
 
+    // Four background rows plus the three response style rows.
     expect(
       container.querySelectorAll('[data-slot="settings-row"]'),
-    ).toHaveLength(4);
+    ).toHaveLength(7);
 
     await user.click(screen.getByRole("button", { name: "Title" }));
     await user.click(
