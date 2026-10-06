@@ -12,6 +12,9 @@ vi.mock("@/app/lib/mikeApi", () => ({
     deleteTabularChat: vi.fn(async () => undefined),
     renameTabularChat: vi.fn(async () => undefined),
     mapTRMessages: vi.fn((messages) => messages),
+    // Dev drift: upstream #339 model registry — ChatInput now loads the
+    // configured-model catalog through useConfiguredModels.
+    getConfiguredModels: vi.fn(async () => []),
 }));
 
 vi.mock("@/app/contexts/UserProfileContext", () => ({
