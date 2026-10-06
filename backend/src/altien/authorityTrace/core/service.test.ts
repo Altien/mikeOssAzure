@@ -10,12 +10,16 @@ vi.mock("../../../lib/storage", () => ({
 }));
 
 import { verifyCitationSources } from "./service";
+import type { z } from "zod";
+import type { verificationProposalSchema } from "./schemas";
 
 function arrayBuffer(text: string): ArrayBuffer {
   return new TextEncoder().encode(text).buffer as ArrayBuffer;
 }
 
-function proposal() {
+// Dev drift: typecheck:test (upstream #295) now type-checks tests; widen the
+// fixture to the schema's input type so tests can set version_id.
+function proposal(): z.input<typeof verificationProposalSchema> {
   return {
     schema_version: 1 as const,
     memo: { document_id: "doc-0" },

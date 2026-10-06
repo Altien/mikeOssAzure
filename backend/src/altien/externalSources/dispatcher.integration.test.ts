@@ -17,7 +17,8 @@ vi.mock("../../lib/courtlistener", () => ({
   verifyCourtlistenerCitations: verifyCourtlistenerCitationsMock,
 }));
 
-import { runToolCalls } from "../../lib/chat/tools/toolDispatcher";
+// Dev drift: upstream #295 moved lib/chat into modules/chat/engine
+import { runToolCalls } from "../../modules/chat/engine/tools/toolDispatcher";
 
 beforeEach(() => {
   getCourtlistenerCasesMock.mockReset();

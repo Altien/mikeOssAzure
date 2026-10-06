@@ -118,6 +118,9 @@ describe("skill pending actions", () => {
     const action = createEnableAction({
       versionId: "version-1",
       analysisInputHash: "hash",
+      // Dev drift: typecheck:test (upstream #295) — the action now also
+      // binds the generated analysis' hash.
+      analysisOutputHash: "output-hash",
       executionContract: { tools: [], projectRead: true },
     });
     expect(() => assertActionIntegrity(action)).not.toThrow();

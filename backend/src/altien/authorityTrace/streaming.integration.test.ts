@@ -33,9 +33,10 @@ vi.mock("./core/extractionService", () => ({
   extractDocumentForVerification: extractDocumentForVerificationMock,
 }));
 
-import { runLLMStream } from "../../lib/chat/streaming";
+// Dev drift: upstream #295 moved lib/chat into modules/chat/engine
+import { runLLMStream } from "../../modules/chat/engine/streaming";
 import { AUTHORITY_TRACE_TOOL_NAMES } from "./chatTools";
-import { PROJECT_EXTRA_TOOLS } from "../../lib/chat/tools/toolSchemas";
+import { PROJECT_EXTRA_TOOLS } from "../../modules/chat/engine/tools/toolSchemas";
 
 beforeEach(() => {
   streamChatWithToolsMock.mockReset();

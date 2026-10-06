@@ -191,7 +191,13 @@ describe("database external-source persistence", () => {
       project_id: "provenance-project",
       user_id: "system:external-provenance",
     });
-    expect(callsFor("document_versions", "insert")[0]?.payload).toMatchObject({
+    // Dev drift: upstream #295 writes versions through the documents
+    // lifecycle facade (create_document_version RPC, row in p_version).
+    expect(
+      (callsFor("create_document_version", "rpc")[0]?.payload as
+        | { p_version?: unknown }
+        | undefined)?.p_version,
+    ).toMatchObject({
       source: "external_retrieval",
       version_number: 1,
       file_type: "txt",

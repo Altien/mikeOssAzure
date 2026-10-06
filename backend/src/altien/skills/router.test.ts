@@ -269,14 +269,15 @@ describe("Skills routes", () => {
       skillId: "skill-1",
       versionId: "version-1",
     });
-    checkProjectAccessMock.mockResolvedValue({ ok: true, isOwner: false });
+    // Dev drift: upstream bdce4fe7 replaced isOwner with projectRole
+    checkProjectAccessMock.mockResolvedValue({ ok: true, projectRole: "editor" });
     await request(makeApp())
       .put("/api/altien/skills/projects/project-1/pins/skill-1")
       .send({ versionId: "version-1" })
       .expect(403, { detail: "PROJECT_OWNER_REQUIRED" });
     expect(setProjectSkillPinMock).not.toHaveBeenCalled();
 
-    checkProjectAccessMock.mockResolvedValue({ ok: true, isOwner: true });
+    checkProjectAccessMock.mockResolvedValue({ ok: true, projectRole: "owner" });
     await request(makeApp())
       .put("/api/altien/skills/projects/project-1/pins/skill-1")
       .send({ versionId: "version-1" })

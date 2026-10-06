@@ -18,7 +18,8 @@ const {
 vi.mock("../../lib/auth/providers/supabase.js", () => ({
   validateSupabaseToken: validateSupabaseTokenMock,
 }));
-vi.mock("../../lib/userSettings.js", () => ({
+// Dev drift: requireAuth now takes upsertUserProfile from lib/userLookup
+vi.mock("../../lib/userLookup.js", () => ({
   upsertUserProfile: upsertUserProfileMock,
 }));
 vi.mock("../../lib/supabase", () => ({
@@ -28,7 +29,8 @@ vi.mock("../../lib/access", () => ({
   checkProjectAccess: checkProjectAccessMock,
 }));
 
-import { diagnosticsRouter } from "../../routes/diagnostics";
+// Dev drift: upstream #295 moved routes/diagnostics into modules/platform
+import { diagnosticsRouter } from "../../modules/platform/diagnostics.routes";
 
 function makeApp() {
   const app = express();
@@ -65,7 +67,9 @@ describe("diagnostic chat API", () => {
   });
 
   it("lists only the signed-in user's chats with a bounded limit", async () => {
-    const { db, calls } = makeFakeDb(() => ({
+    // Dev drift: requireAuth now reads the account_erasure_requests tombstone
+    // (410 when a row exists) through the same client before the route runs.
+    const { db, calls } = makeFakeDb((call) => call.table === "account_erasure_requests" ? { data: null } : ({
       data: [
         {
           id: "chat-1",
@@ -84,7 +88,7 @@ describe("diagnostic chat API", () => {
 
     expect(response.status).toBe(200);
     expect(response.body.chats).toHaveLength(1);
-    expect(calls[0]).toMatchObject({
+    expect(calls.find((call) => call.table === "chats")).toMatchObject({
       table: "chats",
       columns: "id, title, user_id, project_id, created_at",
       filters: [

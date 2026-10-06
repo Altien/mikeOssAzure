@@ -1,16 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { verificationProposalSchema } from "./schemas";
-import { verifyResolvedProposal } from "./verify";
+import { verifyResolvedProposal, type ResolvedVerificationInput } from "./verify";
 
 function bytes(text: string): Uint8Array {
   return new TextEncoder().encode(text);
 }
 
+// Dev drift: typecheck:test (upstream #295) now type-checks tests; type the
+// fixture so tests can add further sources.
 function input(overrides?: {
   memo?: string;
   source?: string;
   quote?: string;
-}) {
+}): ResolvedVerificationInput {
   const memo =
     overrides?.memo ?? "The rule applies. Example v Example confirms this.";
   const source =

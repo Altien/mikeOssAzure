@@ -44,8 +44,11 @@ describe("CourtListener opinion retrieval", () => {
       apiToken: "test-token",
     });
 
-    expect(result.opinions[0]?.text).toBe(fullText);
-    expect(result.opinions[0]?.text).toContain("Late holding.");
+    // Dev drift: typecheck:test (upstream #295) — the result is a union
+    // (error / bulk / opinions); read opinions through a narrowed view.
+    const opinions = (result as { opinions?: Array<{ text?: string }> }).opinions;
+    expect(opinions?.[0]?.text).toBe(fullText);
+    expect(opinions?.[0]?.text).toContain("Late holding.");
   });
 
   it("retains the small preview for callers that do not request full text", async () => {
@@ -57,8 +60,9 @@ describe("CourtListener opinion retrieval", () => {
       apiToken: "test-token",
     });
 
-    expect(result.opinions[0]?.text).toHaveLength(3_000);
-    expect(result.opinions[0]?.text).toMatch(/…$/);
-    expect(result.opinions[0]?.text).not.toContain("Late holding.");
+    const opinions = (result as { opinions?: Array<{ text?: string }> }).opinions;
+    expect(opinions?.[0]?.text).toHaveLength(3_000);
+    expect(opinions?.[0]?.text).toMatch(/…$/);
+    expect(opinions?.[0]?.text).not.toContain("Late holding.");
   });
 });

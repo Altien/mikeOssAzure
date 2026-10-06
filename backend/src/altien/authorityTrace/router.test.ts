@@ -23,7 +23,8 @@ const {
 vi.mock("../../lib/auth/providers/supabase.js", () => ({
   validateSupabaseToken: validateSupabaseTokenMock,
 }));
-vi.mock("../../lib/userSettings.js", () => ({
+// Dev drift: requireAuth now takes upsertUserProfile from lib/userLookup
+vi.mock("../../lib/userLookup.js", () => ({
   upsertUserProfile: upsertUserProfileMock,
 }));
 vi.mock("../../lib/supabase", () => ({
@@ -52,6 +53,16 @@ function makeApp() {
   app.use("/api/authority-trace", authorityTraceRouter);
   return app;
 }
+
+// Dev drift: requireAuth reads the account_erasure_requests tombstone through
+// createServerSupabase and fails closed (503) when it cannot; answer "no
+// tombstone". The routes receive this same client.
+const noTombstone: Record<string, unknown> = {
+  select: () => noTombstone,
+  eq: () => noTombstone,
+  maybeSingle: async () => ({ data: null, error: null }),
+};
+const fakeDb = { from: () => noTombstone };
 
 function exportWorkspace(integrityOk = true) {
   return {
@@ -109,7 +120,7 @@ beforeEach(() => {
     },
   });
   upsertUserProfileMock.mockReset().mockResolvedValue(undefined);
-  createServerSupabaseMock.mockReset().mockReturnValue({});
+  createServerSupabaseMock.mockReset().mockReturnValue(fakeDb);
   getCitationVerificationRunMock.mockReset();
   getAuthorityTraceWorkspaceMock.mockReset();
   createCitationVerificationReviewMock.mockReset();
@@ -186,7 +197,7 @@ describe("GET /api/authority-trace/runs/:runId", () => {
       "project-1",
       "user-1",
       "user@example.com",
-      {},
+      fakeDb,
     );
   });
 });
@@ -233,7 +244,7 @@ describe("POST /api/authority-trace/runs/:runId/reviews", () => {
         reviewerUserId: "user-1",
         reviewerEmail: "user@example.com",
       }),
-      {},
+      fakeDb,
     );
   });
 

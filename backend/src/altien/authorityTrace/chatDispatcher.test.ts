@@ -39,11 +39,22 @@ vi.mock("./core/exportService", () => ({
 }));
 vi.mock("../../lib/mcpConnectors", () => ({
   executeMcpToolCall: executeMcpToolCallMock,
+  // Dev drift: upstream #566 plans every MCP call (approval gate) first;
+  // "run" = read-only tool, no approval needed.
+  planMcpToolCall: vi.fn(async () => ({ type: "run" })),
 }));
 
 import { VerificationExtractionRequiredError } from "./core/service";
-import { runToolCalls } from "../../lib/chat/tools/toolDispatcher";
-import { PROJECT_EXTRA_TOOLS } from "../../lib/chat/tools/toolSchemas";
+// Dev drift: upstream #295 moved lib/chat into modules/chat/engine
+import { runToolCalls as runToolCallsImpl } from "../../modules/chat/engine/tools/toolDispatcher";
+// Dev drift: typecheck:test (upstream #295) — the engine types toolResults as
+// unknown[]; these tests read each result's `content`.
+type ToolRun = Awaited<ReturnType<typeof runToolCallsImpl>>;
+const runToolCalls = (...args: Parameters<typeof runToolCallsImpl>) =>
+  runToolCallsImpl(...args) as Promise<
+    Omit<ToolRun, "toolResults"> & { toolResults: Array<{ content?: unknown }> }
+  >;
+import { PROJECT_EXTRA_TOOLS } from "../../modules/chat/engine/tools/toolSchemas";
 import {
   AUTHORITY_TRACE_SYSTEM_PROMPT,
   AUTHORITY_TRACE_TOOL_NAMES,

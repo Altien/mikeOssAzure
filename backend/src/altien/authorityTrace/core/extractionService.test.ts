@@ -114,7 +114,9 @@ describe("extractDocumentForVerification", () => {
       "documents:select",
       "document_versions:select",
       "documents:insert",
-      "document_versions:insert",
+      // Dev drift: upstream #295 routes version writes through the documents
+      // lifecycle facade (create_document_version RPC).
+      "create_document_version:rpc",
       "documents:update",
       "citation_verification_extractions:insert",
     ]);

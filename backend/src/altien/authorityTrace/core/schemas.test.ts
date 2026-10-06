@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
+import type { z } from "zod";
 import {
   verificationProposalSchema,
   verifiedRecordSchema,
 } from "./schemas";
 
-function proposal() {
+// Dev drift: typecheck:test (upstream #295) now type-checks tests; widen the
+// fixture to the schema's input type so tests can add sources/pins.
+function proposal(): z.input<typeof verificationProposalSchema> {
   return {
     schema_version: 1,
     memo: { document_id: "doc-0" },

@@ -106,6 +106,17 @@ function database(options?: {
         ],
       };
     }
+    // Dev drift: project sharing moved from projects.shared_with to
+    // project_access_grants rows (email + role), read by lib/access.
+    if (call.table === "project_access_grants") {
+      const email = call.filters.find(
+        (filter) => filter[0] === "eq" && filter[1] === "email",
+      )?.[2];
+      const shared = (options?.sharedWith ?? []).some(
+        (entry) => entry.toLowerCase() === email,
+      );
+      return { data: shared ? [{ role: "viewer" }] : [] };
+    }
     if (call.table === "documents" && call.op === "select") {
       return { data: [{ id: "memo-id" }, { id: "source-id" }] };
     }
@@ -189,7 +200,9 @@ describe("exportCitationReview", () => {
     expect(calls.map((call) => `${call.table}:${call.op}`)).toEqual(
       expect.arrayContaining([
         "documents:insert",
-        "document_versions:insert",
+        // Dev drift: upstream #295 routes version writes through the
+        // documents lifecycle facade (create_document_version RPC).
+        "create_document_version:rpc",
         "documents:update",
       ]),
     );
@@ -198,7 +211,7 @@ describe("exportCitationReview", () => {
         (call) =>
           call.op !== "select" &&
           call.table !== "documents" &&
-          call.table !== "document_versions",
+          call.table !== "create_document_version",
       ),
     ).toEqual([]);
   });

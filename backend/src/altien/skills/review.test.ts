@@ -175,7 +175,8 @@ describe("analyseSkillVersion", () => {
     });
     const expiries = fake
       .callsFor("altien_skill_pending_actions", "update")
-      .filter((call) => call.payload?.state === "expired");
+      // Dev drift: typecheck:test (upstream #295) — payload is unknown.
+      .filter((call) => (call.payload as { state?: string } | undefined)?.state === "expired");
     expect(expiries).toHaveLength(1);
     // A rename, an acquisition or an identity link carries no analysis hash,
     // so this must not touch them.
@@ -705,7 +706,9 @@ describe("unresolved analysis references", () => {
       action: { actionType: "enable_version" },
     });
     // Approving covers them, so a re-analysis that changes them breaks the hash.
-    expect(result.action?.payload).toMatchObject({
+    // Dev drift: typecheck:test (upstream #295) — narrow the outcome union.
+    const proposed = "action" in result ? result.action : undefined;
+    expect(proposed?.payload).toMatchObject({
       unresolvedReferences: ["reference/house-format.md is not shown"],
     });
     const conversation = fake

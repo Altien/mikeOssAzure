@@ -106,8 +106,10 @@ describe("storeSkillSnapshot", () => {
     ]);
     const documents = fake.callsFor("documents", "insert")[0];
     expect(documents.payload).toHaveLength(3);
-    const versions = fake.callsFor("document_versions", "insert")[0];
-    expect(versions.payload).toEqual(
+    // Dev drift: upstream #295 writes versions through the documents
+    // lifecycle facade (create_document_versions RPC, rows in p_versions).
+    const versions = fake.callsFor("create_document_versions", "rpc")[0];
+    expect((versions.payload as { p_versions: unknown[] }).p_versions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           source: "skill_import",
