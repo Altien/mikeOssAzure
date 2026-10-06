@@ -1380,7 +1380,7 @@ export function ChatView({
                             }
                             await deleteDocument(target.document_id);
                             setTabs((current) => {
-                                const remaining = current.filter((tab) => tab.document.document_id !== target.document_id);
+                                const remaining = current.filter((tab) => tab.kind === "authority_trace" || tab.document.document_id !== target.document_id);
                                 setActiveTabId((id) => remaining.some((tab) => tab.id === id) ? id : remaining[0]?.id ?? null);
                                 return remaining;
                             });
@@ -1426,6 +1426,7 @@ export function ChatView({
                                       );
                                 setTabs((current) =>
                                     current.map((tab) =>
+                                        tab.kind !== "authority_trace" &&
                                         tab.document.document_id === file.id
                                             ? {
                                                   ...tab,
@@ -1445,7 +1446,7 @@ export function ChatView({
                         onCloseTab={closeTab}
                         onCloseAll={closeAllTabs}
                         onVersionChange={(tabId, version) => setTabs((current) => current.map((tab) =>
-                            tab.id === tabId ? { id: tab.id, kind: "document", document: panelDocumentAtVersion(tab.document, version) } : tab))}
+                            tab.id === tabId && tab.kind !== "authority_trace" ? { id: tab.id, kind: "document", document: panelDocumentAtVersion(tab.document, version) } : tab))}
                         onReorderTabs={reorderTabs}
                         isEditorReloading={(documentId) =>
                             reloadingDocIds.has(documentId)

@@ -24,6 +24,22 @@ export function RequirePathParams({
 }
 
 /**
+ * Static-export divergence (sync-log: 6e3ef6fa): for chat pages that move
+ * between their new-chat URL and `<chat>/:id` with `history.pushState`
+ * (upstream #559 `useChatRoute`). Renders `children` once `usePathname()`
+ * has resolved to a live URL that no longer contains the `"_"` placeholder
+ * segment. Unlike `RequirePathParams`, an absent chat id (the new-chat URL)
+ * keeps the page mounted, so "New chat" does not unmount a streaming answer.
+ */
+export function RequireResolvedPath({ children }: { children: ReactNode }) {
+    const pathname = usePathname() ?? "";
+    const ready =
+        pathname !== "" &&
+        !pathname.split(/[?#]/)[0].split("/").includes("_");
+    return ready ? <>{children}</> : null;
+}
+
+/**
  * Static-export divergence (OSS-5 / OSS-6, dev-only): the replacement for
  * upstream's `use(params)` / `useParams()` in dynamic-route pages.
  *
