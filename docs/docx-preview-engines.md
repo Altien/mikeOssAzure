@@ -72,7 +72,12 @@ A competing editor save or review action receives a conflict instead of losing
 either writer's content. The lifecycle cleanup retires the old objects.
 Tracked edits and review decisions use that same save path. Autosave does not
 generate a PDF; it invalidates the previous PDF rendition. Content hashes protect
-against overwriting another editor's newer file. **Download** exports the live
+against overwriting another editor's newer file. (Dev divergence, sync-log
+6e3ef6fa: editor saves publish through the claim-fenced
+`finish_upload_processing_job` RPC, which repeats the path/hash comparison in
+the publishing transaction — migration `0098_upload_replace_content_cas.sql`.
+A lost comparison reports `document_changed` and cleans up only the losing
+upload's staged objects.) **Download** exports the live
 document, and **Ctrl/Cmd+S** requests an immediate save. Standalone previews using
 `displayUrl`, including the catalog story, only export locally. Native mode
 switching preserves edits. A fresh server snapshot replaces a clean editor and
@@ -168,9 +173,12 @@ clears its highlight while preserving a subsequent user selection or activation.
 From this checkout, using a supported Node runtime (verification used Node 24):
 
 ```sh
-npm ci --prefix frontend
-npm run catalog:docx --prefix frontend -- --host 127.0.0.1 --port 6102
+pnpm --dir frontend install --frozen-lockfile
+pnpm --dir frontend run catalog:docx --host 127.0.0.1 --port 6102
 ```
+
+(Dev divergence, sync-log 6e3ef6fa: this repository uses pnpm only; upstream
+documents npm and Bun commands here.)
 
 Open <http://127.0.0.1:6102/>. The dedicated Ladle story generates a synthetic
 agreement with several fonts, a table, headers, footers, a footnote, and tracked
@@ -180,8 +188,8 @@ file picker uses a browser blob URL and does not upload the selected document.
 The normal primitive catalog is unchanged.
 
 After switching to this branch, install dependencies before starting the app.
-Bun users can run `bun install --frozen-lockfile`, then `bun dev`, from
-`frontend/`. Both npm and Bun lockfiles are maintained. No DOCX preparation script
+Run `pnpm install --frozen-lockfile`, then `pnpm dev`, from `frontend/`
+(Dev: `pnpm-lock.yaml` is the maintained lockfile). No DOCX preparation script
 or copied worker bundle is needed. The standalone catalog excludes EigenPal's
 packages from dependency prebundling to preserve relative font and WASM assets.
 
@@ -191,6 +199,10 @@ packages from dependency prebundling to preserve relative font and WASM assets.
 - Focused Vitest coverage: initial renderer/mode, scroll restoration,
   citation/revision highlights, refresh/error recovery, native revision optimistic
   resolution, panel integration, and import architecture.
+- Dev (sync-log 6e3ef6fa): the static export emits EigenPal's fonts and
+  `harfbuzz.wasm` under `/_next/static/media/`, served by the backend's static
+  handler outside `/api` auth. Upstream's headless-browser checks below were
+  not re-run here.
 - Headless Chromium with synthetic documents: native mode switching, typing,
   local edit preservation, downloading, citation jumps, resizing, and malformed
   files. These checks do not exercise an authenticated backend session or assert
