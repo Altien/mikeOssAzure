@@ -76,6 +76,13 @@ vi.mock("@/app/lib/mikeApi", () => ({
     deleteProjectFolder: vi.fn(),
     moveDocumentToFolder: vi.fn(),
     moveSubfolderToFolder: vi.fn(),
+    // Dev drift: upstream #483 (project chat IDE workspace) made the page load
+    // sibling project chats and added these mikeApi imports.
+    listProjectChats: vi.fn().mockResolvedValue([]),
+    getDocument: vi.fn(),
+    uploadProjectDocuments: vi.fn(),
+    renameProjectDocument: vi.fn(),
+    resolveProjectFolderPath: vi.fn(),
 }));
 
 vi.mock("@/app/components/projects/ProjectExplorer", () => ({
