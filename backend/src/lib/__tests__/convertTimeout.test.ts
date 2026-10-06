@@ -36,8 +36,12 @@ afterEach(async () => {
   await rm(directory, { recursive: true, force: true });
 });
 
+// Platform: the fake soffice is a POSIX `#!/bin/sh` script; Windows cannot
+// spawn it (spawn ENOENT), so these run only on POSIX hosts / CI.
+const posixOnly = it.skipIf(process.platform === "win32");
+
 describe("office conversion deadline", () => {
-  it("kills a conversion that outlives its deadline and removes its profile", async () => {
+  posixOnly("kills a conversion that outlives its deadline and removes its profile", async () => {
     const outputDirectory = join(directory, "work");
     const startedAt = Date.now();
 
@@ -57,7 +61,7 @@ describe("office conversion deadline", () => {
   });
 });
 
-it("distinguishes an unavailable converter from a rejected document without stderr", async () => {
+posixOnly("distinguishes an unavailable converter from a rejected document without stderr", async () => {
   timing.timeoutMs = 5000;
   await writeFile(
     join(directory, "soffice"),
@@ -88,7 +92,7 @@ it("distinguishes an unavailable converter from a rejected document without stde
 // The follow-up access() then threw a bare ENOENT whose top frame was the
 // access call, so the issue read as a missing file rather than a rejected
 // conversion and the operator log lost LibreOffice's own explanation.
-it("reports a clean soffice exit that wrote no PDF as a failed conversion", async () => {
+posixOnly("reports a clean soffice exit that wrote no PDF as a failed conversion", async () => {
   timing.timeoutMs = 5000;
   await writeFile(
     join(directory, "soffice"),
