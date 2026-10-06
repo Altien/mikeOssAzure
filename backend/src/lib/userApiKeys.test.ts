@@ -30,7 +30,7 @@ import {
   flushEncryptionKey,
   _readLegacyRowForMigration,
   getOrganisationApiKeys,
-} from "./userApiKeys";
+} from "../modules/user/user.apiKeyStore"; // Dev drift: moved by upstream #295
 
 /**
  * Build a fake supabase-style client with one method per code path the
@@ -646,6 +646,7 @@ describe("getConfiguredProviders", () => {
       claude: true,
       gemini: false,
       openai: false,
+      kimi: false, // Dev drift: Dev keeps the Kimi provider slot
       openrouter: false,
       vercel: false,
       "opencode-go": false,
@@ -676,6 +677,7 @@ describe("getConfiguredProviders", () => {
       claude: true,
       gemini: false,
       openai: true,
+      kimi: false, // Dev drift: Dev keeps the Kimi provider slot
       openrouter: false,
       vercel: false,
       "opencode-go": false,
@@ -696,6 +698,7 @@ describe("getConfiguredProviders", () => {
       claude: false,
       gemini: false,
       openai: false,
+      kimi: false, // Dev drift: Dev keeps the Kimi provider slot
       openrouter: false,
       vercel: false,
       "opencode-go": false,

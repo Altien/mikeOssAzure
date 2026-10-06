@@ -6,17 +6,20 @@ const { deleteFileMock, listFilesMock } = vi.hoisted(() => ({
   listFilesMock: vi.fn(),
 }));
 
+// Dev drift: upstream #295 moved lib/userDataCleanup to modules/user/user.dataCleanup,
+// which also needs assertStorageConfigured/extractedTextKey from storage.
 vi.mock("./storage", () => ({
+  assertStorageConfigured: vi.fn(),
   deleteFile: deleteFileMock,
   listFiles: listFilesMock,
+  extractedTextKey: (versionId: string) => `extracted-text/${versionId}.txt`,
 }));
 
 import {
   deleteAllUserChats,
   deleteAllUserTabularReviews,
   deleteUserProjects,
-  deleteUserAccountData,
-} from "./userDataCleanup";
+} from "../modules/user/user.dataCleanup";
 
 beforeEach(() => {
   deleteFileMock.mockReset();
@@ -58,12 +61,12 @@ describe("deleteAllUserChats", () => {
 });
 
 describe("deleteAllUserTabularReviews", () => {
-  it("cascades messages → chats → cells → reviews and returns the review count", async () => {
+  // Dev drift: upstream #295 deletes only the parent reviews and relies on the
+  // schema's ON DELETE CASCADE for chats/messages/cells (0000_initial.sql).
+  it("deletes only the parent reviews (children cascade) and returns the review count", async () => {
     const { db, calls, callsFor } = makeFakeDb((call) => {
       if (call.table === "tabular_reviews" && call.op === "select")
         return { data: [{ id: "r1" }, { id: "r2" }] };
-      if (call.table === "tabular_review_chats" && call.op === "select")
-        return { data: [{ id: "tc1" }] };
       return {};
     });
 
@@ -73,18 +76,26 @@ describe("deleteAllUserTabularReviews", () => {
     const deletes = calls
       .filter((c) => c.op === "delete")
       .map((c) => c.table);
-    expect(deletes).toEqual([
-      "tabular_review_chat_messages",
-      "tabular_review_chats",
-      "tabular_cells",
-      "tabular_reviews",
-    ]);
-    expect(
-      filterValue(callsFor("tabular_review_chat_messages", "delete")[0], "in", "chat_id"),
-    ).toEqual(["tc1"]);
+    expect(deletes).toEqual(["tabular_reviews"]);
     expect(
       filterValue(callsFor("tabular_reviews", "delete")[0], "in", "id"),
     ).toEqual(["r1", "r2"]);
+  });
+
+  it("batches id-based deletes at 500 per statement", async () => {
+    const manyReviews = Array.from({ length: 501 }, (_, i) => ({ id: `r${i}` }));
+    const { db, callsFor } = makeFakeDb((call) =>
+      call.table === "tabular_reviews" && call.op === "select"
+        ? { data: manyReviews }
+        : {},
+    );
+
+    expect(await deleteAllUserTabularReviews(db as never, "u1")).toBe(501);
+
+    const reviewDeletes = callsFor("tabular_reviews", "delete");
+    expect(reviewDeletes).toHaveLength(2);
+    expect((filterValue(reviewDeletes[0], "in", "id") as string[]).length).toBe(500);
+    expect((filterValue(reviewDeletes[1], "in", "id") as string[]).length).toBe(1);
   });
 
   it("short-circuits to 0 with no deletes when the user has no reviews", async () => {
@@ -105,7 +116,11 @@ describe("deleteUserProjects", () => {
     expect(calls).toEqual([]);
   });
 
-  it("only deletes projects the user owns, and removes version files from storage", async () => {
+  // Dev drift: upstream #295 moved storage cleanup to the documents module's
+  // inline/durable cleanup; storage-key assertions now live in
+  // lib/__tests__/userDataCleanup.test.ts ("cascades project contents and
+  // storage files for owned projects"). This keeps the ownership filter check.
+  it("only deletes projects the user owns", async () => {
     const { db, calls } = makeFakeDb((call) => {
       if (call.table === "projects" && call.op === "select")
         return { data: [{ id: "p1" }] };
@@ -131,152 +146,16 @@ describe("deleteUserProjects", () => {
     )!;
     expect(filterValue(projectSelect, "eq", "user_id")).toBe("u1");
     expect(filterValue(projectSelect, "in", "id")).toEqual(["p1", "p-not-mine"]);
-    // Both storage objects are handed to durable cleanup, not deleted inline.
-    const queued = calls.find((c) => c.table === "db_jobs" && c.op === "insert");
-    expect(queued).toBeDefined();
-    expect(deleteFileMock).not.toHaveBeenCalled();
     // Projects themselves deleted last.
     const deletes = calls.filter((c) => c.op === "delete").map((c) => c.table);
     expect(deletes[deletes.length - 1]).toBe("projects");
   });
 });
 
-describe("deleteUserAccountData", () => {
-  const baseRespond = (call: DbCall) => {
-    if (call.table === "projects" && call.op === "select")
-      return { data: [{ id: "p1" }] };
-    if (call.table === "documents" && call.op === "select")
-      return { data: [{ id: "d1" }] };
-    if (call.table === "document_versions" && call.op === "select")
-      return {
-        data: [
-          { storage_path: "documents/u1/d1/a.docx", pdf_storage_path: "documents/u1/d1/a.pdf" },
-        ],
-      };
-    if (call.table === "tabular_reviews" && call.op === "select")
-      return { data: [] };
-    return {};
-  };
-
-  it("deletes storage objects, the user's storage prefix, and every owned table", async () => {
-    listFilesMock.mockResolvedValue(["documents/u1/orphan.tmp"]);
-    const { db, calls, callsFor } = makeFakeDb(baseRespond);
-
-    await deleteUserAccountData(db as never, "u1", "User@Example.com");
-
-    expect(deleteFileMock).toHaveBeenCalledWith("documents/u1/d1/a.docx");
-    expect(deleteFileMock).toHaveBeenCalledWith("documents/u1/d1/a.pdf");
-    expect(listFilesMock).toHaveBeenCalledWith("documents/u1/");
-    expect(deleteFileMock).toHaveBeenCalledWith("documents/u1/orphan.tmp");
-
-    const deletedTables = calls
-      .filter((c) => c.op === "delete")
-      .map((c) => c.table);
-    for (const table of [
-      "documents",
-      "tabular_review_chats",
-      "tabular_reviews",
-      "chats",
-      "project_subfolders",
-      "library_folders",
-      "hidden_workflows",
-      "workflows",
-      "projects",
-    ]) {
-      expect(deletedTables).toContain(table);
-    }
-    expect(deletedTables.indexOf("documents")).toBeLessThan(
-      deletedTables.indexOf("library_folders"),
-    );
-    // OSS-6: the user's workflow_open_source_submissions rows are deleted
-    // (upstream a5fe6d6; table added by 0041).
-    const routerDeletes = callsFor("user_router_models", "delete");
-    expect(routerDeletes).toHaveLength(1);
-    expect(filterValue(routerDeletes[0], "eq", "user_id")).toBe("u1");
-    const submissionDeletes = callsFor(
-      "workflow_open_source_submissions",
-      "delete",
-    );
-    expect(submissionDeletes).toHaveLength(1);
-    expect(
-      filterValue(submissionDeletes[0], "eq", "submitted_by_user_id"),
-    ).toBe("u1");
-    // workflow_shares wiped both as sharer and (lowercased) recipient.
-    const shareDeletes = callsFor("workflow_shares", "delete");
-    expect(shareDeletes).toHaveLength(2);
-    expect(filterValue(shareDeletes[0], "eq", "shared_by_user_id")).toBe("u1");
-    expect(filterValue(shareDeletes[1], "eq", "shared_with_email")).toBe(
-      "user@example.com",
-    );
-  });
-
-  it("scrubs the email from shared_with arrays on projects and tabular_reviews", async () => {
-    const { db, callsFor } = makeFakeDb((call) => {
-      if (call.filters.some(([m]) => m.startsWith("filter")))
-        return {
-          data: [
-            { id: "shared-1", shared_with: ["user@example.com", "other@x.com"] },
-          ],
-        };
-      return baseRespond(call);
-    });
-
-    await deleteUserAccountData(db as never, "u1", "User@Example.com");
-
-    for (const table of ["projects", "tabular_reviews"] as const) {
-      const updates = callsFor(table, "update");
-      expect(updates).toHaveLength(1);
-      expect(updates[0].payload).toEqual({ shared_with: ["other@x.com"] });
-      expect(filterValue(updates[0], "eq", "id")).toBe("shared-1");
-    }
-  });
-
-  it("skips all email-based cleanup when the principal has no email", async () => {
-    const { db, calls, callsFor } = makeFakeDb(baseRespond);
-
-    await deleteUserAccountData(db as never, "u1", null);
-
-    expect(callsFor("workflow_shares", "delete")).toHaveLength(1); // sharer only
-    expect(
-      calls.filter((c) => c.filters.some(([m]) => m.startsWith("filter"))),
-    ).toEqual([]); // no shared_with scans
-  });
-
-  it("batches id-based deletes at 500 per statement", async () => {
-    const manyDocs = Array.from({ length: 501 }, (_, i) => ({ id: `d${i}` }));
-    const { db, callsFor } = makeFakeDb((call) => {
-      if (call.table === "documents" && call.op === "select")
-        return { data: manyDocs };
-      if (call.table === "projects" && call.op === "select")
-        return { data: [] };
-      return {};
-    });
-
-    await deleteUserAccountData(db as never, "u1", null);
-
-    const docDeletes = callsFor("documents", "delete");
-    expect(docDeletes).toHaveLength(2);
-    expect((filterValue(docDeletes[0], "in", "id") as string[]).length).toBe(500);
-    expect((filterValue(docDeletes[1], "in", "id") as string[]).length).toBe(1);
-  });
-
-  it("propagates a storage-path load failure with context", async () => {
-    const { db } = makeFakeDb((call) => {
-      if (call.table === "document_versions")
-        return { error: { message: "db down" } };
-      return baseRespond(call);
-    });
-
-    await expect(
-      deleteUserAccountData(db as never, "u1", null),
-    ).rejects.toThrow("Failed to load document storage paths: db down");
-  });
-
-  it("propagates prefix cleanup failure for durable retry", async () => {
-    listFilesMock.mockRejectedValue(new Error("container listing denied"));
-    const { db, callsFor } = makeFakeDb(baseRespond);
-
-    await expect(deleteUserAccountData(db as never, "u1", null))
-      .rejects.toThrow(/container listing denied/);
-  });
-});
+// Dev drift: the deleteUserAccountData cases that lived here asserted the
+// pre-#295 shape (explicit child enumeration, call-order deletes) and need
+// `.not(...)` chains this call-recording fake does not model. Their coverage
+// (storage objects + prefixes, owned tables, OSS submissions, workflow shares,
+// shared_with scrubbing, no-email path, prefix-failure retry, and Dev's
+// user_router_models erasure) lives in the stateful-fake suites
+// lib/__tests__/userDataCleanup.test.ts and userDataCleanup.orgs.test.ts.

@@ -12,7 +12,9 @@ const { readEncryptedApiKeysMock, createServerSupabaseMock } = vi.hoisted(() => 
   createServerSupabaseMock: vi.fn(),
 }));
 
-vi.mock("./userApiKeys", () => ({
+// Dev drift: upstream #295 moved userApiKeys/userSettings into modules/user;
+// upsertUserProfile lives in lib/userLookup.
+vi.mock("../modules/user/user.apiKeyStore", () => ({
   getOrganisationApiKeys: readEncryptedApiKeysMock,
 }));
 
@@ -23,8 +25,10 @@ vi.mock("./supabase", () => ({
 // `resolveModel` is the only thing we actually rely on from ./llm beyond
 // the constants; mock it so we control the allow-list deterministically.
 vi.mock("./llm", () => ({
+  // Dev drift: preferences now go through normalizeOptionalModelPreference →
+  // resolveModel(value, ""); a whitespace id is never on the real allow-list.
   resolveModel: (id: string | null | undefined, fallback: string) =>
-    id && id !== "blocked-model" ? id : fallback,
+    id?.trim() && id !== "blocked-model" ? id : fallback,
   DEFAULT_TITLE_MODEL: "default-title-model",
   DEFAULT_TABULAR_MODEL: "default-tabular-model",
   OPENAI_LOW_MODELS: ["mock-openai-low"],
@@ -33,8 +37,8 @@ vi.mock("./llm", () => ({
 import {
   getUserModelSettings,
   getUserApiKeys,
-  upsertUserProfile,
-} from "./userSettings";
+} from "../modules/user/user.settings";
+import { upsertUserProfile } from "./userLookup";
 
 vi.mock("./routerModels", async () => ({
   ...(await vi.importActual<typeof import("./routerModels")>("./routerModels")),
@@ -232,13 +236,14 @@ describe("getUserModelSettings — fast model resolution chain", () => {
     expect(result.fast_model).toBe("kimi-k3");
   });
 
-  it("falls back to aoai:<deployment> when only the user's azure_openai deployment is set", async () => {
+  // Dev drift: upstream d08e2d2b requires both an API key and a deployment.
+  it("falls back to aoai:<deployment> when only the org azure_openai config is set", async () => {
     readEncryptedApiKeysMock.mockResolvedValueOnce({
       ...emptyKeys,
       azureOpenai: {
         endpoint: "ep",
         deployment: "my-deploy",
-        apiKey: null,
+        apiKey: "azure-key",
         apiVersion: null,
       },
     });
@@ -251,7 +256,11 @@ describe("getUserModelSettings — fast model resolution chain", () => {
     expect(result.fast_model).toBe("aoai:my-deploy");
   });
 
-  it("falls back to the AZURE_OPENAI_DEPLOYMENT env when the user has no azure deployment", async () => {
+  // Dev drift: upstream d08e2d2b dropped the direct AZURE_OPENAI_DEPLOYMENT read
+  // here; the deployment now resolves Key Vault-first inside
+  // getOrganisationApiKeys (azure-openai-deployment), so a bare env var with no
+  // org Azure credentials must not produce an aoai: model.
+  it("ignores a bare AZURE_OPENAI_DEPLOYMENT env when no org azure credentials resolve", async () => {
     process.env.AZURE_OPENAI_DEPLOYMENT = "env-deploy";
     readEncryptedApiKeysMock.mockResolvedValueOnce(emptyKeys);
     const { client } = makeClient({
@@ -260,7 +269,21 @@ describe("getUserModelSettings — fast model resolution chain", () => {
 
     const result = await getUserModelSettings("u1", client as never);
 
-    expect(result.fast_model).toBe("aoai:env-deploy");
+    expect(result.fast_model).toBe("default-title-model");
+  });
+
+  it("does not derive aoai:<deployment> from a deployment without an API key", async () => {
+    readEncryptedApiKeysMock.mockResolvedValueOnce({
+      ...emptyKeys,
+      azureOpenai: { endpoint: "ep", deployment: "my-deploy", apiKey: null, apiVersion: null },
+    });
+    const { client } = makeClient({
+      selectSingle: { data: { fast_model: null, tabular_model: null } },
+    });
+
+    const result = await getUserModelSettings("u1", client as never);
+
+    expect(result.fast_model).toBe("default-title-model");
   });
 
   it("returns DEFAULT_TITLE_MODEL when no providers are configured anywhere", async () => {
@@ -297,7 +320,9 @@ describe("getUserModelSettings — fast model resolution chain", () => {
 });
 
 describe("getUserModelSettings — tabular model & api_keys", () => {
-  it("resolves tabular_model via resolveModel with DEFAULT_TABULAR_MODEL fallback", async () => {
+  // Dev drift: upstream d08e2d2b made tabular_model an optional override
+  // (null = derive at use site) instead of falling back to DEFAULT_TABULAR_MODEL.
+  it("returns null tabular_model when the stored selection is not allow-listed", async () => {
     readEncryptedApiKeysMock.mockResolvedValueOnce(emptyKeys);
     const { client } = makeClient({
       selectSingle: {
@@ -307,7 +332,7 @@ describe("getUserModelSettings — tabular model & api_keys", () => {
 
     const result = await getUserModelSettings("u1", client as never);
 
-    expect(result.tabular_model).toBe("default-tabular-model");
+    expect(result.tabular_model).toBeNull();
   });
 
   it("preserves an allow-listed tabular_model selection", async () => {

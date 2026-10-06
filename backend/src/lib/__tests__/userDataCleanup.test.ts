@@ -279,11 +279,9 @@ function makeDb(
                             tables[table] = rowsOf().filter(
                                 (row) => !predicate(row),
                             );
-                            if (table === "documents") {
-                                const removedIds = new Set(removed.map((row) => row.id));
-                                tables.document_versions = (tables.document_versions ?? [])
-                                    .filter((row) => !removedIds.has(row.document_id));
-                            }
+                            // Dev drift: restore upstream's full FK-cascade model
+                            // (Dev's numbered migrations carry the same ON DELETE CASCADEs).
+                            cascadeDelete(table, removed);
                             // Supabase returns the deleted rows when the call
                             // chains .select(); the grant cleanup uses that to
                             // learn which projects need their mirror rebuilt.
@@ -509,9 +507,10 @@ describe("deleteUserProjects", () => {
             ),
         ).toEqual([]);
 
-        expect(deleteFileMock).not.toHaveBeenCalled();
-        const queuedPaths = (tables.db_jobs?.[0]?.payload as { keys?: string[] })?.keys ?? [];
-        expect(queuedPaths.sort()).toEqual([
+        // Dev drift: upstream #295's inline document cleanup deletes the
+        // captured keys directly (no storage.cleanup job, asserted above).
+        const deletedPaths = deleteFileMock.mock.calls.map(([path]) => path);
+        expect(deletedPaths.sort()).toEqual([
             "documents/u1/d1/converted.pdf",
             "documents/u1/d1/source.pdf",
             // The read_document text cache lives outside the per-user
@@ -671,6 +670,12 @@ describe("deleteUserAccountData", () => {
             workflow_open_source_submissions: [
                 { id: "s1", submitted_by_user_id: "u1" },
             ],
+            // Dev drift: Entra account deletion also erases router preferences
+            // (Dev 6bfbce5a); moved here from the retired lib/userDataCleanup.test.ts.
+            user_router_models: [
+                { id: "urm1", user_id: "u1" },
+                { id: "urm-other", user_id: "u2" },
+            ],
             workflow_shares: [
                 { id: "ws-by", shared_by_user_id: "u1", shared_with_email: "x@y.z" },
                 {
@@ -736,6 +741,7 @@ describe("deleteUserAccountData", () => {
         expect(tables.project_subfolders).toEqual([]);
         expect(tables.hidden_workflows).toEqual([]);
         expect(tables.workflow_open_source_submissions).toEqual([]);
+        expect(ids(tables.user_router_models)).toEqual(["urm-other"]);
         expect(ids(tables.workflows)).toEqual(["w-other"]);
 
         // Audit rows carry PII (email, titles, prompt excerpts) and must be

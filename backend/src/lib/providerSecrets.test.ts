@@ -8,7 +8,8 @@ vi.mock("@azure/keyvault-secrets", () => ({
 
 import { flushConfigCache, getConfig } from "./config";
 import { resolveProviderSecret } from "./envSecrets";
-import { getOrganisationApiKeys, resolveVercelApiKey } from "./userApiKeys";
+// Dev drift: upstream #295 moved lib/userApiKeys to modules/user/user.apiKeyStore.
+import { getOrganisationApiKeys, resolveVercelApiKey } from "../modules/user/user.apiKeyStore";
 
 beforeEach(() => {
     flushConfigCache();
