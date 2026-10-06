@@ -658,7 +658,7 @@ describe("OAuth approval grant identity", () => {
         "%s mode preserves or replaces the grant appropriately",
         async (mode) => {
             vi.stubEnv(
-                "MCP_CONNECTORS_ENCRYPTION_SECRET",
+                "MCP_CONNECTORS_ENCRYPTION_KEY",
                 "test-only-oauth-grant-secret",
             );
             const token: Record<string, unknown> = {

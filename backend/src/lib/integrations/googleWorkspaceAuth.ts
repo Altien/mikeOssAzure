@@ -142,7 +142,7 @@ export async function workspaceStatus(
       connected: !!row,
       writeEnabled: row?.write_enabled === true,
       enabled: row?.enabled !== false,
-      requireWriteApproval: row?.require_write_approval === true,
+      requireWriteApproval: row?.require_write_approval !== false,
       readOnly: row?.read_only === true,
       grantId: row?.grant_id as string | undefined,
       accountEmail: row?.account_email as string | undefined,

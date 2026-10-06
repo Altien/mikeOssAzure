@@ -160,10 +160,24 @@ describe("MCP write approvals", () => {
     const writeTool = () => ({ ...makeTool(), requires_confirmation: true });
 
     it("runs write tools directly unless the connector asks for permission", async () => {
-        const db = makeDb(writeTool(), makeConnector(), []);
+        const db = makeDb(
+            writeTool(),
+            { ...makeConnector(), require_write_approval: false },
+            [],
+        );
         expect(
             await planMcpToolCall("user-1", "evil_do_thing", { a: 1 }, db),
         ).toEqual({ type: "run" });
+    });
+
+    // Dev divergence (sync-log: 2ec7cfc1): only an explicit false skips
+    // approval; a missing setting (unmigrated row) still holds the write.
+    it("holds a write for approval when the setting is absent", async () => {
+        const db = makeDb(writeTool(), makeConnector(), []);
+        expect(
+            (await planMcpToolCall("user-1", "evil_do_thing", { a: 1 }, db))
+                .type,
+        ).toBe("approval");
     });
 
     it("runs read tools directly even when the connector asks for permission", async () => {
@@ -269,14 +283,14 @@ describe("MCP write approvals", () => {
 describe("MCP read-only mode", () => {
     beforeEach(() => vi.clearAllMocks());
 
-    it("disables write tools in summaries without losing stored choices", () => {
+    it("disables write tools in summaries without losing stored choices", async () => {
         const connector = { ...makeConnector(), read_only: true };
         const tools = [makeTool(), { ...makeTool(), id: "write", requires_confirmation: true }, { ...makeTool(), id: "off", enabled: false, requires_confirmation: true }];
-        const summary = toConnectorSummary(connector, tools);
+        const summary = await toConnectorSummary(connector, tools);
         expect(summary.readOnly).toBe(true);
         expect(summary.tools.map(t => t.enabled)).toEqual([true, false, false]);
         connector.read_only = false;
-        expect(toConnectorSummary(connector, tools).tools.map(t => t.enabled)).toEqual([true, true, false]);
+        expect((await toConnectorSummary(connector, tools)).tools.map(t => t.enabled)).toEqual([true, true, false]);
     });
 
     it("omits write schemas and blocks planning, direct calls and stale approvals", async () => {
@@ -310,7 +324,7 @@ describe("previously cached tools without annotations", () => {
         const db = makeDb(tool, connector, []);
         expect(await buildUserMcpTools("user-1", db)).toHaveLength(1);
         connector.read_only = true;
-        expect(toConnectorSummary(connector, [tool]).tools[0]).toMatchObject({ write: true, enabled: false });
+        expect((await toConnectorSummary(connector, [tool])).tools[0]).toMatchObject({ write: true, enabled: false });
         expect(await buildUserMcpTools("user-1", db)).toEqual([]);
         expect((await executeMcpToolCall("user-1", tool.openai_tool_name, {}, db)).event.status).toBe("error");
     });

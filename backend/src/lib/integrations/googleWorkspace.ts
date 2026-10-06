@@ -227,7 +227,8 @@ async function recheckWorkspaceWrite(
   const { grant } = await resolveCall(db, userId, name, input);
   if (grant.grant_id !== grantId)
     throw new GoogleWorkspaceError("The Google connection changed. Review the action again.");
-  if (!approved && grant.require_write_approval)
+  // Dev (sync-log: 2ec7cfc1): approval fails closed — only an explicit false skips it.
+  if (!approved && grant.require_write_approval !== false)
     throw new GoogleWorkspaceError("This Google action requires approval in the assistant.");
 }
 
@@ -250,7 +251,7 @@ export async function planGoogleWorkspaceCall(
       name,
       input,
     );
-    if (!tool.write || grant.require_write_approval !== true)
+    if (!tool.write || grant.require_write_approval === false)
       return { type: "run" };
     const token = await workspaceAccessToken(db, userId, provider);
     const action = await prepareWorkspaceAction(provider, name, args, token);

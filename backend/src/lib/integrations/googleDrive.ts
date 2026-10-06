@@ -427,7 +427,7 @@ export async function getGoogleDriveStatus(
         schemaReady: true,
         enabled: row?.enabled !== false,
         writeEnabled: hasDriveWriteAccess(row),
-        requireWriteApproval: row?.require_write_approval === true,
+        requireWriteApproval: row?.require_write_approval !== false,
         readOnly: row?.read_only === true,
         ...(row?.grant_id ? { grantId: row.grant_id } : {}),
         ...(row?.account_email ? { accountEmail: row.account_email } : {}),
@@ -958,7 +958,8 @@ async function recheckDriveWrite(
         throw new GoogleDriveUserError(
             "The Google Drive connection changed. Review the action again.",
         );
-    if (!approved && row.require_write_approval)
+    // Dev (sync-log: 2ec7cfc1): approval fails closed — only an explicit false skips it.
+    if (!approved && row.require_write_approval !== false)
         throw new GoogleDriveUserError(
             "This Google Drive action requires approval in the assistant.",
         );
@@ -978,7 +979,8 @@ export async function planGoogleDriveCall(
             input,
             db,
         );
-        if (!row.require_write_approval) return { type: "run" };
+        // Dev (sync-log: 2ec7cfc1): approval fails closed — only an explicit false skips it.
+        if (row.require_write_approval === false) return { type: "run" };
         const grantId = row.grant_id!;
         const token = await getAccessToken(userId, db, grantId);
         const action = await prepareDriveWrite(name, args, token);
@@ -1111,7 +1113,7 @@ export async function executeGoogleDriveToolCall(
                 args,
                 db,
             );
-            if (row.require_write_approval)
+            if (row.require_write_approval !== false)
                 throw new GoogleDriveUserError(
                     "This Google Drive action requires approval in the assistant.",
                 );

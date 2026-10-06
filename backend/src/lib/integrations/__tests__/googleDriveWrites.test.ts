@@ -24,8 +24,10 @@ const original = {
 let current = { ...original };
 const calls: { url: URL; init: RequestInit }[] = [];
 let writeResponse: () => Response | Promise<Response>;
+// Dev: the MCP cipher is asynchronous (Key Vault first), so the synthetic
+// token is encrypted once per test in beforeEach.
+let token: Awaited<ReturnType<typeof encryptString>>;
 function store(overrides: Record<string, unknown> = {}) {
-  const token = encryptString("synthetic-token");
   return driveDb({
     tokenRow: {
       user_id: "user-1",
@@ -42,8 +44,9 @@ function store(overrides: Record<string, unknown> = {}) {
     },
   });
 }
-beforeEach(() => {
-  vi.stubEnv("MCP_CONNECTORS_ENCRYPTION_SECRET", "synthetic-secret");
+beforeEach(async () => {
+  vi.stubEnv("MCP_CONNECTORS_ENCRYPTION_KEY", "synthetic-secret");
+  token = await encryptString("synthetic-token");
   vi.spyOn(console, "error").mockImplementation(() => {});
   current = { ...original };
   calls.length = 0;

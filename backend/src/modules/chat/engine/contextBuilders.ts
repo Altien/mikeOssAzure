@@ -797,6 +797,39 @@ export async function appendAssistantEventsToMessage(
   return true;
 }
 
+/**
+ * Dev divergence (sync-log: 2ec7cfc1): approved connector outcomes are
+ * appended to the paused assistant message before any continuation run
+ * exists, so there is no stream-run fence to present. The single-use
+ * ask_inputs_response append is their claim; appending them unfenced also in
+ * the multi-replica cluster keeps the outcome of an external write that has
+ * already happened in durable history instead of silently dropping it.
+ */
+export async function appendSettledAssistantEvents(
+  db: Db,
+  chatId: string,
+  messageId: string,
+  authorUserId: string,
+  events: AssistantEvent[],
+): Promise<boolean> {
+  if (events.length === 0) return true;
+  const { data, error } = await db.rpc("append_chat_assistant_events", {
+    p_chat_id: chatId,
+    p_message_id: messageId,
+    p_author_user_id: authorUserId,
+    p_events: events,
+    p_citations: [],
+  });
+  if (error || data !== "appended") {
+    console.error(
+      "[assistant-events] failed to record approved connector outcome",
+      error ?? { result: data },
+    );
+    return false;
+  }
+  return true;
+}
+
 export type AppendAskInputsResponseResult =
   | "appended"
   | "forbidden"

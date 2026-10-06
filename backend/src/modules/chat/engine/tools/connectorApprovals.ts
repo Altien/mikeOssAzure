@@ -30,7 +30,7 @@ import {
   planGoogleWorkspaceCall,
 } from "../../../../lib/integrations/googleWorkspace";
 import {
-  appendAssistantEventsToMessage,
+  appendSettledAssistantEvents,
   loadAssistantMessage,
 } from "../contextBuilders";
 import { TOOL_ERROR_MESSAGE } from "../types";
@@ -113,14 +113,9 @@ export async function runApprovedConnectorActions(args: {
     });
   }
   if (events.length) {
-    await appendAssistantEventsToMessage(
-      db,
-      chatId,
-      messageId,
-      userId,
-      events,
-      undefined,
-    );
+    // Dev (sync-log: 2ec7cfc1): no stream-run fence exists yet here; see
+    // appendSettledAssistantEvents.
+    await appendSettledAssistantEvents(db, chatId, messageId, userId, events);
   }
   return events;
 }

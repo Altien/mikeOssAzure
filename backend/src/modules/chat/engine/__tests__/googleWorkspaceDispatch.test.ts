@@ -29,14 +29,16 @@ it.each([false, true])("dispatches Drive writes with approval required: %s", asy
   const store = driveDb({ tokenRow: {
     user_id: "u1", grant_id: "drive-grant", scope: "https://www.googleapis.com/auth/drive",
     require_write_approval: requiresApproval, expires_at: "2099-01-01",
-    ...encryptFields("access_token", "test-token"),
+    ...(await encryptFields("access_token", "test-token")),
   } });
   const fetchMock = vi.fn(async () => Response.json({ id: "folder-created" }));
   vi.stubGlobal("fetch", fetchMock);
   const result = await runToolCalls(
     [{ id: "create-folder", function: { name: "google_drive_create_folder", arguments: JSON.stringify({ name: "Matter" }) } }],
     new Map(), "u1", store.db, vi.fn(),
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+    // Dev: externalSourceCache, authorityTraceState, skillResourceStore.
+    undefined, undefined, undefined, undefined,
     { connectorApprovals: true },
   );
   expect(fetchMock).toHaveBeenCalledTimes(requiresApproval ? 0 : 1);
@@ -47,7 +49,7 @@ it.each([false, true])("dispatches Drive writes with approval required: %s", asy
   }
 });
 
-function gmailStore(requireWriteApproval: boolean) {
+async function gmailStore(requireWriteApproval: boolean) {
   const store = workspaceDb();
   store.tables.user_google_workspace_tokens.push({
     user_id: "u1",
@@ -87,13 +89,17 @@ async function dispatch(
     undefined,
     undefined,
     undefined,
+    // Dev: externalSourceCache, authorityTraceState, skillResourceStore.
+    undefined,
+    undefined,
+    undefined,
     { connectorApprovals },
   );
   return { result, stream: write.mock.calls.map((c) => c[0]).join("") };
 }
 
 it("runs reads and writes directly when the connection does not ask for permission", async () => {
-  const { store, fetchMock } = gmailStore(false);
+  const { store, fetchMock } = await gmailStore(false);
   const { result, stream } = await dispatch(
     store,
     [
@@ -123,7 +129,7 @@ it("runs reads and writes directly when the connection does not ask for permissi
 });
 
 it("pauses a write on an approval item when the connection asks for permission", async () => {
-  const { store, fetchMock } = gmailStore(true);
+  const { store, fetchMock } = await gmailStore(true);
   const { result, stream } = await dispatch(
     store,
     [
@@ -157,7 +163,7 @@ it("pauses a write on an approval item when the connection asks for permission",
 });
 
 it("refuses a write that needs approval on a surface that cannot pause for it", async () => {
-  const { store, fetchMock } = gmailStore(true);
+  const { store, fetchMock } = await gmailStore(true);
   const { result } = await dispatch(store, [send], false);
   expect(fetchMock).not.toHaveBeenCalled();
   expect(result.askInputsEvents).toEqual([]);

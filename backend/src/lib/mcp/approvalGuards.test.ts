@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+// Dev: the MCP cipher resolves Key Vault first; tests use the env fallback.
+process.env.MCP_CONNECTORS_ENCRYPTION_KEY ??= "test-encryption-secret";
 const mocks = vi.hoisted(() => ({
   callTool: vi.fn(),
   connect: vi.fn(),
@@ -90,7 +92,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.urls.length = 0;
   vi.stubEnv(
-    "MCP_CONNECTORS_ENCRYPTION_SECRET",
+    "MCP_CONNECTORS_ENCRYPTION_KEY",
     "test-only-connector-approval-secret",
   );
   mocks.connect.mockResolvedValue(undefined);
@@ -193,7 +195,7 @@ it.each([
   const plan = await planMcpToolCall("u1", tool.openai_tool_name, {}, db);
   if (plan.type !== "approval") throw new Error("expected approval");
   if (change === "credentials")
-    Object.assign(connector, authConfigPatch({ bearerToken: "replacement" }));
+    Object.assign(connector, await authConfigPatch({ bearerToken: "replacement" }));
   if (change === "oauth-account") token.grant_id = "replacement-grant";
   if (change === "in-flight-server")
     mocks.connect.mockImplementation(async () => {

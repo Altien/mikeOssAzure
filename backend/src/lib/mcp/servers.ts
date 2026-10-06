@@ -566,7 +566,8 @@ export async function planMcpToolCall(
     const { connector, tool } = resolved;
     if (
         !mcpToolRequiresWriteAccess(tool) ||
-        connector.require_write_approval !== true
+        // Dev (sync-log: 2ec7cfc1): approval fails closed — only an explicit false skips it.
+        connector.require_write_approval === false
     )
         return { type: "run" };
     if (JSON.stringify(args).length > MAX_APPROVAL_ARGUMENT_CHARS) {
@@ -707,7 +708,7 @@ async function callResolvedTool(
                     );
                 if (
                     mcpToolRequiresWriteAccess(current.tool) &&
-                    current.connector.require_write_approval &&
+                    current.connector.require_write_approval !== false &&
                     !approvedFingerprint
                 )
                     throw new Error(
