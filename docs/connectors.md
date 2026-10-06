@@ -104,7 +104,7 @@ for example, the Drive endpoint is
 
 - Connector bearer tokens, custom headers, and OAuth tokens are encrypted at
   rest using the deployment's Key Vault managed connector-encryption secret,
-  with `MCP_CONNECTORS_ENCRYPTION_SECRET` as a local fallback.
+  with `MCP_CONNECTORS_ENCRYPTION_KEY` as a local fallback.
 - Remote URLs are subject to Mike's outbound SSRF protections.
 - Connector tools are cached after successful registration and can be enabled
   or disabled from the connector's Manage dialog.
@@ -113,7 +113,16 @@ for example, the Drive endpoint is
 
 Every connector — MCP servers such as Slack, and Google Drive, Gmail and
 Calendar — has write access by default: the assistant can use a tool that
-changes data as soon as the connector is installed. A tool counts as a write
+changes data as soon as the connector is installed.
+
+> **Dev divergence (sync-log: 2ec7cfc1).** In this deployment **Ask for
+> permission for write actions** is on by default for every connector, and
+> the backend treats only an explicit "off" as no approval. Upgrading keeps
+> every previously disabled MCP tool disabled (upstream re-enables tools that
+> discovery had turned off) and turns a Gmail/Calendar connection that had
+> writes opted out into **Read-only**. Owners can change all of these in the
+> Manage dialog. Sensitive-setting changes rely on Entra sign-in policy
+> (Conditional Access) rather than an in-app MFA prompt. A tool counts as a write
 unless its server explicitly marks it read-only and non-destructive; the Manage
 dialog labels those tools **Write**.
 
@@ -124,10 +133,9 @@ choices. This also covers newly discovered write tools and pending approvals,
 and survives tool refreshes and Google reconnection. MCP write classification
 uses the server's annotations, so servers must report their tools accurately.
 
-Existing deployments must apply
-`backend/migrations/20261002_03_connector_read_only.sql` and
-`backend/migrations/20261002_05_mcp_oauth_grants.sql`. Fresh installations
-already include these settings in `backend/schema.sql`.
+These settings come from numbered migration
+`backend/migrations/0099_connector_write_access.sql`, which fresh and existing
+databases both apply (Dev has no `backend/schema.sql`).
 
 Turn on **Ask for permission for write actions** in a connector's Manage
 dialog to review each write first. The assistant's turn then pauses with an

@@ -7,6 +7,15 @@ replace plain-text/Google Doc contents, move and copy files, and trash or restor
 Each Mike user connects their own Google account in Settings → Connectors → Discover. Google Drive works like every other connector there: **Add** opens Google OAuth directly (showing **Adding...**, then **Cancel** while Google's window is open), the Discover card then shows **Added**, and the connector appears under **Installed** with an on/off switch. Its Manage dialog switches individual tools on or off, offers a **Read-only** override that disables every write tool while preserving individual choices, configures whether writes need approval, and deletes the connection. If the server has no Google OAuth app configured, **Add** shows the same **Could not add connector** warning as Slack, with setup steps and a guide link.
 The integration does not require a Google MCP server or a service account.
 
+> **Dev divergence (sync-log: 2ec7cfc1).** This deployment uses numbered
+> migrations (`0095_google_drive_integration.sql`, then
+> `0099_connector_write_access.sql`) instead of the dated files and
+> `backend/schema.sql` named below, has no Docker Compose stack, stores the
+> Google OAuth client in Key Vault (environment values are a local fallback
+> only), serves callbacks under the same-origin `/api` prefix, uses Entra
+> sign-in policy instead of in-app MFA, and builds with pnpm. Write approval is
+> on by default; see `docs/connectors.md`.
+
 ## Technical approach
 
 - **Authorization:** Web application OAuth, PKCE S256, a random state token,

@@ -2,6 +2,17 @@
 
 Drive, Gmail, and Calendar are delivered together in [PR #434](https://github.com/open-legal-products/mike/pull/434). The Gmail/Calendar design is recorded in [#521](https://github.com/open-legal-products/mike/issues/521).
 
+> **Dev divergence (sync-log: 2ec7cfc1).** This deployment applies numbered
+> migrations (`0096_google_workspace.sql`, then
+> `0099_connector_write_access.sql`) rather than the dated files,
+> `backend/schema.sql` or Compose db-init named below; it has no RLS (browser
+> roles have no grants), keeps the Google OAuth client in Key Vault, serves the
+> static frontend and `/api` from one origin (no Next.js gateway), and relies
+> on Entra Conditional Access instead of in-app MFA. Pending proposals from the
+> earlier out-of-turn approval list were settled as rejected by `0099`. Write
+> approval is on by default, and a connection that had writes opted out
+> became **Read-only**. Run tests with pnpm.
+
 ## User behavior
 
 **Connecting is always opt-in, including for users who sign into Mike with Google.** Mike sign-in tokens are never reused for Gmail or Calendar. Gmail and Calendar behave like every other connector in Settings → Connectors. In **Discover**, choose **Add**: the button shows **Adding...** while Mike starts authorization and **Cancel** while Google's window is open. There is no Mike account-selection dialog. After authorization, the Discover card shows **Added** and the connector appears under **Installed** with an on/off switch. Click it to open the same Manage dialog Slack uses: account, **Read-only** (disable write tools while preserving individual choices), **Ask for permission for write actions**, a switch per tool, **Refresh**, and **Delete**. If the server has no Google OAuth app configured, **Add** shows the same **Could not add connector** warning as Slack, with the server's setup steps and a guide link. Google shows an account chooser: choose a personal Gmail or Workspace account, including one different from your Mike login and different accounts for Gmail and Calendar. Each Mike user has one connection per service; choosing another account replaces that service's connection but keeps its settings.

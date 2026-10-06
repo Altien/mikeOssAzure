@@ -117,7 +117,7 @@ importers:
         specifier: ^18.0.13
         version: 18.0.14
       next:
-        specifier: ^16.3.5
+        specifier: ^16.3.8
         version: 16.3.8(@babel/core@7.29.7)(@types/node@26.6.4)(babel-plugin-react-compiler@1.0.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       nextjs-toploader:
         specifier: ^3.9.17
@@ -214,7 +214,7 @@ importers:
         specifier: ^9.39.5
         version: 9.39.5(jiti@2.7.0)
       eslint-config-next:
-        specifier: ^16.3.5
+        specifier: ^16.3.8
         version: 16.3.8(@typescript-eslint/parser@8.71.0(@typescript/typescript6@6.0.2)(eslint@9.39.5(jiti@2.7.0)))(@typescript/typescript6@6.0.2)(eslint@9.39.5(jiti@2.7.0))
       jsdom:
         specifier: ^30.0.1
