@@ -96,7 +96,9 @@ vi.mock("../../lib/documentVersions", () => ({
     loadActiveVersion: vi.fn(async () => null),
 }));
 
-import { app } from "../../app";
+// Dev drift: app.ts exports a side-effect-free buildApp(), not a module-level app.
+import { buildApp } from "../../app";
+const app = buildApp();
 import { createServerSupabase } from "../../lib/supabase";
 
 const AUTH = ["Authorization", "Bearer test"] as const;
@@ -195,7 +197,8 @@ function useDb(handle: { db: unknown }) {
 }
 
 const search = () =>
-    request(app).get("/projects?view=directory-search&search=Matter").set(...AUTH);
+    // Dev drift: Dev mounts the projects router under /api/projects.
+    request(app).get("/api/projects?view=directory-search&search=Matter").set(...AUTH);
 
 // The caller created this org matter and then left the firm. The
 // projects.user_id row survives their departure; their access does not.

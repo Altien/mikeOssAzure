@@ -19,6 +19,7 @@ import request from "supertest";
 // creator-scoped rule as DELETE .../versions/:versionId.
 // ---------------------------------------------------------------------------
 
+// Dev drift: Dev mounts the documents router under /api/single-documents.
 const { ensureDocAccess } = vi.hoisted(() => ({ ensureDocAccess: vi.fn() }));
 
 type Row = Record<string, unknown>;
@@ -156,7 +157,9 @@ vi.mock("../../lib/dbq/enqueue", () => ({
     requestDocumentCleanupDelivery: vi.fn(async () => 0),
 }));
 
-import { app } from "../../app";
+// Dev drift: app.ts exports a side-effect-free buildApp(), not a module-level app.
+import { buildApp } from "../../app";
+const app = buildApp();
 
 const AUTH = ["Authorization", "Bearer test"] as const;
 const DOC = "11111111-1111-4111-8111-111111111111";
@@ -202,7 +205,7 @@ describe("DELETE /single-documents/:documentId", () => {
         ];
 
         const res = await request(app)
-            .delete(`/single-documents/${DOC}`)
+            .delete(`/api/single-documents/${DOC}`)
             .set(...AUTH);
 
         expect(res.status).toBe(204);
@@ -213,7 +216,7 @@ describe("DELETE /single-documents/:documentId", () => {
         ensureDocAccess.mockResolvedValue(access("owner", true));
 
         const res = await request(app)
-            .delete(`/single-documents/${DOC}`)
+            .delete(`/api/single-documents/${DOC}`)
             .set(...AUTH);
 
         expect(res.status).toBe(204);
@@ -221,7 +224,7 @@ describe("DELETE /single-documents/:documentId", () => {
 
     it("refuses a live colleague's document with 403, not a fake 404", async () => {
         const res = await request(app)
-            .delete(`/single-documents/${DOC}`)
+            .delete(`/api/single-documents/${DOC}`)
             .set(...AUTH);
 
         expect(res.status).toBe(403);
@@ -235,7 +238,7 @@ describe("DELETE /single-documents/:documentId", () => {
         ensureDocAccess.mockResolvedValue({ ok: false });
 
         const res = await request(app)
-            .delete(`/single-documents/${DOC}`)
+            .delete(`/api/single-documents/${DOC}`)
             .set(...AUTH);
 
         expect(res.status).toBe(404);
@@ -261,7 +264,7 @@ describe("DELETE /single-documents/:documentId", () => {
         ensureDocAccess.mockResolvedValue(access("owner", false));
 
         const res = await request(app)
-            .delete(`/single-documents/${DOC}`)
+            .delete(`/api/single-documents/${DOC}`)
             .set(...AUTH);
 
         expect(res.status).toBe(204);
@@ -276,7 +279,7 @@ describe("DELETE /single-documents/:documentId", () => {
         ensureDocAccess.mockResolvedValue(access("editor", false));
 
         const res = await request(app)
-            .delete(`/single-documents/${DOC}`)
+            .delete(`/api/single-documents/${DOC}`)
             .set(...AUTH);
 
         expect(res.status).toBe(403);
@@ -299,7 +302,7 @@ describe("DELETE /single-documents/:documentId", () => {
         ensureDocAccess.mockResolvedValue(access("editor", false));
 
         const res = await request(app)
-            .delete(`/single-documents/${DOC}`)
+            .delete(`/api/single-documents/${DOC}`)
             .set(...AUTH);
 
         expect(res.status).toBe(204);
@@ -365,7 +368,7 @@ describe("DELETE /single-documents/:documentId/versions/:versionId", () => {
 
     it("refuses a non-creator editor with 403 and a reason", async () => {
         const res = await request(app)
-            .delete(`/single-documents/${DOC}/versions/${V2}`)
+            .delete(`/api/single-documents/${DOC}/versions/${V2}`)
             .set(...AUTH);
 
         expect(res.status).toBe(403);
@@ -382,7 +385,7 @@ describe("DELETE /single-documents/:documentId/versions/:versionId", () => {
         ensureDocAccess.mockResolvedValue({ ok: false });
 
         const res = await request(app)
-            .delete(`/single-documents/${DOC}/versions/${V2}`)
+            .delete(`/api/single-documents/${DOC}/versions/${V2}`)
             .set(...AUTH);
 
         expect(res.status).toBe(404);
@@ -395,7 +398,7 @@ describe("DELETE /single-documents/:documentId/versions/:versionId", () => {
         rows.documents[0].user_id = "u1";
 
         const res = await request(app)
-            .delete(`/single-documents/${DOC}/versions/${V2}`)
+            .delete(`/api/single-documents/${DOC}/versions/${V2}`)
             .set(...AUTH);
 
         expect(res.status).toBe(200);
@@ -440,7 +443,7 @@ describe("POST /single-documents/:documentId/versions/from-document", () => {
         ensureDocAccess.mockResolvedValue(access("viewer", false));
 
         const res = await request(app)
-            .post(`/single-documents/${DOC}/versions/from-document`)
+            .post(`/api/single-documents/${DOC}/versions/from-document`)
             .set(...AUTH)
             .send({ source_document_id: SOURCE });
 
@@ -454,7 +457,7 @@ describe("POST /single-documents/:documentId/versions/from-document", () => {
         ensureDocAccess.mockResolvedValue({ ok: false });
 
         const res = await request(app)
-            .post(`/single-documents/${DOC}/versions/from-document`)
+            .post(`/api/single-documents/${DOC}/versions/from-document`)
             .set(...AUTH)
             .send({ source_document_id: SOURCE });
 
