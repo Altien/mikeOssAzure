@@ -351,17 +351,14 @@ describe("queryEvents visibility scoping", () => {
     });
 
     it("de-duplicates owned and shared project ids", async () => {
-        const fake = makeDb(["p1", "p2"], ["p2", "p3"]);
-        const both = await accessibleProjectIds(
-            fake.db,
+        // Dev drift: the audit-local accessibleProjectIds/shared_with operand
+        // were retired for lib/access grants (upstream #463); use its API.
+        const both = await listAccessibleProjectIds(
             "u1",
             "u1@example.com",
             makeDb(["p1", "p2"], ["p2", "p3"]).db,
         );
         expect([...both].sort()).toEqual(["p1", "p2", "p3"]);
-        expect(fake.calls.sharedWithOperand).toBe(
-            JSON.stringify(["u1@example.com"]),
-        );
     });
 
     it("looks direct sharing up by normalized email in the grant table", async () => {
