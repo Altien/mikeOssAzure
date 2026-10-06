@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { ExternalSourceCache } from "../../../altien/externalSources/cache";
+// Dev drift: #295 moved this file into modules/chat/engine/tools; path re-rooted.
+import type { ExternalSourceCache } from "../../../../altien/externalSources/cache";
 import {
   getCachedCaseOpinionTexts,
   courtlistenerFetchedCaseMetadata,

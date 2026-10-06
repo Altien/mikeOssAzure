@@ -88,7 +88,8 @@ beforeEach(async () => {
 
   // Fresh module per test so the JWKS cache doesn't leak across cases.
   vi.resetModules();
-  ({ validateEntraToken } = await import("./entra"));
+  // Dev drift: Node16 type-check (tsconfig.test.json) needs .js on dynamic imports.
+  ({ validateEntraToken } = await import("./entra.js"));
 });
 
 afterEach(() => {

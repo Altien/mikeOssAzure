@@ -24,6 +24,8 @@ const job = {
   id: "text-job", kind: "document.precompute_text", status: "running", attempts: 1,
   max_attempts: 3, run_at: "", claimed_at: null, finished_at: null, last_error: null,
   dedupe_key: null, result: null, created_at: "",
+  // Dev drift: Dev's DbJob carries claim-token lease fences.
+  claim_token: null, lease_expires_at: null,
 } satisfies DbJob;
 beforeEach(() => {
   vi.resetAllMocks();

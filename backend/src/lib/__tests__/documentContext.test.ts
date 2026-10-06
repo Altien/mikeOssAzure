@@ -619,6 +619,11 @@ describe("active Word document context", () => {
             undefined,
             undefined,
             undefined,
+            // Dev drift: Dev's dispatcher takes externalSourceCache,
+            // authorityTraceState and skillResourceStore before the nonce.
+            undefined,
+            undefined,
+            undefined,
             "word-inline-nonce",
         );
 

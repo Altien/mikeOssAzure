@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { makeFakeDb } from "../../test/helpers/fakeDb";
+// Dev drift: #295 moved this file into modules/chat/engine; path re-rooted.
+import { makeFakeDb } from "../../../test/helpers/fakeDb";
 import { buildSystemPrompt } from "./prompts";
 import { buildWorkflowStore } from "./contextBuilders";
 import { TOOLS } from "./tools/toolSchemas";
@@ -18,7 +19,25 @@ describe("upstream feature compatibility", () => {
   });
 
   it("serves only current system workflow ids (no legacy aliases)", async () => {
-    const { db } = makeFakeDb();
+    // Dev drift: since upstream 1d92cbad system workflows are served from the
+    // database catalogue (mike_workflows), so the fake supplies those rows.
+    const { db } = makeFakeDb((call) =>
+      call.table === "mike_workflows" && call.op === "select"
+        ? {
+            data: [
+              "draft-cp-checklist",
+              "credit-agreement-review",
+              "shareholder-agreement-review",
+            ].map((workflow_key) => ({
+              workflow_key,
+              title: workflow_key,
+              prompt_md: `# ${workflow_key}`,
+              active: true,
+              updated_at: "2026-01-01T00:00:00Z",
+            })),
+          }
+        : { data: [] },
+    );
 
     const store = await buildWorkflowStore("user-1", null, db as never);
 

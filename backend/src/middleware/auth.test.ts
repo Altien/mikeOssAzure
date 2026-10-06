@@ -157,7 +157,8 @@ describe("requireAuth — opaque cookie boundary", () => {
   it("rejects a cookie-authenticated write from an untrusted Origin", async () => {
     const req = makeReq();
     req.method = "POST";
-    req.get = vi.fn(() => "https://attacker.example") as Request["get"];
+    // Dev drift: double cast for the tsconfig.test.json type-check gate.
+    req.get = vi.fn(() => "https://attacker.example") as unknown as Request["get"];
     const res = makeRes();
     await requireAuth(req, res, vi.fn());
     expect(res.statusCode).toBe(403);
@@ -199,8 +200,8 @@ describe("requireAuth — provider routing", () => {
     delete process.env.AUTH_PROVIDER;
     vi.mocked(validateSupabaseToken).mockResolvedValue({
       ok: true,
+      // Dev drift: the validator result has no authSource; requireAuth sets it.
       principal: validPrincipal,
-      authSource: "bearer",
     });
     vi.mocked(upsertUserProfile).mockResolvedValue(undefined);
     vi.mocked(tenantAccess).mockImplementation(async (_req, _res, next) => {

@@ -233,7 +233,10 @@ describe("stream runs", () => {
         const hung = start("run-hung", "review:hung");
         const events: string[] = [];
         hung.subscribe(1, {
-            write: (chunk) => events.push(chunk),
+            // Dev drift: write must return void for the type-check gate.
+            write: (chunk) => {
+                events.push(chunk);
+            },
             end: () => events.push("end"),
         });
 

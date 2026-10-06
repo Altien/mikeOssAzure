@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { makeFakeDb, type DbCall } from "../../../test/helpers/fakeDb";
+// Dev drift: #295 moved this file into modules/chat/engine/tools; paths re-rooted.
+import { makeFakeDb, type DbCall } from "../../../../test/helpers/fakeDb";
 
 const { uploadFileMock } = vi.hoisted(() => ({
   uploadFileMock: vi.fn(),
 }));
 
-vi.mock("../../storage", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../storage")>()),
+vi.mock("../../../../lib/storage", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../../lib/storage")>()),
   uploadFile: uploadFileMock,
 }));
 
@@ -14,8 +15,12 @@ import { runToolCalls } from "./toolDispatcher";
 import type { DocIndex, DocStore } from "../types";
 
 function emptyProject() {
+  // Dev drift: since #295 versions are created by the create_document_version
+  // RPC, which assigns the version number.
   return makeFakeDb((call: DbCall) =>
-    call.op === "select" ? { data: [] } : { data: [] },
+    call.op === "rpc" && call.table === "create_document_version"
+      ? { data: { version_number: 1 } }
+      : { data: [] },
   );
 }
 

@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 const bytes = new TextEncoder().encode("# notes\n\nfirst write\n");
 
-vi.mock("../../storage", () => ({
+// Dev drift: #295 moved this file into modules/chat/engine/tools; path re-rooted.
+vi.mock("../../../../lib/storage", () => ({
   downloadFile: vi.fn(async () =>
     bytes.buffer.slice(
       bytes.byteOffset,

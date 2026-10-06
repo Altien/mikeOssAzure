@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { makeFakeDb, type DbCall } from "../../../test/helpers/fakeDb";
+// Dev drift: #295 moved this file into modules/chat/engine/tools; paths re-rooted.
+import { makeFakeDb, type DbCall } from "../../../../test/helpers/fakeDb";
 
 const { uploadFileMock } = vi.hoisted(() => ({
   uploadFileMock: vi.fn(),
 }));
 
-vi.mock("../../storage", () => ({
+vi.mock("../../../../lib/storage", () => ({
   uploadFile: uploadFileMock,
   versionStorageKey: (
     userId: string,
@@ -56,6 +57,16 @@ function database(existing?: {
           }
         : { data: [] };
     }
+    // Dev drift: since #295 versions go through the create_document_version
+    // RPC (documents lifecycle), which assigns the next version number and
+    // activates it.
+    if (call.table === "create_document_version" && call.op === "rpc") {
+      return {
+        data: {
+          version_number: existing ? (existing.versionNumber ?? 1) + 1 : 1,
+        },
+      };
+    }
     return { data: [] };
   };
   return makeFakeDb(respond);
@@ -96,18 +107,19 @@ describe("writeProjectDocument", () => {
     expect(calls.map((call) => `${call.table}:${call.op}`)).toEqual(
       expect.arrayContaining([
         "documents:insert",
-        "document_versions:insert",
-        "documents:update",
+        "create_document_version:rpc",
       ]),
     );
     const versionInsert = calls.find(
-      (call) => call.table === "document_versions" && call.op === "insert",
+      (call) => call.table === "create_document_version" && call.op === "rpc",
     );
     expect(versionInsert?.payload).toMatchObject({
-      source: "tool_write",
-      file_type: "json",
-      version_number: 1,
-      size_bytes: 13,
+      p_activate: true,
+      p_version: {
+        source: "tool_write",
+        file_type: "json",
+        size_bytes: 13,
+      },
     });
     const [storagePath, uploaded, contentType] = uploadFileMock.mock.calls[0];
     expect(String(storagePath)).toContain("/versions/");
@@ -150,17 +162,13 @@ describe("writeProjectDocument", () => {
       calls.filter((call) => call.table === "documents" && call.op === "insert"),
     ).toEqual([]);
     const versionInsert = calls.find(
-      (call) => call.table === "document_versions" && call.op === "insert",
+      (call) => call.table === "create_document_version" && call.op === "rpc",
     );
     expect(versionInsert?.payload).toMatchObject({
-      document_id: "doc-existing",
-      version_number: 3,
-      source: "tool_write",
+      p_document_id: "doc-existing",
+      p_activate: true,
+      p_version: { source: "tool_write" },
     });
-    const update = calls.find(
-      (call) => call.table === "documents" && call.op === "update",
-    );
-    expect(update?.filters).toEqual([["eq", "id", "doc-existing"]]);
   });
 
   it("refuses a filename belonging to a document it did not write", async () => {

@@ -55,7 +55,8 @@ beforeEach(async () => {
   // Fresh module per test so the KV cache and `secretClient` singleton
   // are isolated.
   vi.resetModules();
-  ({ getConfig, flushConfigCache, setConfig } = await import("./config"));
+  // Dev drift: Node16 type-check (tsconfig.test.json) needs .js on dynamic imports.
+  ({ getConfig, flushConfigCache, setConfig } = await import("./config.js"));
 });
 
 afterEach(() => {
@@ -230,7 +231,7 @@ describe("CONFIG_CACHE_TTL_SECONDS", () => {
     process.env.CONFIG_CACHE_TTL_SECONDS = "0"; // disable cache
     process.env.KEY_VAULT_NAME = "test-kv";
     vi.resetModules();
-    const mod = await import("./config");
+    const mod = await import("./config.js");
 
     getSecretMock.mockResolvedValueOnce({ value: "a" });
     getSecretMock.mockResolvedValueOnce({ value: "b" });
@@ -245,7 +246,7 @@ describe("CONFIG_CACHE_TTL_SECONDS", () => {
     process.env.CONFIG_CACHE_TTL_SECONDS = "not-a-number";
     process.env.KEY_VAULT_NAME = "test-kv";
     vi.resetModules();
-    const mod = await import("./config");
+    const mod = await import("./config.js");
 
     getSecretMock.mockResolvedValueOnce({ value: "a" });
 
@@ -259,7 +260,7 @@ describe("CONFIG_CACHE_TTL_SECONDS", () => {
     process.env.CONFIG_CACHE_TTL_SECONDS = "-30";
     process.env.KEY_VAULT_NAME = "test-kv";
     vi.resetModules();
-    const mod = await import("./config");
+    const mod = await import("./config.js");
 
     getSecretMock.mockResolvedValueOnce({ value: "a" });
 

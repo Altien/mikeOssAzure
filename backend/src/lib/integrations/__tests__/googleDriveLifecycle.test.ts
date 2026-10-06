@@ -67,12 +67,13 @@ describe("Google Drive OAuth lifecycle", () => {
         const store = driveDb();
         const state = await begin(store);
         expect(JSON.stringify(store.states)).not.toContain(state);
+        // Dev drift: assert non-null on the awaited value for the type-check gate.
         const config = JSON.parse(
-            await decryptString(
+            (await decryptString(
                 String(store.states[0].encrypted_state_config),
                 String(store.states[0].state_config_iv),
                 String(store.states[0].state_config_tag),
-            )!,
+            ))!,
         );
         const fetchMock = vi.fn(async (url: unknown, init?: RequestInit) => {
             if (String(url).endsWith("/userinfo")) {
