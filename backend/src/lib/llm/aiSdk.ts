@@ -78,6 +78,17 @@ export function stopNotice(
   return "";
 }
 
+/**
+ * A tool round the transport proved unsafe to execute (truncated or
+ * unterminated arguments). Dev divergence: Dev resolves
+ * @openrouter/ai-sdk-provider 3.1.0, which wraps mid-stream body errors in an
+ * APICallError("Failed to process successful response"); streamFailure()
+ * unwraps this class so the actionable reason reaches the caller.
+ */
+class ToolCallStreamError extends Error {
+  override name = "ToolCallStreamError";
+}
+
 /** Ensure a proxy-closed final SSE event is still visible to SDK parsers. */
 export async function aiSdkFetch(
   input: RequestInfo | URL,
@@ -99,7 +110,7 @@ export async function aiSdkFetch(
     for (const partial of partials.values()) {
       if (!partial.arguments) {
         if (!endedCleanly) {
-          throw new Error(
+          throw new ToolCallStreamError(
             `LLM stream ended before any arguments arrived for tool "${partial.name}".`,
           );
         }
@@ -115,13 +126,13 @@ export async function aiSdkFetch(
         // still unsafe: its partial arguments must fail before any tool could
         // run.
         if (!endedCleanly) {
-          throw new Error(
+          throw new ToolCallStreamError(
             `LLM stream ended with malformed JSON arguments for tool "${partial.name}".`,
           );
         }
       }
       if (!endedCleanly) {
-        throw new Error(
+        throw new ToolCallStreamError(
           `LLM stream ended before a clean terminal event for tool "${partial.name}".`,
         );
       }
@@ -343,6 +354,14 @@ function rethrowable(error: unknown, label: string): Error {
   return error instanceof Error ? error : new Error(errorMessage(error, label));
 }
 
+/** Provider stream failure, preferring an unsafe-tool-round transport cause. */
+function streamFailure(error: unknown, config: AiSdkAdapterConfig): Error {
+  for (let e: unknown = error; e instanceof Error; e = e.cause) {
+    if (e instanceof ToolCallStreamError) return e;
+  }
+  return toProviderStreamError(error, config);
+}
+
 function usesCourtlistenerTool(
   steps: Array<{ toolCalls: Array<{ toolName: string }> }>,
 ) {
@@ -544,7 +563,7 @@ export async function streamAiSdk(
           runToolsFailure.first ??= { error: part.error };
           throw guardAbortShaped(rethrowable(part.error, config.label));
         case "error":
-          throw guardAbortShaped(toProviderStreamError(part.error, config));
+          throw guardAbortShaped(streamFailure(part.error, config));
         case "abort": {
           const error = new Error(part.reason || "Stream aborted.");
           error.name = "AbortError";
@@ -575,7 +594,7 @@ export async function streamAiSdk(
     // Tool failures (including pauses) retain their original identity.
     const fatal = runToolsFailure.first
       ? guardAbortShaped(rethrowable(runToolsFailure.first.error, config.label))
-      : guardAbortShaped(toProviderStreamError(error, config));
+      : guardAbortShaped(streamFailure(error, config));
     await rawStreamRecorder?.flush("error", fatal);
     throw fatal;
   } finally {
