@@ -72,7 +72,8 @@ export function protectInternalErrorResponses(
           http_method: req.method,
           http_route: route,
         },
-        extra: { path: req.originalUrl, body: errorBody ?? body },
+        // Path only: OAuth callback query strings carry codes and state.
+        extra: { path: req.originalUrl.split("?")[0], body: errorBody ?? body },
         fingerprint: ["sanitized-5xx", req.method, route ?? ""],
       },
     );
