@@ -133,9 +133,14 @@ export function sendInternalError(
     // reported above.
     console.warn(
       `[http/schema-out-of-date] The database is missing an object this build needs (${schemaCode}). ` +
-        "Apply the SQL files in backend/migrations/ that are newer than this database, " +
-        "then reload the PostgREST schema cache (NOTIFY pgrst, 'reload schema'). " +
-        "See docs/deployment.md.",
+        // Dev divergence (sync-log: 4428944d): Dev applies the numbered
+        // backend/migrations/ history through its migration runner (the
+        // Azure `db-migrate` job or `pnpm migrate`), which also reloads the
+        // private PostgREST schema cache; upstream's hint names loose SQL
+        // files and a manual NOTIFY.
+        "Run the numbered backend/migrations/ history with the migration runner " +
+        "(the Azure db-migrate job, or pnpm migrate), which also reloads the PostgREST " +
+        "schema cache. See docs/deployment.md.",
     );
   }
   console.error("[http/internal-error]", {

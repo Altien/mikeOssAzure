@@ -54,6 +54,8 @@ const JOB = (over: Partial<DbJob> = {}): DbJob => ({
     dedupe_key: null,
     result: null,
     created_at: "2026-08-21T00:00:00Z",
+    // Dev: processClaimedJob requires the claim fence token.
+    claim_token: "11111111-1111-4111-8111-111111111111",
     ...over,
 });
 
@@ -177,7 +179,8 @@ describe("runDbJobTick claim failure reporting", () => {
 
 describe("processClaimedJob console lines", () => {
     it("logs a failed job with the reported Error, so the bridge files no duplicate (MIKE-BACKEND-G)", async () => {
-        const db = makeDb(async () => ({ data: [], error: null }));
+        // Dev: finish_db_job confirms the fenced claim with `true`.
+        const db = makeDb(async () => ({ data: true, error: null }));
         await processClaimedJob(db as never, {
             "test.kind": async () => {
                 throw new Error("Memory curator scope failed");
@@ -193,7 +196,8 @@ describe("processClaimedJob console lines", () => {
     });
 
     it("gives a job rejected with a PostgREST object a code-carrying Error", async () => {
-        const db = makeDb(async () => ({ data: [], error: null }));
+        // Dev: finish_db_job confirms the fenced claim with `true`.
+        const db = makeDb(async () => ({ data: true, error: null }));
         await processClaimedJob(db as never, {
             "test.kind": async () => {
                 throw { code: "42P01", message: 'relation "x" does not exist' };
@@ -210,7 +214,8 @@ describe("processClaimedJob console lines", () => {
     });
 
     it("logs an unknown kind with the reported Error", async () => {
-        const db = makeDb(async () => ({ data: [], error: null }));
+        // Dev: finish_db_job confirms the fenced claim with `true`.
+        const db = makeDb(async () => ({ data: true, error: null }));
         await processClaimedJob(db as never, {}, JOB({ kind: "nope.kind" }));
 
         const logged = consoleError.mock.calls.find(
@@ -220,7 +225,8 @@ describe("processClaimedJob console lines", () => {
     });
 
     it("never logs a deferral at error level (the console bridge would file it)", async () => {
-        const db = makeDb(async () => ({ data: [], error: null }));
+        // Dev: finish_db_job confirms the fenced claim with `true`.
+        const db = makeDb(async () => ({ data: true, error: null }));
         await processClaimedJob(db as never, {
             "test.kind": async () => {
                 throw new DbJobDeferredError(
