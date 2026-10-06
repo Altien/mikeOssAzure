@@ -1,15 +1,19 @@
-import type { Request, Response as ExpressResponse } from "express";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createRequestSupabase } from "../authSession";
+import { startSupabaseSSO } from "../auth/providers/supabaseSession";
 
-// Exercise the real SSR/Auth SDK; only the upstream HTTP boundary is mocked.
+// Dev drift: upstream's lib/authSession (createRequestSupabase + a cookie-held
+// PKCE verifier) does not exist in Dev. Dev's opaque server session starts SSO
+// via startSupabaseSSO, which returns the verifier as server-side state that
+// auth.routes stores with the OAuth state row (only a browser nonce cookie is
+// set). The PKCE contract with GoTrue is unchanged and asserted below.
+// Exercise the real Auth SDK; only the upstream HTTP boundary is mocked.
 describe("SSO PKCE session", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
   });
 
-  it("sends a PKCE challenge and persists an HttpOnly verifier for the callback", async () => {
+  it("sends a PKCE challenge and returns the verifier as server-held state for the callback", async () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("SUPABASE_URL", "https://auth.example.test");
     vi.stubEnv("SUPABASE_PUBLISHABLE_KEY", "test-key");
@@ -20,31 +24,13 @@ describe("SSO PKCE session", () => {
       }),
     );
     vi.stubGlobal("fetch", upstream);
-    const cookies: string[] = [];
-    const req = {
-      headers: { cookie: "" },
-      get: vi.fn((name: string) =>
-        name.toLowerCase() === "origin"
-          ? "https://app.example.test"
-          : undefined,
-      ),
-    } as unknown as Request;
-    const res = {
-      append: vi.fn((name: string, value: string) => {
-        if (name === "Set-Cookie") cookies.push(value);
-      }),
-      setHeader: vi.fn(),
-    } as unknown as ExpressResponse;
-    const client = createRequestSupabase(req, res);
-    const { data, error } = await client.auth.signInWithSSO({
-      domain: "example.com",
-      options: {
-        redirectTo: "https://app.example.test/auth/callback",
-        skipBrowserRedirect: true,
-      },
-    });
-    expect(error).toBeNull();
-    expect(data).toEqual({ url: "https://idp.example/saml" });
+
+    const { url: idpUrl, verifierState } = await startSupabaseSSO(
+      "example.com",
+      "https://app.example.test/auth/callback",
+    );
+
+    expect(idpUrl).toBe("https://idp.example/saml");
     expect(upstream).toHaveBeenCalledTimes(1);
     const [url, init] = upstream.mock.calls[0];
     expect(url).toBe("https://auth.example.test/auth/v1/sso");
@@ -58,13 +44,11 @@ describe("SSO PKCE session", () => {
     expect(body.redirect_to).toContain(
       "https://app.example.test/auth/callback",
     );
-    const verifier = cookies.find((cookie) =>
-      cookie.includes("-code-verifier="),
+    const stored = JSON.parse(verifierState) as Record<string, string>;
+    const verifierKey = Object.keys(stored).find((key) =>
+      key.endsWith("-code-verifier"),
     );
-    expect(verifier).toContain("__Host-mike-session");
-    expect(verifier).toContain("HttpOnly");
-    expect(verifier).toContain("Secure");
-    expect(verifier).toContain("SameSite=Lax");
-    expect(verifier).toContain("Path=/");
+    expect(verifierKey).toBeDefined();
+    expect(stored[verifierKey!]).toBeTruthy();
   });
 });
