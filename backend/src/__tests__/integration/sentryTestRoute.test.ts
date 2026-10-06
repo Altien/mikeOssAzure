@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 
-// The route is registered at import time behind an env flag, so the flag has
-// to be set before app.ts evaluates — hence the dynamic import below.
+// The route is registered behind an env flag.
+// Dev drift: Dev's buildApp() reads the flag per call, so a static import works
+// and the cold app-graph transform is paid at collection, not in a 10s hook.
 const reportError = vi.hoisted(() => vi.fn(() => "event-1"));
 const reportMessage = vi.hoisted(() => vi.fn(() => "event-2"));
 const tagCurrentRequest = vi.hoisted(() => vi.fn());
@@ -14,26 +15,28 @@ vi.mock("../../lib/observability/sentry", async (importOriginal) => ({
   setCurrentUser: vi.fn(),
 }));
 
-import type { app as builtApp } from "../../app";
+import type { Express } from "express";
+import { buildApp } from "../../app";
 
-let app: typeof builtApp;
+let app: Express;
 
-beforeAll(async () => {
+beforeAll(() => {
   process.env.SENTRY_ENABLE_TEST_ROUTE = "true";
-  ({ app } = await import("../../app.js"));
+  app = buildApp();
 });
 
 afterAll(() => {
   delete process.env.SENTRY_ENABLE_TEST_ROUTE;
 });
 
-describe("GET /observability/sentry-test", () => {
+describe("GET /api/observability/sentry-test", () => {
   it("throws through the real 500 path and reports with the response's request id", async () => {
     const consoleError = vi
       .spyOn(console, "error")
       .mockImplementation(() => {});
 
-    const res = await request(app).get("/observability/sentry-test");
+    // Dev drift: Dev mounts the probe under /api
+    const res = await request(app).get("/api/observability/sentry-test");
 
     expect(res.status).toBe(500);
     expect(res.body).toEqual({

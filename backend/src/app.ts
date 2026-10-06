@@ -183,6 +183,8 @@ export function buildApp(): express.Express {
     const requestId = randomUUID();
     res.locals.requestId = requestId;
     res.setHeader("X-Request-ID", requestId);
+    // Same id on the Sentry event, the response body, and the access log.
+    tagCurrentRequest(requestId);
     next();
   });
   app.use(protectInternalErrorResponses);
@@ -384,7 +386,10 @@ export function buildApp(): express.Express {
 
   if (process.env.SENTRY_ENABLE_TEST_ROUTE === "true") {
     app.get("/api/observability/sentry-test", () => {
-      throw new Error("Sentry backend test error");
+      throw Object.assign(
+        new Error("Sentry backend test error (SENTRY_ENABLE_TEST_ROUTE)"),
+        { code: "sentry_test" },
+      );
     });
   }
 
