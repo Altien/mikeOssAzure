@@ -23,6 +23,7 @@ import {
     clearConfiguredModels,
     useConfiguredModels,
 } from "@/app/hooks/useConfiguredModels";
+import { API_BASE } from "@/app/lib/mikeApi";
 
 // ChatInput and its ModelToggle both read the configured catalog, and both
 // mount in the same commit as the provider once the session resolves.
@@ -35,7 +36,9 @@ const fetchMock = vi.fn();
 
 function requestsTo(path: string) {
     return fetchMock.mock.calls.filter(([input]) =>
-        String(input).startsWith(`/api${path}`),
+        // Dev drift: Dev's API_BASE is absolute (NEXT_PUBLIC_API_BASE_URL +
+        // "/api"), not upstream's same-origin "/api" gateway path.
+        String(input).startsWith(`${API_BASE}${path}`),
     ).length;
 }
 
@@ -73,7 +76,7 @@ describe("configured model catalog on a signed-in page mount", () => {
         expect(
             reportNetworkFailure.mock.calls.filter(([, request]) =>
                 (request as { url: string }).url.startsWith(
-                    "/api/models/configured",
+                    `${API_BASE}/models/configured`,
                 ),
             ),
         ).toHaveLength(1);
