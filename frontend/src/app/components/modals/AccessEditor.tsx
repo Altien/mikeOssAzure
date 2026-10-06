@@ -733,6 +733,13 @@ export function AccessEditor({
             ) : null}
 
             <section className="flex min-h-0 flex-1 flex-col">
+                {scope === "project" ? (
+                    <p className="mb-3 text-xs text-gray-500">
+                        Access is inherited from the project and must be changed
+                        from the project&apos;s Access panel.
+                    </p>
+                ) : null}
+
                 <div className="mb-1 grid grid-cols-[minmax(0,1fr)_minmax(8rem,12rem)_5rem_1.5rem] gap-3 px-2 text-xs font-medium text-gray-500">
                     <div className="flex items-center gap-2">
                         <span>Name</span>
@@ -742,13 +749,6 @@ export function AccessEditor({
                     <span className="justify-self-start text-left">Role</span>
                     <span aria-hidden="true" />
                 </div>
-
-                {scope === "project" ? (
-                    <p className="mb-2 text-xs text-gray-500">
-                        Access is inherited from the project and must be changed
-                        from the project&apos;s Access panel.
-                    </p>
-                ) : null}
 
                 {loading ? (
                     <div className="min-h-0 flex-1 space-y-1">

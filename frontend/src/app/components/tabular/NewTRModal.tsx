@@ -646,6 +646,13 @@ export function NewTRModal({
                         directGrants={directGrants}
                         onDirectGrantsChange={setDirectGrants}
                         inheritedFromProject={isProjectMode || underProject}
+                        inheritedProjectId={
+                            isProjectMode
+                                ? projectId
+                                : underProject
+                                  ? selectedProjectId || null
+                                  : null
+                        }
                         ownerLabel="Review owners"
                     />
                 ) : (
