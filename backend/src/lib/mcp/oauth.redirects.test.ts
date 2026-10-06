@@ -106,7 +106,8 @@ describe("the fetcher handed to the MCP SDK", () => {
             return url.endsWith("/moved") ? json(AUTH_SERVER) : redirect("/moved");
         });
 
-        const { guardedDiscoveryFetch } = await import("./client");
+        // Dev drift: tsconfig.test.json (node16 resolution) needs the .js extension.
+        const { guardedDiscoveryFetch } = await import("./client.js");
 
         const followed = await guardedDiscoveryFetch("https://app.example.com/start");
         expect(followed.status).toBe(200);
