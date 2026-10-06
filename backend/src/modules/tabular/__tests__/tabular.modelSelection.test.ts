@@ -17,7 +17,9 @@ afterEach(() => {
 });
 
 describe("configured tabular model authentication", () => {
-    it("allows a cloud endpoint that declares no authentication source", () => {
+    // Dev drift: Dev's missingModelApiKey is async (Key Vault-first credential
+    // resolution), so these assertions await it.
+    it("allows a cloud endpoint that declares no authentication source", async () => {
         configure({
             id: "keyless-cloud",
             provider: "openai-compatible",
@@ -25,10 +27,10 @@ describe("configured tabular model authentication", () => {
             baseUrl: "https://models.example.test/v1",
         });
 
-        expect(missingModelApiKey("keyless-cloud", {})).toBeNull();
+        expect(await missingModelApiKey("keyless-cloud", {})).toBeNull();
     });
 
-    it("rejects a configured endpoint when its declared key is unavailable", () => {
+    it("rejects a configured endpoint when its declared key is unavailable", async () => {
         configure({
             id: "user-key-cloud",
             label: "User Key Cloud",
@@ -38,12 +40,12 @@ describe("configured tabular model authentication", () => {
             apiKeyProvider: "openai",
         });
 
-        expect(missingModelApiKey("user-key-cloud", {})).toMatchObject({
+        expect(await missingModelApiKey("user-key-cloud", {})).toMatchObject({
             provider: "openai-compatible",
             model: "user-key-cloud",
         });
         expect(
-            missingModelApiKey("user-key-cloud", { openai: "user-key" }),
+            await missingModelApiKey("user-key-cloud", { openai: "user-key" }),
         ).toBeNull();
     });
 });
