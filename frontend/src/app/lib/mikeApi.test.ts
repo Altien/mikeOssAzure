@@ -1161,7 +1161,8 @@ describe("streamChatTurn / stopChatTurn (server-owned turns)", () => {
             signal: controller.signal,
         });
         const { url, init } = lastFetchCall();
-        expect(url).toBe("/api/chat/c1/turn/t1/stream?from=7");
+        // Dev drift: API_BASE is absolute (NEXT_PUBLIC_API_BASE_URL + /api), not upstream's relative /api.
+        expect(url).toBe("http://localhost:3001/api/chat/c1/turn/t1/stream?from=7");
         expect(init.method ?? "GET").toBe("GET");
         expect(init.headers).toMatchObject({ Accept: "text/event-stream" });
         expect(init.signal).toBe(controller.signal);
@@ -1170,7 +1171,8 @@ describe("streamChatTurn / stopChatTurn (server-owned turns)", () => {
     it("defaults to replaying the whole turn", async () => {
         fetchMock.mockResolvedValue(streamResponse([]));
         await streamChatTurn({ chatId: "c1", turnId: "t1" });
-        expect(lastFetchCall().url).toBe("/api/chat/c1/turn/t1/stream?from=1");
+        // Dev drift: absolute API_BASE.
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/chat/c1/turn/t1/stream?from=1");
     });
 
     it("POSTs the stop and returns the server's verdict", async () => {
@@ -1182,7 +1184,8 @@ describe("streamChatTurn / stopChatTurn (server-owned turns)", () => {
             finished: false,
         });
         const { url, init } = lastFetchCall();
-        expect(url).toBe("/api/chat/c1/turn/t1/stop");
+        // Dev drift: absolute API_BASE.
+        expect(url).toBe("http://localhost:3001/api/chat/c1/turn/t1/stop");
         expect(init.method).toBe("POST");
     });
 });
@@ -1290,8 +1293,9 @@ describe("streamTabularGenerationResume", () => {
 
         await streamTabularGenerationResume("r1", undefined, 12);
 
+        // Dev drift: absolute API_BASE.
         expect(lastFetchCall().url).toBe(
-            "/api/tabular-review/r1/generate/stream?from=12",
+            "http://localhost:3001/api/tabular-review/r1/generate/stream?from=12",
         );
     });
 });
@@ -1310,8 +1314,9 @@ describe("streamTabularChatTurn / stopTabularChatTurn (server-owned review chat)
         });
 
         const { url, init } = lastFetchCall();
+        // Dev drift: absolute API_BASE.
         expect(url).toBe(
-            "/api/tabular-review/r1/chats/c1/turn/t1/stream?from=7",
+            "http://localhost:3001/api/tabular-review/r1/chats/c1/turn/t1/stream?from=7",
         );
         expect(init.method ?? "GET").toBe("GET");
         expect(init.headers).toMatchObject({ Accept: "text/event-stream" });
@@ -1327,8 +1332,9 @@ describe("streamTabularChatTurn / stopTabularChatTurn (server-owned review chat)
             turnId: "t1",
         });
 
+        // Dev drift: absolute API_BASE.
         expect(lastFetchCall().url).toBe(
-            "/api/tabular-review/r1/chats/c1/turn/t1/stream?from=1",
+            "http://localhost:3001/api/tabular-review/r1/chats/c1/turn/t1/stream?from=1",
         );
     });
 
@@ -1342,7 +1348,8 @@ describe("streamTabularChatTurn / stopTabularChatTurn (server-owned review chat)
             finished: false,
         });
         const { url, init } = lastFetchCall();
-        expect(url).toBe("/api/tabular-review/r1/chats/c1/turn/t1/stop");
+        // Dev drift: absolute API_BASE.
+        expect(url).toBe("http://localhost:3001/api/tabular-review/r1/chats/c1/turn/t1/stop");
         expect(init.method).toBe("POST");
     });
 });
@@ -1358,7 +1365,8 @@ describe("stopTabularGeneration", () => {
             finished: false,
         });
         const { url, init } = lastFetchCall();
-        expect(url).toBe("/api/tabular-review/r1/generate/stop");
+        // Dev drift: absolute API_BASE.
+        expect(url).toBe("http://localhost:3001/api/tabular-review/r1/generate/stop");
         expect(init.method).toBe("POST");
     });
 });
