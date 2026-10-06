@@ -49,6 +49,9 @@ jobs:
   dependency-audit:
     runs-on: ubuntu-latest
     strategy:
+      # Report every affected workspace; one vulnerable tree must not cancel
+      # the remaining audits and hide other updates that need attention.
+      fail-fast: false
       matrix:
         # The Dev fork has exactly three pnpm lock trees. No root package exists.
         include:
