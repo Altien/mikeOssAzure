@@ -22,6 +22,7 @@ import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { MikeIcon } from "@/app/components/chat/mike-icon";
 import { SidebarChatItem } from "@/app/components/shared/SidebarChatItem";
+import { SidebarProjectItem } from "@/app/components/shared/SidebarProjectItem";
 import {
     ChatSkeuoIcon,
     IdeSkeuoIcon,
@@ -34,7 +35,6 @@ import {
     SignOutSkeuoIcon,
 } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import { HistorySkeuoIcon } from "@/app/components/shared/HistorySkeuoIcon";
-import { ProjectSvgIcon } from "@/app/components/shared/FolderSvgIcon";
 import { listProjectSummaries } from "@/app/lib/mikeApi";
 import type { Project } from "@/app/components/shared/types";
 import { cn } from "@/app/lib/utils";
@@ -63,6 +63,8 @@ const NAV_ITEMS = [
 
 const RECENT_PROJECT_PAGE_SIZE = 10;
 const RECENT_PROJECT_LIST_HEIGHT_CLASS = "h-44";
+// Room for an expanded project's recent chats and reviews.
+const RECENT_PROJECT_LIST_EXPANDED_HEIGHT_CLASS = "h-64";
 const recentProjectsCache = new Map<
     string,
     { projects: Project[]; hasMore: boolean }
@@ -105,10 +107,45 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
         statuses: assistantHistoryStatuses,
         clearStatus: clearAssistantHistoryStatus,
     } = useAssistantHistoryStatuses({ activeChatId: routeChatId, chatIds });
+    // Fade the contents in whenever the sidebar opens, from its own toggle or
+    // from a page calling setSidebarOpen, but not when it is already open on
+    // first render.
     const [shouldAnimate, setShouldAnimate] = useState(false);
+    const [wasOpen, setWasOpen] = useState(isOpen);
+    if (isOpen !== wasOpen) {
+        setWasOpen(isOpen);
+        if (isOpen) setShouldAnimate(true);
+    }
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const [projectsCollapsed, setProjectsCollapsed] = useState(false);
     const [historyCollapsed, setHistoryCollapsed] = useState(false);
+    const activeProjectId = pathname.match(/^\/projects\/([^/]+)/)?.[1] ?? null;
+    const [expandedProjectIds, setExpandedProjectIds] = useState<
+        ReadonlySet<string>
+    >(() => new Set(activeProjectId ? [activeProjectId] : []));
+    // Opening a project expands its recent items. It never collapses one the
+    // user opened, so navigating away keeps their choice.
+    const [lastActiveProjectId, setLastActiveProjectId] =
+        useState(activeProjectId);
+    if (activeProjectId !== lastActiveProjectId) {
+        setLastActiveProjectId(activeProjectId);
+        if (activeProjectId && !expandedProjectIds.has(activeProjectId)) {
+            setExpandedProjectIds(
+                (current) => new Set([...current, activeProjectId]),
+            );
+        }
+    }
+    const setProjectExpanded = useCallback(
+        (projectId: string, expanded: boolean) => {
+            setExpandedProjectIds((current) => {
+                const next = new Set(current);
+                if (expanded) next.add(projectId);
+                else next.delete(projectId);
+                return next;
+            });
+        },
+        [],
+    );
     const userId = user?.id ?? null;
     const [recentProjects, setRecentProjects] = useState<Project[] | null>(
         null,
@@ -226,7 +263,6 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
     );
 
     const handleToggle = () => {
-        if (isOpen) setShouldAnimate(true);
         onToggle();
     };
 
@@ -258,6 +294,11 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
         if (!profile) return "";
         return profile.tier || "Free";
     };
+
+    const anyRecentProjectExpanded =
+        displayedRecentProjects?.some((project) =>
+            expandedProjectIds.has(project.id),
+        ) ?? false;
 
     if (!user) return null;
 
@@ -388,8 +429,10 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                             {!projectsCollapsed && (
                                 <div
                                     className={cn(
-                                        RECENT_PROJECT_LIST_HEIGHT_CLASS,
-                                        "overflow-y-auto",
+                                        anyRecentProjectExpanded
+                                            ? RECENT_PROJECT_LIST_EXPANDED_HEIGHT_CLASS
+                                            : RECENT_PROJECT_LIST_HEIGHT_CLASS,
+                                        "overflow-y-auto transition-[height] duration-200 motion-reduce:transition-none",
                                     )}
                                     onScroll={handleRecentProjectsScroll}
                                 >
@@ -398,8 +441,11 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                             {[50, 65, 45].map((w, i) => (
                                                 <div
                                                     key={i}
-                                                    className="flex h-8 items-center rounded-md px-3"
+                                                    className="flex h-8 items-center gap-3 rounded-md px-2"
                                                 >
+                                                    <div className="flex h-4 w-4 shrink-0 items-center justify-center">
+                                                        <div className="h-3.5 w-3.5 rounded bg-gray-200 animate-pulse" />
+                                                    </div>
                                                     <div
                                                         className="h-3 bg-gray-200 rounded animate-pulse"
                                                         style={{
@@ -428,39 +474,29 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                             }`}
                                         >
                                             {displayedRecentProjects.map(
-                                                (project) => {
-                                                    const isActive =
-                                                        pathname ===
-                                                            `/projects/${project.id}` ||
-                                                        pathname.startsWith(
-                                                            `/projects/${project.id}/`,
-                                                        );
-                                                    return (
-                                                        <button
-                                                            key={project.id}
-                                                            onClick={() =>
-                                                                router.push(
-                                                                    `/projects/${project.id}`,
-                                                                )
-                                                            }
-                                                            title={project.name}
-                                                            className={cn(
-                                                                "flex h-8 w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs transition-colors",
-                                                                isActive
-                                                                    ? `${LIQUID_GLASS_SELECTED_CLASS} text-gray-900`
-                                                                    : `text-gray-700 ${LIQUID_GLASS_HOVER_CLASS}`,
-                                                            )}
-                                                        >
-                                                            <ProjectSvgIcon
-                                                                open={isActive}
-                                                                className="h-3.5 w-3.5 shrink-0"
-                                                            />
-                                                            <span className="min-w-0 flex-1 truncate">
-                                                                {project.name}
-                                                            </span>
-                                                        </button>
-                                                    );
-                                                },
+                                                (project) => (
+                                                    <SidebarProjectItem
+                                                        key={project.id}
+                                                        project={project}
+                                                        pathname={pathname}
+                                                        expanded={expandedProjectIds.has(
+                                                            project.id,
+                                                        )}
+                                                        onExpandedChange={(
+                                                            expanded,
+                                                        ) =>
+                                                            setProjectExpanded(
+                                                                project.id,
+                                                                expanded,
+                                                            )
+                                                        }
+                                                        onOpenProject={() =>
+                                                            router.push(
+                                                                `/projects/${project.id}`,
+                                                            )
+                                                        }
+                                                    />
+                                                ),
                                             )}
                                             {loadingMoreRecentProjects && (
                                                 <div className="flex h-8 items-center justify-center">
@@ -505,9 +541,11 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                         {[40, 60, 50, 70, 45].map((w, i) => (
                                             <div
                                                 key={i}
-                                                className="flex h-8 items-center rounded-md px-2.5"
+                                                className="flex h-8 items-center gap-3 rounded-md px-2"
                                             >
-                                                <div className="mr-2 h-3.5 w-3.5 shrink-0 rounded bg-gray-200 animate-pulse" />
+                                                <div className="flex h-4 w-4 shrink-0 items-center justify-center">
+                                                    <div className="h-3.5 w-3.5 rounded bg-gray-200 animate-pulse" />
+                                                </div>
                                                 <div
                                                     className="h-3 bg-gray-200 rounded animate-pulse"
                                                     style={{ width: `${w}%` }}
