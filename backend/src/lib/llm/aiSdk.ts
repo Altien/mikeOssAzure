@@ -25,11 +25,22 @@ import { createRawLlmStreamRecorder, logRawLlmStream } from "./rawStreamLog";
  * OpenCode Go keeps the previous 16,384: its Messages models (MiniMax, Qwen)
  * go through the Anthropic adapter, which does not recognise them and would
  * otherwise fall back to 4,096.
+ *
+ * Dev divergence (sync-log: 171d6f95): Kimi (Moonshot, through
+ * `@ai-sdk/openai-compatible`) also keeps 16,384. No adapter fills in a
+ * model-aware maximum for it and Moonshot's server default when `max_tokens`
+ * is omitted is not verified to exceed Dev's previous limit, so dropping the
+ * cap could truncate long answers. Azure OpenAI follows upstream (unset).
  */
+const PROVIDERS_KEEPING_LEGACY_OUTPUT_LIMIT: ReadonlySet<Provider> = new Set<Provider>([
+  "opencode-go",
+  "kimi",
+]);
+
 export function maxOutputTokensFor(provider: Provider): number | undefined {
   const value = Number(process.env.LLM_MAX_OUTPUT_TOKENS);
   if (Number.isSafeInteger(value) && value > 0) return value;
-  return provider === "opencode-go" ? 16_384 : undefined;
+  return PROVIDERS_KEEPING_LEGACY_OUTPUT_LIMIT.has(provider) ? 16_384 : undefined;
 }
 
 /**

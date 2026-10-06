@@ -52,6 +52,12 @@ describe("maxOutputTokensFor", () => {
     expect(maxOutputTokensFor("opencode-go")).toBe(16_384);
   });
 
+  it("keeps Dev's 16,384 for Kimi and leaves Azure OpenAI to the provider", () => {
+    delete process.env.LLM_MAX_OUTPUT_TOKENS;
+    expect(maxOutputTokensFor("kimi")).toBe(16_384);
+    expect(maxOutputTokensFor("azureOpenai")).toBeUndefined();
+  });
+
   it("uses an operator-set limit for every provider", () => {
     process.env.LLM_MAX_OUTPUT_TOKENS = "32000";
     expect(maxOutputTokensFor("claude")).toBe(32_000);
