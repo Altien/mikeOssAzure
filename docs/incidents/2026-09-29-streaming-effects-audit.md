@@ -218,6 +218,11 @@ checked, but a finite matrix cannot establish the absence of all future loops.
 
 ## Recorded regression evidence
 
+> **Dev divergence (sync-log: cc6e6e59).** The GIF evidence directory and the
+> Playwright specs it describes are not carried in this fork; the link below
+> refers to upstream. See `docs/frontend-testing.md` for the Vitest coverage
+> Dev runs instead.
+
 [Four GIFs and recording commands](../test-evidence/streaming-effects-2026-09-29/README.md)
 show passing development-browser checks for assistant content, reasoning with
 disclosure/resize, reversed tabular histories and sixteen Word exchanges. They

@@ -32,6 +32,15 @@ current behavior.
 
 ## Assistant streaming regressions
 
+> **Dev divergence (sync-log: cc6e6e59).** This fork does not carry upstream's
+> Supabase-bootstrapped Playwright harness, its GitHub Actions jobs, the Word
+> add-in Playwright suite or the recorded GIF evidence, so the `e2e/...` and
+> `word-addin/e2e/...` specs and `npm run test:e2e` commands below are upstream
+> references only. Dev runs the Vitest regressions named here
+> (`ChatView.actions`, `useSmoothedReveal`, `useReasoningDisclosure`,
+> `TRChatPanel`, `TRSidePanel`, `layout.hydration`) with `pnpm test`. Keep the
+> effect-review guidance; adopt the browser suites only with the e2e harness.
+
 Changes to chat rendering, effect dependencies, scrolling or reveal animations
 must exercise a long conversation and paced streaming, not just a completed
 response. `e2e/assistant-streaming.spec.ts` loads eight synthetic exchanges and
