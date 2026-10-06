@@ -339,7 +339,7 @@ describe("POST /api/word-chat/tool-result", () => {
   });
 
   it("delivers once to the authenticated owner then expires", async () => {
-    const { waitForClientToolResult } = await import("../../modules/chat/engine/tools/wordClientTools");
+    const { waitForClientToolResult } = await import("../../modules/chat/engine/tools/wordClientTools.js");
     const pending = waitForClientToolResult({ callId: TOOL_CALL_ID, userId: "u1" });
     const app = makeApp();
     const first = await request(app).post("/api/word-chat/tool-result").set(...AUTH)
@@ -352,7 +352,7 @@ describe("POST /api/word-chat/tool-result", () => {
   });
 
   it("does not deliver another user's pending result", async () => {
-    const { waitForClientToolResult, submitClientToolResult } = await import("../../modules/chat/engine/tools/wordClientTools");
+    const { waitForClientToolResult, submitClientToolResult } = await import("../../modules/chat/engine/tools/wordClientTools.js");
     const pending = waitForClientToolResult({ callId: TOOL_CALL_ID, userId: "someone-else" });
     const response = await request(makeApp()).post("/api/word-chat/tool-result").set(...AUTH)
       .send({ tool_call_id: TOOL_CALL_ID, result: {} });

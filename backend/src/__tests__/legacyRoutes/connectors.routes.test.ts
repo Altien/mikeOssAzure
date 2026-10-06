@@ -69,7 +69,8 @@ afterEach(() => {
     else process.env.API_PUBLIC_URL = ORIGINAL_API_PUBLIC_URL;
 });
 
-describe("POST /user/mcp-connectors", () => {
+// Dev drift: Dev mounts the user router under /api/user (and /api/users).
+describe("POST /api/user/mcp-connectors", () => {
     const connector = {
         id: "c1",
         name: "Private server",
@@ -80,7 +81,7 @@ describe("POST /user/mcp-connectors", () => {
         mcpConnectorSetupInstructions.mockReturnValue(
             "Slack MCP requires administrator setup.",
         );
-        const res = await request(app).post("/user/mcp-connectors").send({
+        const res = await request(app).post("/api/user/mcp-connectors").send({
             name: "Slack",
             serverUrl: "https://mcp.slack.com/mcp",
         });
@@ -99,7 +100,7 @@ describe("POST /user/mcp-connectors", () => {
         );
         deleteUserMcpConnector.mockResolvedValue(undefined);
 
-        const res = await request(app).post("/user/mcp-connectors").send({
+        const res = await request(app).post("/api/user/mcp-connectors").send({
             name: connector.name,
             serverUrl: connector.serverUrl,
         });
@@ -115,7 +116,7 @@ describe("POST /user/mcp-connectors", () => {
         );
         deleteUserMcpConnector.mockRejectedValue(new Error("delete failed"));
 
-        const res = await request(app).post("/user/mcp-connectors").send({
+        const res = await request(app).post("/api/user/mcp-connectors").send({
             name: connector.name,
             serverUrl: connector.serverUrl,
         });
@@ -135,7 +136,7 @@ describe("POST /user/mcp-connectors", () => {
             new McpOAuthRequiredError(),
         );
 
-        const res = await request(app).post("/user/mcp-connectors").send({
+        const res = await request(app).post("/api/user/mcp-connectors").send({
             name: connector.name,
             serverUrl: connector.serverUrl,
         });
@@ -153,7 +154,7 @@ describe("POST /user/mcp-connectors", () => {
         createUserMcpConnector.mockResolvedValue(connector);
         refreshUserMcpConnectorTools.mockResolvedValue(refreshedConnector);
 
-        const res = await request(app).post("/user/mcp-connectors").send({
+        const res = await request(app).post("/api/user/mcp-connectors").send({
             name: connector.name,
             serverUrl: connector.serverUrl,
         });
@@ -219,7 +220,10 @@ describe("POST /user/mcp-connectors/:id/refresh-tools", () => {
         );
 
         expect(res.status).not.toBe(401);
-        expect(res.status).toBe(428);
+        // Dev drift: Dev's own fix (f5ae7667) answered 428; upstream #295
+        // fixed the same bug with 409 and Dev adopted it. The invariant is
+        // "not 401, keyed on code" — the frontend only reads `code`.
+        expect(res.status).toBe(409);
         expect(res.body).toEqual({
             code: "oauth_required",
             detail: "This connector needs to be authorized again.",

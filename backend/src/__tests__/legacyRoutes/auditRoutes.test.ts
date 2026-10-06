@@ -22,7 +22,8 @@ vi.mock("../../lib/supabase", () => ({
     createServerSupabase: createServerSupabaseMock,
 }));
 
-import { auditRouter } from "../audit";
+// Dev drift: upstream #295 moved src/routes/audit into modules/audit/audit.routes
+import { auditRouter } from "../../modules/audit/audit.routes";
 
 function makeApp() {
     const app = express();
@@ -53,6 +54,10 @@ describe("audit route rejection handling", () => {
         const response = await request(makeApp()).get("/api/audit");
 
         expect(response.status).toBe(500);
-        expect(response.body).toEqual({ detail: "Internal server error" });
+        // Dev drift: #295 routers carry their own routerErrorHandler (generic body)
+        expect(response.body).toEqual({
+            code: "internal_error",
+            detail: "Something went wrong. Please try again.",
+        });
     });
 });

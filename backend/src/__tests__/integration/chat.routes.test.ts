@@ -438,6 +438,13 @@ vi.mock("../../lib/llm", async (importOriginal) => {
     };
 });
 
+// Dev drift: Dev-only altien/externalSources/chatDispatcher imports the chat
+// facade, so engine/index -> tools -> altien -> chat.service -> chat.prepare ->
+// engine/index is a cycle. If engine/index loads first, chat.prepare is
+// evaluated while the engine mock factory is still running and binds the REAL
+// engine (buildMessages/buildDocContext unmocked). Loading the facade first
+// lets chat.prepare receive the finished mock.
+import "../../modules/chat/chat.service";
 import { buildApp } from "../../app";
 const app = buildApp();
 import { resetAssistantTurnRunsForTests } from "../../lib/assistantTurnRuns";
@@ -593,8 +600,9 @@ describe("POST /chat — streaming endpoint", () => {
       events: [{ type: "content", text: "hi" }],
       citations: [],
     });
+    // Dev drift: chat router is mounted under /api (also the approval-resume tests)
     const res = await request(app)
-      .post("/chat")
+      .post("/api/chat")
       .set("Authorization", "Bearer test")
       .send({ ...VALID_BODY, time_zone: "Europe/London" });
     expect(res.status).toBe(200);
@@ -615,7 +623,7 @@ describe("POST /chat — streaming endpoint", () => {
     expect(user.content).toMatch(/^\[Sent: .+ \(Europe\/London\)\]\nhello$/);
 
     const invalid = await request(app)
-      .post("/chat")
+      .post("/api/chat")
       .set("Authorization", "Bearer test")
       .send({ ...VALID_BODY, time_zone: "Not/AZone" });
     expect(invalid.status).toBe(200);
@@ -702,6 +710,8 @@ describe("POST /chat — streaming endpoint", () => {
         const userSettings = await import("../../modules/user/user.settings.js");
         vi.mocked(userSettings.getUserModelSettings).mockResolvedValueOnce({
             legal_research_us: false,
+            // Dev drift: Dev's UserModelSettings keeps the Altien fast_model field
+            fast_model: "test-model",
             title_model: null,
             memory_curator_model: null,
             last_selected_reasoning_level: null,
@@ -1266,6 +1276,8 @@ describe("POST /chat — streaming endpoint", () => {
         const userSettings = await import("../../modules/user/user.settings.js");
         vi.mocked(userSettings.getUserModelSettings).mockResolvedValueOnce({
             legal_research_us: false,
+            // Dev drift: Dev's UserModelSettings keeps the Altien fast_model field
+            fast_model: "test-model",
             title_model: null,
             memory_curator_model: null,
             last_selected_reasoning_level: null,
@@ -1607,7 +1619,7 @@ describe("POST /chat — streaming endpoint", () => {
                 },
             };
             const res = await request(app)
-                .post("/chat")
+                .post("/api/chat")
                 .set("Authorization", "Bearer test")
                 .send(body);
 
@@ -1633,7 +1645,7 @@ describe("POST /chat — streaming endpoint", () => {
             }
 
             const retry = await request(app)
-                .post("/chat")
+                .post("/api/chat")
                 .set("Authorization", "Bearer test")
                 .send(body);
             expect(retry.status).toBe(409);
@@ -1904,6 +1916,8 @@ describe("POST /chat — streaming endpoint", () => {
         const chatLib = await import("../../modules/chat/engine/index.js");
         const userSettings = await import("../../modules/user/user.settings.js");
         vi.mocked(userSettings.getUserModelSettings).mockResolvedValueOnce({
+            // Dev drift: Dev's UserModelSettings keeps the Altien fast_model field
+            fast_model: "test-model",
             title_model: "test-model",
             memory_curator_model: null,
             last_selected_reasoning_level: null,
@@ -2276,6 +2290,8 @@ async function seedResolvableModel() {
     const userSettings = await import("../../modules/user/user.settings.js");
     vi.mocked(userSettings.getUserModelSettings).mockResolvedValueOnce({
         legal_research_us: false,
+        // Dev drift: Dev's UserModelSettings keeps the Altien fast_model field
+        fast_model: "test-model",
         title_model: null,
         memory_curator_model: null,
         last_selected_reasoning_level: null,

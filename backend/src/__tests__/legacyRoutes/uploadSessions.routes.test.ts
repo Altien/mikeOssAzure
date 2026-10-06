@@ -6,6 +6,10 @@ const mocks = vi.hoisted(() => ({
   rpc: vi.fn(),
   getSignedUploadUrl: vi.fn(),
   files: [] as Array<Record<string, unknown>>,
+  ensureDocAccess: vi.fn(),
+  checkWorkflowAccess: vi.fn(),
+  /** The row the `documents` read answers with. */
+  documentRow: { data: null as unknown, error: null as unknown },
 }));
 
 vi.mock("../../middleware/auth", () => ({
@@ -23,10 +27,30 @@ vi.mock("../../middleware/auth", () => ({
 vi.mock("../../lib/supabase", () => ({
   createServerSupabase: () => ({
     rpc: mocks.rpc,
-    from: () => ({
-      select: () => ({ eq: () => ({ order: async () => ({ data: mocks.files, error: null }) }) }),
-    }),
+    // Enough of a builder for the destination checks (one row, then the
+    // verdict from lib/access) and for Dev's session-file listing.
+    // Dev drift: awaited list reads answer with mocks.files (Dev's per-file
+    // upload generation rows) instead of upstream's empty list.
+    from: () => {
+      const query: Record<string, unknown> = {};
+      for (const method of ["select", "eq", "in", "is", "order", "limit"])
+        query[method] = () => query;
+      query.maybeSingle = async () => mocks.documentRow;
+      query.single = query.maybeSingle;
+      query.then = (resolve: (value: unknown) => unknown) =>
+        Promise.resolve({ data: mocks.files, error: null }).then(resolve);
+      return query;
+    },
   }),
+}));
+
+// Only the verdict is stubbed. creatorScopedAllowed and `can` stay real,
+// because the rule under test is how those two combine.
+vi.mock("../../lib/access", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/access")>()),
+  ensureDocAccess: (...args: unknown[]) => mocks.ensureDocAccess(...args),
+  checkWorkflowAccess: (...args: unknown[]) =>
+    mocks.checkWorkflowAccess(...args),
 }));
 
 vi.mock("../../lib/storage", () => ({
@@ -186,11 +210,11 @@ describe("upload session routes", () => {
 });
 
 // ---------------------------------------------------------------------------
-// validateDestinationAccess â€” the version-upload destination.
+// validateDestinationAccess — the version-upload destination.
 //
 // This branch collapsed "you cannot see this document" and "you may see it
 // but not write to it" into the same 404, so a Viewer who tried to add a
-// version was told their document had disappeared â€” while it went on
+// version was told their document had disappeared — while it went on
 // rendering in the list behind the dialog. The project branch above already
 // splits the two; this one now does too.
 // ---------------------------------------------------------------------------
@@ -309,7 +333,7 @@ describe("upload session destination access", () => {
 });
 
 // ---------------------------------------------------------------------------
-// validateDestinationAccess â€” the workflow destination.
+// validateDestinationAccess — the workflow destination.
 //
 // The workflow branch was the last one to answer "Workflow not found or not
 // editable" to BOTH a stranger and a Viewer. The Viewer can open the workflow

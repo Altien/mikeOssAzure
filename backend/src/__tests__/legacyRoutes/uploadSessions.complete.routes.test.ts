@@ -271,15 +271,17 @@ describe("upload session completion", () => {
   });
 
   it("answers 503, not 500, when object storage fails while sealing", async () => {
+    // Dev drift: Dev's claim-token sealing HEADs the staged object then copies
+    // it to a per-claim candidate (no sealed-path HEAD, no staged delete), so
+    // the storage outage is injected at the copy. Upstream's three-HEAD queue
+    // also leaked unconsumed Once values into later tests under clearAllMocks.
     mocks.headFile
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ size: 4, etag: "staged-etag", contentType: "application/pdf" })
-      .mockResolvedValueOnce({ size: 4, etag: "sealed-etag", contentType: "application/pdf" });
-    // deleteFile wraps every real SDK failure in StorageOperationError (see
-    // storageBestEffortDelete.test.ts); sealing must treat that like a HEAD or
-    // copy failure: a retryable storage outage, not a bug.
-    mocks.deleteFile.mockRejectedValueOnce(
-      new StorageOperationError("delete", {
+      .mockResolvedValueOnce({ size: 4, etag: "staged-etag", contentType: "application/pdf" });
+    // Storage helpers wrap every real SDK failure in StorageOperationError (see
+    // storageBestEffortDelete.test.ts); sealing must treat that as a
+    // retryable storage outage, not a bug.
+    mocks.copyFile.mockRejectedValueOnce(
+      new StorageOperationError("copy", {
         cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:9000"), {
           code: "ECONNREFUSED",
         }),
