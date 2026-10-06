@@ -7,6 +7,7 @@ import {
     getBrowserAccessToken,
     bounceIfUnauthorized,
 } from "@/app/lib/auth-token";
+import { EventDisclosureButton } from "@/app/components/assistant/message/EventDisclosure";
 import type { AssistantEvent } from "../../shared/types";
 import { FileTypeIcon } from "../../shared/FileTypeIcon";
 import {
@@ -567,17 +568,12 @@ export function AskInputsBlock({
             showConnector={showConnector}
             dotColor={response ? "green" : "gray"}
         >
-            <button
-                type="button"
-                aria-expanded={isOpen}
-                onClick={() => setIsOpen((open) => !open)}
-                className="flex items-center gap-1 font-medium text-gray-600 transition-colors hover:text-gray-800"
-            >
-                {label}
-                <ChevronDown
-                    className={`h-3.5 w-3.5 transition-transform ${isOpen ? "rotate-180" : ""}`}
-                />
-            </button>
+            {/* Upstream #451: one shared disclosure (chevron right when closed). */}
+            <EventDisclosureButton
+                open={isOpen}
+                onToggle={() => setIsOpen((open) => !open)}
+                label={label}
+            />
             {isOpen && (
                 <div className="mt-2 space-y-2 text-gray-800">
                     {event.items.map((item, index) => {
@@ -666,18 +662,13 @@ export function CourtListenerBlock({
             dotColor={hasError ? "red" : "green"}
         >
             {hasItems ? (
-                <button
-                    onClick={() => setIsOpen((v) => !v)}
-                    className="text-left hover:text-gray-700 transition-colors inline-flex items-center"
-                >
-                    <span className="font-medium">{label}</span>
-                    {detail ? <span>&nbsp;{detail}</span> : null}
-                    {isStreaming ? <span>...</span> : null}
-                    <ChevronDown
-                        size={10}
-                        className={`relative top-px ml-1 transition-transform duration-200 ${isOpen ? "" : "-rotate-90"}`}
-                    />
-                </button>
+                <EventDisclosureButton
+                    open={isOpen}
+                    onToggle={() => setIsOpen((v) => !v)}
+                    label={label}
+                    detail={detail}
+                    isStreaming={isStreaming}
+                />
             ) : (
                 <>
                     <span className="font-medium">{label}</span>
