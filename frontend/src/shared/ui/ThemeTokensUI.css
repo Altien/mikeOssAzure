@@ -167,6 +167,12 @@
     background: transparent;
 }
 
+/* A field built into a menu's own header row (icon, input, divider) sits on
+   the menu's glass with no fill of its own. */
+.theme-dropdown-surface input[data-dropdown-input="flush"] {
+    background: transparent;
+}
+
 .theme-dropdown-item:hover,
 .theme-dropdown-item:focus,
 .theme-dropdown-item[data-highlighted],

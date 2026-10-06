@@ -86,6 +86,25 @@ describe("ChatPanelHeader", () => {
         expect(screen.queryByRole("menu")).toBeNull();
     });
 
+    it("keeps the chat search field flush with the menu, without a fill", () => {
+        render(
+            <ChatPanelHeader
+                chats={[{ id: "chat-2", title: "Earlier advice" }]}
+                currentChatId="chat-1"
+                currentTitle="Current draft"
+                actions={null}
+                onLoad={vi.fn()}
+                onNewChat={vi.fn()}
+            />,
+        );
+        fireEvent.click(screen.getByRole("button", { name: "Current draft" }));
+
+        // ThemeTokensUI.css fills dropdown inputs unless they opt out.
+        expect(
+            screen.getByRole("searchbox", { name: "Search chats" }),
+        ).toHaveAttribute("data-dropdown-input", "flush");
+    });
+
     it("shows compact activity times alongside titles and omits unavailable timestamps", () => {
         const now = Date.parse("2026-09-15T12:00:00Z");
         const clock = vi.spyOn(Date, "now").mockReturnValue(now);

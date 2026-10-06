@@ -179,6 +179,7 @@ export function ChatPanelHeader({
                                 type="search"
                                 aria-label="Search chats"
                                 placeholder="Search chats…"
+                                data-dropdown-input="flush"
                                 value={query}
                                 onChange={(event) =>
                                     setQuery(event.target.value)

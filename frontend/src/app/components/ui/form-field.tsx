@@ -25,9 +25,13 @@ type FormTextInputProps = InputHTMLAttributes<HTMLInputElement> & {
 
 const variantClasses: Record<FormTextInputVariant, string> = {
     glass: cn("h-10", FORM_CONTROL_GLASS_CLASS),
+    // A modal's large title field: keyboard-focus-ring (globals.css, driven
+    // by useInputModality) drops the ring after a click or an autofocus that
+    // followed one, keeping it for Tab navigation.
     minimal: cn(
         "w-full rounded bg-transparent font-serif text-2xl text-gray-800 outline-none placeholder:text-gray-300 disabled:cursor-not-allowed disabled:text-gray-400",
         FOCUS_RING_CLASS,
+        "keyboard-focus-ring",
     ),
 };
 
