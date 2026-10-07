@@ -487,18 +487,53 @@ export function ProjectsOverview() {
         }
     }
 
+    function renderProjectActions(
+        project: Project | undefined,
+        close?: () => void,
+    ) {
+        const actionIds = project
+            ? rowActionSelectionIds(project.id, selectedIds)
+            : selectedIds;
+        const appliesToSelection = actionIds.length > 1;
+        const canManage = project ? can(roleFrom(project), "access.manage") : false;
+        return (
+            <RowActionMenuItems
+                onClose={close}
+                onView={
+                    appliesToSelection || !project
+                        ? undefined
+                        : () => router.push(`/projects/${project!.id}`)
+                }
+                viewLabel="Open"
+                onEditDetails={
+                    appliesToSelection || !canManage
+                        ? undefined
+                        : () => {
+                              setDetailsProject(project!);
+                          }
+                }
+                onDelete={
+                    appliesToSelection || !project
+                        ? requestDeleteSelected
+                        : canManage
+                          ? () => handleDeleteProjectRow(project!)
+                          : undefined
+                }
+                deleteLabel={
+                    appliesToSelection
+                        ? `Delete ${actionIds.length} projects`
+                        : undefined
+                }
+            />
+        );
+    }
+
     const toolbarActions =
         selectedIds.length > 0 ? (
             <SelectionActionsMenu
                 open={actionsOpen}
                 onOpenChange={setActionsOpen}
-                actions={[
-                    {
-                        label: "Delete",
-                        destructive: true,
-                        onSelect: requestDeleteSelected,
-                    },
-                ]}
+                renderItems={(close) => renderProjectActions(projects.find((project) => project.id === selectedIds[0]), close)}
             />
         ) : undefined;
 
@@ -699,11 +734,6 @@ export function ProjectsOverview() {
                 ) : (
                     <TableBody>
                         {visibleProjects.map((project) => {
-                            const actionIds = rowActionSelectionIds(
-                                project.id,
-                                selectedIds,
-                            );
-                            const appliesToSelection = actionIds.length > 1;
                             // The list rows carry the caller's merged
                             // access_role, so an organization admin editing a
                             // colleague's matter is no longer mistaken for an
@@ -716,44 +746,7 @@ export function ProjectsOverview() {
                                 <TableRow
                                     key={project.id}
                                     selected={selectedIds.includes(project.id)}
-                                    rightClickDropdown={(close) => (
-                                        <RowActionMenuItems
-                                            onClose={close}
-                                            onView={
-                                                appliesToSelection
-                                                    ? undefined
-                                                    : () =>
-                                                          router.push(
-                                                              `/projects/${project.id}`,
-                                                          )
-                                            }
-                                            viewLabel="Open"
-                                            onEditDetails={
-                                                appliesToSelection || !canManage
-                                                    ? undefined
-                                                    : () => {
-                                                          setDetailsProject(
-                                                              project,
-                                                          );
-                                                      }
-                                            }
-                                            onDelete={
-                                                appliesToSelection
-                                                    ? requestDeleteSelected
-                                                    : canManage
-                                                      ? () =>
-                                                            handleDeleteProjectRow(
-                                                                project,
-                                                            )
-                                                      : undefined
-                                            }
-                                            deleteLabel={
-                                                appliesToSelection
-                                                    ? `Delete ${actionIds.length} projects`
-                                                    : undefined
-                                            }
-                                        />
-                                    )}
+                                    rightClickDropdown={(close) => renderProjectActions(project, close)}
                                     onClick={(event) => {
                                         if (event.shiftKey) {
                                             event.preventDefault();

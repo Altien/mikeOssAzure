@@ -1090,15 +1090,5 @@
     "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
     "size": 220338,
     "sha256": "fb82f6c12147155574e2d57701f5c1b3777465dce1d1e6469ff2c03a82f3f78e"
-  },
-  {
-    "id": "README.md",
-    "filename": "README.md",
-    "title": "About this collection",
-    "publisher": "Collection notes",
-    "group": "",
-    "format": "md",
-    "size": 1081,
-    "sha256": "01d2179f77d97f61a2a846d676b603e37c831dc8ff2bffdd049076386d95c0fa"
   }
 ]

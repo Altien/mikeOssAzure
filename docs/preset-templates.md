@@ -11,12 +11,16 @@ from General Legal, Common Paper, and Bonterms.
 
 ## Proposed solution
 
-Add **Browse presets** to Library → Templates. Users can search by name or
-publisher, inspect source and license information, download an original, or
-choose **Add to templates** to save a personal copy in the current folder.
-Keep the publishers' original files and directory structure intact, including
-agreement variants and formation-package instructions. The initial catalog has
-81 PDF/DOCX templates and four Markdown references. Markdown is download-only
+Add **Add preset templates** to the "…" menu in the Library → Templates page
+header. It opens a Presets page that lists the catalog in the same document
+table as the rest of the library: each publisher's library is a folder, with
+the publisher's package directories nested inside. Users can search by name,
+open a file in the read-only document side panel, download an original, or
+choose **Add to templates** for one file, a selection, or a whole folder to
+save personal copies in the Templates folder they came from. Keep the
+publishers' original files and directory structure intact, including agreement
+variants and formation-package instructions. The initial catalog has 81
+PDF/DOCX templates and three Markdown references. Markdown is download-only
 because the existing document pipeline does not support that format.
 
 ## Technical approach / affected areas
@@ -24,17 +28,18 @@ because the existing document pipeline does not support that format.
 - Bundle the supplied public files under `frontend/public/preset-templates/`.
   A checked-in manifest records each relative path, publisher, format, byte size,
   and SHA-256 checksum. No publisher requests are needed at runtime.
-- Compose a searchable preset dialog from the existing Modal, SearchBar, and
-  button primitives. Long names wrap; source and license information remain
-  visible at narrow widths.
+- Render the catalog with `DocTable` in its read-only `catalog` mode, which
+  serves files from the bundled URLs and offers only view, download, and add.
+  Publisher sources and licenses are recorded in this document and in the
+  manifest, not shown on the page.
 - Fetch the selected same-origin asset, then reuse `uploadLibraryDocument` with
   collection `templates` and the current folder. The existing upload-session
   API owns authentication, folder access, storage, processing, and document
   version creation. No new backend endpoint or database migration is needed.
-- Refresh the displayed collection after an import. Show progress, success, and
-  recoverable failure states; disable repeat clicks during an upload and after
-  success for that dialog session. A later deliberate import creates another
-  independent copy and never overwrites an existing template.
+- Update the loaded Templates collection after an import. Show progress,
+  success, and recoverable failure states, and ignore further add requests
+  while one is running. A later deliberate import creates another independent
+  copy and never overwrites an existing template.
 - Preserve source/license notices and distinguish Bonterms' per-document license
   exceptions. Catalog updates never replace users' imported copies.
 
@@ -55,10 +60,10 @@ availability and cross-origin permissions.
 ## Success metrics / acceptance criteria
 
 - Every document in the supplied collection is available with original bytes.
-- Search includes the publisher and package path, making variants distinguishable.
+- Publisher and package folders keep variants distinguishable.
 - Import targets the signed-in user's Templates collection and selected folder.
 - Upload failures remain retryable and do not report success.
-- Long filenames and actions fit mobile and desktop dialog widths.
+- Long filenames and actions fit mobile and desktop widths.
 - Asset integrity, import behavior, search, and failure handling have focused
   automated coverage.
 
@@ -84,6 +89,14 @@ Publisher credits and licenses:
   [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 - [Bonterms](https://bonterms.com/download-center/): generally CC BY 4.0, with
   per-document exceptions including CC BY-ND 4.0. Consult the notice in each file.
+
+The folders preserve the publishers' version labels and execution formats.
+Bonterms playbooks and explainers were excluded; agreement variants, cover-page
+examples, order forms, statements of work, and attachment templates were
+retained.
+
+These files are templates, not legal advice. Check the publisher's current page
+and have qualified counsel review a template before using it for a transaction.
 
 All bundled publisher files are unmodified. Their licenses are separate from
 Mike's software license, and attribution and other notices remain in the files.

@@ -713,7 +713,7 @@ export function ProjectSectionToolbar({
             }}
             leading={
                 backAction ? (
-                    <TabPillButtonUI onClick={backAction}>
+                    <TabPillButtonUI onClick={backAction} className="pl-2">
                         <ChevronLeft className="h-3.5 w-3.5" />
                         Back
                     </TabPillButtonUI>

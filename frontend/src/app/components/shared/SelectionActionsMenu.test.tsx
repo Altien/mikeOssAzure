@@ -28,6 +28,12 @@ describe("SelectionActionsMenu", () => {
         expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     });
 
+    it("reduces padding on the chevron side", () => {
+        render(<SelectionActionsMenu actions={[]} />);
+        expect(screen.getByRole("button", { name: "Actions" })).toHaveClass("pl-3", "pr-2");
+        expect(screen.getByRole("button", { name: "Actions" })).toHaveAttribute("data-icon-position", "right");
+    });
+
     it("does not run a disabled action", async () => {
         const user = userEvent.setup();
         const onClear = vi.fn();

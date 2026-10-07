@@ -1,7 +1,8 @@
 import { useState, type ComponentProps } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { SelectionActionsMenu } from "@/app/components/shared/SelectionActionsMenu";
 import type { Document } from "@/app/components/shared/types";
 import {
     DocTable,
@@ -57,9 +58,11 @@ function operations(
 function Harness({
     initialDocuments,
     tableOperations,
+    folderViewId = "folder-1",
 }: {
     initialDocuments: Document[];
     tableOperations: DocTableOperations;
+    folderViewId?: string | null;
 }) {
     const [documents, setDocuments] = useState(initialDocuments);
     const [folders, setFolders] = useState<DocTableFolder[]>([
@@ -88,6 +91,9 @@ function Harness({
             >
                 Remove selected
             </button>
+            {selectionActions && (
+                <SelectionActionsMenu renderItems={selectionActions.renderMenuItems} />
+            )}
             <DocTable
                 scopeKey="project-1"
                 documents={documents}
@@ -99,7 +105,7 @@ function Harness({
                 operations={tableOperations}
                 emptyStateTitle="Documents"
                 canDo={allowAll}
-                folderViewId="folder-1"
+                folderViewId={folderViewId}
                 onSelectionActionsChange={setSelectionActions}
             />
         </>
@@ -109,6 +115,59 @@ function Harness({
 describe("DocTable remove-from-folder failures", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+    });
+
+    it.each([1, 2])("matches toolbar and right-click actions for %i selected documents", async (count) => {
+        const user = userEvent.setup();
+        render(<Harness
+            initialDocuments={[document("doc-1", "One.pdf"), document("doc-2", "Two.pdf")]}
+            tableOperations={operations(vi.fn())}
+        />);
+        await user.click(screen.getByLabelText("Select One.pdf"));
+        if (count === 2) await user.click(screen.getByLabelText("Select Two.pdf"));
+        await user.click(screen.getByRole("button", { name: "Actions" }));
+        const toolbarItems = screen.getAllByRole("menuitem").map((item) => item.textContent);
+        expect(toolbarItems).toContain("Deselect rows");
+        if (count === 1) expect(toolbarItems).toContain("Rename document");
+        else expect(toolbarItems).toContain("Delete 2 items");
+        await user.keyboard("{Escape}");
+        fireEvent.contextMenu(screen.getByText("One.pdf"), { clientX: 40, clientY: 40 });
+        expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(toolbarItems);
+        await user.click(screen.getByRole("menuitem", { name: "Deselect rows" }));
+        expect(screen.queryByRole("button", { name: "Actions" })).not.toBeInTheDocument();
+    });
+
+    it.each([false, true])("matches folder right-click actions for a mixed selection: %s", async (mixed) => {
+        const user = userEvent.setup();
+        render(<Harness
+            initialDocuments={[{ ...document("doc-1", "One.pdf"), folder_id: null }]}
+            tableOperations={operations(vi.fn())}
+            folderViewId={null}
+        />);
+        await user.click(screen.getByLabelText("Select files in Folder"));
+        if (mixed) await user.click(screen.getByLabelText("Select One.pdf"));
+        await user.click(screen.getByRole("button", { name: "Actions" }));
+        const toolbarItems = screen.getAllByRole("menuitem").map((item) => item.textContent);
+        if (!mixed) {
+            expect(toolbarItems).toContain("Open");
+            expect(toolbarItems).toContain("Rename folder");
+            expect(toolbarItems).toContain("New subfolder inside");
+        } else expect(toolbarItems).toContain("Delete 2 items");
+        await user.keyboard("{Escape}");
+        fireEvent.contextMenu(screen.getByText("Folder"), { clientX: 40, clientY: 40 });
+        expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(toolbarItems);
+    });
+
+    it("keeps focus in the rename field after a toolbar action", async () => {
+        const user = userEvent.setup();
+        const tableOperations = operations(vi.fn());
+        render(<Harness initialDocuments={[document("doc-1", "One.pdf")]} tableOperations={tableOperations} />);
+        await user.click(screen.getByLabelText("Select One.pdf"));
+        await user.click(screen.getByRole("button", { name: "Actions" }));
+        await user.click(screen.getByRole("menuitem", { name: "Rename document" }));
+        const input = screen.getByDisplayValue("One.pdf");
+        await waitFor(() => expect(input).toHaveFocus());
+        expect(tableOperations.renameDocument).not.toHaveBeenCalled();
     });
 
     it("warns when removing one document fails", async () => {

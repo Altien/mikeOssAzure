@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   addPresetTemplate,
   PRESET_TEMPLATES,
+  presetDirectory,
   presetTemplateUrl,
 } from "./presetTemplates";
 import { uploadLibraryDocument } from "@/app/lib/mikeApi";
@@ -36,8 +37,31 @@ describe("bundled preset catalog", () => {
       expect(createHash("sha256").update(bytes).digest("hex")).toBe(
         preset.sha256,
       );
-      if (preset.publisher !== "Collection notes")
-        expect(preset.sourceUrl).toMatch(/^https:\/\//);
+      expect(preset.sourceUrl).toMatch(/^https:\/\//);
+    }
+  });
+
+  it("files every preset under its publisher's folder, keeping package directories", () => {
+    const { documents, folders } = presetDirectory();
+    expect(documents.map((document) => document.id)).toEqual(
+      PRESET_TEMPLATES.map((preset) => preset.id),
+    );
+    expect(
+      folders
+        .filter((folder) => folder.parent_folder_id === null)
+        .map((folder) => folder.name)
+        .sort(),
+    ).toEqual(["Bonterms", "Common Paper", "General Legal"]);
+
+    const byId = new Map(folders.map((folder) => [folder.id, folder]));
+    for (const document of documents) {
+      const path = [document.filename];
+      let folder = byId.get(document.folder_id ?? "");
+      while (folder) {
+        path.unshift(folder.name);
+        folder = byId.get(folder.parent_folder_id ?? "");
+      }
+      expect(path.join("/")).toBe(document.id);
     }
   });
 

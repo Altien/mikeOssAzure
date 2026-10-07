@@ -134,7 +134,13 @@ export type DocTableFolderBreadcrumb = {
     name: string;
     onClick: () => void;
 };
+// Dropdown content mounts on open, so use the table's latest menu state.
+function SelectionMenuItems({ render }: { render: () => ReactNode }) {
+    return render();
+}
+
 export interface DocTableSelectionActions {
+    renderMenuItems: (onClose?: () => void) => ReactNode;
     selectedCount: number;
     hasDocumentsInFolders: boolean;
     onDownload: () => Promise<void>;
@@ -256,6 +262,25 @@ interface DocTableProps {
     documentTypeOptions?: TableFilterOption<string>[];
     autoLoadOnScroll?: boolean;
     defaultSort?: DocumentSort | null;
+    /**
+     * Presents a fixed set of bundled files instead of stored documents. The
+     * rows are not backend documents, so the table is read-only: nothing can
+     * be uploaded, renamed, moved or deleted, files are viewed and downloaded
+     * from the catalog's own URLs, and the only action is adding copies.
+     */
+    catalog?: DocTableCatalog;
+}
+
+export interface DocTableCatalog {
+    resolveDocumentUrl: (documentId: string) => {
+        url: string;
+        filename: string;
+    };
+    /** False for a file the side panel cannot render; it downloads instead. */
+    canPreview?: (doc: Document) => boolean;
+    canAdd?: (doc: Document) => boolean;
+    addLabel: (count: number) => string;
+    onAdd: (documents: Document[]) => void;
 }
 
 function documentTypeValue(doc: Document): string {
@@ -396,6 +421,7 @@ export function DocTable({
     documentTypeOptions,
     autoLoadOnScroll = false,
     defaultSort = null,
+    catalog,
 }: DocTableProps) {
     const [addDocsOpen, setAddDocsOpen] = useState(false);
     const { user } = useAuth();
@@ -1436,7 +1462,10 @@ export function DocTable({
         return false;
     }
 
+    // A catalog accepts no drops and starts no drags, so every payload check
+    // reports nothing to handle.
     function hasMovePayload(dt: DataTransfer): boolean {
+        if (catalog) return false;
         return Array.from(dt.types).some(
             (type) =>
                 type === SINGLE_DOCUMENT_DRAG_TYPE ||
@@ -1446,10 +1475,12 @@ export function DocTable({
     }
 
     function hasFilePayload(dt: DataTransfer): boolean {
+        if (catalog) return false;
         return Array.from(dt.types).includes("Files");
     }
 
     function hasDocumentPayload(dt: DataTransfer): boolean {
+        if (catalog) return false;
         return Array.from(dt.types).includes(SINGLE_DOCUMENT_DRAG_TYPE);
     }
 
@@ -1788,7 +1819,9 @@ export function DocTable({
 
     useEffect(() => {
         const hasFiles = (dataTransfer: DataTransfer | null) =>
-            !!dataTransfer && Array.from(dataTransfer.types).includes("Files");
+            !catalog &&
+            !!dataTransfer &&
+            Array.from(dataTransfer.types).includes("Files");
 
         function handleDragEnter(event: globalThis.DragEvent) {
             if (!hasFiles(event.dataTransfer)) return;
@@ -2427,8 +2460,47 @@ export function DocTable({
             updateDocumentSelection(doc, true, false);
             return;
         }
+        if (catalog?.canPreview?.(doc) === false) {
+            void downloadDoc(doc.id);
+            return;
+        }
         setViewingDocVersion(null);
         setViewingDoc(doc);
+    }
+
+    function catalogDocumentActions(doc: Document) {
+        return {
+            onView:
+                catalog?.canPreview?.(doc) === false
+                    ? undefined
+                    : () => {
+                          setViewingDocVersion(null);
+                          setViewingDoc(doc);
+                      },
+            onAdd:
+                catalog?.canAdd?.(doc) === false
+                    ? undefined
+                    : () => catalog?.onAdd([doc]),
+            addLabel: catalog?.addLabel(1),
+            onDownload: () => void downloadDoc(doc.id),
+        };
+    }
+
+    function catalogFolderActions(folderId: string) {
+        const treeIds = collectFolderTreeIds(folders, [folderId]);
+        const addable = documents.filter(
+            (doc) =>
+                doc.folder_id != null &&
+                treeIds.has(doc.folder_id) &&
+                catalog?.canAdd?.(doc) !== false,
+        );
+        return {
+            onView: () => openFolderView(folderId),
+            viewLabel: "Open",
+            onAdd:
+                addable.length > 0 ? () => catalog?.onAdd(addable) : undefined,
+            addLabel: catalog?.addLabel(addable.length),
+        };
     }
 
     function handleDocumentDragStart(
@@ -2565,7 +2637,7 @@ export function DocTable({
                                 data-document-row
                                 data-document-id={doc.id}
                                 data-collection-row-key={`document:${doc.id}`}
-                                draggable={renamingDocumentId !== doc.id}
+                                draggable={!catalog && renamingDocumentId !== doc.id}
                                 onDragStart={(event) =>
                                     handleDocumentDragStart(event, doc)
                                 }
@@ -2708,31 +2780,35 @@ export function DocTable({
                                             </div>
                                             <div className="w-8 shrink-0 flex justify-end">
                                                 {!isProcessing && (
-                                                    <RowActions
-                                                        onView={() => {
-                                                            setViewingDocVersion(null);
-                                                            setViewingDoc(doc);
-                                                        }}
-                                                        onRename={() => {
-                                                            setRenameDocumentValue(docName);
-                                                            setRenamingDocumentId(doc.id);
-                                                        }}
-                                                        renameLabel="Rename document"
-                                                        onDownload={() => downloadDoc(doc.id)}
-                                                        onShowAllVersions={
-                                                            hasVersions && !isVersionsOpen
-                                                                ? () => void toggleVersions(doc.id)
-                                                                : undefined
-                                                        }
-                                                        onUploadNewVersion={() => void handleUploadNewVersion(doc)}
-                                                        onRemoveFromFolder={
-                                                            doc.folder_id
-                                                                ? () => handleRemoveDocFromFolder(doc.id)
-                                                                : undefined
-                                                        }
-                                                        onDelete={() => requestRemoveDoc(doc)}
-                                                        deleteDisabled={!canDeleteDocument(doc)}
-                                                    />
+                                                    catalog ? (
+                                                        <RowActions {...catalogDocumentActions(doc)} />
+                                                    ) : (
+                                                        <RowActions
+                                                            onView={() => {
+                                                                setViewingDocVersion(null);
+                                                                setViewingDoc(doc);
+                                                            }}
+                                                            onRename={() => {
+                                                                setRenameDocumentValue(docName);
+                                                                setRenamingDocumentId(doc.id);
+                                                            }}
+                                                            renameLabel="Rename document"
+                                                            onDownload={() => downloadDoc(doc.id)}
+                                                            onShowAllVersions={
+                                                                hasVersions && !isVersionsOpen
+                                                                    ? () => void toggleVersions(doc.id)
+                                                                    : undefined
+                                                            }
+                                                            onUploadNewVersion={() => void handleUploadNewVersion(doc)}
+                                                            onRemoveFromFolder={
+                                                                doc.folder_id
+                                                                    ? () => handleRemoveDocFromFolder(doc.id)
+                                                                    : undefined
+                                                            }
+                                                            onDelete={() => requestRemoveDoc(doc)}
+                                                            deleteDisabled={!canDeleteDocument(doc)}
+                                                        />
+                                                    )
                                                 )}
                                             </div>
                                         </>
@@ -2825,7 +2901,7 @@ export function DocTable({
                                 data-folder-row
                                 data-folder-id={folder.id}
                                 data-collection-row-key={`folder:${folder.id}`}
-                                draggable={!isRenaming}
+                                draggable={!catalog && !isRenaming}
                                 onDragStart={(e) => {
                                     if (isRenaming) {
                                         e.preventDefault();
@@ -3014,15 +3090,19 @@ export function DocTable({
                                     )}
                                 </div>
                                 <div className="w-8 shrink-0 flex justify-end" onClick={(e) => e.stopPropagation()}>
-                                    <RowActions
-                                        onView={() => openFolderView(folder.id)}
-                                        viewLabel="Open"
-                                        onRename={() => {
-                                            setRenameFolderValue(folder.name);
-                                            setRenamingFolderId(folder.id);
-                                        }}
-                                        onDelete={() => requestDeleteFolder(folder.id)}
-                                    />
+                                    {catalog ? (
+                                        <RowActions {...catalogFolderActions(folder.id)} />
+                                    ) : (
+                                        <RowActions
+                                            onView={() => openFolderView(folder.id)}
+                                            viewLabel="Open"
+                                            onRename={() => {
+                                                setRenameFolderValue(folder.name);
+                                                setRenamingFolderId(folder.id);
+                                            }}
+                                            onDelete={() => requestDeleteFolder(folder.id)}
+                                        />
+                                    )}
                                 </div>
                             </div>
                             {isExpanded && renderLevel(folder.id, depth + 1)}
@@ -3041,10 +3121,19 @@ export function DocTable({
 
     const docs = serverDocuments ?? documents;
     const downloadDoc = useCallback(async (docId: string) => {
+        if (catalog) {
+            // Bundled preset templates are public static-export assets.
+            const { url, filename } = catalog.resolveDocumentUrl(docId);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = filename;
+            a.click();
+            return;
+        }
         // Upstream divergence (OSS-6, §2.3 item 6): Azure download URLs are
         // relative, auth-guarded proxy paths — see downloadDocVersion.
         await downloadResolvedDocument(docId, null, "document");
-    }, []);
+    }, [catalog]);
 
     const selectedFolderRootIds = useMemo(
         () => folderSelectionRootIds(folders, selectedFolderIds),
@@ -3746,9 +3835,237 @@ export function DocTable({
 
     const selectedItemCount =
         selectedFolderIds.size + selectedStandaloneDocIds.length;
+    const renderRowActionMenuItems = (
+        docId: string | null | undefined,
+        folderId: string | null | undefined,
+        showFolderActions: boolean | undefined,
+        onClose?: () => void,
+    ) => {
+        const menuDoc = docId ? docs.find((doc) => doc.id === docId) : null;
+        const menuDocVersionNumber = menuDoc ? currentVersionNumber(menuDoc) : null;
+        const menuDocHasVersions =
+            typeof menuDocVersionNumber === "number" && menuDocVersionNumber > 1;
+        const menuDocVersionsOpen = menuDoc
+            ? expandedVersionDocIds.has(menuDoc.id)
+            : false;
+        const menuDocIsSelected =
+            !!menuDoc && effectiveSelectedDocIdSet.has(menuDoc.id);
+        const menuAppliesToSelection = menuDocIsSelected && selectedItemCount > 1;
+        const menuFolderIsSelected = !!folderId && selectedFolderIds.has(folderId);
+        const menuFolderAppliesToSelection =
+            menuFolderIsSelected && selectedItemCount > 1;
+        if (catalog) {
+            if (menuDocIsSelected || menuFolderIsSelected) {
+                const addable = docs.filter(
+                    (doc) =>
+                        effectiveSelectedDocIdSet.has(doc.id) &&
+                        catalog.canAdd?.(doc) !== false,
+                );
+                return (
+                    <RowActionMenuItems
+                        onClose={onClose}
+                        onDeselect={clearCollectionSelection}
+                        onAdd={
+                            addable.length > 0
+                                ? () => catalog.onAdd(addable)
+                                : undefined
+                        }
+                        addLabel={catalog.addLabel(addable.length)}
+                    />
+                );
+            }
+            if (menuDoc) {
+                return (
+                    <RowActionMenuItems
+                        onClose={onClose}
+                        {...catalogDocumentActions(menuDoc)}
+                    />
+                );
+            }
+            return folderId ? (
+                <RowActionMenuItems
+                    onClose={onClose}
+                    {...catalogFolderActions(folderId)}
+                />
+            ) : null;
+        }
+        if (menuAppliesToSelection || menuFolderAppliesToSelection) {
+            return (
+                <RowActionMenuItems
+                    onClose={onClose}
+                    onDeselect={clearCollectionSelection}
+                    onDownload={handleDownloadSelectedDocs}
+                    onRemoveFromFolder={
+                        selectedStandaloneDocIds.some(
+                            (id) => docs.find((doc) => doc.id === id)?.folder_id,
+                        )
+                            ? () => void handleRemoveSelectedFromFolder()
+                            : undefined
+                    }
+                    onDelete={requestDeleteSelectedItems}
+                    deleteLabel={`Delete ${selectedItemCount} items`}
+                />
+            );
+        }
+        return menuDoc ? (
+            <RowActionMenuItems
+                onClose={onClose}
+                onDeselect={
+                    menuDocIsSelected ? clearCollectionSelection : undefined
+                }
+                onView={
+                    menuAppliesToSelection
+                        ? undefined
+                        : () => {
+                              setViewingDocVersion(null);
+                              setViewingDoc(menuDoc);
+                          }
+                }
+                onRename={
+                    menuAppliesToSelection
+                        ? undefined
+                        : () => {
+                              setRenameDocumentValue(menuDoc.filename);
+                              setRenamingDocumentId(menuDoc.id);
+                          }
+                }
+                renameLabel="Rename document"
+                onDownload={() =>
+                    menuAppliesToSelection
+                        ? handleDownloadSelectedDocs()
+                        : downloadDoc(menuDoc.id)
+                }
+                onShowAllVersions={
+                    !menuAppliesToSelection &&
+                    menuDocHasVersions &&
+                    !menuDocVersionsOpen
+                        ? () => void toggleVersions(menuDoc.id)
+                        : undefined
+                }
+                onUploadNewVersion={
+                    menuAppliesToSelection
+                        ? undefined
+                        : () => void handleUploadNewVersion(menuDoc)
+                }
+                onRemoveFromFolder={
+                    menuAppliesToSelection
+                        ? selectedStandaloneDocIds.some(
+                              (id) => docs.find((doc) => doc.id === id)?.folder_id,
+                          )
+                            ? () => void handleRemoveSelectedFromFolder()
+                            : undefined
+                        : menuDoc.folder_id
+                          ? () => void handleRemoveDocFromFolder(menuDoc.id)
+                          : undefined
+                }
+                onDelete={() =>
+                    menuAppliesToSelection
+                        ? requestDeleteSelectedItems()
+                        : requestRemoveDoc(menuDoc)
+                }
+                deleteLabel={
+                    menuAppliesToSelection
+                        ? `Delete ${selectedItemCount} items`
+                        : undefined
+                }
+                deleteDisabled={
+                    !menuAppliesToSelection && !canDeleteDocument(menuDoc)
+                }
+            />
+        ) : (
+            <RowActionMenuItems
+                onClose={onClose}
+                onDeselect={
+                    menuFolderIsSelected ? clearCollectionSelection : undefined
+                }
+                onView={
+                    !menuFolderAppliesToSelection && showFolderActions && folderId
+                        ? () => openFolderView(folderId!)
+                        : undefined
+                }
+                viewLabel="Open"
+                onDownload={
+                    menuFolderAppliesToSelection
+                        ? handleDownloadSelectedDocs
+                        : undefined
+                }
+                newSubfolderDisabled={!allowed("docs.organize")}
+                onNewSubfolder={
+                    menuFolderAppliesToSelection
+                        ? undefined
+                        : () => {
+                              // The name prompt itself is
+                              // only offered to a role
+                              // that may create the
+                              // folder; the submit gate
+                              // in handleCreateFolder
+                              // stays as the backstop.
+                              if (
+                                  !requireCapability(
+                                      "docs.organize",
+                                      "create folders",
+                                      "editor",
+                                  )
+                              )
+                                  return;
+                              setCreatingFolderIn(folderId ?? null);
+                              setNewFolderName("");
+                              if (folderId) {
+                                  const wasExpanded =
+                                      expandedFolderIds.has(folderId);
+                                  if (!wasExpanded)
+                                      void expandFolderChildren(folderId);
+                                  setExpandedFolderIds(
+                                      (prev) => new Set([...prev, folderId!]),
+                                  );
+                              }
+                          }
+                }
+                newSubfolderLabel={
+                    showFolderActions ? "New subfolder inside" : "New subfolder"
+                }
+                onRename={
+                    !menuFolderAppliesToSelection && showFolderActions && folderId
+                        ? () => {
+                              const f = folders.find((x) => x.id === folderId);
+                              setRenameFolderValue(f?.name ?? "");
+                              setRenamingFolderId(folderId!);
+                          }
+                        : undefined
+                }
+                renameLabel="Rename folder"
+                onDelete={
+                    menuFolderAppliesToSelection
+                        ? requestDeleteSelectedItems
+                        : showFolderActions && folderId
+                          ? () => requestDeleteFolder(folderId!)
+                          : undefined
+                }
+                deleteLabel={
+                    menuFolderAppliesToSelection
+                        ? `Delete ${selectedItemCount} items`
+                        : "Delete folder"
+                }
+            />
+        );
+    };
+    // Keep the exported selection descriptor stable across unrelated table renders,
+    // while menu content mounted on open uses current versions and permissions.
+    const rowActionRendererRef = useRef(renderRowActionMenuItems);
+    useEffect(() => {
+        rowActionRendererRef.current = renderRowActionMenuItems;
+    });
     const selectionActions = useMemo<DocTableSelectionActions | null>(() => {
         if (selectedItemCount === 0) return null;
         return {
+            renderMenuItems: (onClose) => (
+                <SelectionMenuItems render={() => rowActionRendererRef.current(
+                    selectedStandaloneDocIds[0],
+                    [...selectedFolderIds][0],
+                    selectedFolderIds.size > 0,
+                    onClose,
+                )} />
+            ),
             selectedCount: selectedItemCount,
             hasDocumentsInFolders: selectedStandaloneDocIds.some(
                 (id) => docs.find((d) => d.id === id)?.folder_id != null,
@@ -3764,6 +4081,7 @@ export function DocTable({
         requestDeleteSelectedItems,
         selectedItemCount,
         selectedStandaloneDocIds,
+        selectedFolderIds,
     ]);
 
     useEffect(() => {
@@ -4157,6 +4475,9 @@ export function DocTable({
                                     onContextMenu={(e) => {
                                         e.preventDefault();
                                         closeRowActionMenus();
+                                        // A catalog has no actions for the
+                                        // table background.
+                                        if (catalog) return;
                                         setContextMenu({
                                             x: e.clientX,
                                             y: e.clientY,
@@ -4223,7 +4544,7 @@ export function DocTable({
                                                             data-document-row
                                                             data-document-id={doc.id}
                                                             data-collection-row-key={`document:${doc.id}`}
-                                                            draggable={renamingDocumentId !== doc.id}
+                                                            draggable={!catalog && renamingDocumentId !== doc.id}
                                                             onDragStart={(event) =>
                                                                 handleDocumentDragStart(
                                                                     event,
@@ -4369,28 +4690,32 @@ export function DocTable({
                                                             </div>
                                                             <div className="w-8 shrink-0 flex justify-end">
                                                                 {!isProcessing && (
-                                                                    <RowActions
-                                                                        onView={() => {
-                                                                            setViewingDocVersion(null);
-                                                                            setViewingDoc(doc);
-                                                                        }}
-                                                                        onRename={() => {
-                                                                            setRenameDocumentValue(docName);
-                                                                            setRenamingDocumentId(doc.id);
-                                                                        }}
-                                                                        renameLabel="Rename document"
-                                                                        onDownload={() => downloadDoc(doc.id)}
-                                                                        onShowAllVersions={
-                                                                            hasVersions && !isVersionsOpen
-                                                                                ? () => void toggleVersions(doc.id)
-                                                                                : undefined
-                                                                        }
-                                                                        onUploadNewVersion={() =>
-                                                                            void handleUploadNewVersion(doc)
-                                                                        }
-                                                                        onDelete={() => requestRemoveDoc(doc)}
-                                                                        deleteDisabled={!canDeleteDocument(doc)}
-                                                                    />
+                                                                    catalog ? (
+                                                                        <RowActions {...catalogDocumentActions(doc)} />
+                                                                    ) : (
+                                                                        <RowActions
+                                                                            onView={() => {
+                                                                                setViewingDocVersion(null);
+                                                                                setViewingDoc(doc);
+                                                                            }}
+                                                                            onRename={() => {
+                                                                                setRenameDocumentValue(docName);
+                                                                                setRenamingDocumentId(doc.id);
+                                                                            }}
+                                                                            renameLabel="Rename document"
+                                                                            onDownload={() => downloadDoc(doc.id)}
+                                                                            onShowAllVersions={
+                                                                                hasVersions && !isVersionsOpen
+                                                                                    ? () => void toggleVersions(doc.id)
+                                                                                    : undefined
+                                                                            }
+                                                                            onUploadNewVersion={() =>
+                                                                                void handleUploadNewVersion(doc)
+                                                                            }
+                                                                            onDelete={() => requestRemoveDoc(doc)}
+                                                                            deleteDisabled={!canDeleteDocument(doc)}
+                                                                        />
+                                                                    )
                                                                 )}
                                                             </div>
                                                         </div>
@@ -4450,27 +4775,6 @@ export function DocTable({
                             {/* Context menu */}
                             {contextMenu &&
                                 (() => {
-                                    const menuDoc = contextMenu.docId
-                                        ? docs.find((doc) => doc.id === contextMenu.docId)
-                                        : null;
-                                    const menuDocVersionNumber = menuDoc ? currentVersionNumber(menuDoc) : null;
-                                    const menuDocHasVersions =
-                                        typeof menuDocVersionNumber === "number" && menuDocVersionNumber > 1;
-                                    const menuDocVersionsOpen = menuDoc ? expandedVersionDocIds.has(menuDoc.id) : false;
-                                    const menuDocIsSelected =
-                                        !!menuDoc &&
-                                        effectiveSelectedDocIdSet.has(menuDoc.id);
-                                    const menuAppliesToSelection =
-                                        menuDocIsSelected &&
-                                        selectedItemCount > 1;
-                                    const menuFolderIsSelected =
-                                        !!contextMenu.folderId &&
-                                        selectedFolderIds.has(
-                                            contextMenu.folderId,
-                                        );
-                                    const menuFolderAppliesToSelection =
-                                        menuFolderIsSelected &&
-                                        selectedItemCount > 1;
                                     return (
                                         <DropdownAtPoint
                                             point={{
@@ -4483,157 +4787,7 @@ export function DocTable({
                                             // the portal to the table.
                                             onClick={(e) => e.stopPropagation()}
                                         >
-                                        {menuDoc ? (
-                                            <RowActionMenuItems
-                                                onClose={() => setContextMenu(null)}
-                                                onDeselect={
-                                                    menuDocIsSelected
-                                                        ? clearCollectionSelection
-                                                        : undefined
-                                                }
-                                                onView={
-                                                    menuAppliesToSelection
-                                                        ? undefined
-                                                        : () => {
-                                                              setViewingDocVersion(null);
-                                                              setViewingDoc(menuDoc);
-                                                          }
-                                                }
-                                                onRename={
-                                                    menuAppliesToSelection
-                                                        ? undefined
-                                                        : () => {
-                                                              setRenameDocumentValue(menuDoc.filename);
-                                                              setRenamingDocumentId(menuDoc.id);
-                                                          }
-                                                }
-                                                renameLabel="Rename document"
-                                                onDownload={() =>
-                                                    menuAppliesToSelection
-                                                        ? handleDownloadSelectedDocs()
-                                                        : downloadDoc(menuDoc.id)
-                                                }
-                                                onShowAllVersions={
-                                                    !menuAppliesToSelection &&
-                                                    menuDocHasVersions &&
-                                                    !menuDocVersionsOpen
-                                                        ? () => void toggleVersions(menuDoc.id)
-                                                        : undefined
-                                                }
-                                                onUploadNewVersion={
-                                                    menuAppliesToSelection
-                                                        ? undefined
-                                                        : () => void handleUploadNewVersion(menuDoc)
-                                                }
-                                                onRemoveFromFolder={
-                                                    menuAppliesToSelection
-                                                        ? selectedStandaloneDocIds.some(
-                                                              (id) => docs.find((doc) => doc.id === id)?.folder_id,
-                                                          )
-                                                            ? () => void handleRemoveSelectedFromFolder()
-                                                            : undefined
-                                                        : menuDoc.folder_id
-                                                          ? () => void handleRemoveDocFromFolder(menuDoc.id)
-                                                        : undefined
-                                                }
-                                                onDelete={() =>
-                                                    menuAppliesToSelection
-                                                        ? requestDeleteSelectedItems()
-                                                        : requestRemoveDoc(menuDoc)
-                                                }
-                                                deleteLabel={
-                                                    menuAppliesToSelection
-                                                        ? `Delete ${selectedItemCount} items`
-                                                        : undefined
-                                                }
-                                                deleteDisabled={
-                                                    !menuAppliesToSelection &&
-                                                    !canDeleteDocument(menuDoc)
-                                                }
-                                            />
-                                        ) : (
-                                            <RowActionMenuItems
-                                                onClose={() => setContextMenu(null)}
-                                                onDeselect={
-                                                    menuFolderIsSelected
-                                                        ? clearCollectionSelection
-                                                        : undefined
-                                                }
-                                                onView={
-                                                    !menuFolderAppliesToSelection &&
-                                                    contextMenu.showFolderActions &&
-                                                    contextMenu.folderId
-                                                        ? () =>
-                                                              openFolderView(
-                                                                  contextMenu.folderId!,
-                                                              )
-                                                        : undefined
-                                                }
-                                                viewLabel="Open"
-                                                onDownload={
-                                                    menuFolderAppliesToSelection
-                                                        ? handleDownloadSelectedDocs
-                                                        : undefined
-                                                }
-                                                newSubfolderDisabled={!allowed("docs.organize")}
-                                                onNewSubfolder={menuFolderAppliesToSelection ? undefined : () => {
-                                                    // The name prompt itself is
-                                                    // only offered to a role
-                                                    // that may create the
-                                                    // folder; the submit gate
-                                                    // in handleCreateFolder
-                                                    // stays as the backstop.
-                                                    if (
-                                                        !requireCapability(
-                                                            "docs.organize",
-                                                            "create folders",
-                                                            "editor",
-                                                        )
-                                                    )
-                                                        return;
-                                                    setCreatingFolderIn(contextMenu.folderId);
-                                                    setNewFolderName("");
-                                                    if (contextMenu.folderId) {
-                                                        const wasExpanded = expandedFolderIds.has(contextMenu.folderId);
-                                                        if (!wasExpanded)
-                                                            void expandFolderChildren(contextMenu.folderId);
-                                                        setExpandedFolderIds(
-                                                            (prev) => new Set([...prev, contextMenu.folderId!]),
-                                                        );
-                                                    }
-                                                }}
-                                                newSubfolderLabel={
-                                                    contextMenu.showFolderActions
-                                                        ? "New subfolder inside"
-                                                        : "New subfolder"
-                                                }
-                                                onRename={
-                                                    !menuFolderAppliesToSelection &&
-                                                    contextMenu.showFolderActions && contextMenu.folderId
-                                                        ? () => {
-                                                              const f = folders.find(
-                                                                  (x) => x.id === contextMenu.folderId,
-                                                              );
-                                                              setRenameFolderValue(f?.name ?? "");
-                                                              setRenamingFolderId(contextMenu.folderId!);
-                                                          }
-                                                        : undefined
-                                                }
-                                                renameLabel="Rename folder"
-                                                onDelete={
-                                                    menuFolderAppliesToSelection
-                                                        ? requestDeleteSelectedItems
-                                                        : contextMenu.showFolderActions && contextMenu.folderId
-                                                        ? () => requestDeleteFolder(contextMenu.folderId!)
-                                                        : undefined
-                                                }
-                                                deleteLabel={
-                                                    menuFolderAppliesToSelection
-                                                        ? `Delete ${selectedItemCount} items`
-                                                        : "Delete folder"
-                                                }
-                                            />
-                                        )}
+                                        {renderRowActionMenuItems(contextMenu.docId, contextMenu.folderId, contextMenu.showFolderActions, () => setContextMenu(null))}
                                         </DropdownAtPoint>
                                     );
                                 })()}
@@ -4647,6 +4801,19 @@ export function DocTable({
 
             <DocumentSidePanel
                 doc={sidePanelDoc}
+                readOnly={!!catalog}
+                displayUrl={
+                    catalog && sidePanelDoc
+                        ? catalog.resolveDocumentUrl(sidePanelDoc.id).url
+                        : undefined
+                }
+                onAdd={
+                    catalog &&
+                    sidePanelDoc &&
+                    catalog.canAdd?.(sidePanelDoc) !== false
+                        ? (doc) => catalog.onAdd([doc])
+                        : undefined
+                }
                 versionId={viewingDocVersion?.id ?? null}
                 currentVersionId={
                     sidePanelDoc ? (versionsByDocId.get(sidePanelDoc.id)?.currentVersionId ?? null) : null

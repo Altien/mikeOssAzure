@@ -80,7 +80,7 @@ import {
   selectedIdsAfterShiftClick,
 } from "@/app/components/shared/TablePrimitive";
 import { TableToolbar } from "@/app/components/shared/TableToolbar";
-import { RowActions } from "@/app/components/shared/RowActions";
+import { RowActions, RowActionMenuItems } from "@/app/components/shared/RowActions";
 import { TRExpandedCellSurface } from "@/app/components/tabular/TRExpandedCellSurface";
 import { UploadOverlay } from "@/app/components/assistant/UploadOverlay";
 import { DocumentUploadMenu } from "@/app/components/shared/DocumentUploadMenu";
@@ -362,14 +362,31 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
     setAddColumnOpen(false);
   }
 
-  function handleDeleteSelectedColumns() {
+  function deleteColumns(indices: number[]) {
+    if (readOnly) return;
     const next = columns
-      .filter((column) => !selectedColIndices.includes(column.index))
+      .filter((column) => !indices.includes(column.index))
       .map((column, index) => ({ ...column, index }));
     setColumns(next);
     saveColumns(next);
     setSelectedColIndices([]);
     setColActionsOpen(false);
+  }
+
+  function columnActions(col: ColumnConfig | undefined, indices: number[]) {
+    return {
+      onView:
+        col && indices.length === 1
+          ? () => {
+              setExpandedPromptIndex(null);
+              if (readOnly) setViewingColumn(col);
+              else setEditingColumn(col);
+            }
+          : undefined,
+      onDelete: readOnly ? undefined : () => deleteColumns(indices),
+      deleteLabel:
+        indices.length > 1 ? `Delete ${indices.length} columns` : undefined,
+    };
   }
 
   function handleColumnSaved(updated: ColumnConfig) {
@@ -712,26 +729,11 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
                   <div className="flex items-center gap-2">
                     {visibleColumns.length > 0 &&
                       selectedColIndices.length > 0 && (
-                        <>
-                          <SelectionActionsMenu
-                            className="max-md:hidden"
-                            open={colActionsOpen}
-                            onOpenChange={setColActionsOpen}
-                            actions={[
-                              {
-                                label: "Delete",
-                                destructive: true,
-                                onSelect: handleDeleteSelectedColumns,
-                              },
-                            ]}
-                          />
-                          <TabPillButtonUI
-                            onClick={handleDeleteSelectedColumns}
-                            className="text-red-600 md:hidden"
-                          >
-                            Delete
-                          </TabPillButtonUI>
-                        </>
+                        <SelectionActionsMenu
+                          open={colActionsOpen}
+                          onOpenChange={setColActionsOpen}
+                          renderItems={(close) => <RowActionMenuItems onClose={close} {...columnActions(columns.find((column) => column.index === selectedColIndices[0]), selectedColIndices)} />}
+                        />
                       )}
                     <TabPillButtonUI onClick={() => setAddColumnOpen(true)}>
                       <Plus className="h-3.5 w-3.5" />
@@ -825,6 +827,7 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
                       <TableRow
                         key={col.index}
                         selected={isChecked}
+                        rightClickDropdown={(close) => <RowActionMenuItems onClose={close} {...columnActions(col, isChecked ? selectedColIndices : [col.index])} />}
                         onClick={(event) => {
                           if (event.shiftKey) {
                             event.preventDefault();
@@ -919,29 +922,7 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
                           className="flex w-8 shrink-0 justify-end"
                           onClick={(event) => event.stopPropagation()}
                         >
-                          <RowActions
-                            onView={() => {
-                              setExpandedPromptIndex(null);
-                              if (readOnly) setViewingColumn(col);
-                              else setEditingColumn(col);
-                            }}
-                            onDelete={
-                              readOnly
-                                ? undefined
-                                : () => {
-                                const next = columns
-                                  .filter(
-                                    (column) => column.index !== col.index,
-                                  )
-                                  .map((column, index) => ({
-                                    ...column,
-                                    index,
-                                  }));
-                                setColumns(next);
-                                saveColumns(next);
-                                  }
-                            }
-                          />
+                          <RowActions {...columnActions(col, [col.index])} />
                         </div>
                       </TableRow>
                     );

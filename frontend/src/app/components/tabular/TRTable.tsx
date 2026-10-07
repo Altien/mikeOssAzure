@@ -2,6 +2,7 @@
 
 import {
     forwardRef,
+    type ReactNode,
     useImperativeHandle,
     useRef,
     useState,
@@ -20,6 +21,7 @@ import {
     SkeletonCheckbox,
     SkeletonLine,
     TableScrollArea,
+    TableRow,
 } from "../shared/TablePrimitive";
 import { EmptyState } from "@/app/components/ui/empty-state";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
@@ -65,6 +67,7 @@ interface Props {
     dragOverFiles?: boolean;
     highlightedCell?: { colIdx: number; rowIdx: number } | null;
     onSelectionChange: (ids: string[]) => void;
+    rightClickDropdown?: (row: TabularReviewRow, close: () => void) => ReactNode;
     onDocumentOpen: (row: TabularReviewRow, document: Document) => void;
     onExpand: (cell: TabularCell) => void;
     onCitationClick: (
@@ -97,6 +100,7 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
         dragOverFiles = false,
         highlightedCell,
         onSelectionChange,
+        rightClickDropdown,
         onDocumentOpen,
         onExpand,
         onCitationClick,
@@ -400,9 +404,12 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                         ? LIQUID_GLASS_SELECTED_CLASS
                         : "";
                     return (
-                        <div
+                        <TableRow
                             key={row.id}
-                            className={`group flex transition-colors ${rowBg}`}
+                            interactive={false}
+                            selected={isSelected}
+                            rightClickDropdown={rightClickDropdown ? (close) => rightClickDropdown(row, close) : undefined}
+                            className={`h-auto items-stretch pr-0 ${rowBg}`}
                             style={{ minWidth: totalContentWidth }}
                         >
                             <TRFirstColumnCell
@@ -459,7 +466,7 @@ export const TRTable = forwardRef<TRTableHandle, Props>(function TRTable(
                                 );
                             })}
                             <div className="flex-1 border-b border-gray-200 min-h-8 min-w-8" />
-                        </div>
+                        </TableRow>
                     );
                     })}
                 </div>

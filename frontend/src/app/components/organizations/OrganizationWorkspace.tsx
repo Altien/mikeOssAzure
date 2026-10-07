@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type Dispatch,
+  type ReactNode,
   type SetStateAction,
 } from "react";
 import { Check, ChevronDown, Loader2, Pencil, Trash2 } from "lucide-react";
@@ -14,6 +15,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import { HeaderActionsMenu } from "@/app/components/shared/HeaderActionsMenu";
+import { SelectionActionsMenu } from "@/app/components/shared/SelectionActionsMenu";
 import { TableToolbar } from "@/app/components/shared/TableToolbar";
 import {
   SkeletonCheckbox,
@@ -40,7 +42,6 @@ import { ClosedProjectSvgIcon } from "@/app/components/shared/FolderSvgIcon";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { EmptyState } from "@/app/components/ui/empty-state";
-import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
 import {
   Dropdown,
   DropdownContent,
@@ -351,25 +352,42 @@ export function OrganizationWorkspace({ orgId }: { orgId: string }) {
     setRemovingSelected(false);
   }
 
+  function renderMemberActions(
+    member: OrgMember | undefined,
+    close?: () => void,
+  ) {
+    const appliesToSelection =
+      member &&
+      selectedMemberIds.includes(member.id) &&
+      selectedMemberIds.length > 1 &&
+      isAdmin;
+    if (
+      !appliesToSelection &&
+      (!member || (!isAdmin && member.user_id !== user?.id))
+    )
+      return null;
+    return (
+      <DropdownItem
+        variant="destructive"
+        onSelect={() => {
+          close?.();
+          if (appliesToSelection) requestRemoveSelected();
+          else if (member) setRemoveMember(member);
+        }}
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+        {appliesToSelection
+          ? "Remove all selected"
+          : member?.user_id === user?.id
+            ? "Leave organization"
+            : "Remove member"}
+      </DropdownItem>
+    );
+  }
+
   const peopleToolbarActions =
     activeTab === "people" && isAdmin && selectedMemberIds.length > 0 ? (
-      <Dropdown>
-        <DropdownTrigger asChild>
-          <TabPillButtonUI>
-            Actions
-            <ChevronDown className="h-3.5 w-3.5" />
-          </TabPillButtonUI>
-        </DropdownTrigger>
-        <DropdownContent align="end" className="w-44">
-          <DropdownItem
-            onSelect={requestRemoveSelected}
-            className="text-red-600 focus:text-red-700"
-          >
-            <Trash2 className="h-3.5 w-3.5 text-red-600" />
-            Remove all selected
-          </DropdownItem>
-        </DropdownContent>
-      </Dropdown>
+      <SelectionActionsMenu renderItems={(close) => renderMemberActions(members.find((member) => member.id === selectedMemberIds[0]), close)} />
     ) : undefined;
 
   return (
@@ -445,6 +463,7 @@ export function OrganizationWorkspace({ orgId }: { orgId: string }) {
           onRetry={load}
           onRoleChange={requestRoleChange}
           onRemove={setRemoveMember}
+          renderActions={renderMemberActions}
         />
       ) : activeTab === "projects" ? (
         <ResourceTable
@@ -584,6 +603,7 @@ function PeopleTable({
   onRetry,
   onRoleChange,
   onRemove,
+  renderActions,
 }: {
   loading: boolean;
   error: string | null;
@@ -596,6 +616,7 @@ function PeopleTable({
   onRetry: () => Promise<void>;
   onRoleChange: (member: OrgMember, role: OrgRole) => void;
   onRemove: (member: OrgMember) => void;
+  renderActions: (member: OrgMember, close?: () => void) => ReactNode;
 }) {
   const [roleFilter, setRoleFilter] = useState<OrgRole | null>(null);
   const [sort, setSort] = useState<{
@@ -764,6 +785,7 @@ function PeopleTable({
                 key={member.id}
                 interactive={false}
                 selected={isSelected}
+                rightClickDropdown={(close) => renderActions(member, close)}
                 className={!isSelected ? LIQUID_GLASS_HOVER_CLASS : undefined}
               >
                 <TablePrimaryCell

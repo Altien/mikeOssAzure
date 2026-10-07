@@ -223,7 +223,7 @@ describe("AppSidebar account dropdown", () => {
       render(<AppSidebar isOpen={isOpen} onToggle={vi.fn()} />);
 
       expect(screen.getByRole("button", { name: "Account menu" })).toHaveClass(
-        "h-12",
+        "h-9",
         "shrink-0",
       );
     },

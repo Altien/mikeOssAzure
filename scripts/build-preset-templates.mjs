@@ -44,24 +44,19 @@ const catalog = walk(root)
     const format = extname(path).slice(1);
     if (!["docx", "pdf", "md"].includes(format))
       throw new Error(`Unsupported preset: ${relativePath}`);
-    const publisher = relativePath.includes("/")
-      ? relativePath.split("/")[0]
-      : "Collection notes";
+    const publisher = relativePath.split("/")[0];
     const source = publishers[publisher];
-    if (!source && relativePath !== "README.md")
+    if (!source || !relativePath.includes("/"))
       throw new Error(`Unknown publisher: ${relativePath}`);
     const bytes = readFileSync(path);
     return {
       id: relativePath,
       filename: relativePath.split("/").at(-1),
-      title:
-        relativePath === "README.md"
-          ? "About this collection"
-          : relativePath
-              .split("/")
-              .at(-1)
-              .replace(/\.[^.]+$/, "")
-              .replace(/-/g, " "),
+      title: relativePath
+        .split("/")
+        .at(-1)
+        .replace(/\.[^.]+$/, "")
+        .replace(/-/g, " "),
       publisher,
       group: dirname(relativePath) === "." ? "" : dirname(relativePath),
       format,
