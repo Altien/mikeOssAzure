@@ -315,7 +315,11 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                     isOpen
                         ? "w-64 h-[calc(100dvh-1rem)] md:h-[calc(100dvh-1.5rem)]"
                         : "max-md:hidden w-[46px] md:h-[calc(100dvh-1.5rem)] h-auto pointer-events-none md:pointer-events-auto",
-                    "my-2 ml-2 mr-0 md:my-3 md:ml-3 md:mr-0 rounded-2xl backdrop-blur-2xl overflow-visible",
+                    // Collapsed, the ends are full semicircles. The radii are
+                    // lengths, not rounded-full, so the change animates with
+                    // the width.
+                    isOpen ? "rounded-2xl" : "rounded-[23px]",
+                    "my-2 ml-2 mr-0 md:my-3 md:ml-3 md:mr-0 overflow-visible",
                     LIQUID_GLASS_FLOAT_CLASS,
                     "absolute z-[99] flex shrink-0 flex-col transition-all duration-300 md:relative",
                 )}
@@ -355,7 +359,8 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                         onPointerLeave={() => setToggleHoverSuppressed(false)}
                         aria-label={isOpen ? "Close sidebar" : "Open sidebar"}
                         className={cn(
-                            "group flex h-8 w-8 shrink-0 items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/40",
+                            "group flex h-8 w-8 shrink-0 items-center justify-center transition-[border-radius] duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/40",
+                            isOpen ? "rounded-md" : "rounded-[16px]",
                             !toggleHoverSuppressed && LIQUID_GLASS_HOVER_CLASS,
                         )}
                         title={isOpen ? "Close sidebar" : "Open sidebar"}
@@ -639,7 +644,8 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                 type="button"
                                 aria-label="Account menu"
                                 className={cn(
-                                    "flex h-9 w-full shrink-0 items-center rounded-xl px-1.5 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2",
+                                    "flex h-9 w-full shrink-0 items-center px-1.5 outline-none [transition:border-radius_300ms_cubic-bezier(0.4,0,0.2,1),background-color_150ms,color_150ms] focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2",
+                                    isOpen ? "rounded-xl" : "rounded-[18px]",
                                     !isOpen ? "hidden md:flex" : "",
                                     pathname.startsWith("/settings") ||
                                         pathname === "/history" ||

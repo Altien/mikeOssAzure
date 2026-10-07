@@ -15,7 +15,7 @@ const FOCUS_RING_CLASS =
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2";
 
 export const FORM_CONTROL_GLASS_CLASS =
-    `w-full rounded-xl px-3 text-sm text-gray-700 ${LIQUID_GLASS_SUBTLE_CLASS} outline-none placeholder:text-gray-400 backdrop-blur-xl transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${FOCUS_RING_CLASS}`;
+    `w-full rounded-xl px-3 text-sm text-gray-700 ${LIQUID_GLASS_SUBTLE_CLASS} outline-none placeholder:text-gray-400 transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${FOCUS_RING_CLASS}`;
 
 type FormTextInputVariant = "glass" | "minimal";
 

@@ -298,7 +298,7 @@ export function AssistantSidePanel({
             ref={panelRef}
             className={cn(
                 "relative flex h-full w-full shrink-0 flex-col md:my-3 md:mr-3 md:h-[calc(100%-1.5rem)] md:w-[var(--assistant-panel-width)]",
-                "rounded-2xl backdrop-blur-2xl",
+                "rounded-2xl",
                 LIQUID_GLASS_FLOAT_CLASS,
                 "overflow-hidden",
             )}

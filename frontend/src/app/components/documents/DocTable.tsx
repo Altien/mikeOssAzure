@@ -214,6 +214,8 @@ interface DocTableProps {
     search: string;
     operations: DocTableOperations;
     emptyStateTitle: string;
+    /** A second way to fill an empty collection, offered beside Upload. */
+    emptyStateSecondaryAction?: { label: string; onClick: () => void };
     renderAddDocumentsModal?: (
         open: boolean,
         onClose: () => void,
@@ -393,6 +395,7 @@ export function DocTable({
     search,
     operations,
     emptyStateTitle,
+    emptyStateSecondaryAction,
     renderAddDocumentsModal,
     onAddDocumentsActionChange,
     onUploadFilesActionChange,
@@ -4431,39 +4434,53 @@ export function DocTable({
                                                 title={emptyStateTitle}
                                                 description="Upload documents or drop files and folders here"
                                                 action={
-                                                    <PillButtonUI
-                                                        tone="black"
-                                                        size="sm"
-                                                        // Uploading here is
-                                                        // editor-tier, and the
-                                                        // empty state was the
-                                                        // one Upload that
-                                                        // still looked live to
-                                                        // a viewer.
-                                                        disabled={
-                                                            !allowed(
-                                                                "content.edit",
-                                                            )
-                                                        }
-                                                        aria-disabled={
-                                                            !allowed(
-                                                                "content.edit",
-                                                            ) || undefined
-                                                        }
-                                                        title={
-                                                            allowed(
-                                                                "content.edit",
-                                                            )
-                                                                ? undefined
-                                                                : "Only an editor can add documents"
-                                                        }
-                                                        onClick={(event) => {
-                                                            event.stopPropagation();
-                                                            openAddDocuments();
-                                                        }}
-                                                    >
-                                                        Upload
-                                                    </PillButtonUI>
+                                                    <div className="flex flex-wrap items-center gap-2">
+                                                        <PillButtonUI
+                                                            tone="black"
+                                                            size="sm"
+                                                            // Uploading here is
+                                                            // editor-tier, and the
+                                                            // empty state was the
+                                                            // one Upload that
+                                                            // still looked live to
+                                                            // a viewer.
+                                                            disabled={
+                                                                !allowed(
+                                                                    "content.edit",
+                                                                )
+                                                            }
+                                                            aria-disabled={
+                                                                !allowed(
+                                                                    "content.edit",
+                                                                ) || undefined
+                                                            }
+                                                            title={
+                                                                allowed(
+                                                                    "content.edit",
+                                                                )
+                                                                    ? undefined
+                                                                    : "Only an editor can add documents"
+                                                            }
+                                                            onClick={(event) => {
+                                                                event.stopPropagation();
+                                                                openAddDocuments();
+                                                            }}
+                                                        >
+                                                            Upload
+                                                        </PillButtonUI>
+                                                        {emptyStateSecondaryAction && (
+                                                            <PillButtonUI
+                                                                tone="white"
+                                                                size="sm"
+                                                                onClick={(event) => {
+                                                                    event.stopPropagation();
+                                                                    emptyStateSecondaryAction.onClick();
+                                                                }}
+                                                            >
+                                                                {emptyStateSecondaryAction.label}
+                                                            </PillButtonUI>
+                                                        )}
+                                                    </div>
                                                 }
                                             />
                                         </TableEmptyState>

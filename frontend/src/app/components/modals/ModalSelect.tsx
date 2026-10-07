@@ -84,7 +84,7 @@ export function ModalSelect({
                     type="button"
                     disabled={disabled}
                     className={cn(
-                        `flex h-10 w-full items-center justify-between rounded-xl px-3 text-sm text-gray-700 ${LIQUID_GLASS_SUBTLE_CLASS} ${LIQUID_GLASS_HOVER_CLASS} backdrop-blur-xl transition-colors focus:outline-none disabled:cursor-not-allowed disabled:opacity-60`,
+                        `flex h-10 w-full items-center justify-between rounded-xl px-3 text-sm text-gray-700 ${LIQUID_GLASS_SUBTLE_CLASS} ${LIQUID_GLASS_HOVER_CLASS} transition-colors focus:outline-none disabled:cursor-not-allowed disabled:opacity-60`,
                         isOpen && LIQUID_GLASS_SELECTED_CLASS,
                         className,
                     )}

@@ -627,6 +627,20 @@ export function LibraryCollectionPage({
         [collectionRootPath, router],
     );
 
+    const openPresets = useCallback(() => {
+        router.push(
+            `${
+                folderId
+                    ? `${collectionRootPath}/folders/${encodeURIComponent(folderId)}`
+                    : collectionRootPath
+            }/presets`,
+        );
+    }, [collectionRootPath, folderId, router]);
+    const presetsEmptyStateAction = useMemo(
+        () => ({ label: "Presets", onClick: openPresets }),
+        [openPresets],
+    );
+
     const setDocuments: Dispatch<SetStateAction<Document[]>> = useCallback(
     (update) => {
       setDocumentsForKind(kind, update);
@@ -931,14 +945,7 @@ export function LibraryCollectionPage({
                                             {
                                                 label: "Add preset templates",
                                                 icon: BookOpen,
-                                                onSelect: () =>
-                                                    router.push(
-                                                        `${
-                                                            folderId
-                                                                ? `${collectionRootPath}/folders/${encodeURIComponent(folderId)}`
-                                                                : collectionRootPath
-                                                        }/presets`,
-                                                    ),
+                                                onSelect: openPresets,
                                             },
                                         ]}
                                     />
@@ -1006,6 +1013,11 @@ export function LibraryCollectionPage({
                     search={search}
                     operations={operations}
                     emptyStateTitle={title}
+                    emptyStateSecondaryAction={
+                        kind === "templates"
+                            ? presetsEmptyStateAction
+                            : undefined
+                    }
                     onAddDocumentsActionChange={handleAddDocumentsActionChange}
                     onUploadFolderActionChange={
                         handleUploadFolderActionChange

@@ -66,7 +66,7 @@ const STATUS_TEXT_STYLES: Record<string, string> = {
 };
 
 const GLASS_DOT =
-  "h-2.5 w-2.5 shrink-0 rounded-full border border-white/80 shadow-[0_1px_2px_rgba(15,23,42,0.08),inset_0_1px_1px_rgba(255,255,255,0.55)] backdrop-blur-xl";
+  "h-2.5 w-2.5 shrink-0 rounded-full border border-white/80 shadow-[0_1px_2px_rgba(15,23,42,0.08),inset_0_1px_1px_rgba(255,255,255,0.55)]";
 
 const SURFACE_LABELS: Record<string, string> = {
   assistant: "Assistant",

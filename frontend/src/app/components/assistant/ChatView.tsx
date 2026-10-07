@@ -1010,7 +1010,7 @@ export function ChatView({
     ];
 
     const renderChatHeaderActions = () => (
-        <HeaderButtonsUI className="pointer-events-auto">
+        <HeaderButtonsUI className="pointer-events-auto backdrop-blur-2xl">
             {!isNewChat && (
                 <HeaderButtonUI
                     iconOnly

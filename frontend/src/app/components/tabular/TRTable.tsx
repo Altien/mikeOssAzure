@@ -42,7 +42,7 @@ const TR_STICKY_CELL_CLASS = "table-sticky-cell";
 // The review grid keeps the wider page gutter. Its first column is a fixed
 // 332px cell rather than a checkbox aligned to the page header, so the
 // narrower gutter the other tables use would buy it nothing.
-const TR_GUTTER_CLASS = "md:mx-8";
+const TR_GUTTER_CLASS = "mx-4 md:mx-8";
 
 // Pixel widths matching the CSS constants above
 const DOC_COL_W_PX = 332;
