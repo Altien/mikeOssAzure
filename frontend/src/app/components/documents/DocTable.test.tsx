@@ -124,7 +124,7 @@ describe("DocTable remove-from-folder failures", () => {
 
         await user.click(screen.getByRole("button", { name: "Open row actions" }));
         await user.click(
-            screen.getByRole("button", { name: "Remove from subfolder" }),
+            screen.getByRole("menuitem", { name: "Remove from subfolder" }),
         );
 
         expect(

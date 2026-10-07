@@ -3,15 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Loader2 } from "lucide-react";
 import {
-    DropdownMenu,
-    DropdownMenuLabel,
-    DropdownMenuSeparator,
-    DropdownMenuTrigger,
-} from "@/app/components/ui/dropdown-menu";
-import {
-    LiquidDropdownContent,
-    LiquidDropdownItem,
-} from "@/app/components/ui/liquid-dropdown";
+    DROPDOWN_ROWS_CLASS,
+    Dropdown,
+    DropdownContent,
+    DropdownItem,
+    DropdownLabel,
+    DropdownSeparator,
+    DropdownTrigger,
+} from "@/shared/ui/dropdown";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { type ApiKeyState } from "@/app/lib/mikeApi";
 import {
@@ -297,8 +296,8 @@ function ModelPreferenceDropdown({
     }, new Map<string, number>());
 
     return (
-        <DropdownMenu onOpenChange={setIsOpen}>
-            <DropdownMenuTrigger asChild>
+        <Dropdown onOpenChange={setIsOpen}>
+            <DropdownTrigger asChild>
                 <button
                     type="button"
                     disabled={isSaving}
@@ -321,13 +320,12 @@ function ModelPreferenceDropdown({
                         />
                     )}
                 </button>
-            </DropdownMenuTrigger>
-            <LiquidDropdownContent
-                className="z-50"
+            </DropdownTrigger>
+            <DropdownContent
                 style={{ width: "var(--radix-dropdown-menu-trigger-width)" }}
                 align="start"
             >
-                <LiquidDropdownItem
+                <DropdownItem
                     className="cursor-pointer"
                     onSelect={() => onChange("")}
                 >
@@ -335,18 +333,18 @@ function ModelPreferenceDropdown({
                     {!value && (
                         <Check className="h-3.5 w-3.5 text-gray-600 ml-1" />
                     )}
-                </LiquidDropdownItem>
-                {availableGroups.length > 0 && <DropdownMenuSeparator />}
+                </DropdownItem>
+                {availableGroups.length > 0 && <DropdownSeparator />}
                 {availableGroups.map(({ group, items }, groupIndex) => {
                     return (
-                        <div key={group}>
-                            {groupIndex > 0 && <DropdownMenuSeparator />}
-                            <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-gray-400">
+                        <div key={group} className={DROPDOWN_ROWS_CLASS}>
+                            {groupIndex > 0 && <DropdownSeparator />}
+                            <DropdownLabel>
                                 {group}
-                            </DropdownMenuLabel>
+                            </DropdownLabel>
                             {items.map((m) => {
                                 return (
-                                    <LiquidDropdownItem
+                                    <DropdownItem
                                         key={m.id}
                                         className="cursor-pointer"
                                         onSelect={() => onChange(m.id)}
@@ -365,13 +363,13 @@ function ModelPreferenceDropdown({
                                         {m.id === value && (
                                             <Check className="h-3.5 w-3.5 text-gray-600 ml-1" />
                                         )}
-                                    </LiquidDropdownItem>
+                                    </DropdownItem>
                                 );
                             })}
                         </div>
                     );
                 })}
-            </LiquidDropdownContent>
-        </DropdownMenu>
+            </DropdownContent>
+        </Dropdown>
     );
 }

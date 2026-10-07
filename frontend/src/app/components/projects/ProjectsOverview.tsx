@@ -1,8 +1,8 @@
 "use client";
 
+import { SelectionActionsMenu } from "@/app/components/shared/SelectionActionsMenu";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronDown } from "lucide-react";
 import {
     getProjectFilterOptions,
     type ProjectFilterOptions,
@@ -62,9 +62,7 @@ import {
 } from "@/app/components/shared/TablePrimitive";
 import { EmptyState } from "@/app/components/ui/empty-state";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
-import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
 import { useQueryParamTab } from "@/app/hooks/useQueryParamTab";
-import { LIQUID_GLASS_FLOAT_CLASS } from "@/shared/ui/LiquidGlassUI";
 import { AccessScopeLabel } from "@/app/components/shared/AccessScopeLabel";
 
 function formatDate(iso: string) {
@@ -149,7 +147,6 @@ export function ProjectsOverview() {
         practices: [],
         owners: [],
     });
-    const actionsRef = useRef<HTMLDivElement>(null);
     const rowSelectionAnchorIdRef = useRef<string | null>(null);
     const { user, isAuthenticated, authLoading } = useAuth();
     const previewEmptyStates = searchParams.get("emptyStates") === "1";
@@ -200,17 +197,6 @@ export function ProjectsOverview() {
         };
     }, [authLoading, isAuthenticated]);
 
-    useEffect(() => {
-        function handleClick(e: MouseEvent) {
-            if (
-                actionsRef.current &&
-                !actionsRef.current.contains(e.target as Node)
-            )
-                setActionsOpen(false);
-        }
-        if (actionsOpen) document.addEventListener("mousedown", handleClick);
-        return () => document.removeEventListener("mousedown", handleClick);
-    }, [actionsOpen]);
 
     const practices = filterOptions.practices;
     const ownerOptions = filterOptions.owners;
@@ -503,24 +489,17 @@ export function ProjectsOverview() {
 
     const toolbarActions =
         selectedIds.length > 0 ? (
-            <div ref={actionsRef} className="relative">
-                <TabPillButtonUI onClick={() => setActionsOpen((v) => !v)}>
-                    Actions
-                    <ChevronDown className="h-3.5 w-3.5" />
-                </TabPillButtonUI>
-                {actionsOpen && (
-                    <div
-                        className={`absolute right-0 top-full z-[120] mt-1 w-36 overflow-hidden rounded-lg ${LIQUID_GLASS_FLOAT_CLASS} backdrop-blur-2xl`}
-                    >
-                        <button
-                            onClick={requestDeleteSelected}
-                            className="w-full px-3 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 transition-colors"
-                        >
-                            Delete
-                        </button>
-                    </div>
-                )}
-            </div>
+            <SelectionActionsMenu
+                open={actionsOpen}
+                onOpenChange={setActionsOpen}
+                actions={[
+                    {
+                        label: "Delete",
+                        destructive: true,
+                        onSelect: requestDeleteSelected,
+                    },
+                ]}
+            />
         ) : undefined;
 
     return (
@@ -737,10 +716,9 @@ export function ProjectsOverview() {
                                 <TableRow
                                     key={project.id}
                                     selected={selectedIds.includes(project.id)}
-                                    rightClickDropdown={(close, menuProps) => (
+                                    rightClickDropdown={(close) => (
                                         <RowActionMenuItems
                                             onClose={close}
-                                            surfaceProps={menuProps}
                                             onView={
                                                 appliesToSelection
                                                     ? undefined

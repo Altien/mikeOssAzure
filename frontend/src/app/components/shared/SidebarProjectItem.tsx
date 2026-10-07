@@ -232,7 +232,9 @@ export function SidebarProjectItem({
                     type="button"
                     onClick={onOpenProject}
                     title={project.name}
-                    className="flex h-full min-w-0 flex-1 items-center gap-3 rounded-md py-1 pl-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                    // The row owns the hover fill, so it draws the ring.
+                    data-focus-fill
+                    className="flex h-full min-w-0 flex-1 items-center gap-3 rounded-md py-1 pl-2 text-left outline-none"
                 >
                     <span className="flex h-4 w-4 shrink-0 items-center justify-center">
                         <ProjectSvgIcon
@@ -325,7 +327,7 @@ export function SidebarProjectItem({
                                                 itemActive ? "page" : undefined
                                             }
                                             className={cn(
-                                                "flex h-7 w-full items-center gap-3 rounded-md pl-2 pr-2 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40",
+                                                "flex h-7 w-full items-center gap-3 rounded-md pl-2 pr-2 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/40",
                                                 itemActive
                                                     ? `${LIQUID_GLASS_SELECTED_CLASS} text-gray-900`
                                                     : `text-gray-600 ${LIQUID_GLASS_HOVER_CLASS}`,
@@ -353,7 +355,7 @@ export function SidebarProjectItem({
                                         onClick={() => void seeMore()}
                                         disabled={loadingMore}
                                         aria-controls={listId}
-                                        className="flex h-7 w-full items-center rounded-md pl-2 pr-2 text-left text-xs text-gray-500 transition-colors hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-default"
+                                        className="flex h-7 w-full items-center rounded-md pl-2 pr-2 text-left text-xs text-gray-500 transition-colors hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/40 disabled:cursor-default"
                                     >
                                         {loadingMore ? "Loading..." : "See more"}
                                     </button>

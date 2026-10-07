@@ -55,7 +55,11 @@ async function clickEditDetails() {
     const menuButton = screen.getAllByRole("button", {
         name: /row actions/i,
     })[0];
-    fireEvent.click(menuButton);
+    // Radix opens on pointerdown, not click.
+    fireEvent.pointerDown(
+        menuButton,
+        new MouseEvent("pointerdown", { bubbles: true, cancelable: true }),
+    );
     const edit = await screen.findByText(/edit details/i);
     fireEvent.click(edit);
 }

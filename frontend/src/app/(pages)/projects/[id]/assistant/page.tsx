@@ -1,8 +1,8 @@
 "use client";
 
+import { SelectionActionsMenu } from "@/app/components/shared/SelectionActionsMenu";
 import { use, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronDown } from "lucide-react";
 import { deleteChat, renameChat } from "@/app/lib/mikeApi";
 import { deleteTabularReviewsWithConcurrency } from "@/app/lib/deleteTabularReviewsWithConcurrency";
 import { ProjectAssistantTable } from "@/app/components/projects/ProjectAssistantTable";
@@ -16,7 +16,6 @@ import { can, roleFrom } from "@/app/lib/permissions";
 import { userFacingApiError } from "@/app/lib/userFacingError";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
-import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
 
 interface Props {
     params: Promise<{ id: string }>;
@@ -36,24 +35,13 @@ function SelectedChatActions({
     if (selectedCount === 0) return null;
 
     return (
-        <div className="relative">
-            <TabPillButtonUI
-                onClick={() => onOpenChange(!open)}
-            >
-                Actions
-                <ChevronDown className="h-3.5 w-3.5" />
-            </TabPillButtonUI>
-            {open && (
-                <div className="absolute right-0 top-full z-[120] mt-1 w-36 overflow-hidden rounded-lg border border-white/60 bg-white shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_12px_32px_rgba(15,23,42,0.14)] backdrop-blur-xl">
-                    <button
-                        onClick={onDelete}
-                        className="w-full px-3 py-1.5 text-left text-xs text-red-600 transition-colors hover:bg-red-50"
-                    >
-                        Delete
-                    </button>
-                </div>
-            )}
-        </div>
+        <SelectionActionsMenu
+            open={open}
+            onOpenChange={onOpenChange}
+            actions={[
+                { label: "Delete", destructive: true, onSelect: onDelete },
+            ]}
+        />
     );
 }
 

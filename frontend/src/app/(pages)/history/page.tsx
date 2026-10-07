@@ -33,10 +33,10 @@ import { HistorySkeuoIcon } from "@/app/components/shared/HistorySkeuoIcon";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
 import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-} from "@/app/components/ui/dropdown-menu";
-import { LiquidDropdownContent } from "@/app/components/ui/liquid-dropdown";
+  Dropdown,
+  DropdownContent,
+  DropdownTrigger,
+} from "@/shared/ui/dropdown";
 import { cn } from "@/app/lib/utils";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 
@@ -546,16 +546,16 @@ function DateRangeDropdown({
   };
 
   return (
-    <DropdownMenu open={open} onOpenChange={handleOpenChange}>
-      <DropdownMenuTrigger asChild>
+    <Dropdown open={open} onOpenChange={handleOpenChange}>
+      <DropdownTrigger asChild>
         <TabPillButtonUI active aria-label="Select date range">
           <CalendarDays className="h-3.5 w-3.5" />
           {formatRangeDate(from)} – {formatRangeDate(to)}
         </TabPillButtonUI>
-      </DropdownMenuTrigger>
-      <LiquidDropdownContent
+      </DropdownTrigger>
+      <DropdownContent
         align="start"
-        className="z-[130] w-auto p-3"
+        className="w-auto p-3"
         onKeyDown={(event) => event.stopPropagation()}
       >
         <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-[14rem_14rem]">
@@ -596,8 +596,8 @@ function DateRangeDropdown({
             Confirm
           </PillButtonUI>
         </div>
-      </LiquidDropdownContent>
-    </DropdownMenu>
+      </DropdownContent>
+    </Dropdown>
   );
 }
 
@@ -674,7 +674,7 @@ const HISTORY_DATE_PICKER_CLASS_NAMES = {
   ),
   day_button: cn(
     dayPickerStyles.day_button,
-    "text-xs font-normal hover:bg-white/80 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-gray-400",
+    "text-xs font-normal hover:bg-white/80 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-blue-500/40",
   ),
   selected: cn(
     dayPickerStyles.selected,

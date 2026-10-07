@@ -10,12 +10,13 @@ import {
 } from "lucide-react";
 import { twMerge } from "tailwind-merge";
 import {
+  DROPDOWN_ROWS_CLASS,
   Dropdown,
   DropdownContent,
   DropdownItem,
   DropdownSeparator,
   DropdownTrigger,
-} from "./DropdownUI";
+} from "./dropdown";
 import {
   LIQUID_GLASS_FLOAT_CLASS,
   LIQUID_GLASS_HOVER_CLASS,
@@ -123,9 +124,9 @@ export interface ModelToggleUIProps {
   /** `default` matches the toolbar's other buttons; `muted` is the lighter chat-composer look. */
   tone?: "muted" | "default";
   modalInput?: boolean;
-  emptyLabel?: string;
   /** Extra classes for the compact trigger button, for a host row's sizing. */
   triggerClassName?: string;
+  emptyLabel?: string;
   onEmptyClick?: () => void;
   reasoningLevel?: ReasoningLevel;
   onReasoningChange?: (level: ReasoningLevel) => void;
@@ -149,8 +150,8 @@ export function ModelToggleUI({
   compact = false,
   tone = "muted",
   modalInput = false,
-  emptyLabel = "No Models",
   triggerClassName,
+  emptyLabel = "No Models",
   onEmptyClick,
   reasoningLevel,
   onReasoningChange,
@@ -262,7 +263,9 @@ export function ModelToggleUI({
         sideOffset={modalInput ? 4 : 8}
         className={`flex max-h-[min(320px,60vh)] flex-col overflow-hidden rounded-2xl text-gray-700 ${modalInput ? "w-[var(--radix-dropdown-menu-trigger-width)]" : "w-56"}`}
       >
-        <div className="-mr-1.5 min-h-0 flex-1 space-y-1 overflow-y-auto pr-1.5">
+        <div
+          className={`-mr-1.5 min-h-0 flex-1 overflow-y-auto pr-1.5 ${DROPDOWN_ROWS_CLASS}`}
+        >
           {availableGroups.map(({ group, items }) => {
             const expanded = expandedGroup === group;
             return (

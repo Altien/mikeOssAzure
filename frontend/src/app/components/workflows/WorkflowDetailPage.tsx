@@ -1,5 +1,6 @@
 "use client";
 
+import { SelectionActionsMenu } from "@/app/components/shared/SelectionActionsMenu";
 import {
   useCallback,
   useEffect,
@@ -11,7 +12,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import {
   Check,
-  ChevronDown,
   Download,
   Globe,
   Pencil,
@@ -60,7 +60,6 @@ import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
 import {
   EDITOR_SURFACE_CLASS,
-  LIQUID_GLASS_FLOAT_CLASS,
 } from "@/app/components/ui/liquid-surface";
 import { NewWorkflowModal } from "@/app/components/workflows/NewWorkflowModal";
 import { TabularReviewSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
@@ -189,20 +188,7 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
 
   // Column actions dropdown
   const [colActionsOpen, setColActionsOpen] = useState(false);
-  const colActionsRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (
-        colActionsRef.current &&
-        !colActionsRef.current.contains(e.target as Node)
-      ) {
-        setColActionsOpen(false);
-      }
-    }
-    if (colActionsOpen) document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [colActionsOpen]);
 
   useEffect(() => {
     if (assistantTab !== "assets" || !pendingAssetsRef.current) return;
@@ -727,27 +713,18 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
                     {visibleColumns.length > 0 &&
                       selectedColIndices.length > 0 && (
                         <>
-                          <div
-                            ref={colActionsRef}
-                            className="relative max-md:hidden"
-                          >
-                            <TabPillButtonUI
-                              onClick={() => setColActionsOpen((open) => !open)}
-                            >
-                              Actions
-                              <ChevronDown className="h-3.5 w-3.5" />
-                            </TabPillButtonUI>
-                            {colActionsOpen && (
-                              <div className={`absolute right-0 top-full z-50 mt-1 w-36 overflow-hidden rounded-lg ${LIQUID_GLASS_FLOAT_CLASS} backdrop-blur-2xl`}>
-                                <button
-                                  onClick={handleDeleteSelectedColumns}
-                                  className="w-full px-3 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 transition-colors"
-                                >
-                                  Delete
-                                </button>
-                              </div>
-                            )}
-                          </div>
+                          <SelectionActionsMenu
+                            className="max-md:hidden"
+                            open={colActionsOpen}
+                            onOpenChange={setColActionsOpen}
+                            actions={[
+                              {
+                                label: "Delete",
+                                destructive: true,
+                                onSelect: handleDeleteSelectedColumns,
+                              },
+                            ]}
+                          />
                           <TabPillButtonUI
                             onClick={handleDeleteSelectedColumns}
                             className="text-red-600 md:hidden"

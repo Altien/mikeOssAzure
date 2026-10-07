@@ -237,7 +237,7 @@ export function AddColumnModal({
                                                         )
                                                     }
                                                     aria-expanded={!isCollapsed}
-                                                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-lg text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-gray-300"
+                                                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-lg text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-blue-500/40"
                                                 >
                                                     <ChevronDown
                                                         className={`h-4 w-4 shrink-0 text-gray-600 transition-transform ${isCollapsed ? "-rotate-90" : ""}`}

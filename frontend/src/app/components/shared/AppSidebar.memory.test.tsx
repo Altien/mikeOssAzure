@@ -75,8 +75,8 @@ describe("AppSidebar account dropdown", () => {
 
     await user.click(screen.getByText("Alice").closest("button")!);
 
-    expect(screen.getByRole("button", { name: "Settings" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Memory" })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: "Settings" })).toBeVisible();
+    expect(screen.queryByRole("menuitem", { name: "Memory" })).toBeNull();
   });
 
   it("shows the IDE navigation directly below Assistant", () => {
@@ -94,7 +94,7 @@ describe("AppSidebar account dropdown", () => {
     render(<AppSidebar isOpen onToggle={vi.fn()} />);
 
     await user.click(screen.getByText("Alice").closest("button")!);
-    await user.click(screen.getByRole("button", { name: "Sign out" }));
+    await user.click(screen.getByRole("menuitem", { name: "Sign out" }));
 
     expect(await screen.findByText("Sign out failed")).toBeInTheDocument();
     expect(

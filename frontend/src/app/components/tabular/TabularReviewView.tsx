@@ -1,5 +1,6 @@
 "use client";
 
+import { SelectionActionsMenu } from "@/app/components/shared/SelectionActionsMenu";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -7,7 +8,6 @@ import {
     Loader2,
     Square,
     Play,
-    ChevronDown,
     MessageSquare,
     MessageSquareX,
     Download,
@@ -85,7 +85,6 @@ import { useSidebar } from "@/app/contexts/SidebarContext";
 import { PageHeader } from "../shared/PageHeader";
 import { TableToolbar } from "../shared/TableToolbar";
 import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
-import { LIQUID_GLASS_FLOAT_CLASS } from "@/shared/ui/LiquidGlassUI";
 import { ModelToggle, type NoModelsReason } from "../assistant/ModelToggle";
 import { SUPPORTED_DOCUMENT_ACCEPT } from "@/app/lib/documentUploadValidation";
 import { useConfiguredModels } from "@/app/hooks/useConfiguredModels";
@@ -179,7 +178,6 @@ export function TRView({ reviewId, projectId }: Props) {
     const [noModelsWarning, setNoModelsWarning] =
         useState<NoModelsReason | null>(null);
     const [modelRequiredWarning, setModelRequiredWarning] = useState(false);
-    const actionsRef = useRef<HTMLDivElement>(null);
     const tableRef = useRef<TRTableHandle>(null);
     const reviewFileUploadInputRef = useRef<HTMLInputElement>(null);
     const reviewFolderUploadInputRef = useRef<HTMLInputElement>(null);
@@ -224,19 +222,6 @@ export function TRView({ reviewId, projectId }: Props) {
         window.history.replaceState(null, "", newUrl);
     }, [chatOpen, selectedChatId]);
 
-    useEffect(() => {
-        if (!actionsOpen) return;
-        function handleClickOutside(e: MouseEvent) {
-            if (
-                actionsRef.current &&
-                !actionsRef.current.contains(e.target as Node)
-            )
-                setActionsOpen(false);
-        }
-        document.addEventListener("mousedown", handleClickOutside);
-        return () =>
-            document.removeEventListener("mousedown", handleClickOutside);
-    }, [actionsOpen]);
 
     useEffect(() => {
         // Cancellation flag: on a rapid reviewId change the previous fetch
@@ -1596,46 +1581,26 @@ export function TRView({ reviewId, projectId }: Props) {
                                     {!loading && selectedRowIds.length > 0 && (
                                         <>
                                             {/* Desktop: compact Actions menu */}
-                                            <div
-                                                ref={actionsRef}
-                                                className="relative max-md:hidden"
-                                            >
-                                                <TabPillButtonUI
-                                                    onClick={() =>
-                                                        setActionsOpen(
-                                                            (v) => !v,
-                                                        )
-                                                    }
-                                                >
-                                                    Actions
-                                                    <ChevronDown className="h-3.5 w-3.5" />
-                                                </TabPillButtonUI>
-                                                {actionsOpen && (
-                                                    <div
-                                                        className={`absolute right-0 top-full z-50 mt-1 w-36 overflow-hidden rounded-lg ${LIQUID_GLASS_FLOAT_CLASS} backdrop-blur-2xl`}
-                                                    >
-                                                        <button
-                                                            onClick={
-                                                                handleClearResults
-                                                            }
-                                                            disabled={
-                                                                cellMutationsBlocked
-                                                            }
-                                                            className="theme-dropdown-item w-full px-3 py-1.5 text-left text-xs text-gray-700 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-                                                        >
-                                                            Clear results
-                                                        </button>
-                                                        <button
-                                                            onClick={
-                                                                handleDeleteDocuments
-                                                            }
-                                                            className="w-full px-3 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 transition-colors"
-                                                        >
-                                                            Delete
-                                                        </button>
-                                                    </div>
-                                                )}
-                                            </div>
+                                            <SelectionActionsMenu
+                                                className="max-md:hidden"
+                                                open={actionsOpen}
+                                                onOpenChange={setActionsOpen}
+                                                actions={[
+                                                    {
+                                                        label: "Clear results",
+                                                        disabled:
+                                                            cellMutationsBlocked,
+                                                        onSelect:
+                                                            handleClearResults,
+                                                    },
+                                                    {
+                                                        label: "Delete",
+                                                        destructive: true,
+                                                        onSelect:
+                                                            handleDeleteDocuments,
+                                                    },
+                                                ]}
+                                            />
                                             {/* Mobile (toolbar dropdown): flattened entries */}
                                             <TabPillButtonUI
                                                 onClick={handleClearResults}

@@ -289,10 +289,9 @@ export function ProjectAssistantTable({
                         <TableRow
                             key={chat.id}
                             selected={selectedChatIds.includes(chat.id)}
-                            rightClickDropdown={(close, menuProps) => (
+                            rightClickDropdown={(close) => (
                                 <RowActionMenuItems
                                     onClose={close}
-                                    surfaceProps={menuProps}
                                     onView={
                                         appliesToSelection
                                             ? undefined

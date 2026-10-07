@@ -42,13 +42,11 @@ import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { EmptyState } from "@/app/components/ui/empty-state";
 import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
 import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-} from "@/app/components/ui/dropdown-menu";
-import {
-  LiquidDropdownContent,
-  LiquidDropdownItem,
-} from "@/app/components/ui/liquid-dropdown";
+  Dropdown,
+  DropdownContent,
+  DropdownItem,
+  DropdownTrigger,
+} from "@/shared/ui/dropdown";
 import { LIQUID_GLASS_HOVER_CLASS } from "@/app/components/ui/liquid-surface";
 import {
   getOrg,
@@ -355,23 +353,23 @@ export function OrganizationWorkspace({ orgId }: { orgId: string }) {
 
   const peopleToolbarActions =
     activeTab === "people" && isAdmin && selectedMemberIds.length > 0 ? (
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
+      <Dropdown>
+        <DropdownTrigger asChild>
           <TabPillButtonUI>
             Actions
             <ChevronDown className="h-3.5 w-3.5" />
           </TabPillButtonUI>
-        </DropdownMenuTrigger>
-        <LiquidDropdownContent align="end" className="z-[130] w-44">
-          <LiquidDropdownItem
+        </DropdownTrigger>
+        <DropdownContent align="end" className="w-44">
+          <DropdownItem
             onSelect={requestRemoveSelected}
             className="text-red-600 focus:text-red-700"
           >
             <Trash2 className="h-3.5 w-3.5 text-red-600" />
             Remove all selected
-          </LiquidDropdownItem>
-        </LiquidDropdownContent>
-      </DropdownMenu>
+          </DropdownItem>
+        </DropdownContent>
+      </Dropdown>
     ) : undefined;
 
   return (
@@ -848,8 +846,8 @@ function OrganizationRoleTab({
   }
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
+    <Dropdown>
+      <DropdownTrigger asChild>
         <button
           type="button"
           aria-label={`Change role for ${label}`}
@@ -863,10 +861,10 @@ function OrganizationRoleTab({
             <ChevronDown className="h-3 w-3 shrink-0" />
           )}
         </button>
-      </DropdownMenuTrigger>
-      <LiquidDropdownContent align="start" className="z-[120] w-36">
+      </DropdownTrigger>
+      <DropdownContent align="start" className="w-36">
         {ROLE_FILTER_OPTIONS.map((option) => (
-          <LiquidDropdownItem
+          <DropdownItem
             key={option.value}
             selected={role === option.value}
             onSelect={() => onChange(option.value)}
@@ -876,10 +874,10 @@ function OrganizationRoleTab({
             {role === option.value ? (
               <Check className="h-3.5 w-3.5 text-gray-400" />
             ) : null}
-          </LiquidDropdownItem>
+          </DropdownItem>
         ))}
-      </LiquidDropdownContent>
-    </DropdownMenu>
+      </DropdownContent>
+    </Dropdown>
   );
 }
 

@@ -1,10 +1,11 @@
 "use client";
 
+import { SelectionActionsMenu } from "@/app/components/shared/SelectionActionsMenu";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useDebouncedValue } from "@/app/hooks/useDebouncedValue";
 import { restoreOptimisticallyDeletedRows } from "@/app/lib/optimisticRows";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronDown, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import {
     RowActionMenuItems,
     RowActions,
@@ -51,9 +52,7 @@ import {
     TableStickyCell,
 } from "@/app/components/shared/TablePrimitive";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
-import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
 import { TabularReviewSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
-import { LiquidDropdownSurface } from "@/app/components/ui/liquid-dropdown";
 import {
     type TabularReviewScope,
     usePaginatedTabularReviews,
@@ -155,7 +154,6 @@ export default function TabularReviewsPage() {
     const [deletingReviewIds, setDeletingReviewIds] = useState<Set<string>>(
         () => new Set(),
     );
-    const actionsRef = useRef<HTMLDivElement>(null);
     const { user } = useAuth();
     const previewEmptyStates = searchParams.get("emptyStates") === "1";
     const effectiveLoading = loading && !previewEmptyStates;
@@ -190,18 +188,6 @@ export default function TabularReviewsPage() {
         if (distanceToBottom < 200) void loadMore();
     }
 
-    useEffect(() => {
-        function handleClick(e: MouseEvent) {
-            if (
-                actionsRef.current &&
-                !actionsRef.current.contains(e.target as Node)
-            ) {
-                setActionsOpen(false);
-            }
-        }
-        if (actionsOpen) document.addEventListener("mousedown", handleClick);
-        return () => document.removeEventListener("mousedown", handleClick);
-    }, [actionsOpen]);
 
     const projectNameById = useMemo(
         () => new Map(projects.map((project) => [project.id, project.name])),
@@ -535,22 +521,17 @@ export default function TabularReviewsPage() {
 
     const toolbarActions =
         selectedIds.length > 0 ? (
-            <div ref={actionsRef} className="relative">
-                <TabPillButtonUI onClick={() => setActionsOpen((v) => !v)}>
-                    Actions
-                    <ChevronDown className="h-3.5 w-3.5" />
-                </TabPillButtonUI>
-                {actionsOpen && (
-                    <LiquidDropdownSurface className="absolute top-full right-0 mt-1 z-[100] w-36 overflow-hidden">
-                        <button
-                            onClick={requestDeleteSelected}
-                            className="w-full px-3 py-1.5 text-left text-xs text-red-600 transition-colors hover:bg-red-500/10"
-                        >
-                            Delete
-                        </button>
-                    </LiquidDropdownSurface>
-                )}
-            </div>
+            <SelectionActionsMenu
+                open={actionsOpen}
+                onOpenChange={setActionsOpen}
+                actions={[
+                    {
+                        label: "Delete",
+                        destructive: true,
+                        onSelect: requestDeleteSelected,
+                    },
+                ]}
+            />
         ) : undefined;
 
     return (
@@ -740,10 +721,9 @@ export default function TabularReviewsPage() {
                                     rightClickDropdown={
                                         deleting
                                             ? undefined
-                                            : (close, menuProps) => (
+                                            : (close) => (
                                                   <RowActionMenuItems
                                                       onClose={close}
-                                                      surfaceProps={menuProps}
                                                       onView={
                                                           appliesToSelection
                                                               ? undefined

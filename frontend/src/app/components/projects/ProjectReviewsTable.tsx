@@ -290,10 +290,9 @@ export function ProjectReviewsTable({
                                 rightClickDropdown={
                                     deleting
                                         ? undefined
-                                        : (close, menuProps) => (
+                                        : (close) => (
                                               <RowActionMenuItems
                                                   onClose={close}
-                                                  surfaceProps={menuProps}
                                                   onView={
                                                       appliesToSelection
                                                           ? undefined

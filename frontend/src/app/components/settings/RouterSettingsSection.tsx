@@ -3,9 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Loader2, X } from "lucide-react";
 import {
-  LiquidDropdownButton,
-  LiquidDropdownSurface,
-} from "@/app/components/ui/liquid-dropdown";
+  DropdownButton,
+  DropdownSurface,
+} from "@/shared/ui/dropdown";
 import { OptionPill } from "@/app/components/ui/option-pill";
 import { SETTINGS_CONTROL_CLASS } from "@/app/components/settings/SettingsTextInput";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
@@ -326,7 +326,7 @@ function RouterModelsSetting({
         }}
       >
         {catalogOpen && (
-          <LiquidDropdownSurface
+          <DropdownSurface
             data-testid={`${provider}-model-catalog`}
             className="absolute bottom-full left-0 z-50 mb-1.5 max-h-72 w-full overflow-y-auto p-1.5"
           >
@@ -350,7 +350,7 @@ function RouterModelsSetting({
                 const active = index === activeCatalogIndex;
                 const costLabel = modelCostLabel(model);
                 return (
-                  <LiquidDropdownButton
+                  <DropdownButton
                     key={model.id}
                     id={`${catalogId}-option-${index}`}
                     role="option"
@@ -379,7 +379,7 @@ function RouterModelsSetting({
                     {selected && (
                       <Check className="h-3.5 w-3.5 shrink-0 text-gray-500" />
                     )}
-                  </LiquidDropdownButton>
+                  </DropdownButton>
                 );
               })}
             </div>
@@ -388,7 +388,7 @@ function RouterModelsSetting({
                 No matching models.
               </div>
             )}
-          </LiquidDropdownSurface>
+          </DropdownSurface>
         )}
         <div
           className={`flex h-9 min-w-0 flex-1 items-center px-0 focus-within:border-gray-200 focus-within:ring-2 focus-within:ring-gray-300/45 ${SETTINGS_CONTROL_CLASS}`}

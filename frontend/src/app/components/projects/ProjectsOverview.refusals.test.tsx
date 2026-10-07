@@ -70,7 +70,11 @@ function mockHook(rows: Project[], selected: string[], ownerIds: Record<string, 
 }
 
 async function bulkDelete() {
-    fireEvent.click(screen.getByText("Actions"));
+    // Radix opens on pointerdown, not click.
+    fireEvent.pointerDown(
+        screen.getByText("Actions"),
+        new MouseEvent("pointerdown", { bubbles: true, cancelable: true }),
+    );
     fireEvent.click(screen.getByText("Delete"));
 }
 

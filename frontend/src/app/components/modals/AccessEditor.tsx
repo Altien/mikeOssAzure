@@ -13,13 +13,11 @@ import {
 import { AddUserInput } from "../shared/AddUserInput";
 import { SearchBar } from "../ui/search-bar";
 import {
-    DropdownMenu,
-    DropdownMenuTrigger,
-} from "../ui/dropdown-menu";
-import {
-    LiquidDropdownContent,
-    LiquidDropdownItem,
-} from "../ui/liquid-dropdown";
+    Dropdown,
+    DropdownContent,
+    DropdownItem,
+    DropdownTrigger,
+} from "@/shared/ui/dropdown";
 import {
     LIQUID_GLASS_FLOAT_CLASS,
     LIQUID_GLASS_HOVER_CLASS,
@@ -99,8 +97,8 @@ function AccessRolePill({
     if (!editable) return <span className={className}>{accessRoleLabel(role)}</span>;
 
     return (
-        <DropdownMenu>
-            <DropdownMenuTrigger asChild>
+        <Dropdown>
+            <DropdownTrigger asChild>
                 <button
                     type="button"
                     aria-label={`Role for ${label}`}
@@ -114,13 +112,13 @@ function AccessRolePill({
                         <ChevronDown className="h-3 w-3 shrink-0 text-gray-400" />
                     )}
                 </button>
-            </DropdownMenuTrigger>
-            <LiquidDropdownContent
+            </DropdownTrigger>
+            <DropdownContent
                 align="end"
-                className="z-[250] w-32 space-y-1"
+                className="w-32"
             >
                 {options.map((option) => (
-                    <LiquidDropdownItem
+                    <DropdownItem
                         key={option}
                         selected={role === option}
                         onSelect={() => onChange(option)}
@@ -130,10 +128,10 @@ function AccessRolePill({
                         {role === option ? (
                             <Check className="h-3.5 w-3.5 text-gray-300" />
                         ) : null}
-                    </LiquidDropdownItem>
+                    </DropdownItem>
                 ))}
-            </LiquidDropdownContent>
-        </DropdownMenu>
+            </DropdownContent>
+        </Dropdown>
     );
 }
 
@@ -147,8 +145,8 @@ function RemoveActionDropdown({
     onRemove: () => void;
 }) {
     return (
-        <DropdownMenu>
-            <DropdownMenuTrigger asChild>
+        <Dropdown>
+            <DropdownTrigger asChild>
                 <button
                     type="button"
                     aria-label={`Actions for ${label}`}
@@ -157,19 +155,19 @@ function RemoveActionDropdown({
                 >
                     ···
                 </button>
-            </DropdownMenuTrigger>
-            <LiquidDropdownContent
+            </DropdownTrigger>
+            <DropdownContent
                 align="end"
-                className="z-[250] min-w-28"
+                className="min-w-28"
             >
-                <LiquidDropdownItem
+                <DropdownItem
                     onSelect={onRemove}
                     className="text-red-500 hover:!bg-red-500/10 focus:!bg-red-500/10 data-[highlighted]:!bg-red-500/10"
                 >
                     Remove
-                </LiquidDropdownItem>
-            </LiquidDropdownContent>
-        </DropdownMenu>
+                </DropdownItem>
+            </DropdownContent>
+        </Dropdown>
     );
 }
 
@@ -304,7 +302,7 @@ function OrganizationMemberPicker({
                                         setQuery("");
                                         setFocused(false);
                                     }}
-                                    className={`flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 ${LIQUID_GLASS_HOVER_CLASS}`}
+                                    className={`flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/40 ${LIQUID_GLASS_HOVER_CLASS}`}
                                 >
                                     <span className="min-w-0 truncate text-xs text-gray-800">
                                         {member.display_name?.trim() ||
@@ -686,8 +684,8 @@ export function AccessEditor({
                         submitLabel="Add"
                         submitVariant="attached"
                         inputEndControl={
-                            <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
+                            <Dropdown>
+                                <DropdownTrigger asChild>
                                     <button
                                         type="button"
                                         aria-label={`Role for the new recipient: ${accessRoleLabel(newRole)}`}
@@ -697,13 +695,13 @@ export function AccessEditor({
                                         <span>{accessRoleLabel(newRole)}</span>
                                         <ChevronDown className="h-3 w-3 shrink-0 text-gray-300" />
                                     </button>
-                                </DropdownMenuTrigger>
-                                <LiquidDropdownContent
+                                </DropdownTrigger>
+                                <DropdownContent
                                     align="end"
-                                    className="z-[250] w-32 space-y-1"
+                                    className="w-32"
                                 >
                                     {PROJECT_ROLES.map((role) => (
-                                        <LiquidDropdownItem
+                                        <DropdownItem
                                             key={role}
                                             selected={newRole === role}
                                             onSelect={() => onNewRoleChange(role)}
@@ -713,10 +711,10 @@ export function AccessEditor({
                                             {newRole === role ? (
                                                 <Check className="h-3.5 w-3.5 text-gray-300" />
                                             ) : null}
-                                        </LiquidDropdownItem>
+                                        </DropdownItem>
                                     ))}
-                                </LiquidDropdownContent>
-                            </DropdownMenu>
+                                </DropdownContent>
+                            </Dropdown>
                         }
                         className="bg-white focus-within:bg-white"
                     />

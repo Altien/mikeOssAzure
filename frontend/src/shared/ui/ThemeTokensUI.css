@@ -29,6 +29,12 @@
     --liquid-glass-selected-background: var(--app-surface-active, #eff0f3);
     --liquid-glass-modal-row-hover-background: #f3f4f6;
     --liquid-glass-modal-row-selected-background: #e5e7eb;
+    /* Matches Tailwind's `ring-blue-500/40`, the ring every primitive uses. */
+    --focus-ring-color: color-mix(
+        in oklab,
+        var(--color-blue-500, #3b82f6) 40%,
+        transparent
+    );
 
     --content-fade-color: var(--app-surface, #fdfdfe);
     --shimmer-edge: #e5e7eb;
@@ -205,6 +211,30 @@
 
 .liquid-glass-modal-row-selected {
     background-color: var(--liquid-glass-modal-row-selected-background);
+}
+
+/* Keyboard focus. In the base layer so a control's own Tailwind ring or
+   `outline-none` still wins; this is the fallback for controls that set
+   nothing, which would otherwise get the browser's grey outline. */
+@layer base {
+    :focus-visible {
+        outline: 2px solid var(--focus-ring-color);
+        outline-offset: 2px;
+    }
+
+    /* A control with a hover fill draws its ring inset, on the fill's own
+       perimeter. When the fill belongs to a row wrapping the focused control,
+       mark that control `data-focus-fill` (and `outline-none`) so the ring
+       traces the row rather than the control inside it. */
+    :is(
+        .liquid-glass-hover,
+        .liquid-glass-selected,
+        .liquid-glass-modal-row-hover,
+        .liquid-glass-modal-row-selected
+    ):is(:focus-visible, :has(> [data-focus-fill]:focus-visible)) {
+        outline: 2px solid var(--focus-ring-color);
+        outline-offset: -2px;
+    }
 }
 
 .citation-quote-selected {

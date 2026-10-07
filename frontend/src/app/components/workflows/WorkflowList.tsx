@@ -1,5 +1,6 @@
 "use client";
 
+import { SelectionActionsMenu } from "@/app/components/shared/SelectionActionsMenu";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -32,7 +33,6 @@ import { SubfolderSvgIcon } from "@/app/components/shared/FolderSvgIcon";
 import { EmptyState } from "@/app/components/ui/empty-state";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
-import { LiquidDropdownSurface } from "@/app/components/ui/liquid-dropdown";
 import {
   ChatSkeuoIcon,
   TabularReviewSkeuoIcon,
@@ -152,7 +152,6 @@ export function WorkflowList({
   const [bulkImportingAddons, setBulkImportingAddons] = useState(false);
   const [addonsError, setAddonsError] = useState("");
   const [actionError, setActionError] = useState("");
-  const workflowActionsRef = useRef<HTMLDivElement>(null);
   const openAddonIdRef = useRef<string | null>(null);
   const previewEmptyStates = searchParams.get("emptyStates") === "1";
   const debouncedSearch = useDebouncedValue(search, 250);
@@ -228,20 +227,6 @@ export function WorkflowList({
     return () => controller.abort();
   }, [activeTab, selectedType]);
 
-  useEffect(() => {
-    function closeActions(event: MouseEvent) {
-      if (
-        workflowActionsRef.current &&
-        !workflowActionsRef.current.contains(event.target as Node)
-      ) {
-        setWorkflowActionsOpen(false);
-      }
-    }
-    if (workflowActionsOpen) {
-      document.addEventListener("mousedown", closeActions);
-    }
-    return () => document.removeEventListener("mousedown", closeActions);
-  }, [workflowActionsOpen]);
 
   const query = search.trim().toLowerCase();
   const visibleWorkflows = useMemo(() => {
@@ -415,30 +400,23 @@ export function WorkflowList({
 
   const workflowToolbarActions =
     activeTab !== "addons" && selectedWorkflowIds.length > 0 ? (
-      <div ref={workflowActionsRef} className="relative">
-        <TabPillButtonUI onClick={() => setWorkflowActionsOpen((open) => !open)}>
-          Actions
-          <ChevronDown className="h-3.5 w-3.5" />
-        </TabPillButtonUI>
-        {workflowActionsOpen && (
-          <LiquidDropdownSurface className="absolute top-full right-0 z-[100] mt-1 w-36 overflow-hidden">
-            <button
-              type="button"
-              onClick={() =>
-                requestWorkflowDeletion(
-                  workflows.filter((workflow) =>
-                    selectedWorkflowIds.includes(workflow.id),
-                  ),
-                  selectedWorkflowIds,
-                )
-              }
-              className="w-full px-3 py-1.5 text-left text-xs text-red-600 transition-colors hover:bg-red-500/10"
-            >
-              Delete
-            </button>
-          </LiquidDropdownSurface>
-        )}
-      </div>
+      <SelectionActionsMenu
+        open={workflowActionsOpen}
+        onOpenChange={setWorkflowActionsOpen}
+        actions={[
+          {
+            label: "Delete",
+            destructive: true,
+            onSelect: () =>
+              requestWorkflowDeletion(
+                workflows.filter((workflow) =>
+                  selectedWorkflowIds.includes(workflow.id),
+                ),
+                selectedWorkflowIds,
+              ),
+          },
+        ]}
+      />
     ) : undefined;
   const addonToolbarActions =
     activeTab === "addons" && selectedAddonIds.length > 0 ? (
@@ -996,10 +974,9 @@ function WorkflowTable({
                     }
                     onOpen(workflow);
                   }}
-                  rightClickDropdown={(close, menuProps) => (
+                  rightClickDropdown={(close) => (
                     <RowActionMenuItems
                       onClose={close}
-                      surfaceProps={menuProps}
                       onView={
                         appliesToSelection ? undefined : () => onOpen(workflow)
                       }

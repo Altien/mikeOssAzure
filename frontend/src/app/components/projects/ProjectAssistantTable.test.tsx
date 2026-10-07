@@ -78,9 +78,9 @@ describe("ProjectAssistantTable row context actions", () => {
         ]);
 
         fireEvent.contextMenu(screen.getByText("First chat"));
-        expect(screen.queryByRole("button", { name: "Rename" })).toBeNull();
-        expect(screen.queryByRole("button", { name: "View" })).toBeNull();
-        await user.click(screen.getByRole("button", { name: "Delete 2 chats" }));
+        expect(screen.queryByRole("menuitem", { name: "Rename" })).toBeNull();
+        expect(screen.queryByRole("menuitem", { name: "View" })).toBeNull();
+        await user.click(screen.getByRole("menuitem", { name: "Delete 2 chats" }));
 
         expect(onDeleteSelectedChats).toHaveBeenCalledOnce();
         expect(onDeleteChat).not.toHaveBeenCalled();
@@ -91,7 +91,7 @@ describe("ProjectAssistantTable row context actions", () => {
         const { onDeleteChat, onDeleteSelectedChats } = renderTable(["chat-2"]);
 
         fireEvent.contextMenu(screen.getByText("First chat"));
-        await user.click(screen.getByRole("button", { name: "Delete" }));
+        await user.click(screen.getByRole("menuitem", { name: "Delete" }));
         // The single-row delete is confirmed first; the bulk one is confirmed
         // by the page that owns the selection.
         await user.click(screen.getByRole("button", { name: "Delete" }));
@@ -105,7 +105,7 @@ describe("ProjectAssistantTable row context actions", () => {
         const { onOpenChat } = renderTable([]);
 
         fireEvent.contextMenu(screen.getByText("First chat"));
-        await user.click(screen.getByRole("button", { name: "View" }));
+        await user.click(screen.getByRole("menuitem", { name: "View" }));
 
         expect(onOpenChat).toHaveBeenCalledWith("chat-1");
     });

@@ -180,7 +180,11 @@ describe("project assistant chat deletion gating", () => {
         ]);
 
         fireEvent.click(screen.getByText("select all"));
-        fireEvent.click(await screen.findByText("Actions"));
+        // Radix opens on pointerdown, not click.
+        fireEvent.pointerDown(
+            await screen.findByText("Actions"),
+            new MouseEvent("pointerdown", { bubbles: true, cancelable: true }),
+        );
         fireEvent.click(await screen.findByText("Delete"));
 
         // The bulk path asks first — nothing is sent until it is confirmed.

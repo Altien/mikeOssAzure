@@ -4,14 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { authInputClassName } from "@/app/components/auth/authStyles";
 import {
-  DropdownMenu,
-  DropdownMenuRadioGroup,
-  DropdownMenuTrigger,
-} from "@/app/components/ui/dropdown-menu";
-import {
-  LiquidDropdownContent,
-  LiquidDropdownRadioItem,
-} from "@/app/components/ui/liquid-dropdown";
+  Dropdown,
+  DropdownContent,
+  DropdownRadioGroup,
+  DropdownRadioItem,
+  DropdownTrigger,
+} from "@/shared/ui/dropdown";
 import { SettingsCard } from "@/app/components/settings/SettingsCard";
 import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
 import { SettingsRow } from "@/app/components/settings/SettingsRow";
@@ -233,8 +231,8 @@ function StyleSettingRow({
           </p>
         )}
       </div>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
+      <Dropdown>
+        <DropdownTrigger asChild>
           <button
             id={id}
             type="button"
@@ -249,21 +247,21 @@ function StyleSettingRow({
             <span className="truncate">{selected?.label ?? "Loading..."}</span>
             <ChevronDown className="h-4 w-4 shrink-0 text-gray-400" />
           </button>
-        </DropdownMenuTrigger>
-        <LiquidDropdownContent
+        </DropdownTrigger>
+        <DropdownContent
           align="end"
           sideOffset={6}
           className="w-[var(--radix-dropdown-menu-trigger-width)]"
         >
-          <DropdownMenuRadioGroup value={value ?? ""} onValueChange={onChange}>
+          <DropdownRadioGroup value={value ?? ""} onValueChange={onChange}>
             {options.map((option) => (
-              <LiquidDropdownRadioItem key={option.value} value={option.value}>
+              <DropdownRadioItem key={option.value} value={option.value}>
                 {option.label}
-              </LiquidDropdownRadioItem>
+              </DropdownRadioItem>
             ))}
-          </DropdownMenuRadioGroup>
-        </LiquidDropdownContent>
-      </DropdownMenu>
+          </DropdownRadioGroup>
+        </DropdownContent>
+      </Dropdown>
     </SettingsRow>
   );
 }
