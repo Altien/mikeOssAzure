@@ -37,6 +37,7 @@ export type ApiKeyProvider =
     | "gemini"
     | "openai"
     | "kimi"
+    | "mistral"
     | "openrouter"
     | "opencode-go"
     | "vercel"
@@ -48,7 +49,7 @@ export type ApiKeyStatus = Record<string, boolean | Record<string, ApiKeySource>
     sources: Record<string, ApiKeySource>;
 };
 
-const ORG_PROVIDERS = ["claude", "gemini", "openai", "kimi", "openrouter", "opencode-go", "vercel", "courtlistener", "azure_openai"] as const;
+const ORG_PROVIDERS = ["claude", "gemini", "openai", "kimi", "mistral", "openrouter", "opencode-go", "vercel", "courtlistener", "azure_openai"] as const;
 
 export function normalizeApiKeyProvider(value: unknown): ApiKeyProvider | null {
     return typeof value === "string" && (ORG_PROVIDERS as readonly string[]).includes(value)
@@ -81,6 +82,7 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
         gemini,
         openai,
         kimi,
+        mistral,
         openrouter,
         vercel,
         openCodeGo,
@@ -94,6 +96,9 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
         resolveSecret("gemini-api-key"),
         resolveSecret("openai-api-key"),
         resolveSecret("moonshot-api-key"),
+        // New provider (upstream 2f30082a): explicit vault-first boundary
+        // (internal design notes §2.4); MISTRAL_API_KEY is the local fallback.
+        resolveProviderSecret("mistral-api-key"),
         resolveProviderSecret("openrouter-api-key"),
         resolveVercelApiKey(),
         resolveProviderSecret("opencode-api-key"),
@@ -109,6 +114,7 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
         gemini: gemini || null,
         openai: openai || null,
         kimi: kimi || null,
+        mistral: mistral || null,
         openrouter: openrouter || null,
         vercel: vercel || null,
         "opencode-go": openCodeGo || null,
@@ -414,6 +420,7 @@ export async function getConfiguredProviders(
         gemini: false,
         openai: false,
         kimi: false,
+        mistral: false,
         openrouter: false,
         vercel: false,
         "opencode-go": false,

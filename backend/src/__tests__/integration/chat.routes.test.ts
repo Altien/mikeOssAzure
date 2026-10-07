@@ -452,7 +452,7 @@ import { createServerSupabase } from "../../lib/supabase";
 
 const VALID_BODY = {
     messages: [{ role: "user", content: "hello" }],
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.8-flash",
 };
 
 function findAssistantReservation() {
@@ -716,7 +716,7 @@ describe("POST /chat — streaming endpoint", () => {
             memory_curator_model: null,
             last_selected_reasoning_level: null,
             tabular_model: null,
-            last_selected_chat_model: "gpt-5.6-luna",
+            last_selected_chat_model: "gpt-6-luna",
             api_keys: { openai: "test-key" },
         });
 
@@ -727,11 +727,11 @@ describe("POST /chat — streaming endpoint", () => {
 
         expect(res.status).toBe(200);
         expect(runLLMStream).toHaveBeenCalledWith(
-            expect.objectContaining({ model: "gpt-5.6-luna" }),
+            expect.objectContaining({ model: "gpt-6-luna" }),
         );
         expect(dbInserts).toContainEqual({
             table: "chats",
-            value: expect.objectContaining({ model: "gpt-5.6-luna" }),
+            value: expect.objectContaining({ model: "gpt-6-luna" }),
         });
     expect(userSettings.persistLastSelectedChatModel).not.toHaveBeenCalled();
     });
@@ -1011,7 +1011,7 @@ describe("POST /chat — streaming endpoint", () => {
             const first = await request(app)
                 .post("/api/chat")
                 .set("Authorization", "Bearer test")
-                .send({ ...VALID_BODY, model: "gpt-5.6-terra" });
+                .send({ ...VALID_BODY, model: "gpt-6.1-sol" });
 
             expect(first.text).toContain('"type":"ask_inputs"');
             expect(first.text).not.toContain('"type":"error"');
@@ -1072,7 +1072,7 @@ describe("POST /chat — streaming endpoint", () => {
                 .post("/api/chat")
                 .set("Authorization", "Bearer test")
                 .send({
-                    model: "gpt-5.6-terra",
+                    model: "gpt-6.1-sol",
                     chat_id: "chat-1",
                     messages: [
                         { role: "user", content: "Draft a letter." },
@@ -1143,7 +1143,7 @@ describe("POST /chat — streaming endpoint", () => {
                 document_name: "Contract.docx",
                 storage: "cloud",
                 document_context: "GOVERNED BY DELAWARE LAW",
-                model: "gemini-3-flash-preview",
+                model: "gemini-3.8-flash",
             });
 
         expect(res.status).toBe(200);
@@ -1282,7 +1282,7 @@ describe("POST /chat — streaming endpoint", () => {
             memory_curator_model: null,
             last_selected_reasoning_level: null,
             tabular_model: null,
-            last_selected_chat_model: "gpt-5.6-luna",
+            last_selected_chat_model: "gpt-6-luna",
             api_keys: { openai: "test-key" },
         });
 
@@ -1297,7 +1297,7 @@ describe("POST /chat — streaming endpoint", () => {
 
         expect(res.status).toBe(200);
         expect(runLLMStream).toHaveBeenCalledWith(
-            expect.objectContaining({ model: "gpt-5.6-luna" }),
+            expect.objectContaining({ model: "gpt-6-luna" }),
         );
     });
 
@@ -1974,17 +1974,17 @@ describe("PATCH /chat/:chatId", () => {
         const res = await request(app)
             .patch("/api/chat/chat-1")
             .set("Authorization", "Bearer test")
-            .send({ model: "gemini-3-flash-preview" });
+            .send({ model: "gemini-3.8-flash" });
 
         expect(res.status).toBe(200);
         expect(dbUpdates).toContainEqual({
             table: "chats",
-            value: { model: "gemini-3-flash-preview" },
+            value: { model: "gemini-3.8-flash" },
             filters: [{ column: "id", value: "chat-1" }],
         });
         expect(userSettings.persistLastSelectedChatModel).toHaveBeenCalledWith(
             "u1",
-            "gemini-3-flash-preview",
+            "gemini-3.8-flash",
             expect.anything(),
         );
     });
@@ -2025,13 +2025,13 @@ describe("PATCH /word-chat/:chatId/model", () => {
             .patch(`/api/word-chat/${chatId}/model`)
             .query({ document_id: documentId })
             .set("Authorization", "Bearer test")
-            .send({ model: "gemini-3-flash-preview" });
+            .send({ model: "gemini-3.8-flash" });
 
         expect(res.status).toBe(200);
         expect(dbUpdates).toContainEqual({
             table: "word_chats",
             value: expect.objectContaining({
-                model: "gemini-3-flash-preview",
+                model: "gemini-3.8-flash",
             }),
             filters: [
                 { column: "id", value: chatId },
@@ -2040,7 +2040,7 @@ describe("PATCH /word-chat/:chatId/model", () => {
         });
         expect(userSettings.persistLastSelectedChatModel).toHaveBeenCalledWith(
             "u1",
-            "gemini-3-flash-preview",
+            "gemini-3.8-flash",
             expect.anything(),
         );
     });
@@ -2296,7 +2296,7 @@ async function seedResolvableModel() {
         memory_curator_model: null,
         last_selected_reasoning_level: null,
         tabular_model: null,
-        last_selected_chat_model: "gpt-5.6-luna",
+        last_selected_chat_model: "gpt-6-luna",
         api_keys: { openai: "test-key" },
     });
 }

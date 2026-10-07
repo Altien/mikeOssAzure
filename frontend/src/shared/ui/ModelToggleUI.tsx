@@ -56,15 +56,29 @@ const REASONING_LEVEL_LABELS: Record<ReasoningLevel, string> = {
 
 const STANDARD_REASONING_LEVELS: readonly ReasoningLevel[] =
   REASONING_LEVELS.filter((level) => level !== "max");
-const GPT_56_REASONING_LEVELS: readonly ReasoningLevel[] = REASONING_LEVELS;
+const ALWAYS_REASONING_LEVELS: readonly ReasoningLevel[] =
+  REASONING_LEVELS.filter((level) => level !== "none");
 
 /** Explicit AI SDK reasoning levels supported by the selected model family. */
 export function reasoningLevelsForModel(
   modelId: string,
 ): readonly ReasoningLevel[] {
   const catalogId = modelId.replace(/^(?:openrouter|vercel)\//, "");
-  if (/(?:^|\/)gpt-5\.6(?:-|$)/.test(catalogId)) {
-    return GPT_56_REASONING_LEVELS;
+  // Astra, Sol 6.1, and current Fable/Opus cannot disable thinking.
+  if (
+    /(?:^|\/)(?:gpt-6-astra|gpt-6\.1-sol|claude-fable-5-1|claude-opus-5-5)(?:$|-)/.test(
+      catalogId,
+    )
+  ) {
+    return catalogId.includes("claude-")
+      ? STANDARD_REASONING_LEVELS.filter((level) => level !== "none")
+      : ALWAYS_REASONING_LEVELS;
+  }
+  if (/(?:^|\/)gpt-(?:5\.6|6(?:\.1)?)(?:-|$)/.test(catalogId)) {
+    return REASONING_LEVELS;
+  }
+  if (/(?:^|\/)mistral-(?:large-4|medium-3-5|small-2603)$/.test(catalogId)) {
+    return ["none", "high"];
   }
   return STANDARD_REASONING_LEVELS;
 }

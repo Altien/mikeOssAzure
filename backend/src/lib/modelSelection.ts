@@ -2,6 +2,7 @@ import {
     CLAUDE_LOW_MODELS,
     GEMINI_LOW_MODELS,
     OPENAI_LOW_MODELS,
+    MISTRAL_LOW_MODELS,
     providerForModel,
     normalizeReasoningLevelForModel,
     resolveModel,
@@ -216,6 +217,8 @@ export function titleModelForChat(
             return GEMINI_LOW_MODELS[0];
         case "openai":
             return OPENAI_LOW_MODELS[0];
+        case "mistral":
+            return MISTRAL_LOW_MODELS[0];
         case "kimi":
         case "azureOpenai":
         case "openai-compatible":

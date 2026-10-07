@@ -110,6 +110,7 @@ function providerLabel(provider: Provider): string {
     if (provider === "openai") return "OpenAI";
     if (provider === "kimi") return "Kimi K3";
     if (provider === "azureOpenai") return "Azure OpenAI";
+    if (provider === "mistral") return "Mistral AI";
     if (provider === "openrouter") return "OpenRouter";
     if (provider === "vercel") return "Vercel AI Gateway";
     if (provider === "opencode-go") return "OpenCode Go";
@@ -122,6 +123,7 @@ const SERVER_KEY_SECRETS: Record<Exclude<Provider, "azureOpenai" | "openai-compa
     gemini: "gemini-api-key",
     openai: "openai-api-key",
     kimi: "moonshot-api-key",
+    mistral: "mistral-api-key",
     openrouter: "openrouter-api-key",
     vercel: "ai-gateway-api-key",
     "opencode-go": "opencode-api-key",

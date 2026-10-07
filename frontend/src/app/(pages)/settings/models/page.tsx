@@ -40,6 +40,12 @@ export default function ModelPreferencesPage() {
     const { profile, updateModelPreference } = useUserProfile();
     const aoai = useAoaiDeployments();
     const configuredModels = useConfiguredModels();
+    // Upstream 2f30082a: a configured model keeps its own id even when it
+    // shares a name with a retired catalog id.
+    const preferenceModelId = (id: string) =>
+        configuredModels.some((model) => model.id === id)
+            ? id
+            : canonicalModelId(id);
     const [savingField, setSavingField] = useState<ModelPreferenceField | null>(
         null,
     );
@@ -105,7 +111,7 @@ export default function ModelPreferencesPage() {
                             chat provider. Choose a model here to override that.
                         </p>
                         <ModelPreferenceDropdown
-                            value={canonicalModelId(
+                            value={preferenceModelId(
                                 optimisticValues.titleModel ??
                                     profile?.titleModel ??
                                     "",
@@ -133,7 +139,7 @@ export default function ModelPreferencesPage() {
                             stores its own model and can be changed separately.
                         </p>
                         <ModelPreferenceDropdown
-                            value={canonicalModelId(
+                            value={preferenceModelId(
                                 optimisticValues.tabularModel ??
                                     profile?.tabularModel ??
                                     "",
@@ -164,7 +170,7 @@ export default function ModelPreferencesPage() {
                             the model selected for the chat.
                         </p>
                         <ModelPreferenceDropdown
-                            value={canonicalModelId(
+                            value={preferenceModelId(
                                 optimisticValues.memoryCuratorModel ??
                                     profile?.memoryCuratorModel ??
                                     "",

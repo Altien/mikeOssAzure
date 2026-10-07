@@ -6,50 +6,41 @@ import { REASONING_LEVELS, type Provider, type ReasoningLevel } from "./types";
 // ---------------------------------------------------------------------------
 // Main-chat tier (top-end) — user picks one of these per message.
 export const CLAUDE_MAIN_MODELS = [
-    "claude-fable-5",
-    "claude-opus-5",
-    "claude-sonnet-5",
-    "claude-opus-4-8",
-    "claude-opus-4-7",
-    "claude-sonnet-4-6",
+    "claude-fable-5-1",
+    "claude-opus-5-5",
+    "claude-sonnet-5-5",
 ] as const;
 export const GEMINI_MAIN_MODELS = [
-    "gemini-3.7-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
+    "gemini-3.8-flash",
     "gemini-3.1-pro-preview",
-    "gemini-3-flash-preview",
 ] as const;
 export const OPENAI_MAIN_MODELS = [
-    "gpt-5.6-sol",
-    "gpt-5.6-terra",
-    "gpt-5.6-luna",
-    "gpt-5.5",
-    "gpt-5.4",
+    "gpt-6-astra",
+    "gpt-6.1-sol",
+    "gpt-6-luna",
+] as const;
+export const MISTRAL_MAIN_MODELS = [
+    "mistral-large-4",
+    "mistral-medium-3-5",
+    "mistral-small-2603",
 ] as const;
 export const KIMI_MAIN_MODELS = ["kimi-k3"] as const;
 
 // Mid-tier (used for tabular review) — user picks one in account settings.
-export const CLAUDE_MID_MODELS = [
-    "claude-sonnet-5",
-    "claude-sonnet-4-6",
+export const CLAUDE_MID_MODELS = ["claude-sonnet-5-5"] as const;
+export const GEMINI_MID_MODELS = ["gemini-3.8-flash"] as const;
+export const OPENAI_MID_MODELS = ["gpt-6.1-sol"] as const;
+export const MISTRAL_MID_MODELS = [
+    "mistral-medium-3-5",
+    "mistral-small-2603",
 ] as const;
-export const GEMINI_MID_MODELS = [
-    "gemini-3.7-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-3-flash-preview",
-] as const;
-export const OPENAI_MID_MODELS = ["gpt-5.6-terra", "gpt-5.4"] as const;
 
 // Low-tier (used for title generation, lightweight extractions) — user picks
 // one in account settings.
 export const CLAUDE_LOW_MODELS = ["claude-haiku-4-5"] as const;
-export const GEMINI_LOW_MODELS = [
-    "gemini-3.5-flash-lite",
-    "gemini-3.1-flash-lite",
-] as const;
-export const OPENAI_LOW_MODELS = ["gpt-5.6-luna", "gpt-5.4-mini"] as const;
+export const GEMINI_LOW_MODELS = ["gemini-3.5-flash-lite"] as const;
+export const OPENAI_LOW_MODELS = ["gpt-6-luna"] as const;
+export const MISTRAL_LOW_MODELS = ["mistral-small-2603"] as const;
 
 // Azure OpenAI model ids are dynamic — they're derived from deployment
 // names discovered against the configured AOAI endpoint at runtime, so
@@ -57,21 +48,35 @@ export const OPENAI_LOW_MODELS = ["gpt-5.6-luna", "gpt-5.4-mini"] as const;
 // which providerForModel routes to the AOAI adapter.
 export const AZURE_OPENAI_PREFIX = "aoai:";
 
-export const DEFAULT_MAIN_MODEL = "gemini-3-flash-preview";
+export const DEFAULT_MAIN_MODEL = "gemini-3.8-flash";
 export const DEFAULT_TITLE_MODEL = "gemini-3.5-flash-lite";
-export const DEFAULT_TABULAR_MODEL = "gemini-3-flash-preview";
+export const DEFAULT_TABULAR_MODEL = "gemini-3.8-flash";
 
 const STANDARD_REASONING_LEVELS: readonly ReasoningLevel[] =
     REASONING_LEVELS.filter((level) => level !== "max");
-const GPT_56_REASONING_LEVELS: readonly ReasoningLevel[] = REASONING_LEVELS;
+const ALWAYS_REASONING_LEVELS: readonly ReasoningLevel[] =
+    REASONING_LEVELS.filter((level) => level !== "none");
 
 /** Explicit AI SDK reasoning levels supported by the selected model family. */
 export function reasoningLevelsForModel(
     model: string,
 ): readonly ReasoningLevel[] {
     const catalogId = model.replace(/^(?:openrouter|vercel)\//, "");
-    if (/(?:^|\/)gpt-5\.6(?:-|$)/.test(catalogId)) {
-        return GPT_56_REASONING_LEVELS;
+    // Astra, Sol 6.1, and current Fable/Opus cannot disable thinking.
+    if (
+        /(?:^|\/)(?:gpt-6-astra|gpt-6\.1-sol|claude-fable-5-1|claude-opus-5-5)(?:$|-)/.test(
+            catalogId,
+        )
+    ) {
+        return catalogId.includes("claude-")
+            ? STANDARD_REASONING_LEVELS.filter((level) => level !== "none")
+            : ALWAYS_REASONING_LEVELS;
+    }
+    if (/(?:^|\/)gpt-(?:5\.6|6(?:\.1)?)(?:-|$)/.test(catalogId)) {
+        return REASONING_LEVELS;
+    }
+    if (/(?:^|\/)mistral-(?:large-4|medium-3-5|small-2603)$/.test(catalogId)) {
+        return ["none", "high"];
     }
     return STANDARD_REASONING_LEVELS;
 }
@@ -132,12 +137,15 @@ const ALL_MODELS = new Set<string>([
     ...GEMINI_MAIN_MODELS,
     ...OPENAI_MAIN_MODELS,
     ...KIMI_MAIN_MODELS,
+    ...MISTRAL_MAIN_MODELS,
     ...CLAUDE_MID_MODELS,
     ...GEMINI_MID_MODELS,
     ...OPENAI_MID_MODELS,
+    ...MISTRAL_MID_MODELS,
     ...CLAUDE_LOW_MODELS,
     ...GEMINI_LOW_MODELS,
     ...OPENAI_LOW_MODELS,
+    ...MISTRAL_LOW_MODELS,
 ]);
 
 // ---------------------------------------------------------------------------
@@ -162,6 +170,7 @@ export function providerForModel(model: string): Provider {
     if (model.startsWith("kimi-")) return "kimi";
     if (model.startsWith(AZURE_OPENAI_PREFIX)) return "azureOpenai";
     if (model.startsWith("gpt-")) return "openai";
+    if (model.startsWith("mistral-")) return "mistral";
     throw new Error(`Unknown model id: ${model}`);
 }
 
@@ -176,12 +185,36 @@ export function isAllowedModelId(id: string): boolean {
 // and localStorage selections outlive catalog renames; mapping here keeps an
 // old saved value working instead of silently kicking it to the fallback.
 export const LEGACY_MODEL_IDS: Record<string, string> = {
+    "claude-fable-5": "claude-fable-5-1",
+    "claude-opus-5": "claude-opus-5-5",
+    "claude-opus-4-8": "claude-opus-5-5",
+    "claude-opus-4-7": "claude-opus-5-5",
+    "claude-sonnet-5": "claude-sonnet-5-5",
+    "claude-sonnet-4-6": "claude-sonnet-5-5",
+    "gemini-3.7-flash": "gemini-3.8-flash",
+    "gemini-3.6-flash": "gemini-3.8-flash",
+    "gemini-3.5-flash": "gemini-3.8-flash",
+    "gemini-3-flash-preview": "gemini-3.8-flash",
+    "gemini-3.1-flash-lite": "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite-preview": "gemini-3.5-flash-lite",
-    "gpt-5.4-lite": "gpt-5.4-mini",
+    "gpt-5.6-sol": "gpt-6-astra",
+    "gpt-5.6-terra": "gpt-6.1-sol",
+    "gpt-5.6-luna": "gpt-6-luna",
+    "gpt-5.5": "gpt-6.1-sol",
+    "gpt-5.4": "gpt-6.1-sol",
+    "gpt-5.4-mini": "gpt-6-luna",
+    "gpt-5.4-lite": "gpt-6-luna",
 };
 
 export function resolveModel(id: string | null | undefined, fallback: string): string {
-    const canonical = id ? (LEGACY_MODEL_IDS[id] ?? id) : id;
+    // A deployment-declared model keeps its own id even when it shares a name
+    // with a retired catalog id (upstream 2f30082a).
+    const canonical =
+        id && getConfiguredModel(id)
+            ? id
+            : id
+              ? (LEGACY_MODEL_IDS[id] ?? id)
+              : id;
     if (canonical && isAllowedModelId(canonical)) return canonical;
     return fallback;
 }

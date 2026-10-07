@@ -184,6 +184,7 @@ const USER_API_KEY_PROVIDERS = new Set<keyof UserApiKeys>([
   "gemini",
   "openai",
   "kimi",
+  "mistral",
   "openrouter",
   "vercel",
   "opencode-go",

@@ -1,3 +1,4 @@
+import { normalizeReasoningLevelForModel } from "./models";
 import type { LanguageModel, ToolSet } from "ai" with {
   "resolution-mode": "import",
 };
@@ -622,14 +623,21 @@ export async function completeAiSdkText(
   config: AiSdkAdapterConfig,
 ): Promise<string> {
   const { generateText } = await import("ai");
+  const completionReasoning = params.reasoningEffort
+    ? normalizeReasoningLevelForModel(config.modelId, params.reasoningEffort)
+    : undefined;
   const result = await generateText({
     model: config.model,
     system: params.systemPrompt,
     prompt: params.user,
     maxOutputTokens: params.maxTokens ?? 512,
+    // Dev keeps the caller's reasoningEffort (upstream always sends "none");
+    // upstream 2f30082a's intent is kept by moving the level to the nearest
+    // one the model supports (Astra, Sol 6.1 and current Fable/Opus cannot
+    // disable thinking).
     reasoning: config.provider === "kimi" || config.supportsReasoning === false
       ? undefined
-      : params.reasoningEffort === "max" ? "xhigh" : params.reasoningEffort,
+      : completionReasoning === "max" ? "xhigh" : completionReasoning,
     ...(config.provider === "kimi" && params.reasoningEffort
       ? { providerOptions: { kimi: { reasoningEffort: params.reasoningEffort === "none" ? "low" : params.reasoningEffort } } }
       : {}),

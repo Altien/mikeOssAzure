@@ -14,7 +14,7 @@ describe("organisation provider credentials", () => {
   beforeEach(() => secrets.values.clear());
 
   it("accepts supported providers without admitting arbitrary names", () => {
-    for (const provider of ["claude", "gemini", "openai", "kimi", "openrouter", "opencode-go", "vercel", "courtlistener", "azure_openai"])
+    for (const provider of ["claude", "gemini", "openai", "kimi", "mistral", "openrouter", "opencode-go", "vercel", "courtlistener", "azure_openai"])
       expect(normalizeApiKeyProvider(provider)).toBe(provider);
     expect(normalizeApiKeyProvider("unknown")).toBeNull();
   });
@@ -27,7 +27,17 @@ describe("organisation provider credentials", () => {
     const status = await getUserApiKeyStatus("entra|tenant|user", db as never);
     expect(status.openai).toBe(true);
     expect(status.azure_openai).toBe(true);
-    expect(status.sources).toMatchObject({ openai: "env", azure_openai: "env", claude: null });
+    expect(status.mistral).toBe(false);
+    expect(status.sources).toMatchObject({ openai: "env", azure_openai: "env", claude: null, mistral: null });
+    expect(db.from).not.toHaveBeenCalled();
+  });
+
+  it("reads the direct Mistral credential from the organisation Key Vault secret", async () => {
+    secrets.values.set("mistral-api-key", "organisation-mistral");
+    const db = { from: vi.fn(() => { throw new Error("personal key lookup forbidden"); }) };
+    const status = await getUserApiKeyStatus("entra|tenant|user", db as never);
+    expect(status.mistral).toBe(true);
+    expect(status.sources).toMatchObject({ mistral: "env" });
     expect(db.from).not.toHaveBeenCalled();
   });
 

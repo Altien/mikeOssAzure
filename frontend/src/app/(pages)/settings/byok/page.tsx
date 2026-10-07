@@ -31,6 +31,7 @@ const PROVIDERS: ReadonlyArray<{
     { provider: "gemini", label: "Google (Gemini)", secret: "gemini-api-key" },
     { provider: "openai", label: "OpenAI", secret: "openai-api-key" },
     { provider: "kimi", label: "Kimi K3", secret: "moonshot-api-key" },
+    { provider: "mistral", label: "Mistral AI", secret: "mistral-api-key" },
     {
         provider: "openrouter",
         label: "OpenRouter",

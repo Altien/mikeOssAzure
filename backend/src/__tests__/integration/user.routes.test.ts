@@ -285,7 +285,7 @@ function profileRow(overrides: Record<string, unknown> = {}) {
         tier: "Pro",
         // Dev drift: Dev's column is fast_model (49c30337), not upstream's title_model.
         fast_model: null,
-        tabular_model: "gemini-3-flash-preview",
+        tabular_model: "gemini-3.8-flash",
         memory_curator_model: null,
         last_selected_chat_model: null,
         mfa_on_login: false,
@@ -405,7 +405,7 @@ describe("user.routes", () => {
         it("keeps existing preferences before the memory curator migration", async () => {
             // Dev drift: titleModel is read from fast_model in Dev.
             const preMigrationRow = profileRow({
-                fast_model: "gpt-5.4-mini",
+                fast_model: "gpt-6-luna",
             });
             delete (preMigrationRow as Record<string, unknown>)
                 .memory_curator_model;
@@ -426,7 +426,7 @@ describe("user.routes", () => {
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
-            expect(res.body.titleModel).toBe("gpt-5.4-mini");
+            expect(res.body.titleModel).toBe("gpt-6-luna");
             expect(res.body.memoryCuratorModel).toBeNull();
             expect(res.body.projectMemoryDefault).toBe(true);
         });
@@ -439,7 +439,7 @@ describe("user.routes", () => {
             // and the cascade falls further than it should, dropping
             // preference columns the database actually has.
             // Dev drift: titleModel is read from fast_model in Dev.
-            const preMigrationRow = profileRow({ fast_model: "gpt-5.4-mini" });
+            const preMigrationRow = profileRow({ fast_model: "gpt-6-luna" });
             delete (preMigrationRow as Record<string, unknown>)
                 .memory_curator_model;
             delete (preMigrationRow as Record<string, unknown>)
@@ -468,7 +468,7 @@ describe("user.routes", () => {
             // The tier keeps every other preference the database does have.
             expect(selects[1]).toContain("last_selected_reasoning_level");
             expect(selects[1]).toContain("dark_mode");
-            expect(res.body.titleModel).toBe("gpt-5.4-mini");
+            expect(res.body.titleModel).toBe("gpt-6-luna");
             expect(res.body.memoryCuratorModel).toBeNull();
         });
 
@@ -485,7 +485,7 @@ describe("user.routes", () => {
                 credits_reset_date: "2999-01-01T00:00:00.000Z",
                 tier: "Pro",
                 fast_model: null, // Dev drift: Dev column name (49c30337)
-                tabular_model: "gemini-3-flash-preview",
+                tabular_model: "gemini-3.8-flash",
                 mfa_on_login: false,
                 legal_research_us: false,
                 quick_actions_visible: false,
@@ -922,7 +922,7 @@ describe("user.routes", () => {
         it("persists the last-selected model from the initial chat view", async () => {
             supabaseState.tables.user_profiles = {
                 data: profileRow({
-                    last_selected_chat_model: "gpt-5.6-sol",
+                    last_selected_chat_model: "gpt-6-astra",
                 }),
                 error: null,
             };
@@ -930,33 +930,33 @@ describe("user.routes", () => {
             const res = await request(app)
                 .patch("/api/user/profile")
                 .set(...AUTH)
-                .send({ lastSelectedChatModel: "gpt-5.6-sol" });
+                .send({ lastSelectedChatModel: "gpt-6-astra" });
 
             expect(res.status).toBe(200);
             expect(supabaseState.updates.user_profiles).toContainEqual(
                 expect.objectContaining({
-                    last_selected_chat_model: "gpt-5.6-sol",
+                    last_selected_chat_model: "gpt-6-astra",
                 }),
             );
-            expect(res.body.lastSelectedChatModel).toBe("gpt-5.6-sol");
+            expect(res.body.lastSelectedChatModel).toBe("gpt-6-astra");
         });
 
         it("persists and returns the memory curator model", async () => {
             supabaseState.tables.user_profiles = {
-                data: profileRow({ memory_curator_model: "gpt-5.4-mini" }),
+                data: profileRow({ memory_curator_model: "gpt-6-luna" }),
                 error: null,
             };
 
             const res = await request(app)
                 .patch("/api/user/profile")
                 .set(...AUTH)
-                .send({ memoryCuratorModel: "gpt-5.4-mini" });
+                .send({ memoryCuratorModel: "gpt-6-luna" });
 
             expect(res.status).toBe(200);
-            expect(res.body.memoryCuratorModel).toBe("gpt-5.4-mini");
+            expect(res.body.memoryCuratorModel).toBe("gpt-6-luna");
             expect(supabaseState.updates.user_profiles).toContainEqual(
                 expect.objectContaining({
-                    memory_curator_model: "gpt-5.4-mini",
+                    memory_curator_model: "gpt-6-luna",
                 }),
             );
         });

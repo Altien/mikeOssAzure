@@ -8,6 +8,7 @@ export type Provider =
     | "openai"
     | "kimi"
     | "azureOpenai"
+    | "mistral"
     | "openai-compatible"
     | "openrouter"
     | "opencode-go"
@@ -61,6 +62,7 @@ export type UserApiKeys = {
     gemini?: string | null;
     openai?: string | null;
     kimi?: string | null;
+    mistral?: string | null;
     openrouter?: string | null;
     vercel?: string | null;
     "opencode-go"?: string | null;
