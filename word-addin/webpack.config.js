@@ -144,6 +144,12 @@ module.exports = async (_env, options) => {
     },
     resolve: {
       extensions: [".ts", ".tsx", ".js", ".jsx"],
+      // Upstream divergence (sync-log: 54b6b3a1): upstream searches the
+      // nearest node_modules first so its npm-hoisted Sentry build plugin and
+      // runtime SDK can use different versions. Dev has no Sentry webpack
+      // plugin, and pnpm keeps each package's own deps nested, so the add-in's
+      // node_modules stays first: shared frontend sources then bundle the
+      // add-in's single copy of clsx, Radix, Sentry, etc.
       modules: [path.resolve(__dirname, "node_modules"), "node_modules"],
       alias: {
         // Cross-app source files must use the add-in's React runtime so the

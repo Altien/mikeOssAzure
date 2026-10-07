@@ -333,7 +333,19 @@ export function browserSentryOptions(env: {
         tracesSampleRate: parseSampleRate(env.tracesSampleRate, 0),
         // Session replay is deliberately NOT enabled: it would record
         // privileged document text on screen.
-        sendDefaultPii: false,
+        dataCollection: {
+            userInfo: false,
+            cookies: false,
+            httpHeaders: { request: false, response: false },
+            httpBodies: [],
+            urlQueryParams: false,
+            genAI: { inputs: false, outputs: false },
+            databaseQueryData: false,
+            queues: false,
+            graphQL: { document: false, variables: false },
+            stackFrameVariables: false,
+            frameContextLines: 0,
+        },
         attachStacktrace: true,
         integrations: [privacyBoundaryIntegration(), Sentry.captureConsoleIntegration({ levels: ["error"] })],
         initialScope: {

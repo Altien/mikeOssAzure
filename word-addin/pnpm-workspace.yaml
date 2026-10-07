@@ -8,3 +8,7 @@ allowBuilds:
   '@microsoft/m365agentstoolkit-cli': false
   '@microsoft/teamsapp-cli': false
   keytar: false
+overrides:
+  # Development-only MCP SDK (office-addin-debugging -> teamsfx-core): hold
+  # the advisory-patched line (upstream's npm override, 54b6b3a1/57009979).
+  '@modelcontextprotocol/sdk': ^1.32.0
