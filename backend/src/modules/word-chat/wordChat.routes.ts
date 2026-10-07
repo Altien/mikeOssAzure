@@ -840,6 +840,7 @@ wordChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
       docStore,
       docIndex,
       userId,
+      userEmail,
       db,
       write,
       workflowStore,

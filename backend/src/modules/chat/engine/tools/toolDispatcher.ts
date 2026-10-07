@@ -360,6 +360,11 @@ export async function runToolCalls(
      * Without it, a connector write that needs approval is refused.
      */
     connectorApprovals?: boolean;
+    /**
+     * The caller's authenticated email, for the per-document write check
+     * edit_document runs (direct grants are keyed by email).
+     */
+    userEmail?: string | null;
   } = {},
 ): Promise<{
   toolResults: unknown[];
@@ -1697,6 +1702,7 @@ export async function runToolCalls(
         const result = await runEditDocument({
           documentId: indexed.document_id,
           userId,
+          userEmail: options.userEmail ?? null,
           edits,
           db,
           reuseVersion,

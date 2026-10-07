@@ -714,10 +714,25 @@ describe("tabular.routes", () => {
                 },
                 error: null,
             };
+            supabaseState.tables.tabular_review_rows = {
+                data: [
+                    {
+                        id: "row-1",
+                        review_id: "r1",
+                        label: "Agreement.pdf",
+                        row_type: "document",
+                        folder_id: null,
+                        document_id: "d1",
+                        sort_index: 0,
+                    },
+                ],
+                error: null,
+            };
             supabaseState.tables.tabular_cells = {
                 data: [
                     {
                         id: "c1",
+                        row_id: "row-1",
                         document_id: "d1",
                         column_index: 0,
                         content: null,
@@ -745,6 +760,56 @@ describe("tabular.routes", () => {
             expect(res.body.documents).toEqual([
                 { id: "d1", current_version_id: null },
             ]);
+        });
+
+        it("withholds rows and cells built from documents the caller cannot read", async () => {
+            supabaseState.tables.tabular_reviews = {
+                data: {
+                    id: "r1",
+                    user_id: "u1",
+                    project_id: null,
+                    document_ids: ["d1"],
+                    columns_config: [],
+                },
+                error: null,
+            };
+            supabaseState.tables.tabular_review_rows = {
+                data: [
+                    {
+                        id: "row-1",
+                        review_id: "r1",
+                        label: "Agreement.pdf",
+                        row_type: "document",
+                        folder_id: null,
+                        document_id: "d1",
+                        sort_index: 0,
+                    },
+                ],
+                error: null,
+            };
+            supabaseState.tables.tabular_cells = {
+                data: [
+                    {
+                        id: "c1",
+                        row_id: "row-1",
+                        document_id: "d1",
+                        column_index: 0,
+                        content: "extracted text",
+                        status: "done",
+                    },
+                ],
+                error: null,
+            };
+            filterAccessibleDocumentIds.mockResolvedValue([]);
+
+            const res = await request(app)
+                .get("/tabular-review/r1")
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(res.body.rows).toEqual([]);
+            expect(res.body.cells).toEqual([]);
+            expect(res.body.documents).toEqual([]);
         });
     });
 
