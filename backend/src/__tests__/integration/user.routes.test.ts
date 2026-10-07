@@ -700,13 +700,13 @@ describe("user.routes", () => {
     });
 
     describe("response style", () => {
-        it("returns the stored style", async () => {
+        it("returns the stored choices with defaults filled in", async () => {
             supabaseState.tables.user_profiles = {
                 data: {
-                    response_verbosity: "detailed",
-                    response_formatting: "less",
-                    response_tone: "formal",
-                    response_language: "en-GB",
+                    response_style: {
+                        verbosity: "detailed",
+                        language: "en-GB",
+                    },
                 },
                 error: null,
             };
@@ -718,15 +718,15 @@ describe("user.routes", () => {
             expect(res.status).toBe(200);
             expect(res.body).toEqual({
                 verbosity: "detailed",
-                formatting: "less",
-                tone: "formal",
+                formatting: "balanced",
+                tone: "balanced",
                 language: "en-GB",
             });
             expect(res.headers["cache-control"]).toBe("private, no-store");
         });
 
         it("reads as the default before the migration is applied", async () => {
-            supabaseState.missingColumns = ["response_verbosity"];
+            supabaseState.missingColumns = ["response_style"];
 
             const res = await request(app)
                 .get("/api/user/response-style")
@@ -741,15 +741,12 @@ describe("user.routes", () => {
             });
         });
 
-        it("saves only the field that changed", async () => {
-            supabaseState.tables.user_profiles = {
-                data: {
-                    response_verbosity: "balanced",
-                    response_formatting: "balanced",
-                    response_tone: "plain",
-                },
+        it("merges only the field that changed, for the caller only", async () => {
+            // The merge function returns the user's whole stored object.
+            supabaseRpc.mockResolvedValue({
+                data: { verbosity: "concise", tone: "plain" },
                 error: null,
-            };
+            });
 
             const res = await request(app)
                 .put("/api/user/response-style")
@@ -758,22 +755,34 @@ describe("user.routes", () => {
 
             expect(res.status).toBe(200);
             expect(res.body).toEqual({
-                verbosity: "balanced",
+                verbosity: "concise",
                 formatting: "balanced",
                 tone: "plain",
                 language: "auto",
             });
-            expect(supabaseState.updates.user_profiles).toHaveLength(1);
-            const [update] = supabaseState.updates.user_profiles as Record<
-                string,
-                unknown
-            >[];
-            expect(update).toMatchObject({ response_tone: "plain" });
-            expect(update).not.toHaveProperty("response_verbosity");
-            expect(update).not.toHaveProperty("response_formatting");
+            expect(supabaseRpc).toHaveBeenCalledWith(
+                "merge_user_response_style",
+                {
+                    p_user_id: expect.any(String),
+                    p_patch: { tone: "plain" },
+                },
+            );
+            // Nothing is written outside the merge function.
+            expect(supabaseState.updates.user_profiles).toBeUndefined();
         });
 
-        it("rejects an unknown value", async () => {
+        it("reports a missing profile as not found", async () => {
+            supabaseRpc.mockResolvedValue({ data: null, error: null });
+
+            const res = await request(app)
+                .put("/api/user/response-style")
+                .set(...AUTH)
+                .send({ tone: "plain" });
+
+            expect(res.status).toBe(404);
+        });
+
+        it("rejects an unknown value without calling the database", async () => {
             const res = await request(app)
                 .put("/api/user/response-style")
                 .set(...AUTH)
@@ -781,7 +790,10 @@ describe("user.routes", () => {
 
             expect(res.status).toBe(400);
             expect(res.body.detail).toMatch(/formatting must be one of/);
-            expect(supabaseState.updates.user_profiles).toBeUndefined();
+            expect(supabaseRpc).not.toHaveBeenCalledWith(
+                "merge_user_response_style",
+                expect.anything(),
+            );
         });
     });
 

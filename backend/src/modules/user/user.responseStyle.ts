@@ -3,20 +3,20 @@
 // How the user wants assistant answers written, from Settings >
 // Personalisation. Like custom instructions it has its own endpoint, so the
 // profile select cascade (user.profile.storage.ts) does not have to carry it.
+//
+// The settings live in one JSON column, user_profiles.response_style, holding
+// only the choices that differ from the default. This module owns the options,
+// the defaults and the validation, so adding a setting or an option is a code
+// change with no migration.
+import { RESPONSE_LANGUAGE_CODES } from "../../lib/responseLanguages";
 import {
     failure,
     internalFailure,
     ok,
     type ServiceResult,
 } from "../../lib/serviceResult";
-import { RESPONSE_LANGUAGE_CODES } from "../../lib/responseLanguages";
 import { type Db } from "./user.shared";
 
-/**
- * The first three lists mirror their user_profiles_response_*_check
- * constraints. Languages are owned here (lib/responseLanguages); the database
- * only checks the tag's shape.
- */
 export const RESPONSE_STYLE_OPTIONS = {
     verbosity: ["concise", "balanced", "detailed"],
     // The "Headers and Lists" setting: how much structure answers use.
@@ -38,15 +38,9 @@ export const DEFAULT_RESPONSE_STYLE: ResponseStyle = {
     language: "auto",
 };
 
-const COLUMNS: Record<ResponseStyleField, string> = {
-    verbosity: "response_verbosity",
-    formatting: "response_formatting",
-    tone: "response_tone",
-    language: "response_language",
-};
-
-const FIELDS = Object.keys(COLUMNS) as ResponseStyleField[];
-const SELECT = FIELDS.map((field) => COLUMNS[field]).join(", ");
+const COLUMN = "response_style";
+const MERGE_FUNCTION = "merge_user_response_style";
+const FIELDS = Object.keys(DEFAULT_RESPONSE_STYLE) as ResponseStyleField[];
 
 function isOption<Field extends ResponseStyleField>(
     field: Field,
@@ -58,24 +52,42 @@ function isOption<Field extends ResponseStyleField>(
     );
 }
 
-function isMissingColumn(error: unknown): boolean {
-    const record =
+function errorCode(error: unknown): string {
+    const code =
         error && typeof error === "object"
-            ? (error as { code?: unknown; message?: unknown })
-            : {};
-    const message = typeof record.message === "string" ? record.message : "";
+            ? (error as { code?: unknown }).code
+            : undefined;
+    return typeof code === "string" ? code : "";
+}
+
+/** The column or the merge function is not there yet: deployed before migrating. */
+function isNotMigrated(error: unknown): boolean {
+    const message =
+        error && typeof error === "object"
+            ? (error as { message?: unknown }).message
+            : undefined;
+    const text = typeof message === "string" ? message : "";
+    const code = errorCode(error);
     return (
-        record.code === "42703" &&
-        FIELDS.some((field) => message.includes(COLUMNS[field]))
+        ((code === "42703" || code === "PGRST204") && text.includes(COLUMN)) ||
+        ((code === "PGRST202" || code === "42883") &&
+            text.includes(MERGE_FUNCTION))
     );
 }
 
-/** Unknown or missing values fall back field by field to the default. */
-function toResponseStyle(row: unknown): ResponseStyle {
-    const record = (row ?? {}) as Record<string, unknown>;
+/**
+ * Reads a stored object into a full style. A missing key is the default, and
+ * so is a value this build does not recognise (a removed option, or one
+ * written by a newer build), so a stale row can never break a chat.
+ */
+function toResponseStyle(stored: unknown): ResponseStyle {
+    const record =
+        stored && typeof stored === "object" && !Array.isArray(stored)
+            ? (stored as Record<string, unknown>)
+            : {};
     const style = { ...DEFAULT_RESPONSE_STYLE };
     for (const field of FIELDS) {
-        const value = record[COLUMNS[field]];
+        const value = record[field];
         if (isOption(field, value)) {
             (style as Record<ResponseStyleField, string>)[field] = value;
         }
@@ -93,14 +105,16 @@ export async function loadResponseStyle(
 ): Promise<ResponseStyle> {
     const { data, error } = await db
         .from("user_profiles")
-        .select(SELECT)
+        .select(COLUMN)
         .eq("user_id", userId)
         .maybeSingle();
     if (error) {
-        if (isMissingColumn(error)) return DEFAULT_RESPONSE_STYLE;
+        if (isNotMigrated(error)) return DEFAULT_RESPONSE_STYLE;
         throw error;
     }
-    return toResponseStyle(data);
+    return toResponseStyle(
+        (data as { response_style?: unknown } | null)?.response_style,
+    );
 }
 
 export async function getResponseStyle(
@@ -138,7 +152,10 @@ export function validateResponseStylePayload(
         };
     }
     if (keys.length === 0) {
-        return { ok: false, detail: "Expected at least one response style field" };
+        return {
+            ok: false,
+            detail: "Expected at least one response style field",
+        };
     }
     const update: Partial<ResponseStyle> = {};
     for (const field of keys as ResponseStyleField[]) {
@@ -146,7 +163,10 @@ export function validateResponseStylePayload(
         if (!isOption(field, value)) {
             return {
                 ok: false,
-                detail: `${field} must be one of: ${RESPONSE_STYLE_OPTIONS[field].join(", ")}`,
+                detail:
+                    field === "language"
+                        ? "language is not a supported language"
+                        : `${field} must be one of: ${RESPONSE_STYLE_OPTIONS[field].join(", ")}`,
             };
         }
         (update as Record<ResponseStyleField, string>)[field] = value;
@@ -154,26 +174,36 @@ export function validateResponseStylePayload(
     return { ok: true, update };
 }
 
+/**
+ * The patch the database merges in. A setting chosen back to its default is
+ * sent as null, which removes its key, so only real choices are stored and a
+ * later change of default reaches everyone who never chose.
+ */
+function toStoredPatch(
+    update: Partial<ResponseStyle>,
+): Record<string, string | null> {
+    const patch: Record<string, string | null> = {};
+    for (const field of FIELDS) {
+        const value = update[field];
+        if (value === undefined) continue;
+        patch[field] = value === DEFAULT_RESPONSE_STYLE[field] ? null : value;
+    }
+    return patch;
+}
+
 export async function saveResponseStyle(
     db: Db,
     userId: string,
     update: Partial<ResponseStyle>,
 ): Promise<ServiceResult<ResponseStyle>> {
-    const row: Record<string, string> = {
-        updated_at: new Date().toISOString(),
-    };
-    for (const field of FIELDS) {
-        const value = update[field];
-        if (value !== undefined) row[COLUMNS[field]] = value;
-    }
-    const { data, error } = await db
-        .from("user_profiles")
-        .update(row)
-        .eq("user_id", userId)
-        .select(SELECT)
-        .maybeSingle();
+    // Merged in the database, so a save of one setting cannot overwrite a
+    // concurrent save of another.
+    const { data, error } = await db.rpc(MERGE_FUNCTION, {
+        p_user_id: userId,
+        p_patch: toStoredPatch(update),
+    });
     if (error) {
-        if (isMissingColumn(error)) {
+        if (isNotMigrated(error)) {
             return failure(
                 "unavailable",
                 "Response style settings are not available yet.",
@@ -181,6 +211,9 @@ export async function saveResponseStyle(
         }
         return internalFailure(error);
     }
-    if (!data) return failure("not_found", "Profile not found");
+    // The function returns null when no profile row matched.
+    if (data === null || data === undefined) {
+        return failure("not_found", "Profile not found");
+    }
     return ok(toResponseStyle(data));
 }

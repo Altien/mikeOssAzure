@@ -65,9 +65,7 @@ describe("getUserModelSettings router-model allowlist", () => {
                 professional_title: "Partner",
                 practice_areas: ["Litigation"],
                 custom_instructions: "Use British spelling.",
-                response_verbosity: "concise",
-                response_formatting: "less",
-                response_tone: "formal",
+                response_style: { verbosity: "concise", tone: "formal" },
             }),
         );
 
@@ -81,7 +79,7 @@ describe("getUserModelSettings router-model allowlist", () => {
             customInstructions: "Use British spelling.",
             responseStyle: {
                 verbosity: "concise",
-                formatting: "less",
+                formatting: "balanced",
                 tone: "formal",
                 language: "auto",
             },
@@ -101,9 +99,7 @@ describe("getUserModelSettings router-model allowlist", () => {
 
         expect(settings.fast_model).toBe("openrouter/allowed/model");
         expect(settings.tabular_model).toBe("openrouter/allowed/model");
-        expect(settings.memory_curator_model).toBe(
-            "openrouter/allowed/model",
-        );
+        expect(settings.memory_curator_model).toBe("openrouter/allowed/model");
     });
 
     it("clears stored router preferences outside the saved selection", async () => {
