@@ -1,6 +1,6 @@
 import { render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { MikeIcon } from "./mike-icon";
+import { MikeIcon } from "./MikeIconUI";
 
 function firstBladeFill(container: HTMLElement) {
     const gradient = container.querySelector(

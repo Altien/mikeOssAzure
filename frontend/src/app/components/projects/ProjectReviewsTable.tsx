@@ -1,9 +1,10 @@
 "use client";
 
-import type { Dispatch, SetStateAction } from "react";
+import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { Loader2 } from "lucide-react";
 import { can, roleFrom } from "@/app/lib/permissions";
 import type { OwnerGate } from "@/app/components/projects/ProjectWorkspace";
+import { SelectionActionsMenu } from "@/app/components/shared/SelectionActionsMenu";
 import {
     RowActionMenuItems,
     RowActions,
@@ -67,6 +68,7 @@ export function ProjectReviewsTable({
     onLoadMore,
     onRetry,
     loading = false,
+    renderToolbar,
 }: {
     docs: Document[];
     reviews: TabularReview[];
@@ -98,9 +100,39 @@ export function ProjectReviewsTable({
     onLoadMore: () => void;
     onRetry: () => void;
     loading?: boolean;
+    renderToolbar?: (actions: ReactNode) => ReactNode;
 }) {
     function clearSelection() {
         setSelectedReviewIds([]);
+    }
+
+    function requestReviewDetails(review: TabularReview) {
+        if (!can(roleFrom(review), "content.edit")) {
+            onOwnerOnlyAction({ action: "edit tabular review details", requiredRole: "editor" });
+            return;
+        }
+        onOpenDetails(review);
+    }
+
+    function renderReviewActions(review: TabularReview | undefined, onClose: () => void) {
+        const actionIds = review
+            ? rowActionSelectionIds(review.id, selectedReviewIds)
+            : selectedReviewIds;
+        const appliesToSelection = actionIds.length > 1;
+        return (
+            <RowActionMenuItems
+                onClose={onClose}
+                onView={!appliesToSelection && review ? () => onOpenReview(review.id) : undefined}
+                viewLabel="Open"
+                onEditDetails={!appliesToSelection && review ? () => requestReviewDetails(review) : undefined}
+                onDelete={() =>
+                    appliesToSelection || !review
+                        ? onDeleteSelectedReviews()
+                        : onDeleteReview(review)
+                }
+                deleteLabel={appliesToSelection ? `Delete ${actionIds.length} reviews` : undefined}
+            />
+        );
     }
 
     function handleSortChange(
@@ -169,6 +201,12 @@ export function ProjectReviewsTable({
     );
 
     return (
+        <>
+        {renderToolbar?.(selectedReviewIds.length > 0 ? (
+            <SelectionActionsMenu
+                renderItems={(close) => renderReviewActions(reviews.find((review) => review.id === selectedReviewIds[0]), close)}
+            />
+        ) : undefined)}
         <TableScrollArea
             onScroll={(event) => {
                 if (loading || loadingMore || !hasMore) return;
@@ -274,11 +312,6 @@ export function ProjectReviewsTable({
                 <TableBody>
                     {visibleReviews.map((review) => {
                         const deleting = deletingReviewIds.has(review.id);
-                        const actionIds = rowActionSelectionIds(
-                            review.id,
-                            selectedReviewIds,
-                        );
-                        const appliesToSelection = actionIds.length > 1;
                         return (
                             <TableRow
                                 key={review.id}
@@ -287,58 +320,7 @@ export function ProjectReviewsTable({
                                     !deleting &&
                                     selectedReviewIds.includes(review.id)
                                 }
-                                rightClickDropdown={
-                                    deleting
-                                        ? undefined
-                                        : (close) => (
-                                              <RowActionMenuItems
-                                                  onClose={close}
-                                                  onView={
-                                                      appliesToSelection
-                                                          ? undefined
-                                                          : () =>
-                                                                onOpenReview(
-                                                                    review.id,
-                                                                )
-                                                  }
-                                                  viewLabel="Open"
-                                                  onEditDetails={
-                                                      appliesToSelection
-                                                          ? undefined
-                                                          : () => {
-                                                                if (
-                                                                    !can(
-                                                                        roleFrom(
-                                                                            review,
-                                                                        ),
-                                                                        "content.edit",
-                                                                    )
-                                                                ) {
-                                                                    onOwnerOnlyAction(
-                                                                        {
-                                                                            action: "edit tabular review details",
-                                                                            requiredRole:
-                                                                                "editor",
-                                                                        },
-                                                                    );
-                                                                    return;
-                                                                }
-                                                                onOpenDetails(review);
-                                                            }
-                                                  }
-                                                  onDelete={() =>
-                                                      appliesToSelection
-                                                          ? onDeleteSelectedReviews()
-                                                          : onDeleteReview(review)
-                                                  }
-                                                  deleteLabel={
-                                                      appliesToSelection
-                                                          ? `Delete ${actionIds.length} reviews`
-                                                          : undefined
-                                                  }
-                                              />
-                                          )
-                                }
+                                rightClickDropdown={deleting ? undefined : (close) => renderReviewActions(review, close)}
                                 onClick={
                                     deleting
                                         ? undefined
@@ -393,21 +375,7 @@ export function ProjectReviewsTable({
                                             onOpenReview(review.id)
                                         }
                                         viewLabel="Open"
-                                        onEditDetails={() => {
-                                            if (
-                                                !can(
-                                                    roleFrom(review),
-                                                    "content.edit",
-                                                )
-                                            ) {
-                                                onOwnerOnlyAction({
-                                                    action: "edit tabular review details",
-                                                    requiredRole: "editor",
-                                                });
-                                                return;
-                                            }
-                                            onOpenDetails(review);
-                                        }}
+                                        onEditDetails={() => requestReviewDetails(review)}
                                         onDelete={() => onDeleteReview(review)}
                                     />
                                 </div>
@@ -425,6 +393,7 @@ export function ProjectReviewsTable({
                 onLoadMore={onLoadMore}
             />
         </TableScrollArea>
+        </>
     );
 }
 

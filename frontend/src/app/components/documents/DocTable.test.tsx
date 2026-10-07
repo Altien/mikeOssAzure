@@ -84,13 +84,6 @@ function Harness({
             <output data-testid="documents-state">
                 {JSON.stringify(documents)}
             </output>
-            <button
-                type="button"
-                disabled={!selectionActions}
-                onClick={() => void selectionActions?.onRemoveFromFolder()}
-            >
-                Remove selected
-            </button>
             {selectionActions && (
                 <SelectionActionsMenu renderItems={selectionActions.renderMenuItems} />
             )}
@@ -217,7 +210,8 @@ describe("DocTable remove-from-folder failures", () => {
 
         await user.click(screen.getByLabelText("Select One.pdf"));
         await user.click(screen.getByLabelText("Select Two.pdf"));
-        await user.click(screen.getByRole("button", { name: "Remove selected" }));
+        await user.click(screen.getByRole("button", { name: "Actions" }));
+        await user.click(screen.getByRole("menuitem", { name: "Remove from subfolder" }));
 
         expect(
             await screen.findByText(

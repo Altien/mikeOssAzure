@@ -56,7 +56,7 @@ vi.mock("@/app/contexts/ChatHistoryContext", () => ({
   }),
 }));
 
-vi.mock("@/app/components/chat/mike-icon", () => ({
+vi.mock("@/shared/ui/MikeIconUI", () => ({
   MikeIcon: () => <span aria-hidden="true" />,
 }));
 

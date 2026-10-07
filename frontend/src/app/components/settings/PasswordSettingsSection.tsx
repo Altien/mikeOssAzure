@@ -1,13 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { authInputClassName } from "@/app/components/auth/authStyles";
+import { authInputUIClassName } from "@/shared/ui/AuthStylesUI";
 import {
     MIN_PASSWORD_LENGTH,
     minimumPasswordMessage,
 } from "@/app/components/auth/passwordPolicy";
 import { Modal } from "@/app/components/modals/Modal";
-import { Input } from "@/app/components/ui/input";
+import { InputUI } from "@/shared/ui/InputUI";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
@@ -186,7 +186,7 @@ export function PasswordSettingsSection() {
                         <FieldLabel htmlFor="new-account-password">
                             Password
                         </FieldLabel>
-                        <Input
+                        <InputUI
                             id="new-account-password"
                             type="password"
                             autoComplete="new-password"
@@ -194,14 +194,14 @@ export function PasswordSettingsSection() {
                             onChange={(event) =>
                                 setPasswordValue(event.target.value)
                             }
-                            className={`w-full ${authInputClassName}`}
+                            className={`w-full ${authInputUIClassName}`}
                         />
                     </div>
                     <div>
                         <FieldLabel htmlFor="confirm-account-password">
                             Confirm password
                         </FieldLabel>
-                        <Input
+                        <InputUI
                             id="confirm-account-password"
                             type="password"
                             autoComplete="new-password"
@@ -209,21 +209,21 @@ export function PasswordSettingsSection() {
                             onChange={(event) =>
                                 setConfirmPassword(event.target.value)
                             }
-                            className={`w-full ${authInputClassName}`}
+                            className={`w-full ${authInputUIClassName}`}
                         />
                     </div>
                     <div>
                         <FieldLabel htmlFor="account-reauth-code">
                             Verification code (if required by your sign-in provider)
                         </FieldLabel>
-                        <Input
+                        <InputUI
                             id="account-reauth-code"
                             inputMode="numeric"
                             autoComplete="one-time-code"
                             maxLength={6}
                             value={reauthCode}
                             onChange={(event) => setReauthCode(event.target.value.replace(/\D/g, ""))}
-                            className={`w-full ${authInputClassName}`}
+                            className={`w-full ${authInputUIClassName}`}
                         />
                         <button type="button" onClick={() => void sendReauthCode()}
                             disabled={reauthSending} className="mt-2 text-sm underline">

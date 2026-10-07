@@ -1,17 +1,17 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { DocPanel } from "./DocPanel";
-import { DocumentTitleRow } from "../shared/DocumentTitleRow";
+import { DocumentContent } from "@/app/components/shared/DocumentContent";
+import { DocumentTitleRow } from "./DocumentTitleRow";
 
-vi.mock("../shared/views/DocxView", () => ({
+vi.mock("./views/DocxView", () => ({
     DocxView: ({ defaultMode, filename }: { defaultMode: string; filename: string }) =>
         <div data-testid="docx-editor" data-mode={defaultMode}>{filename}</div>,
 }));
-vi.mock("../shared/views/PdfView", () => ({ PdfView: () => <div data-testid="pdf-view" /> }));
-vi.mock("../shared/views/SpreadsheetView", () => ({ SpreadsheetView: () => <div data-testid="spreadsheet-view" /> }));
+vi.mock("./views/PdfView", () => ({ PdfView: () => <div data-testid="pdf-view" /> }));
+vi.mock("./views/SpreadsheetView", () => ({ SpreadsheetView: () => <div data-testid="spreadsheet-view" /> }));
 
 it.each(["docx", "pdf", "spreadsheet"] as const)("keeps the assistant title bar for %s", (type) => {
-    render(<DocPanel mode={{ kind: "document" }} document={{
+    render(<DocumentContent mode={{ kind: "document" }} document={{
         document_id: "document-1", title: "Agreement", type, metadata: [], quotes: [],
     }} />);
     expect(screen.getByRole("heading", { name: "Agreement" })).toBeVisible();
@@ -90,7 +90,7 @@ describe("DocumentTitleRow", () => {
 describe("case document", () => {
     it("uses the same title row for normalized metadata and actions", () => {
         const { container } = render(
-            <DocPanel
+            <DocumentContent
                 compactActions={false}
                 mode={{ kind: "document" }}
                 document={{

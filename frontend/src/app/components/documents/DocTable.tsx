@@ -141,11 +141,6 @@ function SelectionMenuItems({ render }: { render: () => ReactNode }) {
 
 export interface DocTableSelectionActions {
     renderMenuItems: (onClose?: () => void) => ReactNode;
-    selectedCount: number;
-    hasDocumentsInFolders: boolean;
-    onDownload: () => Promise<void>;
-    onRemoveFromFolder: () => Promise<void>;
-    onDelete: () => Promise<void>;
 }
 
 export type DocumentSortKey = "name" | "size" | "version" | "created" | "updated";
@@ -3358,7 +3353,6 @@ export function DocTable({
         docs,
         documents,
         operations,
-        selectedDocIds,
         setDocuments,
         setOwnerOnlyAction,
     ]);
@@ -3916,64 +3910,29 @@ export function DocTable({
                 onDeselect={
                     menuDocIsSelected ? clearCollectionSelection : undefined
                 }
-                onView={
-                    menuAppliesToSelection
-                        ? undefined
-                        : () => {
-                              setViewingDocVersion(null);
-                              setViewingDoc(menuDoc);
-                          }
-                }
-                onRename={
-                    menuAppliesToSelection
-                        ? undefined
-                        : () => {
-                              setRenameDocumentValue(menuDoc.filename);
-                              setRenamingDocumentId(menuDoc.id);
-                          }
-                }
+                onView={() => {
+                    setViewingDocVersion(null);
+                    setViewingDoc(menuDoc);
+                }}
+                onRename={() => {
+                    setRenameDocumentValue(menuDoc.filename);
+                    setRenamingDocumentId(menuDoc.id);
+                }}
                 renameLabel="Rename document"
-                onDownload={() =>
-                    menuAppliesToSelection
-                        ? handleDownloadSelectedDocs()
-                        : downloadDoc(menuDoc.id)
-                }
+                onDownload={() => downloadDoc(menuDoc.id)}
                 onShowAllVersions={
-                    !menuAppliesToSelection &&
-                    menuDocHasVersions &&
-                    !menuDocVersionsOpen
+                    menuDocHasVersions && !menuDocVersionsOpen
                         ? () => void toggleVersions(menuDoc.id)
                         : undefined
                 }
-                onUploadNewVersion={
-                    menuAppliesToSelection
-                        ? undefined
-                        : () => void handleUploadNewVersion(menuDoc)
-                }
+                onUploadNewVersion={() => void handleUploadNewVersion(menuDoc)}
                 onRemoveFromFolder={
-                    menuAppliesToSelection
-                        ? selectedStandaloneDocIds.some(
-                              (id) => docs.find((doc) => doc.id === id)?.folder_id,
-                          )
-                            ? () => void handleRemoveSelectedFromFolder()
-                            : undefined
-                        : menuDoc.folder_id
-                          ? () => void handleRemoveDocFromFolder(menuDoc.id)
-                          : undefined
-                }
-                onDelete={() =>
-                    menuAppliesToSelection
-                        ? requestDeleteSelectedItems()
-                        : requestRemoveDoc(menuDoc)
-                }
-                deleteLabel={
-                    menuAppliesToSelection
-                        ? `Delete ${selectedItemCount} items`
+                    menuDoc.folder_id
+                        ? () => void handleRemoveDocFromFolder(menuDoc.id)
                         : undefined
                 }
-                deleteDisabled={
-                    !menuAppliesToSelection && !canDeleteDocument(menuDoc)
-                }
+                onDelete={() => requestRemoveDoc(menuDoc)}
+                deleteDisabled={!canDeleteDocument(menuDoc)}
             />
         ) : (
             <RowActionMenuItems
@@ -3982,53 +3941,28 @@ export function DocTable({
                     menuFolderIsSelected ? clearCollectionSelection : undefined
                 }
                 onView={
-                    !menuFolderAppliesToSelection && showFolderActions && folderId
+                    showFolderActions && folderId
                         ? () => openFolderView(folderId!)
                         : undefined
                 }
                 viewLabel="Open"
-                onDownload={
-                    menuFolderAppliesToSelection
-                        ? handleDownloadSelectedDocs
-                        : undefined
-                }
                 newSubfolderDisabled={!allowed("docs.organize")}
-                onNewSubfolder={
-                    menuFolderAppliesToSelection
-                        ? undefined
-                        : () => {
-                              // The name prompt itself is
-                              // only offered to a role
-                              // that may create the
-                              // folder; the submit gate
-                              // in handleCreateFolder
-                              // stays as the backstop.
-                              if (
-                                  !requireCapability(
-                                      "docs.organize",
-                                      "create folders",
-                                      "editor",
-                                  )
-                              )
-                                  return;
-                              setCreatingFolderIn(folderId ?? null);
-                              setNewFolderName("");
-                              if (folderId) {
-                                  const wasExpanded =
-                                      expandedFolderIds.has(folderId);
-                                  if (!wasExpanded)
-                                      void expandFolderChildren(folderId);
-                                  setExpandedFolderIds(
-                                      (prev) => new Set([...prev, folderId!]),
-                                  );
-                              }
-                          }
-                }
+                onNewSubfolder={() => {
+                    // Gate the prompt as well as submission in handleCreateFolder.
+                    if (!requireCapability("docs.organize", "create folders", "editor")) return;
+                    setCreatingFolderIn(folderId ?? null);
+                    setNewFolderName("");
+                    if (folderId) {
+                        if (!expandedFolderIds.has(folderId))
+                            void expandFolderChildren(folderId);
+                        setExpandedFolderIds((prev) => new Set([...prev, folderId]));
+                    }
+                }}
                 newSubfolderLabel={
                     showFolderActions ? "New subfolder inside" : "New subfolder"
                 }
                 onRename={
-                    !menuFolderAppliesToSelection && showFolderActions && folderId
+                    showFolderActions && folderId
                         ? () => {
                               const f = folders.find((x) => x.id === folderId);
                               setRenameFolderValue(f?.name ?? "");
@@ -4038,17 +3972,11 @@ export function DocTable({
                 }
                 renameLabel="Rename folder"
                 onDelete={
-                    menuFolderAppliesToSelection
-                        ? requestDeleteSelectedItems
-                        : showFolderActions && folderId
-                          ? () => requestDeleteFolder(folderId!)
-                          : undefined
+                    showFolderActions && folderId
+                        ? () => requestDeleteFolder(folderId!)
+                        : undefined
                 }
-                deleteLabel={
-                    menuFolderAppliesToSelection
-                        ? `Delete ${selectedItemCount} items`
-                        : "Delete folder"
-                }
+                deleteLabel="Delete folder"
             />
         );
     };
@@ -4069,19 +3997,8 @@ export function DocTable({
                     onClose,
                 )} />
             ),
-            selectedCount: selectedItemCount,
-            hasDocumentsInFolders: selectedStandaloneDocIds.some(
-                (id) => docs.find((d) => d.id === id)?.folder_id != null,
-            ),
-            onDownload: handleDownloadSelectedDocs,
-            onRemoveFromFolder: handleRemoveSelectedFromFolder,
-            onDelete: async () => requestDeleteSelectedItems(),
         };
     }, [
-        docs,
-        handleDownloadSelectedDocs,
-        handleRemoveSelectedFromFolder,
-        requestDeleteSelectedItems,
         selectedItemCount,
         selectedStandaloneDocIds,
         selectedFolderIds,

@@ -519,18 +519,35 @@ export default function TabularReviewsPage() {
         />
     );
 
+    function renderReviewActions(review: TabularReview | undefined, onClose: () => void) {
+        const actionIds = review ? rowActionSelectionIds(review.id, selectedIds) : selectedIds;
+        const appliesToSelection = actionIds.length > 1;
+        return (
+            <RowActionMenuItems
+                onClose={onClose}
+                onView={!appliesToSelection && review ? () => router.push(
+                    review.project_id
+                        ? `/projects/${review.project_id}/tabular-reviews/${review.id}`
+                        : `/tabular-reviews/${review.id}`,
+                ) : undefined}
+                viewLabel="Open"
+                onEditDetails={!appliesToSelection && review ? () => requestReviewDetails(review) : undefined}
+                onDelete={() =>
+                    appliesToSelection || !review
+                        ? requestDeleteSelected()
+                        : handleDeleteReviewRow(review)
+                }
+                deleteLabel={appliesToSelection ? `Delete ${actionIds.length} reviews` : undefined}
+            />
+        );
+    }
+
     const toolbarActions =
         selectedIds.length > 0 ? (
             <SelectionActionsMenu
                 open={actionsOpen}
                 onOpenChange={setActionsOpen}
-                actions={[
-                    {
-                        label: "Delete",
-                        destructive: true,
-                        onSelect: requestDeleteSelected,
-                    },
-                ]}
+                renderItems={(close) => renderReviewActions(reviews.find((review) => review.id === selectedIds[0]), close)}
             />
         ) : undefined;
 
@@ -705,11 +722,6 @@ export default function TabularReviewsPage() {
                                 ? projectNameById.get(review.project_id)
                                 : null;
                             const deleting = deletingReviewIds.has(review.id);
-                            const actionIds = rowActionSelectionIds(
-                                review.id,
-                                selectedIds,
-                            );
-                            const appliesToSelection = actionIds.length > 1;
                             return (
                                 <TableRow
                                     key={review.id}
@@ -718,47 +730,7 @@ export default function TabularReviewsPage() {
                                         !deleting &&
                                         selectedIds.includes(review.id)
                                     }
-                                    rightClickDropdown={
-                                        deleting
-                                            ? undefined
-                                            : (close) => (
-                                                  <RowActionMenuItems
-                                                      onClose={close}
-                                                      onView={
-                                                          appliesToSelection
-                                                              ? undefined
-                                                              : () =>
-                                                                    router.push(
-                                                                        review.project_id
-                                                                            ? `/projects/${review.project_id}/tabular-reviews/${review.id}`
-                                                                            : `/tabular-reviews/${review.id}`,
-                                                                    )
-                                                      }
-                                                      viewLabel="Open"
-                                                      onEditDetails={
-                                                          appliesToSelection
-                                                              ? undefined
-                                                              : () => {
-                                                                    requestReviewDetails(
-                                                                        review,
-                                                                    );
-                                                                }
-                                                      }
-                                                      onDelete={() =>
-                                                          appliesToSelection
-                                                              ? requestDeleteSelected()
-                                                              : handleDeleteReviewRow(
-                                                                    review,
-                                                                )
-                                                      }
-                                                      deleteLabel={
-                                                          appliesToSelection
-                                                              ? `Delete ${actionIds.length} reviews`
-                                                              : undefined
-                                                      }
-                                                  />
-                                              )
-                                    }
+                                    rightClickDropdown={deleting ? undefined : (close) => renderReviewActions(review, close)}
                                     onClick={
                                         deleting
                                             ? undefined

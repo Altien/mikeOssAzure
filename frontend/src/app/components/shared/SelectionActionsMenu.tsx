@@ -7,17 +7,9 @@ import { ChevronDown } from "lucide-react";
 import {
     Dropdown,
     DropdownContent,
-    DropdownItem,
     DropdownTrigger,
 } from "@/shared/ui/dropdown";
 import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
-
-export interface SelectionAction {
-    label: string;
-    onSelect: () => void;
-    destructive?: boolean;
-    disabled?: boolean;
-}
 
 function SelectionMenuContent({
     renderItems,
@@ -30,20 +22,17 @@ function SelectionMenuContent({
 }
 
 /**
- * The toolbar "Actions" menu a table shows while rows are selected. Pass
- * `open` and `onOpenChange` only when the page needs to close it itself.
+ * The toolbar "Actions" menu a table shows while rows are selected. Reuse
+ * the row context menu's renderer for `renderItems` so both menus stay in sync.
+ * Pass `open` and `onOpenChange` only when the page needs to close it itself.
  */
 export function SelectionActionsMenu({
-    actions = [],
-    children,
     renderItems,
     open,
     onOpenChange,
     className,
 }: {
-    actions?: SelectionAction[];
-    children?: ReactNode;
-    renderItems?: (onActionChosen: () => void) => ReactNode;
+    renderItems: (onActionChosen: () => void) => ReactNode;
     open?: boolean;
     onOpenChange?: (open: boolean) => void;
     /** Applied to the trigger, for responsive visibility. */
@@ -54,7 +43,7 @@ export function SelectionActionsMenu({
         <Dropdown
             open={open}
             onOpenChange={onOpenChange}
-            modal={renderItems ? false : undefined}
+            modal={false}
         >
             <DropdownTrigger asChild>
                 <TabPillButtonUI
@@ -67,33 +56,18 @@ export function SelectionActionsMenu({
             </DropdownTrigger>
             <DropdownContent
                 align="end"
-                className={
-                    children || renderItems ? ROW_ACTION_MENU_CLASS : "w-36"
-                }
+                className={ROW_ACTION_MENU_CLASS}
                 onCloseAutoFocus={(event) => {
                     if (actionChosenRef.current) event.preventDefault();
                     actionChosenRef.current = false;
                 }}
             >
-                {renderItems && (
-                    <SelectionMenuContent
-                        renderItems={renderItems}
-                        onActionChosen={() => {
-                            actionChosenRef.current = true;
-                        }}
-                    />
-                )}
-                {children}
-                {actions.map((action) => (
-                    <DropdownItem
-                        key={action.label}
-                        variant={action.destructive ? "destructive" : "default"}
-                        disabled={action.disabled}
-                        onSelect={action.onSelect}
-                    >
-                        {action.label}
-                    </DropdownItem>
-                ))}
+                <SelectionMenuContent
+                    renderItems={renderItems}
+                    onActionChosen={() => {
+                        actionChosenRef.current = true;
+                    }}
+                />
             </DropdownContent>
         </Dropdown>
     );

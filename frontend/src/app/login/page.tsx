@@ -4,17 +4,17 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { login, loginLocal } from "@/app/lib/authApi";
 import { useConfig } from "@/app/contexts/ConfigContext";
-import { Input } from "@/app/components/ui/input";
+import { InputUI } from "@/shared/ui/InputUI";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import Link from "next/link";
 import { SiteLogo } from "@/app/components/site-logo";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { cn } from "@/app/lib/utils";
 import {
-    authGlassCardClassName,
-    authInputClassName,
-} from "@/app/components/auth/authStyles";
-import { AuthDivider } from "@/app/components/auth/AuthDivider";
+    authGlassCardUIClassName,
+    authInputUIClassName,
+} from "@/shared/ui/AuthStylesUI";
+import { AuthDividerUI } from "@/shared/ui/AuthDividerUI";
 import { SsoAuthButton } from "@/app/components/auth/SsoAuthButton";
 import { GoogleAuthButton } from "@/app/components/auth/GoogleAuthButton";
 import { FieldLabel } from "@/app/components/ui/form-field";
@@ -77,20 +77,20 @@ export default function LoginPage() {
             </div>
             <div className="w-full max-w-md">
                 {/* Login Form */}
-                <div className={cn(authGlassCardClassName, "mb-4")}>
+                <div className={cn(authGlassCardUIClassName, "mb-4")}>
                     <h2 className="mb-6 text-left text-2xl font-medium font-serif text-gray-950">
                         Log In
                     </h2>
                     <form onSubmit={handleLogin} className="space-y-4">
                         {config.authProvider !== "entra" && <div>
                             <FieldLabel htmlFor="email">Email</FieldLabel>
-                            <Input
+                            <InputUI
                                 id="email"
                                 type="email"
                                 value={email}
                                 onChange={(e) => setEmail(e.target.value)}
                                 required
-                                className={`w-full ${authInputClassName}`}
+                                className={`w-full ${authInputUIClassName}`}
                             />
                         </div>}
 
@@ -106,13 +106,13 @@ export default function LoginPage() {
                                     Forgot password?
                                 </Link>
                             </div>
-                            <Input
+                            <InputUI
                                 id="password"
                                 type="password"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
                                 required
-                                className={`w-full ${authInputClassName}`}
+                                className={`w-full ${authInputUIClassName}`}
                             />
                         </div>}
 
@@ -152,7 +152,7 @@ export default function LoginPage() {
                                 window.location.assign(`${base}/api/auth/login-provider/microsoft?returnUrl=${encodeURIComponent(next)}`);
                             }}
                         >Sign in with Microsoft</PillButtonUI>}
-                        {config.authProvider === "supabase" && <><AuthDivider />
+                        {config.authProvider === "supabase" && <><AuthDividerUI />
                         <GoogleAuthButton
                             onError={setError}
                             disabled={loading}

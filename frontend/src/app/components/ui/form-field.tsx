@@ -55,31 +55,18 @@ type FieldLabelProps = Omit<HTMLAttributes<HTMLElement>, "className"> & {
 };
 
 export function FieldLabel({
-    as = "label",
+    as: Component = "label",
     children,
     htmlFor,
     ...props
 }: FieldLabelProps) {
-    const classes = "mb-2 block text-sm font-medium text-gray-700";
-
-    // The non-label variants still need forwarded props: `id` is what lets a
-    // caller point `aria-labelledby` at them.
-    if (as === "p")
-        return (
-            <p className={classes} {...props}>
-                {children}
-            </p>
-        );
-    if (as === "span")
-        return (
-            <span className={classes} {...props}>
-                {children}
-            </span>
-        );
-
     return (
-        <label className={classes} htmlFor={htmlFor} {...props}>
+        <Component
+            className="mb-2 block text-sm font-medium text-gray-700"
+            htmlFor={Component === "label" ? htmlFor : undefined}
+            {...props}
+        >
             {children}
-        </label>
+        </Component>
     );
 }

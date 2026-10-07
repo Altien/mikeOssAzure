@@ -13,7 +13,7 @@ import { type DocumentActions } from "../shared/DocumentTabActions";
 import type { DocumentVersion } from "@/app/lib/mikeApi";
 import Image from "next/image";
 import { BookOpenText } from "lucide-react";
-import { DocPanel, type DocPanelMode } from "./DocPanel";
+import { DocumentContent, type DocumentContentMode } from "@/app/components/shared/DocumentContent";
 import { DocumentTabBar } from "../shared/DocumentTabBar";
 import type { Citation, EditAnnotation, PanelDocument } from "../shared/types";
 import { cn } from "@/app/lib/utils";
@@ -155,7 +155,7 @@ interface Props {
     ) => void;
     /**
      * Parent-driven reloading flag per document. Download buttons in
-     * DocPanel show a spinner iff this returns true for the tab's
+     * DocumentContent show a spinner iff this returns true for the tab's
      * documentId. Used to signal "accept/reject in flight".
      */
     isEditorReloading?: (documentId: string) => boolean;
@@ -401,7 +401,7 @@ export function AssistantSidePanel({
                             </div>
                         );
                     }
-                    const mode: DocPanelMode =
+                    const mode: DocumentContentMode =
                         tab.kind === "citation"
                             ? {
                                   kind: "citation",
@@ -430,7 +430,7 @@ export function AssistantSidePanel({
                             aria-hidden={!isActive}
                             inert={!isActive}
                         >
-                            <DocPanel
+                            <DocumentContent
                                 showToolbarToggle
                                 canEdit={permissions(tab.document.document_id).canEdit}
                                 onDownloadReady={(download) => viewers.registerDownload(tab.id, download)}

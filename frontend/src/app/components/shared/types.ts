@@ -8,8 +8,6 @@ import type { AuthorityTraceAssistantEvent } from "@/altien/authorityTrace/event
 
 import type {
   SourceDocument,
-  SourceDocumentAction,
-  SourceDocumentMetadata,
   SourceDocumentQuote,
   SourceDocumentType,
   SourceSubdocument,
@@ -121,8 +119,6 @@ export interface Document {
 }
 
 export type PanelDocumentType = SourceDocumentType;
-export type PanelDocumentMetadata = SourceDocumentMetadata;
-export type PanelDocumentAction = SourceDocumentAction;
 export type PanelDocumentQuote = SourceDocumentQuote;
 export type PanelSubdocument = SourceSubdocument;
 export type PanelDocument = SourceDocument;
@@ -598,11 +594,6 @@ const PAGE_BREAK_SENTINEL = "[[PAGE_BREAK]]";
 export function isSpreadsheetFilename(filename: string | null | undefined): boolean {
   const ext = filename?.split(".").pop()?.toLowerCase();
   return ext === "xlsx" || ext === "xlsm" || ext === "xls";
-}
-
-export function isDocxFilename(filename: string | null | undefined): boolean {
-  const ext = filename?.split(".").pop()?.toLowerCase();
-  return ext === "docx" || ext === "doc";
 }
 
 /**

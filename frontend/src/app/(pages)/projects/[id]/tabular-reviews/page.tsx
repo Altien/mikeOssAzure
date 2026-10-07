@@ -1,6 +1,5 @@
 "use client";
 
-import { SelectionActionsMenu } from "@/app/components/shared/SelectionActionsMenu";
 import { use, useCallback, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { deleteTabularReview, updateTabularReview } from "@/app/lib/mikeApi";
@@ -27,30 +26,6 @@ interface Props {
     params: Promise<{ id: string }>;
 }
 
-function SelectedReviewActions({
-    selectedCount,
-    open,
-    onOpenChange,
-    onDelete,
-}: {
-    selectedCount: number;
-    open: boolean;
-    onOpenChange: (open: boolean) => void;
-    onDelete: () => void;
-}) {
-    if (selectedCount === 0) return null;
-
-    return (
-        <SelectionActionsMenu
-            open={open}
-            onOpenChange={onOpenChange}
-            actions={[
-                { label: "Delete", destructive: true, onSelect: onDelete },
-            ]}
-        />
-    );
-}
-
 export default function ProjectTabularReviewsPage({ params }: Props) {
     use(params);
     const workspace = useProjectWorkspace();
@@ -62,7 +37,6 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
     const [detailsReview, setDetailsReview] = useState<TabularReview | null>(
         null,
     );
-    const [actionsOpen, setActionsOpen] = useState(false);
     const [bulkDeleteNotice, setBulkDeleteNotice] = useState<string | null>(
         null,
     );
@@ -180,7 +154,6 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
 
     const handleDeleteSelectedReviews = useCallback(async () => {
         const ids = [...selectedReviewIds];
-        setActionsOpen(false);
         setBulkDeleteNotice(null);
         const roleById = new Map(
             reviews.map((review) => [review.id, roleFrom(review)] as const),
@@ -228,19 +201,8 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
 
     return (
         <>
-            <ProjectSectionToolbar
-                actions={
-                    selectedReviewIds.length > 0 ? (
-                        <SelectedReviewActions
-                            selectedCount={selectedReviewIds.length}
-                            open={actionsOpen}
-                            onOpenChange={setActionsOpen}
-                            onDelete={() => void handleDeleteSelectedReviews()}
-                        />
-                    ) : undefined
-                }
-            />
             <ProjectReviewsTable
+                renderToolbar={(actions) => <ProjectSectionToolbar actions={actions} />}
                 docs={docs}
                 reviews={visibleReviews}
                 selectedReviewIds={selectedReviewIds}

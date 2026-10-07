@@ -1,3 +1,5 @@
+import type { ComponentProps } from "react";
+import userEvent from "@testing-library/user-event";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ProjectReviewsTable } from "./ProjectReviewsTable";
@@ -22,9 +24,10 @@ function review(access_role: string): TabularReview {
 function renderTable(row: TabularReview, handlers: {
     onOpenDetails: (r: TabularReview) => void;
     onOwnerOnlyAction: (gate: unknown) => void;
-}) {
+}, overrides: Partial<ComponentProps<typeof ProjectReviewsTable>> = {}) {
     return render(
         <ProjectReviewsTable
+            renderToolbar={(actions) => <>{actions}</>}
             docs={[]}
             reviews={[row]}
             selectedReviewIds={[]}
@@ -47,13 +50,14 @@ function renderTable(row: TabularReview, handlers: {
             loadMoreError={null}
             onLoadMore={vi.fn()}
             onRetry={vi.fn()}
+            {...overrides}
         />,
     );
 }
 
-async function clickEditDetails() {
+async function clickEditDetails(surface: "row" | "toolbar") {
     const menuButton = screen.getAllByRole("button", {
-        name: /row actions/i,
+        name: surface === "row" ? /row actions/i : "Actions",
     })[0];
     // Radix opens on pointerdown, not click.
     fireEvent.pointerDown(
@@ -65,23 +69,47 @@ async function clickEditDetails() {
 }
 
 describe("ProjectReviewsTable details gate", () => {
-    it("lets an editor open details — the tier the server's PATCH enforces", async () => {
+    it.each([1, 2])("matches toolbar and right-click actions for %i selected reviews", async (count) => {
+        const user = userEvent.setup();
+        const rows = [review("owner"), { ...review("owner"), id: "r2", title: "Other review" }];
+        const onDeleteReview = vi.fn();
+        const onDeleteSelectedReviews = vi.fn();
+        renderTable(rows[0], { onOpenDetails: vi.fn(), onOwnerOnlyAction: vi.fn() }, {
+            reviews: rows,
+            selectedReviewIds: rows.slice(0, count).map((row) => row.id),
+            onDeleteReview,
+            onDeleteSelectedReviews,
+        });
+        await user.click(screen.getByRole("button", { name: "Actions" }));
+        const toolbarItems = screen.getAllByRole("menuitem").map((item) => item.textContent);
+        expect(toolbarItems).toEqual(count === 1 ? ["Open", "Edit details", "Delete"] : ["Delete 2 reviews"]);
+        await user.keyboard("{Escape}");
+        fireEvent.contextMenu(screen.getByText("Gating TR"));
+        expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(toolbarItems);
+        await user.keyboard("{Escape}");
+        await user.click(screen.getByRole("button", { name: "Actions" }));
+        await user.click(screen.getByRole("menuitem", { name: count === 1 ? "Delete" : "Delete 2 reviews" }));
+        expect(count === 1 ? onDeleteReview : onDeleteSelectedReviews).toHaveBeenCalledOnce();
+        expect(count === 1 ? onDeleteSelectedReviews : onDeleteReview).not.toHaveBeenCalled();
+    });
+
+    it.each(["row", "toolbar"] as const)("lets an editor open details from the %s menu", async (surface) => {
         const onOpenDetails = vi.fn();
         const onOwnerOnlyAction = vi.fn();
-        renderTable(review("editor"), { onOpenDetails, onOwnerOnlyAction });
+        renderTable(review("editor"), { onOpenDetails, onOwnerOnlyAction }, { selectedReviewIds: ["r1"] });
 
-        await clickEditDetails();
+        await clickEditDetails(surface);
 
         expect(onOpenDetails).toHaveBeenCalledTimes(1);
         expect(onOwnerOnlyAction).not.toHaveBeenCalled();
     });
 
-    it("refuses a viewer with the editor tier, not the owner one", async () => {
+    it.each(["row", "toolbar"] as const)("refuses a viewer from the %s menu with the editor tier", async (surface) => {
         const onOpenDetails = vi.fn();
         const onOwnerOnlyAction = vi.fn();
-        renderTable(review("viewer"), { onOpenDetails, onOwnerOnlyAction });
+        renderTable(review("viewer"), { onOpenDetails, onOwnerOnlyAction }, { selectedReviewIds: ["r1"] });
 
-        await clickEditDetails();
+        await clickEditDetails(surface);
 
         expect(onOpenDetails).not.toHaveBeenCalled();
         expect(onOwnerOnlyAction).toHaveBeenCalledWith({

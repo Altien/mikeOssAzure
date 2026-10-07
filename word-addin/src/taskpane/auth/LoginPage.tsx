@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useAuth } from "./useAuth";
-import { Input } from "../../shared/ui/input";
+import { InputUI } from "@mike/input-ui";
 import { Label } from "../../shared/ui/label";
 import { WordAddinLogo } from "../components/shell/WordAddinLogo";
 import { PillButtonUI as PillButton } from "@mike/pill-button-ui";
@@ -42,7 +42,7 @@ export function LoginPage(): React.ReactElement {
               >
                 Email
               </Label>
-              <Input
+              <InputUI
                 id="email"
                 type="email"
                 value={email}
@@ -57,7 +57,7 @@ export function LoginPage(): React.ReactElement {
 
             {mode === "supabase" && <div>
               <Label htmlFor="password" className="mb-2 block text-sm font-medium text-gray-700">Password</Label>
-              <Input id="password" type="password" value={password}
+              <InputUI id="password" type="password" value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 autoComplete="current-password" disabled={loading} required
                 className={`w-full ${authInputClassName}`} />
