@@ -58,14 +58,7 @@ export function addinSentryOptions(
     dsn: env.dsn,
     fallback: MIKE_SENTRY_DSN.wordAddin,
   });
-  return {
-    dsn: dsn || undefined,
-    enabled: dsn.length > 0,
-    environment: env.environment?.trim() || "self-hosted",
-    release: releaseName(env.release, env.gitSha),
-    tracesSampleRate: parseSampleRate(env.tracesSampleRate, 0),
-    // No session replay: the pane sits next to a privileged document.
-    dataCollection: {
+  const dataCollection = {
             userInfo: false,
             cookies: false,
             httpHeaders: { request: false, response: false },
@@ -77,7 +70,15 @@ export function addinSentryOptions(
             graphQL: { document: false, variables: false },
             stackFrameVariables: false,
             frameContextLines: 0,
-        },
+        };
+  return {
+    dsn: dsn || undefined,
+    enabled: dsn.length > 0,
+    environment: env.environment?.trim() || "self-hosted",
+    release: releaseName(env.release, env.gitSha),
+    tracesSampleRate: parseSampleRate(env.tracesSampleRate, 0),
+    // No session replay: the pane sits next to a privileged document.
+    dataCollection,
     attachStacktrace: true,
     integrations: [privacyBoundaryIntegration(), Sentry.captureConsoleIntegration({ levels: ["error"] })],
     initialScope: {
