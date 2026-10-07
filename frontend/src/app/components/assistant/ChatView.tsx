@@ -1,5 +1,6 @@
 "use client";
 
+import { findPendingAskInput } from "@/app/lib/pendingAskInput";
 import { useCallback, useMemo, useState, useRef, useEffect } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { useRouter } from "next/navigation";
@@ -1125,6 +1126,11 @@ export function ChatView({
                                         const lastAssistantIndex = messages
                                             .map((m) => m.role)
                                             .lastIndexOf("assistant");
+                                        // The message still waiting on the
+                                        // user's input or approval, if any.
+                                        const pendingAskInputIndex =
+                                            findPendingAskInput(messages)
+                                                ?.messageIndex ?? -1;
                                         return messages.map((msg, i) => (
                                             <div
                                                 key={msg.id ?? i}
@@ -1168,6 +1174,9 @@ export function ChatView({
                                                         isStreaming={
                                                             i === messages.length - 1 &&
                                                             isResponseLoading
+                                                        }
+                                                        awaitingInput={
+                                                            i === pendingAskInputIndex
                                                         }
                                                         isError={!!msg.error}
                                                         errorMessage={

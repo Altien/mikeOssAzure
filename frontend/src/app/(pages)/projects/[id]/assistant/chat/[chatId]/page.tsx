@@ -1,5 +1,6 @@
 "use client";
 
+import { findPendingAskInput } from "@/app/lib/pendingAskInput";
 import { useDocumentViewers } from "@/app/hooks/useDocumentViewers";
 import { useDocumentPermissions } from "@/app/hooks/useDocumentPermissions";
 
@@ -2263,6 +2264,11 @@ export default function ProjectAssistantChatPage() {
                             const lastAssistantIdx = messages
                                 .map((m) => m.role)
                                 .lastIndexOf("assistant");
+                            // The message still waiting on the user's input
+                            // or approval, if any.
+                            const pendingAskInputIndex =
+                                findPendingAskInput(messages)?.messageIndex ??
+                                -1;
                             return messages.map((msg, i) =>
                                 msg.role === "user" ? (
                                     <div
@@ -2296,6 +2302,9 @@ export default function ProjectAssistantChatPage() {
                                         isStreaming={
                                             i === messages.length - 1 &&
                                             isResponseLoading
+                                        }
+                                        awaitingInput={
+                                            i === pendingAskInputIndex
                                         }
                                         isError={!!msg.error}
                                         citations={msg.citations}
