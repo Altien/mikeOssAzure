@@ -21,7 +21,7 @@ import {
     TableCell,
     TableEmptyState,
     TableFilters,
-    type TableFilterOption,
+    TableSortFilter,
     TableHeaderCell,
     TableHeaderRow,
     TablePrimaryCell,
@@ -48,11 +48,6 @@ function creatorLabel(chat: Chat, currentUserId?: string | null) {
 }
 
 type ProjectChatSortKey = "name" | "created";
-
-const SORT_OPTIONS: TableFilterOption<TableSortDirection>[] = [
-    { value: "asc", label: "Ascending" },
-    { value: "desc", label: "Descending" },
-];
 
 export function ProjectAssistantTable({
     chats,
@@ -211,13 +206,10 @@ export function ProjectAssistantTable({
     const createdSortDirection =
         sort?.key === "created" ? sort.direction : null;
     const nameFilterButton = (
-        <TableFilters
+        <TableSortFilter
             label="Sort by chat name"
             value={nameSortDirection}
-            allLabel="Default Order"
-            widthClassName="w-40"
             align="right"
-            options={SORT_OPTIONS}
             onChange={(direction) => handleSortChange("name", direction)}
         />
     );
@@ -232,12 +224,9 @@ export function ProjectAssistantTable({
         />
     );
     const createdFilterButton = (
-        <TableFilters
+        <TableSortFilter
             label="Sort by created date"
             value={createdSortDirection}
-            allLabel="Default Order"
-            widthClassName="w-40"
-            options={SORT_OPTIONS}
             onChange={(direction) => handleSortChange("created", direction)}
         />
     );

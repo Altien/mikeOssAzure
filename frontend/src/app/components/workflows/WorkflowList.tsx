@@ -57,6 +57,7 @@ import {
   TableCell,
   TableEmptyState,
   TableFilters,
+  TableSortFilter,
   type TableFilterOption,
   TableHeaderCell,
   TableHeaderRow,
@@ -78,10 +79,6 @@ const WORKFLOW_TABS: { id: WorkflowListTab; label: string }[] = [
 ];
 const WORKFLOW_TAB_IDS = WORKFLOW_TABS.map((tab) => tab.id);
 
-const WORKFLOW_SORT_OPTIONS: TableFilterOption<TableSortDirection>[] = [
-  { value: "asc", label: "Ascending" },
-  { value: "desc", label: "Descending" },
-];
 type AccessFilter = "private" | "shared";
 const ACCESS_FILTER_OPTIONS: TableFilterOption<AccessFilter>[] = [
   { value: "private", label: "Private" },
@@ -814,13 +811,10 @@ function WorkflowTable({
             )}
             <span className="mr-1">Name</span>
             {!loading && (
-              <TableFilters
+              <TableSortFilter
                 label="Sort by workflow name"
                 value={nameSortDirection}
-                allLabel="Default Order"
-                widthClassName="w-40"
                 align="right"
-                options={WORKFLOW_SORT_OPTIONS}
                 onChange={handleNameSortChange}
               />
             )}

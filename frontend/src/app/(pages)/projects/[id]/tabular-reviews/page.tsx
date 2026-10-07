@@ -3,7 +3,7 @@
 import { use, useCallback, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { deleteTabularReview, updateTabularReview } from "@/app/lib/mikeApi";
-import { ProjectReviewsTable } from "@/app/components/projects/ProjectReviewsTable";
+import { ReviewsListTable } from "@/app/components/tabular/ReviewsListTable";
 import { TabularReviewDetailsModal } from "@/app/components/tabular/TabularReviewDetailsModal";
 import {
     ProjectSectionToolbar,
@@ -201,12 +201,13 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
 
     return (
         <>
-            <ProjectReviewsTable
+            <ReviewsListTable
                 renderToolbar={(actions) => <ProjectSectionToolbar actions={actions} />}
-                docs={docs}
+                rowClassName="pr-8 md:pr-8"
                 reviews={visibleReviews}
                 selectedReviewIds={selectedReviewIds}
-                creatingReview={workspace.creatingReview}
+                createDisabled={workspace.creatingReview || docs.length === 0}
+                emptyDescription="Extract data from project documents into tables using AI."
                 loading={effectiveLoading}
                 loadingMore={loadingMore}
                 hasMore={hasMore}
@@ -215,7 +216,7 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
                 onToggleAll={handleToggleAllReviews}
                 selectingAll={selectingAll}
                 deletingReviewIds={deletingReviewIds}
-                hasActiveSearch={debouncedSearch.trim().length > 0}
+                hasActiveFilters={debouncedSearch.trim().length > 0}
                 sort={sort}
                 onSortChange={(key, direction) => {
                     setSelectedReviewIds([]);
@@ -224,9 +225,9 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
                 onLoadMore={() => void loadMore()}
                 onRetry={retry}
                 onCreateReview={workspace.openNewReview}
-                onOpenReview={(reviewId) =>
+                onOpenReview={(review) =>
                     router.push(
-                        `/projects/${projectId}/tabular-reviews/${reviewId}`,
+                        `/projects/${projectId}/tabular-reviews/${review.id}`,
                     )
                 }
                 onOpenDetails={handleOpenDetails}

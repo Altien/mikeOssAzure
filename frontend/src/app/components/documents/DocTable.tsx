@@ -112,6 +112,7 @@ import {
     selectionAnchorAfterRowSelection,
     selectionRangeIds,
     TableFilters,
+    TableSortFilter,
     TableHeaderCell,
     TableHeaderRow,
     TableEmptyState,
@@ -155,11 +156,6 @@ export interface DocTableQuery {
     fileType: string | null;
     sort: DocumentSort | null;
 }
-
-const SORT_OPTIONS: TableFilterOption<TableSortDirection>[] = [
-    { value: "asc", label: "Ascending" },
-    { value: "desc", label: "Descending" },
-];
 
 const SORT_KEY_LABELS: Record<DocumentSortKey, string> = {
     name: "Name",
@@ -3617,13 +3613,11 @@ export function DocTable({
         ? `Default (${SORT_KEY_LABELS[defaultSort.key]})`
         : "Default Order";
     const nameFilterButton = enableHeaderFilters ? (
-        <TableFilters
+        <TableSortFilter
             label="Sort by name"
             value={nameSortDirection}
             allLabel={resetSortLabel}
-            widthClassName="w-40"
             align="right"
-            options={SORT_OPTIONS}
             onChange={(direction) => handleSortChange("name", direction)}
         />
     ) : null;
@@ -3638,42 +3632,34 @@ export function DocTable({
         />
     ) : null;
     const sizeFilterButton = enableHeaderFilters ? (
-        <TableFilters
+        <TableSortFilter
             label="Sort by size"
             value={sizeSortDirection}
             allLabel={resetSortLabel}
-            widthClassName="w-40"
-            options={SORT_OPTIONS}
             onChange={(direction) => handleSortChange("size", direction)}
         />
     ) : null;
     const versionFilterButton = enableHeaderFilters ? (
-        <TableFilters
+        <TableSortFilter
             label="Sort by version"
             value={versionSortDirection}
             allLabel={resetSortLabel}
-            widthClassName="w-40"
-            options={SORT_OPTIONS}
             onChange={(direction) => handleSortChange("version", direction)}
         />
     ) : null;
     const createdFilterButton = enableHeaderFilters ? (
-        <TableFilters
+        <TableSortFilter
             label="Sort by created date"
             value={createdSortDirection}
             allLabel={resetSortLabel}
-            widthClassName="w-40"
-            options={SORT_OPTIONS}
             onChange={(direction) => handleSortChange("created", direction)}
         />
     ) : null;
     const updatedFilterButton = enableHeaderFilters ? (
-        <TableFilters
+        <TableSortFilter
             label="Sort by updated date"
             value={updatedSortDirection}
             allLabel={resetSortLabel}
-            widthClassName="w-40"
-            options={SORT_OPTIONS}
             onChange={(direction) => handleSortChange("updated", direction)}
         />
     ) : null;

@@ -48,6 +48,7 @@ import {
     TableCell,
     TableEmptyState,
     TableFilters,
+    TableSortFilter,
     type TableFilterOption,
     TableHeaderCell,
     TableHeaderRow,
@@ -92,10 +93,6 @@ function getProjectCreatorLabel(
 type ProjectFilter = "all" | "shared" | "private";
 type ProjectSortKey = "name" | "cm" | "files" | "chats" | "reviews" | "created";
 
-const SORT_OPTIONS: TableFilterOption<TableSortDirection>[] = [
-    { value: "asc", label: "Ascending" },
-    { value: "desc", label: "Descending" },
-];
 const PROJECT_FILTERS: { id: ProjectFilter; label: string }[] = [
     { id: "all", label: "All" },
     { id: "shared", label: "Shared" },
@@ -260,13 +257,10 @@ export function ProjectsOverview() {
     const createdSortDirection =
         sort?.key === "created" ? sort.direction : null;
     const nameFilterButton = (
-        <TableFilters
+        <TableSortFilter
             label="Sort by project name"
             value={nameSortDirection}
-            allLabel="Default Order"
-            widthClassName="w-40"
             align="right"
-            options={SORT_OPTIONS}
             onChange={(direction) => handleSortChange("name", direction)}
         />
     );
@@ -284,12 +278,9 @@ export function ProjectsOverview() {
         />
     );
     const cmFilterButton = (
-        <TableFilters
+        <TableSortFilter
             label="Sort by CM"
             value={cmSortDirection}
-            allLabel="Default Order"
-            widthClassName="w-40"
-            options={SORT_OPTIONS}
             onChange={(direction) => handleSortChange("cm", direction)}
         />
     );
@@ -316,42 +307,30 @@ export function ProjectsOverview() {
         />
     );
     const filesFilterButton = (
-        <TableFilters
+        <TableSortFilter
             label="Sort by files"
             value={filesSortDirection}
-            allLabel="Default Order"
-            widthClassName="w-40"
-            options={SORT_OPTIONS}
             onChange={(direction) => handleSortChange("files", direction)}
         />
     );
     const chatsFilterButton = (
-        <TableFilters
+        <TableSortFilter
             label="Sort by chats"
             value={chatsSortDirection}
-            allLabel="Default Order"
-            widthClassName="w-40"
-            options={SORT_OPTIONS}
             onChange={(direction) => handleSortChange("chats", direction)}
         />
     );
     const reviewsFilterButton = (
-        <TableFilters
+        <TableSortFilter
             label="Sort by tabular reviews"
             value={reviewsSortDirection}
-            allLabel="Default Order"
-            widthClassName="w-40"
-            options={SORT_OPTIONS}
             onChange={(direction) => handleSortChange("reviews", direction)}
         />
     );
     const createdFilterButton = (
-        <TableFilters
+        <TableSortFilter
             label="Sort by created date"
             value={createdSortDirection}
-            allLabel="Default Order"
-            widthClassName="w-40"
-            options={SORT_OPTIONS}
             onChange={(direction) => handleSortChange("created", direction)}
         />
     );

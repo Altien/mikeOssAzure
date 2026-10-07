@@ -2,7 +2,7 @@ import type { ComponentProps } from "react";
 import userEvent from "@testing-library/user-event";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { ProjectReviewsTable } from "./ProjectReviewsTable";
+import { ReviewsListTable } from "./ReviewsListTable";
 import type { TabularReview } from "@/app/components/shared/types";
 
 // The live round caught the list surfaces refusing "edit details" at the
@@ -24,14 +24,14 @@ function review(access_role: string): TabularReview {
 function renderTable(row: TabularReview, handlers: {
     onOpenDetails: (r: TabularReview) => void;
     onOwnerOnlyAction: (gate: unknown) => void;
-}, overrides: Partial<ComponentProps<typeof ProjectReviewsTable>> = {}) {
+}, overrides: Partial<ComponentProps<typeof ReviewsListTable>> = {}) {
     return render(
-        <ProjectReviewsTable
+        <ReviewsListTable
             renderToolbar={(actions) => <>{actions}</>}
-            docs={[]}
             reviews={[row]}
             selectedReviewIds={[]}
-            creatingReview={false}
+            createDisabled={false}
+            emptyDescription="Extract data from documents into tables using AI."
             onCreateReview={vi.fn()}
             onDeleteSelectedReviews={vi.fn()}
             onOpenReview={vi.fn()}
@@ -41,7 +41,7 @@ function renderTable(row: TabularReview, handlers: {
             setSelectedReviewIds={vi.fn()}
             onToggleAll={vi.fn()}
             deletingReviewIds={new Set<string>()}
-            hasActiveSearch={false}
+            hasActiveFilters={false}
             sort={{ key: "created", direction: "desc" }}
             onSortChange={vi.fn()}
             hasMore={false}
@@ -68,7 +68,7 @@ async function clickEditDetails(surface: "row" | "toolbar") {
     fireEvent.click(edit);
 }
 
-describe("ProjectReviewsTable details gate", () => {
+describe("ReviewsListTable details gate", () => {
     it.each([1, 2])("matches toolbar and right-click actions for %i selected reviews", async (count) => {
         const user = userEvent.setup();
         const rows = [review("owner"), { ...review("owner"), id: "r2", title: "Other review" }];
@@ -112,9 +112,9 @@ describe("ProjectReviewsTable details gate", () => {
         await clickEditDetails(surface);
 
         expect(onOpenDetails).not.toHaveBeenCalled();
-        expect(onOwnerOnlyAction).toHaveBeenCalledWith({
-            action: "edit tabular review details",
-            requiredRole: "editor",
-        });
+        expect(onOwnerOnlyAction).toHaveBeenCalledWith(
+            { action: "edit tabular review details", requiredRole: "editor" },
+            expect.objectContaining({ id: "r1" }),
+        );
     });
 });

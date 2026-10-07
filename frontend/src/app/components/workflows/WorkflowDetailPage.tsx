@@ -91,10 +91,10 @@ import { useQueryParamTab } from "@/app/hooks/useQueryParamTab";
 import { downloadWorkflowZip } from "./workflowZipExport";
 import { WorkflowAssets, type WorkflowAssetsHandle } from "./WorkflowAssets";
 // dynamic import keeps Tiptap (browser-only) out of the SSR bundle
-const WorkflowPromptEditor = dynamic(
+const MarkdownEditor = dynamic(
   () =>
-    import("@/app/components/workflows/WorkflowPromptEditor").then((m) => ({
-      default: m.WorkflowPromptEditor,
+    import("@/app/components/ui/markdown-editor").then((m) => ({
+      default: m.MarkdownEditor,
     })),
   { ssr: false },
 );
@@ -705,7 +705,8 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
             />
             {assistantTab === "prompt" ? (
               <div className="mx-4 mb-2 min-h-0 min-w-0 flex-1 md:mx-8 md:mb-3">
-                <WorkflowPromptEditor
+                <MarkdownEditor
+                  ariaLabel="Workflow prompt"
                   value={promptMd}
                   onChange={readOnly ? undefined : handlePromptChange}
                   readOnly={readOnly}

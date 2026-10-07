@@ -25,6 +25,7 @@ import {
   TableCell,
   TableEmptyState,
   TableFilters,
+  TableSortFilter,
   TableHeaderCell,
   TableHeaderRow,
   TablePrimaryCell,
@@ -77,11 +78,6 @@ const TABS: { id: OrganizationTab; label: string }[] = [
 ];
 
 const EMPTY_RESOURCES: OrgResources = { projects: [], workflows: [] };
-
-const SORT_OPTIONS: TableFilterOption<TableSortDirection>[] = [
-  { value: "asc", label: "Ascending" },
-  { value: "desc", label: "Descending" },
-];
 
 const ROLE_FILTER_OPTIONS: TableFilterOption<OrgRole>[] = [
   { value: "admin", label: ORG_ROLE_LABELS.admin, className: "text-blue-700" },
@@ -701,13 +697,11 @@ function PeopleTable({
             )}
             <span className="mr-1">Username</span>
             {!loading ? (
-              <TableFilters
+              <TableSortFilter
                 label="Sort by username"
                 value={sort?.key === "name" ? sort.direction : null}
                 allLabel="Default order"
-                options={SORT_OPTIONS}
                 align="right"
-                widthClassName="w-40"
                 onChange={(direction) => setSortFor("name", direction)}
               />
             ) : null}
@@ -715,12 +709,10 @@ function PeopleTable({
           <TableHeaderCell className="ml-auto w-64">
             <span className="mr-1">Email</span>
             {!loading ? (
-              <TableFilters
+              <TableSortFilter
                 label="Sort by email"
                 value={sort?.key === "email" ? sort.direction : null}
                 allLabel="Default order"
-                options={SORT_OPTIONS}
-                widthClassName="w-40"
                 onChange={(direction) => setSortFor("email", direction)}
               />
             ) : null}
@@ -744,12 +736,10 @@ function PeopleTable({
           <TableHeaderCell className="w-36">
             <span className="mr-1">Added</span>
             {!loading ? (
-              <TableFilters
+              <TableSortFilter
                 label="Sort by date added"
                 value={sort?.key === "added" ? sort.direction : null}
                 allLabel="Default order"
-                options={SORT_OPTIONS}
-                widthClassName="w-40"
                 onChange={(direction) => setSortFor("added", direction)}
               />
             ) : null}
@@ -1020,13 +1010,11 @@ function ResourceTable({
             )}
             <span className="mr-1">Name</span>
             {!loading ? (
-              <TableFilters
+              <TableSortFilter
                 label={`Sort ${kind} by name`}
                 value={sort?.key === "name" ? sort.direction : null}
                 allLabel="Default order"
-                options={SORT_OPTIONS}
                 align="right"
-                widthClassName="w-40"
                 onChange={(direction) => setSortFor("name", direction)}
               />
             ) : null}
@@ -1050,12 +1038,10 @@ function ResourceTable({
           <TableHeaderCell className="w-36">
             <span className="mr-1">Created</span>
             {!loading ? (
-              <TableFilters
+              <TableSortFilter
                 label={`Sort ${kind} by creation date`}
                 value={sort?.key === "created" ? sort.direction : null}
                 allLabel="Default order"
-                options={SORT_OPTIONS}
-                widthClassName="w-40"
                 onChange={(direction) => setSortFor("created", direction)}
               />
             ) : null}

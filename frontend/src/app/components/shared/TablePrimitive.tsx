@@ -217,6 +217,34 @@ export function TableFilters<T extends string>({
     );
 }
 
+const SORT_OPTIONS: TableFilterOption<TableSortDirection>[] = [
+    { value: "asc", label: "Ascending" },
+    { value: "desc", label: "Descending" },
+];
+
+/** Ascending/descending sort menu for a column header. */
+export function TableSortFilter({
+    allLabel = "Default Order",
+    widthClassName = "w-40",
+    ...props
+}: {
+    label: string;
+    value: TableSortDirection | null;
+    onChange: (value: TableSortDirection | null) => void;
+    allLabel?: string;
+    widthClassName?: string;
+    align?: "left" | "right";
+}) {
+    return (
+        <TableFilters
+            {...props}
+            allLabel={allLabel}
+            widthClassName={widthClassName}
+            options={SORT_OPTIONS}
+        />
+    );
+}
+
 export function SkeletonLine({ className }: { className?: string }) {
     return (
         <div

@@ -42,8 +42,8 @@ vi.mock("@/app/hooks/useQueryParamTab", () => ({
     useQueryParamTab: () => ["prompt", vi.fn()],
 }));
 
-vi.mock("@/app/components/workflows/WorkflowPromptEditor", () => ({
-    WorkflowPromptEditor: () => null,
+vi.mock("@/app/components/ui/markdown-editor", () => ({
+    MarkdownEditor: () => null,
 }));
 vi.mock("./WorkflowAssets", () => ({
     WorkflowAssets: () => null,
