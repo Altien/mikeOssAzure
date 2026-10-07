@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { MarkdownEditor } from "@/app/components/ui/markdown-editor";
+import { LIQUID_GLASS_FLAT_CLASS } from "@/shared/ui/LiquidGlassUI";
 import { MemorySaveStatus } from "@/app/components/memory/MemoryEditorState";
 import { useMemoryAutosave } from "@/app/components/memory/useMemoryAutosave";
 import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
@@ -18,8 +18,8 @@ export const CUSTOM_INSTRUCTIONS_MAX_LENGTH = 8000;
 
 /**
  * Matches the backend's normalization, so a draft that differs from the saved
- * text only by trailing whitespace is not treated as an unsaved change (the
- * editor tends to append a trailing newline).
+ * text only by line endings or trailing whitespace is not treated as an
+ * unsaved change.
  */
 function normalizeInstructions(value: string) {
   return value.replace(/\r\n?/g, "\n").trimEnd();
@@ -103,7 +103,7 @@ export function CustomInstructionsSection() {
 
       {loading ? (
         <div
-          className="h-64 animate-pulse rounded-2xl bg-app-surface"
+          className="h-96 animate-pulse rounded-xl bg-app-surface"
           aria-label="Loading custom instructions"
         />
       ) : loadError ? (
@@ -125,15 +125,14 @@ export function CustomInstructionsSection() {
         </div>
       ) : (
         <>
-          <div className="min-h-[16rem]">
-            <MarkdownEditor
-              value={draft}
-              onChange={setDraft}
-              ariaLabel="Custom instructions"
-              className="min-h-[16rem]"
-              allowTables={false}
-            />
-          </div>
+          <textarea
+            aria-label="Custom instructions"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            // The same flat surface as the settings cards above it. The ring
+            // shows for keyboard navigation only (keyboard-focus-ring).
+            className={`keyboard-focus-ring block min-h-96 max-h-[70vh] w-full resize-none [field-sizing:content] rounded-xl px-4 py-3 text-sm text-gray-700 outline-none placeholder:text-gray-400 focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 ${LIQUID_GLASS_FLAT_CLASS}`}
+          />
           {tooLong ? (
             <p className="text-xs text-red-600" role="alert">
               Custom instructions must be{" "}

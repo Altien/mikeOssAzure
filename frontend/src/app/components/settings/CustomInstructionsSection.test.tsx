@@ -16,24 +16,6 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
   updateCustomInstructions: vi.fn(),
 }));
 
-vi.mock("@/app/components/ui/markdown-editor", () => ({
-  MarkdownEditor: ({
-    value,
-    onChange,
-    ariaLabel,
-  }: {
-    value: string;
-    onChange?: (value: string) => void;
-    ariaLabel?: string;
-  }) => (
-    <textarea
-      aria-label={ariaLabel}
-      value={value}
-      onChange={(event) => onChange?.(event.target.value)}
-    />
-  ),
-}));
-
 function editor() {
   return screen.findByRole("textbox", { name: "Custom instructions" });
 }
@@ -49,6 +31,15 @@ describe("CustomInstructionsSection", () => {
     vi.mocked(updateCustomInstructions).mockImplementation(async (content) => ({
       content,
     }));
+  });
+
+  it("is a plain text area on the flat glass surface", async () => {
+    render(<CustomInstructionsSection />);
+
+    const field = await editor();
+    expect(field.tagName).toBe("TEXTAREA");
+    expect(field).toHaveClass("liquid-glass-flat", "rounded-xl");
+    expect(field).not.toHaveClass("liquid-glass-subtle");
   });
 
   it("shows a skeleton while loading, then the saved instructions", async () => {

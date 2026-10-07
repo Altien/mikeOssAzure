@@ -1,6 +1,6 @@
 // user custom instructions — implementation behind the module facade.
 //
-// Free-form Markdown the user writes in Settings > Personalisation. It lives
+// Free-form text the user writes in Settings > Personalisation. It lives
 // on user_profiles but is read and written through its own endpoint so the
 // profile select cascade (user.profile.storage.ts) does not have to carry a
 // potentially large text column on every profile load.
