@@ -377,6 +377,11 @@ describe("OpenRouter LLM adapter", () => {
         expect(finalBody).not.toHaveProperty("tools");
     });
 
+    // Upstream divergence (sync-log: f4cf97c7): upstream widened these three
+    // assertions to also accept OpenRouter 3.1's generic "Failed to process
+    // successful response". Dev's adapter (fix 3e5a931b for b7e5fcc5) unwraps
+    // that SDK validation failure into the specific unsafe-tool-round error, so
+    // the narrower assertions stay and guard that mapping.
     it("fails the stream instead of executing a tool with truncated arguments", async () => {
         // The upstream connection died mid-arguments: the JSON fragment can
         // never parse. Coercing it to {} would EXECUTE a side-effecting tool
