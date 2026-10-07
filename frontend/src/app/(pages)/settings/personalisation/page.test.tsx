@@ -15,14 +15,9 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
     verbosity: "balanced",
     formatting: "balanced",
     tone: "balanced",
+    language: "auto",
   })),
   updateResponseStyle: vi.fn(async (style: unknown) => style),
-}));
-
-vi.mock("@/app/components/ui/markdown-editor", () => ({
-  MarkdownEditor: ({ ariaLabel }: { ariaLabel?: string }) => (
-    <textarea aria-label={ariaLabel} readOnly />
-  ),
 }));
 
 vi.mock("@/app/contexts/UserProfileContext", () => ({
@@ -52,7 +47,7 @@ describe("PersonalisationPage", () => {
     expect(
       screen.getByRole("heading", { name: "Response style" }),
     ).toBeInTheDocument();
-    for (const setting of ["Verbosity", "Headers and Lists", "Tone"]) {
+    for (const setting of ["Verbosity", "Headers and Lists", "Tone", "Language"]) {
       expect(
         await screen.findByRole("button", { name: setting }),
       ).toBeInTheDocument();
@@ -63,10 +58,10 @@ describe("PersonalisationPage", () => {
     const user = userEvent.setup();
     const { container } = render(<PersonalisationPage />);
 
-    // Four background rows plus the three response style rows.
+    // Four background rows plus the four response style rows.
     expect(
       container.querySelectorAll('[data-slot="settings-row"]'),
-    ).toHaveLength(7);
+    ).toHaveLength(8);
 
     await user.click(screen.getByRole("button", { name: "Title" }));
     await user.click(

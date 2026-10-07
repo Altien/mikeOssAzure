@@ -83,6 +83,7 @@ describe("getUserModelSettings router-model allowlist", () => {
                 verbosity: "concise",
                 formatting: "less",
                 tone: "formal",
+                language: "auto",
             },
         });
     });

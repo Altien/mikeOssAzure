@@ -17,6 +17,7 @@ const stored: ResponseStyle = {
   verbosity: "balanced",
   formatting: "balanced",
   tone: "balanced",
+  language: "auto",
 };
 
 function trigger(name: string) {
@@ -55,6 +56,38 @@ describe("ResponseStyleSection", () => {
     expect(
       screen.getByText(/everyday words, with legal terms explained/),
     ).toBeInTheDocument();
+  });
+
+  it("offers English variants and other languages, and saves the choice", async () => {
+    render(<ResponseStyleSection />);
+    await waitFor(() => expect(trigger("Language")).toBeEnabled());
+    expect(trigger("Language")).toHaveTextContent("Automatic");
+    expect(
+      screen.getByText("Mike replies in the language you write in."),
+    ).toBeInTheDocument();
+
+    fireEvent.pointerDown(
+      trigger("Language"),
+      new MouseEvent("pointerdown", { bubbles: true, cancelable: true }),
+    );
+    const options = (await screen.findAllByRole("menuitemradio")).map(
+      (option) => option.textContent,
+    );
+    expect(options.slice(0, 3)).toEqual([
+      "Automatic",
+      "English (US)",
+      "English (UK)",
+    ]);
+    expect(options).toEqual(
+      expect.arrayContaining(["French", "Spanish", "Chinese (Simplified)"]),
+    );
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "English (UK)" }));
+
+    expect(updateResponseStyle).toHaveBeenCalledWith({ language: "en-GB" });
+    await waitFor(() =>
+      expect(trigger("Language")).toHaveTextContent("English (UK)"),
+    );
+    expect(screen.getByText("Mike replies in English (UK).")).toBeInTheDocument();
   });
 
   it("saves only the setting that changed", async () => {

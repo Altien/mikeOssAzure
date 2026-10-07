@@ -9,14 +9,20 @@ import {
     ok,
     type ServiceResult,
 } from "../../lib/serviceResult";
+import { RESPONSE_LANGUAGE_CODES } from "../../lib/responseLanguages";
 import { type Db } from "./user.shared";
 
-/** Each list mirrors its user_profiles_response_*_check constraint. */
+/**
+ * The first three lists mirror their user_profiles_response_*_check
+ * constraints. Languages are owned here (lib/responseLanguages); the database
+ * only checks the tag's shape.
+ */
 export const RESPONSE_STYLE_OPTIONS = {
     verbosity: ["concise", "balanced", "detailed"],
     // The "Headers and Lists" setting: how much structure answers use.
     formatting: ["balanced", "less", "more"],
     tone: ["formal", "balanced", "plain"],
+    language: RESPONSE_LANGUAGE_CODES,
 } as const;
 
 type Options = typeof RESPONSE_STYLE_OPTIONS;
@@ -29,12 +35,14 @@ export const DEFAULT_RESPONSE_STYLE: ResponseStyle = {
     verbosity: "balanced",
     formatting: "balanced",
     tone: "balanced",
+    language: "auto",
 };
 
 const COLUMNS: Record<ResponseStyleField, string> = {
     verbosity: "response_verbosity",
     formatting: "response_formatting",
     tone: "response_tone",
+    language: "response_language",
 };
 
 const FIELDS = Object.keys(COLUMNS) as ResponseStyleField[];

@@ -1,3 +1,4 @@
+import { responseLanguageName } from "../../../lib/responseLanguages";
 import crypto from "crypto";
 import type { Db } from "../../../lib/supabase";
 import { ensureDocAccess } from "../../../lib/access";
@@ -109,6 +110,8 @@ export type UserPersonalisation = {
     verbosity: "concise" | "balanced" | "detailed";
     formatting: "balanced" | "less" | "more";
     tone: "formal" | "balanced" | "plain";
+    /** `auto` or a code from lib/responseLanguages. */
+    language?: string;
   };
 };
 
@@ -162,7 +165,9 @@ const RESPONSE_STYLE_GUIDANCE: Record<string, Record<string, string>> = {
 /**
  * States the user's chosen response style. The values come from fixed
  * server-validated sets, so this text is system-authored rather than fenced.
- * 'balanced' is the default for every setting and adds nothing.
+ * 'balanced' is the default for every setting and adds nothing. The language
+ * is named from the server's own table, never from the stored string, so an
+ * unknown code adds nothing either.
  */
 function buildResponseStylePrompt(
   style: UserPersonalisation["responseStyle"],
@@ -171,6 +176,12 @@ function buildResponseStylePrompt(
   const lines = (["verbosity", "formatting", "tone"] as const)
     .map((field) => RESPONSE_STYLE_GUIDANCE[field][style[field]])
     .filter(Boolean);
+  const language = responseLanguageName(style.language);
+  if (language) {
+    lines.push(
+      `Language: write your answers in ${language}, following its spelling and conventions. Keep quoted source text, defined terms, case names, and citations in their original language.`,
+    );
+  }
   if (lines.length === 0) return "";
   return `USER RESPONSE STYLE:
 ${lines.map((line) => `- ${line}`).join("\n")}

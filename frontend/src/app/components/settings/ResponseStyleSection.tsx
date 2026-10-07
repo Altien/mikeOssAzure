@@ -30,6 +30,27 @@ import { cn } from "@/app/lib/utils";
 
 type OptionCopy = { label: string; description: string };
 
+type ResponseLanguage = ResponseStyle["language"];
+
+/** Every language reads the same way, so only its name is written out. */
+function languageOptions(
+  names: Record<Exclude<ResponseLanguage, "auto">, string>,
+): Record<ResponseLanguage, OptionCopy> {
+  const options = {
+    auto: {
+      label: "Automatic",
+      description: "Mike replies in the language you write in.",
+    },
+  } as Record<ResponseLanguage, OptionCopy>;
+  for (const [code, name] of Object.entries(names)) {
+    options[code as ResponseLanguage] = {
+      label: name,
+      description: `Mike replies in ${name}.`,
+    };
+  }
+  return options;
+}
+
 // Typed per field, so adding an option to RESPONSE_STYLE_OPTIONS without its
 // copy here fails the typecheck.
 const SETTINGS: {
@@ -90,6 +111,41 @@ const SETTINGS: {
       },
     },
   },
+  language: {
+    label: "Language",
+    options: languageOptions({
+      "en-US": "English (US)",
+      "en-GB": "English (UK)",
+      ar: "Arabic",
+      "zh-Hans": "Chinese (Simplified)",
+      "zh-Hant": "Chinese (Traditional)",
+      cs: "Czech",
+      da: "Danish",
+      nl: "Dutch",
+      fi: "Finnish",
+      fr: "French",
+      de: "German",
+      el: "Greek",
+      he: "Hebrew",
+      hi: "Hindi",
+      id: "Indonesian",
+      it: "Italian",
+      ja: "Japanese",
+      ko: "Korean",
+      ms: "Malay",
+      nb: "Norwegian",
+      pl: "Polish",
+      "pt-BR": "Portuguese (Brazil)",
+      "pt-PT": "Portuguese (Portugal)",
+      ru: "Russian",
+      es: "Spanish",
+      sv: "Swedish",
+      th: "Thai",
+      tr: "Turkish",
+      uk: "Ukrainian",
+      vi: "Vietnamese",
+    }),
+  },
 };
 
 const FIELDS = Object.keys(RESPONSE_STYLE_OPTIONS) as ResponseStyleField[];
@@ -107,6 +163,7 @@ export function ResponseStyleSection() {
     verbosity: 0,
     formatting: 0,
     tone: 0,
+    language: 0,
   });
 
   useEffect(() => {
@@ -240,7 +297,7 @@ function StyleSettingRow({
             disabled={!selected}
             aria-busy={!selected}
             className={cn(
-              "flex h-9 w-full shrink-0 items-center justify-between gap-2 text-left text-sm outline-none disabled:cursor-default disabled:opacity-60 sm:w-44",
+              "flex h-9 w-full shrink-0 items-center justify-between gap-2 text-left text-sm outline-none disabled:cursor-default disabled:opacity-60 sm:w-56",
               authInputClassName,
             )}
           >
@@ -251,7 +308,8 @@ function StyleSettingRow({
         <DropdownContent
           align="end"
           sideOffset={6}
-          className="w-[var(--radix-dropdown-menu-trigger-width)]"
+          // The language list is long; the others fit without scrolling.
+          className="max-h-72 w-[var(--radix-dropdown-menu-trigger-width)]"
         >
           <DropdownRadioGroup value={value ?? ""} onValueChange={onChange}>
             {options.map((option) => (
