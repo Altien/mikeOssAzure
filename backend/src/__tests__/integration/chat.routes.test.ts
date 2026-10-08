@@ -425,7 +425,6 @@ vi.mock("../../modules/user/user.settings", () => ({
     })),
     persistLastSelectedChatModel: vi.fn(async () => null),
     persistLastSelectedReasoningLevel: vi.fn(async () => null),
-    getUserApiKeys: vi.fn(async () => ({})),
 }));
 
 // Chat title generation calls completeText; stub it so the success-path tests

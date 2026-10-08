@@ -9,7 +9,6 @@ import { contentSha256, loadActiveVersion } from "../../lib/documentVersions";
 import { ensureDocAccess } from "../../lib/access";
 import { can, DOCUMENT_EDIT_FORBIDDEN } from "../../lib/permissions";
 import { downloadFilenameForVersion, type Db } from "./documents.shared";
-import { ensureDocumentAccess } from "./documents.access";
 import { updateDocumentVersion } from "./documents.lifecycle";
 // devLog comes from lib/chat/types (a leaf file — importing the whole chat
 // barrel here just for a logger would be a heavy dependency edge).

@@ -207,7 +207,6 @@ vi.mock("../../lib/access", async (importOriginal) => ({
 
 vi.mock("../../modules/user/user.settings", () => ({
     getUserModelSettings: (...args: unknown[]) => getUserModelSettings(...args),
-    getUserApiKeys: vi.fn(async () => ({})),
     persistLastSelectedChatModel: vi.fn(async () => null),
     persistLastSelectedReasoningLevel: vi.fn(async () => null),
 }));
