@@ -15,6 +15,10 @@ const routerModels = {
     "opencode-go": ["glm-5"],
     bedrock: [],
     azure: [],
+    "azure-foundry": [],
+    vertex: [],
+    xai: [],
+    custom: [],
 };
 
 describe("titleModelForChat", () => {
@@ -38,11 +42,15 @@ describe("titleModelForChat", () => {
         "aoai:production",
         "bedrock/us.anthropic.claude-opus-5-5",
         "azure/gpt-6.1-sol",
+        "azure-foundry/mistral-large-4",
+        "vertex/gemini-3.1-pro-preview",
+        "xai/grok-4.3",
+        "custom/my-model",
     ])("reuses dynamic model %s", (chatModel) => {
         expect(titleModelForChat(chatModel)).toBe(chatModel);
     });
 
-    it("honors the saved title override", () => {
+    it("honors the saved title override", async () => {
         expect(titleModelForChat("gpt-6-astra", "claude-haiku-4-5")).toBe(
             "claude-haiku-4-5",
         );
@@ -50,23 +58,23 @@ describe("titleModelForChat", () => {
 });
 
 describe("hasApiKeyForModel for cloud platforms", () => {
-    it("requires the region or endpoint saved with the key", () => {
+    it("requires the region or endpoint saved with the key", async () => {
         expect(
-            hasApiKeyForModel("bedrock/anthropic.claude-opus-5-5", {
+            await hasApiKeyForModel("bedrock/anthropic.claude-opus-5-5", {
                 bedrock: "k",
             }),
         ).toBe(false);
         expect(
-            hasApiKeyForModel("bedrock/anthropic.claude-opus-5-5", {
+            await hasApiKeyForModel("bedrock/anthropic.claude-opus-5-5", {
                 bedrock: "k",
                 providerSettings: { bedrock: { region: "us-east-1" } },
             }),
         ).toBe(true);
-        expect(hasApiKeyForModel("azure/gpt-6.1-sol", { azure: "k" })).toBe(
+        expect(await hasApiKeyForModel("azure/gpt-6.1-sol", { azure: "k" })).toBe(
             false,
         );
         expect(
-            hasApiKeyForModel("azure/gpt-6.1-sol", {
+            await hasApiKeyForModel("azure/gpt-6.1-sol", {
                 azure: "k",
                 providerSettings: { azure: { endpoint: "contoso-openai" } },
             }),
@@ -74,15 +82,74 @@ describe("hasApiKeyForModel for cloud platforms", () => {
     });
 });
 
+describe("hasApiKeyForModel for Vertex, Foundry, xAI and custom endpoints", () => {
+    const serviceAccount = JSON.stringify({
+        type: "service_account",
+        project_id: "legal-prod",
+        private_key: "-----BEGIN PRIVATE KEY-----",
+        client_email: "mike@legal-prod.iam.gserviceaccount.com",
+    });
+
+    it("requires the setting saved with each key", async () => {
+        expect(
+            await hasApiKeyForModel("vertex/gemini-3.8-flash", {
+                vertex: serviceAccount,
+            }),
+        ).toBe(false);
+        expect(
+            await hasApiKeyForModel("vertex/gemini-3.8-flash", {
+                vertex: serviceAccount,
+                providerSettings: { vertex: { location: "us-central1" } },
+            }),
+        ).toBe(true);
+        // A stored value that is not a key file is unusable, not "configured".
+        expect(
+            await hasApiKeyForModel("vertex/gemini-3.8-flash", {
+                vertex: "AIzaSy-plain-key",
+                providerSettings: { vertex: { location: "us-central1" } },
+            }),
+        ).toBe(false);
+        expect(
+            await hasApiKeyForModel("azure-foundry/mistral-large-4", {
+                "azure-foundry": "k",
+            }),
+        ).toBe(false);
+        expect(
+            await hasApiKeyForModel("azure-foundry/mistral-large-4", {
+                "azure-foundry": "k",
+                providerSettings: {
+                    "azure-foundry": { endpoint: "contoso-foundry" },
+                },
+            }),
+        ).toBe(true);
+        expect(await hasApiKeyForModel("custom/my-model", { custom: "k" })).toBe(
+            false,
+        );
+        expect(
+            await hasApiKeyForModel("custom/my-model", {
+                custom: "k",
+                providerSettings: {
+                    custom: { baseUrl: "https://llm.example.com/v1" },
+                },
+            }),
+        ).toBe(true);
+    });
+
+    it("needs only the key for xAI", async () => {
+        expect(await hasApiKeyForModel("xai/grok-4.3", {})).toBe(false);
+        expect(await hasApiKeyForModel("xai/grok-4.3", { xai: "k" })).toBe(true);
+    });
+});
+
 describe("normalizeOptionalModelPreference", () => {
-    it("returns null instead of inventing a default", () => {
+    it("returns null instead of inventing a default", async () => {
         expect(normalizeOptionalModelPreference(null, routerModels)).toBeNull();
         expect(
             normalizeOptionalModelPreference("not-a-model", routerModels),
         ).toBeNull();
     });
 
-    it("rejects a router model outside the saved allowlist", () => {
+    it("rejects a router model outside the saved allowlist", async () => {
         expect(
             normalizeOptionalModelPreference(
                 "openrouter/openai/gpt-5.4",
@@ -93,7 +160,7 @@ describe("normalizeOptionalModelPreference", () => {
 });
 
 describe("resolveEffectiveReasoningLevel", () => {
-    it("normalizes a stale level for the selected model before persistence", () => {
+    it("normalizes a stale level for the selected model before persistence", async () => {
         expect(
             resolveEffectiveReasoningLevel({
                 model: "gpt-5.6-terra",
@@ -209,7 +276,7 @@ describe("configured model selection", () => {
         ).toBe(true);
     });
 
-    it("reuses the configured chat model for title generation", () => {
+    it("reuses the configured chat model for title generation", async () => {
         expect(titleModelForChat("keyless-compatible")).toBe(
             "keyless-compatible",
         );
@@ -217,7 +284,7 @@ describe("configured model selection", () => {
 });
 
 
-it("preserves a configured endpoint whose name is also a removed hosted model", () => {
+it("preserves a configured endpoint whose name is also a removed hosted model", async () => {
     const previous = process.env.MIKE_MODEL_CONFIG_JSON;
     process.env.MIKE_MODEL_CONFIG_JSON = JSON.stringify({ models: [{ id: "gpt-5.4", provider: "openai-compatible", location: "local", baseUrl: "http://localhost:8000/v1" }] });
     resetModelRegistryCache();

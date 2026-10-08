@@ -25,8 +25,8 @@
 import crypto from "node:crypto";
 import { getConfig } from "../../lib/config";
 import { resolveSecret, resolveProviderSecret, resolveVercelApiKey } from "../../lib/envSecrets";
-import { createServerSupabase } from "../../lib/supabase";
-import { envBedrockCredentials, envAzureCredentials } from "../../lib/llm/cloudProviders";
+import { createServerSupabase, type Db } from "../../lib/supabase";
+import { envBedrockCredentials, envAzureCredentials, envAzureFoundryCredentials, envVertexCredentials, envVertexServiceAccountKey, envCustomEndpointCredentials } from "../../lib/llm/cloudProviders";
 import type { ProviderSettings, AzureOpenaiSettings, UserApiKeys } from "../../lib/llm";
 
 // `openrouter` and `courtlistener` added with upstream 44e868e
@@ -45,15 +45,20 @@ export type ApiKeyProvider =
     | "courtlistener"
     | "bedrock"
     | "azure"
+    | "azure-foundry"
+    | "vertex"
+    | "xai"
+    | "custom"
     | "azure_openai";
 
 export type ApiKeySource = "env" | "user" | null;
-export type ApiKeyStatus = Record<string, boolean | Record<string, ApiKeySource> | ProviderSettings> & {
+export type ApiKeyStatus = Record<ApiKeyProvider, boolean> & {
+    sources: Record<ApiKeyProvider, ApiKeySource>;
+    enabled: Partial<Record<ApiKeyProvider, boolean>>;
     settings: ProviderSettings;
-    sources: Record<string, ApiKeySource>;
 };
 
-const ORG_PROVIDERS = ["claude", "gemini", "openai", "kimi", "mistral", "openrouter", "opencode-go", "vercel", "courtlistener", "azure_openai", "bedrock", "azure"] as const;
+const ORG_PROVIDERS = ["claude", "gemini", "openai", "kimi", "mistral", "openrouter", "opencode-go", "vercel", "courtlistener", "azure_openai", "bedrock", "azure", "azure-foundry", "vertex", "xai", "custom"] as const;
 
 export function normalizeApiKeyProvider(value: unknown): ApiKeyProvider | null {
     return typeof value === "string" && (ORG_PROVIDERS as readonly string[]).includes(value)
@@ -61,18 +66,17 @@ export function normalizeApiKeyProvider(value: unknown): ApiKeyProvider | null {
 }
 
 /** Legacy wire shape, backed only by organisation Key Vault credentials. */
-export async function getUserApiKeyStatus(_userId: string, _db?: ReturnType<typeof createServerSupabase>): Promise<ApiKeyStatus> {
-    const keys = await getOrganisationApiKeys();
-    const status: Record<string, boolean> = {};
-    const sources: Record<string, ApiKeySource> = {};
+export async function getUserApiKeyStatus(userId: string, db: Db = createServerSupabase()): Promise<ApiKeyStatus> {
+    const [keys, enabled] = await Promise.all([getOrganisationApiKeys(), getProviderEnabled(userId, db)]);
+    const status = { sources: {}, enabled, settings: {} } as ApiKeyStatus;
     for (const provider of ORG_PROVIDERS) {
         const configured = provider === "azure_openai"
             ? !!(keys.azureOpenai?.apiKey && keys.azureOpenai?.endpoint)
             : !!keys[provider];
-        status[provider] = configured;
-        sources[provider] = configured ? "env" : null;
+        status[provider] = configured && enabled[provider] !== false;
+        status.sources[provider] = configured ? "env" : null;
     }
-    return { ...status, sources, settings: {} };
+    return status;
 }
 
 /**
@@ -97,6 +101,11 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
         azureDeployment,
         cloudBedrock,
         cloudAzure,
+        cloudFoundry,
+        cloudVertex,
+        vertexKey,
+        xai,
+        custom,
     ] = await Promise.all([
         resolveSecret("anthropic-api-key"),
         resolveSecret("gemini-api-key"),
@@ -115,6 +124,11 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
         resolveSecret("azure-openai-deployment"),
         envBedrockCredentials(),
         envAzureCredentials(),
+        envAzureFoundryCredentials(),
+        envVertexCredentials(),
+        envVertexServiceAccountKey(),
+        resolveProviderSecret("xai-api-key"),
+        envCustomEndpointCredentials(),
     ]);
 
     return {
@@ -129,9 +143,16 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
         courtlistener: courtlistener || null,
         bedrock: cloudBedrock?.apiKey ?? null,
         azure: cloudAzure?.apiKey ?? null,
+        "azure-foundry": cloudFoundry?.apiKey ?? null,
+        vertex: cloudVertex ? vertexKey : null,
+        xai: xai || null,
+        custom: custom?.apiKey ?? null,
         providerSettings: {
             bedrock: cloudBedrock ? { region: cloudBedrock.region } : null,
             azure: cloudAzure ? { endpoint: cloudAzure.endpoint } : null,
+            "azure-foundry": cloudFoundry ? { endpoint: cloudFoundry.endpoint } : null,
+            vertex: cloudVertex ? { location: cloudVertex.location } : null,
+            custom: custom ? { baseUrl: custom.baseUrl } : null,
         },
         azureOpenai:
             azureEndpoint && azureApiKey
@@ -143,6 +164,52 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
                   }
                 : null,
     };
+}
+
+export async function getProviderEnabled(
+    userId: string,
+    db: Db = createServerSupabase(),
+): Promise<Partial<Record<ApiKeyProvider, boolean>>> {
+    const { data, error } = await db.from("user_profiles")
+        .select("provider_enabled").eq("user_id", userId).maybeSingle();
+    if (error) throw error;
+    const value: unknown = data?.provider_enabled;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    const enabled: Partial<Record<ApiKeyProvider, boolean>> = {};
+    for (const provider of ORG_PROVIDERS) {
+        const flag = (value as Record<string, unknown>)[provider];
+        if (typeof flag === "boolean") enabled[provider] = flag;
+    }
+    if (enabled.azure === false || enabled.azure_openai === false) {
+        enabled.azure = false;
+        enabled.azure_openai = false;
+    }
+    return enabled;
+}
+
+// Upstream divergence (sync-log: 25779536): provider switches are preferences,
+// never secret rows. A user's preference only masks centrally supplied keys
+// for that same user and cannot modify another user's or the organisation's keys.
+export async function getUserExecutionApiKeys(
+    userId: string,
+    db: Db = createServerSupabase(),
+): Promise<UserApiKeys> {
+    const [keys, enabled] = await Promise.all([
+        getOrganisationApiKeys(), getProviderEnabled(userId, db),
+    ]);
+    const disabled = ORG_PROVIDERS.filter(provider => enabled[provider] === false);
+    for (const provider of disabled) {
+        if (provider === "azure_openai") {
+            keys.azureOpenai = null;
+        } else {
+            keys[provider] = null;
+        }
+    }
+    keys.disabledProviders = [
+        ...disabled,
+        ...(disabled.includes("azure") || disabled.includes("azure_openai") ? ["azure", "azure_openai", "azureOpenai"] : []),
+    ];
+    return keys;
 }
 
 // Upstream divergence (sync-log: 972cf22): router credentials use the same
@@ -442,6 +509,10 @@ export async function getConfiguredProviders(
         azure_openai: false,
         bedrock: false,
         azure: false,
+        "azure-foundry": false,
+        vertex: false,
+        xai: false,
+        custom: false,
     };
     for (const row of (rows ?? []) as { provider: ApiKeyProvider }[]) {
         configured[row.provider] = true;

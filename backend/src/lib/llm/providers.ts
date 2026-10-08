@@ -1,3 +1,4 @@
+import { isProviderDisabled } from "./providerPreferences";
 import {
   aiSdkFetch,
   completeAiSdkText,
@@ -7,12 +8,19 @@ import {
 import {
   azureClientTarget,
   azureCredentials,
+  azureFoundryCredentials,
   bedrockCredentials,
+  customEndpointCredentials,
+  vertexCredentials,
 } from "./cloudProviders";
+import { guardedFetch } from "../mcp/client";
 import { localModelToleranceMiddleware } from "./localModelMiddleware";
 import {
   azureDeploymentName,
+  azureFoundryDeploymentName,
   bedrockModelId,
+  customEndpointModelId,
+  isAzureFoundryClaudeDeployment,
   isOpenCodeGoChatCompletionsModel,
   isOpenCodeGoMessagesModel,
   normalizeReasoningLevelForModel,
@@ -20,6 +28,9 @@ import {
   openRouterModelId,
   providerForModel,
   vercelModelId,
+  vertexModelId,
+  vertexModelProtocol,
+  xaiModelId,
 } from "./models";
 import {
   apiKeyForConfiguredModel,
@@ -37,6 +48,8 @@ import type {
 } from "./types";
 import { resolveSecret, resolveProviderSecret, resolveVercelApiKey } from "../envSecrets";
 import { REASONING_LEVELS } from "./types";
+import { vertexAuthClient } from "./vertexAuth";
+import { UserFacingError } from "../userFacingError";
 
 const OPENROUTER_BASE_URL =
   process.env.OPENROUTER_BASE_URL?.trim().replace(/\/+$/, "") ||
@@ -97,7 +110,7 @@ async function routerKey(provider: RouterProvider, apiKeys?: UserApiKeys): Promi
 }
 
 async function createAnthropicAdapter(args: {
-  provider: Extract<Provider, "claude" | "opencode-go">;
+  provider: Extract<Provider, "claude" | "opencode-go" | "azure-foundry">;
   label: string;
   model: string;
   apiKey: string;
@@ -245,6 +258,126 @@ async function createAzureAdapter(
   };
 }
 
+async function createAzureFoundryAdapter(
+  model: string,
+  apiKeys?: UserApiKeys,
+): Promise<AiSdkAdapterConfig> {
+  const credentials = await azureFoundryCredentials(apiKeys);
+  if (!credentials) {
+    throw new Error(
+      "Azure AI Foundry API key is not configured. Set AZURE_FOUNDRY_API_KEY and AZURE_FOUNDRY_ENDPOINT or add a user Azure AI Foundry key and endpoint.",
+    );
+  }
+  const deployment = azureFoundryDeploymentName(model);
+  if (isAzureFoundryClaudeDeployment(model)) {
+    return createAnthropicAdapter({
+      provider: "azure-foundry",
+      label: "Azure AI Foundry",
+      model: deployment,
+      apiKey: credentials.apiKey,
+      baseURL: `${credentials.endpoint}/anthropic/v1`,
+      supportsReasoning: true,
+    });
+  }
+  const { createOpenAICompatible } = await import("@ai-sdk/openai-compatible");
+  const foundry = createOpenAICompatible({
+    name: "azureFoundry",
+    apiKey: credentials.apiKey,
+    // The v1 endpoint takes the key as a bearer token or as Azure's own
+    // header; sending both covers resources that only accept one.
+    headers: { "api-key": credentials.apiKey },
+    baseURL: `${credentials.endpoint}/openai/v1`,
+    fetch: aiSdkFetch,
+  });
+  return {
+    provider: "azure-foundry",
+    label: "Azure AI Foundry",
+    model: foundry(deployment),
+    modelId: model,
+    supportsReasoning: false,
+  };
+}
+
+async function createVertexAdapter(
+  model: string,
+  apiKeys?: UserApiKeys,
+): Promise<AiSdkAdapterConfig> {
+  const credentials = await vertexCredentials(apiKeys);
+  if (!credentials) {
+    throw new Error(
+      "Google Vertex AI credentials are not configured. Set GOOGLE_VERTEX_CREDENTIALS_JSON and GOOGLE_VERTEX_LOCATION or add a user Vertex AI service-account key and location.",
+    );
+  }
+  // A ready-made auth client keeps google-auth-library from ever looking for
+  // ambient credentials (a deployment may hold its own for storage).
+  const settings = {
+    project: credentials.project,
+    location: credentials.location,
+    googleAuthOptions: { authClient: await vertexAuthClient(credentials) },
+    fetch: aiSdkFetch,
+  };
+  const upstreamId = vertexModelId(model);
+  const base = { provider: "vertex" as const, label: "Google Vertex AI", modelId: model };
+  const protocol = vertexModelProtocol(model);
+  if (protocol === "anthropic") {
+    const { createVertexAnthropic } = await import(
+      "@ai-sdk/google-vertex/anthropic"
+    );
+    return { ...base, model: createVertexAnthropic(settings)(upstreamId) };
+  }
+  if (protocol === "maas") {
+    const { createVertexMaas } = await import("@ai-sdk/google-vertex/maas");
+    return {
+      ...base,
+      model: createVertexMaas(settings)(upstreamId),
+      supportsReasoning: false,
+    };
+  }
+  const { createVertex } = await import("@ai-sdk/google-vertex");
+  // An explicit empty apiKey stops the SDK from switching to express mode on
+  // a GOOGLE_VERTEX_API_KEY in the environment, which would bypass the
+  // service account chosen above.
+  const vertex = createVertex({ ...settings, apiKey: "" });
+  return { ...base, model: vertex(upstreamId) };
+}
+
+/**
+ * Egress for a user-supplied base URL: https only, never a private or
+ * metadata address, pinned to the address that was validated.
+ */
+async function customEndpointFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  return aiSdkFetch(input, init, guardedFetch);
+}
+
+async function createCustomEndpointAdapter(
+  model: string,
+  apiKeys?: UserApiKeys,
+): Promise<AiSdkAdapterConfig> {
+  const credentials = await customEndpointCredentials(apiKeys);
+  if (!credentials) {
+    throw new Error(
+      "OpenAI-compatible endpoint is not configured. Add an API key and base URL in Settings → Bring Your Own Keys.",
+    );
+  }
+  const { createOpenAICompatible } = await import("@ai-sdk/openai-compatible");
+  const client = createOpenAICompatible({
+    name: "custom",
+    apiKey: credentials.apiKey,
+    baseURL: credentials.baseUrl,
+    fetch: customEndpointFetch,
+  });
+  return {
+    provider: "custom",
+    label: "OpenAI-compatible endpoint",
+    model: client(customEndpointModelId(model)),
+    modelId: model,
+    supportsReasoning: false,
+  };
+}
+
 function configuredModelOrThrow(id: string): ConfiguredModel {
   const configured = getConfiguredModel(id);
   if (!configured) {
@@ -263,6 +396,9 @@ async function createConfiguredAdapter(
   apiKeys?: UserApiKeys,
 ): Promise<AiSdkAdapterConfig> {
   const configured = configuredModelOrThrow(id);
+  if (configured.apiKeyProvider && isProviderDisabled(configured.apiKeyProvider, apiKeys)) {
+    throw new UserFacingError("This model provider is turned off. Turn it on in Model Providers or select another model.");
+  }
   const { createOpenAICompatible } = await import("@ai-sdk/openai-compatible");
   const apiKey = await apiKeyForConfiguredModel(configured, apiKeys);
   if (configuredModelRequiresApiKey(configured) && !apiKey) {
@@ -353,6 +489,9 @@ async function createProviderAdapter(
   apiKeys?: UserApiKeys,
 ): Promise<AiSdkAdapterConfig> {
   const provider = providerForModel(model);
+  if (isProviderDisabled(provider, apiKeys)) {
+    throw new UserFacingError("This model provider is turned off. Turn it on in Model Providers or select another model.");
+  }
 
   if (provider === "claude") {
     return createAnthropicAdapter({
@@ -429,6 +568,25 @@ async function createProviderAdapter(
   if (provider === "azureOpenai") return createLegacyAzureAdapter(model, apiKeys);
   if (provider === "bedrock") return createBedrockAdapter(model, apiKeys);
   if (provider === "azure") return createAzureAdapter(model, apiKeys);
+  if (provider === "azure-foundry") {
+    return createAzureFoundryAdapter(model, apiKeys);
+  }
+  if (provider === "vertex") return createVertexAdapter(model, apiKeys);
+  if (provider === "custom") return createCustomEndpointAdapter(model, apiKeys);
+
+  if (provider === "xai") {
+    const { createXai } = await import("@ai-sdk/xai");
+    const xai = createXai({
+      apiKey: await requiredKey("xAI", "xai-api-key", apiKeys?.xai),
+      fetch: aiSdkFetch,
+    });
+    return {
+      provider,
+      label: "xAI",
+      model: xai(xaiModelId(model)),
+      modelId: model,
+    };
+  }
 
   if (provider === "openai-compatible") {
     return createConfiguredAdapter(model, apiKeys);

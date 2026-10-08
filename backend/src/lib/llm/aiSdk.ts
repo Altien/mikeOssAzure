@@ -99,8 +99,9 @@ class ToolCallStreamError extends Error {
 export async function aiSdkFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
+  baseFetch?: typeof fetch,
 ): Promise<Response> {
-  const response = await fetch(input, init);
+  const response = await (baseFetch ?? fetch)(input, init);
   if (
     !response.body ||
     !response.headers.get("content-type")?.includes("text/event-stream")

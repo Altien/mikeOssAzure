@@ -1,3 +1,4 @@
+import { isProviderDisabled } from "./llm/providerPreferences";
 import {
     CLAUDE_LOW_MODELS,
     GEMINI_LOW_MODELS,
@@ -10,7 +11,13 @@ import {
     REASONING_LEVELS,
     type ReasoningLevel,
 } from "./llm";
-import { azureCredentials, bedrockCredentials } from "./llm/cloudProviders";
+import {
+    azureCredentials,
+    azureFoundryCredentials,
+    bedrockCredentials,
+    customEndpointCredentials,
+    vertexCredentials,
+} from "./llm/cloudProviders";
 import {
     apiKeyForConfiguredModel,
     configuredModelRequiresApiKey,
@@ -83,6 +90,7 @@ export async function hasApiKeyForModel(
     apiKeys: UserApiKeys,
 ): Promise<boolean> {
     const provider = providerForModel(model);
+    if (isProviderDisabled(provider, apiKeys)) return false;
     if (provider === "openai-compatible") {
         const configured = getConfiguredModel(model);
         return configured !== null &&
@@ -96,6 +104,13 @@ export async function hasApiKeyForModel(
     }
     if (provider === "bedrock") return (await bedrockCredentials(apiKeys)) !== null;
     if (provider === "azure") return (await azureCredentials(apiKeys)) !== null;
+    if (provider === "azure-foundry") {
+        return (await azureFoundryCredentials(apiKeys)) !== null;
+    }
+    if (provider === "vertex") return (await vertexCredentials(apiKeys)) !== null;
+    if (provider === "custom") {
+        return (await customEndpointCredentials(apiKeys)) !== null;
+    }
     return !!apiKeys[provider]?.trim();
 }
 
@@ -145,6 +160,14 @@ export async function resolveEffectiveChatModel(args: {
                 "throw",
             );
             if (!(await hasApiKeyForModel(model, args.apiKeys))) {
+                if (isProviderDisabled(providerForModel(model), args.apiKeys)) {
+                    return {
+                        ok: false,
+                        status: 422,
+                        code: "model_unavailable",
+                        detail: "This model provider is turned off. Turn it on in Model Providers or select another model.",
+                    };
+                }
                 return {
                     ok: false,
                     status: 422,
@@ -230,6 +253,10 @@ export function titleModelForChat(
         case "opencode-go":
         case "bedrock":
         case "azure":
+        case "azure-foundry":
+        case "vertex":
+        case "xai":
+        case "custom":
             return resolvedChatModel;
     }
 }

@@ -62,6 +62,7 @@ import {
     recordPasswordSet,
     refreshMcpConnectorTools,
     saveApiKey,
+    setApiKeyEnabled,
     setMcpToolEnabled,
     setMfaOnLogin,
     startMcpConnectorOAuth,
@@ -447,6 +448,26 @@ userRouter.put(
             return void sendInternalError(res, result.error);
         }
         res.json(result.status);
+    }),
+);
+
+// PATCH /user/api-keys/:provider — retain the key while disabling its provider.
+userRouter.patch(
+    "/api-keys/:provider",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+        const provider = normalizeApiKeyProvider(req.params.provider);
+        if (!provider || provider === "courtlistener" || typeof req.body?.enabled !== "boolean") {
+            return void res.status(400).json({ detail: "A supported provider and boolean enabled value are required." });
+        }
+        const result = await setApiKeyEnabled(
+            createServerSupabase(),
+            res.locals.userId as string,
+            provider,
+            req.body.enabled,
+        );
+        if (!result.ok) return sendServiceFailure(res, result);
+        res.json(result.data);
     }),
 );
 

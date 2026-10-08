@@ -198,8 +198,21 @@ describe("router slugs", () => {
             vercel: [],
             "opencode-go": ["glm-5"],
             bedrock: ["us.anthropic.claude-opus-5-5"],
-            azure: [],
+            azure: ["claude-opus-5-5"],
+            "azure-foundry": [],
+            vertex: [],
+            xai: ["grok-4.3"],
+            custom: [],
         };
+
+        expect(isRouterModelSelected("xai/grok-4.3", selections)).toBe(true);
+        // An Azure OpenAI deployment must not unlock the same name on Foundry.
+        expect(
+            isRouterModelSelected("azure-foundry/claude-opus-5-5", selections),
+        ).toBe(false);
+        expect(isRouterModelSelected("custom/grok-4.3", selections)).toBe(
+            false,
+        );
 
         expect(
             isRouterModelSelected("opencode-go/glm-5", selections),

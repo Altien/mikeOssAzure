@@ -1510,6 +1510,10 @@ export function TRView({ reviewId, projectId }: Props) {
                                                 profile?.bedrockModels
                                             }
                                             azureModels={profile?.azureModels}
+                                            azureFoundryModels={profile?.azureFoundryModels}
+                                            vertexModels={profile?.vertexModels}
+                                            xaiModels={profile?.xaiModels}
+                                            customModels={profile?.customModels}
                                             onNoModelsClick={setNoModelsWarning}
                                         />
                                     ),

@@ -1,6 +1,6 @@
 import { createServerSupabase, type Db } from "../../lib/supabase";
 import { DEFAULT_TITLE_MODEL, OPENAI_LOW_MODELS, type UserApiKeys, type ReasoningLevel } from "../../lib/llm";
-import { getOrganisationApiKeys } from "./user.apiKeyStore";
+import { getUserExecutionApiKeys } from "./user.apiKeyStore";
 import { loadCustomInstructions } from "./user.customInstructions";
 import {
     DEFAULT_RESPONSE_STYLE,
@@ -60,7 +60,7 @@ export async function getUserModelSettings(
         client.from("user_profiles")
             .select("fast_model, tabular_model, memory_curator_model, last_selected_chat_model, last_selected_reasoning_level, legal_research_us, display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas")
             .eq("user_id", userId).single(),
-        getOrganisationApiKeys(),
+        getUserExecutionApiKeys(userId, client),
         getAllUserRouterModels(userId, client),
         // Instructions are an enhancement: a failed read must not block chat.
         loadCustomInstructions(client, userId).catch((error: unknown) => {

@@ -1,131 +1,281 @@
 "use client";
 
-import { RouterSettingsSection } from "@/app/components/settings/RouterSettingsSection";
-import { AlertTriangle, CheckCircle2, ExternalLink } from "lucide-react";
-import { useUserProfile } from "@/app/contexts/UserProfileContext";
-import type { ApiKeyProvider } from "@/app/lib/mikeApi";
-// Upstream divergence (OSS-6, §2.3 item 3 — org Key Vault keys): upstream's
-// Upstream 9c5ffa31 cloud credentials keep this same administrator boundary.
-// page lets each user paste personal provider keys (ApiKeyField + PUT
-// /user/api-keys/:provider). Dev's credentials are organisation secrets in
-// Azure Key Vault, set by an administrator through /install; the backend
-// rejects personal keys (PUT returns an "organisation credential required"
-// error). So this page is a read-only status list in upstream's layout
-// (header, SettingsSection), including dev's Kimi and Azure OpenAI. Upstream
-// dropped the page's Refresh button in 93c72a16 (it only re-detected local
-// Ollama models, which dev does not serve).
-// Upstream divergence (sync-log: 3a10943): upstream gates key save/remove
-// behind MfaVerificationPopup. Dev has no app-level MFA and no key editing.
-import { SettingsSection } from "../SettingsSection";
+import { useState } from "react";
+import Image from "next/image";
+import { Plug, type LucideIcon } from "lucide-react";
 
-const PROVIDERS: ReadonlyArray<{
+import { ByokProviderModal } from "@/app/components/settings/ByokProviderModal";
+import { ConnectorCard } from "@/app/components/settings/ConnectorCard";
+import { PillButtonUI } from "@/shared/ui/PillButtonUI";
+import { ToggleSwitchUI } from "@/shared/ui/ToggleSwitchUI";
+import { WarningPopup } from "@/app/components/popups/WarningPopup";
+import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
+import { SettingsDescription } from "@/app/components/settings/SettingsText";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
+import { type ApiKeyProvider } from "@/app/lib/mikeApi";
+type ModelApiKeyField = {
     provider: ApiKeyProvider;
+    name: string;
+    /** A vendored provider logo, or a Lucide icon where there is no brand. */
+    logo?: string;
+    icon?: LucideIcon;
     label: string;
-    secret: string;
-}> = [
+    keyLabel?: string;
+};
+
+// Upstream divergence (sync-log: 25779536): shared connector cards and modal
+// are retained; configuration is central and switches are personal preferences.
+const MODEL_API_KEY_FIELDS: readonly ModelApiKeyField[] = [
+    { provider: "kimi", name: "Kimi K3", icon: Plug, label: "Kimi K3" },
+    { provider: "azure_openai", name: "Azure OpenAI Chat Completions", logo: "azure-color", label: "Azure OpenAI Chat Completions" },
     {
         provider: "claude",
-        label: "Anthropic (Claude)",
-        secret: "anthropic-api-key",
+        name: "Anthropic (Claude)",
+        logo: "anthropic",
+        label: "Anthropic (Claude) API Key",
     },
-    { provider: "opencode-go", label: "OpenCode Go", secret: "opencode-api-key" },
-    { provider: "bedrock", label: "Amazon Bedrock", secret: "aws-bearer-token-bedrock + bedrock-aws-region" },
-    { provider: "azure", label: "Azure OpenAI Responses", secret: "azure-openai-endpoint + azure-openai-api-key" },
-    { provider: "gemini", label: "Google (Gemini)", secret: "gemini-api-key" },
-    { provider: "openai", label: "OpenAI", secret: "openai-api-key" },
-    { provider: "kimi", label: "Kimi K3", secret: "moonshot-api-key" },
-    { provider: "mistral", label: "Mistral AI", secret: "mistral-api-key" },
+    {
+        provider: "gemini",
+        name: "Google (Gemini)",
+        logo: "gemini-color",
+        label: "Google (Gemini) API Key",
+    },
+    {
+        provider: "openai",
+        name: "OpenAI",
+        logo: "openai",
+        label: "OpenAI API Key",
+    },
+    {
+        provider: "mistral",
+        name: "Mistral AI",
+        logo: "mistral-color",
+        label: "Mistral AI API Key",
+    },
+    {
+        provider: "xai",
+        name: "xAI",
+        logo: "xai",
+        label: "xAI API Key",
+    },
+    {
+        provider: "bedrock",
+        name: "Amazon Bedrock",
+        logo: "bedrock-color",
+        label: "Amazon Bedrock API Key",
+    },
+    {
+        provider: "azure",
+        name: "Azure OpenAI Responses",
+        logo: "azure-color",
+        label: "Azure OpenAI API Key",
+    },
+    {
+        provider: "azure-foundry",
+        name: "Azure AI Foundry",
+        logo: "azureai-color",
+        label: "Azure AI Foundry API Key",
+    },
+    {
+        provider: "vertex",
+        name: "Google Vertex AI",
+        logo: "vertexai-color",
+        label: "Google Vertex AI service-account key",
+        keyLabel: "Service-account key (JSON)",
+    },
     {
         provider: "openrouter",
-        label: "OpenRouter",
-        secret: "openrouter-api-key",
+        name: "OpenRouter",
+        logo: "openrouter-color",
+        label: "OpenRouter API Key",
     },
     {
         provider: "vercel",
-        label: "Vercel AI Gateway",
-        secret: "ai-gateway-api-key",
+        name: "Vercel AI Gateway",
+        logo: "vercel",
+        label: "Vercel AI Gateway API Key",
     },
     {
-        provider: "courtlistener",
-        label: "CourtListener",
-        secret: "courtlistener-api-token",
+        provider: "opencode-go",
+        name: "OpenCode Go",
+        logo: "opencode",
+        label: "OpenCode Go API Key",
     },
     {
-        provider: "azure_openai",
-        label: "Azure OpenAI",
-        secret: "azure-openai-endpoint + azure-openai-api-key",
+        provider: "custom",
+        name: "OpenAI-compatible endpoint",
+        icon: Plug,
+        label: "OpenAI-compatible endpoint API Key",
     },
 ];
 
-const INSTALL_URL =
-    (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") +
-    "/install";
+/**
+ * A provider is listed as saved once the user has saved their own key for it. It
+ * stays there while switched off, so the switch does not move under the
+ * pointer and the provider can be switched back on.
+ */
+const PROVIDER_SECTIONS = [
+    {
+        id: "active",
+        active: true,
+        title: "Configured Providers",
+        empty: "No providers are configured. Ask an administrator to configure organisation credentials.",
+    },
+    {
+        id: "available",
+        active: false,
+        title: "Available Providers",
+        empty: "Every provider is configured.",
+    },
+] as const;
 
-export default function ApiKeysPage() {
-    const { profile } = useUserProfile();
+export default function ByokPage() {
+    const { profile, loading, updateApiKeyEnabled } = useUserProfile();
+    const [busyProvider, setBusyProvider] = useState<ApiKeyProvider | null>(null);
+    const [toggleError, setToggleError] = useState<string | null>(null);
+    const [selectedProvider, setSelectedProvider] = useState<string | null>(
+        null,
+    );
+    const selected = MODEL_API_KEY_FIELDS.find(
+        (field) => field.provider === selectedProvider,
+    );
+
+    async function toggleProvider(provider: ApiKeyProvider, enabled: boolean) {
+        setBusyProvider(provider);
+        setToggleError(null);
+        try {
+            const saved = await updateApiKeyEnabled(provider, enabled);
+            if (!saved) setToggleError("The provider could not be updated. Please try again.");
+        } catch (error) {
+            setToggleError("The provider could not be updated. Please try again.");
+        } finally {
+            setBusyProvider(null);
+        }
+    }
+
+    const renderToggle = (field: ModelApiKeyField, label: string) => (
+        <ToggleSwitchUI
+            checked={profile?.apiKeys[field.provider]?.enabled !== false}
+            disabled={busyProvider !== null}
+            aria-busy={busyProvider === field.provider}
+            aria-label={label}
+            onCheckedChange={(enabled) =>
+                void toggleProvider(field.provider, enabled)
+            }
+        />
+    );
+
+    const renderCard = (field: ModelApiKeyField) => {
+        const hasSavedKey =
+            profile?.apiKeys[field.provider]?.source != null;
+        const Icon = field.icon;
+        const blocked = loading || busyProvider === field.provider;
+        const open = () => {
+            if (!blocked) setSelectedProvider(field.provider);
+        };
+        return (
+            <ConnectorCard
+                key={field.provider}
+                kind="provider"
+                name={field.name}
+                icon={
+                    loading ? (
+                        <span className="h-7 w-7 animate-pulse rounded-lg bg-gray-200" />
+                    ) : Icon ? (
+                        <Icon
+                            aria-hidden="true"
+                            className="h-6 w-6 text-gray-500"
+                        />
+                    ) : (
+                        <Image
+                            src={`/icons/providers/${field.logo}.svg`}
+                            alt=""
+                            width={28}
+                            height={28}
+                            className={
+                                field.logo?.endsWith("-color")
+                                    ? ""
+                                    : "dark:invert"
+                            }
+                        />
+                    )
+                }
+                // Like connectors: a saved provider opens from anywhere on
+                // its card, an available one only from its Add button.
+                onOpen={hasSavedKey ? open : undefined}
+                action={
+                    hasSavedKey ? (
+                        renderToggle(field, `${field.name} provider`)
+                    ) : (
+                        <PillButtonUI
+                            tone="blue"
+                            size="sm"
+                            disabled={blocked}
+                            aria-label={`Set up ${field.name}`}
+                            aria-haspopup="dialog"
+                            onClick={open}
+                        >
+                            Set up
+                        </PillButtonUI>
+                    )
+                }
+            />
+        );
+    };
 
     return (
-        <div>
-            <div className="mb-3">
-                <h2 className="text-2xl font-medium font-serif text-gray-900">
-                    API Keys
-                </h2>
-            </div>
-            <p className="text-sm text-gray-500 mb-4">
-                Provider credentials are shared by everyone in this Mike
-                installation. They are stored once in Azure Key Vault and can
-                only be changed by an administrator through organisation
-                setup.
-            </p>
-            <SettingsSection>
-                {PROVIDERS.map((provider, index) => {
-                    const configured =
-                        !!profile?.apiKeys[provider.provider]?.configured;
-                    return (
-                        <div key={provider.provider}>
-                            <div className="flex items-start justify-between gap-4 px-4 py-5">
-                                <div className="min-w-0">
-                                    <p className="text-sm font-medium text-gray-700">
-                                        {provider.label}
-                                    </p>
-                                    <p className="mt-1 text-xs text-gray-500">
-                                        Key Vault: {provider.secret}
-                                    </p>
-                                </div>
-                                <div
-                                    className={`flex shrink-0 items-center gap-1.5 text-xs font-medium ${
-                                        configured
-                                            ? "text-emerald-700"
-                                            : "text-amber-700"
-                                    }`}
-                                >
-                                    {configured ? (
-                                        <CheckCircle2 className="h-4 w-4" />
-                                    ) : (
-                                        <AlertTriangle className="h-4 w-4" />
-                                    )}
-                                    {profile === null
-                                        ? "Checking..."
-                                        : configured
-                                          ? "Configured for this organisation"
-                                          : "Administrator action required"}
-                                </div>
+        <div className="@container space-y-8">
+            {PROVIDER_SECTIONS.map((section) => {
+                // While the profile loads, which providers are active is not
+                // known yet: every card waits in the second section.
+                const fields = MODEL_API_KEY_FIELDS.filter(
+                    (field) =>
+                        (!loading &&
+                            profile?.apiKeys[field.provider]?.source != null) === section.active,
+                );
+                const headingId = `byok-${section.id}-providers`;
+                return (
+                    <section
+                        key={section.id}
+                        aria-labelledby={headingId}
+                        className="space-y-3"
+                    >
+                        <SettingsHeading id={headingId}>
+                            {section.title}
+                        </SettingsHeading>
+                        {loading && section.active ? (
+                            <span className="block h-5 w-56 max-w-full animate-pulse rounded bg-gray-200" />
+                        ) : fields.length === 0 ? (
+                            <SettingsDescription>
+                                {section.empty}
+                            </SettingsDescription>
+                        ) : (
+                            <div
+                                className="grid grid-cols-1 gap-3 @min-[32rem]:grid-cols-2"
+                                aria-busy={loading}
+                            >
+                                {fields.map(renderCard)}
                             </div>
-                            {index < PROVIDERS.length - 1 && (
-                                <div className="mx-4 h-px bg-gray-200" />
-                            )}
-                        </div>
-                    );
-                })}
-            </SettingsSection>
-            <a
-                href={INSTALL_URL}
-                className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-gray-700 underline underline-offset-4 hover:text-gray-950"
-            >
-                Open organisation setup
-                <ExternalLink className="h-3.5 w-3.5" />
-            </a>
-            <RouterSettingsSection />
+                        )}
+                    </section>
+                );
+            })}
+            <ByokProviderModal
+                provider={selected ?? null}
+                enabledToggle={
+                    selected &&
+                    profile?.apiKeys[selected.provider]?.source != null
+                        ? renderToggle(selected, `Use ${selected.name}`)
+                        : undefined
+                }
+                onClose={() => setSelectedProvider(null)}
+            />
+            <WarningPopup
+                open={toggleError !== null}
+                title="Provider update failed"
+                message={toggleError}
+                onClose={() => setToggleError(null)}
+            />
         </div>
     );
 }

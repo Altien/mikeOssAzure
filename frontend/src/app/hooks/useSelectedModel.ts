@@ -38,6 +38,10 @@ export interface SelectedModelSources {
         openCodeGoModels: string[];
         bedrockModels?: string[];
         azureModels?: string[];
+        azureFoundryModels?: string[];
+        vertexModels?: string[];
+        xaiModels?: string[];
+        customModels?: string[];
     } | null;
     /** Undefined means availability is unknown and must fail open. */
     apiKeys?: ApiKeyState;
@@ -67,6 +71,10 @@ function usableStoredModel(
             "opencode-go": sources.routerSelections.openCodeGoModels,
             bedrock: sources.routerSelections.bedrockModels ?? [],
             azure: sources.routerSelections.azureModels ?? [],
+            "azure-foundry": sources.routerSelections.azureFoundryModels ?? [],
+            vertex: sources.routerSelections.vertexModels ?? [],
+            xai: sources.routerSelections.xaiModels ?? [],
+            custom: sources.routerSelections.customModels ?? [],
         };
         if (!selections[router].includes(canonical.slice(router.length + 1))) {
             return null;
@@ -90,6 +98,10 @@ export function useSelectedModel(
     const openCodeGoModels = sources.routerSelections?.openCodeGoModels;
     const bedrockModels = sources.routerSelections?.bedrockModels;
     const azureModels = sources.routerSelections?.azureModels;
+    const azureFoundryModels = sources.routerSelections?.azureFoundryModels;
+    const vertexModels = sources.routerSelections?.vertexModels;
+    const xaiModels = sources.routerSelections?.xaiModels;
+    const customModels = sources.routerSelections?.customModels;
     const configuredModelIds = sources.configuredModelIds;
     const hasRouterSelections = sources.routerSelections != null;
     const selectionSources = useMemo<SelectedModelSources>(
@@ -104,6 +116,10 @@ export function useSelectedModel(
                       openCodeGoModels: openCodeGoModels ?? [],
                       bedrockModels: bedrockModels ?? [],
                       azureModels: azureModels ?? [],
+                      azureFoundryModels: azureFoundryModels ?? [],
+                      vertexModels: vertexModels ?? [],
+                      xaiModels: xaiModels ?? [],
+                      customModels: customModels ?? [],
                   }
                 : null,
             apiKeys: sources.apiKeys,
@@ -119,6 +135,10 @@ export function useSelectedModel(
             openCodeGoModels,
             bedrockModels,
             azureModels,
+            azureFoundryModels,
+            vertexModels,
+            xaiModels,
+            customModels,
             sources.apiKeys,
             configuredModelIds,
         ],

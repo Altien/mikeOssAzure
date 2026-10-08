@@ -153,6 +153,10 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
             "opencode-go": profile.openCodeGoModels,
             bedrock: profile.bedrockModels,
             azure: profile.azureModels,
+            "azure-foundry": profile.azureFoundryModels,
+            vertex: profile.vertexModels,
+            xai: profile.xaiModels,
+            custom: profile.customModels,
         };
         const routerSelectionValid =
             !router ||
@@ -469,6 +473,10 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
                                     }
                                     bedrockModels={profile?.bedrockModels}
                                     azureModels={profile?.azureModels}
+                                    azureFoundryModels={profile?.azureFoundryModels}
+                                    vertexModels={profile?.vertexModels}
+                                    xaiModels={profile?.xaiModels}
+                                    customModels={profile?.customModels}
                                     onNoModelsClick={setNoModelsWarning}
                                 />
                             </div>

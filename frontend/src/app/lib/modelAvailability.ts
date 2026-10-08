@@ -26,7 +26,12 @@ export type ModelProvider =
     | "kimi"
     | "azureOpenai"
     | "bedrock"
-    | "azure";
+    | "azure"
+    | "azure-foundry"
+    | "vertex"
+    | "xai"
+    | "custom"
+;
 
 export function getModelProvider(
     modelId: string,
@@ -38,6 +43,10 @@ export function getModelProvider(
     if (modelId.startsWith("opencode-go/")) return "opencode-go";
     if (modelId.startsWith("bedrock/")) return "bedrock";
     if (modelId.startsWith("azure/")) return "azure";
+    if (modelId.startsWith("azure-foundry/")) return "azure-foundry";
+    if (modelId.startsWith("vertex/")) return "vertex";
+    if (modelId.startsWith("xai/")) return "xai";
+    if (modelId.startsWith("custom/")) return "custom";
     if (modelId.startsWith("aoai:")) return "azureOpenai"; // dynamic (dev)
     const model =
         SETTINGS_MODELS.find((m) => m.id === canonicalModelId(modelId)) ??
@@ -76,8 +85,8 @@ export function isProviderAvailable(
     apiKeys: ApiKeyState,
 ): boolean {
     if (provider === "ollama") return true; // local, no key needed
-    if (provider === "azureOpenai") return !!apiKeys.azure_openai?.configured;
-    return !!apiKeys[provider]?.configured;
+    if (provider === "azureOpenai") return !!apiKeys.azure_openai?.configured && apiKeys.azure_openai?.enabled !== false;
+    return !!apiKeys[provider]?.configured && apiKeys[provider]?.enabled !== false;
 }
 
 export function providerLabel(provider: ModelProvider): string {
@@ -89,6 +98,10 @@ export function providerLabel(provider: ModelProvider): string {
     if (provider === "opencode-go") return "OpenCode Go";
     if (provider === "bedrock") return "Amazon Bedrock";
     if (provider === "azure") return "Azure OpenAI";
+    if (provider === "azure-foundry") return "Azure AI Foundry";
+    if (provider === "vertex") return "Google Vertex AI";
+    if (provider === "xai") return "xAI";
+    if (provider === "custom") return "OpenAI-compatible endpoint";
     if (provider === "ollama") return "Local (Ollama)";
     if (provider === "kimi") return "Kimi K3";
     if (provider === "azureOpenai") return "Azure OpenAI";

@@ -24,6 +24,7 @@ import {
     getUserProfile,
     isMfaRequiredError,
     saveApiKey,
+    setApiKeyEnabled,
     updateUserMfaOnLogin,
     updateUserProfile,
     updateChatModel,
@@ -68,10 +69,14 @@ interface UserProfile {
     openCodeGoModels: string[];
     bedrockModels: string[];
     azureModels: string[];
+    azureFoundryModels: string[];
+    vertexModels: string[];
+    xaiModels: string[];
+    customModels: string[];
     darkMode: boolean;
     projectMemoryDefault: boolean;
     apiKeys: ApiKeyState;
-    /** Settings saved with the user's own Bedrock/Azure keys. */
+    /** Settings saved with the user's own keys (region, endpoint, location, base URL). */
     apiKeySettings: ApiKeySettings;
 }
 
@@ -115,6 +120,10 @@ interface UserProfileContextType {
     updateOpenCodeGoModels: (models: string[]) => Promise<boolean>;
     updateBedrockModels: (models: string[]) => Promise<boolean>;
     updateAzureModels: (models: string[]) => Promise<boolean>;
+    updateAzureFoundryModels: (models: string[]) => Promise<boolean>;
+    updateVertexModels: (models: string[]) => Promise<boolean>;
+    updateXaiModels: (models: string[]) => Promise<boolean>;
+    updateCustomModels: (models: string[]) => Promise<boolean>;
     updateDarkMode: (enabled: boolean) => Promise<void>;
     updateProjectMemoryDefault: (enabled: boolean) => Promise<void>;
     updateApiKey: (
@@ -123,6 +132,7 @@ interface UserProfileContextType {
         settings?: ApiKeySettings[keyof ApiKeySettings],
     ) => Promise<boolean>;
     reloadProfile: () => Promise<void>;
+    updateApiKeyEnabled: (provider: ApiKeyProvider, enabled: boolean) => Promise<boolean>;
     incrementMessageCredits: () => Promise<boolean>;
 }
 
@@ -140,6 +150,10 @@ const API_KEY_PROVIDERS: ApiKeyProvider[] = [
     "opencode-go",
     "bedrock",
     "azure",
+    "azure-foundry",
+    "vertex",
+    "xai",
+    "custom",
     "courtlistener",
     // Upstream divergence (OSS-6, §2.3 item 3): dev's organisation
     // credentials (Key Vault) for Kimi and Azure OpenAI. The Azure OpenAI
@@ -159,6 +173,10 @@ function emptyApiKeys(): ApiKeyState {
         "opencode-go": { configured: false, source: null },
         bedrock: { configured: false, source: null },
         azure: { configured: false, source: null },
+        "azure-foundry": { configured: false, source: null },
+        vertex: { configured: false, source: null },
+        xai: { configured: false, source: null },
+        custom: { configured: false, source: null },
         courtlistener: { configured: false, source: null },
         kimi: { configured: false, source: null },
         azure_openai: { configured: false, source: null },
@@ -171,6 +189,7 @@ function toProfile(data: ApiUserProfile): UserProfile {
     for (const provider of API_KEY_PROVIDERS) {
         apiKeys[provider] = {
             configured: !!apiKeyStatus[provider],
+            enabled: apiKeyStatus.enabled?.[provider] !== false,
             source:
                 apiKeyStatus.sources?.[provider] ??
                 (apiKeyStatus[provider] ? "user" : null),
@@ -208,6 +227,18 @@ function toProfile(data: ApiUserProfile): UserProfile {
             : [],
         azureModels: Array.isArray(profile.azureModels)
             ? profile.azureModels
+            : [],
+        azureFoundryModels: Array.isArray(profile.azureFoundryModels)
+            ? profile.azureFoundryModels
+            : [],
+        vertexModels: Array.isArray(profile.vertexModels)
+            ? profile.vertexModels
+            : [],
+        xaiModels: Array.isArray(profile.xaiModels)
+            ? profile.xaiModels
+            : [],
+        customModels: Array.isArray(profile.customModels)
+            ? profile.customModels
             : [],
         apiKeys,
         apiKeySettings: apiKeyStatus.settings ?? {},
@@ -297,6 +328,10 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 openCodeGoModels: [],
                 bedrockModels: [],
                 azureModels: [],
+                azureFoundryModels: [],
+                vertexModels: [],
+                xaiModels: [],
+                customModels: [],
                 darkMode: false,
                 projectMemoryDefault: true,
                 apiKeys: emptyApiKeys(),
@@ -671,6 +706,82 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
         [user, accountGuard],
     );
 
+    const updateAzureFoundryModels = useCallback(
+        async (azureFoundryModels: string[]): Promise<boolean> => {
+            if (!user) return false;
+            try {
+                const current = accountGuard(user.id);
+                if (!current()) return false;
+                const updated = await updateUserProfile({ azureFoundryModels }, current);
+                if (!current()) return false;
+                setProfile((prev) =>
+                    prev ? { ...prev, ...toProfile(updated) } : null,
+                );
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        [user, accountGuard],
+    );
+
+    const updateVertexModels = useCallback(
+        async (vertexModels: string[]): Promise<boolean> => {
+            if (!user) return false;
+            try {
+                const current = accountGuard(user.id);
+                if (!current()) return false;
+                const updated = await updateUserProfile({ vertexModels }, current);
+                if (!current()) return false;
+                setProfile((prev) =>
+                    prev ? { ...prev, ...toProfile(updated) } : null,
+                );
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        [user, accountGuard],
+    );
+
+    const updateXaiModels = useCallback(
+        async (xaiModels: string[]): Promise<boolean> => {
+            if (!user) return false;
+            try {
+                const current = accountGuard(user.id);
+                if (!current()) return false;
+                const updated = await updateUserProfile({ xaiModels }, current);
+                if (!current()) return false;
+                setProfile((prev) =>
+                    prev ? { ...prev, ...toProfile(updated) } : null,
+                );
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        [user, accountGuard],
+    );
+
+    const updateCustomModels = useCallback(
+        async (customModels: string[]): Promise<boolean> => {
+            if (!user) return false;
+            try {
+                const current = accountGuard(user.id);
+                if (!current()) return false;
+                const updated = await updateUserProfile({ customModels }, current);
+                if (!current()) return false;
+                setProfile((prev) =>
+                    prev ? { ...prev, ...toProfile(updated) } : null,
+                );
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        [user, accountGuard],
+    );
+
     const updateDarkMode = useCallback(
         async (enabled: boolean): Promise<void> => {
             if (!user) throw new Error("Sign in to update Dark Mode.");
@@ -730,6 +841,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                                   ...prev.apiKeys,
                                   [provider]: {
                                       configured: status[provider],
+                                      enabled: status.enabled?.[provider] !== false,
                                       source:
                                           status.sources?.[provider] ?? null,
                                   },
@@ -746,6 +858,35 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             }
         },
         [user],
+    );
+
+    const updateApiKeyEnabled = useCallback(
+        async (provider: ApiKeyProvider, enabled: boolean): Promise<boolean> => {
+            if (!user) return false;
+            try {
+                const current = accountGuard(user.id);
+                if (!current()) return false;
+                const status = await setApiKeyEnabled(provider, enabled, current);
+                if (!current()) return false;
+                setProfile((prev) => prev ? {
+                    ...prev,
+                    apiKeys: {
+                        ...prev.apiKeys,
+                        [provider]: {
+                            configured: status[provider],
+                            source: status.sources?.[provider] ?? null,
+                            enabled: status.enabled?.[provider] !== false,
+                        },
+                    },
+                } : null);
+                void refreshConfiguredModels();
+                return true;
+            } catch (error) {
+                if (isMfaRequiredError(error)) throw error;
+                return false;
+            }
+        },
+        [user, accountGuard],
     );
 
     const reloadProfile = useCallback(async () => {
@@ -790,9 +931,14 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             updateOpenCodeGoModels,
             updateBedrockModels,
             updateAzureModels,
+            updateAzureFoundryModels,
+            updateVertexModels,
+            updateXaiModels,
+            updateCustomModels,
             updateDarkMode,
             updateProjectMemoryDefault,
             updateApiKey,
+            updateApiKeyEnabled,
             reloadProfile,
             incrementMessageCredits,
         }),
@@ -816,9 +962,14 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             updateOpenCodeGoModels,
             updateBedrockModels,
             updateAzureModels,
+            updateAzureFoundryModels,
+            updateVertexModels,
+            updateXaiModels,
+            updateCustomModels,
             updateDarkMode,
             updateProjectMemoryDefault,
             updateApiKey,
+            updateApiKeyEnabled,
             reloadProfile,
             incrementMessageCredits,
         ],

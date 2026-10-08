@@ -129,7 +129,7 @@ export function vercelModelOptions(models: string[]): ModelOption[] {
     id: `vercel/${model}`,
     label: modelDisplayName(model),
     group: underlyingProviderGroup(model, "vercel"),
-    source: "Vercel AI Gateway",
+    source: "Vercel",
   }));
 }
 
@@ -138,7 +138,7 @@ export function openCodeGoModelOptions(models: string[]): ModelOption[] {
     id: `opencode-go/${model}`,
     label: modelDisplayName(model),
     group: underlyingProviderGroup(model, "opencode-go"),
-    source: "OpenCode Go",
+    source: "OpenCode",
   }));
 }
 

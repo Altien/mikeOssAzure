@@ -652,7 +652,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
                           openCodeGoModels.length === 0);
                       setModelError(
                         routerHasNoModels
-                          ? "Your router is connected, but it has no saved models. Add one in Bring Your Own Keys → Routers."
+                          ? "Your router is connected, but it has no saved models. Open your provider in Bring Your Own Keys and add a model under Model Selections."
                           : "Add an API key in Bring Your Own Keys before selecting a model.",
                       );
                     }}

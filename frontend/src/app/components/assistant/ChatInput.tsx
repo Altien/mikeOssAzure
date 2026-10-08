@@ -212,6 +212,10 @@ function ChatInputForChatImpl(
                   openCodeGoModels: profile.openCodeGoModels,
                   bedrockModels: profile.bedrockModels,
                   azureModels: profile.azureModels,
+                  azureFoundryModels: profile.azureFoundryModels,
+                  vertexModels: profile.vertexModels,
+                  xaiModels: profile.xaiModels,
+                  customModels: profile.customModels,
                   }
                 : null,
         apiKeys: apiKeysDegraded ? undefined : profile?.apiKeys,
@@ -891,6 +895,10 @@ function ChatInputForChatImpl(
                                     openCodeGoModels={profile?.openCodeGoModels}
                                     bedrockModels={profile?.bedrockModels}
                                     azureModels={profile?.azureModels}
+                                    azureFoundryModels={profile?.azureFoundryModels}
+                                    vertexModels={profile?.vertexModels}
+                                    xaiModels={profile?.xaiModels}
+                                    customModels={profile?.customModels}
                                     compact={compactControls}
                                     triggerClassName={cn(
                                         "h-7.5",

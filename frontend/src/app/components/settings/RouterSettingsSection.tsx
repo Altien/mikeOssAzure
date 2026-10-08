@@ -7,19 +7,19 @@ import {
   DropdownSurface,
 } from "@/shared/ui/dropdown";
 import { OptionPill } from "@/app/components/ui/option-pill";
-import { SETTINGS_CONTROL_CLASS } from "@/app/components/settings/SettingsTextInput";
+import { FieldLabel, FormTextInput } from "@/app/components/ui/form-field";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import {
   getOpenCodeGoModels,
+  getBedrockModels,
+  getCustomEndpointModels,
+  getXaiModels,
   getOpenRouterModels,
   getVercelModels,
   type RouterCatalogModel,
 } from "@/app/lib/mikeApi";
 import type { RouterSlug } from "@/app/components/assistant/ModelToggle";
-import { GlassCardUI } from "@/shared/ui/GlassCardUI";
-import { SettingsHeading } from "./SettingsHeading";
-import { SettingsRow } from "./SettingsRow";
-import { SettingsDescription, SettingsLabel } from "./SettingsText";
+import { SettingsDescription } from "./SettingsText";
 
 const COST_FORMATTER = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -87,6 +87,26 @@ const ROUTER_MODEL_ID: Record<
     shape: "a deployment name with no spaces",
     example: "gpt-6.1-sol",
   },
+  "azure-foundry": {
+    pattern: /^[^\s]+$/,
+    shape: "a deployment name with no spaces",
+    example: "claude-opus-5-5",
+  },
+  vertex: {
+    pattern: /^[^\s]+$/,
+    shape: "a Vertex AI model ID with no spaces",
+    example: "gemini-3.1-pro-preview",
+  },
+  xai: {
+    pattern: /^[^\s]+$/,
+    shape: "a model name with no spaces",
+    example: "grok-4.3",
+  },
+  custom: {
+    pattern: /^[^\s]+$/,
+    shape: "a model name with no spaces",
+    example: "my-model",
+  },
 };
 
 /**
@@ -128,7 +148,7 @@ function catalogModelMatches(model: RouterCatalogModel, query: string) {
   );
 }
 
-export function RouterSettingsSection() {
+export function RouterSettingsSection({ provider }: { provider?: RouterSlug } = {}) {
   const {
     profile,
     updateOpenRouterModels,
@@ -136,32 +156,46 @@ export function RouterSettingsSection() {
     updateOpenCodeGoModels,
     updateBedrockModels,
     updateAzureModels,
+    updateAzureFoundryModels,
+    updateVertexModels,
+    updateXaiModels,
+    updateCustomModels,
   } = useUserProfile();
-  const openRouterConfigured = profile?.apiKeys.openrouter.configured === true;
-  const vercelConfigured = profile?.apiKeys.vercel.configured === true;
+  const configured = (slug: RouterSlug) =>
+    (!provider || provider === slug) &&
+    profile?.apiKeys[slug]?.configured === true;
+  const azureFoundryConfigured = configured("azure-foundry");
+  const vertexConfigured = configured("vertex");
+  const xaiConfigured = configured("xai");
+  const customConfigured = configured("custom");
+  const openRouterConfigured = (!provider || provider === "openrouter") && profile?.apiKeys.openrouter.configured === true;
+  const vercelConfigured = (!provider || provider === "vercel") && profile?.apiKeys.vercel.configured === true;
   const openCodeGoConfigured =
-    profile?.apiKeys["opencode-go"].configured === true;
-  const bedrockConfigured = profile?.apiKeys.bedrock.configured === true;
-  const azureConfigured = profile?.apiKeys.azure.configured === true;
+    (!provider || provider === "opencode-go") && profile?.apiKeys["opencode-go"].configured === true;
+  const bedrockConfigured = (!provider || provider === "bedrock") && profile?.apiKeys.bedrock.configured === true;
+  const azureConfigured = (!provider || provider === "azure") && profile?.apiKeys.azure.configured === true;
 
   if (
     !openRouterConfigured &&
     !vercelConfigured &&
     !openCodeGoConfigured &&
     !bedrockConfigured &&
-    !azureConfigured
+    !azureConfigured &&
+    !azureFoundryConfigured &&
+    !vertexConfigured &&
+    !xaiConfigured &&
+    !customConfigured
   ) {
     return null;
   }
 
   return (
     <section id="routers" className="scroll-mt-6 space-y-3">
-      <SettingsHeading>Routers</SettingsHeading>
+      <FieldLabel as="p">Model Selections</FieldLabel>
       <SettingsDescription>
-        Choose models from each router&apos;s catalog or enter a model ID. Saved
-        models appear in model selectors.
+        Add the models you want to use. Saved models appear in model selectors.
       </SettingsDescription>
-      <GlassCardUI>
+      <div className="space-y-4">
         {openRouterConfigured && (
           <RouterModelsSetting
             provider="openrouter"
@@ -191,9 +225,10 @@ export function RouterSettingsSection() {
         )}
         {bedrockConfigured && (
           <RouterModelsSetting
+            key={`bedrock:${profile?.apiKeySettings?.bedrock?.region ?? ""}`}
             provider="bedrock"
             label="Amazon Bedrock"
-            description="Enter the model or inference-profile IDs enabled in your AWS account and region."
+            loadCatalog={getBedrockModels}
             selection={profile?.bedrockModels ?? []}
             onSave={updateBedrockModels}
           />
@@ -202,12 +237,46 @@ export function RouterSettingsSection() {
           <RouterModelsSetting
             provider="azure"
             label="Azure OpenAI"
-            description="Enter your deployment names. Deployments named after their model (for example gpt-6.1-sol) also get that model's reasoning controls."
             selection={profile?.azureModels ?? []}
             onSave={updateAzureModels}
           />
         )}
-      </GlassCardUI>
+        {azureFoundryConfigured && (
+          <RouterModelsSetting
+            provider="azure-foundry"
+            label="Azure AI Foundry"
+            selection={profile?.azureFoundryModels ?? []}
+            onSave={updateAzureFoundryModels}
+          />
+        )}
+        {vertexConfigured && (
+          <RouterModelsSetting
+            provider="vertex"
+            label="Google Vertex AI"
+            selection={profile?.vertexModels ?? []}
+            onSave={updateVertexModels}
+          />
+        )}
+        {xaiConfigured && (
+          <RouterModelsSetting
+            provider="xai"
+            label="xAI"
+            selection={profile?.xaiModels ?? []}
+            loadCatalog={getXaiModels}
+            onSave={updateXaiModels}
+          />
+        )}
+        {customConfigured && (
+          <RouterModelsSetting
+            key={`custom:${profile?.apiKeySettings?.custom?.baseUrl ?? ""}`}
+            provider="custom"
+            label="OpenAI-compatible endpoint"
+            selection={profile?.customModels ?? []}
+            loadCatalog={getCustomEndpointModels}
+            onSave={updateCustomModels}
+          />
+        )}
+      </div>
     </section>
   );
 }
@@ -215,14 +284,12 @@ export function RouterSettingsSection() {
 function RouterModelsSetting({
   provider,
   label,
-  description,
   selection,
   loadCatalog,
   onSave,
 }: {
   provider: RouterSlug;
   label: string;
-  description?: string;
   selection: string[];
   /** Omitted for providers with no listable catalog: IDs are typed only. */
   loadCatalog?: () => Promise<RouterCatalogModel[]>;
@@ -348,18 +415,10 @@ function RouterModelsSetting({
   };
 
   return (
-    <SettingsRow layout="stacked">
-      <div className="flex items-center gap-2">
-        <div className={description ? "space-y-1" : undefined}>
-          <SettingsLabel>{label} models</SettingsLabel>
-          {description && (
-            <SettingsDescription>{description}</SettingsDescription>
-          )}
-        </div>
-        {saving && (
-          <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />
-        )}
-      </div>
+    <div className="min-w-0 space-y-3">
+      {saving && (
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />
+      )}
       <div
         ref={typeaheadRef}
         className="relative"
@@ -435,10 +494,9 @@ function RouterModelsSetting({
             )}
           </DropdownSurface>
         )}
-        <div
-          className={`flex h-9 min-w-0 flex-1 items-center px-0 focus-within:border-gray-200 focus-within:ring-2 focus-within:ring-gray-300/45 ${SETTINGS_CONTROL_CLASS}`}
-        >
-          <input
+        <div className="relative min-w-0">
+          <FormTextInput
+            id={`${provider}-model-input`}
             ref={inputRef}
             type="text"
             aria-label={`${label} models`}
@@ -458,7 +516,7 @@ function RouterModelsSetting({
             value={input}
             disabled={saving}
             placeholder={`e.g. ${ROUTER_MODEL_ID[provider].example}`}
-            className="h-full min-w-0 flex-1 bg-transparent text-sm text-gray-900 outline-none placeholder:text-gray-400 disabled:cursor-not-allowed"
+            className={loadCatalog ? "pr-9" : undefined}
             onChange={(event) => {
               setInput(event.target.value);
               // Typing never claims a highlight: Enter must add
@@ -518,7 +576,7 @@ function RouterModelsSetting({
                 setActiveCatalogIndex(-1);
                 if (nextOpen) inputRef.current?.focus();
               }}
-              className="flex h-full shrink-0 items-center justify-end text-gray-400 transition-colors hover:text-gray-700 disabled:cursor-default disabled:opacity-40"
+              className="absolute inset-y-0 right-3 flex items-center text-gray-400 transition-colors hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-default disabled:opacity-40"
             >
               <ChevronDown
                 className={`h-3.5 w-3.5 transition-transform duration-200 ${catalogOpen ? "rotate-180" : ""}`}
@@ -532,6 +590,7 @@ function RouterModelsSetting({
           {selection.map((model) => (
             <OptionPill
               key={model}
+              surface="flat"
               disabled={saving}
               aria-label={`Remove ${model}`}
               title={`Remove ${model}`}
@@ -546,6 +605,6 @@ function RouterModelsSetting({
         </div>
       )}
       {error && <p className="text-xs text-red-600">{error}</p>}
-    </SettingsRow>
+    </div>
   );
 }

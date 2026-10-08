@@ -1,3 +1,4 @@
+import { isProviderDisabled } from "./providerPreferences";
 import type {
   CommitteeModel,
   ConfiguredModel,
@@ -103,6 +104,7 @@ export async function apiKeyForConfiguredModel(
   model: ConfiguredModel,
   apiKeys?: UserApiKeys,
 ): Promise<string | null> {
+  if (model.apiKeyProvider && isProviderDisabled(model.apiKeyProvider, apiKeys)) return null;
   if (model.apiKey?.trim()) return model.apiKey.trim();
   if (model.apiKeyProvider) {
     const userKey = apiKeys?.[model.apiKeyProvider];

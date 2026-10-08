@@ -88,7 +88,10 @@ const MODEL_NAME_ACRONYMS: Record<string, string> = {
 
 export function modelDisplayName(modelId: string): string {
   const normalized = modelId
-    .replace(/^(?:openrouter|vercel|opencode-go|bedrock|azure|ollama)\//, "")
+    .replace(
+      /^(?:openrouter|vercel|opencode-go|bedrock|azure-foundry|azure|vertex|xai|custom|ollama)\//,
+      "",
+    )
     .split("/")
     .at(-1)!
     .replace(/(\d)-(\d)/g, "$1.$2");
@@ -124,6 +127,10 @@ export const ROUTER_SLUGS = [
   "opencode-go",
   "bedrock",
   "azure",
+  "azure-foundry",
+  "vertex",
+  "xai",
+  "custom",
 ] as const;
 export type RouterSlug = (typeof ROUTER_SLUGS)[number];
 
@@ -150,6 +157,8 @@ const ROUTER_VENDOR_GROUPS: Record<string, string> = {
   mistralai: "Mistral AI",
   meta: "Meta",
   amazon: "Amazon",
+  xai: "xAI",
+  grok: "xAI",
 };
 
 /** Model maker used for grouping; the router remains a separate source. */
@@ -198,6 +207,10 @@ interface Props {
   openCodeGoModels?: string[];
   bedrockModels?: string[];
   azureModels?: string[];
+  azureFoundryModels?: string[];
+  vertexModels?: string[];
+  xaiModels?: string[];
+  customModels?: string[];
   compact?: boolean;
   tone?: "muted" | "default";
   /** Render as a full-width liquid-glass control inside a modal form. */
@@ -237,7 +250,7 @@ export function vercelModelOptions(models: string[]): ModelOption[] {
     id: `vercel/${model}`,
     label: modelDisplayName(model),
     group: underlyingProviderGroup(model, "vercel"),
-    source: "Vercel AI Gateway",
+    source: "Vercel",
   }));
 }
 
@@ -278,7 +291,7 @@ export function bedrockModelOptions(models: string[]): ModelOption[] {
       id: `bedrock/${model}`,
       label: modelDisplayName(catalogModel),
       group: underlyingProviderGroup(catalogModel, "bedrock"),
-      source: "Amazon Bedrock",
+      source: "Bedrock",
     };
   });
 }
@@ -289,7 +302,57 @@ export function azureModelOptions(models: string[]): ModelOption[] {
     id: `azure/${model}`,
     label: modelDisplayName(model),
     group: underlyingProviderGroup(model, "azure"),
-    source: "Azure OpenAI",
+    source: "Azure",
+  }));
+}
+
+/** Foundry deployments are named by their owner too. */
+export function azureFoundryModelOptions(models: string[]): ModelOption[] {
+  return models.map((model) => ({
+    id: `azure-foundry/${model}`,
+    label: modelDisplayName(model),
+    group: underlyingProviderGroup(model, "azure-foundry"),
+    source: "Foundry",
+  }));
+}
+
+/**
+ * A Vertex AI model id without the parts that only matter to Google: the
+ * version pin on Claude ("claude-opus-5-5@20260101") and the "-maas" suffix
+ * on partner models ("meta/llama-4-maverick-maas").
+ */
+export function vertexCatalogModel(modelId: string): string {
+  return modelId.replace(/@[^/]*$/, "").replace(/-maas$/, "");
+}
+
+export function vertexModelOptions(models: string[]): ModelOption[] {
+  return models.map((model) => {
+    const catalogModel = vertexCatalogModel(model);
+    return {
+      id: `vertex/${model}`,
+      label: modelDisplayName(catalogModel),
+      group: underlyingProviderGroup(catalogModel, "vertex"),
+      source: "Vertex",
+    };
+  });
+}
+
+export function xaiModelOptions(models: string[]): ModelOption[] {
+  return models.map((model) => ({
+    id: `xai/${model}`,
+    label: modelDisplayName(model),
+    group: "xAI",
+    source: "xAI",
+  }));
+}
+
+/** Models behind the user's own OpenAI-compatible endpoint. */
+export function customModelOptions(models: string[]): ModelOption[] {
+  return models.map((model) => ({
+    id: `custom/${model}`,
+    label: modelDisplayName(model),
+    group: underlyingProviderGroup(model, "custom"),
+    source: "Custom",
   }));
 }
 
@@ -298,7 +361,7 @@ export function openCodeGoModelOptions(models: string[]): ModelOption[] {
     id: `opencode-go/${model}`,
     label: modelDisplayName(model),
     group: underlyingProviderGroup(model, "opencode-go"),
-    source: "OpenCode Go",
+    source: "OpenCode",
   }));
 }
 
@@ -324,6 +387,10 @@ export function ModelToggle({
   openCodeGoModels = [],
   bedrockModels = [],
   azureModels = [],
+  azureFoundryModels = [],
+  vertexModels = [],
+  xaiModels = [],
+  customModels = [],
   compact = false,
   tone,
   modalInput = false,
@@ -341,6 +408,10 @@ export function ModelToggle({
     ...openCodeGoModelOptions(openCodeGoModels),
     ...bedrockModelOptions(bedrockModels),
     ...azureModelOptions(azureModels),
+    ...azureFoundryModelOptions(azureFoundryModels),
+    ...vertexModelOptions(vertexModels),
+    ...xaiModelOptions(xaiModels),
+    ...customModelOptions(customModels),
     ...extraModels.map((model) => ({
       ...model,
       label: modelDisplayName(model.id),
@@ -379,6 +450,10 @@ export function ModelToggle({
     "opencode-go": openCodeGoModels,
     bedrock: bedrockModels,
     azure: azureModels,
+    "azure-foundry": azureFoundryModels,
+    vertex: vertexModels,
+    xai: xaiModels,
+    custom: customModels,
   });
   return (
     <ModelToggleUI

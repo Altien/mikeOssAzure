@@ -116,6 +116,10 @@ function providerLabel(provider: Provider): string {
     if (provider === "opencode-go") return "OpenCode Go";
     if (provider === "bedrock") return "Amazon Bedrock";
     if (provider === "azure") return "Azure OpenAI";
+    if (provider === "azure-foundry") return "Azure AI Foundry";
+    if (provider === "vertex") return "Google Vertex AI";
+    if (provider === "xai") return "xAI";
+    if (provider === "custom") return "OpenAI-compatible endpoint";
     if (provider === "openai-compatible") return "Configured endpoint";
     return "Gemini";
 }

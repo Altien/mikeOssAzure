@@ -20,7 +20,6 @@ function renderField({
   render(
     <ApiKeyField
       label="Anthropic (Claude) API Key"
-      placeholder="sk-ant-..."
       hasSavedKey={hasSavedKey}
       onSave={onSave}
       onRemove={onRemove}
@@ -42,11 +41,11 @@ describe("ApiKeyField", () => {
     expect(screen.queryByText("Saved key hidden")).toBeNull();
   });
 
-  it("shows an empty input with the placeholder when no key is saved", () => {
+  it("shows an empty input without a placeholder when no key is saved", () => {
     const { input } = renderField();
 
     expect(input.value).toBe("");
-    expect(input.placeholder).toBe("sk-ant-...");
+    expect(input).not.toHaveAttribute("placeholder");
     expect(input.readOnly).toBe(false);
   });
 
@@ -134,7 +133,6 @@ describe("ApiKeyField with a required setting", () => {
     render(
       <ApiKeyField
         label="Amazon Bedrock API Key"
-        placeholder="Enter your key"
         hasSavedKey={hasSavedKey}
         setting={{ ...regionSetting, savedValue }}
         onSave={onSave}

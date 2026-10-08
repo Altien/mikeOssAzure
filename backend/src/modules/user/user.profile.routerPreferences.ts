@@ -25,6 +25,13 @@ const ROUTER_MODEL_ID_RE: Record<RouterSlug, RegExp> = {
     // deployment names.
     bedrock: /^[^\s]+$/,
     azure: /^[^\s]+$/,
+    // Foundry deployment names, Vertex model ids ("gemini-3.1-pro-preview",
+    // "claude-opus-5-5@20260101", "meta/llama-4-maverick-maas"), xAI model
+    // names and whatever a custom endpoint calls its models.
+    "azure-foundry": /^[^\s]+$/,
+    vertex: /^[^\s]+$/,
+    xai: /^[^\s]+$/,
+    custom: /^[^\s]+$/,
 };
 
 /**
@@ -37,6 +44,10 @@ export const ROUTER_PROFILE_FIELDS: Record<RouterSlug, string> = {
     "opencode-go": "openCodeGoModels",
     bedrock: "bedrockModels",
     azure: "azureModels",
+    "azure-foundry": "azureFoundryModels",
+    vertex: "vertexModels",
+    xai: "xaiModels",
+    custom: "customModels",
 };
 
 export function normalizeRouterModels(

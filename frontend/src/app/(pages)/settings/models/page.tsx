@@ -17,6 +17,10 @@ import {
     MODELS,
     SETTINGS_MODELS,
     azureModelOptions,
+    azureFoundryModelOptions,
+    vertexModelOptions,
+    xaiModelOptions,
+    customModelOptions,
     bedrockModelOptions,
     canonicalModelId,
     mergeConfiguredModelOptions,
@@ -68,6 +72,10 @@ export default function ModelPreferencesPage() {
     );
     const selectedBedrockOptions = bedrockModelOptions(profile?.bedrockModels ?? []);
     const selectedAzureOptions = azureModelOptions(profile?.azureModels ?? []);
+    const selectedAzureFoundryOptions = azureFoundryModelOptions(profile?.azureFoundryModels ?? []);
+    const selectedVertexOptions = vertexModelOptions(profile?.vertexModels ?? []);
+    const selectedXaiOptions = xaiModelOptions(profile?.xaiModels ?? []);
+    const selectedCustomOptions = customModelOptions(profile?.customModels ?? []);
 
     useEffect(() => {
         return () => {
@@ -127,6 +135,10 @@ export default function ModelPreferencesPage() {
                                 ...selectedOpenCodeGoOptions,
                 ...selectedBedrockOptions,
                 ...selectedAzureOptions,
+                ...selectedAzureFoundryOptions,
+                ...selectedVertexOptions,
+                ...selectedXaiOptions,
+                ...selectedCustomOptions,
                                 ...aoai.modelOptions,
                             ])}
                             apiKeys={profile?.apiKeys}
@@ -157,6 +169,10 @@ export default function ModelPreferencesPage() {
                                 ...selectedOpenCodeGoOptions,
                 ...selectedBedrockOptions,
                 ...selectedAzureOptions,
+                ...selectedAzureFoundryOptions,
+                ...selectedVertexOptions,
+                ...selectedXaiOptions,
+                ...selectedCustomOptions,
                                 ...aoai.modelOptions,
                             ])}
                             apiKeys={profile?.apiKeys}
@@ -190,6 +206,10 @@ export default function ModelPreferencesPage() {
                                 ...selectedOpenCodeGoOptions,
                 ...selectedBedrockOptions,
                 ...selectedAzureOptions,
+                ...selectedAzureFoundryOptions,
+                ...selectedVertexOptions,
+                ...selectedXaiOptions,
+                ...selectedCustomOptions,
                                 ...aoai.modelOptions,
                             ])}
                             apiKeys={profile?.apiKeys}

@@ -35,7 +35,7 @@
 // tests import exactly the same names they always did.
 
 export { errorMessage } from "./user.shared";
-export { getOrganisationApiKeys } from "./user.apiKeyStore";
+export { getOrganisationApiKeys, getUserExecutionApiKeys } from "./user.apiKeyStore";
 
 export {
     validateProfilePayload,
@@ -51,6 +51,7 @@ export {
 } from "./user.profile";
 
 export { setMfaOnLogin } from "./user.mfa";
+export { setApiKeyEnabled } from "./user.apiKeyEnabled";
 
 export {
     getCustomInstructions,

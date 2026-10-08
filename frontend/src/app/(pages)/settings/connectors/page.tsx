@@ -1199,6 +1199,19 @@ export default function ConnectorsPage() {
   const installedGoogle = googleConnectors.filter(
     (connector) => connector.status?.connected,
   );
+  // Discover only offers what is not installed yet: an added connector is
+  // managed from Installed.
+  const discoverGoogle = googleConnectors.filter(
+    (connector) => !connector.status?.connected,
+  );
+  const discoverPresets = CONNECTOR_PRESETS.filter(
+    (preset) =>
+      !connectors.some(
+        (connector) =>
+          normalizedServerUrl(connector.serverUrl) ===
+          normalizedServerUrl(preset.serverUrl),
+      ),
+  );
   const googleLoading = googleConnectors.some((connector) => connector.loading);
   const googleAdding = googleConnectors.some(
     (connector) => connector.phase !== "idle",
@@ -1298,13 +1311,17 @@ export default function ConnectorsPage() {
             Discover
           </SettingsHeading>
         </div>
+        {discoverGoogle.length === 0 && discoverPresets.length === 0 && (
+          <SettingsDescription>
+            Every available connector is installed.
+          </SettingsDescription>
+        )}
         <div className="grid grid-cols-1 gap-3 @min-[32rem]:grid-cols-2">
-          {googleConnectors.map((connector) => (
+          {discoverGoogle.map((connector) => (
             <DiscoverCard
               key={connector.provider}
               name={connector.name}
               icon={<GoogleConnectorIcon provider={connector.provider} />}
-              added={!!connector.status?.connected}
               adding={connector.phase === "adding"}
               authorizing={connector.phase === "authorizing"}
               loading={connector.loading}
@@ -1316,12 +1333,7 @@ export default function ConnectorsPage() {
               onCancel={connector.cancel}
             />
           ))}
-          {CONNECTOR_PRESETS.map((preset) => {
-            const isAdded = connectors.some(
-              (connector) =>
-                normalizedServerUrl(connector.serverUrl) ===
-                normalizedServerUrl(preset.serverUrl),
-            );
+          {discoverPresets.map((preset) => {
             const isAdding =
               busyKey === "create" &&
               installingPresetUrl !== null &&
@@ -1337,7 +1349,6 @@ export default function ConnectorsPage() {
                 key={preset.serverUrl}
                 name={preset.name}
                 icon={<ConnectorBrandIcon name={preset.name} />}
-                added={isAdded}
                 adding={isAdding && !isAuthorizing}
                 authorizing={isAuthorizing}
                 loading={loading}
@@ -1549,7 +1560,6 @@ function ConnectorRow({
 function DiscoverCard({
   name,
   icon,
-  added,
   adding,
   authorizing,
   loading,
@@ -1559,7 +1569,6 @@ function DiscoverCard({
 }: {
   name: string;
   icon: ReactNode;
-  added: boolean;
   adding: boolean;
   authorizing: boolean;
   loading: boolean;
@@ -1576,23 +1585,15 @@ function DiscoverCard({
           tone="blue"
           size="sm"
           onClick={authorizing ? onCancel : onAdd}
-          disabled={loading || added || (!authorizing && (adding || disabled))}
+          disabled={loading || (!authorizing && (adding || disabled))}
           loading={adding}
           aria-label={
-            added
-              ? `${name} connector added`
-              : authorizing
-                ? `Cancel ${name} authorization`
-                : `Add ${name} connector`
+            authorizing
+              ? `Cancel ${name} authorization`
+              : `Add ${name} connector`
           }
         >
-          {added
-            ? "Added"
-            : authorizing
-              ? "Cancel"
-              : adding
-                ? "Adding..."
-                : "Add"}
+          {authorizing ? "Cancel" : adding ? "Adding..." : "Add"}
         </PillButtonUI>
       }
     />

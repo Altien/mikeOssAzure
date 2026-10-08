@@ -21,6 +21,8 @@ import {
     isSupportedOpenCodeGoModel,
     normalizeReasoningLevelForModel,
     reasoningLevelsForModel,
+    isAzureFoundryClaudeDeployment,
+    vertexModelProtocol,
 } from "../llm/models";
 
 // ---------------------------------------------------------------------------
@@ -36,6 +38,34 @@ describe("providerForModel", () => {
             "bedrock",
         );
         expect(providerForModel("azure/gpt-6.1-sol")).toBe("azure");
+    });
+
+    it("routes the Foundry, Vertex, xAI and custom-endpoint prefixes", () => {
+        // "azure-foundry/" must not be read as an Azure OpenAI deployment.
+        expect(providerForModel("azure-foundry/claude-opus-5-5")).toBe(
+            "azure-foundry",
+        );
+        expect(providerForModel("vertex/gemini-3.1-pro-preview")).toBe(
+            "vertex",
+        );
+        expect(providerForModel("xai/grok-4.3")).toBe("xai");
+        expect(providerForModel("custom/gpt-6.1-sol")).toBe("custom");
+    });
+
+    it("picks a Vertex protocol and a Foundry protocol from the id", () => {
+        expect(vertexModelProtocol("vertex/claude-opus-5-5@20260101")).toBe(
+            "anthropic",
+        );
+        expect(vertexModelProtocol("vertex/meta/llama-4-maverick-maas")).toBe(
+            "maas",
+        );
+        expect(vertexModelProtocol("vertex/gemini-3.8-flash")).toBe("gemini");
+        expect(
+            isAzureFoundryClaudeDeployment("azure-foundry/Claude-Opus-prod"),
+        ).toBe(true);
+        expect(
+            isAzureFoundryClaudeDeployment("azure-foundry/mistral-large-4"),
+        ).toBe(false);
     });
 
     it("maps claude-* ids to the claude provider", () => {
@@ -267,7 +297,33 @@ describe("vercelModelId", () => {
     });
 });
 
+describe("resolveModel for account-specific providers", () => {
+    it("accepts the new prefixes by shape and rejects malformed ids", () => {
+        for (const id of [
+            "azure-foundry/claude-opus-5-5",
+            "vertex/claude-opus-5-5@20260101",
+            "vertex/meta/llama-4-maverick-maas",
+            "xai/grok-4.3",
+            "custom/deepseek/deepseek-v4",
+        ]) {
+            expect(resolveModel(id, "fallback")).toBe(id);
+        }
+        expect(resolveModel("vertex/", "fallback")).toBe("fallback");
+        expect(resolveModel("custom/has space", "fallback")).toBe("fallback");
+    });
+});
+
 describe("reasoningLevelsForModel", () => {
+    it("recognizes Claude behind Vertex and Foundry ids", () => {
+        for (const model of [
+            "vertex/claude-opus-5-5@20260101",
+            "vertex/claude-opus-5-5",
+            "azure-foundry/claude-opus-5-5",
+        ]) {
+            expect(reasoningLevelsForModel(model)).not.toContain("none");
+        }
+    });
+
     it("recognizes Claude behind Bedrock ids, which cannot disable thinking", () => {
         for (const model of [
             "bedrock/anthropic.claude-opus-5-5",

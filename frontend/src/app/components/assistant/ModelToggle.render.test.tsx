@@ -38,6 +38,8 @@ function keys(configured: Partial<Record<keyof ApiKeyState, boolean>>) {
         "claude",
         "gemini",
         "openai",
+        "bedrock",
+        "azure",
         "openrouter",
         "vercel",
         "opencode-go",
@@ -374,7 +376,7 @@ describe("ModelToggle provider grouping", () => {
         await user.click(await screen.findByText("Zhipu AI"));
 
         expect(await screen.findByText("Glm 5")).toBeInTheDocument();
-        expect(screen.queryByText("OpenCode Go")).not.toBeInTheDocument();
+        expect(screen.getByText("OpenCode")).toBeInTheDocument();
     });
 
     it("hides the group when the OpenCode Go key is missing", async () => {
@@ -390,10 +392,10 @@ describe("ModelToggle provider grouping", () => {
 
         await user.click(screen.getByRole("button", { name: "Choose model" }));
 
-        expect(screen.queryByText("OpenCode Go")).not.toBeInTheDocument();
+        expect(screen.queryByText("OpenCode")).not.toBeInTheDocument();
     });
 
-    it("shows route labels only when the same provider model has duplicates", async () => {
+    it("distinguishes direct and routed copies of the same model", async () => {
         const user = userEvent.setup();
         render(
             <ModelToggle
@@ -408,6 +410,29 @@ describe("ModelToggle provider grouping", () => {
 
         expect(screen.getByText("Direct")).toBeInTheDocument();
         expect(screen.getByText("OpenRouter")).toBeInTheDocument();
+    });
+
+    it.each([
+        { source: "OpenRouter", provider: "openrouter", models: { openRouterModels: ["openai/gpt-4o"] }, id: "openrouter/openai/gpt-4o" },
+        { source: "Azure", provider: "azure", models: { azureModels: ["gpt-4o"] }, id: "azure/gpt-4o" },
+        { source: "Bedrock", provider: "bedrock", models: { bedrockModels: ["us.anthropic.claude-sonnet-4-6-v1:0"] }, id: "bedrock/us.anthropic.claude-sonnet-4-6-v1:0" },
+    ])("identifies $source even without a direct copy of the model", async ({ source, provider, models, id }) => {
+        const user = userEvent.setup();
+        const onChange = vi.fn();
+        render(
+            <ModelToggle
+                value={id}
+                onChange={onChange}
+                apiKeys={keys({ [provider]: true })}
+                {...models}
+            />,
+        );
+
+        await user.click(screen.getByRole("button", { name: "Choose model" }));
+        const row = screen.getByRole("menuitem", { name: new RegExp(source) });
+        expect(row).toHaveTextContent(source);
+        await user.click(row);
+        expect(onChange).toHaveBeenCalledWith(id);
     });
 });
 
