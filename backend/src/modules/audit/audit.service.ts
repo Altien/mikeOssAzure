@@ -20,7 +20,6 @@ import {
 
 export {
   csvCell,
-  escapeLikePattern,
   parseQuery,
   queryEvents,
 } from "../../lib/auditExport";
