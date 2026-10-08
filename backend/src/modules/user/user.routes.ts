@@ -1306,8 +1306,9 @@ userRouter.post(
         // a receipt for work that cannot happen â€” and worse than useless: the
         // pending row holds the (user, type) dedupe key forever, so the user
         // could never successfully start that export again, even after an
-        // operator turns the runner back on. Refuse instead. The synchronous
-        // GET /user/*/export routes still work, which is the escape hatch.
+        // operator turns the runner back on. Refuse instead: exports answer
+        // 503 until the runner is enabled (production must keep it on; see
+        // docs/memory.md).
         if (!dbJobsEnabled())
             return void res.status(503).json({
                 detail: "Exports are temporarily unavailable. Please try again later.",
