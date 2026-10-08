@@ -722,10 +722,10 @@ export async function extractDocxBodyText(bytes: Buffer): Promise<string> {
 }
 
 /**
- * Walk document.xml in render order and collect the w:id for every
- * w:ins / w:del wrapper. The order here matches what docx-preview emits
- * as <ins>/<del> in the DOM, so the frontend can tag each rendered
- * element by index to recover the w:id attribute that docx-preview drops.
+ * Walk document.xml in document order and collect the w:id for every
+ * w:ins / w:del wrapper. No production caller remains; the tests use it to
+ * check which tracked changes applyTrackedEdits and resolveTrackedChange
+ * leave behind.
  */
 export async function extractTrackedChangeIds(
     bytes: Buffer,

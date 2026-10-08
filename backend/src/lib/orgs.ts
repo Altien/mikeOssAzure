@@ -1031,11 +1031,10 @@ export async function acceptInvitation(
     // (apart from an org's creator). Idempotent for the already-a-member
     // case: mark the invitation answered rather than 500ing on the unique.
     const existing = await getOrgRole(params.userId, invite.org_id, db);
-    // Grants are FLOORS, not ceilings — the same rule `strongerRole` applies
-    // to project access. Accepting an admin invitation while already a member
-    // raises you to admin; accepting a member invitation while already an
-    // admin leaves you an admin, because an invitation is an offer of
-    // access, not an instruction to reduce it. Demotion is what
+    // Roles are FLOORS, not ceilings. Accepting an admin invitation while
+    // already a member raises you to admin; accepting a member invitation
+    // while already an admin leaves you an admin, because an invitation is an
+    // offer of access, not an instruction to reduce it. Demotion is what
     // PATCH /orgs/:orgId/members exists for, where an admin does it on
     // purpose and the last-admin guard gets a say.
     const effectiveRole: OrgRole =

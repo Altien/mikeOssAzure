@@ -69,14 +69,6 @@ export function getConfiguredModel(id: string): ConfiguredModel | null {
   return loadModelRegistry().models.find((model) => model.id === id) ?? null;
 }
 
-export function configuredModelIds(
-  additionalCommittees: CommitteeModel[] = [],
-): string[] {
-  return configuredModelSummaries(additionalCommittees).map(
-    (summary) => summary.id,
-  );
-}
-
 export type ConfiguredModelSummary = {
   id: string;
   label: string;

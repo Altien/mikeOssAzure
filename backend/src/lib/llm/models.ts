@@ -48,9 +48,12 @@ export const MISTRAL_LOW_MODELS = ["mistral-small-2603"] as const;
 // which providerForModel routes to the AOAI adapter.
 export const AZURE_OPENAI_PREFIX = "aoai:";
 
-export const DEFAULT_MAIN_MODEL = "gemini-3.8-flash";
+// Upstream divergence (sync-log: ef9b5afd): upstream removed
+// DEFAULT_MAIN_MODEL, DEFAULT_TITLE_MODEL and DEFAULT_TABULAR_MODEL as
+// test-only. Dev keeps DEFAULT_TITLE_MODEL: user.settings'
+// fallbackTitleModel (Dev's fast_model helper for Altien skill paths)
+// returns it when the organisation has a Gemini key or no other credential.
 export const DEFAULT_TITLE_MODEL = "gemini-3.5-flash-lite";
-export const DEFAULT_TABULAR_MODEL = "gemini-3.8-flash";
 
 const STANDARD_REASONING_LEVELS: readonly ReasoningLevel[] =
     REASONING_LEVELS.filter((level) => level !== "max");

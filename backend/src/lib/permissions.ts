@@ -63,19 +63,6 @@ const REQUIRED_RANK: Record<Capability, number> = {
     "container.delete": ROLE_RANK.owner,
 };
 
-/**
- * The stronger of two roles; retained for direct-scope compatibility helpers.
- * Organization access is resolved exclusively and never merged with grants.
- */
-export function strongerRole(
-    a: ProjectRole | null,
-    b: ProjectRole | null,
-): ProjectRole | null {
-    if (!a) return b;
-    if (!b) return a;
-    return ROLE_RANK[a] >= ROLE_RANK[b] ? a : b;
-}
-
 /** Fail closed: an absent/unknown role can do nothing. */
 export function can(
     role: ProjectRole | null | undefined,

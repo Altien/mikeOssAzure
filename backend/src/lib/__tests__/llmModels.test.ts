@@ -11,9 +11,6 @@ import {
     CLAUDE_LOW_MODELS,
     GEMINI_LOW_MODELS,
     OPENAI_LOW_MODELS,
-    DEFAULT_MAIN_MODEL,
-    DEFAULT_TITLE_MODEL,
-    DEFAULT_TABULAR_MODEL,
     providerForModel,
     resolveModel,
     openRouterModelId,
@@ -94,31 +91,34 @@ describe("providerForModel", () => {
 // resolveModel
 // ---------------------------------------------------------------------------
 
+// Any string works as the fallback; resolveModel returns it untouched.
+const FALLBACK = "gemini-3.8-flash";
+
 describe("resolveModel", () => {
     it("returns a known model id unchanged", () => {
-        expect(resolveModel("claude-opus-5-5", DEFAULT_MAIN_MODEL)).toBe(
+        expect(resolveModel("claude-opus-5-5", FALLBACK)).toBe(
             "claude-opus-5-5",
         );
-        expect(resolveModel("gemini-3.8-flash", DEFAULT_MAIN_MODEL)).toBe(
+        expect(resolveModel("gemini-3.8-flash", FALLBACK)).toBe(
             "gemini-3.8-flash",
         );
-        expect(resolveModel("gpt-6-astra", DEFAULT_MAIN_MODEL)).toBe(
+        expect(resolveModel("gpt-6-astra", FALLBACK)).toBe(
             "gpt-6-astra",
         );
     });
 
     it("falls back for unknown model ids", () => {
-        expect(resolveModel("gpt-3.5-turbo", DEFAULT_MAIN_MODEL)).toBe(
-            DEFAULT_MAIN_MODEL,
+        expect(resolveModel("gpt-3.5-turbo", FALLBACK)).toBe(
+            FALLBACK,
         );
     });
 
     it("falls back for null, undefined, and empty ids", () => {
-        expect(resolveModel(null, DEFAULT_MAIN_MODEL)).toBe(DEFAULT_MAIN_MODEL);
-        expect(resolveModel(undefined, DEFAULT_TABULAR_MODEL)).toBe(
-            DEFAULT_TABULAR_MODEL,
+        expect(resolveModel(null, FALLBACK)).toBe(FALLBACK);
+        expect(resolveModel(undefined, FALLBACK)).toBe(
+            FALLBACK,
         );
-        expect(resolveModel("", DEFAULT_TITLE_MODEL)).toBe(DEFAULT_TITLE_MODEL);
+        expect(resolveModel("", FALLBACK)).toBe(FALLBACK);
     });
 
     it("accepts models from every tier of the catalog", () => {
@@ -142,9 +142,9 @@ describe("resolveModel", () => {
         // Stored preferences outlive catalog renames; without the mapping the
         // saved value silently degrades to the fallback.
         expect(
-            resolveModel("gemini-3.1-flash-lite-preview", DEFAULT_MAIN_MODEL),
+            resolveModel("gemini-3.1-flash-lite-preview", FALLBACK),
         ).toBe("gemini-3.5-flash-lite");
-        expect(resolveModel("gpt-5.4-lite", DEFAULT_MAIN_MODEL)).toBe(
+        expect(resolveModel("gpt-5.4-lite", FALLBACK)).toBe(
             "gpt-6-luna",
         );
     });
@@ -153,34 +153,34 @@ describe("resolveModel", () => {
         expect(
             resolveModel(
                 "openrouter/meta-llama/llama-4-maverick",
-                DEFAULT_MAIN_MODEL,
+                FALLBACK,
             ),
         ).toBe("openrouter/meta-llama/llama-4-maverick");
-        expect(resolveModel("openrouter/invalid", DEFAULT_MAIN_MODEL)).toBe(
-            DEFAULT_MAIN_MODEL,
+        expect(resolveModel("openrouter/invalid", FALLBACK)).toBe(
+            FALLBACK,
         );
     });
 
     it("accepts namespaced Vercel AI Gateway model ids", () => {
-        expect(resolveModel("vercel/openai/gpt-5.4", DEFAULT_MAIN_MODEL)).toBe(
+        expect(resolveModel("vercel/openai/gpt-5.4", FALLBACK)).toBe(
             "vercel/openai/gpt-5.4",
         );
-        expect(resolveModel("vercel/invalid", DEFAULT_MAIN_MODEL)).toBe(
-            DEFAULT_MAIN_MODEL,
+        expect(resolveModel("vercel/invalid", FALLBACK)).toBe(
+            FALLBACK,
         );
     });
 
     it("accepts OpenCode Go's single-segment model ids", () => {
         // Unlike the other two routers, OpenCode Go's catalog ids are bare
         // names — requiring a vendor/model pair would reject all of them.
-        expect(resolveModel("opencode-go/glm-5", DEFAULT_MAIN_MODEL)).toBe(
+        expect(resolveModel("opencode-go/glm-5", FALLBACK)).toBe(
             "opencode-go/glm-5",
         );
-        expect(resolveModel("opencode-go/", DEFAULT_MAIN_MODEL)).toBe(
-            DEFAULT_MAIN_MODEL,
+        expect(resolveModel("opencode-go/", FALLBACK)).toBe(
+            FALLBACK,
         );
-        expect(resolveModel("opencode-go/a b", DEFAULT_MAIN_MODEL)).toBe(
-            DEFAULT_MAIN_MODEL,
+        expect(resolveModel("opencode-go/a b", FALLBACK)).toBe(
+            FALLBACK,
         );
     });
 });
@@ -222,7 +222,7 @@ describe("openRouterModelId", () => {
         // id is "openrouter/openrouter/auto": resolveModel must accept it and
         // the adapter must strip exactly one namespace segment.
         expect(
-            resolveModel("openrouter/openrouter/auto", DEFAULT_MAIN_MODEL),
+            resolveModel("openrouter/openrouter/auto", FALLBACK),
         ).toBe("openrouter/openrouter/auto");
         expect(openRouterModelId("openrouter/openrouter/auto")).toBe(
             "openrouter/auto",
@@ -236,34 +236,12 @@ describe("vercelModelId", () => {
     });
 
     it("preserves catalog ids that begin with the router's own slug", () => {
-        expect(resolveModel("vercel/vercel/v0-1.5-md", DEFAULT_MAIN_MODEL)).toBe(
+        expect(resolveModel("vercel/vercel/v0-1.5-md", FALLBACK)).toBe(
             "vercel/vercel/v0-1.5-md",
         );
         expect(vercelModelId("vercel/vercel/v0-1.5-md")).toBe(
             "vercel/v0-1.5-md",
         );
-    });
-});
-
-// ---------------------------------------------------------------------------
-// Default model sanity
-// ---------------------------------------------------------------------------
-
-describe("default models", () => {
-    it("every default resolves to itself (defaults are in the catalog)", () => {
-        expect(resolveModel(DEFAULT_MAIN_MODEL, "x")).toBe(DEFAULT_MAIN_MODEL);
-        expect(resolveModel(DEFAULT_TITLE_MODEL, "x")).toBe(
-            DEFAULT_TITLE_MODEL,
-        );
-        expect(resolveModel(DEFAULT_TABULAR_MODEL, "x")).toBe(
-            DEFAULT_TABULAR_MODEL,
-        );
-    });
-
-    it("every default has a resolvable provider", () => {
-        expect(providerForModel(DEFAULT_MAIN_MODEL)).toBe("gemini");
-        expect(providerForModel(DEFAULT_TITLE_MODEL)).toBe("gemini");
-        expect(providerForModel(DEFAULT_TABULAR_MODEL)).toBe("gemini");
     });
 });
 
