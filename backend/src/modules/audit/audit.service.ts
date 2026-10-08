@@ -19,13 +19,11 @@ import {
 } from "../../lib/serviceResult";
 
 export {
-  buildAuditCsv,
   csvCell,
   escapeLikePattern,
   parseQuery,
   queryEvents,
 } from "../../lib/auditExport";
-export type { AuditQuery, ParseQueryResult } from "../../lib/auditExport";
 
 export const PAGE_SIZE = 50;
 

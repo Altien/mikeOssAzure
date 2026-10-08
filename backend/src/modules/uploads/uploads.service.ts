@@ -14,30 +14,3 @@
 //                           siblings directly, like every other module)
 
 export { startUploadProcessingWorkers } from "./uploads.processing";
-
-export {
-  parseUploadSessionRequest,
-  uploadSessionExpiresAt,
-  UploadSessionValidationError,
-} from "./uploads.manifest";
-export type {
-  ParsedUploadSessionRequest,
-  UploadSessionFile,
-} from "./uploads.manifest";
-
-export { validateDestinationAccess } from "./uploads.access";
-
-export {
-  cancelUploadSession,
-  completeUploadSessionFile,
-  createUploadSession,
-  getUploadSession,
-  putAuthenticatedUploadPart,
-  refreshUploadUrls,
-} from "./uploads.sessions";
-
-export type {
-  UploadFailure,
-  UploadOutcome,
-  UploadResult,
-} from "./uploads.shared";

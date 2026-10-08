@@ -1,8 +1,5 @@
 // Stable public API. Keep implementations in the topic files below.
 export {
-  type AccessibleChat,
-  validateAccessibleProjectId,
-  type ChatAccess,
   getAccessibleChat,
 } from "./chat.access";
 export { getChatMessages } from "./chat.messages";
@@ -20,7 +17,7 @@ export {
 } from "./chat.sharing";
 export { updateChatSettings } from "./chat.settings";
 export { updateChatTitle } from "./chat.titles";
-export { type PreparedChatStream, prepareChatStream } from "./chat.prepare";
+export { prepareChatStream } from "./chat.prepare";
 export {
   devLog,
   appendAssistantEventsToMessage,
