@@ -66,7 +66,7 @@ class R2Provider implements StorageProvider {
   // provider instance. Upstream's requireStorageConfig() throw-on-upload is
   // already covered (more strongly) by requireProvider() below.
   private cachedClient?: S3Client;
-  private cachedUploadSigningClient?: { endpoint: string; client: S3Client };
+  private cachedBrowserSigningClient?: { endpoint: string; client: S3Client };
 
   constructor() {
     if (
@@ -168,21 +168,21 @@ class R2Provider implements StorageProvider {
 
   // Signs URLs the browser follows, so it uses the browser-reachable
   // endpoint (R2_PUBLIC_ENDPOINT_URL, falling back to R2_ENDPOINT_URL).
-  private uploadSigningClient(): S3Client {
+  private browserSigningClient(): S3Client {
     const endpoint = process.env.R2_PUBLIC_ENDPOINT_URL?.trim() || process.env.R2_ENDPOINT_URL!;
-    if (this.cachedUploadSigningClient?.endpoint !== endpoint) {
-      this.cachedUploadSigningClient = { endpoint, client: new S3Client({
+    if (this.cachedBrowserSigningClient?.endpoint !== endpoint) {
+      this.cachedBrowserSigningClient = { endpoint, client: new S3Client({
         region: "auto", endpoint, forcePathStyle: true,
         requestChecksumCalculation: "WHEN_REQUIRED", responseChecksumValidation: "WHEN_REQUIRED",
         credentials: { accessKeyId: process.env.R2_ACCESS_KEY_ID!, secretAccessKey: process.env.R2_SECRET_ACCESS_KEY! },
       }) };
     }
-    return this.cachedUploadSigningClient.client;
+    return this.cachedBrowserSigningClient.client;
   }
 
   async signedUpload(key: string, contentType: string, size: number, expiresIn: number): Promise<string> {
     try {
-      return await awsGetSignedUrl(this.uploadSigningClient(),
+      return await awsGetSignedUrl(this.browserSigningClient(),
         new PutObjectCommand({ Bucket: this.bucket, Key: key, ContentType: contentType, ContentLength: size }),
         { expiresIn, signableHeaders: new Set(["content-type", "content-length"]) });
     } catch (error) {
@@ -249,7 +249,7 @@ class R2Provider implements StorageProvider {
       // The browser follows this URL, so sign it for the public endpoint.
       // (Dev: R2 only. AzureBlobProvider.signedUrl stays null: private Blob
       // bytes go through the authenticated /api download routes.)
-      return await awsGetSignedUrl(this.uploadSigningClient(), command, { expiresIn });
+      return await awsGetSignedUrl(this.browserSigningClient(), command, { expiresIn });
     } catch (error) {
       console.error("[storage] getSignedUrl failed", {
         key,
