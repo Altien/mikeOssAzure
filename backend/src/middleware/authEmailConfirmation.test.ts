@@ -1,5 +1,4 @@
-import express from "express";
-import request from "supertest";
+import type { NextFunction, Request, Response } from "express";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // `res.locals.userEmail` is what every direct grant and organization
@@ -22,12 +21,25 @@ vi.mock("../lib/supabase", () => ({
 }));
 import { requireAuth } from "./auth";
 
-function app() {
-  const server = express();
-  server.get("/probe", requireAuth, (_req, res) =>
-    res.json({ email: res.locals.userEmail }),
-  );
-  return server;
+// The middleware is driven directly rather than mounted on an app: the
+// behaviour under test is what it writes to res.locals.
+async function authenticatedEmail(): Promise<unknown> {
+  const req = {
+    headers: { authorization: "Bearer token" },
+    method: "GET",
+    originalUrl: "/probe",
+    get: () => undefined,
+  } as unknown as Request;
+  const res = {
+    locals: {} as Record<string, unknown>,
+    status: vi.fn().mockReturnThis(),
+    json: vi.fn().mockReturnThis(),
+  };
+  const next = vi.fn() as unknown as NextFunction;
+  await requireAuth(req as never, res as unknown as Response, next);
+  expect(res.status).not.toHaveBeenCalled();
+  expect(next).toHaveBeenCalledOnce();
+  return res.locals.userEmail;
 }
 
 describe("requireAuth email trust", () => {
@@ -44,11 +56,7 @@ describe("requireAuth email trust", () => {
       },
       error: null,
     });
-    const res = await request(app())
-      .get("/probe")
-      .set("Authorization", "Bearer token");
-    expect(res.status).toBe(200);
-    expect(res.body.email).toBe("person@example.com");
+    expect(await authenticatedEmail()).toBe("person@example.com");
   });
 
   it("withholds an unconfirmed email so it matches no grant or invitation", async () => {
@@ -58,10 +66,6 @@ describe("requireAuth email trust", () => {
       },
       error: null,
     });
-    const res = await request(app())
-      .get("/probe")
-      .set("Authorization", "Bearer token");
-    expect(res.status).toBe(200);
-    expect(res.body.email).toBe("");
+    expect(await authenticatedEmail()).toBe("");
   });
 });
