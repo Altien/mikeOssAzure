@@ -3,20 +3,20 @@ import { describe, expect, it, vi } from "vitest";
 // deleteUserAccountData reaches storage on its way through the cascade. The
 // refusal test below asserts it never gets there, so these have to be
 // observable no-ops rather than real calls.
-vi.mock("../storage", () => ({
+vi.mock("../../../lib/storage", () => ({
     deleteFile: vi.fn(async () => {}),
     listFiles: vi.fn(async () => [] as string[]),
     extractedTextKey: (versionId: string) => `extracted-text/${versionId}.txt`,
 }));
 
-import { deleteFile, listFiles } from "../storage";
-import { NonRetryableJobError } from "../dbq/runner";
+import { deleteFile, listFiles } from "../../../lib/storage";
+import { NonRetryableJobError } from "../../../lib/dbq/runner";
 import {
     deleteUserAccountData,
     deleteUserOrganizations,
     deleteUserProjects,
     listOrgsBlockingAccountDeletion,
-} from "../../modules/user/user.dataCleanup";
+} from "../user.dataCleanup";
 
 type Row = Record<string, unknown>;
 

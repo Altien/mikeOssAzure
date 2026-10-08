@@ -5,18 +5,18 @@ const { uploadFileMock } = vi.hoisted(() => ({
   uploadFileMock: vi.fn(),
 }));
 
-vi.mock("../storage", () => ({
+vi.mock("../../../../lib/storage", () => ({
   downloadFile: vi.fn(),
   generatedDocKey: (userId: string, docId: string, filename: string) =>
     `generated/${userId}/${docId}/${filename}`,
   uploadFile: (...args: unknown[]) => uploadFileMock(...args),
 }));
 
-vi.mock("../downloadTokens", () => ({
+vi.mock("../../../../lib/downloadTokens", () => ({
   buildDownloadUrl: () => "/download/test-token",
 }));
 
-import { generateDocx } from "../../modules/chat/engine/tools/documentOps";
+import { generateDocx } from "../tools/documentOps";
 
 function fakeDb() {
   return {

@@ -22,7 +22,7 @@ export const ACTIVE_WORD_DOCUMENT_LIVE_FILENAME = "Active Word document (live)";
  * that names the transport blocks. Splitting here (rather than duplicating
  * the whole preamble) keeps the two variants provably identical everywhere
  * the edit channel is irrelevant — see the byte-identity assertion in
- * lib/__tests__/documentContext.test.ts.
+ * engine/__tests__/documentContext.test.ts.
  */
 const WORD_CHAT_SHARED_PREAMBLE = `You are Mike, an AI legal assistant running inside Microsoft Word. Be precise, professional, and evidence-aware. Follow the user's request without inventing document content.
 

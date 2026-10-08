@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../storage", () => {
+vi.mock("../../../lib/storage", () => {
     const deleteFile = vi.fn(async (_key: string) => {});
     return {
     assertStorageConfigured: vi.fn(),
@@ -17,13 +17,13 @@ vi.mock("../storage", () => {
     };
 });
 
-import { deleteFile, listFiles } from "../storage";
+import { deleteFile, listFiles } from "../../../lib/storage";
 import {
     deleteAllUserChats,
     deleteAllUserTabularReviews,
     deleteUserProjects,
     deleteUserAccountData,
-} from "../../modules/user/user.dataCleanup";
+} from "../user.dataCleanup";
 
 const deleteFileMock = vi.mocked(deleteFile);
 const listFilesMock = vi.mocked(listFiles);

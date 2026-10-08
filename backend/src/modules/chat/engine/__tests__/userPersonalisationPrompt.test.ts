@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildUserPersonalisationPrompt } from "../../modules/chat/engine/contextBuilders";
+import { buildUserPersonalisationPrompt } from "../contextBuilders";
 
 describe("buildUserPersonalisationPrompt", () => {
   it("includes all saved professional details as fenced data", () => {

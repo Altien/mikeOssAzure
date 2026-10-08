@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildSystemPrompt } from "../../modules/chat/engine/prompts";
-import { COURTLISTENER_SYSTEM_PROMPT } from "../../modules/chat/engine/tools/courtlistenerTools";
+import { buildSystemPrompt } from "../prompts";
+import { COURTLISTENER_SYSTEM_PROMPT } from "../tools/courtlistenerTools";
 
 describe("buildSystemPrompt", () => {
     it("always contains the core identity and rules", () => {

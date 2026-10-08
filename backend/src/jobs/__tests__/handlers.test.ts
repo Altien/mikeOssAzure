@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Db } from "../../supabase";
-import type { AuditEventInput } from "../../audit";
+import type { Db } from "../../lib/supabase";
+import type { AuditEventInput } from "../../lib/audit";
 
 // Every stub below carries the argument list of the function it replaces.
 // That is what makes `mock.calls[n][m]` a real argument rather than an
@@ -9,8 +9,8 @@ const insertAuditEvent =
     vi.fn<(db: Db, event: AuditEventInput) => Promise<void>>(async () => {});
 const recordAudit =
     vi.fn<(db: Db, event: AuditEventInput) => Promise<void>>(async () => {});
-vi.mock("../../audit", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../audit")>();
+vi.mock("../../lib/audit", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../../lib/audit")>();
     return {
         ...actual,
         insertAuditEvent: (db: Db, event: AuditEventInput) =>
@@ -25,7 +25,7 @@ const deleteUserAccountData =
         (db: Db, userId: string, userEmail?: string | null) => Promise<void>
     >(async () => {});
 const listOrgsBlockingAccountDeletion = vi.fn(async () => [] as unknown[]);
-vi.mock("../../../modules/user/user.dataCleanup", () => ({
+vi.mock("../../modules/user/user.dataCleanup", () => ({
     deleteUserAccountData: (
         db: Db,
         userId: string,
@@ -42,9 +42,9 @@ const buildUserAccountExport =
             userEmail?: string | null,
         ) => Promise<{ hello: string }>
     >(async () => ({ hello: "world" }));
-vi.mock("../../../modules/user/user.dataExport", async (importOriginal) => {
+vi.mock("../../modules/user/user.dataExport", async (importOriginal) => {
     const actual =
-        await importOriginal<typeof import("../../../modules/user/user.dataExport")>();
+        await importOriginal<typeof import("../../modules/user/user.dataExport")>();
     return {
         ...actual,
         buildUserAccountExport: (
@@ -58,8 +58,8 @@ vi.mock("../../../modules/user/user.dataExport", async (importOriginal) => {
 const buildAuditCsv = vi.fn(
     async (..._a: unknown[]) => "created_at,user\n2026-01-01,a@b.test",
 );
-vi.mock("../../auditExport", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../auditExport")>();
+vi.mock("../../lib/auditExport", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../../lib/auditExport")>();
     return {
         ...actual,
         buildAuditCsv: (...a: unknown[]) => buildAuditCsv(...a),
@@ -69,7 +69,7 @@ vi.mock("../../auditExport", async (importOriginal) => {
 const buildMemoryArchive = vi.fn(async (..._a: unknown[]) =>
     Buffer.from("memory-zip"),
 );
-vi.mock("../../memory/archive", () => ({
+vi.mock("../../lib/memory/archive", () => ({
     buildMemoryArchive: (...a: unknown[]) => buildMemoryArchive(...a),
 }));
 
@@ -86,17 +86,17 @@ const ACTIVE_VERSION = {
 };
 
 const ensureDocAccess = vi.fn(async (..._a: unknown[]) => ({ ok: true }));
-vi.mock("../../access", async (importOriginal) => ({
-    ...(await importOriginal<typeof import("../../access")>()),
+vi.mock("../../lib/access", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../../lib/access")>()),
     ensureDocAccess: (...a: unknown[]) => ensureDocAccess(...a),
 }));
 
 const loadActiveVersion = vi.fn(
     async (..._a: unknown[]) => ACTIVE_VERSION as typeof ACTIVE_VERSION | null,
 );
-vi.mock("../../documentVersions", async (importOriginal) => {
+vi.mock("../../lib/documentVersions", async (importOriginal) => {
     const actual =
-        await importOriginal<typeof import("../../documentVersions")>();
+        await importOriginal<typeof import("../../lib/documentVersions")>();
     return {
         ...actual,
         loadActiveVersion: (...a: unknown[]) => loadActiveVersion(...a),
@@ -112,7 +112,7 @@ const listFiles = vi.fn<(prefix: string) => Promise<string[]>>(
     async () => [] as string[],
 );
 const downloadFile = vi.fn(async (..._a: unknown[]) => new Uint8Array([1, 2, 3]));
-vi.mock("../../storage", () => ({
+vi.mock("../../lib/storage", () => ({
     assertStorageConfigured: vi.fn(),
     uploadFile: (key: string, content: ArrayBuffer, contentType: string) =>
         uploadFile(key, content, contentType),
@@ -127,9 +127,9 @@ import {
     handleStorageCleanup,
     handleExportBuild,
     MAX_ZIP_EXPORT_DOCUMENTS,
-} from "../../../jobs/registry";
-import { NonRetryableJobError } from "../runner";
-import type { DbJob } from "../types";
+} from "../registry";
+import { NonRetryableJobError } from "../../lib/dbq/runner";
+import type { DbJob } from "../../lib/dbq/types";
 
 const JOB = (kind: string, payload: Record<string, unknown>): DbJob => ({
     id: "job-1",

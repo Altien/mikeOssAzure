@@ -7,14 +7,14 @@ import {
   enrichWithPriorEvents,
   appendAskInputsResponseToAssistantMessage,
   buildMessages,
-} from "../../modules/chat/engine/contextBuilders";
+} from "../contextBuilders";
 import {
     ACTIVE_WORD_DOCUMENT_ID,
     buildWordChatSystemPrompt,
-} from "../../modules/chat/engine/wordPrompt";
-import { readDocumentContent } from "../../modules/chat/engine/tools/documentOps";
-import { runToolCalls } from "../../modules/chat/engine/tools/toolDispatcher";
-import type { DocStore } from "../../modules/chat/engine/types";
+} from "../wordPrompt";
+import { readDocumentContent } from "../tools/documentOps";
+import { runToolCalls } from "../tools/toolDispatcher";
+import type { DocStore } from "../types";
 
 const TEST_ACTIVE_WORD_DOCUMENT_NAME = "Contract.docx";
 

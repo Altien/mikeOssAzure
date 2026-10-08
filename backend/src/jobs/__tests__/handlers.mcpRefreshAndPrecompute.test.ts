@@ -15,10 +15,10 @@ const loadOAuthToken = vi.fn(
     async (..._a: unknown[]) => null as TokenRow | null,
 );
 const refreshOAuthAccessToken = vi.fn(async (..._a: unknown[]) => ({}));
-vi.mock("../../mcp/oauth", async (importOriginal) => {
+vi.mock("../../lib/mcp/oauth", async (importOriginal) => {
     // importOriginal keeps McpOAuthRequiredError the REAL class, so the
     // handler's `instanceof` check is exercised rather than faked.
-    const actual = await importOriginal<typeof import("../../mcp/oauth")>();
+    const actual = await importOriginal<typeof import("../../lib/mcp/oauth")>();
     return {
         ...actual,
         loadOAuthToken: (...a: unknown[]) => loadOAuthToken(...a),
@@ -30,9 +30,9 @@ vi.mock("../../mcp/oauth", async (importOriginal) => {
 const extractLegacyOfficeText = vi.fn(
     async (..._a: unknown[]) => "[Page 1]\nhello from libreoffice",
 );
-vi.mock("../../pdfText", async (importOriginal) => {
+vi.mock("../../lib/pdfText", async (importOriginal) => {
     const actual =
-        await importOriginal<typeof import("../../pdfText")>();
+        await importOriginal<typeof import("../../lib/pdfText")>();
     return {
         ...actual,
         extractLegacyOfficeText: (...a: unknown[]) =>
@@ -45,10 +45,10 @@ const downloadFile = vi.fn(
     async (..._a: unknown[]) =>
         new Uint8Array([0xd0, 0xcf, 0x11, 0xe0]).buffer as ArrayBuffer | null,
 );
-vi.mock("../../storage", async (importOriginal) => {
+vi.mock("../../lib/storage", async (importOriginal) => {
     // extractedTextKey stays REAL: the point of the precompute test is that
     // the handler writes the key the read path will look for.
-    const actual = await importOriginal<typeof import("../../storage")>();
+    const actual = await importOriginal<typeof import("../../lib/storage")>();
     return {
         ...actual,
         uploadFile: (...a: unknown[]) => uploadFile(...a),
@@ -56,14 +56,14 @@ vi.mock("../../storage", async (importOriginal) => {
     };
 });
 
-import { McpOAuthRequiredError } from "../../mcp/oauth";
+import { McpOAuthRequiredError } from "../../lib/mcp/oauth";
 import {
     handleMcpRefreshToken,
     handleDocumentPrecomputeText,
     MCP_TOKEN_REFRESH_WINDOW_MS,
     DB_JOB_HANDLERS,
-} from "../../../jobs/registry";
-import type { DbJob } from "../types";
+} from "../registry";
+import type { DbJob } from "../../lib/dbq/types";
 
 const JOB = (kind: string, payload: Record<string, unknown>): DbJob => ({
     id: "job-1",

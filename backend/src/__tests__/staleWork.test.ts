@@ -1,18 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("../../supabase", () => ({
+vi.mock("../lib/supabase", () => ({
     createServerSupabase: vi.fn(),
 }));
 
 const conversionGetJob = vi.fn();
-vi.mock("../../queue/conversionQueue", () => ({
+vi.mock("../lib/queue/conversionQueue", () => ({
     getConversionQueue: () => ({ getJob: conversionGetJob }),
     conversionJobId: (versionId: string, storagePath: string) =>
         `convert_${versionId}_${storagePath}`,
 }));
 
 const extractionGetJob = vi.fn();
-vi.mock("../../queue/extractionQueue", () => ({
+vi.mock("../lib/queue/extractionQueue", () => ({
     getExtractionQueue: () => ({ getJob: extractionGetJob }),
     extractionJobId: (reviewId: string, rowId: string, columnIndex?: number) =>
         columnIndex == null
@@ -20,8 +20,8 @@ vi.mock("../../queue/extractionQueue", () => ({
             : `extract_${reviewId}_${rowId}_${columnIndex}`,
 }));
 
-import { sweepStaleProcessingDocuments } from "../../../modules/documents/documents.service";
-import { sweepStaleGeneratingCells } from "../../../modules/tabular/tabular.service";
+import { sweepStaleProcessingDocuments } from "../modules/documents/documents.service";
+import { sweepStaleGeneratingCells } from "../modules/tabular/tabular.service";
 
 type Call = {
     table: string;

@@ -5,8 +5,8 @@ const { downloadFile, uploadFile } = vi.hoisted(() => ({
     uploadFile: vi.fn(),
 }));
 
-vi.mock("../storage", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../storage")>();
+vi.mock("../../../../lib/storage", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../../../../lib/storage")>();
     return {
         ...actual,
         downloadFile: (...args: unknown[]) => downloadFile(...args),
@@ -14,8 +14,8 @@ vi.mock("../storage", async (importOriginal) => {
     };
 });
 
-vi.mock("../downloadTokens", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../downloadTokens")>();
+vi.mock("../../../../lib/downloadTokens", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../../../../lib/downloadTokens")>();
     return {
         ...actual,
         buildDownloadUrl: (_storagePath: string, filename: string) =>
@@ -23,9 +23,9 @@ vi.mock("../downloadTokens", async (importOriginal) => {
     };
 });
 
-import { runToolCalls } from "../../modules/chat/engine/tools/toolDispatcher";
-import { PROJECT_EXTRA_TOOLS, TOOLS } from "../../modules/chat/engine/tools/toolSchemas";
-import type { DocIndex, DocStore, WorkflowStore } from "../../modules/chat/engine/types";
+import { runToolCalls } from "../tools/toolDispatcher";
+import { PROJECT_EXTRA_TOOLS, TOOLS } from "../tools/toolSchemas";
+import type { DocIndex, DocStore, WorkflowStore } from "../types";
 
 function toolNames(tools: readonly { function: { name: string } }[]) {
     return tools.map((tool) => tool.function.name);

@@ -1,7 +1,7 @@
 import { inspect } from "node:util";
 import { describe, expect, it, vi } from "vitest";
-import { diagnosticErrorTags } from "../../observability/sentryPrivacy";
-import type { StreamChatParams } from "../../llm";
+import { diagnosticErrorTags } from "../../../lib/observability/sentryPrivacy";
+import type { StreamChatParams } from "../../../lib/llm";
 import {
   buildMemoryCuratorTranscript,
   loadEligibleMemoryMessages,
@@ -13,12 +13,12 @@ import {
   runMemoryCuratorScope,
   type CuratorScopeServices,
   type MemoryCuratorStoredMessage,
-} from "../../../modules/memory/memory.curator";
+} from "../memory.curator";
 import {
   MemoryRevisionConflictError,
   MemoryValidationError,
   type MemoryFileRow,
-} from "../files";
+} from "../../../lib/memory/files";
 
 describe("memory curator model selection", () => {
   it("prefers the environment override, then the user's memory preference", async () => {
@@ -796,8 +796,8 @@ describe("memory.consolidate deferral cost", () => {
 
   it("defers without claiming the job or rewriting any file status", async () => {
     const { db, rpc, tables } = deferringDb();
-    const { handleMemoryConsolidation } = await import("../../../modules/memory/memory.curator.js");
-    const { DbJobDeferredError } = await import("../../dbq/types.js");
+    const { handleMemoryConsolidation } = await import("../memory.curator.js");
+    const { DbJobDeferredError } = await import("../../../lib/dbq/types.js");
 
     await expect(
       handleMemoryConsolidation(db as never, {

@@ -17,8 +17,8 @@ const { downloadFile, uploadFile, docxToPdf, enqueueConversion } = vi.hoisted(
     }),
 );
 
-vi.mock("../storage", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../storage")>();
+vi.mock("../../../../lib/storage", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../../../../lib/storage")>();
     return {
         ...actual,
         downloadFile: (...args: unknown[]) => downloadFile(...args),
@@ -26,20 +26,20 @@ vi.mock("../storage", async (importOriginal) => {
     };
 });
 
-vi.mock("../convert", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../convert")>();
+vi.mock("../../../../lib/convert", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../../../../lib/convert")>();
     return {
         ...actual,
         docxToPdf: (...args: unknown[]) => docxToPdf(...args),
     };
 });
 
-vi.mock("../queue/conversionQueue", () => ({
+vi.mock("../../../../lib/queue/conversionQueue", () => ({
     enqueueConversion: (...args: unknown[]) => enqueueConversion(...args),
 }));
 
-vi.mock("../downloadTokens", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../downloadTokens")>();
+vi.mock("../../../../lib/downloadTokens", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../../../../lib/downloadTokens")>();
     return {
         ...actual,
         buildDownloadUrl: (_storagePath: string, filename: string) =>
@@ -47,8 +47,8 @@ vi.mock("../downloadTokens", async (importOriginal) => {
     };
 });
 
-import { runToolCalls } from "../../modules/chat/engine/tools/toolDispatcher";
-import type { DocIndex, DocStore } from "../../modules/chat/engine/types";
+import { runToolCalls } from "../tools/toolDispatcher";
+import type { DocIndex, DocStore } from "../types";
 
 // Same double as workflowAssetReplication.test.ts: documents echo their
 // client-generated ids; versions get deterministic new-version-N ids.
