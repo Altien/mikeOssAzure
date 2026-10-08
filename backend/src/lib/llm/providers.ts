@@ -4,8 +4,15 @@ import {
   streamAiSdk,
   type AiSdkAdapterConfig,
 } from "./aiSdk";
+import {
+  azureClientTarget,
+  azureCredentials,
+  bedrockCredentials,
+} from "./cloudProviders";
 import { localModelToleranceMiddleware } from "./localModelMiddleware";
 import {
+  azureDeploymentName,
+  bedrockModelId,
   isOpenCodeGoChatCompletionsModel,
   isOpenCodeGoMessagesModel,
   normalizeReasoningLevelForModel,
@@ -172,6 +179,72 @@ async function createRouterAdapter(
   };
 }
 
+/**
+ * Bedrock's prompt caching takes an explicit cache point, which most Bedrock
+ * models reject, so it is only sent to Claude. Claude ids appear bare
+ * ("anthropic.claude-…"), behind a cross-region profile prefix
+ * ("us.anthropic.claude-…") or inside an inference-profile ARN.
+ */
+export function bedrockModelSupportsCachePoint(modelId: string): boolean {
+  return /(?:^|[./])anthropic\.claude-/.test(modelId);
+}
+
+async function createBedrockAdapter(
+  model: string,
+  apiKeys?: UserApiKeys,
+): Promise<AiSdkAdapterConfig> {
+  const credentials = await bedrockCredentials(apiKeys);
+  if (!credentials) {
+    throw new Error(
+      "Amazon Bedrock API key is not configured. Set AWS_BEARER_TOKEN_BEDROCK and BEDROCK_AWS_REGION or add a user Amazon Bedrock key and region.",
+    );
+  }
+  const { createAmazonBedrock } = await import("@ai-sdk/amazon-bedrock");
+  // An explicit apiKey makes the SDK use bearer auth and never fall back to
+  // ambient AWS credentials (which a deployment may hold for S3 storage).
+  const bedrock = createAmazonBedrock({
+    apiKey: credentials.apiKey,
+    region: credentials.region,
+    fetch: aiSdkFetch,
+  });
+  const upstreamId = bedrockModelId(model);
+  return {
+    provider: "bedrock",
+    label: "Amazon Bedrock",
+    model: bedrock(upstreamId),
+    modelId: model,
+    bedrockCachePoint: bedrockModelSupportsCachePoint(upstreamId),
+  };
+}
+
+async function createAzureAdapter(
+  model: string,
+  apiKeys?: UserApiKeys,
+): Promise<AiSdkAdapterConfig> {
+  const credentials = await azureCredentials(apiKeys);
+  if (!credentials) {
+    throw new Error(
+      "Azure OpenAI API key is not configured. Set AZURE_API_KEY and AZURE_OPENAI_ENDPOINT or add a user Azure OpenAI key and endpoint.",
+    );
+  }
+  const { createAzure } = await import("@ai-sdk/azure");
+  const azure = createAzure({
+    apiKey: credentials.apiKey,
+    ...azureClientTarget(credentials.endpoint),
+    fetch: aiSdkFetch,
+  });
+  return {
+    provider: "azure",
+    label: "Azure OpenAI",
+    // The deployment name doubles as the model id the SDK uses to infer
+    // reasoning support, so deployments named after their model ("gpt-6.1-sol")
+    // get reasoning controls and arbitrary names run without them.
+    model: azure.responses(azureDeploymentName(model)),
+    modelId: model,
+    courtlistenerCitationReminder: true,
+  };
+}
+
 function configuredModelOrThrow(id: string): ConfiguredModel {
   const configured = getConfiguredModel(id);
   if (!configured) {
@@ -257,7 +330,7 @@ function azureDeployment(model: string, settings?: UserApiKeys["azureOpenai"]): 
   return deployment;
 }
 
-async function createAzureAdapter(model: string, apiKeys?: UserApiKeys): Promise<AiSdkAdapterConfig> {
+async function createLegacyAzureAdapter(model: string, apiKeys?: UserApiKeys): Promise<AiSdkAdapterConfig> {
   const settings = apiKeys?.azureOpenai;
   const endpoint = settings?.endpoint?.trim() || await resolveSecret("azure-openai-endpoint");
   const apiKey = settings?.apiKey?.trim() || await resolveSecret("azure-openai-api-key");
@@ -353,7 +426,10 @@ async function createProviderAdapter(
     });
     return { provider, label: "Kimi K3", model: kimi(model), modelId: model };
   }
-  if (provider === "azureOpenai") return createAzureAdapter(model, apiKeys);
+  if (provider === "azureOpenai") return createLegacyAzureAdapter(model, apiKeys);
+  if (provider === "bedrock") return createBedrockAdapter(model, apiKeys);
+  if (provider === "azure") return createAzureAdapter(model, apiKeys);
+
   if (provider === "openai-compatible") {
     return createConfiguredAdapter(model, apiKeys);
   }

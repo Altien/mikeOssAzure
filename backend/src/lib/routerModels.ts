@@ -3,7 +3,12 @@ import { UserFacingError } from "./safeError";
 import type { Db } from "./supabase";
 import { resolveModel } from "./llm/models";
 
-export type RouterSlug = "openrouter" | "vercel" | "opencode-go";
+export type RouterSlug =
+    | "openrouter"
+    | "vercel"
+    | "opencode-go"
+    | "bedrock"
+    | "azure";
 
 /**
  * Every router, in the order the settings UI lists them. A router's slug is
@@ -14,6 +19,8 @@ export const ROUTER_SLUGS: readonly RouterSlug[] = [
     "openrouter",
     "vercel",
     "opencode-go",
+    "bedrock",
+    "azure",
 ];
 
 /** One saved model selection per router. */
@@ -43,6 +50,8 @@ const ROUTER_LABELS: Record<RouterSlug, string> = {
     openrouter: "OpenRouter",
     vercel: "Vercel AI Gateway",
     "opencode-go": "OpenCode Go",
+    bedrock: "Amazon Bedrock",
+    azure: "Azure OpenAI",
 };
 
 /**

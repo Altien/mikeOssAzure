@@ -77,6 +77,16 @@ const ROUTER_MODEL_ID: Record<
     shape: "a model name with no spaces",
     example: "glm-5",
   },
+  bedrock: {
+    pattern: /^[^\s]+$/,
+    shape: "a Bedrock model or inference-profile ID with no spaces",
+    example: "us.anthropic.claude-opus-5-5",
+  },
+  azure: {
+    pattern: /^[^\s]+$/,
+    shape: "a deployment name with no spaces",
+    example: "gpt-6.1-sol",
+  },
 };
 
 /**
@@ -124,13 +134,23 @@ export function RouterSettingsSection() {
     updateOpenRouterModels,
     updateVercelModels,
     updateOpenCodeGoModels,
+    updateBedrockModels,
+    updateAzureModels,
   } = useUserProfile();
   const openRouterConfigured = profile?.apiKeys.openrouter.configured === true;
   const vercelConfigured = profile?.apiKeys.vercel.configured === true;
   const openCodeGoConfigured =
     profile?.apiKeys["opencode-go"].configured === true;
+  const bedrockConfigured = profile?.apiKeys.bedrock.configured === true;
+  const azureConfigured = profile?.apiKeys.azure.configured === true;
 
-  if (!openRouterConfigured && !vercelConfigured && !openCodeGoConfigured) {
+  if (
+    !openRouterConfigured &&
+    !vercelConfigured &&
+    !openCodeGoConfigured &&
+    !bedrockConfigured &&
+    !azureConfigured
+  ) {
     return null;
   }
 
@@ -169,6 +189,24 @@ export function RouterSettingsSection() {
             onSave={updateOpenCodeGoModels}
           />
         )}
+        {bedrockConfigured && (
+          <RouterModelsSetting
+            provider="bedrock"
+            label="Amazon Bedrock"
+            description="Enter the model or inference-profile IDs enabled in your AWS account and region."
+            selection={profile?.bedrockModels ?? []}
+            onSave={updateBedrockModels}
+          />
+        )}
+        {azureConfigured && (
+          <RouterModelsSetting
+            provider="azure"
+            label="Azure OpenAI"
+            description="Enter your deployment names. Deployments named after their model (for example gpt-6.1-sol) also get that model's reasoning controls."
+            selection={profile?.azureModels ?? []}
+            onSave={updateAzureModels}
+          />
+        )}
       </GlassCardUI>
     </section>
   );
@@ -177,14 +215,17 @@ export function RouterSettingsSection() {
 function RouterModelsSetting({
   provider,
   label,
+  description,
   selection,
   loadCatalog,
   onSave,
 }: {
   provider: RouterSlug;
   label: string;
+  description?: string;
   selection: string[];
-  loadCatalog: () => Promise<RouterCatalogModel[]>;
+  /** Omitted for providers with no listable catalog: IDs are typed only. */
+  loadCatalog?: () => Promise<RouterCatalogModel[]>;
   onSave: (models: string[]) => Promise<boolean>;
 }) {
   const [catalog, setCatalog] = useState<RouterCatalogModel[]>([]);
@@ -198,6 +239,7 @@ function RouterModelsSetting({
   const catalogId = `${provider}-model-catalog`;
 
   useEffect(() => {
+    if (!loadCatalog) return;
     let cancelled = false;
     loadCatalog()
       .then((models) => {
@@ -308,8 +350,11 @@ function RouterModelsSetting({
   return (
     <SettingsRow layout="stacked">
       <div className="flex items-center gap-2">
-        <div>
+        <div className={description ? "space-y-1" : undefined}>
           <SettingsLabel>{label} models</SettingsLabel>
+          {description && (
+            <SettingsDescription>{description}</SettingsDescription>
+          )}
         </div>
         {saving && (
           <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />
@@ -396,16 +441,20 @@ function RouterModelsSetting({
           <input
             ref={inputRef}
             type="text"
-            role="combobox"
             aria-label={`${label} models`}
-            aria-autocomplete="list"
-            aria-controls={catalogId}
-            aria-expanded={catalogOpen}
-            aria-activedescendant={
-              catalogOpen && activeCatalogIndex >= 0
-                ? `${catalogId}-option-${activeCatalogIndex}`
-                : undefined
-            }
+            // Without a catalog there is no list to control: a plain textbox.
+            {...(loadCatalog
+              ? {
+                  role: "combobox",
+                  "aria-autocomplete": "list" as const,
+                  "aria-controls": catalogId,
+                  "aria-expanded": catalogOpen,
+                  "aria-activedescendant":
+                    catalogOpen && activeCatalogIndex >= 0
+                      ? `${catalogId}-option-${activeCatalogIndex}`
+                      : undefined,
+                }
+              : {})}
             value={input}
             disabled={saving}
             placeholder={`e.g. ${ROUTER_MODEL_ID[provider].example}`}
@@ -451,29 +500,31 @@ function RouterModelsSetting({
               }
             }}
           />
-          <button
-            type="button"
-            disabled={saving || catalog.length === 0}
-            aria-label={`Choose ${label} model`}
-            aria-controls={catalogId}
-            aria-expanded={catalogOpen}
-            aria-haspopup="listbox"
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => {
-              const nextOpen = !catalogOpen;
-              setCatalogOpen(nextOpen);
-              // Highlight only ever follows an explicit arrow
-              // key or pointer hover — opening the list doesn't
-              // pre-claim a row for Enter.
-              setActiveCatalogIndex(-1);
-              if (nextOpen) inputRef.current?.focus();
-            }}
-            className="flex h-full shrink-0 items-center justify-end text-gray-400 transition-colors hover:text-gray-700 disabled:cursor-default disabled:opacity-40"
-          >
-            <ChevronDown
-              className={`h-3.5 w-3.5 transition-transform duration-200 ${catalogOpen ? "rotate-180" : ""}`}
-            />
-          </button>
+          {loadCatalog && (
+            <button
+              type="button"
+              disabled={saving || catalog.length === 0}
+              aria-label={`Choose ${label} model`}
+              aria-controls={catalogId}
+              aria-expanded={catalogOpen}
+              aria-haspopup="listbox"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                const nextOpen = !catalogOpen;
+                setCatalogOpen(nextOpen);
+                // Highlight only ever follows an explicit arrow
+                // key or pointer hover — opening the list doesn't
+                // pre-claim a row for Enter.
+                setActiveCatalogIndex(-1);
+                if (nextOpen) inputRef.current?.focus();
+              }}
+              className="flex h-full shrink-0 items-center justify-end text-gray-400 transition-colors hover:text-gray-700 disabled:cursor-default disabled:opacity-40"
+            >
+              <ChevronDown
+                className={`h-3.5 w-3.5 transition-transform duration-200 ${catalogOpen ? "rotate-180" : ""}`}
+              />
+            </button>
+          )}
         </div>
       </div>
       {selection.length > 0 && (

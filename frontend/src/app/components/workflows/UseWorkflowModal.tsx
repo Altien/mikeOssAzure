@@ -17,6 +17,7 @@ import { workflowDetailPath } from "./workflowRoutes";
 import {
     ModelToggle,
     type NoModelsReason,
+    ROUTER_SLUGS,
     type RouterSlug,
 } from "../assistant/ModelToggle";
 import { NoModelsWarningPopup } from "../popups/NoModelsWarningPopup";
@@ -143,13 +144,15 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
             return;
         }
         const defaultModel = profile.tabularModel;
-        const router = (["openrouter", "vercel", "opencode-go"] as const).find(
+        const router = ROUTER_SLUGS.find(
             (slug) => defaultModel.startsWith(`${slug}/`),
         );
         const routerSelections: Record<RouterSlug, string[]> = {
             openrouter: profile.openRouterModels,
             vercel: profile.vercelModels,
             "opencode-go": profile.openCodeGoModels,
+            bedrock: profile.bedrockModels,
+            azure: profile.azureModels,
         };
         const routerSelectionValid =
             !router ||
@@ -464,6 +467,8 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
                                     openCodeGoModels={
                                         profile?.openCodeGoModels
                                     }
+                                    bedrockModels={profile?.bedrockModels}
+                                    azureModels={profile?.azureModels}
                                     onNoModelsClick={setNoModelsWarning}
                                 />
                             </div>

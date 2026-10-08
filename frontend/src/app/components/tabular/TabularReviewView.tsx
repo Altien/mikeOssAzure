@@ -1506,6 +1506,10 @@ export function TRView({ reviewId, projectId }: Props) {
                                             openCodeGoModels={
                                                 profile?.openCodeGoModels
                                             }
+                                            bedrockModels={
+                                                profile?.bedrockModels
+                                            }
+                                            azureModels={profile?.azureModels}
                                             onNoModelsClick={setNoModelsWarning}
                                         />
                                     ),

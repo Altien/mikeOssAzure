@@ -12,7 +12,9 @@ export type Provider =
     | "openai-compatible"
     | "openrouter"
     | "opencode-go"
-    | "vercel";
+    | "vercel"
+    | "bedrock"
+    | "azure";
 
 export const REASONING_LEVELS = [
     "none",
@@ -66,8 +68,16 @@ export type UserApiKeys = {
     openrouter?: string | null;
     vercel?: string | null;
     "opencode-go"?: string | null;
+    bedrock?: string | null;
+    azure?: string | null;
     courtlistener?: string | null;
     azureOpenai?: AzureOpenaiSettings | null;
+    providerSettings?: ProviderSettings;
+};
+
+export type ProviderSettings = {
+    bedrock?: { region: string } | null;
+    azure?: { endpoint: string } | null;
 };
 
 // Azure OpenAI needs endpoint, API key, deployment and API version. The

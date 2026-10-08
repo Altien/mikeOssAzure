@@ -28,6 +28,16 @@ import {
 // ---------------------------------------------------------------------------
 
 describe("providerForModel", () => {
+    it("routes bedrock/ and azure/ ids to the cloud platforms", () => {
+        expect(providerForModel("bedrock/us.anthropic.claude-opus-5-5")).toBe(
+            "bedrock",
+        );
+        expect(providerForModel("bedrock/meta.llama4-maverick-v1:0")).toBe(
+            "bedrock",
+        );
+        expect(providerForModel("azure/gpt-6.1-sol")).toBe("azure");
+    });
+
     it("maps claude-* ids to the claude provider", () => {
         for (const model of [
             ...CLAUDE_MAIN_MODELS,
@@ -105,6 +115,18 @@ describe("resolveModel", () => {
         expect(resolveModel("gpt-6-astra", FALLBACK)).toBe(
             "gpt-6-astra",
         );
+    });
+
+    it("accepts account-specific Bedrock and Azure ids by shape", () => {
+        for (const model of [
+            "bedrock/us.anthropic.claude-opus-5-5",
+            "bedrock/arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-opus-5-5",
+            "azure/my-gpt-deployment",
+        ]) {
+            expect(resolveModel(model, FALLBACK)).toBe(model);
+        }
+        expect(resolveModel("bedrock/", FALLBACK)).toBe(FALLBACK);
+        expect(resolveModel("azure/has space", FALLBACK)).toBe(FALLBACK);
     });
 
     it("falls back for unknown model ids", () => {
@@ -246,6 +268,19 @@ describe("vercelModelId", () => {
 });
 
 describe("reasoningLevelsForModel", () => {
+    it("recognizes Claude behind Bedrock ids, which cannot disable thinking", () => {
+        for (const model of [
+            "bedrock/anthropic.claude-opus-5-5",
+            "bedrock/us.anthropic.claude-opus-5-5",
+            "bedrock/global.anthropic.claude-fable-5-1-v1:0",
+        ]) {
+            expect(reasoningLevelsForModel(model)).not.toContain("none");
+        }
+        expect(
+            reasoningLevelsForModel("bedrock/us.anthropic.claude-sonnet-5-5"),
+        ).toContain("none");
+    });
+
     it("uses the GPT-5.6 subset exposed by the provider", () => {
         expect(reasoningLevelsForModel("gpt-5.6-terra")).toEqual([
             "none",

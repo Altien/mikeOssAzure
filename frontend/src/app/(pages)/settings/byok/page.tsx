@@ -5,6 +5,7 @@ import { AlertTriangle, CheckCircle2, ExternalLink } from "lucide-react";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import type { ApiKeyProvider } from "@/app/lib/mikeApi";
 // Upstream divergence (OSS-6, §2.3 item 3 — org Key Vault keys): upstream's
+// Upstream 9c5ffa31 cloud credentials keep this same administrator boundary.
 // page lets each user paste personal provider keys (ApiKeyField + PUT
 // /user/api-keys/:provider). Dev's credentials are organisation secrets in
 // Azure Key Vault, set by an administrator through /install; the backend
@@ -28,6 +29,8 @@ const PROVIDERS: ReadonlyArray<{
         secret: "anthropic-api-key",
     },
     { provider: "opencode-go", label: "OpenCode Go", secret: "opencode-api-key" },
+    { provider: "bedrock", label: "Amazon Bedrock", secret: "aws-bearer-token-bedrock + bedrock-aws-region" },
+    { provider: "azure", label: "Azure OpenAI Responses", secret: "azure-openai-endpoint + azure-openai-api-key" },
     { provider: "gemini", label: "Google (Gemini)", secret: "gemini-api-key" },
     { provider: "openai", label: "OpenAI", secret: "openai-api-key" },
     { provider: "kimi", label: "Kimi K3", secret: "moonshot-api-key" },

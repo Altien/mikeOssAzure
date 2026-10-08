@@ -38,6 +38,33 @@ blocks use the existing shared AI SDK loop. The available reasoning controls are
 None and High. The API IDs are `mistral-large-4`, `mistral-medium-3-5`, and
 `mistral-small-2603`. Large 4 is currently a public preview, labeled accordingly.
 
+## Amazon Bedrock and Azure OpenAI setup
+
+Provider credentials are shared by this installation and configured by an
+administrator in Azure Key Vault. Environment variables are a fallback for
+local development. Users see credential availability under Settings → API Keys
+and choose router model IDs under its Routers section. Personal key changes
+remain refused.
+
+- Amazon Bedrock uses `aws-bearer-token-bedrock` (alias `bedrock-api-key`)
+  and `bedrock-aws-region` (alias `aws-region`). The corresponding environment
+  fallbacks are AWS_BEARER_TOKEN_BEDROCK and BEDROCK_AWS_REGION (or AWS_REGION).
+- Azure Responses uses the existing Azure connection: `azure-openai-api-key`
+  and `azure-openai-endpoint`; `azure-api-key` is also accepted. An endpoint
+  may be a resource name or an https URL on an Azure AI hostname. Every vault
+  alias is checked before environment fallback.
+
+Keys and the region or endpoint supplied to a request stay together. The
+model IDs are `bedrock/<model-or-inference-profile-id>` and
+`azure/<deployment>`; an explicit router ID must be in the user's saved
+selection. Bedrock uses bearer-authenticated Converse and Azure uses the v1
+Responses API. Existing `aoai:<deployment>` models keep their Azure Chat
+Completions protocol and encrypted compound settings.
+
+Numbered migration 0106 adds companion settings and extends the legacy
+provider constraint without replacing existing Azure payloads or identity
+types.
+
 ## Saved selections
 
 Removed direct-provider IDs are normalized when read, including saved chat,

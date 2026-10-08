@@ -20,6 +20,11 @@ const ROUTER_MODEL_ID_RE: Record<RouterSlug, RegExp> = {
     openrouter: CATALOG_MODEL_ID_RE,
     vercel: CATALOG_MODEL_ID_RE,
     "opencode-go": /^[^\s]+$/,
+    // Account-specific ids with no published catalog: Bedrock model and
+    // inference-profile ids ("us.anthropic.claude-opus-5-5", ARNs) and Azure
+    // deployment names.
+    bedrock: /^[^\s]+$/,
+    azure: /^[^\s]+$/,
 };
 
 /**
@@ -30,6 +35,8 @@ export const ROUTER_PROFILE_FIELDS: Record<RouterSlug, string> = {
     openrouter: "openRouterModels",
     vercel: "vercelModels",
     "opencode-go": "openCodeGoModels",
+    bedrock: "bedrockModels",
+    azure: "azureModels",
 };
 
 export function normalizeRouterModels(

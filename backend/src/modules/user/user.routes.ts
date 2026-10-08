@@ -428,8 +428,16 @@ userRouter.put(
 
         const apiKey =
             typeof req.body?.api_key === "string" ? req.body.api_key : null;
+        const settings =
+            req.body && typeof req.body === "object"
+                ? (req.body as { settings?: unknown }).settings
+                : undefined;
         const db = createServerSupabase();
-        const result = await saveApiKey(db, { userId, provider, apiKey });
+        const result = await saveApiKey(db, {
+            userId,
+            provider,
+            apiKey,
+        });
         if (!result.ok) {
             if (result.kind === "env_configured")
                 return void res.status(403).json({

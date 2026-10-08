@@ -15,6 +15,7 @@ import { useAuth } from "@/app/contexts/AuthContext";
 import {
     type ApiKeyState,
     type ApiKeyProvider,
+    type ApiKeySettings,
     type PersonalisationDetails,
     type PracticeSetting,
     type ProfessionalTitle,
@@ -65,9 +66,13 @@ interface UserProfile {
     openRouterModels: string[];
     vercelModels: string[];
     openCodeGoModels: string[];
+    bedrockModels: string[];
+    azureModels: string[];
     darkMode: boolean;
     projectMemoryDefault: boolean;
     apiKeys: ApiKeyState;
+    /** Settings saved with the user's own Bedrock/Azure keys. */
+    apiKeySettings: ApiKeySettings;
 }
 
 interface UserProfileContextType {
@@ -108,11 +113,14 @@ interface UserProfileContextType {
     updateOpenRouterModels: (models: string[]) => Promise<boolean>;
     updateVercelModels: (models: string[]) => Promise<boolean>;
     updateOpenCodeGoModels: (models: string[]) => Promise<boolean>;
+    updateBedrockModels: (models: string[]) => Promise<boolean>;
+    updateAzureModels: (models: string[]) => Promise<boolean>;
     updateDarkMode: (enabled: boolean) => Promise<void>;
     updateProjectMemoryDefault: (enabled: boolean) => Promise<void>;
     updateApiKey: (
         provider: ApiKeyProvider,
         value: string | null,
+        settings?: ApiKeySettings[keyof ApiKeySettings],
     ) => Promise<boolean>;
     reloadProfile: () => Promise<void>;
     incrementMessageCredits: () => Promise<boolean>;
@@ -130,6 +138,8 @@ const API_KEY_PROVIDERS: ApiKeyProvider[] = [
     "openrouter",
     "vercel",
     "opencode-go",
+    "bedrock",
+    "azure",
     "courtlistener",
     // Upstream divergence (OSS-6, §2.3 item 3): dev's organisation
     // credentials (Key Vault) for Kimi and Azure OpenAI. The Azure OpenAI
@@ -147,6 +157,8 @@ function emptyApiKeys(): ApiKeyState {
         openrouter: { configured: false, source: null },
         vercel: { configured: false, source: null },
         "opencode-go": { configured: false, source: null },
+        bedrock: { configured: false, source: null },
+        azure: { configured: false, source: null },
         courtlistener: { configured: false, source: null },
         kimi: { configured: false, source: null },
         azure_openai: { configured: false, source: null },
@@ -191,7 +203,14 @@ function toProfile(data: ApiUserProfile): UserProfile {
         openCodeGoModels: Array.isArray(profile.openCodeGoModels)
             ? profile.openCodeGoModels
             : [],
+        bedrockModels: Array.isArray(profile.bedrockModels)
+            ? profile.bedrockModels
+            : [],
+        azureModels: Array.isArray(profile.azureModels)
+            ? profile.azureModels
+            : [],
         apiKeys,
+        apiKeySettings: apiKeyStatus.settings ?? {},
     };
 }
 
@@ -276,9 +295,12 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 openRouterModels: [],
                 vercelModels: [],
                 openCodeGoModels: [],
+                bedrockModels: [],
+                azureModels: [],
                 darkMode: false,
                 projectMemoryDefault: true,
                 apiKeys: emptyApiKeys(),
+                apiKeySettings: {},
             });
         } finally {
             if (isCurrent()) setLoading(false);
@@ -611,6 +633,44 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
         [user],
     );
 
+    const updateBedrockModels = useCallback(
+        async (bedrockModels: string[]): Promise<boolean> => {
+            if (!user) return false;
+            try {
+                const current = accountGuard(user.id);
+                if (!current()) return false;
+                const updated = await updateUserProfile({ bedrockModels }, current);
+                if (!current()) return false;
+                setProfile((prev) =>
+                    prev ? { ...prev, ...toProfile(updated) } : null,
+                );
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        [user, accountGuard],
+    );
+
+    const updateAzureModels = useCallback(
+        async (azureModels: string[]): Promise<boolean> => {
+            if (!user) return false;
+            try {
+                const current = accountGuard(user.id);
+                if (!current()) return false;
+                const updated = await updateUserProfile({ azureModels }, current);
+                if (!current()) return false;
+                setProfile((prev) =>
+                    prev ? { ...prev, ...toProfile(updated) } : null,
+                );
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        [user, accountGuard],
+    );
+
     const updateDarkMode = useCallback(
         async (enabled: boolean): Promise<void> => {
             if (!user) throw new Error("Sign in to update Dark Mode.");
@@ -656,11 +716,12 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
         async (
             provider: ApiKeyProvider,
             value: string | null,
+            settings?: ApiKeySettings[keyof ApiKeySettings],
         ): Promise<boolean> => {
             if (!user) return false;
             const normalized = value?.trim() ? value.trim() : null;
             try {
-                const status = await saveApiKey(provider, normalized);
+                const status = await saveApiKey(provider, normalized, settings);
                 setProfile((prev) =>
                     prev
                         ? {
@@ -673,6 +734,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                                           status.sources?.[provider] ?? null,
                                   },
                               },
+                              apiKeySettings: status.settings ?? {},
                           }
                         : null,
                 );
@@ -726,6 +788,8 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             updateOpenRouterModels,
             updateVercelModels,
             updateOpenCodeGoModels,
+            updateBedrockModels,
+            updateAzureModels,
             updateDarkMode,
             updateProjectMemoryDefault,
             updateApiKey,
@@ -750,6 +814,8 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             updateOpenRouterModels,
             updateVercelModels,
             updateOpenCodeGoModels,
+            updateBedrockModels,
+            updateAzureModels,
             updateDarkMode,
             updateProjectMemoryDefault,
             updateApiKey,

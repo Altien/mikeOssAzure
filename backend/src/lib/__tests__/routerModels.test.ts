@@ -197,6 +197,8 @@ describe("router slugs", () => {
             openrouter: ["openai/gpt-5.4"],
             vercel: [],
             "opencode-go": ["glm-5"],
+            bedrock: ["us.anthropic.claude-opus-5-5"],
+            azure: [],
         };
 
         expect(
@@ -204,6 +206,15 @@ describe("router slugs", () => {
         ).toBe(true);
         expect(
             isRouterModelSelected("opencode-go/kimi-k3", selections),
+        ).toBe(false);
+        expect(
+            isRouterModelSelected(
+                "bedrock/us.anthropic.claude-opus-5-5",
+                selections,
+            ),
+        ).toBe(true);
+        expect(
+            isRouterModelSelected("azure/us.anthropic.claude-opus-5-5", selections),
         ).toBe(false);
         // A selection is per-router: the same catalog id saved for one router
         // must not unlock another.

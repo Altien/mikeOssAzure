@@ -26,7 +26,8 @@ import crypto from "node:crypto";
 import { getConfig } from "../../lib/config";
 import { resolveSecret, resolveProviderSecret, resolveVercelApiKey } from "../../lib/envSecrets";
 import { createServerSupabase } from "../../lib/supabase";
-import type { AzureOpenaiSettings, UserApiKeys } from "../../lib/llm";
+import { envBedrockCredentials, envAzureCredentials } from "../../lib/llm/cloudProviders";
+import type { ProviderSettings, AzureOpenaiSettings, UserApiKeys } from "../../lib/llm";
 
 // `openrouter` and `courtlistener` added with upstream 44e868e
 // (CourtListener integration). Unlike upstream, their org-level
@@ -42,14 +43,17 @@ export type ApiKeyProvider =
     | "opencode-go"
     | "vercel"
     | "courtlistener"
+    | "bedrock"
+    | "azure"
     | "azure_openai";
 
 export type ApiKeySource = "env" | "user" | null;
-export type ApiKeyStatus = Record<string, boolean | Record<string, ApiKeySource>> & {
+export type ApiKeyStatus = Record<string, boolean | Record<string, ApiKeySource> | ProviderSettings> & {
+    settings: ProviderSettings;
     sources: Record<string, ApiKeySource>;
 };
 
-const ORG_PROVIDERS = ["claude", "gemini", "openai", "kimi", "mistral", "openrouter", "opencode-go", "vercel", "courtlistener", "azure_openai"] as const;
+const ORG_PROVIDERS = ["claude", "gemini", "openai", "kimi", "mistral", "openrouter", "opencode-go", "vercel", "courtlistener", "azure_openai", "bedrock", "azure"] as const;
 
 export function normalizeApiKeyProvider(value: unknown): ApiKeyProvider | null {
     return typeof value === "string" && (ORG_PROVIDERS as readonly string[]).includes(value)
@@ -68,7 +72,7 @@ export async function getUserApiKeyStatus(_userId: string, _db?: ReturnType<type
         status[provider] = configured;
         sources[provider] = configured ? "env" : null;
     }
-    return { ...status, sources };
+    return { ...status, sources, settings: {} };
 }
 
 /**
@@ -91,6 +95,8 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
         azureApiKey,
         azureApiVersion,
         azureDeployment,
+        cloudBedrock,
+        cloudAzure,
     ] = await Promise.all([
         resolveSecret("anthropic-api-key"),
         resolveSecret("gemini-api-key"),
@@ -107,6 +113,8 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
         resolveSecret("azure-openai-api-key"),
         resolveSecret("azure-openai-api-version"),
         resolveSecret("azure-openai-deployment"),
+        envBedrockCredentials(),
+        envAzureCredentials(),
     ]);
 
     return {
@@ -119,6 +127,12 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
         vercel: vercel || null,
         "opencode-go": openCodeGo || null,
         courtlistener: courtlistener || null,
+        bedrock: cloudBedrock?.apiKey ?? null,
+        azure: cloudAzure?.apiKey ?? null,
+        providerSettings: {
+            bedrock: cloudBedrock ? { region: cloudBedrock.region } : null,
+            azure: cloudAzure ? { endpoint: cloudAzure.endpoint } : null,
+        },
         azureOpenai:
             azureEndpoint && azureApiKey
                 ? {
@@ -426,6 +440,8 @@ export async function getConfiguredProviders(
         "opencode-go": false,
         courtlistener: false,
         azure_openai: false,
+        bedrock: false,
+        azure: false,
     };
     for (const row of (rows ?? []) as { provider: ApiKeyProvider }[]) {
         configured[row.provider] = true;

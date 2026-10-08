@@ -64,7 +64,11 @@ const ALWAYS_REASONING_LEVELS: readonly ReasoningLevel[] =
 export function reasoningLevelsForModel(
     model: string,
 ): readonly ReasoningLevel[] {
-    const catalogId = model.replace(/^(?:openrouter|vercel)\//, "");
+    const catalogId = model
+        .replace(/^(?:openrouter|vercel)\//, "")
+        // Bedrock names Claude "anthropic.claude-…", optionally behind a
+        // cross-region inference-profile prefix ("us.anthropic.claude-…").
+        .replace(/^bedrock\/(?:[a-z]+\.)?anthropic\./, "");
     // Astra, Sol 6.1, and current Fable/Opus cannot disable thinking.
     if (
         /(?:^|\/)(?:gpt-6-astra|gpt-6\.1-sol|claude-fable-5-1|claude-opus-5-5)(?:$|-)/.test(
@@ -168,6 +172,8 @@ export function providerForModel(model: string): Provider {
     if (model.startsWith("openrouter/")) return "openrouter";
     if (model.startsWith("vercel/")) return "vercel";
     if (model.startsWith("opencode-go/")) return "opencode-go";
+    if (model.startsWith("bedrock/")) return "bedrock";
+    if (model.startsWith("azure/")) return "azure";
     if (model.startsWith("claude")) return "claude";
     if (model.startsWith("gemini")) return "gemini";
     if (model.startsWith("kimi-")) return "kimi";
@@ -181,7 +187,7 @@ export function isAllowedModelId(id: string): boolean {
     // Static models are listed in ALL_MODELS; AOAI ids are accepted by
     // prefix because deployment names are user-defined and only known
     // at runtime via deployment discovery.
-    return ALL_MODELS.has(id) || getConfiguredModel(id) !== null || /^opencode-go\/[^\s]+$/.test(id) || id.startsWith(AZURE_OPENAI_PREFIX) || /^(?:openrouter|vercel)\/[^\s/]+\/[^\s]+$/.test(id);
+    return ALL_MODELS.has(id) || getConfiguredModel(id) !== null || /^(?:opencode-go|bedrock|azure)\/[^\s]+$/.test(id) || id.startsWith(AZURE_OPENAI_PREFIX) || /^(?:openrouter|vercel)\/[^\s/]+\/[^\s]+$/.test(id);
 }
 
 // Renamed/retired static ids → their current equivalents. Stored preferences
@@ -228,6 +234,16 @@ export function openRouterModelId(model: string): string {
 
 export function vercelModelId(model: string): string {
     return model.replace(/^vercel\//, "");
+}
+
+/** Bedrock model or inference-profile id, without the app-level prefix. */
+export function bedrockModelId(model: string): string {
+    return model.replace(/^bedrock\//, "");
+}
+
+/** Azure OpenAI deployment name, without the app-level prefix. */
+export function azureDeploymentName(model: string): string {
+    return model.replace(/^azure\//, "");
 }
 
 export function openCodeGoModelId(model: string): string {

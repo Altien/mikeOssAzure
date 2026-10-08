@@ -36,6 +36,8 @@ export interface SelectedModelSources {
         openRouterModels: string[];
         vercelModels: string[];
         openCodeGoModels: string[];
+        bedrockModels?: string[];
+        azureModels?: string[];
     } | null;
     /** Undefined means availability is unknown and must fail open. */
     apiKeys?: ApiKeyState;
@@ -63,6 +65,8 @@ function usableStoredModel(
             openrouter: sources.routerSelections.openRouterModels,
             vercel: sources.routerSelections.vercelModels,
             "opencode-go": sources.routerSelections.openCodeGoModels,
+            bedrock: sources.routerSelections.bedrockModels ?? [],
+            azure: sources.routerSelections.azureModels ?? [],
         };
         if (!selections[router].includes(canonical.slice(router.length + 1))) {
             return null;
@@ -84,6 +88,8 @@ export function useSelectedModel(
     const openRouterModels = sources.routerSelections?.openRouterModels;
     const vercelModels = sources.routerSelections?.vercelModels;
     const openCodeGoModels = sources.routerSelections?.openCodeGoModels;
+    const bedrockModels = sources.routerSelections?.bedrockModels;
+    const azureModels = sources.routerSelections?.azureModels;
     const configuredModelIds = sources.configuredModelIds;
     const hasRouterSelections = sources.routerSelections != null;
     const selectionSources = useMemo<SelectedModelSources>(
@@ -96,6 +102,8 @@ export function useSelectedModel(
                       openRouterModels: openRouterModels ?? [],
                       vercelModels: vercelModels ?? [],
                       openCodeGoModels: openCodeGoModels ?? [],
+                      bedrockModels: bedrockModels ?? [],
+                      azureModels: azureModels ?? [],
                   }
                 : null,
             apiKeys: sources.apiKeys,
@@ -109,6 +117,8 @@ export function useSelectedModel(
             openRouterModels,
             vercelModels,
             openCodeGoModels,
+            bedrockModels,
+            azureModels,
             sources.apiKeys,
             configuredModelIds,
         ],

@@ -63,7 +63,11 @@ const ALWAYS_REASONING_LEVELS: readonly ReasoningLevel[] =
 export function reasoningLevelsForModel(
   modelId: string,
 ): readonly ReasoningLevel[] {
-  const catalogId = modelId.replace(/^(?:openrouter|vercel)\//, "");
+  const catalogId = modelId
+    .replace(/^(?:openrouter|vercel)\//, "")
+    // Bedrock names Claude "anthropic.claude-…", optionally behind a
+    // cross-region inference-profile prefix ("us.anthropic.claude-…").
+    .replace(/^bedrock\/(?:[a-z]+\.)?anthropic\./, "");
   // Astra, Sol 6.1, and current Fable/Opus cannot disable thinking.
   if (
     /(?:^|\/)(?:gpt-6-astra|gpt-6\.1-sol|claude-fable-5-1|claude-opus-5-5)(?:$|-)/.test(

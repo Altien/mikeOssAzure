@@ -6,13 +6,17 @@ const {
     getOpenCodeGoModels,
     updateOpenRouterModels,
     updateOpenCodeGoModels,
+    updateBedrockModels,
     openCodeGoConfigured,
+    bedrockConfigured,
 } = vi.hoisted(() => ({
     getOpenRouterModels: vi.fn(),
     getOpenCodeGoModels: vi.fn(),
     updateOpenRouterModels: vi.fn(),
     updateOpenCodeGoModels: vi.fn(),
+    updateBedrockModels: vi.fn(),
     openCodeGoConfigured: { value: false },
+    bedrockConfigured: { value: false },
 }));
 
 vi.mock("@/app/lib/mikeApi", () => ({
@@ -31,14 +35,23 @@ vi.mock("@/app/contexts/UserProfileContext", () => ({
                     configured: openCodeGoConfigured.value,
                     source: openCodeGoConfigured.value ? "user" : null,
                 },
+                bedrock: {
+                    configured: bedrockConfigured.value,
+                    source: bedrockConfigured.value ? "user" : null,
+                },
+                azure: { configured: false, source: null },
             },
             openRouterModels: ["anthropic/claude-sonnet-4.5"],
             vercelModels: [],
             openCodeGoModels: [],
+            bedrockModels: [],
+            azureModels: [],
         },
         updateOpenRouterModels,
         updateVercelModels: vi.fn(),
         updateOpenCodeGoModels,
+        updateBedrockModels,
+        updateAzureModels: vi.fn(),
     }),
 }));
 
@@ -337,5 +350,55 @@ describe("RouterSettingsSection with OpenCode Go configured", () => {
         expect(normalizeTypedModelId("glm-5", "opencode-go")).toBe("glm-5");
         expect(normalizeTypedModelId("glm-5", "openrouter")).toBeNull();
         expect(normalizeTypedModelId("not a model", "opencode-go")).toBeNull();
+    });
+});
+
+describe("RouterSettingsSection with Amazon Bedrock configured", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        bedrockConfigured.value = true;
+        getOpenRouterModels.mockResolvedValue([]);
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        bedrockConfigured.value = false;
+    });
+
+    it("takes typed ids without a catalog, as a plain textbox", async () => {
+        updateBedrockModels.mockResolvedValue(true);
+        render(<RouterSettingsSection />);
+        const input = screen.getByPlaceholderText(
+            "e.g. us.anthropic.claude-opus-5-5",
+        );
+
+        // No list to browse: not a combobox, and no chevron to open one.
+        expect(input).not.toHaveAttribute("role", "combobox");
+        expect(
+            screen.queryByRole("button", { name: "Choose Amazon Bedrock model" }),
+        ).toBeNull();
+
+        fireEvent.change(input, {
+            target: {
+                value: "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-opus-5-5",
+            },
+        });
+        fireEvent.keyDown(input, { key: "Enter" });
+
+        await waitFor(() =>
+            expect(updateBedrockModels).toHaveBeenCalledWith([
+                "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-opus-5-5",
+            ]),
+        );
+    });
+
+    it("validates Bedrock and Azure ids as space-free strings", () => {
+        expect(
+            normalizeTypedModelId("bedrock/us.anthropic.claude-opus-5-5", "bedrock"),
+        ).toBe("us.anthropic.claude-opus-5-5");
+        expect(normalizeTypedModelId("my-gpt-deployment", "azure")).toBe(
+            "my-gpt-deployment",
+        );
+        expect(normalizeTypedModelId("my deployment", "azure")).toBeNull();
     });
 });

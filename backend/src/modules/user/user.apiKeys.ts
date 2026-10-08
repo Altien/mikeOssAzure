@@ -22,8 +22,10 @@ export type SaveApiKeyResult =
 
 export async function saveApiKey(
     _db: Db,
-    _params: { userId: string; provider: ApiKeyProvider; apiKey: string | null },
+    _params: { userId: string; provider: ApiKeyProvider; apiKey: string | null; settings?: unknown },
 ): Promise<SaveApiKeyResult> {
+    // Upstream divergence (sync-log: 9c5ffa31): cloud key/settings edits
+    // remain an organisation operation; personal keys cannot shadow Key Vault.
     // The organisation owns provider credentials. Older clients receive an
     // explicit refusal rather than creating a shadow per-user key.
     return { ok: false, kind: "env_configured" };

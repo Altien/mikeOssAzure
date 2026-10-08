@@ -210,6 +210,8 @@ function ChatInputForChatImpl(
                   openRouterModels: profile.openRouterModels,
                   vercelModels: profile.vercelModels,
                   openCodeGoModels: profile.openCodeGoModels,
+                  bedrockModels: profile.bedrockModels,
+                  azureModels: profile.azureModels,
                   }
                 : null,
         apiKeys: apiKeysDegraded ? undefined : profile?.apiKeys,
@@ -887,6 +889,8 @@ function ChatInputForChatImpl(
                                     openRouterModels={profile?.openRouterModels}
                                     vercelModels={profile?.vercelModels}
                                     openCodeGoModels={profile?.openCodeGoModels}
+                                    bedrockModels={profile?.bedrockModels}
+                                    azureModels={profile?.azureModels}
                                     compact={compactControls}
                                     triggerClassName={cn(
                                         "h-7.5",
