@@ -44,9 +44,9 @@ export const INVITATION_TTL_DAYS = 14;
  * ONE list, because two different call sites ask the same question and used
  * to disagree about the answer: `deleteOrg` below (may this org be deleted?)
  * and account deletion (`listOrgsBlockingAccountDeletion` in
- * lib/userDataCleanup.ts). The account-deletion probe omitted `chats`, so an
- * org whose only remaining content was a chat looked empty and was deleted —
- * while `deleteOrg` refused the very same delete over the API.
+ * modules/user/user.dataCleanup.ts). The account-deletion probe omitted
+ * `chats`, so an org whose only remaining content was a chat looked empty and
+ * was deleted — while `deleteOrg` refused the very same delete over the API.
  *
  * Every one of these foreign keys is ON DELETE RESTRICT, so an incomplete
  * probe does not silently detach content: the database refuses the delete and
