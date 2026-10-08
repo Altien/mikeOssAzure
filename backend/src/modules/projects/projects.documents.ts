@@ -9,16 +9,13 @@ import {
   contentSha256,
 } from "../../lib/documentVersions";
 import {
-  deleteFile,
   deleteFileBestEffort,
   downloadFile,
-  uploadFile,
   storageKey,
 } from "../../lib/storage";
 import { convertedPdfKey } from "../../lib/convert";
 import { checkProjectAccess, resolveContentOrgId } from "../../lib/access";
 import { can, DOCS_ORGANIZE_FORBIDDEN } from "../../lib/permissions";
-import { contentTypeForDocumentType } from "../../lib/documentTypes";
 import {
   type Db,
   type RoleForbidden,

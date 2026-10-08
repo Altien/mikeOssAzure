@@ -119,7 +119,7 @@ function extractFormFields(
 
 function positionedFormItem(field: ExtractedFormField): PdfTextItem | null {
   if (!field.rect) return null;
-  const [x1, y1, x2, y2] = field.rect;
+  const [x1, y1, , y2] = field.rect;
   const height = Math.max(8, Math.min(16, (y2 - y1) * 0.7));
   const text = `[${field.text}]`;
   return {

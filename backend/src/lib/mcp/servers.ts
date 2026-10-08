@@ -477,7 +477,6 @@ export async function buildUserMcpTools(
             ? connector[0]?.name
             : connector?.name;
         const toolName = String(raw.tool_name);
-        const title = typeof raw.title === "string" ? raw.title : toolName;
         const description =
             typeof raw.description === "string" && raw.description.trim()
                 ? raw.description

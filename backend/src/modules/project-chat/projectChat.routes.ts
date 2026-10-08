@@ -20,7 +20,6 @@ import {
     appendAssistantEventsToMessage,
     AssistantStreamError,
     assistantStreamErrorPayload,
-    ASSISTANT_ERROR_MESSAGE,
     buildCancelledAssistantMessage,
     extractCitations,
     isAbortError,

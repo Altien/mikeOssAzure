@@ -12,7 +12,7 @@ import { randomUUID } from "node:crypto";
 import { type Db } from "../../lib/supabase";
 import { ensureDocAccess } from "../../lib/access";
 import { convertedPdfKey } from "../../lib/convert";
-import { copyFile, storageKey } from "../../lib/storage";
+import { storageKey } from "../../lib/storage";
 import { enqueueStorageCleanup } from "../../lib/dbq/enqueue";
 import { attachActiveVersionPaths, attachLatestVersionNumbers } from "../../lib/documentVersions";
 import { resolveWorkflowAccess, assetsUnsupported } from "./workflows.access";

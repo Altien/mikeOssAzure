@@ -17,21 +17,6 @@ async function deleteByIds(db: Db, table: string, ids: string[]) {
     }
 }
 
-async function deleteWhereIn(
-    db: Db,
-    table: string,
-    column: string,
-    values: string[],
-) {
-    for (const batch of chunkArray(values, DELETE_BATCH_SIZE)) {
-        const { error } = await (db as any)
-            .from(table)
-            .delete()
-            .in(column, batch);
-        await throwIfError(error, `Failed to delete ${table}`);
-    }
-}
-
 /**
  * Fence and purge scoped memory before its owner row cascades away. The
  * database function empties the body under the file's row lock and advances

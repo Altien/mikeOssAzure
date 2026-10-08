@@ -10,14 +10,9 @@ import { UserFacingError, safeErrorLog } from "../../../lib/safeError";
 import { InvalidApiKeyError } from "../../../lib/llm/apiKeyErrors";
 import { reportError } from "../../../lib/observability/sentry";
 import type { Db } from "../../../lib/supabase";
-import { buildUserMcpTools, type McpToolEvent } from "../../../lib/mcpConnectors";
-import type { SourceDocument } from "../../../lib/sourceDocuments";
+import { buildUserMcpTools } from "../../../lib/mcpConnectors";
 import { buildGoogleDriveTools } from "../../../lib/integrations/googleDrive";
-import {
-  COURTLISTENER_TOOLS,
-  type CaseCitationEvent,
-  type CourtlistenerToolEvent,
-} from "./tools/courtlistenerTools";
+import { COURTLISTENER_TOOLS } from "./tools/courtlistenerTools";
 import { EXTERNAL_SOURCE_TOOLS } from "../../../altien/externalSources/toolDefinitions";
 import {
   type DocStore,
@@ -25,9 +20,6 @@ import {
   type TabularCellStore,
   type WorkflowStore,
   type ToolCall,
-  type AskInputResponseItem,
-  type AskInputsEvent,
-  type EditAnnotation,
   devLog,
   resolveDocLabel,
   TOOL_ERROR_MESSAGE,

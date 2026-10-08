@@ -658,16 +658,6 @@ function findBody(doc: XNode[]): XNode[] | null {
     return null;
 }
 
-function replaceBody(doc: XNode[], bodyChildren: XNode[]): void {
-    for (const top of doc) {
-        if (elName(top) !== "w:document") continue;
-        const docKids = elChildren(top);
-        for (const c of docKids) {
-            if (elName(c) === "w:body") setChildren(c, bodyChildren);
-        }
-    }
-}
-
 /**
  * Walk a tree and collect all max w:id values in w:ins/w:del so new changes
  * can start their numbering safely above it.

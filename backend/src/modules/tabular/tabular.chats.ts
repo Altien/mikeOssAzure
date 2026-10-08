@@ -41,7 +41,6 @@ import {
 } from "../user/user.service";
 import {
     resolveEffectiveChatModel,
-    resolveEffectiveReasoningLevel,
     titleModelForChat,
 } from "../../lib/modelSelection";
 import { generateChatTitle } from "./tabular.extract";

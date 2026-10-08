@@ -7,7 +7,7 @@ import {
 } from "../../../../lib/storage";
 import { convertedPdfKey, docxToPdf } from "../../../../lib/convert";
 import { enqueueConversion } from "../../../../lib/queue/conversionQueue";
-import { enqueueDbJob, enqueueStorageCleanup } from "../../../../lib/dbq/enqueue";
+import { enqueueDbJob } from "../../../../lib/dbq/enqueue";
 import type { Db } from "../../../../lib/supabase";
 import { profileAttributionName } from "../../../../lib/userLookup";
 import {
