@@ -2467,6 +2467,15 @@ describe("thin endpoint wrappers", () => {
             method: "PUT",
             body: { api_key: null },
         },
+        {
+            // A cloud key travels with its region/endpoint in one request.
+            name: "saveApiKey (with settings)",
+            call: () =>
+                saveApiKey("bedrock", "bedrock-key", { region: "us-east-1" }),
+            url: "/user/api-keys/bedrock",
+            method: "PUT",
+            body: { api_key: "bedrock-key", settings: { region: "us-east-1" } },
+        },
         // MCP connectors
         {
             name: "listMcpConnectors",

@@ -36,6 +36,9 @@ describe("normalizeAzureEndpoint", () => {
       "http://contoso.openai.azure.com",
       "https://contoso.openai.azure.com.example.com",
       "https://contoso.openai.azure.com/?key=1",
+      "not a url",
+      "   ",
+      `https://contoso.openai.azure.com/${"a".repeat(300)}`,
     ]) {
       expect(normalizeAzureEndpoint(value)).toBeNull();
     }

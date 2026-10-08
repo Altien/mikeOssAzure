@@ -42,6 +42,10 @@ describe("getModelProvider", () => {
         );
         expect(getModelProvider("vercel/openai/gpt-5.4")).toBe("vercel");
         expect(getModelProvider("opencode-go/glm-5")).toBe("opencode-go");
+        expect(
+            getModelProvider("bedrock/us.anthropic.claude-opus-5-5"),
+        ).toBe("bedrock");
+        expect(getModelProvider("azure/gpt-6.1-sol")).toBe("azure");
     });
 
     it("resolves any ollama/-prefixed id without consulting SETTINGS_MODELS", () => {
@@ -140,6 +144,8 @@ describe("providerLabel", () => {
         expect(providerLabel("openrouter")).toBe("OpenRouter");
         expect(providerLabel("vercel")).toBe("Vercel AI Gateway");
         expect(providerLabel("opencode-go")).toBe("OpenCode Go");
+        expect(providerLabel("bedrock")).toBe("Amazon Bedrock");
+        expect(providerLabel("azure")).toBe("Azure OpenAI");
         expect(providerLabel("ollama")).toBe("Local (Ollama)");
         expect(providerLabel("gemini")).toBe("Google (Gemini)");
     });
