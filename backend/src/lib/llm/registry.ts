@@ -69,17 +69,6 @@ export function getConfiguredModel(id: string): ConfiguredModel | null {
   return loadModelRegistry().models.find((model) => model.id === id) ?? null;
 }
 
-export function getCommitteeModel(
-  id: string,
-  additionalCommittees: CommitteeModel[] = [],
-): CommitteeModel | null {
-  return (
-    additionalCommittees.find((committee) => committee.id === id) ??
-    loadModelRegistry().committees.find((committee) => committee.id === id) ??
-    null
-  );
-}
-
 export function configuredModelIds(
   additionalCommittees: CommitteeModel[] = [],
 ): string[] {

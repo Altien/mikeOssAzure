@@ -162,10 +162,3 @@ export async function persistLastSelectedReasoningLevel(
         .eq("user_id", userId);
     return error ?? null;
 }
-
-export async function getUserApiKeys(
-    userId: string,
-    db?: Db,
-): Promise<UserApiKeys> {
-    return getOrganisationApiKeys();
-}

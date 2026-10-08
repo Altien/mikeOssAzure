@@ -619,14 +619,6 @@ export function storageKey(
   return `documents/${userId}/${docId}/source${storageExtension(filename, ".bin")}`;
 }
 
-export function pdfStorageKey(
-  userId: string,
-  docId: string,
-  stem: string,
-): string {
-  return `documents/${userId}/${docId}/${stem}.pdf`;
-}
-
 export function generatedDocKey(
   userId: string,
   docId: string,

@@ -32,9 +32,6 @@
 
 export type ProjectRole = "owner" | "editor" | "viewer";
 
-/** `deny` is an organization-only override, not a capability-bearing role. */
-export type OrganizationAccessOverride = ProjectRole | "deny";
-
 /** The role values a direct access grant may carry (the whole ladder). */
 export const PROJECT_ROLES: ProjectRole[] = ["owner", "editor", "viewer"];
 

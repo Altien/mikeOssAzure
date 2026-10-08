@@ -46,7 +46,7 @@ function accessFailureMessage(
   return null;
 }
 
-function errorMessage(error: unknown, label: string): string {
+export function streamErrorMessage(error: unknown, label: string): string {
   if (error instanceof Error && error.message) return error.message;
   if (typeof error === "string" && error.trim()) return error;
   return `${label} stream failed.`;
@@ -94,5 +94,5 @@ export function toProviderStreamError(
   const message = apiError && accessFailureMessage(apiError, context);
   if (message) return new UserFacingError(message, { cause: error });
   if (error instanceof Error && error.message) return error;
-  return new Error(errorMessage(error, context.label), { cause: error });
+  return new Error(streamErrorMessage(error, context.label), { cause: error });
 }

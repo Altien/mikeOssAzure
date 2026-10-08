@@ -12,7 +12,11 @@ import type {
   StreamChatResult,
 } from "./types";
 import { streamChunkTimeouts } from "../runtimeConfig";
-import { asProviderStallError, toProviderStreamError } from "./providerErrors";
+import {
+  asProviderStallError,
+  streamErrorMessage,
+  toProviderStreamError,
+} from "./providerErrors";
 import { createRawLlmStreamRecorder, logRawLlmStream } from "./rawStreamLog";
 
 /**
@@ -335,25 +339,13 @@ function toAiSdkTools(
   );
 }
 
-function errorMessage(error: unknown, label: string): string {
-  // SDK adapters wrap failures from our validating fetch transform in an
-  // APICallError. Surface the actionable malformed/truncated tool cause.
-  if (error instanceof Error && error.cause) {
-    const cause = errorMessage(error.cause, label);
-    if (cause !== `${label} stream failed.`) return cause;
-  }
-  if (error instanceof Error && error.message) return error.message;
-  if (typeof error === "string" && error.trim()) return error;
-  return `${label} stream failed.`;
-}
-
 /**
  * The ORIGINAL Error instance from a `tool-error` / `error` part. Re-wrapping
  * it discards error identity, including control-flow and user-facing error
  * types thrown inside runTools (the SDK's tool `execute`).
  */
 function rethrowable(error: unknown, label: string): Error {
-  return error instanceof Error ? error : new Error(errorMessage(error, label));
+  return error instanceof Error ? error : new Error(streamErrorMessage(error, label));
 }
 
 /** Provider stream failure, preferring an unsafe-tool-round transport cause. */

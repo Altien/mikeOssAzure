@@ -122,7 +122,6 @@ export {
     type ApiKeySource,
     type ApiKeyStatus,
 } from "./user.apiKeyStore";
-export { getUserApiKeys } from "./user.settings";
 export { setUserApiKey } from "./user.apiKeyStore";
 
 export { resolveUserChatSelection } from "./user.chatSelection";

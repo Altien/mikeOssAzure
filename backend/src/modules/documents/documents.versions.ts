@@ -16,7 +16,7 @@ import {
     uploadFile,
     versionStorageKey,
 } from "../../lib/storage";
-import { docxToPdf } from "../../lib/convert";
+import { convertedPdfKey, docxToPdf } from "../../lib/convert";
 import { enqueueConversion } from "../../lib/queue/conversionQueue";
 import { contentSha256, loadActiveVersion } from "../../lib/documentVersions";
 import { creatorScopedAllowed } from "../../lib/access";
@@ -193,7 +193,7 @@ export async function createVersionFromDocument(
         ({ pdfStoragePath } = await copyDocumentVersionFiles({
             source: { ...active, file_type: suffix },
             storagePath: key,
-            pdfStoragePath: `converted-pdfs/${userId}/${documentId}/${versionSlug}.pdf`,
+            pdfStoragePath: convertedPdfKey(userId, documentId, versionSlug),
             transport: "download",
             rendition: "optional",
             sourceBytes: bytes,
@@ -219,7 +219,7 @@ export async function createVersionFromDocument(
         } else {
             try {
                 const pdfBuf = await docxToPdf(Buffer.from(bytes));
-                const pdfKey = `converted-pdfs/${userId}/${documentId}/${versionSlug}.pdf`;
+                const pdfKey = convertedPdfKey(userId, documentId, versionSlug);
                 await uploadFile(
                     pdfKey,
                     pdfBuf.buffer.slice(
@@ -270,7 +270,7 @@ export async function createVersionFromDocument(
             userId,
             storagePath: key,
             fileType: suffix,
-            pdfKey: `converted-pdfs/${userId}/${documentId}/${versionSlug}.pdf`,
+            pdfKey: convertedPdfKey(userId, documentId, versionSlug),
             finalizeDocumentStatus: false,
         });
     }

@@ -1,5 +1,3 @@
-export { STANDARD_FONT_DATA_URL } from "../../../lib/pdfText";
-
 // Re-exported so the chat modules that already import it from here keep
 // working; the definition lives in lib/log.ts.
 export { devLog } from "../../../lib/log";

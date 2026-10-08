@@ -20,10 +20,8 @@ vi.mock("../../queue/extractionQueue", () => ({
             : `extract_${reviewId}_${rowId}_${columnIndex}`,
 }));
 
-import {
-    sweepStaleProcessingDocuments,
-    sweepStaleGeneratingCells,
-} from "../../../jobs/staleWork";
+import { sweepStaleProcessingDocuments } from "../../../modules/documents/documents.service";
+import { sweepStaleGeneratingCells } from "../../../modules/tabular/tabular.service";
 
 type Call = {
     table: string;

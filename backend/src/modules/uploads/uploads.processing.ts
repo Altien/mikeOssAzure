@@ -195,9 +195,11 @@ async function buildPdfRendition(args: {
       args.sourceFilePath,
       args.workingDirectory,
     );
-    const key = args.versionSlug
-      ? `converted-pdfs/${args.userId}/${args.documentId}/${args.versionSlug}.pdf`
-      : convertedPdfKey(args.userId, args.documentId);
+    const key = convertedPdfKey(
+      args.userId,
+      args.documentId,
+      args.versionSlug,
+    );
     await uploadFileFromPath(key, pdfPath, "application/pdf");
     return key;
   } catch (error) {

@@ -47,7 +47,7 @@ import {
     type ToolCacheRow,
 } from "./types";
 
-export { startUserMcpConnectorOAuth, validateRemoteMcpUrl };
+export { startUserMcpConnectorOAuth };
 
 async function withMcpClient<T>(
     connector: ConnectorRow,
