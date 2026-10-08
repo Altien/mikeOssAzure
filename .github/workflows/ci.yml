@@ -45,6 +45,9 @@ jobs:
 
       - run: npm run typecheck:contracts
 
+      - name: Numbered migration history database guarantees
+        run: bash scripts/test-migration-ledger-db.sh
+
       - name: Google Workspace approval database guarantees
         run: bash scripts/test-google-workspace-db.sh
 

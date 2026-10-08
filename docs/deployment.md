@@ -6,6 +6,65 @@ Use [Azure prerequisites](azure-prereqs.md) for self-host provisioning and [the 
 
 Apply numbered files in backend/migrations/ using the migration runner. Fresh and existing databases use the same migration history; there is no standalone schema.sql bootstrap. Back up existing data, inspect the applied migration records, and run the documented migration command before starting a new version. Application boot reports outstanding migrations without applying them.
 
+The runner records applied file names in `public.pgmigrations`, the single
+authoritative history for Azure and local PostgreSQL. Numbered migration
+0109 adds nullable SHA-256 checksums and removes application-role writes to
+history. The internal service role retains SELECT for startup schema checks;
+web_anon and authenticated have no bookkeeping access. No schema.sql or
+parallel schema_migrations table is used.
+
+Inspect an intended database before upgrading (set its direct owner connection
+in DATABASE_URL, or the existing Managed Identity connection settings):
+
+```bash
+pnpm --dir backend migrate:dev status
+pnpm --dir backend migrate:dev up
+# Local Docker stack; also supports status/up and the recovery commands below:
+pnpm --dir backend migrate:local status
+```
+
+The built deployment job runs `pnpm --dir backend migrate` (default `up`).
+Status exits 0 when current, 2 for pending files, and 1 for changed, removed or
+out-of-order history. It never provisions secrets, reloads PostgREST, syncs the
+catalogue, creates history or applies SQL. Only successful `up` runs continue
+through the existing deployment provisioning steps. Use a direct database
+session, not a transaction pooler: status and upgrades hold the same advisory
+lock as node-pg-migrate, including older jobs and its CLI.
+
+Checksums use UTF-8 SQL with CRLF normalized to LF for Windows/Linux parity.
+Newly executed files receive checksums after node-pg-migrate commits successfully.
+Older applied records, manually recorded files and a job interrupted between
+migration commit and checksum recording remain explicitly **unverified**.
+Their original bytes cannot be reconstructed, so the runner never fills them
+in silently or replays them. Status reports their count; unverified historical
+checksums alone do not block an upgrade. Changed or removed recorded files and
+insertions before applied history block `up`: restore the shipped files,
+inspect deployment records and use a new numbered migration for corrections.
+
+Back up data before upgrading. The library keeps its single-transaction option;
+some historical SQL files contain their own BEGIN/COMMIT, so do not assume a
+failed multi-file upgrade rolls back all preceding changes. Recorded files are
+skipped, a failed file remains pending, and later files do not run. Inspect the
+failure and restore the backup or complete the affected SQL deliberately before
+recording it. Never edit or rename shipped migration files.
+
+Recovery is explicit and never part of normal startup or deployment:
+
+```bash
+# Only after independently verifying every file through this exact filename ran:
+pnpm --dir backend migrate:dev baseline 0000_initial.sql --confirm-applied
+# Record one file applied by hand; it must be the next pending file:
+pnpm --dir backend migrate:dev mark 0001_tenant_policy.sql --confirm-applied
+```
+
+These commands use node-pg-migrate's existing history, execute no migration SQL,
+and leave checksums NULL. Baseline records only pending files at or below the
+explicit filename, never files above it; ordinary `up` never baselines. New
+and existing databases both execute pending numbered files. A fresh successful
+install therefore reports no pending files without a hand-maintained manifest.
+Direct `migrate:legacy`/`migrate:down` commands remain operator escape hatches
+and bypass these integrity checks; production corrections are forward-only.
+
 Identity values are Entra text IDs. Database roles and grants are explicit: the API uses its service role, while anonymous access is restricted. Preserve those grants when adding tables or RPCs.
 
 The Azure `db-migrate` Container App job applies the numbered schema, refreshes

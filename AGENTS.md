@@ -19,6 +19,11 @@ in `backend/src/jobs/registry.ts`. Shared API/event types live in
 credential precedence, private Blob transport, text user IDs, and claim-token
 fences while applying this structure.
 
+Migration history stays in public.pgmigrations. Use the standard migration
+runner for upgrades and status; never edit or rename shipped SQL. Explicit
+baseline/mark recovery requires the last verified applied filename and
+--confirm-applied; ordinary upgrades never infer a baseline.
+
 Database changes use the next numbered `backend/migrations/NNNN_*.sql` file.
 The same numbered history initializes fresh and existing private PostgreSQL
 databases. Use `web_anon`, `authenticated`, and `service_role` grants with

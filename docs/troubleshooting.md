@@ -24,3 +24,9 @@ The [Word development guide](word-addin-development.md#troubleshooting) covers H
 ### Optional Supabase authentication recovery
 
 When runtime `/config` selects Supabase authentication, confirmation and password recovery use the frontend `/auth/callback` URL. Allow that exact URL in Supabase Auth, configure SMTP and the Site URL, and use a minimum password length of 10. Recovery responses intentionally do not reveal whether an account exists. Secure email changes require both addresses to confirm; expired links must be requested again. Entra and local deployments continue using their configured identity flow. These routes do not provision Supabase Auth or its database triggers in the Azure database.
+
+
+For schema upgrade problems, run `pnpm --dir backend migrate:local status`
+locally, or `pnpm --dir backend migrate:dev status` with the intended direct
+PostgreSQL connection configured. See [database upgrades](deployment.md#database-upgrades)
+for pending files, changed/missing history and explicitly unverified checksums.
