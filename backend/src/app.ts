@@ -333,21 +333,18 @@ export function buildApp(): express.Express {
   app.post("/api/projects/:projectId/documents", uploadLimiter);
   app.post("/api/upload-sessions", uploadLimiter);
   app.get("/api/projects/:projectId/export", exportLimiter);
-  app.get("/api/audit/export", exportLimiter);
   app.post("/api/altien/skills/imports/zip", uploadLimiter);
   app.post("/api/altien/skills/imports/github", uploadLimiter);
-  // Export / data-deletion limiters (upstream 3a10943). Dev mounts the user
-  // router at both /api/user and /api/users, so limit both aliases.
-  for (const userBase of ["/api/user", "/api/users"]) {
-    app.get(`${userBase}/export`, exportLimiter);
-    app.post(`${userBase}/exports`, exportLimiter);
-    app.get(`${userBase}/chats/export`, exportLimiter);
-    app.get(`${userBase}/tabular-reviews/export`, exportLimiter);
-    app.delete(`${userBase}/account`, dataDeleteLimiter);
-    app.delete(`${userBase}/chats`, dataDeleteLimiter);
-    app.delete(`${userBase}/projects`, dataDeleteLimiter);
-    app.delete(`${userBase}/tabular-reviews`, dataDeleteLimiter);
-  }
+  // Export / data-deletion limiters (upstream 3a10943). Scheduling an async
+  // export costs what the synchronous project export above costs, so it
+  // shares its budget. Deliberately POST-only: the /user/exports/:id poll and
+  // its download stay on the general limiter (upstream 33facdba removed the
+  // synchronous user/audit export GETs and the /api/users alias).
+  app.post("/api/user/exports", exportLimiter);
+  app.delete("/api/user/account", dataDeleteLimiter);
+  app.delete("/api/user/chats", dataDeleteLimiter);
+  app.delete("/api/user/projects", dataDeleteLimiter);
+  app.delete("/api/user/tabular-reviews", dataDeleteLimiter);
 
   app.use("/api/chat", chatRouter);
   app.use("/api/word-chat", wordChatRouter);
@@ -364,7 +361,6 @@ export function buildApp(): express.Express {
   app.use("/api/workflow-addons", workflowAddonsRouter);
   app.use("/api/models", modelsRouter);
   app.use("/api/user", userRouter);
-  app.use("/api/users", userRouter);
   app.use("/api/download", downloadsRouter);
   app.use("/api/documents", sourceDocumentsRouter);
   app.use("/api/help", helpRouter);

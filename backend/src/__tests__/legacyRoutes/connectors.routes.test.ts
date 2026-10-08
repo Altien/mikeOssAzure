@@ -69,7 +69,7 @@ afterEach(() => {
     else process.env.API_PUBLIC_URL = ORIGINAL_API_PUBLIC_URL;
 });
 
-// Dev drift: Dev mounts the user router under /api/user (and /api/users).
+// Dev drift: Dev mounts the user router under /api/user.
 describe("POST /api/user/mcp-connectors", () => {
     const connector = {
         id: "c1",

@@ -37,7 +37,6 @@ import {
     listMyInvitations,
 } from "../../lib/orgs";
 import { sendOrgFailure } from "../../lib/orgFailure";
-import { userExportFilename } from "./user.dataExport";
 import { configuredApiPublicUrl } from "../../lib/runtimeConfig";
 import {
     bootstrapUserProfile,
@@ -51,9 +50,6 @@ import {
     deleteUserProjectsData,
     deleteUserTabularReviews,
     errorMessage,
-    exportUserAccount,
-    exportUserChats,
-    exportUserTabularReviews,
     getApiKeyStatus,
     getCustomInstructions,
     getResponseStyle,
@@ -1282,87 +1278,11 @@ userRouter.delete(
     }),
 );
 
-// GET /user/export
-userRouter.get(
-    "/export",
-    requireAuth,
-    asyncRoute(async (_req, res) => {
-        const userId = res.locals.userId as string;
-        const userEmail = res.locals.userEmail as string | undefined;
-        const db = createServerSupabase();
-        const result = await exportUserAccount(db, userId, userEmail);
-        if (!result.ok) return void sendInternalError(res, result.error);
-        res.setHeader("Content-Type", "application/json; charset=utf-8");
-        res.setHeader(
-            "Content-Disposition",
-            `attachment; filename="${userExportFilename("account", userId)}"`,
-        );
-        void recordAudit(createServerSupabase(), {
-            userId,
-            userEmail: res.locals.userEmail as string | undefined,
-            action: "export.account",
-            surface: "account",
-        });
-        res.json(result.data);
-    }),
-);
-
-// GET /user/chats/export
-userRouter.get(
-    "/chats/export",
-    requireAuth,
-    asyncRoute(async (_req, res) => {
-        const userId = res.locals.userId as string;
-        const userEmail = res.locals.userEmail as string | undefined;
-        const db = createServerSupabase();
-        const result = await exportUserChats(db, userId, userEmail);
-        if (!result.ok) return void sendInternalError(res, result.error);
-        res.setHeader("Content-Type", "application/json; charset=utf-8");
-        res.setHeader(
-            "Content-Disposition",
-            `attachment; filename="${userExportFilename("chats", userId)}"`,
-        );
-        void recordAudit(createServerSupabase(), {
-            userId,
-            userEmail: res.locals.userEmail as string | undefined,
-            action: "export.chats",
-            surface: "account",
-        });
-        res.json(result.data);
-    }),
-);
-
-// GET /user/tabular-reviews/export
-userRouter.get(
-    "/tabular-reviews/export",
-    requireAuth,
-    asyncRoute(async (_req, res) => {
-        const userId = res.locals.userId as string;
-        const userEmail = res.locals.userEmail as string | undefined;
-        const db = createServerSupabase();
-        const result = await exportUserTabularReviews(db, userId, userEmail);
-        if (!result.ok) return void sendInternalError(res, result.error);
-        res.setHeader("Content-Type", "application/json; charset=utf-8");
-        res.setHeader(
-            "Content-Disposition",
-            `attachment; filename="${userExportFilename("tabular-reviews", userId)}"`,
-        );
-        void recordAudit(createServerSupabase(), {
-            userId,
-            userEmail: res.locals.userEmail as string | undefined,
-            action: "export.tabular",
-            surface: "account",
-        });
-        res.json(result.data);
-    }),
-);
-
 // ---------------------------------------------------------------------------
 // Async exports (durable): POST creates a DB-queue job that builds the
 // export off the request thread; GET polls it; the download endpoint streams
-// the finished artifact. The synchronous GET /user/*/export routes above
-// still work (curl users, older clients) â€” the frontend uses this flow so a
-// large export can neither time out the request nor die with a dropped tab.
+// the finished artifact, so a large export can neither time out the request
+// nor die with a dropped tab.
 // Artifacts expire after 24 hours (the runner's retention sweep deletes the
 // file and the job row).
 

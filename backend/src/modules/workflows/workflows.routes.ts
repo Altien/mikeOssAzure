@@ -257,9 +257,6 @@ async function handleWorkflowUpdate(
   res.json(result.body);
 }
 
-// PUT /workflows/:workflowId
-workflowsRouter.put("/:workflowId", requireAuth, asyncRoute(handleWorkflowUpdate));
-
 // PATCH /workflows/:workflowId
 workflowsRouter.patch("/:workflowId", requireAuth, asyncRoute(handleWorkflowUpdate));
 
