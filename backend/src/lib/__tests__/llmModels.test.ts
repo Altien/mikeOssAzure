@@ -329,6 +329,8 @@ describe("reasoningLevelsForModel", () => {
             "bedrock/anthropic.claude-opus-5-5",
             "bedrock/us.anthropic.claude-opus-5-5",
             "bedrock/global.anthropic.claude-fable-5-1-v1:0",
+            "bedrock/us-gov.anthropic.claude-opus-5-5",
+            "bedrock/arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-opus-5-5",
         ]) {
             expect(reasoningLevelsForModel(model)).not.toContain("none");
         }

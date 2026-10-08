@@ -56,6 +56,23 @@ describe("word add-in catalog parity", () => {
         for (const { id } of MODELS) {
             expect(reasoningLevelsForModel(id)).toEqual(backendReasoningLevels(id));
         }
+        // Bedrock ids reach Claude through several prefixes; the picker and
+        // the backend must agree that Opus 5.5 cannot run without thinking.
+        for (const id of [
+            "bedrock/anthropic.claude-opus-5-5",
+            "bedrock/us.anthropic.claude-opus-5-5",
+            "bedrock/us-gov.anthropic.claude-opus-5-5",
+            "bedrock/arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-opus-5-5",
+            "bedrock/us.anthropic.claude-sonnet-5-5",
+            "bedrock/meta.llama4-maverick-17b-instruct-v1:0",
+        ]) {
+            expect(reasoningLevelsForModel(id)).toEqual(backendReasoningLevels(id));
+        }
+        expect(
+            reasoningLevelsForModel(
+                "bedrock/arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-opus-5-5",
+            ),
+        ).not.toContain("none");
     });
     it("offers exactly the web app's static models (id, label, group)", () => {
         const webModels = MODELS.map(({ id, label, group }) => ({
