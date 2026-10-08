@@ -60,36 +60,6 @@ export async function ensureDocumentAccess(
     };
 }
 
-// ---------------------------------------------------------------------------
-// List
-// ---------------------------------------------------------------------------
-
-export async function listSingleDocuments(
-    userId: string,
-    db: Db,
-): Promise<
-    | { ok: true; docs: { id: string; current_version_id?: string | null }[] }
-    // The raw error travels back so the route can hand it to
-    // sendInternalError, which logs it and returns the opaque body.
-    | { ok: false; error: unknown }
-> {
-    const { data, error } = await db
-        .from("documents")
-        .select("*")
-        .eq("user_id", userId)
-        .is("project_id", null)
-        .or("library_kind.eq.file,library_kind.is.null")
-        .order("created_at", { ascending: false });
-    if (error) return { ok: false, error };
-    const docs = (data ?? []) as unknown as {
-        id: string;
-        current_version_id?: string | null;
-    }[];
-    await attachLatestVersionNumbers(db, docs);
-    await attachActiveVersionPaths(db, docs);
-    return { ok: true, docs };
-}
-
 /**
  * One document, same shape as a list entry. Exists so the client can poll a
  * single document's status while a deferred conversion runs, instead of

@@ -40,11 +40,6 @@ export {
   submitOpenSourceWorkflow,
 } from "./workflows.submissions";
 export {
-  listHiddenWorkflows,
-  hideWorkflow,
-  unhideWorkflow,
-} from "./workflows.hidden";
-export {
   type WorkflowAssetFailure,
   parseAssetDocumentIds,
   listWorkflowAssets,

@@ -27,9 +27,6 @@ import {
   withSystemWorkflowAccess,
   submitOpenSourceWorkflow,
   WORKFLOW_CONTRIBUTIONS_ENABLED,
-  listHiddenWorkflows,
-  hideWorkflow,
-  unhideWorkflow,
   parseAssetDocumentIds,
   listWorkflowAssets,
   copyDocumentsToWorkflowAssets,
@@ -283,37 +280,6 @@ workflowsRouter.delete("/:workflowId", requireAuth, asyncRoute(async (req, res) 
       return void res.status(404).json({ detail: "Workflow not found" });
     return void sendInternalError(res, result.error);
   }
-  res.status(204).send();
-}));
-
-// GET /workflows/hidden
-workflowsRouter.get("/hidden", requireAuth, asyncRoute(async (req, res) => {
-  const userId = res.locals.userId as string;
-  const db = createServerSupabase();
-  const result = await listHiddenWorkflows(db, userId);
-  if (!result.ok) return void sendInternalError(res, result.error);
-  res.json(result.ids);
-}));
-
-// POST /workflows/hidden
-workflowsRouter.post("/hidden", requireAuth, asyncRoute(async (req, res) => {
-  const userId = res.locals.userId as string;
-  const { workflow_id } = req.body as { workflow_id: string };
-  if (!workflow_id?.trim())
-    return void res.status(400).json({ detail: "workflow_id is required" });
-  const db = createServerSupabase();
-  const result = await hideWorkflow(db, userId, workflow_id);
-  if (!result.ok) return void sendInternalError(res, result.error);
-  res.status(204).send();
-}));
-
-// DELETE /workflows/hidden/:workflowId
-workflowsRouter.delete("/hidden/:workflowId", requireAuth, asyncRoute(async (req, res) => {
-  const userId = res.locals.userId as string;
-  const { workflowId } = req.params;
-  const db = createServerSupabase();
-  const result = await unhideWorkflow(db, userId, workflowId);
-  if (!result.ok) return void sendInternalError(res, result.error);
   res.status(204).send();
 }));
 

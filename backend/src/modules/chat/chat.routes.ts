@@ -55,7 +55,6 @@ import {
     createChat,
     deleteChat,
     devLog,
-    generateChatTitle,
     getAccessibleChat,
     getChatMessages,
     grantChatAccess,
@@ -401,8 +400,8 @@ chatRouter.patch("/:chatId", requireAuth, asyncRoute(async (req, res) => {
     const access = await getAccessibleChat(db, { chatId, userId, userEmail });
     if (!access.ok)
         return void res.status(404).json({ detail: "Chat not found" });
-    // Title edits are content collaboration (the same tier that already
-    // rewrites titles via generate-title).
+    // Title edits are content collaboration (the same tier that may send
+    // messages into the chat).
     if (title != null && !can(access.projectRole, "content.edit"))
         return void res
             .status(403)
@@ -460,50 +459,6 @@ chatRouter.delete("/:chatId", requireAuth, asyncRoute(async (req, res) => {
     const result = await deleteChat(db, { chatId });
     if (!result.ok) return void sendInternalError(res, result.error);
     res.status(204).send();
-}));
-
-// POST /chat/:chatId/generate-title
-chatRouter.post("/:chatId/generate-title", requireAuth, asyncRoute(async (req, res) => {
-    const userId = res.locals.userId as string;
-    const userEmail = res.locals.userEmail as string | undefined;
-    const { chatId } = req.params;
-    const message =
-        typeof req.body?.message === "string" ? req.body.message.trim() : "";
-    const requestedModel =
-        typeof req.body?.model === "string" ? req.body.model.trim() : null;
-    if (!message)
-        return void res.status(400).json({ detail: "message is required" });
-    const db = createServerSupabase();
-    const access = await getAccessibleChat(db, { chatId, userId, userEmail });
-    if (!access.ok)
-        return void res.status(404).json({ detail: "Chat not found" });
-    // Generating a title UPDATEs the chat row — a write, so being able to
-    // *see* the chat is not enough. Org viewers get 403 here.
-    if (!can(access.projectRole, "content.edit"))
-        return void res
-            .status(403)
-            .json({ detail: "You do not have permission to modify this chat" });
-
-    const result = await generateChatTitle(db, {
-        chatId,
-        userId,
-        chatModel: access.chat.model,
-        message,
-        requestedModel,
-    });
-    if (!result.ok) {
-        if (result.kind === "model")
-            return void res
-                .status(result.status)
-                .json({ code: result.code, detail: result.detail });
-        // A title that could not be stored is not a renamed chat.
-        if (result.kind === "write")
-            return void sendInternalError(res, result.error);
-        return void res
-            .status(500)
-            .json({ detail: "Failed to generate title" });
-    }
-    res.json({ title: result.title });
 }));
 
 // POST /chat — streaming

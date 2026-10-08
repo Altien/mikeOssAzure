@@ -19,7 +19,7 @@ export {
   revokeChatAccess,
 } from "./chat.sharing";
 export { updateChatSettings } from "./chat.settings";
-export { updateChatTitle, generateChatTitle } from "./chat.titles";
+export { updateChatTitle } from "./chat.titles";
 export { type PreparedChatStream, prepareChatStream } from "./chat.prepare";
 export {
   devLog,

@@ -428,8 +428,8 @@ vi.mock("../../modules/user/user.settings", () => ({
     getUserApiKeys: vi.fn(async () => ({})),
 }));
 
-// generate-title calls completeText; stub it so the success-path tests don't
-// reach a real LLM. Everything else in lib/llm stays real.
+// Chat title generation calls completeText; stub it so the success-path tests
+// don't reach a real LLM. Everything else in lib/llm stays real.
 vi.mock("../../lib/llm", async (importOriginal) => {
     const actual = await importOriginal<typeof import("../../lib/llm")>();
     return {
@@ -2084,9 +2084,8 @@ describe("PATCH /word-chat/:chatId/model", () => {
 // A table-aware supabase stub lets us vary how u1 reaches the project: a
 // direct 'viewer' grant (may read, must not write), or org membership, which
 // inherits project member and may write. The security property under test:
-// POST /chat with an existing chat_id and POST /chat/:chatId/generate-title
-// are WRITES and must require content.edit, while GET /chat/:chatId stays a
-// read open to viewers.
+// POST /chat with an existing chat_id is a WRITE and must require
+// content.edit, while GET /chat/:chatId stays a read open to viewers.
 //
 // The same stub backs the sharing routes (PATCH/DELETE/people): it records
 // every update/delete with its filters, so a test can prove the write was
@@ -2338,25 +2337,6 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
         expect(runLLMStream).not.toHaveBeenCalled();
     });
 
-    it("403s a personal-project Viewer calling generate-title", async () => {
-        mockedCreate.mockImplementation(
-      () =>
-        makeRbacDb(null, "colleague-1", {
-                grantRole: "viewer",
-                project: { org_id: null },
-                chat: { org_id: null },
-            }) as never,
-        );
-
-        const res = await request(app)
-            .post("/api/chat/chat-1/generate-title")
-            .set("Authorization", "Bearer test")
-            .send({ message: "hello there" });
-
-        expect(res.status).toBe(403);
-        expect(res.body).toHaveProperty("detail");
-    });
-
     // A Viewer can open the project, so answering "Project not found" told
     // them their matter had vanished. The refusal has to say it is one.
     it("403s a project Viewer creating a chat in that project", async () => {
@@ -2421,40 +2401,6 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
 
         expect(res.status).toBe(200);
         expect(runLLMStream).toHaveBeenCalledTimes(1);
-    });
-
-    it("still lets an org admin generate a title", async () => {
-        await seedResolvableModel();
-        mockedCreate.mockImplementation(() => makeRbacDb("admin") as never);
-
-        const res = await request(app)
-            .post("/api/chat/chat-1/generate-title")
-            .set("Authorization", "Bearer test")
-            .send({ message: "hello there" });
-
-        expect(res.status).toBe(200);
-        expect(res.body.title).toBe("Generated Title");
-    });
-
-    // The update's error used to be ignored, so a failed write still
-    // answered 200 with the new title: the sidebar renamed the chat and the
-    // next reload silently put the old name back.
-    it("reports a failed title write instead of answering 200", async () => {
-        await seedResolvableModel();
-        mockedCreate.mockImplementation(
-            () =>
-                makeRbacDb("admin", "colleague-1", {
-                    chatWriteError: "title update failed",
-                }) as never,
-        );
-
-        const res = await request(app)
-            .post("/api/chat/chat-1/generate-title")
-            .set("Authorization", "Bearer test")
-            .send({ message: "hello there" });
-
-        expect(res.status).toBe(500);
-        expect(res.body.detail).toBe("Something went wrong. Please try again.");
     });
 
     it("still lets a project viewer GET the chat (reads stay project.view)", async () => {
@@ -3227,19 +3173,6 @@ describe("chat grants, deletion and roster", () => {
             expect(res.status).toBe(200);
             expect(res.body.access_role).toBe("editor");
             expect(res.body.is_owner).toBe(false);
-        });
-
-        it("may generate a title (content.edit)", async () => {
-            await seedResolvableModel();
-            mockedCreate.mockImplementation(directShare);
-
-            const res = await request(app)
-                .post("/api/chat/chat-1/generate-title")
-                .set("Authorization", "Bearer test")
-                .send({ message: "hello there" });
-
-            expect(res.status).toBe(200);
-            expect(res.body.title).toBe("Generated Title");
         });
 
         it("marks a collaborator's generated turn as shared memory context", async () => {

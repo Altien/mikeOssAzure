@@ -20,7 +20,6 @@
 
 export {
     getDocument,
-    listSingleDocuments,
     deleteDocument,
 } from "./documents.access";
 
@@ -41,7 +40,6 @@ export {
 } from "./documents.versions";
 
 export {
-    getTrackedChangeIds,
     resolveEdit,
 } from "./documents.edits";
 
