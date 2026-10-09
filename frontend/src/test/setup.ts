@@ -12,6 +12,8 @@ beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => {
     cleanup();
     server.resetHandlers();
+    // Suites that opt into `@vitest-environment node` have no window.
+    if (typeof window === "undefined") return;
     window.localStorage.clear();
     window.sessionStorage.clear();
 });

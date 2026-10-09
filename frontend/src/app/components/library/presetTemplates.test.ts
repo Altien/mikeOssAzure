@@ -23,7 +23,8 @@ describe("bundled preset catalog", () => {
     const files = readdirSync(root, { recursive: true, withFileTypes: true })
       .filter((entry) => entry.isFile() && !entry.name.startsWith("."))
       .map((entry) =>
-        join(entry.parentPath, entry.name).slice(root.length + 1),
+        // Catalog ids use "/"; normalise Windows separators.
+        join(entry.parentPath, entry.name).slice(root.length + 1).replaceAll("\\", "/"),
       );
     expect(PRESET_TEMPLATES.map((preset) => preset.id).sort()).toEqual(
       files.sort(),
