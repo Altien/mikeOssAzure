@@ -23,6 +23,12 @@ const mocks = vi.hoisted(() => ({
   enqueueStorageCleanup: vi.fn(),
   requestDocumentCleanupDelivery: vi.fn(),
   reportError: vi.fn((_error: unknown, _context?: unknown) => null),
+  countPagesWithoutText: vi.fn(async (_buf: ArrayBuffer): Promise<number | null> => null),
+}));
+
+vi.mock("../../../lib/pdfText", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../lib/pdfText")>()),
+  countPagesWithoutText: mocks.countPagesWithoutText,
 }));
 
 vi.mock("../../../lib/observability/sentry", async (importOriginal) => ({
@@ -292,6 +298,36 @@ describe("upload processing", () => {
       "upload_processing_jobs", "upload_sessions", "upload_session_files",
     ]);
     expect(mocks.recordAudit).toHaveBeenCalledOnce();
+  });
+
+  // Sync cf5fa985: the worker measures textless PDF pages and hands the count
+  // to the publishing RPC (0104), which stores it on the version row.
+  it.each([
+    ["pdf", "contract.pdf", 3, 3],
+    ["docx", "contract.docx", 3, null],
+  ])("puts textless_page_count for a %s upload in the publish payload", async (
+    fileType, filename, measured, expected,
+  ) => {
+    mocks.countPagesWithoutText.mockImplementation(async () => measured);
+    const claimToken = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const file = { ...baseFile, file_type: fileType, filename };
+    const db = scriptedDb([
+      { data: { id: "job-1", session_id: baseSession.id, file_id: baseFile.id, attempts: 1, locked_by: "worker-1", claim_token: claimToken }, error: null },
+      { data: baseSession, error: null },
+      { data: file, error: null },
+    ]);
+    let payload: Record<string, unknown> | undefined;
+    db.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
+      if (name === "renew_upload_processing_job") return { data: true, error: null };
+      if (name === "finish_upload_processing_job") {
+        payload = args.p_payload as Record<string, unknown>;
+        return { data: { status: "completed" }, error: null };
+      }
+      throw new Error("unexpected RPC: " + name);
+    });
+    await processUploadJob(db as never, "job-1", "worker-1");
+    expect(payload).toMatchObject({ kind: "document_create", textless_page_count: expected });
+    expect(mocks.countPagesWithoutText).toHaveBeenCalledTimes(fileType === "pdf" ? 1 : 0);
   });
 
   it("sends a failed file to the atomic retry RPC without publishing domain rows", async () => {
