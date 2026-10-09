@@ -106,9 +106,6 @@ import {
     getWorkflowPeople,
     getWorkflowAddon,
   getWorkflowFilterOptions,
-    hideWorkflow,
-    unhideWorkflow,
-    listHiddenWorkflows,
     isMfaRequiredError,
     acceptOrgInvitation,
     cancelOrgInvitation,
@@ -2277,27 +2274,6 @@ describe("workflow endpoints", () => {
         expect(lastFetchCall().url).toBe(
             "http://localhost:3001/api/workflows?type=assistant",
         );
-    });
-
-    it("hide/unhide/list use the hidden-workflows routes with matching methods", async () => {
-        fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
-
-        await hideWorkflow("w1");
-        let { url, init } = lastFetchCall();
-        expect(url).toBe("http://localhost:3001/api/workflows/hidden");
-        expect(init.method).toBe("POST");
-        expect(JSON.parse(init.body as string)).toEqual({ workflow_id: "w1" });
-
-        await unhideWorkflow("w1");
-        ({ url, init } = lastFetchCall());
-        expect(url).toBe("http://localhost:3001/api/workflows/hidden/w1");
-        expect(init.method).toBe("DELETE");
-
-        fetchMock.mockResolvedValue(jsonResponse(["w2"]));
-        await expect(listHiddenWorkflows()).resolves.toEqual(["w2"]);
-    expect(lastFetchCall().url).toBe(
-      "http://localhost:3001/api/workflows/hidden",
-    );
     });
 });
 

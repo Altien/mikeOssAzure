@@ -3276,21 +3276,11 @@ export async function openSourceWorkflow(
     );
 }
 
-export async function listHiddenWorkflows(): Promise<string[]> {
-    return apiRequest<string[]>("/workflows/hidden");
-}
-
-export async function hideWorkflow(workflowId: string): Promise<void> {
-    await apiRequest("/workflows/hidden", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workflow_id: workflowId }),
-    });
-}
-
-export async function unhideWorkflow(workflowId: string): Promise<void> {
-    await apiRequest(`/workflows/hidden/${workflowId}`, { method: "DELETE" });
-}
+// Upstream divergence (sync-log: 058acc6c): the hidden-workflow wrappers
+// (list/hide/unhide over /workflows/hidden) are gone with their backend
+// routes. Upstream dropped these wrappers in #295; Dev kept them with no UI
+// caller. Account export and cleanup still handle existing hidden_workflows
+// rows server-side.
 
 export async function shareWorkflow(
     workflowId: string,
