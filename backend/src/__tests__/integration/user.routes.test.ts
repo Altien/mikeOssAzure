@@ -712,7 +712,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .get("/user/response-style")
+                .get("/api/user/response-style")
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
@@ -729,7 +729,7 @@ describe("user.routes", () => {
             supabaseState.missingColumns = ["response_verbosity"];
 
             const res = await request(app)
-                .get("/user/response-style")
+                .get("/api/user/response-style")
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
@@ -752,7 +752,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .put("/user/response-style")
+                .put("/api/user/response-style")
                 .set(...AUTH)
                 .send({ tone: "plain" });
 
@@ -775,7 +775,7 @@ describe("user.routes", () => {
 
         it("rejects an unknown value", async () => {
             const res = await request(app)
-                .put("/user/response-style")
+                .put("/api/user/response-style")
                 .set(...AUTH)
                 .send({ formatting: "fancy" });
 
