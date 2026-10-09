@@ -120,7 +120,7 @@ vi.mock("@/app/components/assistant/ChatInput", () => ({
     ChatInput: forwardRef(() => <div>Chat input</div>),
 }));
 
-vi.mock("@/app/components/chat/mike-icon", () => ({
+vi.mock("@/shared/ui/MikeIconUI", () => ({
     MikeIcon: () => <span>Mike</span>,
 }));
 

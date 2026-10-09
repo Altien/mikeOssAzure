@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Input } from "./input";
+import { InputUI } from "./InputUI";
 
-describe("Input", () => {
+describe("InputUI", () => {
     it("renders a controlled value through to the DOM", () => {
-        render(<Input value="hello" onChange={() => {}} />);
+        render(<InputUI value="hello" onChange={() => {}} />);
 
         const input = screen.getByRole("textbox") as HTMLInputElement;
         expect(input.value).toBe("hello");
@@ -16,7 +16,7 @@ describe("Input", () => {
         let captured = "";
         function Probe() {
             return (
-                <Input
+                <InputUI
                     value={captured}
                     onChange={(e) => {
                         captured = e.target.value;
@@ -34,7 +34,7 @@ describe("Input", () => {
     it("does not accept input when disabled", async () => {
         let captured = "untouched";
         render(
-            <Input
+            <InputUI
                 disabled
                 value={captured}
                 onChange={(e) => {
@@ -53,7 +53,7 @@ describe("Input", () => {
         // <input type="email"> isn't role=textbox by default; it
         // exposes role=textbox only when not validated. The DOM
         // assertion is the reliable contract.
-        render(<Input type="email" placeholder="email" />);
+        render(<InputUI type="email" placeholder="email" />);
 
         const input = document.querySelector<HTMLInputElement>(
             "input[data-slot='input']",
@@ -62,7 +62,7 @@ describe("Input", () => {
     });
 
     it("reflects aria-invalid for form-level error states", () => {
-        render(<Input aria-invalid="true" />);
+        render(<InputUI aria-invalid="true" />);
 
         expect(screen.getByRole("textbox")).toHaveAttribute("aria-invalid", "true");
     });
