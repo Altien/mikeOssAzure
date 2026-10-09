@@ -27,6 +27,14 @@ export default defineConfig({
         // source outside this root, where tsconfigPaths() does not apply the
         // frontend paths; mirror upstream's explicit alias for the shared client.
         alias: [
+            { find: /^react$/, replacement: fileURLToPath(new URL("./node_modules/react/index.js", import.meta.url)) },
+            { find: /^@sentry\/react$/, replacement: fileURLToPath(new URL("./node_modules/@sentry/react/build/esm/index.js", import.meta.url)) },
+            { find: /^@sentry\/nextjs$/, replacement: fileURLToPath(new URL("./node_modules/@sentry/react/build/esm/index.js", import.meta.url)) },
+            { find: "@mike/sentry-event", replacement: fileURLToPath(new URL("./src/shared/lib/sentryEvent.ts", import.meta.url)) },
+            { find: "@mike/user-error", replacement: fileURLToPath(new URL("./src/shared/lib/userError.ts", import.meta.url)) },
+            { find: "@mike/toast-store", replacement: fileURLToPath(new URL("./src/shared/lib/toastStore.ts", import.meta.url)) },
+            { find: "@mike/toast-ui", replacement: fileURLToPath(new URL("./src/shared/ui/ToastUI.tsx", import.meta.url)) },
+            { find: "@mike/secure-uuid", replacement: fileURLToPath(new URL("./src/shared/lib/secureUuid.ts", import.meta.url)) },
             {
                 find: /^@mike\/upload-session-client$/,
                 replacement: fileURLToPath(
