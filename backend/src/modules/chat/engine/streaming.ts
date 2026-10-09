@@ -345,8 +345,13 @@ export async function runLLMStream(params: {
     : withoutDocumentMutatingTools(scopedTools);
 
   // Extract system prompt; pass remaining turns to the adapter as
-  // plain user/assistant messages.
-  const rawMsgs = apiMessages as { role: string; content: string | null }[];
+  // plain user/assistant messages (assistant turns may carry stored
+  // reasoning, which only reasoning-replaying models receive).
+  const rawMsgs = apiMessages as {
+    role: string;
+    content: string | null;
+    reasoning?: string;
+  }[];
   const baseSystemPrompt =
     rawMsgs[0]?.role === "system" ? (rawMsgs[0].content ?? "") : "";
   const memory = await buildMemoryTurn({
@@ -361,10 +366,13 @@ export async function runLLMStream(params: {
   const chatMessages: LlmMessage[] = rawMsgs
     .filter((m) => m.role !== "system")
     .map(
-      (m): LlmMessage => ({
-        role: m.role === "assistant" ? "assistant" : "user",
-        content: m.content ?? "",
-      }),
+      (m): LlmMessage =>
+        m.role === "assistant" && m.reasoning
+          ? { role: "assistant", content: m.content ?? "", reasoning: m.reasoning }
+          : {
+              role: m.role === "assistant" ? "assistant" : "user",
+              content: m.content ?? "",
+            },
     )
     // An assistant turn with no text (an error, a cancellation, or a client
     // that keeps prose in events) carries nothing for the model, and Anthropic

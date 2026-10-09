@@ -45,6 +45,7 @@ export {
   type MessageTimeContext,
   buildUserPersonalisationPrompt,
   buildWorkflowStore,
+  attachPriorReasoning,
   enrichWithPriorEvents,
   appendAskInputsResponseToAssistantMessage,
   runApprovedConnectorActions,

@@ -73,6 +73,11 @@ export type ChatMessage = {
     version_number?: number;
   }[];
   workflow?: { id: string; title: string };
+  /**
+   * Stored reasoning for an assistant turn, attached server-side by
+   * attachPriorReasoning. Never accepted from the request body.
+   */
+  reasoning?: string;
 };
 
 /**

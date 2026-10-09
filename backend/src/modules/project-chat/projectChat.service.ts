@@ -16,6 +16,7 @@ import {
     buildMessages,
     buildUserPersonalisationPrompt,
     buildWorkflowStore,
+    attachPriorReasoning,
     enrichWithPriorEvents,
     loadUserMessageSentTimes,
     appendAskInputsResponseToAssistantMessage,
@@ -39,6 +40,7 @@ import { can, type ProjectRole } from "../../lib/permissions";
 import {
     resolveEffectiveReasoningLevel,
 } from "../../lib/modelSelection";
+import { replaysReasoning } from "../../lib/llm/registry";
 import {
     beginMemoryConversationTurn,
     releaseMemoryConversationTurn,
@@ -453,9 +455,12 @@ export async function prepareProjectChatStream(
             };
         };
 
+        const historyMessages = replaysReasoning(selectedModel)
+            ? await attachPriorReasoning(messages, chatId, db)
+            : messages;
         const timeZone = resolveRequestTimeZone(args.requestedTimeZone);
         const enrichedMessages = await enrichWithPriorEvents(
-            messages,
+            historyMessages,
             chatId,
             db,
             docIndex,
