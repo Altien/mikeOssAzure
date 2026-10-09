@@ -51,7 +51,23 @@ import {
     ROUTER_SLUGS as ADDIN_ROUTER_SLUGS,
     routerModelOptions as addinRouterModelOptions,
 } from "../../../word-addin/src/taskpane/lib/modelCatalog";
-import { ROUTER_SLUGS as BACKEND_ROUTER_SLUGS } from "../../../backend/src/lib/routerModels";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
+// The backend's router list sits in a module that also talks to the
+// database, which this package cannot import. Read the list from its source
+// instead: the declaration is a plain array of string literals.
+function backendRouterSlugs(): string[] {
+    const source = readFileSync(
+        path.resolve(__dirname, "../../../backend/src/lib/routerModels.ts"),
+        "utf8",
+    );
+    const declaration = /export const ROUTER_SLUGS[^=]*=\s*\[([^\]]*)\]/.exec(
+        source,
+    );
+    if (!declaration) throw new Error("backend ROUTER_SLUGS not found");
+    return [...declaration[1]!.matchAll(/"([^"]+)"/g)].map((match) => match[1]!);
+}
 
 describe("word add-in catalog parity", () => {
     it("keeps both clients aligned with backend model IDs and reasoning capabilities", () => {
@@ -269,7 +285,7 @@ describe("router parity across the web app, the add-in and the backend", () => {
 
     it("lists the same routers, in the same order, with the same profile fields", () => {
         expect([...ADDIN_ROUTER_SLUGS]).toEqual([...WEB_ROUTER_SLUGS]);
-        expect([...BACKEND_ROUTER_SLUGS]).toEqual([...WEB_ROUTER_SLUGS]);
+        expect(backendRouterSlugs()).toEqual([...WEB_ROUTER_SLUGS]);
         expect(ADDIN_ROUTER_PROFILE_FIELDS).toEqual(WEB_ROUTER_PROFILE_FIELDS);
     });
 
