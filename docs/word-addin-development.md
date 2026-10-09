@@ -218,7 +218,18 @@ pnpm typecheck
 
 Upstream's hermetic Playwright suite (`e2e/`) and live Word-on-the-web demo recorders (`e2e-live/`) are bootstrapped against Supabase auth and are **not** included in this fork (deferred with the rest of upstream's Playwright/e2e tooling).
 
----
+## Shared UI maintenance
+
+The task pane is independently bundled. When the web design system changes,
+compare:
+
+- `src/taskpane/lib/modelCatalog.ts` with the web model catalog; and
+- `src/shared/chat/ChatInput.tsx` and the vendored UI primitives with their web
+  counterparts, retaining narrow-pane adaptations.
+
+Design tokens are not compared by hand: both targets import
+`frontend/src/shared/ui/DesignTokensUI.css`, and `src/shared/styles/tokens.css`
+holds only the add-in's base layer.
 
 Files with no add-in-specific behavior are not vendored at all: they are
 aliased straight at the web source (`@mike/*` in `webpack.config.js` and
