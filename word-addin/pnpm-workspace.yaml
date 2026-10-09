@@ -12,3 +12,6 @@ overrides:
   # Development-only MCP SDK (office-addin-debugging -> teamsfx-core): hold
   # the advisory-patched line (upstream's npm override, 54b6b3a1/57009979).
   '@modelcontextprotocol/sdk': ^1.32.0
+  # GHSA-8r5x-fm3f-whwj / GHSA-p8wg-vrv2-v86f (critical, handlebars <=4.7.9),
+  # reached only through the same development sideload tooling.
+  handlebars: ^4.7.10
