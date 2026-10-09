@@ -4,11 +4,36 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // `res.locals.userEmail` is what every direct grant and organization
 // invitation is matched against, so an address the account never confirmed
 // must not reach it.
-const mocks = vi.hoisted(() => ({ getUser: vi.fn() }));
-vi.mock("../lib/userLookup", () => ({ syncProfileEmail: async () => null }));
-vi.mock("../lib/supabase", () => ({
+//
+// Dev divergence (sync 1f831f07/d146998d): upstream's requireAuth reads the
+// Supabase user directly. Dev's requireAuth is provider-pluggable
+// (supabase | local | entra): the provider reports `emailVerified` on the
+// principal and `authorizationEmail` decides what reaches res.locals. The
+// providers, the profile mirror and tenant admission are mocked here so the
+// test asserts only that decision.
+const mocks = vi.hoisted(() => ({
+  provider: "supabase" as string,
+  validateSupabaseToken: vi.fn(),
+  validateEntraToken: vi.fn(),
+  upsertUserProfile: vi.fn(async () => undefined),
+}));
+vi.mock("../lib/config.js", () => ({
+  getConfig: async () => mocks.provider,
+}));
+vi.mock("../lib/auth/providers/supabase.js", () => ({
+  validateSupabaseToken: mocks.validateSupabaseToken,
+}));
+vi.mock("../lib/auth/providers/entra.js", () => ({
+  validateEntraToken: mocks.validateEntraToken,
+}));
+vi.mock("../lib/userLookup.js", () => ({
+  upsertUserProfile: mocks.upsertUserProfile,
+}));
+vi.mock("./tenantAccess.js", () => ({
+  tenantAccess: async (_req: unknown, _res: unknown, next: () => void) => next(),
+}));
+vi.mock("../lib/supabase.js", () => ({
   createServerSupabase: () => ({
-    auth: { getUser: mocks.getUser },
     from: () => {
       const builder = {
         select: () => builder,
@@ -42,30 +67,52 @@ async function authenticatedEmail(): Promise<unknown> {
   return res.locals.userEmail;
 }
 
+function principal(overrides: Record<string, unknown>) {
+  return {
+    ok: true,
+    principal: {
+      userId: "u1",
+      email: "person@example.com",
+      groups: [],
+      roles: [],
+      provider: mocks.provider,
+      ...overrides,
+    },
+  };
+}
+
 describe("requireAuth email trust", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.provider = "supabase";
+  });
 
   it("exposes a confirmed email, normalized", async () => {
-    mocks.getUser.mockResolvedValue({
-      data: {
-        user: {
-          id: "u1",
-          email: "Person@Example.com",
-          email_confirmed_at: "2026-01-01T00:00:00Z",
-        },
-      },
-      error: null,
-    });
+    mocks.validateSupabaseToken.mockResolvedValue(
+      principal({ email: "Person@Example.com", emailVerified: true }),
+    );
     expect(await authenticatedEmail()).toBe("person@example.com");
   });
 
   it("withholds an unconfirmed email so it matches no grant or invitation", async () => {
-    mocks.getUser.mockResolvedValue({
-      data: {
-        user: { id: "u1", email: "victim@example.com", email_confirmed_at: null },
-      },
-      error: null,
-    });
+    mocks.validateSupabaseToken.mockResolvedValue(
+      principal({ email: "victim@example.com", emailVerified: false }),
+    );
     expect(await authenticatedEmail()).toBe("");
+    // The session still authenticates and the profile mirror keeps the
+    // IdP address for display; only grant matching is withheld.
+    expect(mocks.upsertUserProfile).toHaveBeenCalledWith(
+      "u1",
+      "victim@example.com",
+      undefined,
+    );
+  });
+
+  it("exposes the tenant-administered Entra email", async () => {
+    mocks.provider = "entra";
+    mocks.validateEntraToken.mockResolvedValue(
+      principal({ email: "person@contoso.example" }),
+    );
+    expect(await authenticatedEmail()).toBe("person@contoso.example");
   });
 });
