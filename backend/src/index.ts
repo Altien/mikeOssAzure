@@ -20,6 +20,7 @@ import { getKeyVaultConfig } from "./lib/config";
 import { failBoot, listenOrFail } from "./lib/processLifecycle";
 
 const PORT = process.env.PORT ?? 3001;
+const HOST = process.env.HOST?.trim() || undefined;
 const workersMode = process.env.WORKERS_MODE === "inline" || process.env.WORKERS_MODE === "none"
   ? process.env.WORKERS_MODE : "thread";
 let shuttingDown = false;
@@ -101,7 +102,7 @@ async function start(): Promise<void> {
   const server = listenOrFail(buildApp(), PORT, () => {
     console.log(`Mike backend running on port ${PORT} (workers: ${workersMode})`);
     void checkSchemaVersion().catch(() => {});
-  });
+  }, undefined, HOST);
 
   async function shutdown(signal: string): Promise<void> {
     if (shuttingDown) return;

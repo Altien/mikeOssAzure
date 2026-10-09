@@ -10,8 +10,12 @@ import {
 import { getSignedUrl as awsGetSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { bestEffort } from "./observability/sentry";
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
-import { Readable } from "node:stream";
+import fs, { stat } from "node:fs/promises";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { pipeline } from "node:stream/promises";
+import { signBlobToken, signBlobUploadToken } from "./downloadTokens";
+import { Readable, Transform } from "node:stream";
 import { safeErrorLog } from "./safeError";
 import { BlobServiceClient, ContainerClient } from "@azure/storage-blob";
 import { DefaultAzureCredential } from "@azure/identity";
@@ -37,7 +41,7 @@ export class StorageOperationError extends Error {
 }
 
 export interface StorageProvider {
-  readonly kind: "r2" | "azure";
+  readonly kind: "r2" | "azure" | "fs";
   upload(key: string, content: ArrayBuffer, contentType: string): Promise<void>;
   uploadFromPath(key: string, filePath: string, contentType: string): Promise<void>;
   download(key: string): Promise<ArrayBuffer | null>;
@@ -424,9 +428,220 @@ class AzureBlobProvider implements StorageProvider {
   }
 }
 
+const FS_ROOT = process.env.STORAGE_FS_ROOT;
+
+function backendPublicUrl(): string {
+  return (
+    process.env.BACKEND_PUBLIC_URL ??
+    `http://localhost:${process.env.PORT ?? 3001}`
+  ).replace(/\/+$/, "");
+}
+
+// The one place a storage key becomes a filesystem path. Every fs call in this
+// module goes through here, so containment is proven once rather than trusted
+// three times.
+//
+// Keys are backend-constructed today, but they are built from user-supplied
+// filenames, so resolve-and-check anyway: path.join alone is not a fence —
+// it *canonicalizes* "../" rather than rejecting it, so join(root, "../x")
+// happily lands outside root, and an absolute key ignores root entirely.
+// path.resolve collapses both cases into one absolute path we can then test.
+//
+// The test is deliberately a SINGLE startsWith guard. An earlier shape —
+//   if (resolved !== root && !resolved.startsWith(root + path.sep)) throw
+// — is equally safe at runtime, but falling through it only proves a
+// *disjunction* ("resolved is exactly root" OR "resolved is under root"),
+// which neither a reader nor a static analyser can reduce to a containment
+// fact; CodeQL reported the fs calls below as js/path-injection for precisely
+// that reason. Falling through the form below proves one thing and nothing
+// weaker: resolved is under rootPrefix.
+//
+// Comparing against root + path.sep, not bare root, is what closes the classic
+// sibling escape — "/data/store-evil" startsWith "/data/store". The endsWith
+// guard keeps that correct when root is itself a separator (e.g. "/").
+function fsPathFor(key: string): string {
+  const root = path.resolve(FS_ROOT!);
+  const rootPrefix = root.endsWith(path.sep) ? root : root + path.sep;
+  const resolved = path.resolve(root, key);
+  if (!resolved.startsWith(rootPrefix)) {
+    throw new Error(`storage key escapes STORAGE_FS_ROOT: ${key}`);
+  }
+  return resolved;
+}
+
+async function fsWalk(dir: string, out: string[], root: string): Promise<void> {
+  let entries;
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) await fsWalk(full, out, root);
+    else if (entry.isFile())
+      out.push(path.relative(root, full).split(path.sep).join("/"));
+  }
+}
+
+// Upstream 89dc8323 filesystem driver, kept behind Dev's provider boundary.
+// Integration dependency: upstream 80136892 later introduces StorageAdapter.
+class FilesystemProvider implements StorageProvider {
+  readonly kind = "fs" as const;
+  constructor() {
+    if (!FS_ROOT) throw new Error("STORAGE_FS_ROOT must be set when STORAGE_DRIVER=fs");
+  }
+  async upload(key: string, content: ArrayBuffer, _contentType: string): Promise<void> {
+    const bytes = Buffer.from(content);
+    await writeBlobFromStream(key, Readable.from([bytes]), bytes.length);
+  }
+  async uploadFromPath(key: string, source: string, _contentType: string): Promise<void> {
+    const target = fsPathFor(key);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    const temp = `${target}.${randomUUID()}.part`;
+    try { await fs.copyFile(source, temp); await fs.rename(temp, target); }
+    catch (error) { throw new StorageOperationError("upload", { cause: error }); }
+    finally { await fs.rm(temp, { force: true }).catch(() => {}); }
+  }
+  async download(key: string): Promise<ArrayBuffer | null> {
+    try {
+      const bytes = await fs.readFile(fsPathFor(key));
+      return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        console.error("[storage] downloadFile failed", safeErrorLog(error));
+      }
+      return null;
+    }
+  }
+  readStream(key: string): Readable {
+    return Readable.from((async function* () {
+      try { yield* createReadStream(fsPathFor(key)); }
+      catch (error) { throw new StorageOperationError("download", { cause: error }); }
+    })());
+  }
+  async head(key: string): Promise<StoredObjectMetadata | null> {
+    try {
+      const info = await stat(fsPathFor(key));
+      return { size: info.size, etag: null, contentType: null };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw new StorageOperationError("HEAD", { cause: error });
+    }
+  }
+  async copy(sourceKey: string, targetKey: string, sourceEtag?: string): Promise<void> {
+    if (sourceEtag) throw new StorageOperationError("source changed");
+    await this.uploadFromPath(targetKey, fsPathFor(sourceKey), "application/octet-stream");
+  }
+  async list(prefix: string): Promise<string[]> {
+    const root = path.resolve(FS_ROOT!);
+    const lastSlash = prefix.lastIndexOf("/");
+    const dirPart = lastSlash >= 0 ? prefix.slice(0, lastSlash) : "";
+    const all: string[] = [];
+    await fsWalk(dirPart ? fsPathFor(dirPart) : root, all, root);
+    return all.filter((key) => key.startsWith(prefix)).sort();
+  }
+  async remove(key: string): Promise<void> {
+    try { await fs.unlink(fsPathFor(key)); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  }
+  async signedUpload(key: string, contentType: string, size: number, expiresIn: number): Promise<string> {
+    fsPathFor(key);
+    return `${backendPublicUrl()}/api/download/signed/${signBlobUploadToken(key, contentType, size, expiresIn)}`;
+  }
+  async signedUrl(key: string, expiresIn: number, downloadFilename?: string): Promise<string> {
+    fsPathFor(key);
+    const filename = downloadFilename ?? normalizeDownloadFilename(path.posix.basename(key));
+    return `${backendPublicUrl()}/api/download/signed/${signBlobToken(key, filename, expiresIn)}`;
+  }
+}
+
+/**
+ * Stream a request body straight onto disk for the filesystem driver's signed
+ * PUT route. Streaming (rather than an express body parser) is what keeps a
+ * multi-hundred-megabyte upload from being buffered in the process.
+ * Rejects before any byte beyond the capability's signed limit reaches disk.
+ * The request remains readable after rejection so the route can return its
+ * validation response instead of resetting the HTTP connection.
+ */
+export class BlobUploadSizeError extends Error {
+  constructor() {
+    super("Upload size does not match the link");
+    this.name = "BlobUploadSizeError";
+  }
+}
+
+export async function writeBlobFromStream(
+  key: string,
+  body: Readable,
+  maxBytes: number,
+): Promise<number> {
+  if (requireProvider("stream upload").kind !== "fs") {
+    throw new Error("writeBlobFromStream is only available on the fs driver");
+  }
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+    throw new BlobUploadSizeError();
+  }
+  const target = fsPathFor(key);
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  // Stream into a sibling temp file and rename on success, so an aborted or
+  // oversized upload never truncates a blob already stored at this key and
+  // never leaves a partial file behind for any caller.
+  const temp = `${target}.${randomUUID()}.part`;
+  const handle = await fs.open(temp, "wx");
+  let committed = false;
+  let written = 0;
+  const bounded = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      if (chunk.length > maxBytes - written) {
+        callback(new BlobUploadSizeError());
+        return;
+      }
+      written += chunk.length;
+      callback(null, chunk);
+    },
+  });
+  const abort = (error: Error) => bounded.destroy(error);
+  const aborted = () => bounded.destroy(new Error("Upload aborted"));
+  const closed = () => {
+    if (!body.readableEnded) aborted();
+  };
+  body.once("error", abort);
+  body.once("aborted", aborted);
+  body.once("close", closed);
+  try {
+    if (body.destroyed) throw new Error("Upload aborted");
+    const sink = handle.createWriteStream();
+    const completed = pipeline(bounded, sink);
+    body.pipe(bounded);
+    await completed;
+    if (written !== maxBytes) throw new BlobUploadSizeError();
+    await fs.rename(temp, target);
+    committed = true;
+  } finally {
+    body.unpipe(bounded);
+    body.off("error", abort);
+    body.off("aborted", aborted);
+    body.off("close", closed);
+    // Drain a rejected request without writing it. Keeping the incoming HTTP
+    // stream out of pipeline lets Express send the expected 400 response.
+    if (!body.readableEnded && !body.destroyed) body.resume();
+    await handle.close().catch(() => {});
+    if (!committed) await fs.rm(temp, { force: true }).catch(() => {});
+  }
+  return written;
+}
+
+/** Remove a partially written blob after a failed or oversized upload. */
+export async function discardBlob(key: string): Promise<void> {
+  if (requireProvider("discard blob").kind !== "fs") return;
+  await fs.rm(fsPathFor(key), { force: true }).catch(() => {});
+}
+
 // ─── Factory ──────────────────────────────────────────────────────────────────
 
 function createProvider(): StorageProvider {
+  if (process.env.STORAGE_DRIVER === "fs") return new FilesystemProvider();
   if (
     process.env.AZURE_STORAGE_ACCOUNT_NAME ||
     process.env.AZURE_STORAGE_CONNECTION_STRING

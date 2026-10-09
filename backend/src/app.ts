@@ -22,7 +22,7 @@ import { quickActionsRouter } from "./modules/quick-actions/quickActions.routes"
 import { workflowAddonsRouter } from "./modules/workflows/workflowAddons.routes";
 import { userRouter } from "./modules/user/user.routes";
 import { modelsRouter } from "./modules/models/models.routes";
-import { downloadsRouter } from "./modules/downloads/downloads.routes";
+import { blobUploadHandler, downloadsRouter } from "./modules/downloads/downloads.routes";
 import { sourceDocumentsRouter } from "./modules/source-documents/sourceDocuments.routes";
 import { auditRouter } from "./modules/audit/audit.routes";
 import { authRouter } from "./modules/auth/auth.routes";
@@ -237,15 +237,23 @@ export function buildApp(): express.Express {
   // the route mounts below. Bundled-frontend assets are exempt: one page
   // load fetches dozens of JS/CSS chunks, which exhausted the 300/15 min
   // budget after ~20 page loads (OSS-6 smoke, 2026-09-30).
+  const blobUploadPath = /^\/api\/download\/signed\/[^/]+$/;
+  const blobUploadLimiter = makeLimiter({
+    windowMs: minutes(envInt("RATE_LIMIT_BLOB_UPLOAD_WINDOW_MINUTES", 15)),
+    max: envInt("RATE_LIMIT_BLOB_UPLOAD_MAX", 1000),
+    message: "Too many uploads. Please try again later.",
+  });
   const uploadPartPath = /^\/api\/upload-sessions\/[^/]+\/files\/[^/]+\/parts\/\d+$/;
   app.use((req, res, next) =>
-    isStaticAsset(req) || (req.method === "PUT" && uploadPartPath.test(req.path))
+    isStaticAsset(req) || (req.method === "PUT" && (uploadPartPath.test(req.path) || blobUploadPath.test(req.path)))
       ? next() : generalLimiter(req, res, next),
   );
 
   // Parse this return channel before the general 50 MB parser. Its full
   // /api path also gives it a separate limiter budget under static hosting.
   app.post(TOOL_RESULT_PATH, toolResultLimiter, express.json({ limit: "2mb" }));
+  // The filesystem capability upload consumes a bounded stream before JSON parsing.
+  app.put("/api/download/signed/:token", blobUploadLimiter, blobUploadHandler);
   const jsonParser = express.json({ limit: JSON_BODY_LIMIT });
   // Blob parts are bounded streams. Never let the global JSON parser buffer a
   // mislabeled 8 MiB part (or the global 50 MiB ceiling) before ownership and
@@ -261,7 +269,9 @@ export function buildApp(): express.Express {
   app.use(cookieParser());
 
   // ── Static frontend bundle (must be set up BEFORE the API routers below) ──
-  const PUBLIC_DIR = path.resolve(__dirname, "..", "public");
+  const PUBLIC_DIR = process.env.FRONTEND_PUBLIC_DIR
+    ? path.resolve(process.env.FRONTEND_PUBLIC_DIR)
+    : path.resolve(__dirname, "..", "public");
   const FRONTEND_BUNDLED = fs.existsSync(PUBLIC_DIR);
 
   // Resolve the static-export shell file for `reqPath`. Returns a path on disk

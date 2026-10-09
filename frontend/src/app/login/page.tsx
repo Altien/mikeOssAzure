@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { login, loginLocal } from "@/app/lib/authApi";
 import { useConfig } from "@/app/contexts/ConfigContext";
+import { completeUserOnboarding, getUserProfile } from "@/app/lib/mikeApi";
 import { InputUI } from "@/shared/ui/InputUI";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import Link from "next/link";
@@ -25,6 +26,15 @@ const LOGIN_ERROR_MESSAGES = {
     email_not_confirmed: "Confirm your email address before logging in.",
 } as const;
 
+// Upstream desktop 89dc8323 uses Dev's local cookie sessions; no GoTrue
+// passwords or provider secrets cross this bridge.
+type GuestCredentials = { email: string };
+declare global {
+  interface Window {
+    mikeDesktop?: { guestCredentials?: () => Promise<GuestCredentials | null> };
+  }
+}
+
 export default function LoginPage() {
     const router = useRouter();
     const config = useConfig();
@@ -35,6 +45,7 @@ export default function LoginPage() {
         refreshSession,
         retrySession,
     } = useAuth();
+    const [guest, setGuest] = useState<GuestCredentials | null>(null);
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [loading, setLoading] = useState(false);
@@ -45,6 +56,29 @@ export default function LoginPage() {
             router.replace("/onboarding/profile");
         }
     }, [authLoading, isAuthenticated, router]);
+
+    useEffect(() => {
+        let cancelled = false;
+        if (config.authProvider !== "local") return;
+        window.mikeDesktop?.guestCredentials?.().then((value) => {
+            if (!cancelled && value?.email) setGuest(value);
+        }).catch(() => {});
+        return () => { cancelled = true; };
+    }, [config.authProvider]);
+
+    const handleGuestLogin = async () => {
+        if (!guest || config.authProvider !== "local") return;
+        setLoading(true); setError(null);
+        try {
+            await loginLocal(guest.email);
+            const profile = await getUserProfile();
+            if (!profile.onboardingComplete) await completeUserOnboarding();
+            await refreshSession();
+            router.push("/assistant");
+        } catch {
+            setError("Unable to open the local workspace. Please try again.");
+        } finally { setLoading(false); }
+    };
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -79,8 +113,19 @@ export default function LoginPage() {
                 {/* Login Form */}
                 <div className={cn(authGlassCardUIClassName, "mb-4")}>
                     <h2 className="mb-6 text-left text-2xl font-medium font-serif text-gray-950">
-                        Log In
+                        {guest ? "Your workspace on this Mac" : "Log In"}
                     </h2>
+                    {guest && <div className="mb-6 space-y-3">
+                        <p className="text-sm text-muted-foreground">Start without a cloud account. Your work is saved on this Mac.</p>
+                        <PillButtonUI type="button" tone="black" size="normal" className="w-full"
+                            onClick={handleGuestLogin} disabled={loading}>
+                            {loading ? "Opening workspace…" : "Continue on this Mac"}
+                        </PillButtonUI>
+                    </div>}
+                    <details open={!guest}>
+                        <summary hidden={!guest} className="mb-4 cursor-pointer text-sm text-muted-foreground">
+                            Use a separate local account
+                        </summary>
                     <form onSubmit={handleLogin} className="space-y-4">
                         {config.authProvider !== "entra" && <div>
                             <FieldLabel htmlFor="email">Email</FieldLabel>
@@ -160,6 +205,8 @@ export default function LoginPage() {
                         />
                         <SsoAuthButton disabled={loading} /></>}
                     </form>
+                    </details>
+                    {guest && error && <p role="alert" className="mt-3 text-sm text-destructive">{error}</p>}
                 </div>
                 {config.authProvider === "supabase" && <div className="text-center text-sm text-gray-500">
                     Don&apos;t have an account?{" "}

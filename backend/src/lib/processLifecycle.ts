@@ -46,6 +46,7 @@ export async function failBoot(
 
 interface Listenable {
   listen(port: number | string, callback: (error?: Error) => void): Server;
+  listen(port: number | string, host: string, callback: (error?: Error) => void): Server;
 }
 
 /**
@@ -62,6 +63,7 @@ export function listenOrFail(
   port: number | string,
   onListening: () => void,
   effects: LifecycleEffects = processEffects,
+  host?: string,
 ): Server {
   let settled = false;
   let server: Server;
@@ -70,13 +72,14 @@ export function listenOrFail(
     settled = true;
     void failBoot(error, "listen", effects);
   };
-  server = app.listen(port, (error) => {
+  const onListen = (error?: Error) => {
     if (error) { onError(error); return; }
     if (settled) return;
     settled = true;
     server.off("error", onError);
     onListening();
-  });
+  };
+  server = host ? app.listen(port, host, onListen) : app.listen(port, onListen);
   // Express 4 emits a Server error; Express 5 also passes it to the callback.
   // The settled guard keeps either path from reporting the bind failure twice.
   if (!settled) server.once("error", onError);
