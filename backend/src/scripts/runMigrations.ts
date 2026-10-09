@@ -5,7 +5,7 @@ import { Client } from "pg";
 import { createServerSupabase } from "../lib/supabase";
 import { syncWorkflowCatalog } from "../lib/workflowCatalogSync";
 import { resolveProviderSecret } from "../lib/envSecrets";
-import { parseMigrationCommand, runMigrationCommand } from "./migrationLedger";
+import { assertDirectMigrationConnection, parseMigrationCommand, runMigrationCommand } from "./migrationLedger";
 
 const AAD_SCOPE = "https://ossrdbms-aad.database.windows.net/.default";
 
@@ -201,7 +201,8 @@ async function provisionAuthSecrets(databaseUrl: string): Promise<void> {
 async function main() {
   const command = parseMigrationCommand(process.argv.slice(2));
   const databaseUrl = await getDatabaseUrl();
-  const client = new Client({ connectionString: databaseUrl });
+  assertDirectMigrationConnection(databaseUrl);
+  const client = new Client({ connectionString: databaseUrl, application_name: "mike-migrate" });
   try {
     await client.connect();
     process.exitCode = await runMigrationCommand(client, command);

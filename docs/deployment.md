@@ -41,12 +41,31 @@ checksums alone do not block an upgrade. Changed or removed recorded files and
 insertions before applied history block `up`: restore the shipped files,
 inspect deployment records and use a new numbered migration for corrections.
 
-Back up data before upgrading. The library keeps its single-transaction option;
-some historical SQL files contain their own BEGIN/COMMIT, so do not assume a
-failed multi-file upgrade rolls back all preceding changes. Recorded files are
-skipped, a failed file remains pending, and later files do not run. Inspect the
-failure and restore the backup or complete the affected SQL deliberately before
-recording it. Never edit or rename shipped migration files.
+Ordinary files run in a native node-pg-migrate transaction with their history
+row. A failure rolls back that file and leaves it pending; previously committed
+files stay recorded and later files do not run. Historical SQL containing its
+own BEGIN/COMMIT remains unchanged: those files may leave partial changes on
+failure and their file/history atomicity is not guaranteed. Back up data,
+inspect the failure and restore or complete that SQL deliberately before using
+explicit mark recovery. Never edit or rename shipped migration files.
+
+The outer session lock stays held across history checks, every file and checksum
+recording. A concurrent runner polls pg_try_advisory_lock without retaining a
+blocking query snapshot, names the holder when visible, then re-reads history
+after acquiring the lock. MIGRATE_LOCK_WAIT bounds the wait in whole seconds
+(default 900; 0 fails immediately). Migration sessions are named mike-migrate.
+The runner resets settings, role/session authorization and transient session
+state between files without releasing the advisory lock.
+
+Supply a direct or session-pooler owner connection. Port 6543 and explicit
+transaction-pooler URL indicators are refused; poolers on custom ports must
+still be configured in session mode. On a busy database, a connection-time
+PGOPTIONS='-c lock_timeout=10s' bounds waits for table locks.
+
+The installed node-pg-migrate 7.x SQL loader has no noTransaction annotation.
+No current numbered file requires one. The runner clearly rejects CONCURRENTLY
+and -- migrate:no-transaction forms rather than silently wrapping them. Adopt
+an explicit native runner mechanism before introducing such a migration.
 
 Recovery is explicit and never part of normal startup or deployment:
 
@@ -59,8 +78,10 @@ pnpm --dir backend migrate:dev mark 0001_tenant_policy.sql --confirm-applied
 
 These commands use node-pg-migrate's existing history, execute no migration SQL,
 and leave checksums NULL. Baseline records only pending files at or below the
-explicit filename, never files above it; ordinary `up` never baselines. New
-and existing databases both execute pending numbered files. A fresh successful
+explicit filename, never files above it; ordinary `up` never baselines. An existing public schema with no pgmigrations
+history is refused by status/up/mark until a confirmed bounded baseline records
+its independently verified provenance. Truly empty databases initialize normally.
+New and existing databases both execute pending numbered files. A fresh successful
 install therefore reports no pending files without a hand-maintained manifest.
 Direct `migrate:legacy`/`migrate:down` commands remain operator escape hatches
 and bypass these integrity checks; production corrections are forward-only.

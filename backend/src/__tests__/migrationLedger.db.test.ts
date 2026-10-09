@@ -112,7 +112,7 @@ describe.skipIf(!databaseUrl)("migration runner disposable PostgreSQL guarantees
     await other.connect();
     try {
       await other.query("select pg_advisory_lock(7241865325823964)");
-      await expect(up()).rejects.toThrow(/already running/);
+      await expect(runMigrationCommand(client, {kind: "up"}, directory, log, {lockWaitSeconds: 0})).rejects.toThrow(/already running/);
     } finally { await other.end(); }
     await up();
     const privileges = (await client.query(`select
@@ -126,4 +126,40 @@ describe.skipIf(!databaseUrl)("migration runner disposable PostgreSQL guarantees
       service_read: true, sequence_write: false,
     });
   });
+  it("refuses an existing schema without history until its baseline is explicitly confirmed", async () => {
+    await client.query("create table public.probe(id integer primary key)");
+    await expect(up()).rejects.toThrow(/no pgmigrations history/);
+    await expect(status()).rejects.toThrow(/baseline FILE --confirm-applied/);
+    expect((await client.query("select to_regclass('public.pgmigrations') as relation")).rows[0].relation).toBeNull();
+    await runMigrationCommand(client, parseMigrationCommand(["baseline", "0000_initial.sql", "--confirm-applied"]), directory, log);
+    expect(await up()).toBe(0);
+  });
+
+  it("commits successful files and rolls back a failing file together with its history row", async () => {
+    await up();
+    await add("0110_success.sql", "create table committed_file(id int);");
+    await add("0111_failure.sql", "create table rolled_back_file(id int); select * from intentionally_absent;");
+    await add("0112_later.sql", "create table later_file(id int);");
+    await expect(up()).rejects.toThrow();
+    expect((await client.query("select to_regclass('public.committed_file') is not null as present")).rows[0].present).toBe(true);
+    expect((await client.query("select to_regclass('public.rolled_back_file') is null and to_regclass('public.later_file') is null as absent")).rows[0].absent).toBe(true);
+    expect((await history()).map(row => row.name)).toEqual(["0000_initial", "0109_migration_history_checksums", "0110_success"]);
+    expect((await history()).at(-1)?.checksum).toHaveLength(64);
+  });
+
+  it("names a competing lock holder and rechecks history after waiting", async () => {
+    const other = connect(); await other.connect();
+    const warnings: string[] = [];
+    try {
+      await other.query("set application_name = 'migration-test-holder'; select pg_advisory_lock(7241865325823964)");
+      const pending = runMigrationCommand(client, {kind: "up"}, directory, {...log, warn: message => warnings.push(String(message))}, {lockWaitSeconds: 5});
+      await new Promise(resolve => setTimeout(resolve, 50));
+      await runMigrationCommand(other, {kind: "up"}, directory, log);
+      await other.query("select pg_advisory_unlock(7241865325823964)");
+      expect(await pending).toBe(0);
+      expect(warnings.join("\n")).toMatch(/pid .*migration-test-holder/);
+      expect(await history()).toHaveLength(2);
+    } finally { await other.end(); }
+  });
+
 });

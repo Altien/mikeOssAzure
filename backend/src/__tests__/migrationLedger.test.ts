@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { compareMigrationHistory, migrationFiles, parseMigrationCommand } from "../scripts/migrationLedger";
+import { assertDirectMigrationConnection, assertSupportedMigrationSql, migrationLockWaitSeconds, compareMigrationHistory, migrationFiles, parseMigrationCommand } from "../scripts/migrationLedger";
 
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map((dir) => rm(dir, { recursive: true, force: true }))); });
@@ -56,5 +56,24 @@ describe("numbered migration history", () => {
     expect((await migrationFiles(dir))[0].checksum).not.toBe(lf.checksum);
     await writeFile(path.join(dir, "0000_duplicate.sql"), "select 3;");
     await expect(migrationFiles(dir)).rejects.toThrow(/duplicate numbered migration/);
+  });
+});
+
+describe("migration session policy", () => {
+  it("requires a bounded whole-number lock wait", () => {
+    expect(migrationLockWaitSeconds("0")).toBe(0);
+    expect(migrationLockWaitSeconds("900")).toBe(900);
+    for (const value of ["", "-1", "1.5", "abc", "999999999999999999999"]) expect(() => migrationLockWaitSeconds(value)).toThrow(/whole number/);
+  });
+  it("refuses conventional and explicitly declared transaction-pooler connections", () => {
+    for (const url of ["postgres://user:password@host:6543/db", "postgres://host:6543", "postgres://host/db?port=6543", "postgres://host/db?pool_mode=transaction", "postgres://host/db?pgbouncer=true"]) {
+      expect(() => assertDirectMigrationConnection(url)).toThrow(/direct or session/);
+    }
+    expect(() => assertDirectMigrationConnection("postgres://host:5432/db")).not.toThrow();
+  });
+  it("refuses unsupported SQL opt-outs without rewriting shipped transaction controls", () => {
+    for (const sql of ["-- migrate:no-transaction\nselect 1;", "create index concurrently ix on t(id);"]) expect(() => assertSupportedMigrationSql(sql, "0110_example.sql")).toThrow(/nontransactional SQL is unsupported/);
+    expect(() => assertSupportedMigrationSql("BEGIN; select 1; COMMIT;", "0000_initial.sql")).not.toThrow();
+    expect(() => assertSupportedMigrationSql("create function f() returns void language plpgsql as $$\nbegin\nperform 1;\nend;\n$$;", "0110_example.sql")).not.toThrow();
   });
 });

@@ -24,6 +24,13 @@ runner for upgrades and status; never edit or rename shipped SQL. Explicit
 baseline/mark recovery requires the last verified applied filename and
 --confirm-applied; ordinary upgrades never infer a baseline.
 
+Ordinary numbered SQL runs in one native transaction per file with its history row.
+Do not add transaction controls to new files. Historical BEGIN/COMMIT SQL remains
+unchanged and may leave partial changes on failure. The current SQL loader does
+not support CONCURRENTLY or -- migrate:no-transaction; the runner rejects them
+explicitly. Any future nontransactional migration needs an approved runner change.
+Use a direct/session connection, never a transaction pooler.
+
 Database changes use the next numbered `backend/migrations/NNNN_*.sql` file.
 The same numbered history initializes fresh and existing private PostgreSQL
 databases. Use `web_anon`, `authenticated`, and `service_role` grants with
