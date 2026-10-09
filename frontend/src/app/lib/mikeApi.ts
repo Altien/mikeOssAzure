@@ -1,3 +1,4 @@
+import type { RouterProfileLists } from "@/shared/lib/modelCatalog";
 /**
  * Mike API client — all requests to the Node.js backend.
  * Attaches the active browser auth token for user authentication.
@@ -772,7 +773,7 @@ export interface PersonalisationDetails {
     professionalTitle?: ProfessionalTitle | null;
     practiceAreas?: string[];}
 
-export interface UserProfile {
+export interface UserProfile extends RouterProfileLists {
     displayName: string | null;
     organisation: string | null;
     jurisdiction: string | null;
@@ -796,15 +797,6 @@ export interface UserProfile {
     quickActionsVisible: boolean;
     darkMode: boolean;
     projectMemoryDefault: boolean;
-    openRouterModels: string[];
-    vercelModels: string[];
-    openCodeGoModels: string[];
-    bedrockModels: string[];
-    azureModels: string[];
-    azureFoundryModels: string[];
-    vertexModels: string[];
-    xaiModels: string[];
-    customModels: string[];
     apiKeyStatus: ApiKeyStatus;
 }
 

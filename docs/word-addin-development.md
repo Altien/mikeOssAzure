@@ -223,7 +223,7 @@ Upstream's hermetic Playwright suite (`e2e/`) and live Word-on-the-web demo reco
 The task pane is independently bundled. When the web design system changes,
 compare:
 
-- `src/taskpane/lib/modelCatalog.ts` with the web model catalog; and
+- `src/shared/styles/tokens.css` with `frontend/src/app/globals.css`; and
 - `src/shared/chat/ChatInput.tsx` and the vendored UI primitives with their web
   counterparts, retaining narrow-pane adaptations.
 
@@ -233,7 +233,10 @@ holds only the add-in's base layer.
 
 Files with no add-in-specific behavior are not vendored at all: they are
 aliased straight at the web source (`@mike/*` in `webpack.config.js` and
-`tsconfig.json`), so there is nothing to keep in sync.
+`tsconfig.json`), so there is nothing to keep in sync. The model catalog is one
+of them: `@mike/model-catalog` is `frontend/src/shared/lib/modelCatalog.ts`,
+and `src/taskpane/lib/modelCatalog.ts` only adapts the add-in's key-status
+shape to it.
 
 ## Troubleshooting
 

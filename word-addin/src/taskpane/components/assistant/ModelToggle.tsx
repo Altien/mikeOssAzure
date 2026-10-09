@@ -1,21 +1,27 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ModelToggleUI, nearestReasoningLevelForModel, reasoningLevelsForModel, type ReasoningLevel } from "@mike/model-toggle-ui";
+import {
+  ModelToggleUI,
+  nearestReasoningLevelForModel,
+  reasoningLevelsForModel,
+  type ReasoningLevel,
+} from "@mike/model-toggle-ui";
 import { getAzureModels, type ApiKeyStatus, type ConfiguredModelOption } from "../../api/mikeApi";
 import {
-  isModelAvailable,
-  routerModelOptions,
-  STATIC_MODELS,
+  MODELS, mergeConfiguredModelOptions,
+  allRouterModelOptions,
+  modelDisplayName,
   type ModelOption,
-  type RouterModelSelections,
-} from "../../lib/modelCatalog";
+  type RouterSelections,
+} from "@mike/model-catalog";
+import { isModelAvailable } from "../../lib/modelCatalog";
 
 export function ModelToggle({
   value,
   onChange,
   keyStatus,
   keyStatusLoading = false,
-  routerModels,
-  configuredModels,
+  routerSelections,
+  configuredModels = [],
   compact = false,
   onNoModelsClick,
   reasoningLevel,
@@ -27,9 +33,9 @@ export function ModelToggle({
   /** True while the key-status preflight is in flight: render a neutral
    *  disabled trigger instead of flashing "No Models". */
   keyStatusLoading?: boolean;
-  /** The user's saved models, per router. */
-  routerModels: RouterModelSelections;
-  configuredModels: readonly ConfiguredModelOption[];
+  /** Each router's saved Model Selections; null before the profile loads. */
+  routerSelections: RouterSelections | null;
+  configuredModels?: readonly ConfiguredModelOption[];
   compact?: boolean;
   onNoModelsClick?: () => void;
   reasoningLevel?: ReasoningLevel;
@@ -50,13 +56,21 @@ export function ModelToggle({
   }, []);
 
   const models = useMemo(() => {
-    const otherModels = [...STATIC_MODELS, ...routerModelOptions(routerModels), ...azureModels];
-    const configuredIds = new Set(configuredModels.map((model) => model.id));
-    return [...otherModels.filter((model) => !configuredIds.has(model.id)), ...configuredModels].filter(
+    const routerOptions = allRouterModelOptions(routerSelections ?? {});
+    const localOptions = azureModels.map((model) => ({
+      ...model,
+      label: modelDisplayName(model.id),
+      source: "Azure OpenAI",
+    }));
+    return mergeConfiguredModelOptions(configuredModels, [
+      ...MODELS,
+      ...routerOptions,
+      ...localOptions,
+    ]).filter(
       (model) =>
         model.source === "Configured" || model.group === "Local" || isModelAvailable(model.id, keyStatus),
     );
-  }, [keyStatus, azureModels, routerModels, configuredModels]);
+  }, [keyStatus, azureModels, routerSelections, configuredModels]);
   const selected = models.find((model) => model.id === value);
   const supportedReasoningLevels = reasoningLevelsForModel(value);
   const normalizedReasoningLevel = reasoningLevel

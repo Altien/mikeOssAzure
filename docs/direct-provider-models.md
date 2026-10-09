@@ -101,6 +101,20 @@ Users add model selections once the administrator has configured a provider. The
 `custom/<model>`, and a request can only use a model in the requesting user's
 saved list.
 
+Model IDs for Bedrock, Azure OpenAI, Azure AI Foundry, Vertex AI, xAI and
+custom endpoints are typed by users and some SDKs put them into request URLs,
+so they must follow a strict grammar, checked when a model is saved, when a
+request resolves it, and again before a provider is called: `/`-separated
+segments of letters, digits and `. _ : @ + -`, with no empty, `.` or `..`
+segments and no `?`, `#`, `%`, backslash, whitespace or control characters.
+Vertex Claude and Gemini IDs are a single segment and partner IDs are exactly
+`publisher/model`. A model declared in `MIKE_MODEL_CONFIG_JSON` keeps its
+declared provider even if its ID starts with one of these prefixes.
+
+Moving a saved Azure AI Foundry key or custom-endpoint key to a different
+host requires entering the key again; changing a Vertex AI location does not,
+because the location only selects one of Google's own regional endpoints.
+
 - **Vertex AI:** the service account needs the Vertex AI User role, and the
   project is read from the key file's `project_id`. A model ID selects the
   protocol: `claude…` IDs (`claude-opus-5-5@20260101`) use Anthropic Messages,
@@ -162,7 +176,10 @@ change their selections in the model picker and task settings. GPT-6 Astra and
 GPT-6.1 Sol require reasoning, so a saved None setting is normalized to Low.
 Current Fable and Opus also require thinking. Sonnet's lowest setting uses the
 SDK's `between_tools` behavior. Lightweight automatic titles use their provider's
-small model with reasoning disabled.
+small model with reasoning disabled. On Bedrock, Azure, Foundry, Vertex AI, xAI,
+custom endpoints and routers, titles use the chat model itself; when that model
+cannot turn reasoning off, the title call gets extra output headroom so its
+thinking cannot use up the whole title budget.
 
 OpenRouter and Vercel continue to use their live catalogs and users' saved
 allowlists. OpenCode Go retains its protocol compatibility list. Ollama models
@@ -171,8 +188,10 @@ mappings.
 
 ## Catalog maintenance
 
-Keep `backend/src/lib/llm/models.ts`, the web `ModelToggle.tsx`, and the Word
-add-in's `modelCatalog.ts` synchronized, including legacy mappings. Update
+Keep `backend/src/lib/llm/models.ts` and the client catalog
+`frontend/src/shared/lib/modelCatalog.ts` (used by both the web app and the
+Word add-in) synchronized, including legacy mappings;
+`frontend/src/wordAddin/catalogParity.test.ts` compares them. Update
 reasoning capabilities in the backend and shared `ModelToggleUI.tsx` together.
 
 Sources:
@@ -187,3 +206,5 @@ Sources:
 - [Mistral Medium 3.5](https://docs.mistral.ai/models/mistral-medium-3-5-26-04)
 - [Mistral Small 4](https://docs.mistral.ai/models/mistral-small-4-0-26-03)
 - [Mistral AI SDK adapter](https://ai-sdk.dev/providers/ai-sdk-providers/mistral)
+
+Dev compatibility (sync-log: 1da19c20): the pure shared client catalog includes authenticated configured models and legacy aoai: discovery; these remain distinct from user-saved azure/ deployment selections. Provider credentials and endpoints are organisation-managed; personal key/settings writes remain refused. Outbound cloud endpoint/model ID validation applies to managed calls. Bedrock SDK endpoints are explicit, and the direct Claude output ceiling is used where the SDK would otherwise supply a small default.

@@ -204,7 +204,9 @@ export interface QuickAction {
  * must not drag the API client's runtime dependencies into the web app's
  * type-check.
  */
+export type ApiKeyProvider = "claude" | "gemini" | "openai" | "mistral" | "kimi" | "azure_openai" | "openrouter" | "vercel" | "opencode-go" | "bedrock" | "azure" | "azure-foundry" | "vertex" | "xai" | "custom" | "courtlistener";
 export interface ApiKeyStatus {
+  enabled?: Partial<Record<ApiKeyProvider, boolean>>;
   azure_openai?: boolean;
   kimi?: boolean;
   claude: boolean;

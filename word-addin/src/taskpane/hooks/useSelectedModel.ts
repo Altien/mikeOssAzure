@@ -1,19 +1,19 @@
+import { ROUTER_SLUGS } from "@mike/model-catalog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApiKeyStatus } from "../api/client";
 import {
-  ROUTER_SLUGS,
   canonicalModelId,
   isAllowedModelId,
-  isModelAvailable,
-  type RouterModelSelections,
-} from "../lib/modelCatalog";
+  isRouterModelSelected,
+  type RouterSelections,
+} from "@mike/model-catalog";
+import { isModelAvailable } from "../lib/modelCatalog";
 
 interface SelectedModelSources {
   sessionKey: number;
   chatModel?: string | null;
   lastSelectedModel?: string | null;
-  /** The user's saved models per router; null while they are not known. */
-  routerSelections?: RouterModelSelections | null;
+  routerSelections?: RouterSelections | null;
   /** Null means the key-status request failed and availability fails open. */
   apiKeyStatus: ApiKeyStatus | null;
   configuredModelIds?: readonly string[];
@@ -24,7 +24,7 @@ function usableStoredModel(
   sources: SelectedModelSources,
 ): string | null {
   if (!value) return null;
-  const model = canonicalModelId(value);
+  const model = sources.configuredModelIds?.includes(value) ? value : canonicalModelId(value);
   if (!isAllowedModelId(model, sources.configuredModelIds)) return null;
   const router = ROUTER_SLUGS.find((slug) => model.startsWith(`${slug}/`));
   if (router && !sources.configuredModelIds?.includes(model) && sources.routerSelections) {
@@ -44,10 +44,7 @@ export function useSelectedModel(
   );
   const manualSelection = useRef(false);
   const previousSessionKey = useRef(sources.sessionKey);
-  // Compared by content: a fresh but equal map is not a changed selection.
-  const routerSelectionsKey = sources.routerSelections
-    ? JSON.stringify(sources.routerSelections)
-    : null;
+  const routerSelectionsKey = sources.routerSelections ? JSON.stringify(sources.routerSelections) : null;
 
   useEffect(() => {
     if (previousSessionKey.current !== sources.sessionKey) {
@@ -78,7 +75,7 @@ export function useSelectedModel(
   ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setModel = useCallback((raw: string): void => {
-    const next = canonicalModelId(raw);
+    const next = sources.configuredModelIds?.includes(raw) ? raw : canonicalModelId(raw);
     manualSelection.current = true;
     setModelState(isAllowedModelId(next, sources.configuredModelIds) ? next : "");
     setSettingsResolved(true);

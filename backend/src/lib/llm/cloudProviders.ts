@@ -11,9 +11,9 @@ import { isProviderDisabled } from "./providerPreferences";
 // region/endpoint. Mixing them would send a user's key to the operator's
 // Azure resource, or the operator's key to a resource the user chose.
 
-import { BLOCKED_METADATA_HOSTS } from "../mcp/types";
+import { canonicalHostname, isBlockedHostname } from "../mcp/types";
 import { isBlockedIp } from "../privateIp";
-import type { UserApiKeys } from "./types";
+import type { ProviderSettings, UserApiKeys } from "./types";
 import { resolveProviderSecret } from "../envSecrets";
 
 export type BedrockCredentials = { apiKey: string; region: string };
@@ -33,8 +33,8 @@ export type CustomEndpointCredentials = { apiKey: string; baseUrl: string };
 // the bedrock-runtime hostname.
 const AWS_REGION_RE = /^[a-z]{2}(?:-[a-z]+)+-\d{1,2}$/;
 
-// An Azure resource name is a single DNS label; the SDK builds
-// https://{name}.openai.azure.com from it.
+// An Azure resource name is a single DNS label; azureEndpointUrl expands it
+// to https://{name}.openai.azure.com.
 const AZURE_RESOURCE_NAME_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
 
 // Full endpoints are limited to Azure's own AI hostnames. The endpoint is a
@@ -68,6 +68,19 @@ export function normalizeAwsRegion(value: unknown): string | null {
     if (typeof value !== "string") return null;
     const region = value.trim().toLowerCase();
     return AWS_REGION_RE.test(region) ? region : null;
+}
+
+/**
+ * The AWS origin for a Bedrock service in a region, e.g.
+ * https://bedrock-runtime.eu-west-2.amazonaws.com. Built explicitly so the
+ * SDK never falls back to AWS_ENDPOINT_URL* from the environment, which would
+ * send a user's key to a host the operator configured for something else.
+ */
+export function bedrockServiceUrl(
+    service: "bedrock" | "bedrock-runtime",
+    region: string,
+): string {
+    return `https://${service}.${region}.${awsDnsSuffix(region)}`;
 }
 
 /**
@@ -187,6 +200,12 @@ export function parseVertexServiceAccount(
 }
 
 /**
+ * How egress-guard errors name a custom endpoint's URL ("Model endpoint URL
+ * resolves to a blocked network address."), for every caller that fetches it.
+ */
+export const CUSTOM_ENDPOINT_URL_LABEL = "Model endpoint URL";
+
+/**
  * The base URL of a user's own OpenAI-compatible endpoint, without a trailing
  * slash, or null when it is not acceptable. The backend sends requests and
  * the user's key to this URL, so it must be public https: no credentials,
@@ -204,7 +223,7 @@ export function normalizeCustomBaseUrl(value: unknown): string | null {
     } catch {
         return null;
     }
-    const hostname = url.hostname.toLowerCase();
+    const hostname = canonicalHostname(url);
     const literalHost =
         hostname.startsWith("[") && hostname.endsWith("]")
             ? hostname.slice(1, -1)
@@ -217,9 +236,7 @@ export function normalizeCustomBaseUrl(value: unknown): string | null {
         url.search ||
         url.hash ||
         !hostname ||
-        hostname === "localhost" ||
-        hostname.endsWith(".localhost") ||
-        BLOCKED_METADATA_HOSTS.has(hostname) ||
+        isBlockedHostname(hostname) ||
         (isIpLiteral ? isBlockedIp(literalHost) : !hostname.includes("."))
     ) {
         return null;
@@ -227,18 +244,70 @@ export function normalizeCustomBaseUrl(value: unknown): string | null {
     return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
 }
 
-/** How `createAzure` should address a normalized endpoint. */
-export function azureClientTarget(
-    endpoint: string,
-): { resourceName: string } | { baseURL: string } {
-    if (!endpoint.startsWith("https://")) return { resourceName: endpoint };
+// The host @ai-sdk/azure addresses for a bare resource name
+// (createAzure({ resourceName }) -> https://{name}.openai.azure.com/openai).
+const AZURE_RESOURCE_NAME_HOST_SUFFIX = ".openai.azure.com";
+
+/**
+ * The https URL a normalized Azure OpenAI endpoint (see
+ * normalizeAzureEndpoint) is reached at: a bare resource name is
+ * https://{name}.openai.azure.com, a URL is itself. The single place that
+ * expands a resource name, so the host a request goes to and the host a
+ * saved key is bound to (credentialEndpointHost) cannot disagree.
+ */
+export function azureEndpointUrl(endpoint: string): URL {
+    return new URL(
+        endpoint.startsWith("https://")
+            ? endpoint
+            : `https://${endpoint}${AZURE_RESOURCE_NAME_HOST_SUFFIX}`,
+    );
+}
+
+/**
+ * How `createAzure` should address a normalized endpoint. Always an explicit
+ * baseURL, built by azureEndpointUrl: for a resource name it is exactly the
+ * URL the SDK's own resourceName option would build, and it leaves the SDK
+ * no AZURE_RESOURCE_NAME environment fallback to reach for.
+ */
+export function azureClientTarget(endpoint: string): { baseURL: string } {
+    const url = azureEndpointUrl(endpoint);
+    const path = url.pathname.replace(/\/+$/, "");
     // A bare host has no API path; the SDK appends /v1 to an /openai base.
-    const url = new URL(endpoint);
-    return {
-        baseURL: url.pathname === "/" || url.pathname === ""
-            ? `${endpoint}/openai`
-            : endpoint,
-    };
+    return { baseURL: `${url.origin}${path || "/openai"}` };
+}
+
+/** Providers whose setting is the host their key is sent to. */
+const ENDPOINT_SCOPED_PROVIDERS = ["azure", "azure-foundry", "custom"] as const;
+export type EndpointScopedProvider = (typeof ENDPOINT_SCOPED_PROVIDERS)[number];
+
+export function isEndpointScopedProvider(
+    provider: string,
+): provider is EndpointScopedProvider {
+    return (ENDPOINT_SCOPED_PROVIDERS as readonly string[]).includes(provider);
+}
+
+/**
+ * The host a key for an endpoint-scoped provider is sent to, read from its
+ * normalized settings; null when the settings do not name one. Bedrock
+ * regions and Vertex locations are not endpoints in this sense: they only
+ * pick a region of the same cloud provider's own API, where the key is the
+ * only one valid.
+ */
+export function credentialEndpointHost(
+    provider: EndpointScopedProvider,
+    settings: ProviderSettings,
+): string | null {
+    if (provider === "azure") {
+        const endpoint = settings.azure?.endpoint;
+        return endpoint ? azureEndpointUrl(endpoint).host : null;
+    }
+    const value =
+        provider === "custom"
+            ? settings.custom?.baseUrl
+            : settings["azure-foundry"]?.endpoint;
+    // Both normalize to an https URL (a Foundry resource name is expanded
+    // by normalizeAzureFoundryEndpoint).
+    return value ? new URL(value).host : null;
 }
 
 // Upstream divergence (sync-log: 25779536): all cloud deployment inputs
@@ -294,6 +363,21 @@ export async function envCustomEndpointCredentials(): Promise<CustomEndpointCred
 }
 
 /**
+ * True when the user switched the provider off, or saved a key for it whose
+ * setting no longer validates. Either way the user has opted out of the
+ * deployment's credentials, so there is no environment fallback.
+ */
+function userTurnedAway(
+    apiKeys: UserApiKeys | undefined,
+    provider: string,
+): boolean {
+    return (
+        isProviderDisabled(provider, apiKeys) ||
+        !!apiKeys?.unusableProviders?.includes(provider)
+    );
+}
+
+/**
  * Bedrock credentials for a request. A key in `apiKeys` must arrive with its
  * region; a key without one is unusable rather than paired with the
  * environment's region.
@@ -301,7 +385,7 @@ export async function envCustomEndpointCredentials(): Promise<CustomEndpointCred
 export async function bedrockCredentials(
     apiKeys?: UserApiKeys,
 ): Promise<BedrockCredentials | null> {
-    if (isProviderDisabled("bedrock", apiKeys)) return null;
+    if (userTurnedAway(apiKeys, "bedrock")) return null;
     const apiKey = apiKeys?.bedrock?.trim();
     if (apiKey) {
         const region = normalizeAwsRegion(
@@ -316,7 +400,7 @@ export async function bedrockCredentials(
 export async function azureCredentials(
     apiKeys?: UserApiKeys,
 ): Promise<AzureCredentials | null> {
-    if (isProviderDisabled("azure", apiKeys)) return null;
+    if (userTurnedAway(apiKeys, "azure")) return null;
     const apiKey = apiKeys?.azure?.trim();
     if (apiKey) {
         const endpoint = normalizeAzureEndpoint(
@@ -336,7 +420,7 @@ export async function azureCredentials(
 export async function azureFoundryCredentials(
     apiKeys?: UserApiKeys,
 ): Promise<AzureFoundryCredentials | null> {
-    if (isProviderDisabled("azure-foundry", apiKeys)) return null;
+    if (userTurnedAway(apiKeys, "azure-foundry")) return null;
     const apiKey = apiKeys?.["azure-foundry"]?.trim();
     if (apiKey) {
         const endpoint = normalizeAzureFoundryEndpoint(
@@ -354,7 +438,7 @@ export async function azureFoundryCredentials(
 export async function vertexCredentials(
     apiKeys?: UserApiKeys,
 ): Promise<VertexCredentials | null> {
-    if (isProviderDisabled("vertex", apiKeys)) return null;
+    if (userTurnedAway(apiKeys, "vertex")) return null;
     const key = apiKeys?.vertex?.trim();
     if (key) {
         const account = parseVertexServiceAccount(key);
@@ -373,7 +457,7 @@ export async function vertexCredentials(
 export async function customEndpointCredentials(
     apiKeys?: UserApiKeys,
 ): Promise<CustomEndpointCredentials | null> {
-    if (isProviderDisabled("custom", apiKeys)) return null;
+    if (userTurnedAway(apiKeys, "custom")) return null;
     const apiKey = apiKeys?.custom?.trim();
     const baseUrl = normalizeCustomBaseUrl(
         apiKeys?.providerSettings?.custom?.baseUrl,

@@ -39,10 +39,10 @@ const PROVIDERS_KEEPING_LEGACY_OUTPUT_LIMIT: ReadonlySet<Provider> = new Set<Pro
   "kimi",
 ]);
 
-export function maxOutputTokensFor(provider: Provider): number | undefined {
+export function maxOutputTokensFor(provider: Provider, adapterDefault?: number): number | undefined {
   const value = Number(process.env.LLM_MAX_OUTPUT_TOKENS);
   if (Number.isSafeInteger(value) && value > 0) return value;
-  return PROVIDERS_KEEPING_LEGACY_OUTPUT_LIMIT.has(provider) ? 16_384 : undefined;
+  return PROVIDERS_KEEPING_LEGACY_OUTPUT_LIMIT.has(provider) ? 16_384 : adapterDefault;
 }
 
 /**
@@ -229,6 +229,13 @@ export type AiSdkAdapterConfig = {
   courtlistenerCitationReminder?: boolean;
   /** Mark the prefix-cache breakpoint with a Bedrock cache point as well. */
   bedrockCachePoint?: boolean;
+  /**
+   * Output ceiling for a chat step at the given reasoning level, for SDKs
+   * that send none by default. LLM_MAX_OUTPUT_TOKENS still wins.
+   */
+  defaultMaxOutputTokens?: (
+    reasoning: StreamChatParams["reasoning"],
+  ) => number | undefined;
 };
 
 type PendingToolExecution = {
@@ -484,9 +491,11 @@ export async function streamAiSdk(
         ? { providerOptions }
         : {}),
       tools,
-      maxOutputTokens: maxOutputTokensFor(config.provider),
-      // maxIterations counts tool-enabled turns. A final tool-disabled step
-      // lets the model synthesize results from the last permitted tool call.
+      maxOutputTokens: maxOutputTokensFor(
+        config.provider,
+        config.defaultMaxOutputTokens?.(params.reasoning),
+      ),
+      // Dev final synthesis step remains tool-disabled.
       stopWhen: sdk.stepCountIs(Math.max(0, maxIterations) + 1),
       abortSignal: internalAbort.signal,
       reasoning:
@@ -632,12 +641,14 @@ export async function completeAiSdkText(
     config.modelId,
     params.reasoningEffort ?? "none",
   );
+  const requested = params.maxTokens ?? 512;
   const result = await generateText({
     model: config.model,
     system: params.systemPrompt,
     prompt: params.user,
     abortSignal: params.abortSignal,
-    maxOutputTokens: params.maxTokens ?? 512,
+    maxOutputTokens: config.supportsReasoning !== false && completionReasoning && completionReasoning !== "none"
+      ? requested + COMPLETION_REASONING_HEADROOM_TOKENS : requested,
     reasoning: config.provider === "kimi" || config.supportsReasoning === false
       ? undefined
       : completionReasoning === "max" ? "xhigh" : completionReasoning,
@@ -647,3 +658,11 @@ export async function completeAiSdkText(
   });
   return result.text;
 }
+
+/**
+ * Extra output allowance for one-shot completions on models that always
+ * reason (Opus 5.5, Fable 5.1, GPT-6 Astra/Sol 6.1 — directly, or through
+ * Bedrock, Vertex, Foundry, Azure or a router). 4,096 matches what
+ * @ai-sdk/amazon-bedrock adds on top of a thinking budget for the answer.
+ */
+export const COMPLETION_REASONING_HEADROOM_TOKENS = 4_096;

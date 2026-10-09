@@ -1,7 +1,10 @@
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { useSelectedModel, useSelectedReasoning } from "./useSelectedModel";
-import { canonicalModelId } from "../components/assistant/ModelToggle";
+import {
+    canonicalModelId,
+    routerSelections as selectionsFromProfile,
+} from "@/shared/lib/modelCatalog";
 import type { ApiKeyState } from "../lib/mikeApi";
 
 const keys: ApiKeyState = {
@@ -23,11 +26,9 @@ const keys: ApiKeyState = {
     azure_openai: { configured: false, source: null },
 };
 
-const routerSelections = {
-    openrouter: ["openai/gpt-5.4"],
-    vercel: [],
-    "opencode-go": [],
-};
+const routerSelections = selectionsFromProfile({
+    openRouterModels: ["openai/gpt-5.4"],
+});
 
 describe("useSelectedModel", () => {
     it("has no invented default when neither saved source is usable", () => {
@@ -64,10 +65,7 @@ describe("useSelectedModel", () => {
                 useSelectedModel({
                     chatModel: bedrockModel,
                     lastSelectedModel: "gpt-6-luna",
-                    routerSelections: {
-                        ...routerSelections,
-                        bedrock: bedrockModels,
-                    },
+                    routerSelections: { ...routerSelections, bedrock: bedrockModels },
                     apiKeys: keys,
                 }),
             ).result.current[0];
