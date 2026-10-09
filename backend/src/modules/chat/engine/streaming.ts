@@ -208,6 +208,7 @@ export async function runLLMStream(params: {
   userEmail?: string | null;
   db: Db;
   write: (s: string) => void;
+  onActivity?: () => void;
   extraTools?: unknown[];
   allowedToolNames?: string[];
   skillResourceStore?: import("../../../altien/skills/resources").SkillResourceStore;
@@ -568,6 +569,7 @@ export async function runLLMStream(params: {
       abortSignal: signal,
       conversationId,
       callbacks: {
+        onActivity: params.onActivity,
         onContentDelta: (delta) => {
           iterText += delta;
           streamVisibleContent(delta);

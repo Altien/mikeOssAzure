@@ -37,8 +37,8 @@ const MAX_SSE_READER_QUEUE_BYTES = 1024 * 1024;
 /**
  * Defaults for the two run deadlines (see `streamRunDeadlines` in
  * runtimeConfig.ts for the env overrides). The idle deadline catches a hung
- * provider or tool: it re-arms on every frame, so a long agentic run that keeps
- * producing output is never cut off by it. The lifetime is a backstop for a
+ * provider or tool: useful model progress and data frames re-arm it, while
+ * transport keep-alives do not. The lifetime is a backstop for a
  * run that emits forever.
  */
 export const MAX_RUN_LIFETIME_MS = 4 * 60 * 60_000;
@@ -48,14 +48,17 @@ export const IDLE_RUN_TIMEOUT_MS = 5 * 60_000;
 export type StreamStopReason = "user" | "idle" | "max_lifetime";
 
 /** The terminal SSE records for a run that hit one of its deadlines. */
-export function deadlineFrames(reason: StreamStopReason): string[] {
+export function deadlineMessage(reason: Exclude<StreamStopReason, "user">): string {
+    return reason === "idle"
+        ? "The request timed out because it stopped responding. Please try again."
+        : "The request ran longer than the maximum allowed time and was stopped.";
+}
+
+export function deadlineFrames(reason: Exclude<StreamStopReason, "user">): string[] {
     return [
         `data: ${JSON.stringify({
             type: "error",
-            message:
-                reason === "idle"
-                    ? "The request timed out because it stopped responding. Please try again."
-                    : "The request ran longer than the maximum allowed time and was stopped.",
+            message: deadlineMessage(reason),
             safe_to_display: true,
         })}\n\n`,
         "data: [DONE]\n\n",
@@ -129,6 +132,8 @@ export type StreamRun<Meta = Record<string, unknown>> = {
      * numbered — it is a keep-alive, not content.
      */
     write: (line: string, opts?: StreamRunWriteOptions) => boolean;
+    /** Mark useful progress which does not need a client-facing frame. */
+    touch: () => void;
     /** The work is over: end every attached response and start the retention clock. */
     finish: () => void;
     /**
@@ -246,10 +251,13 @@ export function startStreamRun<Meta = Record<string, unknown>>(args: {
         heartbeat: null,
         bufferedBytes: 0,
         bufferExhausted: false,
+        touch() {
+            if (!finished && !stopped) armIdle();
+        },
         write(line: string, opts?: StreamRunWriteOptions) {
             if (finished) return false;
-            // Any output, keep-alive comments included, proves the run is alive.
-            if (!stopped) armIdle();
+            // Transport keep-alives do not prove useful work is progressing.
+            if (!line.startsWith(":")) run.touch();
             // SSE COMMENT lines (`: tool-wait`) are not records: they carry
             // no payload, exist only to stop an intermediary idling the
             // connection out, and mean nothing to a client that arrives
@@ -330,6 +338,7 @@ export function startStreamRun<Meta = Record<string, unknown>>(args: {
             run.idle = null;
             if (args.clusterRow) void streamRunCluster()?.stop(args.clusterRow.id, args.clusterRow.fence).catch(() => {});
             controller.abort();
+            if (finished) return;
             // The route owns the orderly ending; this is the disorderly one.
             // Whatever it is still awaiting, the key is free again after the
             // grace period and attached readers get their terminal frame.
@@ -451,6 +460,9 @@ function remoteRun<Meta>(row: RunRow): StreamRun<Meta> {
         // Dev (sync-log: d3a6565a): the stop reason lives only on the owner;
         // a remote reader learns it from the owner's terminal frame.
         stopReason: null,
+        // Useful activity is owner-local; relays must not mutate or renew a
+        // remote owner's run lease.
+        touch: () => {},
         write: () => false, finish: () => {}, stop: () => {},
         subscribe(from, subscriber) {
             let detached = false;

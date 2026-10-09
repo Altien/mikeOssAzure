@@ -11,12 +11,8 @@ import type {
   StreamChatParams,
   StreamChatResult,
 } from "./types";
-import { streamChunkTimeouts } from "../runtimeConfig";
-import {
-  asProviderStallError,
-  streamErrorMessage,
-  toProviderStreamError,
-} from "./providerErrors";
+import { providerDeadlines } from "./providerDeadlines";
+import { asProviderStallError, streamErrorMessage, toProviderStreamError } from "./providerErrors";
 import { createRawLlmStreamRecorder, logRawLlmStream } from "./rawStreamLog";
 
 /**
@@ -225,7 +221,7 @@ Do not use doc_id, page, top-level quote, case_name, or citation fields for Cour
 export type AiSdkAdapterConfig = {
   provider: Provider;
   label: string;
-  model: LanguageModel;
+  model: Exclude<LanguageModel, string>;
   modelId: string;
   /** Some protocol-compatible gateways reject reasoning request fields. */
   supportsReasoning?: boolean;
@@ -478,7 +474,10 @@ export async function streamAiSdk(
 
   try {
     const result = sdk.streamText({
-      model: config.model,
+      model: sdk.wrapLanguageModel({
+        model: config.model,
+        middleware: providerDeadlines(params.callbacks?.onActivity),
+      }),
       system: params.systemPrompt,
       messages: cacheHints.messages,
       ...(Object.keys(providerOptions).length
@@ -490,11 +489,6 @@ export async function streamAiSdk(
       // lets the model synthesize results from the last permitted tool call.
       stopWhen: sdk.stepCountIs(Math.max(0, maxIterations) + 1),
       abortSignal: internalAbort.signal,
-      // Cut off a provider that stops sending, at the source. Tool execution
-      // is deliberately not bounded here: it runs through runTools, which
-      // does not observe the SDK's per-tool signal, so the run-level idle
-      // deadline in streamRuns.ts is what covers a hung tool.
-      timeout: streamChunkTimeouts(),
       reasoning:
         config.provider === "kimi" || config.supportsReasoning === false
           ? undefined
@@ -626,6 +620,7 @@ export async function completeAiSdkText(
     user: string;
     maxTokens?: number;
     reasoningEffort?: "none" | "low" | "high" | "max";
+    abortSignal?: AbortSignal;
   },
   config: AiSdkAdapterConfig,
 ): Promise<string> {
@@ -641,6 +636,7 @@ export async function completeAiSdkText(
     model: config.model,
     system: params.systemPrompt,
     prompt: params.user,
+    abortSignal: params.abortSignal,
     maxOutputTokens: params.maxTokens ?? 512,
     reasoning: config.provider === "kimi" || config.supportsReasoning === false
       ? undefined
