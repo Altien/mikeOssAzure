@@ -1,40 +1,58 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import {
+    useCallback,
+    useEffect,
+    useLayoutEffect,
+    useRef,
+    useState,
+    type CSSProperties,
+} from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import {
-    Clock,
-    MessageSquarePlus,
-    Search,
-    Square,
-    ArrowRight,
-    ChevronDown,
-    ChevronLeft,
-    Trash2,
-} from "lucide-react";
-import { MikeIcon } from "@/components/chat/mike-icon";
+import { Pencil, Trash2 } from "lucide-react";
+import { MikeIcon } from "@/shared/ui/MikeIconUI";
 import {
     streamTabularChat,
+    streamTabularChatTurn,
+    stopTabularChatTurn,
     getTabularChats,
     getTabularChatMessages,
     deleteTabularChat,
+    renameTabularChat,
+    tabularChatSelectionKey,
     mapTRMessages,
     type TRChat,
     type TRCitationAnnotation,
 } from "@/app/lib/mikeApi";
-import type { AssistantEvent, ColumnConfig, Document } from "../shared/types";
-import { ModelToggle } from "../assistant/ModelToggle";
-import { ApiKeyMissingModal } from "../shared/ApiKeyMissingModal";
-import { PreResponseWrapper } from "../shared/PreResponseWrapper";
-import { useUserProfile } from "@/contexts/UserProfileContext";
+import {
+    isPanelDocument,
+    type AssistantEvent,
+    type Message,
+} from "../shared/types";
+import { ChatInput } from "../assistant/ChatInput";
+import { PreResponseWrapper } from "../assistant/PreResponseWrapper";
+import {
+    DocReadBlock,
+    EventBlock,
+    ReasoningBlock,
+} from "../assistant/message/EventBlocks";
+import { readSseFrames } from "@/app/lib/sse";
+import { LIQUID_GLASS_FLAT_CLASS } from "@/app/components/ui/liquid-surface";
+import { ChatPanelHeader } from "../shared/ChatPanelHeader";
+import { HeaderActionsMenu } from "../shared/HeaderActionsMenu";
+import { cn } from "@/app/lib/utils";
+import { buildTabularChatHistory } from "@/app/lib/tabularChatHistory";
+import { CitationPillUI } from "@/shared/ui/CitationPillUI";
+import { subscribeToTabularChatSettingsUpdates } from "@/app/lib/tabularChatSettingsEvents";
+import { sortChatsByActivity, touchChatActivity } from "@/app/lib/chatActivity";
+import { WarningPopup } from "../popups/WarningPopup";
+import { ApiKeyMissingPopup } from "../popups/ApiKeyMissingPopup";
 import {
     getModelProvider,
-    isModelAvailable,
-    type ApiKeyAvailability,
+    providerLabel,
     type ModelProvider,
 } from "@/app/lib/modelAvailability";
-import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -104,171 +122,18 @@ interface Props {
     reviewId: string;
     reviewTitle?: string | null;
     projectName?: string | null;
-    columns: ColumnConfig[];
-    documents: Document[];
     onCitationClick: (colIdx: number, rowIdx: number) => void;
-    onClose: () => void;
     initialChatId?: string | null;
     onChatIdChange?: (chatId: string | null) => void;
-}
-
-// ---------------------------------------------------------------------------
-// Reasoning block
-// ---------------------------------------------------------------------------
-
-const THINKING_PHRASES = [
-    "Thinking...",
-    "Pondering...",
-    "Analyzing...",
-    "Reasoning...",
-];
-const REASONING_COLLAPSED_MAX_LINES = 6;
-const REASONING_COLLAPSED_MAX_HEIGHT_REM = 9;
-
-function ReasoningBlock({
-    text,
-    isStreaming,
-}: {
-    text: string;
-    isStreaming: boolean;
-}) {
-    const [isOpen, setIsOpen] = useState(false);
-    const [userToggled, setUserToggled] = useState(false);
-    const [isOverflowing, setIsOverflowing] = useState(false);
-    const [hasMeasured, setHasMeasured] = useState(false);
-    const [phraseIdx, setPhraseIdx] = useState(0);
-    const contentRef = useRef<HTMLDivElement | null>(null);
-
-    useEffect(() => {
-        if (!isStreaming) return;
-        const interval = setInterval(
-            () => setPhraseIdx((i) => (i + 1) % THINKING_PHRASES.length),
-            2000,
-        );
-        return () => clearInterval(interval);
-    }, [isStreaming]);
-
-    useEffect(() => {
-        const el = contentRef.current;
-        if (!el) return;
-        const lineHeight = parseFloat(getComputedStyle(el).lineHeight) || 24;
-        const maxHeight = lineHeight * REASONING_COLLAPSED_MAX_LINES;
-        const nextOverflowing = el.scrollHeight > maxHeight + 2;
-        setIsOverflowing(nextOverflowing);
-        setHasMeasured(true);
-        if (nextOverflowing && !userToggled) setIsOpen(false);
-    }, [text, userToggled]);
-
-    const showContent = isOpen || isStreaming || isOverflowing || !hasMeasured;
-    const isCollapsed = isOverflowing && !isOpen;
-
-    return (
-        <div className="ml-1">
-            <button
-                onClick={() => {
-                    if (isStreaming) return;
-                    setUserToggled(true);
-                    setIsOpen((v) => !v);
-                }}
-                className="flex items-center text-sm text-gray-400 hover:text-gray-500 transition-colors"
-            >
-                {isStreaming ? (
-                    <div className="w-1.5 h-1.5 rounded-full border border-gray-400 border-t-transparent animate-spin shrink-0" />
-                ) : (
-                    <div className="w-1.5 h-1.5 rounded-full bg-gray-300 shrink-0" />
-                )}
-                <span className="font-medium ml-2">
-                    {isStreaming
-                        ? THINKING_PHRASES[phraseIdx]
-                        : "Thought process"}
-                </span>
-                {!isStreaming && (
-                    <ChevronDown
-                        size={10}
-                        className={`ml-1.5 transition-transform duration-200 ${isOpen ? "" : "-rotate-90"}`}
-                    />
-                )}
-            </button>
-            {showContent && (
-                <div className="mt-1.5 ml-[14px]">
-                    <div
-                        className={`relative ${isCollapsed ? "overflow-hidden" : ""}`}
-                        style={
-                            isCollapsed
-                                ? {
-                                      maxHeight: `${REASONING_COLLAPSED_MAX_HEIGHT_REM}rem`,
-                                  }
-                                : undefined
-                        }
-                    >
-                        <div
-                            ref={contentRef}
-                            className="text-sm text-gray-400 prose prose-sm max-w-none [&>*]:text-gray-400 [&>*]:text-sm"
-                        >
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                {text}
-                            </ReactMarkdown>
-                        </div>
-                        {isCollapsed && (
-                            <>
-                                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-b from-white/0 to-white" />
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setUserToggled(true);
-                                        setIsOpen(true);
-                                    }}
-                                    className="absolute left-1/2 bottom-2 z-10 -translate-x-1/2 text-gray-400 transition-colors hover:text-gray-600"
-                                    aria-label="Expand thought process"
-                                >
-                                    <ChevronDown className="h-3.5 w-3.5" />
-                                </button>
-                            </>
-                        )}
-                    </div>
-                    {isOverflowing && isOpen && (
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setUserToggled(true);
-                                setIsOpen(false);
-                            }}
-                            className="mx-auto mt-2 flex text-gray-400 transition-colors hover:text-gray-600"
-                            aria-label="Minimise thought process"
-                        >
-                            <ChevronDown className="h-3.5 w-3.5 rotate-180" />
-                        </button>
-                    )}
-                </div>
-            )}
-        </div>
-    );
-}
-
-// ---------------------------------------------------------------------------
-// DocRead block
-// ---------------------------------------------------------------------------
-
-function DocReadBlock({
-    label,
-    isStreaming,
-}: {
-    label: string;
-    isStreaming?: boolean;
-}) {
-    return (
-        <div className="flex items-center text-sm text-gray-400 ml-1">
-            {isStreaming ? (
-                <div className="w-1.5 h-1.5 rounded-full border border-gray-400 border-t-transparent animate-spin shrink-0" />
-            ) : (
-                <div className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />
-            )}
-            <span className="font-medium ml-2">
-                {isStreaming ? "Reading" : "Read"}
-            </span>
-            <span className="ml-1 text-gray-500">{label}</span>
-        </div>
-    );
+    /**
+     * Sending is member-tier server-side; false renders a read-only composer.
+     *
+     * `null` is the third answer — the review's role has not arrived yet. It
+     * closes the composer like `false`, but ChatInput's placeholder stays
+     * neutral instead of telling an owner they are "viewing only" for the
+     * length of a fetch.
+     */
+    canSend?: boolean | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -306,6 +171,7 @@ function TRResponseStatus({ isActive }: { isActive: boolean }) {
 
     useEffect(() => {
         if (wasActiveRef.current && !isActive) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect -- timed 'Done' flash on the active->idle transition
             setShowDone(true);
             setDoneVisible(true);
             const t = setTimeout(() => setDoneVisible(false), 1500);
@@ -392,13 +258,23 @@ function TRAssistantMessage({
         return false;
     };
 
-    const renderPreEvent = (event: AssistantEvent, key: number) => {
+    const renderPreEvent = (
+        event: AssistantEvent,
+        index: number,
+        allEvents: AssistantEvent[],
+        key: number,
+    ) => {
+        const nextEvent = allEvents[index + 1];
+        const showConnector =
+            nextEvent !== undefined && nextEvent.type !== "content";
+
         if (event.type === "reasoning") {
             return (
                 <ReasoningBlock
                     key={key}
                     text={event.text}
                     isStreaming={!!event.isStreaming && !!msg.isStreaming}
+                    showConnector={showConnector}
                 />
             );
         }
@@ -406,20 +282,18 @@ function TRAssistantMessage({
             return (
                 <DocReadBlock
                     key={key}
-                    label={event.filename}
+                    filename={event.filename}
                     isStreaming={event.isStreaming}
+                    showConnector={showConnector}
+                    showFileIcon={false}
                 />
             );
         }
         if (event.type === "thinking") {
             return (
-                <div
-                    key={key}
-                    className="flex items-center text-sm text-gray-400 ml-1"
-                >
-                    <div className="w-1.5 h-1.5 rounded-full border border-gray-400 border-t-transparent animate-spin shrink-0" />
-                    <span className="ml-2">Thinking...</span>
-                </div>
+                <EventBlock key={key} showConnector={showConnector} isStreaming>
+                    <span>Thinking...</span>
+                </EventBlock>
             );
         }
         return null;
@@ -462,7 +336,7 @@ function TRAssistantMessage({
                             const cit = citationsList[idx];
                             if (cit) {
                                 return (
-                                    <button
+                                    <CitationPillUI
                                         onClick={() =>
                                             onCitationClick(
                                                 cit.col_index,
@@ -470,10 +344,10 @@ function TRAssistantMessage({
                                             )
                                         }
                                         title={`${cit.col_name} · ${cit.doc_name.replace(/\.[^.]+$/, "")}`}
-                                        className="mx-0.5 inline-flex items-center justify-center rounded-full w-4 h-4 text-[10px] font-medium bg-gray-100 text-gray-900 hover:bg-gray-200 transition-colors align-super font-serif"
+                                        className="mx-0.5 align-super"
                                     >
                                         {cit.ref}
-                                    </button>
+                                    </CitationPillUI>
                                 );
                             }
                         }
@@ -518,10 +392,14 @@ function TRAssistantMessage({
                                 stepCount={g.events.length}
                                 shouldMinimize={subsequentContent}
                                 isStreaming={wrapperIsStreaming}
-                                compact
                             >
                                 {g.events.map((event, i) =>
-                                    renderPreEvent(event, g.indices[i]),
+                                    renderPreEvent(
+                                        event,
+                                        i,
+                                        g.events,
+                                        g.indices[i],
+                                    ),
                                 )}
                             </PreResponseWrapper>
                         );
@@ -556,160 +434,6 @@ function MessageBubble({
 }
 
 // ---------------------------------------------------------------------------
-// Input
-// ---------------------------------------------------------------------------
-
-function TRChatInput({
-    isLoading,
-    onSubmit,
-    onCancel,
-    model,
-    onModelChange,
-    apiKeys,
-    extraModels,
-}: {
-    isLoading: boolean;
-    onSubmit: (value: string) => void;
-    onCancel: () => void;
-    model: string;
-    onModelChange: (id: string) => void;
-    apiKeys: ApiKeyAvailability;
-    extraModels: { id: string; label: string; group: "Azure OpenAI" }[];
-}) {
-    const [value, setValue] = useState("");
-    const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-    function handleAction() {
-        if (isLoading) {
-            onCancel();
-            return;
-        }
-        const trimmed = value.trim();
-        if (!trimmed) return;
-        setValue("");
-        if (textareaRef.current) textareaRef.current.style.height = "auto";
-        onSubmit(trimmed);
-    }
-
-    // Upstream divergence (sync-log: 44e868e): upstream's liquid-glass
-    // input container relies on a rootRef/onHeightChange resize-observer
-    // mechanism dev's TRChatInput (extraModels/AOAI variant) doesn't
-    // have; keeping dev's container markup here.
-    return (
-        <div className="absolute bottom-0 left-0 right-0 mx-4 pb-4 bg-white">
-            <div className="border border-gray-300 rounded-xl bg-white  pt-1.5 pb-1.5 flex flex-col gap-1">
-                <textarea
-                    ref={textareaRef}
-                    rows={1}
-                    placeholder="Ask a question about your documents..."
-                    value={value}
-                    onChange={(e) => {
-                        setValue(e.target.value);
-                        e.target.style.height = "auto";
-                        e.target.style.height = `${e.target.scrollHeight}px`;
-                    }}
-                    onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey) {
-                            e.preventDefault();
-                            handleAction();
-                        }
-                    }}
-                    className="flex-1 resize-none text-sm bg-transparent outline-none placeholder:text-gray-400 leading-6 max-h-48 overflow-y-auto border-0 p-0 pl-3 pr-2 pt-1"
-                />
-                <div className="flex items-center justify-between pl-1 pr-2">
-                    <ModelToggle
-                        value={model}
-                        onChange={onModelChange}
-                        apiKeys={apiKeys}
-                        extraModels={extraModels}
-                    />
-                    <button
-                        type="button"
-                        onClick={handleAction}
-                        disabled={!isLoading && !value.trim()}
-                        className={cn(
-                            "relative bg-gradient-to-b from-neutral-700 to-black text-white rounded-[10px] h-7 w-7 shrink-0 flex items-center justify-center disabled:cursor-default disabled:from-neutral-600 disabled:to-black border border-white/30 active:enabled:scale-95 transition-all duration-150",
-                            "shadow-[0_5px_14px_rgba(15,23,42,0.18),inset_0_1px_0_rgba(255,255,255,0.24)]",
-                        )}
-                    >
-                        {isLoading ? (
-                            <Square
-                                className="h-3.5 w-3.5"
-                                fill="currentColor"
-                                strokeWidth={0}
-                            />
-                        ) : (
-                            <ArrowRight className="h-3.5 w-3.5" />
-                        )}
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-}
-
-// ---------------------------------------------------------------------------
-// History dropdown
-// ---------------------------------------------------------------------------
-
-function HistoryDropdown({
-    chats,
-    currentChatId,
-    onLoad,
-}: {
-    chats: TRChat[];
-    currentChatId: string | null;
-    onLoad: (chatId: string) => void;
-}) {
-    const [query, setQuery] = useState("");
-    const filtered = chats
-        .filter((c) => c.id !== currentChatId)
-        .filter((c) => {
-            const label = c.title ?? "";
-            return label.toLowerCase().includes(query.toLowerCase());
-        });
-
-    return (
-        <>
-            <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-gray-100">
-                <Search className="h-3 w-3 text-gray-400 shrink-0" />
-                <input
-                    autoFocus
-                    type="text"
-                    placeholder="Search chats…"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    className="flex-1 text-xs bg-transparent outline-none placeholder:text-gray-400 text-gray-700"
-                />
-            </div>
-            <div className="max-h-48 overflow-y-auto">
-                {filtered.length === 0 ? (
-                    <p className="px-3 py-2 text-xs text-gray-400">
-                        {chats.filter((c) => c.id !== currentChatId).length ===
-                        0
-                            ? "No previous chats."
-                            : "No matches."}
-                    </p>
-                ) : (
-                    filtered.map((chat) => {
-                        const label = chat.title ?? "Chat";
-                        return (
-                            <button
-                                key={chat.id}
-                                onClick={() => onLoad(chat.id)}
-                                className="w-full px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-50 transition-colors truncate"
-                            >
-                                {label}
-                            </button>
-                        );
-                    })
-                )}
-            </div>
-        </>
-    );
-}
-
-// ---------------------------------------------------------------------------
 // Drip helpers
 // ---------------------------------------------------------------------------
 
@@ -720,6 +444,10 @@ function findLastContentIndex(events: AssistantEvent[]): number {
     return -1;
 }
 
+const MESSAGE_TOP_INSET = 80;
+const MESSAGE_GAP = 16;
+const COMPOSER_GAP = 16;
+
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
@@ -728,51 +456,62 @@ export function TRChatPanel({
     reviewId,
     reviewTitle,
     projectName,
-    columns: _columns,
-    documents: _documents,
     onCitationClick,
-    onClose,
     initialChatId,
     onChatIdChange,
+    canSend = true,
 }: Props) {
-    const { profile, updateModelPreference, aoaiDeployments } =
-        useUserProfile();
-    const apiKeys: ApiKeyAvailability = {
-        claudeApiKey: profile?.claudeApiKey ?? null,
-        geminiApiKey: profile?.geminiApiKey ?? null,
-        openaiApiKey: profile?.openaiApiKey ?? null,
-        globalApiKeys: profile?.globalApiKeys,
-    };
-    const extraModels = aoaiDeployments.map((d) => ({
-        id: `aoai:${d.name}`,
-        label: d.model ? `${d.name} (${d.model})` : d.name,
-        group: "Azure OpenAI" as const,
-    }));
-    const currentModel = profile?.tabularModel ?? "gemini-3-flash-preview";
-    const [apiKeyModalProvider, setApiKeyModalProvider] =
-        useState<ModelProvider | null>(null);
     const [chats, setChats] = useState<TRChat[]>([]);
     const [currentChatId, setCurrentChatId] = useState<string | null>(
         initialChatId ?? null,
     );
+    const currentChatIdRef = useRef(currentChatId);
+    const historyRequestGeneration = useRef(0);
+    useLayoutEffect(() => {
+        currentChatIdRef.current = currentChatId;
+    }, [currentChatId]);
+    const [chatResponseStatuses, setChatResponseStatuses] = useState<
+        Record<string, "loading" | "complete">
+    >({});
     const [currentChatTitle, setCurrentChatTitle] = useState<string | null>(
         null,
     );
+    const [currentChatModel, setCurrentChatModel] = useState<
+        string | null | undefined
+    >(initialChatId ? undefined : null);
+    const [currentChatReasoningLevel, setCurrentChatReasoningLevel] = useState<
+        NonNullable<Message["reasoning"]> | null | undefined
+    >(initialChatId ? undefined : null);
     const [messages, setMessages] = useState<TRMessage[]>([]);
-    const [historyOpen, setHistoryOpen] = useState(false);
+    const [titleDraft, setTitleDraft] = useState<string | null>(null);
+    const [isLoadingChats, setIsLoadingChats] = useState(true);
     const [isLoading, setIsLoading] = useState(false);
     const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+    const [messageLoadWarning, setMessageLoadWarning] = useState(false);
+    const [rejectedApiKey, setRejectedApiKey] = useState<{
+        provider: ModelProvider | null;
+    } | null>(null);
     const [minHeight, setMinHeight] = useState("0px");
     const [messagesVisible, setMessagesVisible] = useState(false);
     const [panelWidth, setPanelWidth] = useState(380);
     const [isResizing, setIsResizing] = useState(false);
+    const [inputHeight, setInputHeight] = useState(96);
+
+    const resizeStartRef = useRef({ x: 0, width: 380 });
+    const composerRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         if (!isResizing) return;
         const MIN_WIDTH = 280;
         const MAX_WIDTH = 800;
         function onMove(e: MouseEvent) {
-            setPanelWidth(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, e.clientX)));
+            const delta = resizeStartRef.current.x - e.clientX;
+            setPanelWidth(
+                Math.min(
+                    MAX_WIDTH,
+                    Math.max(MIN_WIDTH, resizeStartRef.current.width + delta),
+                ),
+            );
         }
         function onUp() {
             setIsResizing(false);
@@ -789,34 +528,162 @@ export function TRChatPanel({
         };
     }, [isResizing]);
 
+    useEffect(() => {
+        const composer = composerRef.current;
+        if (!composer) return;
+        const updateHeight = () => {
+            setInputHeight(composer.getBoundingClientRect().height);
+        };
+        updateHeight();
+        const observer = new ResizeObserver(updateHeight);
+        observer.observe(composer);
+        window.addEventListener("resize", updateHeight);
+        return () => {
+            observer.disconnect();
+            window.removeEventListener("resize", updateHeight);
+        };
+    }, []);
+
     const messagesContainerRef = useRef<HTMLDivElement>(null);
     const latestUserMessageRef = useRef<HTMLDivElement>(null);
     const abortRef = useRef<AbortController | null>(null);
-    const historyRef = useRef<HTMLDivElement>(null);
+    // Bumped whenever the message list stops belonging to the running stream
+    // (new chat, loaded chat, new submit, unmount). The stream loop checks it
+    // before writing, so an orphaned stream can't repaint someone else's chat.
+    const streamGenerationRef = useRef(0);
     const hasScrolledRef = useRef(false);
+    const scrollLatestUserToTop = useCallback((behavior: ScrollBehavior) => {
+        const container = messagesContainerRef.current;
+        const message = latestUserMessageRef.current;
+        if (!container || !message) return;
+        const messageTop =
+            message.getBoundingClientRect().top -
+            container.getBoundingClientRect().top +
+            container.scrollTop;
+        container.scrollTo({
+            top: Math.max(0, messageTop - MESSAGE_TOP_INSET),
+            behavior,
+        });
+    }, []);
 
     // Drip animation refs
     const dripIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const dripTargetRef = useRef<string>("");
     const dripDisplayLenRef = useRef<number>(0);
     const eventsRef = useRef<AssistantEvent[]>([]);
+    // Where the panel is in the turn the server owns: which thread and run it
+    // is reading, the sequence number of the last frame it applied, and
+    // whether the server reported an error. A reconnect resumes from
+    // `lastSeq + 1`; Stop needs `turnId`; the history list's status needs
+    // `hadError`.
+    type TurnCursor = {
+        chatId: string | null;
+        turnId: string | null;
+        lastSeq: number;
+        hadError: boolean;
+    };
+    const turnCursorRef = useRef<TurnCursor>({
+        chatId: null,
+        turnId: null,
+        lastSeq: 0,
+        hadError: false,
+    });
     const DRIP_CHARS = 8;
 
     // Load existing chats from DB on mount
     useEffect(() => {
         getTabularChats(reviewId)
-            .then(setChats)
-            .catch(() => {});
-    }, [reviewId]);
+            .then((loadedChats) => {
+                setChats(sortChatsByActivity(loadedChats));
+                if (!initialChatId) return;
+                const initialChat = loadedChats.find(
+                    (chat) => chat.id === initialChatId,
+                );
+                setCurrentChatModel(initialChat?.model ?? null);
+                setCurrentChatReasoningLevel(
+                    initialChat?.reasoning_level ?? null,
+                );
+            })
+            .catch(() => {
+                if (initialChatId) {
+                    setCurrentChatModel(null);
+                    setCurrentChatReasoningLevel(null);
+                }
+            })
+            .finally(() => setIsLoadingChats(false));
+    }, [reviewId]); // eslint-disable-line react-hooks/exhaustive-deps -- initialChatId is the mount-time thread; live chat id changes must not refetch settings
 
-    // Load messages for an initial chat id (e.g. from URL)
-    useEffect(() => {
-        if (!initialChatId) return;
+    // ChatInput persists through UserProfileContext. Mirror successful saves
+    // into this panel's chat cache so navigating away and back does not restore
+    // the stale model/reasoning values fetched when the panel first mounted.
+    useEffect(
+        () =>
+            subscribeToTabularChatSettingsUpdates((update) => {
+                if (update.reviewId !== reviewId) return;
+                setChats((current) =>
+                    touchChatActivity(
+                        current.map((chat) =>
+                            chat.id === update.chatId
+                                ? {
+                                      ...chat,
+                                      ...(update.model !== undefined
+                                          ? { model: update.model }
+                                          : {}),
+                                      ...(update.reasoningLevel !== undefined
+                                          ? {
+                                                reasoning_level:
+                                                    update.reasoningLevel,
+                                            }
+                                          : {}),
+                                  }
+                                : chat,
+                        ),
+                        update.chatId,
+                    ),
+                );
+                if (update.chatId !== currentChatId) return;
+                if (update.model !== undefined) {
+                    setCurrentChatModel(update.model);
+                }
+                if (update.reasoningLevel !== undefined) {
+                    setCurrentChatReasoningLevel(update.reasoningLevel);
+                }
+            }),
+        [currentChatId, reviewId],
+    );
+
+    // History requests can finish out of order (including A → B → A). Only
+    // the latest selection owns the transcript, loading state and warning.
+    async function loadHistory(chatId: string) {
+        const generation = ++historyRequestGeneration.current;
         setIsLoadingMessages(true);
-        getTabularChatMessages(reviewId, initialChatId)
-            .then((raw) => setMessages(mapTRMessages(raw) as TRMessage[]))
-            .catch(() => {})
-            .finally(() => setIsLoadingMessages(false));
+        setMessageLoadWarning(false);
+        try {
+            const raw = await getTabularChatMessages(reviewId, chatId);
+            if (generation === historyRequestGeneration.current) {
+                setMessages(mapTRMessages(raw) as TRMessage[]);
+            }
+        } catch {
+            if (generation === historyRequestGeneration.current) {
+                setMessageLoadWarning(true);
+            }
+        } finally {
+            if (generation === historyRequestGeneration.current) {
+                setIsLoadingMessages(false);
+            }
+        }
+    }
+
+    // Load messages for an initial chat id (e.g. from URL). Cleanup also
+    // retires a manually selected history request when the panel unmounts.
+    useEffect(() => {
+        if (initialChatId) void loadHistory(initialChatId);
+        return () => {
+            // Retire the latest request, including selections made since mount.
+            // This ref is a counter, not a DOM node captured for cleanup.
+            // eslint-disable-next-line react-hooks/exhaustive-deps
+            historyRequestGeneration.current++;
+        };
     }, [reviewId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Fill in title once chats list arrives
@@ -837,63 +704,97 @@ export function TRChatPanel({
     }, [currentChatId]);
 
     useEffect(() => {
-        if (messages.length === 0) {
+        hasScrolledRef.current = false;
+    }, [currentChatId]);
+
+    const hasMessages = messages.length > 0;
+    const userMessageCount = messages.filter(
+        (message) => message.role === "user",
+    ).length;
+    useEffect(() => {
+        if (isLoadingMessages) {
+            hasScrolledRef.current = false;
+            setMessagesVisible(false);
+            return;
+        }
+        if (!hasMessages) {
             hasScrolledRef.current = false;
             setMessagesVisible(false);
         } else if (!hasScrolledRef.current) {
-            const userMsgCount = messages.filter(
-                (m) => m.role === "user",
-            ).length;
             if (
-                userMsgCount >= 2 &&
+                userMessageCount >= 2 &&
                 latestUserMessageRef.current &&
                 messagesContainerRef.current
             ) {
-                setTimeout(() => {
-                    const container = messagesContainerRef.current;
-                    const element = latestUserMessageRef.current;
-                    if (container && element) {
-                        container.scrollTo({
-                            top: element.offsetTop - 44,
-                            behavior: "instant",
-                        });
-                    }
+                const timer = setTimeout(() => {
+                    scrollLatestUserToTop("auto");
                     hasScrolledRef.current = true;
                     setMessagesVisible(true);
                 }, 100);
+                return () => clearTimeout(timer);
             } else {
                 hasScrolledRef.current = true;
                 setMessagesVisible(true);
             }
         }
-    }, [messages]); // eslint-disable-line react-hooks/exhaustive-deps
+        // Text chunks must not restart the positioning delay: a resumed stream
+        // can otherwise keep the entire transcript at opacity: 0 until DONE.
+    }, [
+        hasMessages,
+        userMessageCount,
+        isLoadingMessages,
+        currentChatId,
+        scrollLatestUserToTop,
+    ]);
 
-    useEffect(() => {
+    useLayoutEffect(() => {
+        if (isLoadingMessages) return;
         const userEl = latestUserMessageRef.current;
         const containerEl = messagesContainerRef.current;
         if (!userEl || !containerEl) return;
-        const BOTTOM_PAD = 96;
-        const messageContainerTopPadding = 16;
-        const messageGap = 16;
+        const composerSpace = Math.ceil(inputHeight + COMPOSER_GAP);
         setMinHeight(
-            `${Math.max(0, containerEl.clientHeight - BOTTOM_PAD - userEl.offsetHeight - messageContainerTopPadding - messageGap)}px`,
+            `${Math.max(
+                0,
+                containerEl.clientHeight -
+                    MESSAGE_TOP_INSET -
+                    userEl.offsetHeight -
+                    MESSAGE_GAP -
+                    composerSpace,
+            )}px`,
         );
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [messages.length, latestUserMessageRef.current]);
+    }, [inputHeight, messages.length, isLoadingMessages, currentChatId]);
 
     useEffect(() => {
-        if (!historyOpen) return;
-        function handleClick(e: MouseEvent) {
-            if (
-                historyRef.current &&
-                !historyRef.current.contains(e.target as Node)
-            ) {
-                setHistoryOpen(false);
-            }
-        }
-        document.addEventListener("mousedown", handleClick);
-        return () => document.removeEventListener("mousedown", handleClick);
-    }, [historyOpen]);
+        setTitleDraft(null);
+    }, [currentChatId]);
+
+    // Resume on open. The chat list reports, per thread, the turn this
+    // backend is still generating into it, so a panel that has just loaded —
+    // a refresh, a second tab, or a thread opened from the list while its
+    // answer runs elsewhere — attaches to it instead of showing a transcript
+    // whose last answer is simply missing. The row is cleared as it is
+    // claimed, so a later send into the same thread cannot re-trigger it.
+    const resumeTurnRef = useRef(resumeTurn);
+    useEffect(() => {
+        resumeTurnRef.current = resumeTurn;
+    });
+    useEffect(() => {
+        if (isLoadingChats || isLoadingMessages || isLoading) return;
+        if (!currentChatId) return;
+        const active = chats.find(
+            (chat) => chat.id === currentChatId,
+        )?.active_turn;
+        if (!active) return;
+        setChats((prev) =>
+            prev.map((chat) =>
+                chat.id === currentChatId
+                    ? { ...chat, active_turn: null }
+                    : chat,
+            ),
+        );
+        void resumeTurnRef.current(currentChatId, active.id);
+    }, [chats, currentChatId, isLoadingChats, isLoadingMessages, isLoading]);
 
     // ---- drip ----
 
@@ -903,6 +804,22 @@ export function TRChatPanel({
             dripIntervalRef.current = null;
         }
     }
+
+    // Detach whatever is still streaming from the message list: stop the
+    // 16ms drip timer and retire the generation so the in-flight loop stops
+    // writing into a list it no longer owns. Deliberately does NOT abort:
+    // the answer belongs to the server now, so closing the panel or
+    // switching chats simply stops watching it — the turn keeps generating
+    // and is still there to reattach to. Only the Stop control ends it, and
+    // it does so through the stop endpoint rather than by dropping a socket.
+    function detachActiveStream() {
+        streamGenerationRef.current += 1;
+        stopDrip();
+    }
+
+    // This panel is conditionally mounted, so without a cleanup the drip
+    // interval survives it.
+    useEffect(() => detachActiveStream, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     function updateLastContentEvent(
         prev: TRMessage[],
@@ -1052,61 +969,167 @@ export function TRChatPanel({
     // ---- chat actions ----
 
     function handleNewChat() {
+        historyRequestGeneration.current++;
+        setIsLoadingMessages(false);
+        setMessageLoadWarning(false);
+        detachActiveStream();
+        setIsLoading(false);
+        currentChatIdRef.current = null;
         setCurrentChatId(null);
         setCurrentChatTitle(null);
+        setCurrentChatModel(null);
+        setCurrentChatReasoningLevel(null);
         setMessages([]);
-        setHistoryOpen(false);
     }
 
-    async function handleDeleteChat() {
-        if (!currentChatId) return;
-        const chatIdToDelete = currentChatId;
-        setChats((prev) => prev.filter((c) => c.id !== chatIdToDelete));
-        setCurrentChatId(null);
-        setCurrentChatTitle(null);
-        setMessages([]);
+    async function handleDeleteChat(chatId: string) {
+        setChats((prev) => prev.filter((c) => c.id !== chatId));
+        if (chatId === currentChatId) {
+            historyRequestGeneration.current++;
+            setIsLoadingMessages(false);
+            setMessageLoadWarning(false);
+            // Same exit as New chat / Load chat: retire the in-flight stream's
+            // generation so its late events cannot land in the emptied list.
+            detachActiveStream();
+            setIsLoading(false);
+            currentChatIdRef.current = null;
+            setCurrentChatId(null);
+            setCurrentChatTitle(null);
+            setCurrentChatModel(null);
+            setCurrentChatReasoningLevel(null);
+            setMessages([]);
+        }
         try {
-            await deleteTabularChat(reviewId, chatIdToDelete);
+            await deleteTabularChat(reviewId, chatId);
+        } catch {
+            /* ignore */
+        }
+    }
+
+    async function handleRenameChat(chatId: string, title: string) {
+        setChats((prev) =>
+            touchChatActivity(
+                prev.map((c) => (c.id === chatId ? { ...c, title } : c)),
+                chatId,
+            ),
+        );
+        if (chatId === currentChatId) setCurrentChatTitle(title);
+        try {
+            await renameTabularChat(reviewId, chatId, title);
         } catch {
             /* ignore */
         }
     }
 
     async function handleLoadChat(chatId: string) {
+        detachActiveStream();
+        setIsLoading(false);
+        currentChatIdRef.current = chatId;
+        setChatResponseStatuses((current) => {
+            if (current[chatId] !== "complete") return current;
+            const next = { ...current };
+            delete next[chatId];
+            return next;
+        });
         const chat = chats.find((c) => c.id === chatId);
         setCurrentChatId(chatId);
         setCurrentChatTitle(chat?.title ?? null);
+        setCurrentChatModel(chat?.model ?? null);
+        setCurrentChatReasoningLevel(chat?.reasoning_level ?? null);
         setMessages([]);
-        setHistoryOpen(false);
-        setIsLoadingMessages(true);
-        try {
-            const raw = await getTabularChatMessages(reviewId, chatId);
-            setMessages(mapTRMessages(raw) as TRMessage[]);
-        } catch {
-            /* ignore */
-        } finally {
-            setIsLoadingMessages(false);
-        }
+        await loadHistory(chatId);
     }
 
     function handleCancel() {
-        abortRef.current?.abort();
+        const cursor = turnCursorRef.current;
+        const chatId = cursor.chatId ?? currentChatId;
+        if (!chatId || !cursor.turnId) {
+            // The turn has no server-side identity yet (its `chat_id` frame
+            // has not arrived), so dropping this request is the only lever
+            // there is — and it is still the whole cancellation, because the
+            // server has nothing registered to keep generating.
+            abortRef.current?.abort();
+            return;
+        }
+        // Closing the socket is no longer how Stop works: it would detach
+        // this panel and leave the server answering into the transcript.
+        void stopTabularChatTurn(reviewId, chatId, cursor.turnId).catch(() => {
+            // The server does not know this turn any more (another tab
+            // stopped it, or the process restarted). Dropping our own
+            // connection is all that is left to do.
+            abortRef.current?.abort();
+        });
     }
 
-    async function handleSubmit(trimmed: string) {
-        if (!trimmed || isLoading) return;
-        if (!isModelAvailable(currentModel, apiKeys, extraModels)) {
-            setApiKeyModalProvider(getModelProvider(currentModel, extraModels));
+    /**
+     * Attach to an answer the server is already generating into `chatId` — a
+     * reload, a second tab, or this thread opened from the list while its
+     * answer runs somewhere else.
+     *
+     * The stored transcript holds the user turn already and gains the
+     * assistant row only once the turn finishes, so the placeholder belongs
+     * after the loaded messages and the replay starts at frame 1. The stream
+     * is opened BEFORE the placeholder is appended: a turn that ended in the
+     * meantime answers 404, and the transcript that has just loaded is then
+     * already complete.
+     */
+    async function resumeTurn(chatId: string, turnId: string) {
+        const controller = new AbortController();
+        const response = await streamTabularChatTurn({
+            reviewId,
+            chatId,
+            turnId,
+            from: 1,
+            signal: controller.signal,
+        }).catch(() => null);
+        if (!response?.ok) {
+            await response?.body?.cancel().catch(() => {});
             return;
         }
 
+        detachActiveStream();
+        const gen = streamGenerationRef.current;
+        dripTargetRef.current = "";
+        dripDisplayLenRef.current = 0;
+        eventsRef.current = [];
+        turnCursorRef.current = {
+            chatId,
+            turnId,
+            lastSeq: 0,
+            hadError: false,
+        };
+        setMessages((prev) => [
+            ...prev,
+            {
+                role: "assistant",
+                content: "",
+                events: [],
+                isStreaming: true,
+            },
+        ]);
+        setIsLoading(true);
+        abortRef.current = controller;
+
+        await runTurn({
+            gen,
+            controller,
+            settings: {
+                model: currentChatModel ?? undefined,
+                reasoning: currentChatReasoningLevel ?? undefined,
+            },
+            open: () => Promise.resolve(response),
+        });
+    }
+
+    async function handleSubmit(message: Message) {
+        const trimmed = message.content.trim();
+        if (!trimmed || isLoading) return;
+        if (!message.model || !message.reasoning) return;
+        setCurrentChatModel(message.model);
+        setCurrentChatReasoningLevel(message.reasoning);
+
         // Build messages array for backend (plain text history)
-        const history: { role: string; content: string }[] = messages.map(
-            (m) => ({
-                role: m.role,
-                content: m.content,
-            }),
-        );
+        const history = buildTabularChatHistory(messages);
         const allMessages = [...history, { role: "user", content: trimmed }];
 
         const userMsg: TRMessage = { role: "user", content: trimmed };
@@ -1121,71 +1144,132 @@ export function TRChatPanel({
         setIsLoading(true);
 
         setTimeout(() => {
-            const container = messagesContainerRef.current;
-            const element = latestUserMessageRef.current;
-            if (container && element) {
-                container.scrollTo({
-                    top: element.offsetTop - 44,
-                    behavior: "smooth",
-                });
-            }
+            scrollLatestUserToTop("smooth");
         }, 50);
 
-        stopDrip();
+        detachActiveStream();
+        const gen = streamGenerationRef.current;
         dripTargetRef.current = "";
         dripDisplayLenRef.current = 0;
         eventsRef.current = [];
 
         const controller = new AbortController();
         abortRef.current = controller;
+        turnCursorRef.current = {
+            chatId: currentChatId,
+            turnId: null,
+            lastSeq: 0,
+            hadError: false,
+        };
+        if (currentChatId) {
+            // The history list shows this thread as answering, and moves it
+            // to the top, from the moment the request leaves.
+            setChatResponseStatuses((current) => ({
+                ...current,
+                [currentChatId]: "loading",
+            }));
+            setChats((current) => touchChatActivity(current, currentChatId));
+        }
+        await runTurn({
+            gen,
+            controller,
+            settings: { model: message.model, reasoning: message.reasoning },
+            open: () =>
+                streamTabularChat(
+                    reviewId,
+                    allMessages,
+                    currentChatId,
+                    controller.signal,
+                    { reviewTitle, projectName },
+                    message.model,
+                    message.reasoning,
+                ),
+        });
+    }
 
-        try {
-            const response = await streamTabularChat(
-                reviewId,
-                allMessages,
-                currentChatId,
-                controller.signal,
-                { reviewTitle, projectName },
-            );
-            if (!response.body) throw new Error("No response body");
+    // ---- one turn, whichever response is carrying it ----
 
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = "";
+    /**
+     * Apply one response's frames to this panel's state.
+     *
+     * Both ends of a turn go through here — the POST that starts it and the
+     * GET that reattaches to it — which is why nothing below knows which one
+     * it is reading. The cursor it keeps (the turn's id, and the last `id:`
+     * line applied) is what a reconnect or a Stop needs afterwards.
+     */
+    type TurnSettings = {
+        model: Message["model"];
+        reasoning: Message["reasoning"];
+    };
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split("\n");
-                buffer = lines.pop() ?? "";
+    async function consumeTurnStream(
+        response: Response,
+        gen: number,
+        signal: AbortSignal,
+        settings: TurnSettings,
+        cursor: TurnCursor,
+    ) {
+        const { model, reasoning } = settings;
+        for await (const frame of readSseFrames(response, {
+            signal,
+            onEventId: (id) => {
+                const seq = Number.parseInt(id, 10);
+                if (Number.isFinite(seq)) cursor.lastSeq = seq;
+            },
+        })) {
+                const data = frame as Record<string, unknown>;
 
-                for (const line of lines) {
-                    if (!line.startsWith("data:")) continue;
-                    const dataStr = line.slice(5).trim();
-                    if (dataStr === "[DONE]") continue;
+                if (data.type === "chat_id") {
+                    const newId = data.chatId as string;
+                    // What a reconnect needs: which thread this is and which
+                    // run inside it to reattach to.
+                    cursor.chatId = newId;
+                    if (typeof data.turnId === "string")
+                        cursor.turnId = data.turnId;
+                    // Handled before the ownership check below: even a stream
+                    // another thread has since replaced still names a real
+                    // chat that belongs in the list, and is still answering.
+                    setChatResponseStatuses((current) => ({
+                        ...current,
+                        [newId]: "loading",
+                    }));
+                    setChats((prev) => {
+                        const now = new Date().toISOString();
+                        const next = prev.some((chat) => chat.id === newId)
+                            ? prev
+                            : [
+                                  {
+                                      id: newId,
+                                      title: null,
+                                      model: model ?? null,
+                                      reasoning_level: reasoning ?? null,
+                                      created_at: now,
+                                      updated_at: now,
+                                  },
+                                  ...prev,
+                              ];
+                        return touchChatActivity(next, newId, now);
+                    });
+                    if (streamGenerationRef.current !== gen) continue;
+                    currentChatIdRef.current = newId;
+                    setCurrentChatId(newId);
+                    continue;
+                }
+                if (data.type === "error") cursor.hadError = true;
 
-                    try {
-                        const data = JSON.parse(dataStr);
+                // Another chat owns the message list now — stop writing,
+                // but keep draining: breaking out cancels the reader, which
+                // closes the socket and makes the server persist a
+                // truncated answer.
+                if (streamGenerationRef.current !== gen) continue;
 
-                        if (data.type === "chat_id") {
-                            const newId = data.chatId as string;
-                            setCurrentChatId(newId);
-                            setChats((prev) =>
-                                prev.some((c) => c.id === newId)
-                                    ? prev
-                                    : [
-                                          {
-                                              id: newId,
-                                              title: null,
-                                              created_at:
-                                                  new Date().toISOString(),
-                                              updated_at:
-                                                  new Date().toISOString(),
-                                          },
-                                          ...prev,
-                                      ],
-                            );
+                try {
+                        if (data.type === "cancelled") {
+                            // Stop was pressed — in this panel or another
+                            // tab. The server has already stored the partial
+                            // answer and [DONE] follows immediately, so all
+                            // that is left is to stop pretending to think.
+                            clearStreamingPlaceholders();
                             continue;
                         }
 
@@ -1195,8 +1279,11 @@ export function TRChatPanel({
                                 title: string;
                             };
                             setChats((prev) =>
-                                prev.map((c) =>
-                                    c.id === chatId ? { ...c, title } : c,
+                                touchChatActivity(
+                                    prev.map((c) =>
+                                        c.id === chatId ? { ...c, title } : c,
+                                    ),
+                                    chatId,
                                 ),
                             );
                             setCurrentChatTitle(title);
@@ -1418,9 +1505,7 @@ export function TRChatPanel({
                             continue;
                         }
 
-                        if (
-                            data.type === "courtlistener_find_in_case_start"
-                        ) {
+                        if (data.type === "courtlistener_find_in_case_start") {
                             const searches = parseCourtlistenerCaseSearches(
                                 data.searches,
                             );
@@ -1446,8 +1531,7 @@ export function TRChatPanel({
                             );
                             updateMatchingEvent(
                                 (e) =>
-                                    e.type ===
-                                        "courtlistener_find_in_case" &&
+                                    e.type === "courtlistener_find_in_case" &&
                                     (searches?.length
                                         ? Array.isArray(e.searches)
                                         : e.cluster_id ===
@@ -1455,8 +1539,7 @@ export function TRChatPanel({
                                               "number"
                                                   ? (data.cluster_id as number)
                                                   : null) &&
-                                          e.query ===
-                                              (data.query as string)) &&
+                                          e.query === (data.query as string)) &&
                                     !!e.isStreaming,
                                 () => ({
                                     type: "courtlistener_find_in_case",
@@ -1610,10 +1693,9 @@ export function TRChatPanel({
                                     typeof data.cluster_id === "number"
                                         ? (data.cluster_id as number)
                                         : 0,
-                                case: data.case as Extract<
-                                    AssistantEvent,
-                                    { type: "case_opinions" }
-                                >["case"],
+                                document: isPanelDocument(data.document)
+                                    ? data.document
+                                    : undefined,
                             });
                             continue;
                         }
@@ -1639,6 +1721,33 @@ export function TRChatPanel({
                             continue;
                         }
 
+                        if (data.type === "error") {
+                            if (data.code === "invalid_api_key") {
+                                setRejectedApiKey({
+                                    provider: model
+                                        ? getModelProvider(model)
+                                        : null,
+                                });
+                            }
+                            clearStreamingPlaceholders();
+                            pushEvent({
+                                type: "error",
+                                message:
+                                    data.safe_to_display === true &&
+                                    typeof data.message === "string" &&
+                                    data.message.trim()
+                                        ? data.message.trim()
+                                        : "An error occurred. Please try again.",
+                                ...(data.safe_to_display === true
+                                    ? { safe_to_display: true }
+                                    : {}),
+                                ...(data.code === "invalid_api_key"
+                                    ? { code: "invalid_api_key" as const }
+                                    : {}),
+                            });
+                            continue;
+                        }
+
                         if (data.type === "citations") {
                             // End-of-stream signal — scrub any lingering
                             // placeholders so they don't persist into the
@@ -1659,11 +1768,118 @@ export function TRChatPanel({
                             });
                             continue;
                         }
-                    } catch {
-                        /* skip malformed */
-                    }
+                } catch (err) {
+                    console.warn("[TRChatPanel] failed to handle SSE event:", data, err);
                 }
+        }
+    }
+
+    /**
+     * Read a turn to its end, rejoining the server's copy of it when the
+     * connection drops.
+     *
+     * A dropped connection is no longer a cancellation — the answer is still
+     * being generated on the server — so it is a transport failure to
+     * recover from, by resuming at the frame after the last one applied. An
+     * abort (the local Stop fallback) is never retried, and neither is a
+     * turn the server no longer knows.
+     */
+    async function readTurn(args: {
+        open: () => Promise<Response>;
+        gen: number;
+        signal: AbortSignal;
+        settings: TurnSettings;
+        cursor: TurnCursor;
+        retries?: number;
+    }) {
+        const { cursor } = args;
+        const retries = args.retries ?? 2;
+        let response = await args.open();
+        if (!response.ok) {
+            await response.body?.cancel().catch(() => {});
+            throw new Error(
+                `Tabular chat request failed with status ${response.status}`,
+            );
+        }
+        for (let attempt = 0; ; attempt += 1) {
+            try {
+                await consumeTurnStream(
+                    response,
+                    args.gen,
+                    args.signal,
+                    args.settings,
+                    cursor,
+                );
+                return;
+            } catch (error) {
+                if (
+                    (error instanceof Error && error.name === "AbortError") ||
+                    args.signal.aborted ||
+                    !cursor.chatId ||
+                    !cursor.turnId ||
+                    attempt >= retries
+                ) {
+                    throw error;
+                }
+                await new Promise((resolve) =>
+                    setTimeout(resolve, 400 * (attempt + 1)),
+                );
+                if (args.signal.aborted) throw error;
+                const resumed = await streamTabularChatTurn({
+                    reviewId,
+                    chatId: cursor.chatId,
+                    turnId: cursor.turnId,
+                    from: cursor.lastSeq + 1,
+                    signal: args.signal,
+                });
+                if (!resumed.ok) {
+                    await resumed.body?.cancel().catch(() => {});
+                    throw error;
+                }
+                response = resumed;
             }
+        }
+    }
+
+    /** The shared ending: finalise the message, or report the failure. */
+    async function runTurn(args: {
+        open: () => Promise<Response>;
+        gen: number;
+        controller: AbortController;
+        settings: TurnSettings;
+    }) {
+        const { gen, controller } = args;
+        // This turn's cursor, held here rather than re-read from the ref: a
+        // later send replaces the ref while a superseded stream is still
+        // being drained.
+        const cursor = turnCursorRef.current;
+        try {
+            await readTurn({
+                open: args.open,
+                gen,
+                signal: controller.signal,
+                settings: args.settings,
+                cursor,
+            });
+            const streamChatId = cursor.chatId;
+            if (streamChatId) {
+                setChats((current) =>
+                    touchChatActivity(current, streamChatId),
+                );
+                setChatResponseStatuses((current) => {
+                    if (
+                        cursor.hadError ||
+                        currentChatIdRef.current === streamChatId
+                    ) {
+                        if (!(streamChatId in current)) return current;
+                        const next = { ...current };
+                        delete next[streamChatId];
+                        return next;
+                    }
+                    return { ...current, [streamChatId]: "complete" };
+                });
+            }
+            if (streamGenerationRef.current !== gen) return;
 
             flushDrip();
             clearStreamingPlaceholders();
@@ -1679,6 +1895,19 @@ export function TRChatPanel({
                 return updated;
             });
         } catch (err: unknown) {
+            const streamChatId = cursor.chatId;
+            if (streamChatId) {
+                setChatResponseStatuses((current) => {
+                    if (!(streamChatId in current)) return current;
+                    const next = { ...current };
+                    delete next[streamChatId];
+                    return next;
+                });
+            }
+            // Superseded stream: the list it would repaint is someone
+            // else's now.
+            if (streamGenerationRef.current !== gen) return;
+
             const isAbort = err instanceof Error && err.name === "AbortError";
             stopDrip();
             clearStreamingPlaceholders();
@@ -1715,8 +1944,8 @@ export function TRChatPanel({
                 return updated;
             });
         } finally {
-            setIsLoading(false);
-            abortRef.current = null;
+            if (streamGenerationRef.current === gen) setIsLoading(false);
+            if (abortRef.current === controller) abortRef.current = null;
         }
     }
 
@@ -1729,120 +1958,138 @@ export function TRChatPanel({
 
     return (
         <div
-            style={{ width: panelWidth }}
+            style={
+                {
+                    "--tr-chat-panel-width": `${panelWidth}px`,
+                } as CSSProperties
+            }
             className={cn(
-                "shrink-0 flex flex-col border-r border-gray-200 h-full relative",
-                "bg-transparent",
+                "flex flex-col relative",
+                // Mobile: replaces the table, filling the row minus margins.
+                // md+: fixed width beside the table, top-aligned with it
+                // (below the toolbar).
+                "flex-1 min-w-0 mx-3 mb-3 md:flex-none md:w-[var(--tr-chat-panel-width)] md:mt-12 md:-ml-6 md:mr-6",
+                "rounded-2xl",
+                LIQUID_GLASS_FLAT_CLASS,
+                "overflow-hidden",
             )}
         >
             {/* Resize handle */}
             <div
                 onMouseDown={(e) => {
                     e.preventDefault();
+                    resizeStartRef.current = {
+                        x: e.clientX,
+                        width: panelWidth,
+                    };
                     setIsResizing(true);
                 }}
-                className={`absolute top-0 right-0 h-full w-1 cursor-col-resize z-20 transition-colors ${
+                className={`absolute top-0 left-0 h-full w-1 cursor-col-resize z-20 transition-colors hidden md:block ${
                     isResizing
-                        ? "bg-blue-500"
-                        : "bg-transparent hover:bg-blue-500"
+                        ? "bg-blue-400/70"
+                        : "bg-transparent hover:bg-blue-400/70"
                 }`}
             />
-            {/* Header */}
-            <div className="flex items-center justify-between h-8 pr-2 border-b border-gray-200 shrink-0">
-                <div className="flex items-center gap-1 pl-2 pr-2 min-w-0">
-                    <button
-                        onClick={onClose}
-                        title="Close"
-                        className="flex items-center justify-center h-7 w-7 shrink-0 rounded-md text-gray-600 hover:text-gray-900 transition-colors"
-                    >
-                        <ChevronLeft className="h-3.5 w-3.5" />
-                    </button>
-                    <div
-                        onMouseEnter={(e) => {
-                            const el = e.currentTarget;
-                            const overflow = el.scrollWidth - el.clientWidth;
-                            if (overflow > 0)
-                                el.scrollTo({
-                                    left: overflow,
-                                    behavior: "smooth",
-                                });
-                        }}
-                        onMouseLeave={(e) => {
-                            e.currentTarget.scrollTo({
-                                left: 0,
-                                behavior: "smooth",
-                            });
-                        }}
-                        className="min-w-0 overflow-x-hidden whitespace-nowrap scrollbar-none"
-                    >
-                        <span className="text-xs font-medium text-gray-700">
-                            {currentChatTitle ?? "New chat"}
-                        </span>
-                    </div>
-                </div>
-                <div className="flex items-center">
-                    <div ref={historyRef} className="relative">
-                        <button
-                            onClick={() => setHistoryOpen((v) => !v)}
-                            title="Chat history"
-                            className={`flex items-center justify-center h-7 w-7 rounded-md transition-colors ${historyOpen ? "text-gray-900" : "text-gray-600 hover:text-gray-900"}`}
-                        >
-                            <Clock className="h-3.5 w-3.5" />
-                        </button>
-                        {historyOpen && (
-                            <div className="absolute top-full right-0 mt-1 w-64 rounded-lg border border-gray-100 bg-white shadow-lg z-50 overflow-hidden">
-                                <HistoryDropdown
-                                    chats={chats}
-                                    currentChatId={currentChatId}
-                                    onLoad={handleLoadChat}
-                                />
-                            </div>
-                        )}
-                    </div>
-                    <button
-                        onClick={handleNewChat}
-                        title="New chat"
-                        className="flex items-center justify-center h-7 w-7 rounded-md text-gray-600 hover:text-gray-900 transition-colors"
-                    >
-                        <MessageSquarePlus className="h-3.5 w-3.5" />
-                    </button>
-                    {currentChatId && (
-                        <button
-                            onClick={handleDeleteChat}
-                            title="Delete chat"
-                            className="flex items-center justify-center h-7 w-7 rounded-md text-gray-600 hover:text-red-600 transition-colors"
-                        >
-                            <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                    )}
-                </div>
+            {/* Header — fixed, overlaid on top of the messages */}
+            <div className="absolute inset-x-0 top-0 z-10">
+                <ChatPanelHeader
+                    chats={chats}
+                    currentChatId={currentChatId ?? ""}
+                    currentTitle={currentChatTitle}
+                    loading={isLoadingChats}
+                    responseStatuses={chatResponseStatuses}
+                    newChatDisabled={!canSend || isLoading}
+                    onLoad={(chatId) => void handleLoadChat(chatId)}
+                    onNewChat={handleNewChat}
+                    titleEdit={
+                        titleDraft !== null
+                            ? {
+                                  value: titleDraft,
+                                  onChange: setTitleDraft,
+                                  onSave: () => {
+                                      const title = titleDraft.trim();
+                                      setTitleDraft(null);
+                                      if (
+                                          currentChatId &&
+                                          title &&
+                                          title !== currentChatTitle
+                                      ) {
+                                          void handleRenameChat(
+                                              currentChatId,
+                                              title,
+                                          );
+                                      }
+                                  },
+                                  onCancel: () => setTitleDraft(null),
+                              }
+                            : undefined
+                    }
+                    actions={
+                        currentChatId ? (
+                            <HeaderActionsMenu
+                                triggerClassName="h-6 w-6"
+                                onCloseAutoFocus={(event) => {
+                                    if (titleDraft !== null)
+                                        event.preventDefault();
+                                }}
+                                items={[
+                                    {
+                                        label: "Rename",
+                                        icon: Pencil,
+                                        onSelect: () =>
+                                            setTitleDraft(
+                                                currentChatTitle ?? "New Chat",
+                                            ),
+                                        disabled:
+                                            !canSend ||
+                                            isLoadingChats ||
+                                            isLoadingMessages ||
+                                            isLoading,
+                                    },
+                                    {
+                                        label: "Delete",
+                                        icon: Trash2,
+                                        onSelect: () => {
+                                            if (currentChatId)
+                                                void handleDeleteChat(
+                                                    currentChatId,
+                                                );
+                                        },
+                                        disabled:
+                                            !canSend ||
+                                            isLoadingChats ||
+                                            isLoadingMessages ||
+                                            isLoading,
+                                        variant: "danger",
+                                    },
+                                ]}
+                            />
+                        ) : null
+                    }
+                />
             </div>
 
-            {/* Messages */}
+            {/* Messages and loading skeleton share the spacer's top inset. */}
             <div
                 ref={messagesContainerRef}
-                className="flex-1 overflow-y-auto px-4 pt-4 pb-[96px] flex flex-col"
+                className="tr-chat-message-fades flex-1 overflow-y-auto px-4 flex flex-col"
+                style={{
+                    paddingTop: MESSAGE_TOP_INSET,
+                    paddingBottom: Math.ceil(inputHeight + COMPOSER_GAP),
+                }}
             >
-                {messages.length === 0 && !isLoadingMessages && (
-                    <div className="flex flex-1 flex-col items-center justify-center gap-2">
-                        <MikeIcon size={24} />
-                        <p className="text-gray-400 font-serif text-center">
-                            Ask a question about this tabular review.
-                        </p>
-                    </div>
-                )}
                 {isLoadingMessages && (
                     <div className="flex flex-col gap-4">
                         <div className="flex justify-end">
                             <div className="bg-gray-100 rounded-2xl p-3 w-3/5">
-                                <div className="h-3 bg-gradient-to-r from-gray-200 via-gray-300 to-gray-200 bg-[length:200%_100%] animate-[shimmer_2s_ease-in-out_infinite] rounded w-full" />
+                                <div className="theme-shimmer h-3 bg-[length:200%_100%] animate-[shimmer_2s_ease-in-out_infinite] rounded w-full" />
                             </div>
                         </div>
                         <div className="space-y-2">
                             {[1, 2, 3, 4].map((i) => (
                                 <div
                                     key={i}
-                                    className={`h-3 bg-gradient-to-r from-gray-200 via-gray-300 to-gray-200 bg-[length:200%_100%] animate-[shimmer_2s_ease-in-out_infinite] rounded ${i === 3 ? "w-5/6" : i === 4 ? "w-4/6" : "w-full"}`}
+                                    className={`theme-shimmer h-3 bg-[length:200%_100%] animate-[shimmer_2s_ease-in-out_infinite] rounded ${i === 3 ? "w-5/6" : i === 4 ? "w-4/6" : "w-full"}`}
                                 />
                             ))}
                         </div>
@@ -1878,22 +2125,41 @@ export function TRChatPanel({
             </div>
 
             {/* Input */}
-            <TRChatInput
-                isLoading={isLoading}
-                onSubmit={handleSubmit}
-                onCancel={handleCancel}
-                model={currentModel}
-                onModelChange={(id) =>
-                    updateModelPreference("tabularModel", id)
-                }
-                apiKeys={apiKeys}
-                extraModels={extraModels}
+            <div
+                ref={composerRef}
+                className="absolute bottom-0 left-0 right-0 z-10 px-3 pb-3"
+            >
+                <ChatInput
+                    onSubmit={(message) => void handleSubmit(message)}
+                    onCancel={handleCancel}
+                    isLoading={isLoading}
+                    canSend={canSend}
+                    hideAddDocButton
+                    hideWorkflowButton
+                    chatModel={currentChatModel}
+                    chatReasoningLevel={currentChatReasoningLevel}
+                    chatKey={
+                        currentChatId
+                            ? tabularChatSelectionKey(reviewId, currentChatId)
+                            : null
+                    }
+                />
+            </div>
+            <WarningPopup
+                open={messageLoadWarning}
+                title="Chat unavailable"
+                message="This chat’s messages could not be loaded. Please try again."
+                onClose={() => setMessageLoadWarning(false)}
             />
-
-            <ApiKeyMissingModal
-                open={apiKeyModalProvider !== null}
-                provider={apiKeyModalProvider}
-                onClose={() => setApiKeyModalProvider(null)}
+            <ApiKeyMissingPopup
+                open={rejectedApiKey !== null}
+                title="API key rejected"
+                message={`${
+                    rejectedApiKey?.provider
+                        ? `The ${providerLabel(rejectedApiKey.provider)} API key`
+                        : "That API key"
+                } was rejected. If it is your own key, check it in Settings; otherwise contact your administrator.`}
+                onClose={() => setRejectedApiKey(null)}
             />
         </div>
     );

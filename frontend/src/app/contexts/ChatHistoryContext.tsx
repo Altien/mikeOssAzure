@@ -6,10 +6,11 @@ import {
     useContext,
     useEffect,
     useMemo,
+  useRef,
     useState,
     type ReactNode,
 } from "react";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth } from "@/app/contexts/AuthContext";
 import {
     createChat,
     deleteChat,
@@ -17,16 +18,24 @@ import {
     renameChat,
 } from "@/app/lib/mikeApi";
 import type { Chat, Message } from "@/app/components/shared/types";
+import type { ProjectRole } from "@/app/lib/permissions";
+import { subscribeAssistantTurns } from "@/app/lib/assistantTurns";
+import { sortChatsByActivity, touchChatActivity } from "@/app/lib/chatActivity";
 
 interface ChatHistoryContextType {
     chats: Chat[] | null;
     hasMoreChats: boolean;
+  loadingMoreChats: boolean;
     currentChatId: string | null;
     setCurrentChatId: (chatId: string | null) => void;
     loadChats: () => Promise<void>;
-    loadMoreChats: () => void;
-    saveChat: (projectId?: string) => Promise<string | null>;
+  loadMoreChats: () => Promise<void>;
+    saveChat: (
+        projectId?: string,
+        projectRole?: ProjectRole | null,
+    ) => Promise<string | null>;
     renameChat: (chatId: string, title: string) => Promise<void>;
+    updateChatTitle: (chatId: string, title: string) => void;
     newChatMessages: Message[] | null;
     setNewChatMessages: (messages: Message[] | null) => void;
     replaceChatId: (
@@ -42,13 +51,22 @@ const ChatHistoryContext = createContext<ChatHistoryContextType | undefined>(
 );
 
 const INITIAL_CHAT_LIMIT = 20;
-const CHAT_LIMIT_INCREMENT = 10;
+const CHAT_PAGE_SIZE = 10;
+
+type ChatCursor = { updatedAt: string; id: string };
+
+function cursorFor(chat: Chat | undefined): ChatCursor | null {
+    const updatedAt = chat?.updated_at || chat?.created_at;
+    return chat && updatedAt ? { updatedAt, id: chat.id } : null;
+}
 
 export function ChatHistoryProvider({ children }: { children: ReactNode }) {
     const { user } = useAuth();
     const [chats, setChats] = useState<Chat[] | null>(null);
-    const [chatLimit, setChatLimit] = useState(INITIAL_CHAT_LIMIT);
     const [hasMoreChats, setHasMoreChats] = useState(false);
+    const [loadingMoreChats, setLoadingMoreChats] = useState(false);
+    const loadingMoreChatsRef = useRef(false);
+    const nextChatCursorRef = useRef<ChatCursor | null>(null);
     const [currentChatId, setCurrentChatId] = useState<string | null>(null);
     const [newChatMessages, setNewChatMessages] = useState<Message[] | null>(
         null,
@@ -62,20 +80,25 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
         }
 
         try {
-            const data = await listChats({ limit: chatLimit + 1 });
-            setChats(data.slice(0, chatLimit));
-            setHasMoreChats(data.length > chatLimit);
+            const data = await listChats({ limit: INITIAL_CHAT_LIMIT + 1 });
+            const page = data.slice(0, INITIAL_CHAT_LIMIT);
+            setChats(sortChatsByActivity(page));
+            nextChatCursorRef.current = cursorFor(page.at(-1));
+            setHasMoreChats(data.length > INITIAL_CHAT_LIMIT);
         } catch {
             setChats([]);
+            nextChatCursorRef.current = null;
             setHasMoreChats(false);
         }
-    }, [chatLimit, user]);
+    }, [user]);
 
     useEffect(() => {
         if (!user) {
             setChats([]);
-            setChatLimit(INITIAL_CHAT_LIMIT);
             setHasMoreChats(false);
+            setLoadingMoreChats(false);
+            loadingMoreChatsRef.current = false;
+            nextChatCursorRef.current = null;
             setCurrentChatId(null);
             return;
         }
@@ -83,9 +106,58 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
         void loadChats();
     }, [user, loadChats]);
 
-    const loadMoreChats = useCallback(() => {
-        setChatLimit((prev) => prev + CHAT_LIMIT_INCREMENT);
-    }, []);
+    const loadMoreChats = useCallback(async () => {
+        if (
+            !user ||
+            !hasMoreChats ||
+            loadingMoreChatsRef.current ||
+            chats === null
+        ) {
+            return;
+        }
+
+        loadingMoreChatsRef.current = true;
+        setLoadingMoreChats(true);
+        try {
+            const cursor = nextChatCursorRef.current;
+            if (!cursor) {
+                setHasMoreChats(false);
+                return;
+            }
+            const data = await listChats({
+                limit: CHAT_PAGE_SIZE + 1,
+                beforeUpdatedAt: cursor.updatedAt,
+                beforeId: cursor.id,
+            });
+            const page = data.slice(0, CHAT_PAGE_SIZE);
+            nextChatCursorRef.current = cursorFor(page.at(-1));
+            setChats((current) => {
+                const existing = new Set(
+                    (current ?? []).map((chat) => chat.id),
+                );
+                return sortChatsByActivity([
+                    ...(current ?? []),
+                    ...page.filter((chat) => !existing.has(chat.id)),
+                ]);
+            });
+            setHasMoreChats(data.length > CHAT_PAGE_SIZE);
+        } catch {
+            // Preserve the current page and allow another scroll to retry.
+        } finally {
+            loadingMoreChatsRef.current = false;
+            setLoadingMoreChats(false);
+        }
+    }, [chats, hasMoreChats, user]);
+
+    useEffect(
+        () =>
+            subscribeAssistantTurns((chatId) => {
+                setChats((current) =>
+                    current ? touchChatActivity(current, chatId) : current,
+                );
+            }),
+        [],
+    );
 
     const replaceChatId = useCallback(
         (oldChatId: string, newChatId: string, title?: string) => {
@@ -116,20 +188,49 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
     );
 
     const saveChat = useCallback(
-        async (projectId?: string): Promise<string | null> => {
+        async (
+            projectId?: string,
+            projectRole?: ProjectRole | null,
+        ): Promise<string | null> => {
             try {
                 const { id } = await createChat(
                     projectId ? { project_id: projectId } : undefined,
                 );
                 const now = new Date().toISOString();
+                // The optimistic row must say what the server would say.
+                // The overview RPC serves is_owner + access_role on every
+                // row, and the sidebar's gates read them via roleFrom(),
+                // which fails closed to viewer when both are absent — so
+                // without a stamp the creator was refused rename and delete
+                // on their own brand-new thread until a reload.
+                //
+                // What the stamp should SAY differs by chat kind. A
+                // standalone chat belongs to its creator, so owner is what
+                // the server serves back. A PROJECT chat does not: the
+                // server derives its role from the caller's role on the
+                // project (ensureSharedRowAccess), so an editor who starts a
+                // thread there is an editor on it. Stamping owner offered
+                // that editor a Delete which came back 403 — the sidebar
+                // promised something the server refuses. Callers pass their
+                // project role; absent one we fall back to editor, the
+                // minimum the server requires to have created the chat at
+                // all, rather than to the top of the ladder.
+                const role: ProjectRole = projectId
+                    ? (projectRole ?? "editor")
+                    : "owner";
                 const newChat: Chat = {
                     id,
                     project_id: projectId ?? null,
                     user_id: user?.id ?? "",
                     title: null,
                     created_at: now,
+                    updated_at: now,
+                    is_owner: role === "owner",
+                    access_role: role,
                 };
-                setChats((prev) => [newChat, ...(prev ?? [])]);
+                setChats((prev) =>
+                    sortChatsByActivity([newChat, ...(prev ?? [])]),
+                );
                 return id;
             } catch {
                 return null;
@@ -141,18 +242,38 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
     const renameChatFn = useCallback(
         async (chatId: string, title: string) => {
             setChats((prev) =>
-                (prev ?? []).map((c) =>
-                    c.id === chatId ? { ...c, title } : c,
+                touchChatActivity(
+                    (prev ?? []).map((c) =>
+                        c.id === chatId ? { ...c, title } : c,
+                    ),
+                    chatId,
                 ),
             );
             try {
                 await renameChat(chatId, title);
-            } catch {
+            } catch (error) {
+                // Same contract as delete below: the optimistic write must
+                // not become a silent success. The old bare catch let a
+                // refused rename show the new title and then quietly revert
+                // it on reload — the caller rethrows so the row's UI can say
+                // why the title snapped back.
                 void loadChats();
+                throw error;
             }
         },
         [loadChats],
     );
+
+    const updateChatTitle = useCallback((chatId: string, title: string) => {
+        setChats((prev) =>
+            touchChatActivity(
+                (prev ?? []).map((chat) =>
+                    chat.id === chatId ? { ...chat, title } : chat,
+                ),
+                chatId,
+            ),
+        );
+    }, []);
 
     const deleteChatFn = useCallback(
         async (chatId: string) => {
@@ -160,8 +281,13 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
             if (currentChatId === chatId) setCurrentChatId(null);
             try {
                 await deleteChat(chatId);
-            } catch {
+            } catch (error) {
+                // Optimistic removal must not become a silent success: put
+                // the row back and let the caller tell the user why. The old
+                // bare catch here was the client-side twin of the
+                // filter-scoped 204 this stack removes on the server.
                 void loadChats();
+                throw error;
             }
         },
         [currentChatId, loadChats],
@@ -171,12 +297,14 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
         () => ({
             chats,
             hasMoreChats,
+      loadingMoreChats,
             currentChatId,
             setCurrentChatId,
             loadChats,
             loadMoreChats,
             saveChat,
             renameChat: renameChatFn,
+            updateChatTitle,
             newChatMessages,
             setNewChatMessages,
             replaceChatId,
@@ -185,11 +313,13 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
         [
             chats,
             hasMoreChats,
+      loadingMoreChats,
             currentChatId,
             loadChats,
             loadMoreChats,
             saveChat,
             renameChatFn,
+            updateChatTitle,
             newChatMessages,
             replaceChatId,
             deleteChatFn,

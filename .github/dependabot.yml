@@ -1,0 +1,88 @@
+# Dependabot proposes updates; maintainers review and merge after CI passes.
+# Group names appear in PR titles and make the review order explicit:
+# priority-1 security fixes, priority-2 production, priority-3 development/tools.
+# Routine updates stay grouped weekly. Security updates are advisory-driven and
+# do not wait for this weekly schedule or the version-update cooldown.
+#
+# REQUIRED REPOSITORY SETTINGS (an admin must enable both):
+# Settings -> Advanced Security -> Dependabot alerts AND security updates.
+# This file configures the updater; it cannot enable those repository settings.
+# This pairs with .github/workflows/security.yml, whose pnpm audit gate fails
+# on unallowlisted high/critical advisories. Dependabot never pushes directly.
+
+version: 2
+updates:
+  # pnpm workspaces use Dependabot's npm ecosystem identifier. The Dev fork
+  # has no repo-root package (upstream's root Playwright entry is not carried).
+  # Backend workspace
+  - package-ecosystem: "npm"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    groups:
+      # One PR per batch of CVE fixes instead of one PR per advisory
+      priority-1-security-fixes:
+        applies-to: security-updates
+        patterns: ["*"]
+      # Routine version bumps arrive as (at most) two grouped weekly PRs —
+      # one for dev deps, one for production deps — never as a flood of
+      # per-package PRs.
+      priority-3-development:
+        applies-to: version-updates
+        dependency-type: "development"
+      priority-2-production:
+        applies-to: version-updates
+        dependency-type: "production"
+
+  # Frontend workspace
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    groups:
+      priority-1-security-fixes:
+        applies-to: security-updates
+        patterns: ["*"]
+      priority-3-development:
+        applies-to: version-updates
+        dependency-type: "development"
+      priority-2-production:
+        applies-to: version-updates
+        dependency-type: "production"
+
+  # Word add-in — its own lockfile, its own CI job (.github/workflows/
+  # word-addin.yml), and its own advisory surface
+  - package-ecosystem: "npm"
+    directory: "/word-addin"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    groups:
+      priority-1-security-fixes:
+        applies-to: security-updates
+        patterns: ["*"]
+      priority-3-development:
+        applies-to: version-updates
+        dependency-type: "development"
+      priority-2-production:
+        applies-to: version-updates
+        dependency-type: "production"
+
+  # Keep the actions used by the security workflow pinned and current
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      priority-1-security-fixes:
+        applies-to: security-updates
+        patterns: ["*"]
+      priority-3-actions:
+        applies-to: version-updates
+        patterns: ["*"]

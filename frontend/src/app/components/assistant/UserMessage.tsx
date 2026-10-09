@@ -1,14 +1,26 @@
 "use client";
 
-import { File, FileText, Library } from "lucide-react";
+import { Waypoints } from "lucide-react";
+import { FileTypeIcon } from "../shared/FileTypeIcon";
+import type { MessageFile } from "../shared/types";
+import { LIQUID_GLASS_FLAT_CLASS } from "@/shared/ui/LiquidGlassUI";
 
 interface Props {
     content: string;
-    files?: { filename: string; document_id?: string }[];
+    files?: MessageFile[];
     workflow?: { id: string; title: string };
+    onFileClick?: (file: MessageFile) => void;
+    /** Reveals the workflow this message ran, in the workflow modal. */
+    onWorkflowClick?: (workflow: { id: string; title: string }) => void;
 }
 
-export function UserMessage({ content, files, workflow }: Props) {
+export function UserMessage({
+    content,
+    files,
+    workflow,
+    onFileClick,
+    onWorkflowClick,
+}: Props) {
     const hasFiles = files && files.length > 0;
 
     return (
@@ -19,26 +31,59 @@ export function UserMessage({ content, files, workflow }: Props) {
                     <div className="flex flex-wrap justify-end gap-1.5 mt-3">
                         {workflow && (
                             <div className="inline-flex items-center gap-1 pl-2 pr-2.5 py-0.5 rounded-full text-xs bg-blue-600 text-white shadow border border-blue-600">
-                                <Library className="h-2.5 w-2.5 shrink-0" />
-                                <span className="max-w-[140px] truncate">{workflow.title}</span>
+                                {onWorkflowClick ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => onWorkflowClick(workflow)}
+                                        aria-label={`Open workflow ${workflow.title}`}
+                                        className="inline-flex min-w-0 items-center gap-1 rounded-full transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                                    >
+                                        <Waypoints className="h-2.5 w-2.5 shrink-0" />
+                                        <span className="max-w-[140px] truncate">
+                                            {workflow.title}
+                                        </span>
+                                    </button>
+                                ) : (
+                                    <>
+                                        <Waypoints className="h-2.5 w-2.5 shrink-0" />
+                                        <span className="max-w-[140px] truncate">
+                                            {workflow.title}
+                                        </span>
+                                    </>
+                                )}
                             </div>
                         )}
-                        {hasFiles && files.map((f, i) => {
-                            const ext = f.filename.split(".").pop()?.toLowerCase();
-                            const isPdf = ext === "pdf";
-                            return (
-                                <div
-                                    key={i}
-                                    className="inline-flex items-center gap-1 rounded-[10px] border border-white/70 bg-white py-0.5 pl-2 pr-2.5 text-xs text-gray-800 shadow-[0_2px_6px_rgba(15,23,42,0.08),inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur-xl"
-                                >
-                                    {isPdf
-                                        ? <FileText className="h-2.5 w-2.5 shrink-0 text-red-500" />
-                                        : <File className="h-2.5 w-2.5 shrink-0 text-blue-500" />
-                                    }
-                                    <span className="max-w-[140px] truncate">{f.filename}</span>
-                                </div>
-                            );
-                        })}
+                        {hasFiles &&
+                            files.map((f, i) => {
+                                const className =
+                                    `inline-flex items-center gap-1 rounded-[10px] py-0.5 pl-2 pr-2.5 text-xs text-gray-800 ${LIQUID_GLASS_FLAT_CLASS}`;
+                                const fileContent = (
+                                    <>
+                                        <FileTypeIcon
+                                            fileType={f.filename}
+                                            className="h-2.5 w-2.5"
+                                        />
+                                        <span className="max-w-[140px] truncate">
+                                            {f.filename}
+                                        </span>
+                                    </>
+                                );
+                                return f.document_id && onFileClick ? (
+                                    <button
+                                        key={i}
+                                        type="button"
+                                        onClick={() => onFileClick(f)}
+                                        aria-label={`Open ${f.filename}`}
+                                        className={`${className} cursor-pointer transition-colors hover:bg-white/80`}
+                                    >
+                                        {fileContent}
+                                    </button>
+                                ) : (
+                                    <div key={i} className={className}>
+                                        {fileContent}
+                                    </div>
+                                );
+                            })}
                     </div>
                 )}
             </div>

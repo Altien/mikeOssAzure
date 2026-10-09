@@ -1,11 +1,18 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "../shared/ui/LiquidGlassUI.css";
+@import "../shared/ui/ThemeTokensUI.css";
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
     --color-background: var(--background);
     --color-foreground: var(--foreground);
+    --color-app-background: var(--app-background);
+    --color-app-surface: var(--app-surface);
+    --color-app-surface-hover: var(--app-surface-hover);
+    --color-app-surface-active: var(--app-surface-active);
+    --color-app-floating: var(--app-floating);
     --font-sans: var(--font-inter);
     --font-serif: var(--font-eb-garamond);
     --color-blue: rgb(0, 136, 255);
@@ -51,7 +58,12 @@
 
 :root {
     --radius: 0.625rem;
-    --color-azure: 0, 136, 255;
+    --app-background: #f9fafb;
+    --app-surface: #fdfdfe;
+    --app-surface-hover: #f9fafb;
+    --app-surface-active: #eff0f3;
+    --app-floating: #fefefe;
+    --table-grid-border: #e5e7eb;
     --background: oklch(0.985 0 0);
     --foreground: oklch(0.145 0 0);
     --card: oklch(1 0 0);
@@ -86,6 +98,13 @@
 }
 
 .dark {
+    color-scheme: dark;
+    --app-background: #0b0f14;
+    --app-surface: #131922;
+    --app-surface-hover: #19212c;
+    --app-surface-active: #222c38;
+    --app-floating: #171e28;
+    --table-grid-border: #2b3645;
     --background: oklch(0.145 0 0);
     --foreground: oklch(0.985 0 0);
     --card: oklch(0.205 0 0);
@@ -119,9 +138,170 @@
     --sidebar-ring: oklch(0.556 0 0);
 }
 
+/* Table surfaces are transparent. Sticky layers retain an opaque page-color
+   backing so content scrolling beneath them never shows through. */
+.table-surface {
+    --table-cell-background: var(--app-background);
+    background-color: transparent;
+    border: 1px solid transparent;
+    box-shadow: none;
+}
+
+.table-surface .table-sticky-cell,
+.table-surface .table-sticky-header {
+    background-color: var(--table-cell-background);
+}
+
+.table-surface .table-sticky-cell.liquid-glass-selected {
+    background-color: var(--liquid-glass-selected-background);
+}
+
+.table-surface .table-sticky-cell.bg-blue-50 {
+    background-color: var(--color-blue-50);
+}
+
+.dark .table-surface .table-sticky-cell.bg-blue-50 {
+    background-color: rgba(3, 73, 130, 0.3);
+}
+
+.table-surface
+    .group:hover
+    .table-sticky-cell.liquid-glass-group-hover {
+    background-color: var(--liquid-glass-hover-background);
+}
+
+.table-surface.tabular-review-table-surface {
+    border: 1px solid var(--table-grid-border);
+}
+
+/* Most of Mike predates semantic color tokens and uses Tailwind's neutral
+   palette directly. These mappings make those existing surfaces participate
+   in the user-selected dark theme without requiring page-by-page forks. */
+.dark .bg-white,
+.dark .bg-white\/86,
+.dark .bg-white\/80,
+.dark .bg-white\/78,
+.dark .bg-white\/75,
+.dark .bg-white\/72,
+.dark .bg-white\/70,
+.dark .bg-white\/65,
+.dark .bg-white\/60,
+.dark .bg-white\/58,
+.dark .bg-white\/55,
+.dark .bg-white\/50,
+.dark .bg-white\/45,
+.dark .bg-white\/38,
+.dark .bg-white\/35,
+.dark .bg-white\/30,
+.dark .bg-white\/25,
+.dark .bg-white\/20,
+.dark .bg-white\/10 {
+    background-color: rgba(19, 25, 34, 0.9);
+}
+
+.dark .bg-gray-50,
+.dark .bg-gray-50\/95,
+.dark .bg-gray-50\/80 {
+    background-color: #0f141c;
+}
+.dark .bg-gray-100,
+.dark .bg-gray-100\/70 { background-color: #19212c; }
+.dark .bg-gray-200,
+.dark .bg-gray-200\/80,
+.dark .bg-gray-200\/70 { background-color: #253142; }
+.dark .bg-gray-300 { background-color: #364152; }
+.dark .bg-gray-400 { background-color: #4b5563; }
+
+.dark .text-black,
+.dark .text-gray-950,
+.dark .text-gray-900 { color: #f3f4f6; }
+.dark .text-gray-800 { color: #e5e7eb; }
+.dark .text-gray-700 { color: #d1d5db; }
+.dark .text-gray-600 { color: #b6c0cf; }
+.dark .text-gray-500 { color: #9ca3af; }
+.dark .text-gray-400 { color: #7f8a99; }
+.dark .text-gray-300 { color: #6b7280; }
+.dark .text-gray-200 { color: #4b5563; }
+
+.dark .border-gray-50,
+.dark .border-gray-100,
+.dark .divide-gray-100 > :not(:last-child) { border-color: #202936; }
+.dark .border-gray-200,
+.dark .divide-gray-200 > :not(:last-child) { border-color: #2b3645; }
+.dark .border-gray-300,
+.dark .divide-gray-300 > :not(:last-child) { border-color: #3a4657; }
+.dark .border-gray-400 { border-color: #4b5563; }
+.dark .border-white,
+.dark .border-white\/90,
+.dark .border-white\/80,
+.dark .border-white\/70,
+.dark .border-white\/65,
+.dark .border-white\/60,
+.dark .border-white\/40,
+.dark .border-white\/30,
+.dark .border-white\/20 { border-color: rgba(148, 163, 184, 0.2); }
+.dark .ring-white\/70 { --tw-ring-color: rgba(148, 163, 184, 0.2); }
+
+.dark .hover\:bg-white:hover,
+.dark .hover\:bg-gray-50:hover { background-color: #19212c; }
+.dark .hover\:bg-gray-100:hover { background-color: #222c38; }
+.dark .hover\:bg-gray-200:hover { background-color: #2b3747; }
+.dark .hover\:text-gray-950:hover,
+.dark .hover\:text-gray-900:hover { color: #ffffff; }
+.dark .hover\:text-gray-700:hover { color: #e5e7eb; }
+.dark .focus\:bg-gray-50:focus,
+.dark .focus\:bg-gray-100:focus { background-color: #222c38; }
+
+.dark input,
+.dark textarea,
+.dark select {
+    color-scheme: dark;
+}
+.dark input::placeholder,
+.dark textarea::placeholder { color: #6b7280; }
+.dark [role="switch"] .bg-white { background-color: #f3f4f6; }
+
+.dark .bg-red-50,
+.dark .bg-red-100 { background-color: rgba(127, 29, 29, 0.28); }
+.dark .border-red-200 { border-color: rgba(248, 113, 113, 0.35); }
+.dark .text-red-600,
+.dark .text-red-700 { color: #fca5a5; }
+.dark .bg-amber-50,
+.dark .bg-amber-100 { background-color: rgba(120, 53, 15, 0.3); }
+.dark .border-amber-200 { border-color: rgba(251, 191, 36, 0.35); }
+.dark .text-amber-700,
+.dark .text-amber-800,
+.dark .text-amber-900 { color: #fcd34d; }
+.dark .bg-green-50,
+.dark .bg-green-100,
+.dark .bg-emerald-50 { background-color: rgba(6, 78, 59, 0.32); }
+.dark .border-emerald-200 { border-color: rgba(52, 211, 153, 0.32); }
+.dark .text-green-700,
+.dark .text-green-800,
+.dark .text-emerald-700 { color: #6ee7b7; }
+.dark .bg-blue-50,
+.dark .bg-blue-100 { background-color: rgba(3, 73, 130, 0.3); }
+
 @layer base {
     * {
         @apply border-border outline-ring/50;
+    }
+
+    /* Thin, track-less scrollbars on every scroll area, so a classic
+       (mouse / Windows) scrollbar does not draw an opaque gutter on glass
+       surfaces. The spreadsheet and DOCX editors size and style their own. */
+    * {
+        scrollbar-width: thin;
+        scrollbar-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent)
+            transparent;
+    }
+
+    .fortune-container,
+    .fortune-container *,
+    .docx-editor,
+    .docx-editor * {
+        scrollbar-width: auto;
+        scrollbar-color: auto;
     }
 
     body {
@@ -131,149 +311,6 @@
     button {
         cursor: pointer;
     }
-}
-
-.usc-section {
-    font-family: var(--font-serif);
-    line-height: 1.6;
-}
-
-.usc-section h1,
-.usc-section h2,
-.usc-section h3,
-.usc-section h4,
-.usc-section h5,
-.usc-section h6 {
-    font-family: var(--font-serif);
-    font-weight: 600;
-    margin-top: 1.5em;
-    margin-bottom: 0.5em;
-    line-height: 1.2;
-}
-
-.usc-section h1 {
-    font-size: 1.5em;
-}
-
-.usc-section h2 {
-    font-size: 1.25em;
-}
-
-.usc-section h3 {
-    font-size: 1.125em;
-}
-
-.usc-section p {
-    margin-bottom: 1em;
-}
-
-/* Inline cross-reference links within section text */
-.usc-xref,
-.usc-section a {
-    color: rgb(var(--color-azure));
-    text-decoration: none;
-    border-bottom: 1px dotted rgba(var(--color-azure), 0.4);
-    transition: border-bottom-color 0.2s;
-}
-
-.usc-xref:hover,
-.usc-section a:hover {
-    border-bottom-color: rgb(var(--color-azure));
-}
-
-/* Remove automatic list styling for USC section content */
-/* The labels are already embedded in the HTML content */
-.usc-section ol,
-.usc-section ul {
-    list-style: none !important;
-    padding-left: 0 !important;
-    margin: 0;
-}
-
-.usc-section li {
-    margin-bottom: 0.125em;
-    text-indent: -1.25em;
-    padding-left: 1.25em;
-}
-
-/* Add indentation for nested lists */
-.usc-section ol ol,
-.usc-section ol ul,
-.usc-section ul ol {
-    padding-left: 0.75em !important;
-    margin-top: 0;
-}
-
-/* ─── CFR (Code of Federal Regulations) ────────────────────────── */
-.cfr-section {
-    font-family: var(--font-serif);
-    line-height: 1.6;
-}
-
-.cfr-section h1,
-.cfr-section h2,
-.cfr-section h3,
-.cfr-section h4,
-.cfr-section h5,
-.cfr-section h6 {
-    font-family: var(--font-serif);
-    font-weight: 600;
-    margin-top: 1.5em;
-    margin-bottom: 0.5em;
-    line-height: 1.2;
-}
-
-.cfr-section h1 {
-    font-size: 1.5em;
-}
-.cfr-section h2 {
-    font-size: 1.25em;
-}
-.cfr-section h3 {
-    font-size: 1.125em;
-}
-
-.cfr-section p {
-    margin-bottom: 0.75em;
-}
-
-.cfr-section a {
-    color: rgb(var(--color-azure));
-    text-decoration: none;
-    border-bottom: 1px dotted rgba(var(--color-azure), 0.4);
-    transition: border-bottom-color 0.2s;
-}
-
-.cfr-section a:hover {
-    border-bottom-color: rgb(var(--color-azure));
-}
-
-.cfr-section table {
-    width: 100%;
-    border-collapse: collapse;
-    margin: 1em 0;
-    font-size: 0.875em;
-}
-
-.cfr-section th,
-.cfr-section td {
-    border: 1px solid #e2e8f0;
-    padding: 0.5em 0.75em;
-    text-align: left;
-}
-
-.cfr-section th {
-    background: #f8fafc;
-    font-weight: 600;
-}
-
-.cfr-section .authority-section,
-.cfr-section .source-section {
-    font-size: 0.875em;
-    color: #64748b;
-    margin: 1em 0;
-    padding: 0.75em;
-    border-left: 3px solid #e2e8f0;
 }
 
 @layer utilities {
@@ -293,27 +330,12 @@
         opacity: 0;
     }
 
-    .sidebar-fade-in-3 {
-        animation: sidebarFadeIn 0.3s ease-out forwards;
-        animation-delay: 0.25s;
-        opacity: 0;
-    }
-
     @keyframes sidebarFadeIn {
         from {
             opacity: 0;
         }
         to {
             opacity: 1;
-        }
-    }
-
-    @keyframes scroll-left {
-        0% {
-            transform: translateX(0);
-        }
-        100% {
-            transform: translateX(calc(-100% + 100px));
         }
     }
 
@@ -325,159 +347,232 @@
             background-position: -200% 0;
         }
     }
-
-    .animate-shimmer {
-        animation: shimmer 8s linear infinite;
-    }
 }
 
-/* ─── Tiptap WYSIWYG workflow editor ────────────────────────────── */
-.workflow-editor-content {
+/* ─── Reusable Tiptap WYSIWYG Markdown editor ───────────────────── */
+.markdown-editor-content {
     min-height: 100%;
     padding: 1rem 1.25rem;
     outline: none;
     font-size: 0.875rem;
-    color: #374151;
+    color: var(--editor-text);
     line-height: 1.65;
     font-family: var(--font-serif);
 }
 
-.workflow-editor-content h1 {
-    font-size: 1rem;
+.markdown-editor-content h1 {
+    font-size: 1.25rem;
     font-weight: 600;
-    color: #111827;
+    color: var(--editor-heading);
     margin-top: 1.25rem;
     margin-bottom: 0.375rem;
+    line-height: 1.25;
 }
 
-.workflow-editor-content h2 {
-    font-size: 0.875rem;
+.markdown-editor-content h2 {
+    font-size: 1.0625rem;
     font-weight: 600;
-    color: #111827;
+    color: var(--editor-heading);
     margin-top: 0.875rem;
     margin-bottom: 0.25rem;
+    line-height: 1.3;
 }
 
-.workflow-editor-content h3 {
-    font-size: 0.8125rem;
+.markdown-editor-content h3 {
+    font-size: 0.9375rem;
     font-weight: 600;
-    color: #111827;
+    color: var(--editor-heading);
     margin-top: 0.625rem;
     margin-bottom: 0.125rem;
+    line-height: 1.35;
 }
 
-.workflow-editor-content h1:first-child,
-.workflow-editor-content h2:first-child,
-.workflow-editor-content h3:first-child {
+.markdown-editor-content h1:first-child,
+.markdown-editor-content h2:first-child,
+.markdown-editor-content h3:first-child {
     margin-top: 0;
 }
 
-.workflow-editor-content p {
+.markdown-editor-content p {
     margin-bottom: 0.5rem;
 }
 
-.workflow-editor-content p:last-child {
+.markdown-editor-content p:last-child {
     margin-bottom: 0;
 }
 
-.workflow-editor-content ul {
+.markdown-editor-content ul {
     list-style-type: disc;
     padding-left: 1.375rem;
     margin-bottom: 0.5rem;
 }
 
-.workflow-editor-content ol {
+.markdown-editor-content ol {
     list-style-type: decimal;
     padding-left: 1.375rem;
     margin-bottom: 0.5rem;
 }
 
-.workflow-editor-content li {
+.markdown-editor-content li {
     margin-bottom: 0.125rem;
 }
 
-.workflow-editor-content li > p {
+.markdown-editor-content li > p {
     margin-bottom: 0;
 }
 
-.workflow-editor-content strong {
+.markdown-editor-content strong {
     font-weight: 600;
-    color: #1f2937;
+    color: var(--editor-strong-text);
 }
 
-.workflow-editor-content em {
+.markdown-editor-content em {
     font-style: italic;
+}
+
+.markdown-editor-content .tableWrapper {
+    margin: 0.75rem 0;
+    overflow-x: auto;
+    border: 1px solid var(--editor-border);
+    border-radius: 0.375rem;
+}
+
+.markdown-editor-content .tableWrapper:first-child {
+    margin-top: 0;
+}
+
+.markdown-editor-content .tableWrapper:last-child {
+    margin-bottom: 0;
+}
+
+.markdown-editor-content table {
+    width: 100%;
+    min-width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    text-align: left;
+    font-size: 0.75rem;
+}
+
+.markdown-editor-content thead {
+    background: var(--editor-table-header);
+}
+
+.markdown-editor-content th,
+.markdown-editor-content td {
+    border-right: 1px solid var(--editor-grid-line);
+    border-bottom: 1px solid var(--editor-grid-line);
+    padding: 0.5rem 0.75rem;
+    vertical-align: top;
+    word-break: break-word;
+}
+
+.markdown-editor-content th:last-child,
+.markdown-editor-content td:last-child {
+    border-right: 0;
+}
+
+.markdown-editor-content tr:last-child td {
+    border-bottom: 0;
+}
+
+.markdown-editor-content th {
+    color: var(--editor-text);
+    font-weight: 600;
+}
+
+.markdown-editor-content td {
+    color: var(--editor-muted-text);
+}
+
+.markdown-editor-content th p,
+.markdown-editor-content td p {
+    min-height: 1.25rem;
+    margin-bottom: 0;
 }
 
 /* ChatBox Animation Styles */
 
 /* PDF text layer */
 .pdf-text-layer {
+    --text-scale-factor: calc(
+        var(--total-scale-factor) * var(--min-font-size, 1)
+    );
+    --min-font-size-inv: calc(1 / var(--min-font-size, 1));
     overflow: hidden;
     opacity: 1;
     line-height: 1;
-    user-select: none;
-    pointer-events: none;
+    /* The layer sits over the rendered canvas and holds the page's real text,
+       so it has to receive pointer events for the user to select and copy. */
+    caret-color: CanvasText;
 }
 
-.pdf-text-layer > span {
+.pdf-text-layer .markedContent {
+    display: contents;
+}
+
+.pdf-text-layer .pdf-text-item {
+    --font-height: 0;
+    --scale-x: 1;
+    --rotate: 0deg;
     color: transparent;
     position: absolute;
     white-space: pre;
     cursor: text;
+    user-select: text;
     transform-origin: 0% 0%;
+    z-index: 1;
+    font-size: calc(var(--text-scale-factor) * var(--font-height));
+    transform: rotate(var(--rotate)) scaleX(var(--scale-x))
+        scale(var(--min-font-size-inv));
 }
 
 .pdf-text-layer .pdf-text-highlight {
-    background-color: rgba(37, 99, 235, 0.2);
+    background-color: var(--pdf-highlight-background);
     border-radius: 2px;
     position: static;
 }
 
+/* The glyphs in this layer are transparent stand-ins for the ones painted on
+   the canvas below. Selection has to stay translucent so the real text still
+   reads through it, and the text itself has to stay transparent: the browser's
+   default selection foreground would paint these invisible glyphs opaque and
+   double them on top of the page. */
+.pdf-text-layer ::selection {
+    background-color: var(--pdf-selection-background);
+    color: transparent;
+}
+
+/* PDF.js ends each text line with a <br>. The stock viewer stylesheet takes
+   those out of flow and hides their selection; without that they sat at the
+   layer's left edge and a drag selection painted a bar there on every line. */
+.pdf-text-layer br {
+    position: absolute;
+    color: transparent;
+    white-space: pre;
+    cursor: text;
+}
+
+.pdf-text-layer br::selection {
+    background: transparent;
+}
+
 .docx-view-container span.docx-text-highlight,
 .docx-view-container .docx-text-highlight {
-    background-color: rgba(37, 99, 235, 0.35) !important;
+    background-color: var(--docx-highlight-background) !important;
     border-radius: 2px;
     padding: 0 1px;
     color: inherit !important;
 }
 
-.case-opinion-content span.docx-text-highlight,
-.case-opinion-content .docx-text-highlight {
-    background-color: rgba(96, 165, 250, 0.55) !important;
+.case-document-content span.case-quote-highlight,
+.case-document-content .case-quote-highlight {
+    background-color: var(--case-highlight-background) !important;
     border-radius: 2px;
     padding: 0 1px;
     color: inherit !important;
-}
-
-/* docx-preview tracked-change styling */
-.docx-view-container ins {
-    color: #16a34a;
-    text-decoration: none;
-    background-color: rgba(22, 163, 74, 0.08);
-}
-
-.docx-view-container del {
-    color: #dc2626;
-    text-decoration: line-through;
-    background-color: rgba(220, 38, 38, 0.08);
-}
-
-/* Kill docx-preview's default dark-gray wrapper chrome — let the scroll
-   container's own bg show through. */
-.docx-view-container .docx-wrapper {
-    background: transparent !important;
-    padding: 0 !important;
-}
-
-.docx-view-container .docx-wrapper > section.docx {
-    margin: 0 auto 16px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-}
-
-.docx-view-container .docx-edit-flash {
-    animation: docxEditFlash 2s ease-out;
-    border-radius: 2px;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
 }
 
 /* Optimistic Accept/Reject: instantly hide rejected side / de-style kept side.
@@ -486,20 +581,82 @@
     display: none !important;
 }
 
-.docx-view-container ins.docx-edit-kept,
-.docx-view-container del.docx-edit-kept {
+.docx-view-container .docx-edit-kept {
     color: inherit !important;
     background-color: transparent !important;
     text-decoration: none !important;
+    border-bottom: none !important;
 }
 
-@keyframes docxEditFlash {
-    0%, 20% {
-        background-color: rgba(59, 130, 246, 0.45);
-        box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.45);
+.uploading-ellipsis {
+    display: inline-grid;
+    width: 1.5em;
+}
+
+.uploading-ellipsis-one,
+.uploading-ellipsis-two,
+.uploading-ellipsis-three {
+    grid-area: 1 / 1;
+}
+
+.uploading-ellipsis-one {
+    animation: uploadingEllipsisOne 1.2s steps(1, end) infinite;
+}
+
+.uploading-ellipsis-two {
+    animation: uploadingEllipsisTwo 1.2s steps(1, end) infinite;
+}
+
+.uploading-ellipsis-three {
+    animation: uploadingEllipsisThree 1.2s steps(1, end) infinite;
+}
+
+@keyframes uploadingEllipsisOne {
+    0%, 32% {
+        opacity: 1;
     }
-    100% {
-        background-color: rgba(59, 130, 246, 0);
-        box-shadow: 0 0 0 2px rgba(59, 130, 246, 0);
+    33%, 100% {
+        opacity: 0;
     }
+}
+
+@keyframes uploadingEllipsisTwo {
+    0%, 32%, 66%, 100% {
+        opacity: 0;
+    }
+    33%, 65% {
+        opacity: 1;
+    }
+}
+
+@keyframes uploadingEllipsisThree {
+    0%, 65% {
+        opacity: 0;
+    }
+    66%, 100% {
+        opacity: 1;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .uploading-ellipsis-one,
+    .uploading-ellipsis-two,
+    .uploading-ellipsis-three {
+        animation: none;
+    }
+
+    .uploading-ellipsis-one,
+    .uploading-ellipsis-two {
+        opacity: 0;
+    }
+}
+
+/* Text fields always match :focus-visible, even after a click. Keep the
+   Tailwind focus ring for keyboard navigation only; useInputModality sets the
+   attribute. Clears only the ring, not the field's own shadows. Unlayered on
+   purpose: EigenPal's unlayered `.docx-editor .focus-visible\:ring-2` rules
+   would otherwise win inside the editor chrome (comment column, composer). */
+:root[data-input-modality="pointer"] .keyboard-focus-ring:focus-visible {
+    --tw-ring-shadow: 0 0 #0000;
+    --tw-ring-offset-shadow: 0 0 #0000;
 }

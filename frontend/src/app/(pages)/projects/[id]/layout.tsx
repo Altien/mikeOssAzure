@@ -1,13 +1,18 @@
-"use client";
-
 import type { ReactNode } from "react";
-import { ProjectWorkspaceLayout } from "@/app/components/projects/ProjectWorkspace";
+import { ProjectWorkspaceFromPath } from "./ProjectWorkspaceFromPath";
 
-// Static-export divergence (OSS-5): upstream's layout receives
-// `params: Promise<{id}>` and forwards it. Under `output: "export"` those
-// params are always the placeholder `"_"`, so `ProjectWorkspaceLayout`
-// derives the real project id from `usePathname()` instead — this client
-// layout just mounts the workspace provider around the section pages.
+// Static-export divergence (OSS-5 / OSS-6, decision 2): upstream's layout is
+// a client component that forwards `params: Promise<{id}>` to
+// `ProjectWorkspaceLayout`. Under `output: "export"` those params are always
+// the `"_"` placeholder, so this is a server layout that (a) declares the
+// placeholder shell via `generateStaticParams` for the whole `/projects/[id]`
+// subtree and (b) mounts `ProjectWorkspaceFromPath`, which feeds the real
+// project id (from `usePathname()`) into upstream's unchanged
+// `ProjectWorkspaceProvider`.
+export function generateStaticParams() {
+    return [{ id: "_" }];
+}
+
 export default function ProjectLayout({ children }: { children: ReactNode }) {
-    return <ProjectWorkspaceLayout>{children}</ProjectWorkspaceLayout>;
+    return <ProjectWorkspaceFromPath>{children}</ProjectWorkspaceFromPath>;
 }

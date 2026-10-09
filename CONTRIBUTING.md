@@ -26,26 +26,43 @@ issue against this repository letting us know. That way we can:
 If you are unsure whether a change is upstream-eligible, file an
 issue here first and we will help you triage.
 
-## System Workflows
+## Mike Workflows
 
-The canonical workflow sources are not stored in this repository. They live in
-the separate upstream repository
-[`Open-Legal-Products/mike-workflows`](https://github.com/Open-Legal-Products/mike-workflows).
-The generator expects that repository to be checked out beside this one, at
-the exact relative path `../mike-workflows/`, with system workflow sources in
-`../mike-workflows/system/`.
+System workflows live in the sibling
+[`Open-Legal-Products/mike-workflows`](https://github.com/Open-Legal-Products/mike-workflows)
+repository under `assistant-workflows/` and `tabular-review-workflows/`. Put
+structured metadata in the YAML frontmatter at the top of `SKILL.md`, put
+workflow instructions in the body of `SKILL.md`, and use `table-columns.yaml`
+for tabular review columns.
 
-**Regeneration is not supported in this dev fork.** Do not run
-`scripts/build-workflows.js`, even after cloning the sibling repository: dev
-kept the older generator while the adopted upstream workflow content moved to
-a newer source format. The script now exits with an intentional hard stop.
+How workflows reach users:
 
-Do not reconstruct missing workflow sources from the generated TypeScript and
-do not treat this repository as their source of truth. During an upstream
-merge conflict, preserve the checked-in `backend/src/lib/systemWorkflows.ts`.
-Regeneration may be restored only by deliberately adopting the canonical
-workflow sources, their current generator/source schema, and the deferred
-workflow engine as one complete unit.
+- **Defaults.** Five workflows are marked as defaults by the ingestion policy
+  in `backend/src/lib/workflowCatalogSource.ts`. The workflow sync job stores
+  that classification and the Quick Action settings in
+  `mike_workflows`; Postgres installs independent, editable copies for each
+  user on first use.
+- **Add-ons.** Every other workflow in the repository ships in the Add-ons
+  catalog. Users import an add-on as an independent, editable copy of the
+  workflow.
+- **Packs.** A directory with a `pack.yaml` groups its child workflow
+  directories into a pack shown together in the catalog. `pack.yaml` must list
+  exactly the workflow directories that exist under it — the build fails on
+  either a listed-but-missing or an unlisted workflow.
+- The `metadata.mike-availability` frontmatter key is deprecated and ignored:
+  the default/add-on split comes from `DEFAULT_WORKFLOWS`, not from the
+  workflow files. Existing files may keep the key; the ingestion parser
+  accepts it but does not use it for classification.
+
+The Azure `db-migrate` job applies numbered SQL and then ingests the catalogue
+before the backend revision is activated. The job resolves its configured source
+ref to a full commit, validates that archive, uploads references through the
+configured storage provider, and atomically replaces active database rows.
+History stays available for existing `builtin-*` links. Backend request handlers
+read the database and do not run a lazy source sync. The optional
+`scripts/build-workflows.js` only generates landing-site assets; it is no longer
+the backend runtime source.
+
 
 ## Reporting issues
 
@@ -88,6 +105,22 @@ This is a public repository. Do not commit:
 Use placeholders such as `<your-resource-group>` or
 `00000000-0000-0000-0000-000000000000` instead.
 
+## Frontend UI Work
+
+Before writing a new component, check whether one already exists. Look first in
+`frontend/src/app/components/ui/` (and `frontend/src/shared/ui/` for anything the
+Word add-in also renders), then in the [shadcn/ui](https://ui.shadcn.com)
+registry — the project is configured for it in `frontend/components.json`, so
+`npx shadcn@latest add <component>` lands a component in the right place with
+the right style and tokens. Write a one-off in the feature directory only when
+the markup is genuinely specific to that feature; once the same markup shows up
+in a second feature file, promote it into `components/ui/` with a test and
+replace the copies. Use the documented color, typography, spacing and radius
+tokens rather than raw hex values, and keep the accessibility baseline (visible
+focus ring, accessible name on icon-only controls, `type="button"`, ARIA state
+alongside color). See [docs/design-system.md](docs/design-system.md) for the
+tokens, the primitive inventory, and the full baseline.
+
 ## What "ready for review" looks like
 
 Before requesting review, please make sure:
@@ -102,20 +135,53 @@ Before requesting review, please make sure:
 - The PR description has a one-paragraph summary, a "test plan"
   section listing what you exercised, and any rollback / risk notes.
 
+## Migrations
+
+Nothing migrates on boot — several replicas can start against one database,
+so applying them is a deliberate step:
+
+```bash
+npm run migrate:local --prefix backend   # docker-compose Postgres
+npm run migrate:dev   --prefix backend   # any other DATABASE_URL
+```
+
+On startup the server compares the migrations in the build against the
+`pgmigrations` table and prints the names of any that are unapplied. It only
+reports: a schema behind the code otherwise fails later as an unrelated
+application error.
+
+## Backend dev logs
+
+`npm run dev --prefix backend` tees everything the server prints — including
+stack traces and unhandled rejections — to `backend/.tmp/backend-dev.log`,
+so a failed request can be read after the fact instead of being lost to a
+scrolled terminal:
+
+```bash
+tail -f backend/.tmp/backend-dev.log
+```
+
+The file appends across restarts and marks each run with a `===== dev start`
+separator; delete it when it gets long. Set `DEV_LOG_FILE` to write
+elsewhere, or use `npm run dev:nolog --prefix backend` for the previous
+console-only behaviour.
+
 ## Testing
 
-We are putting together a proper test suite over the coming weeks;
-until that lands, contributions should include a written test plan
-in the PR description describing how you exercised the change. Once
-the suite is in place this section will be updated with concrete
-expectations (which suites must pass, where to put new tests, fixture
-conventions).
+<!-- Upstream divergence (sync-log: 15b7b4c): upstream's Testing section also
+     lists a Playwright e2e suite, an evals harness, a Supabase-gated stack
+     suite and .github CI workflows; dev has none of those, so only the
+     applicable commands and policy are kept. -->
 
-In the meantime, the local docker stack
-(`docker-compose.dev.yml` plus `npm run dev --prefix backend` and
-`npm run dev --prefix frontend`) is the canonical "does it actually
-work" environment. Please exercise the golden path and at least one
-failure mode before opening a PR.
+```bash
+npm test --prefix backend            # backend unit + route integration tests (vitest)
+npm test --prefix frontend           # frontend component/hook tests (vitest + jsdom)
+```
+
+- New features and bug fixes should come with a test at the lowest layer that
+  can catch the regression: unit first, then route-level integration.
+- Tests that need a live service or an LLM key are env-gated and skip cleanly
+  when the environment is absent — a plain `npm test` should always be green.
 
 ## What gets refused without discussion
 

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { pillButtonUIClassName } from "@/shared/ui/PillButtonUI.styles";
 
 export default function NotFound() {
     return (
@@ -14,7 +15,10 @@ export default function NotFound() {
 
                 <Link
                     href="/"
-                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-medium text-white bg-gray-900 hover:bg-gray-700 transition-colors"
+                    className={pillButtonUIClassName({
+                        tone: "black",
+                        size: "normal",
+                    })}
                 >
                     Go home
                 </Link>

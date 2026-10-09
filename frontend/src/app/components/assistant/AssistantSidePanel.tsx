@@ -7,17 +7,19 @@ import {
     useState,
     type CSSProperties,
 } from "react";
-import { X } from "lucide-react";
-import { DocPanel, type DocPanelMode } from "../shared/DocPanel";
-import type {
-    CitationAnnotation,
-    EditAnnotation,
-} from "../shared/types";
-import {
-    CaseLawPanel,
-    type CaseTab,
-} from "./CaseLawPanel";
-import { cn } from "@/lib/utils";
+import { useDocumentViewers } from "@/app/hooks/useDocumentViewers";
+import { useDocumentPermissions } from "@/app/hooks/useDocumentPermissions";
+import { type DocumentActions } from "../shared/DocumentTabActions";
+import type { DocumentVersion } from "@/app/lib/mikeApi";
+import Image from "next/image";
+import { BookOpenText } from "lucide-react";
+import { DocumentContent, type DocumentContentMode } from "@/app/components/shared/DocumentContent";
+import { DocumentTabBar } from "../shared/DocumentTabBar";
+import type { Citation, EditAnnotation, PanelDocument } from "../shared/types";
+import { cn } from "@/app/lib/utils";
+import { LIQUID_GLASS_FLOAT_CLASS } from "@/app/components/ui/liquid-surface";
+import { AuthorityTracePanel } from "@/altien/authorityTrace/AuthorityTracePanel";
+import { reorderTabs, type TabDropPosition } from "@/app/lib/reorderTabs";
 
 // ---------------------------------------------------------------------------
 // Tab data
@@ -27,16 +29,12 @@ import { cn } from "@/lib/utils";
 //   - a document view (no specific annotation),
 //   - a single citation quote,
 //   - a single tracked change.
-// There is no selector UI inside the panel — the user picks what to view
-// by clicking a different tab (or opening a new one from a citation pill,
-// an EditCard's View button, or the download card).
+// Each document has one tab. Its shared title row selects the version;
+// citation pills and edit cards select the annotation within that tab.
 
 type CommonTab = {
     id: string;
-    documentId: string;
-    filename: string;
-    versionId: string | null;
-    versionNumber: number | null;
+    document: PanelDocument;
     warning?: string | null;
     initialScrollTop?: number | null;
 };
@@ -45,29 +43,119 @@ export type DocumentTab = CommonTab & { kind: "document" };
 
 export type CitationTab = CommonTab & {
     kind: "citation";
-    citation: CitationAnnotation;
+    citation: Citation;
 };
 
 export type EditTab = CommonTab & {
     kind: "edit";
     edit: EditAnnotation;
+    changeNumber?: number;
+};
+
+// Upstream divergence (OSS-6, §2.3 item 7): dev's Authority Trace tab
+// (panel from src/altien/authorityTrace), alongside upstream's case tab.
+export type AuthorityTraceTab = {
+    kind: "authority_trace";
+    id: string;
+    runId: string;
+    title: string;
 };
 
 export type AssistantSidePanelTab =
     | DocumentTab
     | CitationTab
     | EditTab
-    | CaseTab;
+    | AuthorityTraceTab;
+
+/** One tab per document; the title row selects the displayed version. */
+export function assistantSidePanelTabId(document: PanelDocument): string {
+    return document.document_id;
+}
+
+export function mergeAssistantSidePanelTab(
+    existing: AssistantSidePanelTab,
+    incoming: AssistantSidePanelTab,
+): AssistantSidePanelTab {
+    // Dev (sync-log: 972cf22): Authority Trace has no document/version.
+    if (existing.kind === "authority_trace" || incoming.kind === "authority_trace") return incoming;
+    if (
+        existing.id !== incoming.id ||
+        existing.document.version_id !== incoming.document.version_id ||
+        existing.document.version_number !== incoming.document.version_number
+    ) {
+        return incoming;
+    }
+    if (existing.kind === "document" && incoming.kind === "document") {
+        if (
+            incoming.document.subdocuments?.length &&
+            !existing.document.subdocuments?.length
+        ) {
+            return {
+                ...existing,
+                document: incoming.document,
+            };
+        }
+        return existing;
+    }
+    return {
+        ...incoming,
+        id: existing.id,
+        warning: existing.warning,
+        initialScrollTop: existing.initialScrollTop,
+    };
+}
+
+export function upsertAssistantSidePanelTab(
+    tabs: AssistantSidePanelTab[],
+    incoming: AssistantSidePanelTab,
+): AssistantSidePanelTab[] {
+    const index = tabs.findIndex((tab) => tab.id === incoming.id);
+    if (index < 0) return [...tabs, incoming];
+
+    const existing = tabs[index];
+    const merged = mergeAssistantSidePanelTab(existing, incoming);
+    if (merged === existing) return tabs;
+
+    const next = tabs.slice();
+    next[index] = merged;
+    return next;
+}
+
+export type AssistantTabDropPosition = TabDropPosition;
+
+export function reorderAssistantSidePanelTabs(
+    tabs: AssistantSidePanelTab[],
+    draggedTabId: string,
+    targetTabId: string,
+    position: AssistantTabDropPosition,
+): AssistantSidePanelTab[] {
+    return reorderTabs(
+        tabs,
+        draggedTabId,
+        targetTabId,
+        position,
+        (tab) => tab.id,
+    );
+}
 
 interface Props {
     tabs: AssistantSidePanelTab[];
+    /** Whether the viewer may edit the documents; read-only otherwise. */
+    canEdit?: boolean;
     activeTabId: string | null;
     onActivateTab: (id: string) => void;
     onCloseTab: (id: string) => void;
     onCloseAll: () => void;
+    onVersionChange?: (tabId: string, version: DocumentVersion) => void;
+    documentActions?: (document: PanelDocument) => DocumentActions;
+    onReorderTabs?: (
+        draggedTabId: string,
+        targetTabId: string,
+        position: AssistantTabDropPosition,
+    ) => void;
     /**
      * Parent-driven reloading flag per document. Download buttons in
-     * DocPanel show a spinner iff this returns true for the tab's
+     * DocumentContent show a spinner iff this returns true for the tab's
      * documentId. Used to signal "accept/reject in flight".
      */
     isEditorReloading?: (documentId: string) => boolean;
@@ -96,13 +184,22 @@ interface Props {
         message: string;
     }) => void;
     onWarningDismiss?: (tabId: string) => void;
+    /**
+     * Drops a tab back to a plain document view, dismissing the citation quote
+     * or tracked change shown above the viewer.
+     */
+    onCloseAnnotation?: (tabId: string) => void;
     onScrollChange?: (tabId: string, scrollTop: number) => void;
+    /**
+     * Offered when the panel has no tabs. Without it an empty panel renders
+     * nothing; with it the panel stays open on an "Open Documents" placeholder.
+     */
+    onOpenDocuments?: () => void;
 }
 
 const MIN_WIDTH = 300;
 const MAX_WIDTH_OFFSET = 56; // sidebar width
 const MIN_CHAT_WIDTH = 400;
-
 function maxPanelWidth() {
     if (typeof window === "undefined") return 600;
     return Math.max(
@@ -112,27 +209,34 @@ function maxPanelWidth() {
 }
 
 function tabTitle(tab: AssistantSidePanelTab): string {
-    if (tab.kind === "case") {
-        return tab.caseName || tab.citation || "Case";
-    }
-    return tab.filename;
+    if (tab.kind === "authority_trace") return tab.title;
+    return tab.document.title;
 }
 
 export function AssistantSidePanel({
     tabs,
+    canEdit = false,
     activeTabId,
     onActivateTab,
     onCloseTab,
     onCloseAll,
+    onVersionChange,
+    documentActions,
+    onReorderTabs,
     isEditorReloading,
     isEditReloading,
     onEditResolveStart,
     onEditResolved,
     onEditError,
     onWarningDismiss,
+    onCloseAnnotation,
     onScrollChange,
+    onOpenDocuments,
 }: Props) {
     const panelRef = useRef<HTMLDivElement>(null);
+    // Dev (sync-log: 972cf22): Authority Trace tabs carry no document.
+    const permissions = useDocumentPermissions(tabs.flatMap((tab) => tab.kind !== "authority_trace" && !["case", "legislation"].includes(tab.document.type) ? [tab.document.document_id] : []), canEdit);
+    const viewers = useDocumentViewers();
     const [panelWidth, setPanelWidth] = useState(() =>
         typeof window !== "undefined"
             ? Math.min(
@@ -144,7 +248,6 @@ export function AssistantSidePanel({
 
     const dragStartX = useRef<number>(0);
     const dragStartWidth = useRef<number>(0);
-
     const onMouseDown = useCallback(
         (e: React.MouseEvent) => {
             e.preventDefault();
@@ -188,18 +291,22 @@ export function AssistantSidePanel({
     }, []);
 
     const active = tabs.find((t) => t.id === activeTabId) ?? tabs[0] ?? null;
-    if (!active) return null;
+    if (!active && !onOpenDocuments) return null;
 
     return (
         <div
             ref={panelRef}
             className={cn(
                 "relative flex h-full w-full shrink-0 flex-col md:my-3 md:mr-3 md:h-[calc(100%-1.5rem)] md:w-[var(--assistant-panel-width)]",
-                "rounded-2xl border border-white/70 bg-white shadow-[0_6px_18px_rgba(15,23,42,0.08),inset_0_1px_0_rgba(255,255,255,0.9),inset_0_-10px_24px_rgba(255,255,255,0.18),inset_1px_0_0_rgba(255,255,255,0.5)] backdrop-blur-2xl overflow-hidden",
+                "rounded-2xl",
+                LIQUID_GLASS_FLOAT_CLASS,
+                "overflow-hidden",
             )}
-            style={{
-                "--assistant-panel-width": `${panelWidth}px`,
-            } as CSSProperties}
+            style={
+                {
+                    "--assistant-panel-width": `${panelWidth}px`,
+                } as CSSProperties
+            }
         >
             {/* Drag handle */}
             <div
@@ -211,93 +318,90 @@ export function AssistantSidePanel({
                 style={{ marginLeft: -2 }}
             />
 
-            {/* Tab strip (Chrome-style) */}
-            <div
-                className={cn(
-                    "flex items-end gap-1 px-1 pt-2",
-                    "bg-gray-200/80",
-                )}
-            >
-                <div className="flex-1 flex items-end gap-1 overflow-hidden px-2">
-                    {tabs.map((tab) => {
-                        const isActive = tab.id === active.id;
-                        const showVersionBadge =
-                            tab.kind !== "case" &&
-                            typeof tab.versionNumber === "number" &&
-                            Number.isFinite(tab.versionNumber) &&
-                            tab.versionNumber > 1;
-                        const title = tabTitle(tab);
-                        return (
-                            <div
-                                key={tab.id}
-                                onClick={() => onActivateTab(tab.id)}
-                                className={cn(
-                                    "group relative flex items-center gap-1.5 pl-3 pr-1.5 h-8 min-w-0 max-w-[220px] rounded-t-lg cursor-pointer select-none transition-colors",
-                                    isActive
-                                        ? "z-20 bg-white text-gray-800 before:content-[''] before:absolute before:bottom-0 before:-left-2 before:z-20 before:h-2 before:w-2 before:rounded-br-lg before:shadow-[4px_4px_0_4px_white] before:transition-shadow after:content-[''] after:absolute after:bottom-0 after:-right-2 after:z-20 after:h-2 after:w-2 after:rounded-bl-lg after:shadow-[-4px_4px_0_4px_white] after:transition-shadow"
-                                        : "z-10 bg-gray-100 text-gray-600 hover:bg-gray-100 before:content-[''] before:absolute before:bottom-0 before:-left-2 before:h-2 before:w-2 before:rounded-br-lg before:shadow-[4px_4px_0_4px_#f3f4f6] before:transition-shadow after:content-[''] after:absolute after:bottom-0 after:-right-2 after:h-2 after:w-2 after:rounded-bl-lg after:shadow-[-4px_4px_0_4px_#f3f4f6] after:transition-shadow",
-                                )}
-                            >
-                                <span
-                                    className={`min-w-0 flex-1 truncate text-xs ${isActive ? "font-medium" : "font-normal"}`}
-                                    title={title}
-                                >
-                                    {title}
-                                </span>
-                                {showVersionBadge && (
-                                    <span
-                                        className={`shrink-0 inline-flex items-center rounded border px-1 py-px text-[9px] font-medium ${
-                                            isActive
-                                                ? "border-gray-200 bg-white text-gray-600"
-                                                : "border-gray-300 bg-white/70 text-gray-500"
-                                        }`}
-                                    >
-                                        V{tab.versionNumber}
-                                    </span>
-                                )}
-                                <button
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        onCloseTab(tab.id);
-                                    }}
-                                    className="shrink-0 rounded-full p-0.5 text-gray-400 hover:text-gray-700"
-                                >
-                                    <X className="h-3 w-3" />
-                                </button>
-                            </div>
-                        );
-                    })}
-                </div>
-                <button
-                    onClick={onCloseAll}
-                    className="shrink-0 mb-1 ml-1 rounded-lg p-1.5 text-gray-400 hover:text-gray-700"
-                    title="Close panel"
-                >
-                    <X className="h-4 w-4" />
-                </button>
-            </div>
+            <DocumentTabBar
+                label="Assistant documents"
+                idPrefix="assistant-document"
+                activeTabId={active?.id ?? null}
+                onActivate={onActivateTab}
+                onClose={(id) => viewers.requestClose([id], () => onCloseTab(id))}
+                onClosePanel={() => viewers.requestClose(tabs.map((tab) => tab.id), onCloseAll)}
+                onAdd={onOpenDocuments}
+                addLabel="Open Documents"
+                onReorder={onReorderTabs}
+                tabs={tabs.map((tab) => {
+                    // Dev (sync-log: 972cf22): Authority Trace tab has no
+                    // document actions, version or file-type icon.
+                    if (tab.kind === "authority_trace") {
+                        return { id: tab.id, title: tabTitle(tab) };
+                    }
+                    const isLegalSource =
+                        tab.document.type === "case" ||
+                        tab.document.type === "legislation";
+                    const actions = isLegalSource
+                        ? undefined
+                        : documentActions?.(tab.document);
+                    return {
+                        id: tab.id,
+                        title: tab.document.title,
+                        versionNumber: tab.document.version_number,
+                        icon: isLegalSource ? (
+                            <Image
+                                src={
+                                    tab.document.type === "case"
+                                        ? "/icons/legal-sources/case-law.svg"
+                                        : "/icons/legal-sources/legislation.svg"
+                                }
+                                alt=""
+                                aria-hidden="true"
+                                width={14}
+                                height={14}
+                                className="h-3.5 w-3.5 shrink-0 object-contain"
+                            />
+                        ) : undefined,
+                        actions: {
+                            ...actions,
+                            onRename: permissions(tab.document.document_id).canEdit ? actions?.onRename : undefined,
+                            onDownload: isLegalSource ? undefined : () => viewers.download(tab.id, tab.document.document_id, tab.document.version_id, tab.document.title),
+                            onDelete: permissions(tab.document.document_id).canDelete ? actions?.onDelete : undefined,
+                        },
+                    };
+                })}
+            />
 
             {/* Tab bodies — all mounted, inactive ones hidden. Each tab
-                preserves its state (scroll, docx-preview render, etc.)
+                preserves its state (scroll, DOCX renderer, etc.)
                 when inactive. */}
             <div className="flex-1 min-h-0 relative">
+                {!active && onOpenDocuments ? (
+                    <div className="flex h-full items-center justify-center">
+                        <button
+                            type="button"
+                            onClick={onOpenDocuments}
+                            className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium text-gray-500 transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                        >
+                            <BookOpenText aria-hidden="true" className="h-4 w-4" />
+                            Open Documents
+                        </button>
+                    </div>
+                ) : null}
                 {tabs.map((tab) => {
-                    const isActive = tab.id === active.id;
-                    if (tab.kind === "case") {
+                    const isActive = tab.id === active?.id;
+                    if (tab.kind === "authority_trace") {
                         return (
                             <div
                                 key={tab.id}
+                                role="tabpanel"
+                                id={`assistant-document-panel-${tab.id}`}
+                                aria-labelledby={`assistant-document-tab-${tab.id}`}
                                 className={`absolute inset-0 flex flex-col ${isActive ? "" : "invisible pointer-events-none"}`}
                                 aria-hidden={!isActive}
+                                inert={!isActive}
                             >
-                                <CaseLawPanel
-                                    tab={tab}
-                                    compactActions={panelWidth < 600}
-                                />
+                                <AuthorityTracePanel runId={tab.runId} />
                             </div>
                         );
                     }
-                    const mode: DocPanelMode =
+                    const mode: DocumentContentMode =
                         tab.kind === "citation"
                             ? {
                                   kind: "citation",
@@ -307,6 +411,7 @@ export function AssistantSidePanel({
                               ? {
                                     kind: "edit",
                                     edit: tab.edit,
+                                    changeNumber: tab.changeNumber,
                                     isEditReloading:
                                         isEditReloading?.(tab.edit.edit_id) ??
                                         false,
@@ -318,21 +423,40 @@ export function AssistantSidePanel({
                     return (
                         <div
                             key={tab.id}
+                            role="tabpanel"
+                            id={`assistant-document-panel-${tab.id}`}
+                            aria-labelledby={`assistant-document-tab-${tab.id}`}
                             className={`absolute inset-0 flex flex-col ${isActive ? "" : "invisible pointer-events-none"}`}
                             aria-hidden={!isActive}
+                            inert={!isActive}
                         >
-                            <DocPanel
-                                documentId={tab.documentId}
-                                filename={tab.filename}
-                                versionId={tab.versionId}
-                                versionNumber={tab.versionNumber}
+                            <DocumentContent
+                                showToolbarToggle
+                                canEdit={permissions(tab.document.document_id).canEdit}
+                                onDownloadReady={(download) => viewers.registerDownload(tab.id, download)}
+                                onCloseGuardReady={(guard) => viewers.registerCloseGuard(tab.id, guard)}
+                                active={isActive}
+                                onVersionChange={
+                                    onVersionChange
+                                        ? (version) =>
+                                              viewers.requestClose([tab.id], () => onVersionChange(tab.id, version))
+                                        : undefined
+                                }
+                                document={tab.document}
                                 mode={mode}
                                 isReloading={
-                                    isEditorReloading?.(tab.documentId) ?? false
+                                    isEditorReloading?.(
+                                        tab.document.document_id,
+                                    ) ?? false
                                 }
                                 warning={tab.warning ?? null}
                                 onWarningDismiss={() =>
                                     onWarningDismiss?.(tab.id)
+                                }
+                                onCloseAnnotation={
+                                    tab.kind !== "document" && onCloseAnnotation
+                                        ? () => onCloseAnnotation(tab.id)
+                                        : undefined
                                 }
                                 initialScrollTop={tab.initialScrollTop ?? null}
                                 onScrollChange={(scrollTop) =>
@@ -343,6 +467,7 @@ export function AssistantSidePanel({
                     );
                 })}
             </div>
+            {viewers.confirmation}
         </div>
     );
 }

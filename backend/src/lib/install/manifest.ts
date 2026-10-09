@@ -260,6 +260,28 @@ const items: ManifestItem[] = [
         },
     },
     {
+        // Upstream 2f30082a added direct Mistral models with per-user keys;
+        // Dev keeps it an organisation credential in Key Vault.
+        id: "ai-mistral-key",
+        label: "Mistral AI API key",
+        section: "AI providers",
+        required: false,
+        check: () => checkKvSecret("mistral-api-key", { redacted: true }),
+        fixedBy: {
+            type: "in-app-form",
+            submitTo: "kv",
+            fields: [{
+                name: "mistral-api-key",
+                label: "Mistral AI API key",
+                type: "password",
+                required: true,
+                helpText:
+                    "Organisation-wide key for direct Mistral models. " +
+                    "Create one in Mistral Studio (console.mistral.ai).",
+            }],
+        },
+    },
+    {
         id: "ai-gemini-key",
         label: "Google Gemini API key",
         section: "AI providers",
@@ -303,6 +325,24 @@ const items: ManifestItem[] = [
                 required: true,
                 pattern: "^sk-or-.+",
                 helpText: "Organisation-wide OpenRouter key shared by this Mike installation. Get one at openrouter.ai → Keys.",
+            }],
+        },
+    },
+    {
+        id: "ai-opencode-go-key",
+        label: "OpenCode Go API key",
+        section: "AI providers",
+        required: false,
+        check: () => checkKvSecret("opencode-api-key", { redacted: true }),
+        fixedBy: {
+            type: "in-app-form",
+            submitTo: "kv",
+            fields: [{
+                name: "opencode-api-key",
+                label: "OpenCode Go API key",
+                type: "password",
+                required: true,
+                helpText: "Organisation-wide OpenCode Go key shared by this Mike installation.",
             }],
         },
     },

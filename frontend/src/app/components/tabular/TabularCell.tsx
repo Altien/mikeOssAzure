@@ -8,12 +8,22 @@ import type { ColumnConfig, TabularCell as TCell } from "../shared/types";
 import { preprocessCitations, type ParsedCitation } from "./citation-utils";
 import { getPillClass } from "./pillUtils";
 import { SkeletonLine } from "../shared/TablePrimitive";
+import { TRExpandedCellSurface } from "./TRExpandedCellSurface";
+import { CitationPillUI } from "@/shared/ui/CitationPillUI";
 
 interface Props {
     cell: TCell;
     column?: ColumnConfig;
+    closeSignal?: number;
     onExpand: () => void;
-    onCitationClick?: (page: number, quote: string) => void;
+    onCitationClick?: (
+        page: number | undefined,
+        quote: string,
+        citationRef: number,
+        sheet?: string,
+        cell?: string,
+        documentId?: string,
+    ) => void;
 }
 
 const FLAG_STYLES = {
@@ -25,7 +35,7 @@ const FLAG_STYLES = {
 
 function TabularCellSkeleton() {
     return (
-        <div className="flex h-10 items-center px-2">
+        <div className="flex h-8 items-center px-2">
             <SkeletonLine className="h-3.5 w-full" />
         </div>
     );
@@ -62,7 +72,14 @@ function CellMarkdown({
     citations: ParsedCitation[];
     pills: string[];
     column?: ColumnConfig;
-    onCitationClick?: (page: number, quote: string) => void;
+    onCitationClick?: (
+        page: number | undefined,
+        quote: string,
+        citationRef: number,
+        sheet?: string,
+        cell?: string,
+        documentId?: string,
+    ) => void;
     onExpand: () => void;
     inline?: boolean;
 }) {
@@ -106,23 +123,27 @@ function CellMarkdown({
                         const citation = citations[idx];
                         if (citation) {
                             return (
-                                <span
-                                    title={`Page ${citation.page}: "${citation.quote}"`}
+                                <CitationPillUI
+                                    title={`${formatCitationLocation(citation)}: "${citation.quote}"`}
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         if (onCitationClick) {
                                             onCitationClick(
                                                 citation.page,
                                                 citation.quote,
+                                                idx + 1,
+                                                citation.sheet,
+                                                citation.cell,
+                                                citation.documentId,
                                             );
                                         } else {
                                             onExpand();
                                         }
                                     }}
-                                    className="mx-0.5 inline-flex items-center justify-center rounded-full bg-gray-200 w-3.5 h-3.5 text-[9px] font-medium text-gray-700 align-super cursor-pointer hover:bg-gray-300 transition-colors"
+                                    className="mx-0.5 align-super"
                                 >
                                     {idx + 1}
-                                </span>
+                                </CitationPillUI>
                             );
                         }
                     }
@@ -155,14 +176,28 @@ function CellMarkdown({
     );
 }
 
+function formatCitationLocation(citation: ParsedCitation): string {
+    if (citation.sheet && citation.cell) {
+        return `${citation.sheet}!${citation.cell}`;
+    }
+    return `Page ${citation.page ?? 1}`;
+}
+
 export function TabularCell({
     cell,
     column,
+    closeSignal,
     onExpand,
     onCitationClick,
 }: Props) {
     const [inlineExpanded, setInlineExpanded] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (closeSignal === undefined) return;
+        const timeout = window.setTimeout(() => setInlineExpanded(false), 0);
+        return () => window.clearTimeout(timeout);
+    }, [closeSignal]);
 
     useEffect(() => {
         if (!inlineExpanded) return;
@@ -185,14 +220,14 @@ export function TabularCell({
 
     if (cell.status === "error") {
         return (
-            <div className="h-10 flex items-center justify-center text-gray-300">
+            <div className="h-8 flex items-center justify-center text-gray-300">
                 <AlertCircle className="h-4 w-4 text-red-300" />
             </div>
         );
     }
 
     if (!cell.content?.summary) {
-        return <div className="h-10" />;
+        return <div className="h-8" />;
     }
 
     const { processed, citations, pills } = preprocessCellMarkdown(
@@ -202,9 +237,23 @@ export function TabularCell({
     const firstLine = processed.split("\n").find((l) => l.trim()) ?? processed;
     const collapsedDisplay = firstLine.replace(/^[-*•]\s+/, "");
 
-    function handleCitationClickInOverlay(page: number, quote: string) {
+    function handleCitationClickInOverlay(
+        page: number | undefined,
+        quote: string,
+        citationRef: number,
+        sheet?: string,
+        citationCell?: string,
+        documentId?: string,
+    ) {
         setInlineExpanded(false);
-        onCitationClick?.(page, quote);
+        onCitationClick?.(
+            page,
+            quote,
+            citationRef,
+            sheet,
+            citationCell,
+            documentId,
+        );
     }
 
     function handleSeeDetails() {
@@ -216,7 +265,7 @@ export function TabularCell({
         <div ref={containerRef} className="relative">
             {/* Normal cell row — always visible, preserves table layout */}
             <div
-                className="group relative h-10 px-2 flex items-center text-xs text-gray-800 leading-relaxed cursor-pointer hover:bg-gray-50 transition-colors"
+                className="group relative h-8 px-2 flex items-center text-xs text-gray-800 leading-relaxed cursor-pointer hover:bg-gray-50 transition-colors"
                 onClick={() => setInlineExpanded((v) => !v)}
             >
                 {cell.content.flag && (
@@ -240,7 +289,7 @@ export function TabularCell({
 
             {/* Inline expanded overlay — absolutely positioned so it overlays without disrupting table layout */}
             {inlineExpanded && (
-                <div className="absolute left-0 top-0 z-50 w-full bg-white border border-gray-200 shadow-lg rounded-sm">
+                <TRExpandedCellSurface>
                     <div className="relative p-2 pr-4 text-xs text-gray-800 leading-relaxed">
                         {cell.content.flag && (
                             <span
@@ -266,7 +315,7 @@ export function TabularCell({
                             See details
                         </button>
                     </div>
-                </div>
+                </TRExpandedCellSurface>
             )}
         </div>
     );

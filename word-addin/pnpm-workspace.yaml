@@ -1,0 +1,17 @@
+# Standalone pnpm project (like frontend/ and backend/): this file makes
+# word-addin/ its own pnpm root so installs never resolve against a parent
+# directory's workspace.
+# Build scripts of office-addin-debugging's transitive deps are not needed
+# for the dev server / sideload flow.
+allowBuilds:
+  '@azure/msal-node-extensions': false
+  '@microsoft/m365agentstoolkit-cli': false
+  '@microsoft/teamsapp-cli': false
+  keytar: false
+overrides:
+  # Development-only MCP SDK (office-addin-debugging -> teamsfx-core): hold
+  # the advisory-patched line (upstream's npm override, 54b6b3a1/57009979).
+  '@modelcontextprotocol/sdk': ^1.32.0
+  # GHSA-8r5x-fm3f-whwj / GHSA-p8wg-vrv2-v86f (critical, handlebars <=4.7.9),
+  # reached only through the same development sideload tooling.
+  handlebars: ^4.7.10

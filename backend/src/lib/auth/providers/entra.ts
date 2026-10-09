@@ -1,5 +1,4 @@
 import { createPublicKey, createVerify } from "node:crypto";
-import type { JsonWebKey } from "node:crypto";
 import type { AuthValidationResult } from "../types.js";
 import { getConfig } from "../../config.js";
 

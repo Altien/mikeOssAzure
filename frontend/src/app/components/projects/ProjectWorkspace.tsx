@@ -3,6 +3,7 @@
 import {
     createContext,
     type ReactNode,
+    use,
     useCallback,
     useContext,
     useEffect,
@@ -10,40 +11,87 @@ import {
     useRef,
     useState,
 } from "react";
-import {
-    usePathname,
-    useRouter,
-    useSelectedLayoutSegments,
-} from "next/navigation";
+import { useRouter, useSelectedLayoutSegments } from "next/navigation";
+import { ChevronLeft } from "lucide-react";
 import {
     createTabularReview,
     deleteProject,
     getProject,
+    getProjectAccess,
     getProjectPeople,
+    grantProjectAccess,
     listProjectChats,
-    listTabularReviews,
+    revokeProjectAccess,
     updateProject,
+    type ProjectGrant,
 } from "@/app/lib/mikeApi";
 import type {
     Chat,
     ColumnConfig,
     Folder as ProjectFolder,
     Project,
-    TabularReview,
 } from "@/app/components/shared/types";
 import { TableToolbar } from "@/app/components/shared/TableToolbar";
-import { AddNewTRModal } from "@/app/components/tabular/AddNewTRModal";
-import { ConfirmPopup } from "@/app/components/shared/ConfirmPopup";
-import { OwnerOnlyModal } from "@/app/components/shared/OwnerOnlyModal";
-import { PeopleModal } from "@/app/components/shared/PeopleModal";
-import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
-import { useAuth } from "@/contexts/AuthContext";
-import { useUserProfile } from "@/contexts/UserProfileContext";
+import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
+import { NewTRModal } from "@/app/components/tabular/NewTRModal";
+import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
+import {
+    PermissionDeniedPopup,
+    type AccessContact,
+} from "@/app/components/popups/PermissionDeniedPopup";
+import { AccessModal } from "@/app/components/modals/AccessModal";
+import { useAuth } from "@/app/contexts/AuthContext";
+import {
+    type Capability,
+    type ProjectRole,
+    can,
+    roleFromLoaded,
+} from "@/app/lib/permissions";
 import { ProjectDetailsModal } from "./ProjectDetailsModal";
+import { ProjectMemoryModal } from "./ProjectMemoryModal";
 import {
     ProjectPageHeader,
     type ProjectWorkspaceSection,
 } from "./ProjectPageParts";
+
+/**
+ * A denied action: the sentence for the popup plus which role the action is
+ * reserved for. A plain string means the strictest tier, admin.
+ *
+ * The third shape is for rules that are not rungs on the ladder at all — the
+ * server asks "did you create this row?", which no role can answer for you.
+ * Those carry their own sentence, and deliberately offer nobody to ask,
+ * because there is nobody who could grant it.
+ */
+export type OwnerGate =
+    | string
+    | { action: string; requiredRole: "owner" | "editor" }
+    | { title?: string; message: string };
+
+/**
+ * Turn a gate into `PermissionDeniedPopup` props, so every surface renders
+ * the same gate the same way instead of re-deriving `requiredRole` inline.
+ */
+export function permissionDeniedProps(
+    gate: OwnerGate | null,
+    contacts?: AccessContact[] | null,
+) {
+    if (gate && typeof gate === "object" && "message" in gate) {
+        return {
+            open: true,
+            title: gate.title,
+            message: gate.message,
+            contacts: null,
+        };
+    }
+    return {
+        open: !!gate,
+        action: typeof gate === "string" ? gate : gate?.action,
+        requiredRole:
+            typeof gate === "string" ? ("owner" as const) : gate?.requiredRole,
+        contacts,
+    };
+}
 
 type ProjectWorkspaceValue = {
     projectId: string;
@@ -59,18 +107,31 @@ type ProjectWorkspaceValue = {
     setProjectChats: React.Dispatch<React.SetStateAction<Chat[] | null>>;
     projectChatsLoading: boolean;
     ensureProjectChats: () => Promise<Chat[]>;
-    projectReviews: TabularReview[] | null;
-    setProjectReviews: React.Dispatch<
-        React.SetStateAction<TabularReview[] | null>
-    >;
-    projectReviewsLoading: boolean;
-    ensureProjectReviews: () => Promise<TabularReview[]>;
     prefetchProjectSections: () => void;
-    creatingChat: boolean;
     creatingReview: boolean;
-    createChat: () => Promise<void>;
+    createChat: () => void;
     openNewReview: () => void;
-    setOwnerOnlyAction: React.Dispatch<React.SetStateAction<string | null>>;
+    setDocumentUploadHeaderAction: (
+        kind: "savedFiles" | "uploadFiles" | "uploadFolder",
+        action: (() => void) | null,
+    ) => void;
+    setDocumentFolderBreadcrumbs: React.Dispatch<
+        React.SetStateAction<Array<{ label: string; onClick: () => void }>>
+    >;
+    setOwnerOnlyAction: React.Dispatch<React.SetStateAction<OwnerGate | null>>;
+    /**
+     * The caller's role on this project, or `null` while the project row is
+     * still in flight — an explicit "not known yet", never a guess. Surfaces
+     * that render an affordance should disable it while this is null rather
+     * than assume either answer.
+     */
+    accessRole: ProjectRole | null;
+    /**
+     * Capability check against the caller's role — mirror of the server.
+     * Answers `false` while the role is unknown, so a gated affordance is
+     * closed until the server has told us it may open.
+     */
+    canDo: (capability: Capability) => boolean;
 };
 
 const ProjectWorkspaceContext =
@@ -86,10 +147,6 @@ export function useProjectWorkspace() {
     return value;
 }
 
-export function useProjectWorkspaceOptional() {
-    return useContext(ProjectWorkspaceContext);
-}
-
 function activeSectionFromSegments(
     segments: string[],
 ): ProjectWorkspaceSection {
@@ -100,6 +157,7 @@ function activeSectionFromSegments(
 
 function shouldShowWorkspaceShell(segments: string[]) {
     if (segments.length === 0) return true;
+    if (segments.length === 2 && segments[0] === "folders") return true;
     if (segments.length !== 1) return false;
     return segments[0] === "assistant" || segments[0] === "tabular-reviews";
 }
@@ -118,43 +176,72 @@ export function ProjectWorkspaceProvider({
         Record<ProjectWorkspaceSection, string>
     >({ documents: "", assistant: "", reviews: "" });
     const [projectChats, setProjectChats] = useState<Chat[] | null>(null);
-    const [projectReviews, setProjectReviews] = useState<
-        TabularReview[] | null
-    >(null);
     const [projectChatsLoading, setProjectChatsLoading] = useState(false);
-    const [projectReviewsLoading, setProjectReviewsLoading] = useState(false);
-    const [peopleModalOpen, setPeopleModalOpen] = useState(false);
+    const [accessModalOpen, setAccessModalOpen] = useState(false);
+    // Direct access grants, loaded only when the share dialog is opened: every
+    // project page would otherwise pay for a roster nobody looked at.
+    const [grants, setGrants] = useState<ProjectGrant[] | null>(null);
     const [projectDetailsOpen, setProjectDetailsOpen] = useState(false);
-    const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
+    const [projectMemoryOpen, setProjectMemoryOpen] = useState(false);
+    const [ownerOnlyAction, setOwnerOnlyAction] = useState<OwnerGate | null>(
+        null,
+    );
     const [deleteProjectConfirmOpen, setDeleteProjectConfirmOpen] =
         useState(false);
     const [deleteProjectStatus, setDeleteProjectStatus] = useState<
         "idle" | "deleting" | "deleted"
     >("idle");
     const [newTRModalOpen, setNewTRModalOpen] = useState(false);
-    const [creatingChat, setCreatingChat] = useState(false);
     const [creatingReview, setCreatingReview] = useState(false);
-
+    const [documentUploadActions, setDocumentUploadActions] = useState<{
+        savedFiles: (() => void) | null;
+        uploadFiles: (() => void) | null;
+        uploadFolder: (() => void) | null;
+    }>({ savedFiles: null, uploadFiles: null, uploadFolder: null });
+    const [documentFolderBreadcrumbs, setDocumentFolderBreadcrumbs] = useState<
+        Array<{ label: string; onClick: () => void }>
+    >([]);
     const segments = useSelectedLayoutSegments();
     const activeSection = activeSectionFromSegments(segments);
     const showShell = shouldShowWorkspaceShell(segments);
     const router = useRouter();
     const { user } = useAuth();
-    const { profile } = useUserProfile();
-    const { saveChat } = useChatHistoryContext();
     const projectChatsPromiseRef = useRef<Promise<Chat[]> | null>(null);
-    const projectReviewsPromiseRef = useRef<Promise<TabularReview[]> | null>(
-        null,
-    );
 
     useEffect(() => {
+        // A new projectId is a new answer to "who am I here?". This provider
+        // lives in the [id] layout, which the App Router keeps mounted across
+        // dynamic-param navigation — so without this reset the PREVIOUS
+        // project's row, and therefore its role, stays live for the whole
+        // fetch window. An admin of project A navigating into project B they
+        // can only view kept admin affordances (Delete included) until B's
+        // row arrived: `roleKnown` was true, so nothing was disabled and
+        // `denyUnlessLoading` never suppressed a thing. Unknown-while-loading
+        // only protects anyone if loading actually starts from unknown.
+        setProject(null);
+        setFolders([]);
         setProjectChats(null);
-        setProjectReviews(null);
         setProjectChatsLoading(false);
-        setProjectReviewsLoading(false);
+        setDocumentFolderBreadcrumbs([]);
         projectChatsPromiseRef.current = null;
-        projectReviewsPromiseRef.current = null;
     }, [projectId]);
+
+    const setDocumentUploadHeaderAction = useCallback(
+        (
+            kind: "savedFiles" | "uploadFiles" | "uploadFolder",
+            action: (() => void) | null,
+        ) => {
+            setDocumentUploadActions((current) => ({
+                ...current,
+                [kind]: action,
+            }));
+        },
+        [],
+    );
+
+    const openProjectRoot = useCallback(() => {
+        router.push(`/projects/${projectId}`);
+    }, [projectId, router]);
 
     useEffect(() => {
         if (!showShell) {
@@ -217,77 +304,111 @@ export function ProjectWorkspaceProvider({
         return promise;
     }, [projectChats, projectId]);
 
-    const ensureProjectReviews = useCallback(() => {
-        if (projectReviews) return Promise.resolve(projectReviews);
-        if (projectReviewsPromiseRef.current)
-            return projectReviewsPromiseRef.current;
-
-        setProjectReviewsLoading(true);
-        const promise = listTabularReviews(projectId)
-            .then((loaded) => {
-                setProjectReviews(loaded);
-                return loaded;
-            })
-            .catch((error) => {
-                console.error("[project reviews] failed to load", error);
-                setProjectReviews([]);
-                return [];
-            })
-            .finally(() => {
-                projectReviewsPromiseRef.current = null;
-                setProjectReviewsLoading(false);
-            });
-        projectReviewsPromiseRef.current = promise;
-        return promise;
-    }, [projectId, projectReviews]);
+    // The memory dialog owns its own reads and writes; this keeps the loaded
+    // project row agreeing with them.
+    const syncProjectMemoryEnabled = useCallback((enabled: boolean) => {
+        // Called on every memory load and poll; only a real change may
+        // produce a new project object, or the whole workspace re-renders
+        // every few seconds while a curator runs.
+        setProject((current) =>
+            current && current.memory_enabled !== enabled
+                ? { ...current, memory_enabled: enabled }
+                : current,
+        );
+    }, []);
 
     const prefetchProjectSections = useCallback(() => {
         void ensureProjectChats();
-        void ensureProjectReviews();
-    }, [ensureProjectChats, ensureProjectReviews]);
+    }, [ensureProjectChats]);
 
-    const createChat = useCallback(async () => {
-        setCreatingChat(true);
+    // Role derived from the loaded project. Until it arrives the role is
+    // *unknown* — not "admin", which is what this used to assume so the shell
+    // would not flash disabled controls. Assuming the top of the ladder while
+    // waiting means every gate stands open during the window in which we know
+    // least, and a viewer who clicks Delete in that window gets a confirmation
+    // dialog for an action the server will refuse. Unknown is its own answer:
+    // `canDo` says no, affordances stay disabled, and no refusal popup accuses
+    // the user of lacking a role we have not looked up yet.
+    const accessRole: ProjectRole | null = roleFromLoaded(project);
+    const roleKnown = accessRole !== null;
+    const canDo = useCallback(
+        (capability: Capability) => can(accessRole, capability),
+        [accessRole],
+    );
+    /**
+     * Refuse an action, explaining only when we can. While the role is
+     * unknown the caller is not told "only an admin can do this" — we do not
+     * know that they are not one — the click simply does nothing, because the
+     * control that produced it is disabled anyway.
+     */
+    const denyUnlessLoading = useCallback(
+        (gate: OwnerGate) => {
+            if (roleKnown) setOwnerOnlyAction(gate);
+        },
+        [roleKnown],
+    );
+
+    const refreshGrants = useCallback(async () => {
         try {
-            const id = await saveChat(projectId);
-            if (id) {
-                const now = new Date().toISOString();
-                setProjectChats((prev) =>
-                    prev
-                        ? [
-                              {
-                                  id,
-                                  project_id: projectId,
-                                  user_id: user?.id ?? "",
-                                  creator_display_name:
-                                      profile?.displayName ?? null,
-                                  title: null,
-                                  created_at: now,
-                              },
-                              ...prev,
-                          ]
-                        : prev,
-                );
-                router.push(`/projects/${projectId}/assistant/chat/${id}`);
-            }
-        } finally {
-            setCreatingChat(false);
+            const access = await getProjectAccess(projectId);
+            setGrants(access.grants);
+        } catch (error) {
+            console.error("[project workspace] failed to load access", error);
+            setGrants([]);
         }
-    }, [profile?.displayName, projectId, router, saveChat, user?.id]);
+    }, [projectId]);
+
+    useEffect(() => {
+        setGrants(null);
+    }, [projectId]);
+
+    useEffect(() => {
+        // The grant list is the management surface and the server now only
+        // serves it at access.manage — the Access modal's role pickers, its
+        // one consumer, render only at that tier anyway. Below admin the
+        // modal shows the /people roster, so there is nothing to fetch and
+        // no point collecting a 403 on every open.
+        if (accessModalOpen && grants === null && canDo("access.manage"))
+            void refreshGrants();
+    }, [accessModalOpen, grants, refreshGrants, canDo]);
+
+    const createChat = useCallback(() => {
+        if (!canDo("content.edit")) {
+            denyUnlessLoading({ action: "create a chat", requiredRole: "editor" });
+            return;
+        }
+        router.push(`/projects/${projectId}/assistant/chat`);
+    }, [projectId, router, canDo, denyUnlessLoading]);
 
     const openNewReview = useCallback(() => {
-        const readyDocs =
-            project?.documents?.filter((d) => d.status === "ready") ?? [];
-        if (readyDocs.length === 0) return;
+        // Creating a review is member-tier server-side (POST /tabular-review
+        // gates on content.edit) — stop viewers before the modal, not after
+        // an unexplained failed submit.
+        if (!canDo("content.edit")) {
+            denyUnlessLoading({
+                action: "create a tabular review",
+                requiredRole: "editor",
+            });
+            return;
+        }
         setNewTRModalOpen(true);
-    }, [project?.documents]);
+    }, [canDo, denyUnlessLoading]);
 
     async function handleCreateReview(
         title: string,
-        _projectId?: string,
-        documentIds?: string[],
-        columnsConfig?: ColumnConfig[] | null,
+        _projectId: string | undefined,
+        documentIds: string[] | undefined,
+        columnsConfig: ColumnConfig[] | null | undefined,
+        documentGrouping: "document" | "folder" | undefined,
+        model: string,
+        _accessAssignments: {
+            email: string;
+            role: import("@/app/lib/mikeApi").AccessAssignmentRole;
+        }[],
     ) {
+        // Project-owned reviews inherit their project's organization and
+        // access exactly, so modal-level standalone assignments are ignored.
+        void _accessAssignments;
         setCreatingReview(true);
         try {
             const readyDocs =
@@ -296,9 +417,10 @@ export function ProjectWorkspaceProvider({
                 title: title || undefined,
                 document_ids: documentIds ?? readyDocs.map((d) => d.id),
                 columns_config: columnsConfig ?? [],
+                document_grouping: documentGrouping,
+                model,
                 project_id: projectId,
             });
-            setProjectReviews((prev) => (prev ? [review, ...prev] : prev));
             router.push(`/projects/${projectId}/tabular-reviews/${review.id}`);
         } finally {
             setCreatingReview(false);
@@ -308,17 +430,23 @@ export function ProjectWorkspaceProvider({
     async function handleProjectDetailsSave(values: {
         name: string;
         cmNumber: string;
+        practice: string;
     }) {
-        if (project && project.is_owner === false) {
-            setOwnerOnlyAction("edit project details");
+        if (!canDo("access.manage")) {
+            denyUnlessLoading({
+                action: "edit project details",
+                requiredRole: "owner",
+            });
             return;
         }
         const name = values.name.trim();
         const cmNumber = values.cmNumber.trim();
+        const practice = values.practice.trim();
         if (!name) return;
         const updated = await updateProject(projectId, {
             name,
             cm_number: cmNumber,
+            practice: practice || null,
         });
         setProject((prev) =>
             prev
@@ -326,14 +454,15 @@ export function ProjectWorkspaceProvider({
                       ...prev,
                       name: updated.name,
                       cm_number: updated.cm_number,
+                      practice: updated.practice,
                   }
                 : updated,
         );
     }
 
     function requestProjectDelete() {
-        if (project && project.is_owner === false) {
-            setOwnerOnlyAction("delete this project");
+        if (!canDo("container.delete")) {
+            denyUnlessLoading("delete this project");
             return;
         }
         setDeleteProjectStatus("idle");
@@ -368,16 +497,15 @@ export function ProjectWorkspaceProvider({
             setProjectChats,
             projectChatsLoading,
             ensureProjectChats,
-            projectReviews,
-            setProjectReviews,
-            projectReviewsLoading,
-            ensureProjectReviews,
             prefetchProjectSections,
-            creatingChat,
             creatingReview,
             createChat,
             openNewReview,
+            setDocumentUploadHeaderAction,
+            setDocumentFolderBreadcrumbs,
             setOwnerOnlyAction,
+            accessRole,
+            canDo,
         }),
         [
             projectId,
@@ -390,14 +518,13 @@ export function ProjectWorkspaceProvider({
             projectChats,
             projectChatsLoading,
             ensureProjectChats,
-            projectReviews,
-            projectReviewsLoading,
-            ensureProjectReviews,
             prefetchProjectSections,
-            creatingChat,
             creatingReview,
             createChat,
             openNewReview,
+            setDocumentUploadHeaderAction,
+            accessRole,
+            canDo,
         ],
     );
 
@@ -415,51 +542,71 @@ export function ProjectWorkspaceProvider({
                 <ProjectPageHeader
                     project={project}
                     search={search}
-                    creatingChat={creatingChat}
+                    activeSection={activeSection}
                     creatingReview={creatingReview}
-                    docsCount={project?.documents?.length ?? 0}
-                    isOwner={project?.is_owner !== false}
+                    canManageProject={canDo("access.manage")}
+                    roleKnown={roleKnown}
                     onBackToProjects={() => router.push("/projects")}
-                    onOwnerOnly={setOwnerOnlyAction}
+                    onProjectRoot={openProjectRoot}
                     onOpenDetails={() => setProjectDetailsOpen(true)}
+                    onOpenMemory={() => setProjectMemoryOpen(true)}
                     onDeleteProject={requestProjectDelete}
                     onSearchChange={setSearch}
-                    onOpenPeople={() => setPeopleModalOpen(true)}
+                    onOpenAccess={() => setAccessModalOpen(true)}
                     onNewChat={() => void createChat()}
                     onNewReview={openNewReview}
+                    onSavedFiles={documentUploadActions.savedFiles}
+                    onUploadFiles={documentUploadActions.uploadFiles}
+                    onUploadFolder={documentUploadActions.uploadFolder}
+                    documentFolderBreadcrumbs={documentFolderBreadcrumbs}
                 />
 
                 {children}
 
-                <AddNewTRModal
+                <NewTRModal
                     open={newTRModalOpen}
                     onClose={() => setNewTRModalOpen(false)}
                     onAdd={handleCreateReview}
-                    projectDocs={project?.documents?.filter(
-                        (d) => d.status === "ready",
-                    )}
+                    projectId={projectId}
+                    projectDocs={
+                        project?.documents?.filter(
+                            (d) => d.status === "ready",
+                        ) ?? []
+                    }
+                    projectFolders={folders}
                     projectName={project?.name}
                     projectCmNumber={project?.cm_number}
                 />
 
-                <OwnerOnlyModal
-                    open={!!ownerOnlyAction}
-                    action={ownerOnlyAction ?? undefined}
+                <PermissionDeniedPopup
+                    {...permissionDeniedProps(
+                        ownerOnlyAction,
+                        project?.admin_contacts,
+                    )}
                     onClose={() => setOwnerOnlyAction(null)}
+                />
+
+                <ProjectMemoryModal
+                    key={projectId}
+                    open={projectMemoryOpen}
+                    onClose={() => setProjectMemoryOpen(false)}
+                    projectId={projectId}
+                    projectName={project?.name ?? null}
+                    projectLoading={projectLoading}
+                    canEdit={canDo("content.edit")}
+                    canManage={canDo("access.manage")}
+                    onMemoryEnabledChange={syncProjectMemoryEnabled}
                 />
 
                 <ProjectDetailsModal
                     open={projectDetailsOpen}
                     project={project}
-                    canEdit={project?.is_owner !== false}
-                    currentUserDisplayName={profile?.displayName ?? null}
-                    currentUserEmail={user?.email ?? null}
-                    fetchPeople={getProjectPeople}
+                    canEdit={canDo("access.manage")}
                     onClose={() => setProjectDetailsOpen(false)}
                     onSave={handleProjectDetailsSave}
                     onShareProject={() => {
                         setProjectDetailsOpen(false);
-                        setPeopleModalOpen(true);
+                        setAccessModalOpen(true);
                     }}
                 />
 
@@ -468,6 +615,7 @@ export function ProjectWorkspaceProvider({
                     title="Delete project?"
                     message="This will permanently delete the project and its related documents, chats, and tabular reviews."
                     confirmLabel="Delete"
+                    confirmVariant="danger"
                     confirmStatus={
                         deleteProjectStatus === "deleting"
                             ? "loading"
@@ -485,39 +633,42 @@ export function ProjectWorkspaceProvider({
                 />
 
                 {project && (
-                    <PeopleModal
-                        open={peopleModalOpen}
-                        onClose={() => setPeopleModalOpen(false)}
+                    <AccessModal
+                        open={accessModalOpen}
+                        onClose={() => setAccessModalOpen(false)}
                         resource={project}
-                        fetchPeople={getProjectPeople}
+                        fetchAccess={getProjectPeople}
                         currentUserEmail={user?.email ?? null}
+                        // Both identifiers: a roster row without an email
+                        // would otherwise offer the caller a Remove that locks
+                        // them out of their own project.
+                        currentUserId={user?.id ?? null}
                         breadcrumb={[
                             "Projects",
                             project.name +
                                 (project.cm_number
                                     ? ` (${project.cm_number})`
                                     : ""),
-                            "People",
+                            "Access",
                         ]}
-                        onSharedWithChange={
-                            project.is_owner === false
-                                ? undefined
-                                : async (next) => {
-                                      const updated = await updateProject(
-                                          projectId,
-                                          { shared_with: next },
-                                      );
-                                      setProject((prev) =>
-                                          prev
-                                              ? {
-                                                    ...prev,
-                                                    shared_with:
-                                                        updated.shared_with,
-                                                }
-                                              : prev,
-                                      );
-                                  }
-                        }
+                        access={{
+                            grants: grants ?? [],
+                            orgId: project.org_id ?? null,
+                            ownerLabel: "Project owners",
+                            canManage: canDo("access.manage"),
+                            onGrant: async (email, role) => {
+                                await grantProjectAccess(
+                                    projectId,
+                                    email,
+                                    role,
+                                );
+                                await refreshGrants();
+                            },
+                            onRevoke: async (email) => {
+                                await revokeProjectAccess(projectId, email);
+                                await refreshGrants();
+                            },
+                        }}
                     />
                 )}
             </div>
@@ -527,47 +678,56 @@ export function ProjectWorkspaceProvider({
 
 export function ProjectSectionToolbar({
     actions,
+    backAction,
 }: {
     actions?: ReactNode;
+    backAction?: (() => void) | null;
 }) {
     const { activeSection, projectId } = useProjectWorkspace();
     const router = useRouter();
 
     return (
         <TableToolbar
-            items={[
-                { id: "documents", label: "Documents" },
-                { id: "assistant", label: "Assistant Chats" },
-                { id: "reviews", label: "Tabular Reviews" },
-            ]}
+            items={
+                backAction
+                    ? []
+                    : [
+                          { id: "documents", label: "Documents" },
+                          { id: "assistant", label: "Chats" },
+                          { id: "reviews", label: "Tabular Reviews" },
+                      ]
+            }
             active={activeSection}
             onChange={(next) => {
                 const href =
-                    next === "documents"
-                        ? `/projects/${projectId}`
-                        : next === "assistant"
-                          ? `/projects/${projectId}/assistant`
-                          : `/projects/${projectId}/tabular-reviews`;
+                    next === "assistant"
+                        ? `/projects/${projectId}/assistant`
+                        : next === "reviews"
+                          ? `/projects/${projectId}/tabular-reviews`
+                          : `/projects/${projectId}`;
                 router.push(href);
             }}
+            leading={
+                backAction ? (
+                    <TabPillButtonUI onClick={backAction} className="pl-2">
+                        <ChevronLeft className="h-3.5 w-3.5" />
+                        Back
+                    </TabPillButtonUI>
+                ) : undefined
+            }
             actions={actions}
         />
     );
 }
 
 export function ProjectWorkspaceLayout({
+    params,
     children,
 }: {
+    params: Promise<{ id: string }>;
     children: ReactNode;
 }) {
-    // Static-export divergence (OSS-5): under `output: "export"` the
-    // `/projects/[id]` subtree is a single prebaked shell, so server-baked
-    // params / `use(params)` resolve to the placeholder `"_"` for every URL.
-    // `usePathname()` is the only client hook that reflects the live URL, so
-    // derive the real project id from it and feed it into the workspace
-    // context. Everything below consumes `projectId` from context unchanged.
-    const pathname = usePathname() ?? "";
-    const id = pathname.match(/^\/projects\/([^/?#]+)/)?.[1] ?? "";
+    const { id } = use(params);
     return (
         <ProjectWorkspaceProvider projectId={id}>
             {children}

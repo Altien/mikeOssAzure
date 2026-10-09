@@ -1,7 +1,7 @@
 import { ReactElement, ReactNode } from "react";
 import { render, type RenderOptions } from "@testing-library/react";
-import { ConfigContext, type RuntimeConfig } from "@/contexts/ConfigContext";
-import { AuthContext } from "@/contexts/AuthContext";
+import { ConfigContext, type RuntimeConfig } from "@/app/contexts/ConfigContext";
+import { AuthContext } from "@/app/contexts/AuthContext";
 
 interface TestUser {
     id: string;
@@ -45,13 +45,23 @@ export function renderWithProviders(ui: ReactElement, opts: Opts = {}) {
     };
 
     const auth = {
-        user,
+        user: user ? { ...user, pendingEmail: null, createdWithGoogle: false } : null,
         isAuthenticated: user !== null,
         authLoading,
+        authError: null,
         signInLocal,
         signOut,
         getAccessToken:
             getAccessToken ?? (async () => (user ? "fake-token" : null)),
+        updateEmail: async (email: string) => ({
+            id: user?.id ?? "test-user",
+            email,
+            pendingEmail: null,
+            createdWithGoogle: false,
+        }),
+        setPassword: async () => {},
+        refreshSession: async () => user ? { ...user, pendingEmail: null, createdWithGoogle: false } : null,
+        retrySession: async () => user ? { ...user, pendingEmail: null, createdWithGoogle: false } : null,
     };
 
     function Wrapper({ children }: { children: ReactNode }) {

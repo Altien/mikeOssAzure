@@ -1,12 +1,11 @@
-import { DocumentsSection } from "./DocumentsSection";
+"use client";
 
-export function generateStaticParams() {
-    return [{ id: "_" }];
-}
+import { ProjectDocumentsView } from "@/app/components/projects/ProjectDocumentsView";
+import { usePathParams } from "@/app/lib/usePathParams";
 
-// Server stub: `output: "export"` needs one prebuilt shell per dynamic route.
-// The real id is read client-side from the URL (see DocumentsSection /
-// ProjectWorkspaceLayout) because server-baked params are always "_".
 export default function ProjectDetailPage() {
-    return <DocumentsSection />;
+    // Static-export divergence (OSS-6): id from the live URL instead of
+    // `use(params)` (always "_" under output: "export"; see ../layout.tsx).
+    const { id } = usePathParams<"id">("/projects/:id");
+    return <ProjectDocumentsView projectId={id} />;
 }

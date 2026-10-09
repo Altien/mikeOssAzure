@@ -1,0 +1,210 @@
+/**
+ * Builds the functional-test skill ZIPs into ./out.
+ * Run: node tools/skill-fixtures/make-fixtures.mjs
+ */
+// Resolved from the backend's node_modules; run from anywhere.
+import JSZip from "../../backend/node_modules/jszip/lib/index.js";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const outDir = join(dirname(fileURLToPath(import.meta.url)), "out");
+
+async function write(name, build) {
+    const zip = new JSZip();
+    build(zip);
+    const bytes = await zip.generateAsync({
+        type: "nodebuffer",
+        compression: "DEFLATE",
+    });
+    await writeFile(join(outDir, name), bytes);
+    console.log(`${name.padEnd(34)} ${bytes.length} bytes`);
+}
+
+await mkdir(outDir, { recursive: true });
+
+// F1 — happy path. Instruction-only, read-only baseline, one reference resource.
+await write("f1-case-summariser.zip", (zip) => {
+    zip.file(
+        "case-summariser/SKILL.md",
+        `---
+name: case-summariser
+description: Summarises a litigation document into issues, holdings, and dates using a fixed house format.
+version: 1.0.0
+---
+
+# Case Summariser
+
+When the user asks for a case summary:
+
+1. Read the project documents you have been given.
+2. Follow the house format in \`reference/house-format.md\` exactly — load it
+   with the skill resource tools before writing anything.
+3. Produce: Parties, Procedural posture, Issues, Holding, Key dates, Open questions.
+4. Quote sparingly and cite the document name for every factual claim.
+5. If a section has no support in the documents, write "Not stated in the provided documents."
+`,
+    );
+    zip.file(
+        "case-summariser/reference/house-format.md",
+        `# House summary format
+
+## Parties
+Full names, then short form in brackets.
+
+## Procedural posture
+One sentence. Name the court and the stage.
+
+## Issues
+Numbered list, one line each, phrased as questions.
+
+## Holding
+One paragraph maximum.
+
+## Key dates
+Table: date | event | source document.
+
+## Open questions
+Bulleted. Say what document would answer each one.
+
+MARKER-HOUSE-FORMAT-9F2A
+`,
+    );
+    zip.file(
+        "case-summariser/reference/citation-style.md",
+        `# Citation style
+Cite as (Document name, p.N). Never invent a page number; omit it if unknown.
+MARKER-CITATION-STYLE-4B7C
+`,
+    );
+    zip.file("case-summariser/LICENSE", "MIT License\n\nCopyright (c) 2026\n");
+});
+
+// F2 — capability requirements the deployment may not have (tests story 23 +
+// the proposed/name-match path). Names a vague tool and a plausible one.
+await write("f2-docket-watcher.zip", (zip) => {
+    zip.file(
+        "docket-watcher/SKILL.md",
+        `---
+name: docket-watcher
+description: Tracks docket entries for a matter and drafts a status note when something changes.
+version: 0.9.0
+---
+
+# Docket Watcher
+
+To do this work you need to look things up in the project's documents, and you
+will need the case-law lookup facility and a suitable notification mechanism to
+tell the team when a docket entry appears.
+
+1. Read the matter file.
+2. Use the case law search capability to check whether any cited authority has
+   been superseded.
+3. Draft a status note. Do not send anything without explicit user confirmation.
+`,
+    );
+});
+
+// F3 — declared GitHub dependency (story 38 acquisition proposal).
+await write("f3-brief-builder.zip", (zip) => {
+    zip.file(
+        "brief-builder/SKILL.md",
+        `---
+name: brief-builder
+description: Assembles a first-draft brief from a case summary and an authorities table.
+version: 1.1.0
+dependencies: case-summariser https://github.com/anthropics/skills
+---
+
+# Brief Builder
+
+Requires the case-summariser skill for its summary format.
+
+1. Produce or load a case summary.
+2. Build the authorities table.
+3. Assemble the brief skeleton and hand back for review.
+`,
+    );
+});
+
+// F4 — REJECT: path traversal.
+await write("f4-reject-traversal.zip", (zip) => {
+    zip.file(
+        "evil/SKILL.md",
+        `---
+name: traversal-probe
+description: Should never import.
+---
+
+Body.
+`,
+    );
+    zip.file("evil/../../../etc/passwd-probe.txt", "root:x:0:0\n");
+});
+
+// F5 — REJECT: embedded secret.
+await write("f5-reject-secret.zip", (zip) => {
+    zip.file(
+        "leaky/SKILL.md",
+        `---
+name: leaky-skill
+description: Should never import because it ships a private key.
+---
+
+Body.
+`,
+    );
+    zip.file(
+        "leaky/deploy/id_rsa",
+        `-----BEGIN RSA PRIVATE KEY-----
+MIIEowIBAAKCAQEAx7Fm0Vn2QeXVn0PLACEHOLDERPLACEHOLDERPLACEHOLDER
+-----END RSA PRIVATE KEY-----
+`,
+    );
+});
+
+// F6 — REJECT: no SKILL.md entrypoint.
+await write("f6-reject-no-entrypoint.zip", (zip) => {
+    zip.file("nothing/readme.md", "# Not a skill\n");
+});
+
+// F7 — REJECT: zip bomb (high-ratio, small compressed, huge expanded).
+await write("f7-reject-zip-bomb.zip", (zip) => {
+    zip.file(
+        "bomb/SKILL.md",
+        `---
+name: bomb-skill
+description: Should be rejected by the expansion limit before inflating.
+---
+
+Body.
+`,
+    );
+    zip.file("bomb/payload.txt", " ".repeat(64 * 1024 * 1024));
+});
+
+// F8 — REJECT: encrypted archive. JSZip cannot author one, so flip the
+// general-purpose encryption bit in the local + central headers by hand.
+{
+    const zip = new JSZip();
+    zip.file(
+        "locked/SKILL.md",
+        `---
+name: locked-skill
+description: Should be rejected as an encrypted archive.
+---
+
+Body.
+`,
+    );
+    const bytes = await zip.generateAsync({ type: "nodebuffer" });
+    for (let i = 0; i + 4 <= bytes.length; i += 1) {
+        const sig = bytes.readUInt32LE(i);
+        if (sig === 0x04034b50) bytes[i + 6] |= 0x01; // local file header
+        if (sig === 0x02014b50) bytes[i + 8] |= 0x01; // central directory
+    }
+    await writeFile(join(outDir, "f8-reject-encrypted.zip"), bytes);
+    console.log(`${"f8-reject-encrypted.zip".padEnd(34)} ${bytes.length} bytes`);
+}
+
+console.log(`\nFixtures written to ${outDir}`);

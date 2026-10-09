@@ -1,0 +1,289 @@
+import { act, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { listProjectChats, listProjectSummaries } from "@/app/lib/mikeApi";
+import { beginAssistantTurn } from "@/app/lib/assistantTurns";
+import { AppSidebar } from "./AppSidebar";
+
+const state = vi.hoisted(() => ({
+  signOut: vi.fn(),
+  pathname: "/assistant",
+  chats: [] as Array<{
+    id: string;
+    title: string;
+    user_id: string;
+    created_at: string;
+    is_owner: boolean;
+  }>,
+}));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn() }),
+  usePathname: () => state.pathname,
+}));
+
+vi.mock("next/image", () => ({
+  default: ({ className, src }: { className?: string; src?: string }) => (
+    <span aria-hidden="true" className={className} data-src={src} />
+  ),
+}));
+
+vi.mock("@/app/lib/mikeApi", () => ({
+  listProjectSummaries: vi.fn(),
+  listProjectChats: vi.fn(async () => []),
+  listTabularReviews: vi.fn(async () => []),
+}));
+
+vi.mock("@/app/contexts/AuthContext", () => ({
+  useAuth: () => ({
+    user: { id: "memory-menu-user", email: "alice@example.com" },
+    signOut: state.signOut,
+  }),
+}));
+
+vi.mock("@/app/contexts/UserProfileContext", () => ({
+  useUserProfile: () => ({
+    profile: { displayName: "Alice", tier: "Free" },
+  }),
+}));
+
+vi.mock("@/app/contexts/ChatHistoryContext", () => ({
+  useChatHistoryContext: () => ({
+    chats: state.chats,
+    loadingMoreChats: false,
+    loadMoreChats: vi.fn(),
+    setCurrentChatId: vi.fn(),
+  }),
+}));
+
+vi.mock("@/shared/ui/MikeIconUI", () => ({
+  MikeIcon: () => <span aria-hidden="true" />,
+}));
+
+describe("AppSidebar account dropdown", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(listProjectSummaries).mockResolvedValue([]);
+    state.signOut.mockResolvedValue(undefined);
+    state.pathname = "/assistant";
+    state.chats = [];
+  });
+
+  it("keeps memory navigation inside Settings", async () => {
+    const user = userEvent.setup();
+    render(<AppSidebar isOpen onToggle={vi.fn()} />);
+
+    await user.click(screen.getByText("Alice").closest("button")!);
+
+    expect(screen.getByRole("menuitem", { name: "Settings" })).toBeVisible();
+    expect(screen.queryByRole("menuitem", { name: "Memory" })).toBeNull();
+  });
+
+  it("shows the IDE navigation directly below Assistant", () => {
+    render(<AppSidebar isOpen onToggle={vi.fn()} />);
+
+    const assistant = screen.getByRole("button", { name: "Assistant" });
+    const ide = screen.getByRole("button", { name: "IDE" });
+
+    expect(assistant.parentElement?.nextElementSibling).toContainElement(ide);
+  });
+
+  it("shows a warning popup when sign out fails", async () => {
+    state.signOut.mockRejectedValue(new Error("network unavailable"));
+    const user = userEvent.setup();
+    render(<AppSidebar isOpen onToggle={vi.fn()} />);
+
+    await user.click(screen.getByText("Alice").closest("button")!);
+    await user.click(screen.getByRole("menuitem", { name: "Sign out" }));
+
+    expect(await screen.findByText("Sign out failed")).toBeInTheDocument();
+    expect(
+      screen.getByText("Unable to sign out. Please try again."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows responses loading while selected and detached, then marks a detached response complete until opened", async () => {
+    const user = userEvent.setup();
+    state.pathname = "/assistant/chat/chat-1";
+    state.chats = [
+      {
+        id: "chat-1",
+        title: "Quarterly filing",
+        user_id: "memory-menu-user",
+        created_at: new Date().toISOString(),
+        is_owner: true,
+      },
+    ];
+    const view = render(<AppSidebar isOpen onToggle={vi.fn()} />);
+    const turn = beginAssistantTurn("chat-1", {
+      userMessage: { role: "user", content: "Summarize" },
+      assistant: { role: "assistant", content: "" },
+      cancel: vi.fn(),
+    });
+
+    expect(
+      await screen.findByRole("status", {
+        name: "Quarterly filing response loading",
+      }),
+    ).toBeInTheDocument();
+
+    state.pathname = "/assistant/chat/chat-2";
+    view.rerender(<AppSidebar isOpen onToggle={vi.fn()} />);
+
+    expect(
+      await screen.findByRole("status", {
+        name: "Quarterly filing response loading",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Quarterly filing (Response loading)",
+      }),
+    ).toBeInTheDocument();
+
+    act(() => turn.finish());
+
+    const completedRow = await screen.findByRole("button", {
+      name: "Quarterly filing (Response complete)",
+    });
+    expect(
+      completedRow.parentElement?.querySelector("span[aria-hidden='true']"),
+    ).toHaveAttribute(
+      "data-src",
+      expect.stringContaining("features/chat-complete"),
+    );
+
+    await user.click(completedRow);
+
+    expect(
+      screen.getByRole("button", { name: "Quarterly filing" }),
+    ).toBeInTheDocument();
+    expect(
+      completedRow.parentElement?.querySelector("span[aria-hidden='true']"),
+    ).not.toHaveAttribute(
+      "data-src",
+      expect.stringContaining("features/chat-complete"),
+    );
+  });
+
+  it("does not mark a selected response green when it completes", async () => {
+    state.pathname = "/assistant/chat/chat-1";
+    state.chats = [
+      {
+        id: "chat-1",
+        title: "Quarterly filing",
+        user_id: "memory-menu-user",
+        created_at: new Date().toISOString(),
+        is_owner: true,
+      },
+    ];
+    render(<AppSidebar isOpen onToggle={vi.fn()} />);
+    const turn = beginAssistantTurn("chat-1", {
+      userMessage: { role: "user", content: "Summarize" },
+      assistant: { role: "assistant", content: "" },
+      cancel: vi.fn(),
+    });
+
+    expect(
+      await screen.findByRole("status", {
+        name: "Quarterly filing response loading",
+      }),
+    ).toBeInTheDocument();
+
+    act(() => turn.finish());
+
+    const selectedRow = await screen.findByRole("button", {
+      name: "Quarterly filing",
+    });
+    expect(
+      selectedRow.parentElement?.querySelector("span[aria-hidden='true']"),
+    ).not.toHaveAttribute(
+      "data-src",
+      expect.stringContaining("features/chat-complete"),
+    );
+  });
+
+  it.each([
+    { isOpen: true, toggleName: "Close sidebar" },
+    { isOpen: false, toggleName: "Open sidebar" },
+  ])(
+    "keeps the header row at a fixed height when isOpen is $isOpen",
+    ({ isOpen, toggleName }) => {
+      render(<AppSidebar isOpen={isOpen} onToggle={vi.fn()} />);
+
+      expect(
+        screen.getByRole("button", { name: toggleName }).parentElement,
+      ).toHaveClass("h-11", "shrink-0");
+    },
+  );
+
+  it.each([true, false])(
+    "keeps the account button at a fixed height when isOpen is %s",
+    (isOpen) => {
+      render(<AppSidebar isOpen={isOpen} onToggle={vi.fn()} />);
+
+      expect(screen.getByRole("button", { name: "Account menu" })).toHaveClass(
+        "h-9",
+        "shrink-0",
+      );
+    },
+  );
+
+  it("expands the open project's recent items and leaves others collapsed", async () => {
+    vi.mocked(listProjectSummaries).mockResolvedValue([
+      { id: "open-project", name: "Open matter" },
+      { id: "other-project", name: "Other matter" },
+    ] as never);
+    state.pathname = "/projects/open-project/assistant";
+    render(<AppSidebar isOpen onToggle={vi.fn()} />);
+
+    expect(
+      await screen.findByRole("button", {
+        name: "Hide recent chats and reviews in Open matter",
+      }),
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(
+      screen.getByRole("button", {
+        name: "Show recent chats and reviews in Other matter",
+      }),
+    ).toHaveAttribute("aria-expanded", "false");
+    expect(listProjectChats).toHaveBeenCalledWith("open-project");
+    expect(listProjectChats).not.toHaveBeenCalledWith("other-project");
+  });
+
+  it("gives the recent projects list more height while a project is expanded", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listProjectSummaries).mockResolvedValue([
+      { id: "open-project", name: "Open matter" },
+    ] as never);
+    state.pathname = "/projects/open-project";
+    render(<AppSidebar isOpen onToggle={vi.fn()} />);
+
+    const toggle = await screen.findByRole("button", {
+      name: "Hide recent chats and reviews in Open matter",
+    });
+    const list = toggle.closest(".overflow-y-auto");
+    expect(list).toHaveClass("h-64");
+
+    await user.click(toggle);
+
+    expect(list).toHaveClass("h-44");
+  });
+
+  it("fades contents in when a sidebar that loaded closed is opened", () => {
+    const { rerender } = render(<AppSidebar isOpen={false} onToggle={vi.fn()} />);
+
+    rerender(<AppSidebar isOpen onToggle={vi.fn()} />);
+
+    expect(screen.getByText("Assistant")).toHaveClass("sidebar-fade-in-2");
+    expect(screen.getByText("Recent Projects").closest("button")).toHaveClass(
+      "sidebar-fade-in",
+    );
+  });
+
+  it("does not fade contents of a sidebar that is open on first render", () => {
+    render(<AppSidebar isOpen onToggle={vi.fn()} />);
+
+    expect(screen.getByText("Assistant")).not.toHaveClass("sidebar-fade-in-2");
+  });
+});

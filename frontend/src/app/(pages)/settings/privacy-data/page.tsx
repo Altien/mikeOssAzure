@@ -1,0 +1,425 @@
+"use client";
+
+import { useState } from "react";
+import { Download, Trash2 } from "lucide-react";
+import { PillButtonUI } from "@/shared/ui/PillButtonUI";
+import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
+import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
+import { WarningPopup } from "@/app/components/popups/WarningPopup";
+// Upstream divergence (sync-log: 3a10943): upstream wraps these actions in
+// a Supabase Auth MFA step-up flow (MfaVerificationPopup +
+// needsMfaVerification + isMfaRequiredError retries). Dev did not adopt
+// app-level Supabase MFA — Entra enforces MFA at the IdP — so the actions
+// run directly after the confirm popup.
+import {
+    deleteAllChats,
+    deleteAllMemories,
+    deleteAllProjects,
+    deleteAllTabularReviews,
+    downloadUserExport,
+    getUserExportStatus,
+    startUserExport,
+    type UserExportType,
+} from "@/app/lib/mikeApi";
+import { SettingsSection } from "../SettingsSection";
+
+// Upstream #451 (1672f736) adds memory export/delete; ported into Dev's
+// settings layout without the Supabase MFA step-up (see note above).
+type DeleteDataAction = "chats" | "tabular-reviews" | "projects" | "memory";
+
+const isDev = process.env.NODE_ENV !== "production";
+const devLog = (...args: Parameters<typeof console.log>) => {
+    if (isDev) console.log(...args);
+};
+
+const DELETE_DATA_COPY: Record<
+    DeleteDataAction,
+    {
+        title: string;
+        message: string;
+    }
+> = {
+    chats: {
+        title: "Delete all chats?",
+        message:
+            "This will permanently delete your assistant and tabular review chat history. This action cannot be undone.",
+    },
+    "tabular-reviews": {
+        title: "Delete all tabular reviews?",
+        message:
+            "This will permanently delete all tabular reviews you own, including their cells and review chats. This action cannot be undone.",
+    },
+    projects: {
+        title: "Delete all projects?",
+        message:
+            "This will permanently delete all projects you own, including their documents, chats, and tabular reviews. This action cannot be undone.",
+    },
+    memory: {
+        title: "Delete all memory?",
+        message:
+            "This permanently deletes your app memory and memories for private projects you created. Project collaborators will also lose those memories. Memory remains enabled and can be rebuilt from future conversations. This action cannot be undone.",
+    },
+};
+
+export default function PrivacyDataPage() {
+    const { loadChats, setCurrentChatId } = useChatHistoryContext();
+    const [pendingDeleteAction, setPendingDeleteAction] =
+        useState<DeleteDataAction | null>(null);
+    const [deletingAction, setDeletingAction] =
+        useState<DeleteDataAction | null>(null);
+    const [isExportingAccount, setIsExportingAccount] = useState(false);
+    const [isExportingChats, setIsExportingChats] = useState(false);
+    const [isExportingTabularReviews, setIsExportingTabularReviews] =
+        useState(false);
+    const [isExportingMemory, setIsExportingMemory] = useState(false);
+    const [warningMessage, setWarningMessage] = useState<string | null>(null);
+
+    const downloadBlob = (blob: Blob, filename: string) => {
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = filename;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    };
+
+    // Exports run as durable backend jobs: schedule, poll until built, then
+    // download the artifact. A double click dedupes onto the running job
+    // server-side, and a build that outlives this tab can be re-downloaded by
+    // clicking the button again (the poll finds the finished job).
+    const EXPORT_POLL_MS = process.env.NODE_ENV === "test" ? 10 : 2000;
+    const EXPORT_POLL_LIMIT = 150; // ~5 minutes
+    const runAsyncExport = async (
+        type: UserExportType,
+        fallbackFilename: string,
+    ) => {
+        const { export_id } = await startUserExport(type);
+        for (let i = 0; i < EXPORT_POLL_LIMIT; i++) {
+            await new Promise((resolve) =>
+                setTimeout(resolve, EXPORT_POLL_MS),
+            );
+            const status = await getUserExportStatus(export_id);
+            if (status.status === "failed")
+                throw new Error("Export build failed");
+            if (status.status === "done") {
+                const { blob, filename } = await downloadUserExport(export_id);
+                downloadBlob(
+                    blob,
+                    filename ?? status.filename ?? fallbackFilename,
+                );
+                return;
+            }
+        }
+        throw new Error("Export timed out");
+    };
+
+    const handleExportAccountData = async () => {
+        devLog("[privacy-data] export account requested");
+        setIsExportingAccount(true);
+        try {
+            await runAsyncExport("account", "mike-account-export.json");
+        } catch (error) {
+            devLog("[privacy-data] export account failed", { error });
+            setWarningMessage("Failed to export account data. Please try again.");
+        } finally {
+            setIsExportingAccount(false);
+        }
+    };
+
+    const handleExportChatData = async () => {
+        devLog("[privacy-data] export chats requested");
+        setIsExportingChats(true);
+        try {
+            await runAsyncExport("chats", "mike-chat-export.json");
+        } catch (error) {
+            devLog("[privacy-data] export chats failed", { error });
+            setWarningMessage("Failed to export chats. Please try again.");
+        } finally {
+            setIsExportingChats(false);
+        }
+    };
+
+    const handleExportTabularReviewsData = async () => {
+        devLog("[privacy-data] export tabular reviews requested");
+        setIsExportingTabularReviews(true);
+        try {
+            await runAsyncExport("tabular-reviews", "mike-tabular-reviews-export.json");
+        } catch (error) {
+            devLog("[privacy-data] export tabular reviews failed", { error });
+            setWarningMessage("Failed to export tabular reviews. Please try again.");
+        } finally {
+            setIsExportingTabularReviews(false);
+        }
+    };
+
+    const handleExportMemoryData = async () => {
+        devLog("[privacy-data] export memory requested");
+        setIsExportingMemory(true);
+        try {
+            await runAsyncExport("memory-zip", "mike-memory-export.zip");
+        } catch (error) {
+            devLog("[privacy-data] export memory failed", { error });
+            setWarningMessage("Failed to export memory. Please try again.");
+        } finally {
+            setIsExportingMemory(false);
+        }
+    };
+
+    const handleDeleteData = async (action: DeleteDataAction) => {
+        devLog("[privacy-data] delete requested", { action });
+        setDeletingAction(action);
+        try {
+            if (action === "chats") {
+                await deleteAllChats();
+                setCurrentChatId(null);
+                await loadChats();
+            } else if (action === "tabular-reviews") {
+                await deleteAllTabularReviews();
+            } else if (action === "memory") {
+                await deleteAllMemories();
+            } else {
+                await deleteAllProjects();
+                setCurrentChatId(null);
+                await loadChats();
+            }
+            setPendingDeleteAction(null);
+        } catch (error) {
+            devLog("[privacy-data] delete failed", { action, error });
+            setWarningMessage("Failed to delete data. Please try again.");
+        } finally {
+            setDeletingAction(null);
+        }
+    };
+
+    const pendingDeleteCopy = pendingDeleteAction
+        ? DELETE_DATA_COPY[pendingDeleteAction]
+        : null;
+
+    return (
+        <div className="space-y-8">
+            <section className="space-y-3">
+                <h2 className="text-2xl font-medium font-serif text-gray-900">
+                    Export data
+                </h2>
+                <SettingsSection>
+                    <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="space-y-1">
+                            <p className="text-sm font-medium text-gray-700">
+                                Export chats
+                            </p>
+                            <p className="text-sm text-gray-500">
+                                Download assistant and tabular review chat
+                                history as JSON.
+                            </p>
+                        </div>
+                        <PillButtonUI
+                            tone="black"
+                            size="sm"
+                            onClick={handleExportChatData}
+                            disabled={isExportingChats}
+                            className="shrink-0"
+                        >
+                            {!isExportingChats && (
+                                <Download className="h-4 w-4 shrink-0" />
+                            )}
+                            {isExportingChats ? "Exporting..." : "Export"}
+                        </PillButtonUI>
+                    </div>
+                    <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="space-y-1">
+                            <p className="text-sm font-medium text-gray-700">
+                                Export tabular reviews
+                            </p>
+                            <p className="text-sm text-gray-500">
+                                Download all owned tabular reviews, cells, and
+                                review chat records as JSON.
+                            </p>
+                        </div>
+                        <PillButtonUI
+                            tone="black"
+                            size="sm"
+                            onClick={handleExportTabularReviewsData}
+                            disabled={isExportingTabularReviews}
+                            className="shrink-0"
+                        >
+                            {!isExportingTabularReviews && (
+                                <Download className="h-4 w-4 shrink-0" />
+                            )}
+                            {isExportingTabularReviews
+                                ? "Exporting..."
+                                : "Export"}
+                        </PillButtonUI>
+                    </div>
+                    <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="space-y-1">
+                            <p className="text-sm font-medium text-gray-700">
+                                Export account JSON
+                            </p>
+                            <p className="text-sm text-gray-500">
+                                Download account metadata, projects, document
+                                metadata, workflows, and review data as JSON.
+                            </p>
+                        </div>
+                        <PillButtonUI
+                            tone="black"
+                            size="sm"
+                            onClick={handleExportAccountData}
+                            disabled={isExportingAccount}
+                            className="shrink-0"
+                        >
+                            {!isExportingAccount && (
+                                <Download className="h-4 w-4 shrink-0" />
+                            )}
+                            {isExportingAccount ? "Exporting..." : "Export"}
+                        </PillButtonUI>
+                    </div>
+                    <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="space-y-1">
+                            <p className="text-sm font-medium text-gray-700">
+                                Export memory
+                            </p>
+                            <p className="text-sm text-gray-500">
+                                Download your app memory and every project
+                                memory you can access as Markdown files in a
+                                ZIP archive.
+                            </p>
+                        </div>
+                        <PillButtonUI
+                            tone="black"
+                            size="sm"
+                            aria-label="Export memory"
+                            onClick={handleExportMemoryData}
+                            disabled={isExportingMemory}
+                            className="shrink-0"
+                        >
+                            {!isExportingMemory && (
+                                <Download className="h-4 w-4 shrink-0" />
+                            )}
+                            {isExportingMemory ? "Exporting..." : "Export"}
+                        </PillButtonUI>
+                    </div>
+                </SettingsSection>
+            </section>
+
+            <section className="space-y-3">
+                <h2 className="text-2xl font-medium font-serif text-gray-900">
+                    Delete data
+                </h2>
+                <SettingsSection>
+                    <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="space-y-1">
+                            <p className="text-sm font-medium text-gray-700">
+                                Delete all chats
+                            </p>
+                            <p className="text-sm text-gray-500">
+                                Permanently delete your assistant and tabular
+                                review chat history.
+                            </p>
+                        </div>
+                        <PillButtonUI
+                            tone="danger"
+                            size="sm"
+                            onClick={() => setPendingDeleteAction("chats")}
+                            disabled={!!deletingAction}
+                            className="w-full shrink-0 sm:w-auto"
+                        >
+                            <Trash2 className="h-4 w-4 shrink-0" />
+                            Delete
+                        </PillButtonUI>
+                    </div>
+                    <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="space-y-1">
+                            <p className="text-sm font-medium text-gray-700">
+                                Delete all tabular reviews
+                            </p>
+                            <p className="text-sm text-gray-500">
+                                Permanently delete all tabular reviews you own,
+                                including cells and review chats.
+                            </p>
+                        </div>
+                        <PillButtonUI
+                            tone="danger"
+                            size="sm"
+                            onClick={() =>
+                                setPendingDeleteAction("tabular-reviews")
+                            }
+                            disabled={!!deletingAction}
+                            className="w-full shrink-0 sm:w-auto"
+                        >
+                            <Trash2 className="h-4 w-4 shrink-0" />
+                            Delete
+                        </PillButtonUI>
+                    </div>
+                    <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="space-y-1">
+                            <p className="text-sm font-medium text-gray-700">
+                                Delete all projects
+                            </p>
+                            <p className="text-sm text-gray-500">
+                                Permanently delete all projects you own,
+                                including documents, chats, and tabular reviews.
+                            </p>
+                        </div>
+                        <PillButtonUI
+                            tone="danger"
+                            size="sm"
+                            onClick={() => setPendingDeleteAction("projects")}
+                            disabled={!!deletingAction}
+                            className="w-full shrink-0 sm:w-auto"
+                        >
+                            <Trash2 className="h-4 w-4 shrink-0" />
+                            Delete
+                        </PillButtonUI>
+                    </div>
+                    <div className="flex flex-col gap-3 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="space-y-1">
+                            <p className="text-sm font-medium text-gray-700">
+                                Delete all memory
+                            </p>
+                            <p className="text-sm text-gray-500">
+                                Permanently delete your app memory and memories
+                                for private projects you created.
+                            </p>
+                        </div>
+                        <PillButtonUI
+                            tone="danger"
+                            size="sm"
+                            aria-label="Delete all memory"
+                            onClick={() => setPendingDeleteAction("memory")}
+                            disabled={!!deletingAction}
+                            className="w-full shrink-0 sm:w-auto"
+                        >
+                            <Trash2 className="h-4 w-4 shrink-0" />
+                            Delete
+                        </PillButtonUI>
+                    </div>
+                </SettingsSection>
+            </section>
+            <ConfirmPopup
+                open={!!pendingDeleteAction}
+                title={pendingDeleteCopy?.title}
+                message={pendingDeleteCopy?.message}
+                confirmLabel="Delete"
+                confirmVariant="danger"
+                confirmStatus={deletingAction ? "loading" : "idle"}
+                cancelLabel="Cancel"
+                onCancel={() => {
+                    if (deletingAction) return;
+                    setPendingDeleteAction(null);
+                }}
+                onConfirm={() => {
+                    if (!pendingDeleteAction) return;
+                    void handleDeleteData(pendingDeleteAction);
+                }}
+            />
+            <WarningPopup
+                open={!!warningMessage}
+                title="Action failed"
+                message={warningMessage}
+                onClose={() => setWarningMessage(null)}
+            />
+        </div>
+    );
+}

@@ -1,4 +1,23 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+
+/**
+ * The server-side database handle every service function takes as its first
+ * argument. One name for the whole backend: services and job handlers accept
+ * a `Db`, route handlers obtain one from `createServerSupabase()` and pass it
+ * down. Declaring the alias here (instead of a private
+ * `type Db = ReturnType<typeof createServerSupabase>` in every file) keeps
+ * the seam explicit and lets tests substitute a fake with a single cast.
+ */
+export type Db = SupabaseClient<any, "public", any>;
+
+let cachedAdminClient:
+  | {
+      url: string;
+      key: string;
+      provider: string;
+      client: SupabaseClient<any, "public", any>;
+    }
+  | undefined;
 
 // Historical naming note:
 // the upstream app used hosted Supabase directly. In this fork the backend still
@@ -63,67 +82,51 @@ function postgrestFetchWrapper(opts: { stripAuth: boolean }): typeof fetch {
  *   long comment in infra/modules/containerapp-postgrest.bicep for the
  *   full trust-model rationale.
  */
-export function createServerSupabase() {
+export function createServerSupabase(): Db {
   const url = process.env.SUPABASE_URL || "";
   if (!url) {
     throw new Error("SUPABASE_URL is required");
   }
 
   const provider = getAuthProvider();
+  const key = provider === "entra"
+    ? "unused-entra-mode-no-auth"
+    : process.env.SUPABASE_SECRET_KEY || "";
+
+  if (provider === "supabase" && !key) {
+    throw new Error("SUPABASE_URL and SUPABASE_SECRET_KEY must be set");
+  }
+
+  if (
+    cachedAdminClient?.url === url &&
+    cachedAdminClient.key === key &&
+    cachedAdminClient.provider === provider
+  ) {
+    return cachedAdminClient.client;
+  }
+
+  let client: SupabaseClient<any, "public", any>;
 
   if (provider === "entra") {
     // The "key" arg is required by supabase-js but never reaches PostgREST
     // — the fetch wrapper deletes the Authorization and apikey headers
     // before the request leaves the process.
-    return createClient(url, "unused-entra-mode-no-auth", {
-      auth: { persistSession: false },
+    client = createClient(url, key, {
+      auth: { persistSession: false, autoRefreshToken: false },
       global: { fetch: postgrestFetchWrapper({ stripAuth: true }) },
     });
-  }
-
-  if (provider === "local") {
-    const key = process.env.SUPABASE_SECRET_KEY || "";
-    return createClient(url, key, {
-      auth: { persistSession: false },
+  } else if (provider === "local") {
+    client = createClient(url, key, {
+      auth: { persistSession: false, autoRefreshToken: false },
       global: { fetch: postgrestFetchWrapper({ stripAuth: false }) },
     });
-  }
-
-  // supabase mode — default supabase-js behavior, including the /rest/v1
-  // prefix that hosted Supabase actually serves.
-  const key = process.env.SUPABASE_SECRET_KEY || "";
-  if (!url || !key) {
-    throw new Error("SUPABASE_URL and SUPABASE_SECRET_KEY must be set");
-  }
-  return createClient(url, key, { auth: { persistSession: false } });
-}
-
-/**
- * Extract and verify the Supabase JWT from the Authorization header.
- * Returns the user's UUID string, or throws a Response with 401.
- */
-export async function getUserIdFromRequest(req: Request): Promise<string> {
-  const auth = req.headers.get("authorization") ?? "";
-  if (!auth.startsWith("Bearer ")) {
-    throw new Response("Missing or invalid Authorization header", {
-      status: 401,
+  } else {
+    // Hosted Supabase keeps its /rest/v1 path and service-role credential.
+    client = createClient(url, key, {
+      auth: { persistSession: false, autoRefreshToken: false },
     });
   }
-  const token = auth.slice(7).trim();
 
-  const supabaseUrl = process.env.SUPABASE_URL || "";
-  const serviceKey = process.env.SUPABASE_SECRET_KEY || "";
-
-  if (!supabaseUrl || !serviceKey) {
-    throw new Response("Server auth is not configured", { status: 500 });
-  }
-
-  const admin = createClient(supabaseUrl, serviceKey, {
-    auth: { persistSession: false },
-  });
-  const { data } = await admin.auth.getUser(token);
-  if (!data.user) {
-    throw new Response("Invalid or expired token", { status: 401 });
-  }
-  return data.user.id;
+  cachedAdminClient = { url, key, provider, client };
+  return client;
 }

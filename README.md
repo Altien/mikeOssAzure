@@ -33,6 +33,19 @@ Then run `pnpm migrate:dev` and `pnpm dev` from `backend/`, and `pnpm dev`
 from `frontend/`. The backend runs on `http://localhost:3001`; the frontend
 runs on `http://localhost:3000`.
 
+### Telemetry
+
+Sentry error reporting is optional and disabled until this deployment supplies
+its own DSN. The backend reads `sentry-dsn` from Key Vault first, then
+`SENTRY_DSN`; the browser and Word add-in receive their deployment's public,
+write-only DSNs from runtime `/config` (`sentry-frontend-dsn` and
+`sentry-word-dsn` in Key Vault, with `SENTRY_FRONTEND_DSN` and
+`SENTRY_WORD_DSN` as fallbacks). No Sentry address is baked into either
+client bundle. The outbound privacy boundary keeps only bounded diagnostic
+events and excludes document content, credentials, request bodies, and user
+identities. See [observability](docs/observability.md) for configuration and
+limits.
+
 ### Manual Azure deployment
 
 For a self-hosted Azure installation, follow
@@ -44,6 +57,21 @@ Generic helper scripts in [`scripts/install/`](scripts/install/) automate
 the error-prone Entra registration, redirect-URI, Azure OpenAI, and recovery
 steps. They use the operator's current Azure login and contain no deployment
 credentials.
+
+## Documentation
+
+- [Documentation index](docs/README.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [MCP connectors](docs/connectors.md)
+- [Google Drive integration](docs/google-drive.md)
+- [Preset contract templates and publisher credits](docs/preset-templates.md)
+- [CourtListener integration](docs/courtlistener.md)
+- [Microsoft Word add-in](word-addin/README.md)
+- [Tamper-evident exports](docs/tamper-evident-exports.md)
+- [Safe local testing](docs/safe-local-testing.md)
+- [Contributing](CONTRIBUTING.md)
+- [Open-source credits](CREDITS.md)
+- [Security policy](SECURITY.md)
 
 ## What this fork adds
 
@@ -75,6 +103,32 @@ credentials.
 - LibreOffice for DOC/DOCX-to-PDF conversion; it is included in the
   production image.
 
+## Tamper-evident export
+
+Mike hashes a document version's bytes (SHA-256) whenever it writes them.
+`GET /api/projects/:projectId/export` returns a manifest of those hashes plus
+the accept/reject trail. To check a file you were given, run
+`shasum -a 256 lease.docx` and compare it to the manifest. Versions written
+before this shipped carry a `null` hash, so they read as unverifiable rather
+than as falsely verified.
+
+The manifest also carries a SHA-256 `digest` over its own body (everything
+except `digest` and `signature`, serialised with object keys sorted, array
+order kept, no whitespace).
+
+Provision a `manifest-signing-key` secret in Key Vault (local dev:
+`MANIFEST_SIGNING_KEY`; a 32-byte hex Ed25519 seed, `openssl rand -hex 32`) to
+sign that digest. The signature is a raw Ed25519 signature over the bytes
+`mike-project-manifest-v1`, a NUL byte, then the digest bytes. Take the public
+key from `GET /api/manifest-signing-key`, not from the manifest: whoever edits a
+manifest can re-sign it with a key of their own, so the embedded copy shows
+consistency, never provenance.
+
+Soft-deleted versions stay in the manifest, carrying their `deleted_at`. A
+trail that dropped them would be a weaker attestation, but it does mean the
+filename and timestamps of a deleted version are visible to anyone with access
+to the project.
+
 ## Validation
 
 ```bash
@@ -93,6 +147,17 @@ Only placeholder-bearing `*.example` environment templates belong in Git.
 
 AGPL-3.0-only. See [LICENSE](LICENSE).
 
+Bundled [public contract templates](docs/preset-templates.md#maintaining-the-catalog)
+retain their publishers' separate licenses and notices.
+
 The application is derived from
 [`willchen96/mike`](https://github.com/willchen96/mike). The Azure adaptation
 is maintained by Altien.
+
+## Microsoft Word add-in (Beta)
+
+The Mike Word add-in brings Mike into a Word task pane for document chat, quick actions, workflows, supporting files, and tracked edits. See [the Word add-in guide](word-addin/README.md) for setup and Entra sign-in.
+
+## Google integrations
+
+Google Drive, Gmail, and Calendar are optional connections in **Settings → Connectors**. Each account is separately authorized; writes require separate consent and explicit review. See [Google Workspace integration](docs/google-workspace.md).

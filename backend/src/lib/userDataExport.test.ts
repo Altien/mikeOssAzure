@@ -5,7 +5,7 @@ import {
   buildUserChatsExport,
   buildUserTabularReviewsExport,
   buildUserAccountExport,
-} from "./userDataExport";
+} from "../modules/user/user.dataExport"; // Dev drift: moved by upstream #295
 
 function rangeStart(call: DbCall): number | undefined {
   const r = call.filters.find(([m]) => m === "range");
@@ -151,14 +151,17 @@ describe("buildUserAccountExport", () => {
         c.table === "workflow_shares" &&
         c.filters.some(([, col]) => col === "shared_with_email"),
     );
-    const sharedWithScans = withEmailCalls.filter((c) =>
-      c.filters.some(([m]) => m.startsWith("filter")),
+    // Dev drift: upstream org access (bdce4fe7) replaced shared_with array
+    // containment scans with lookups in the per-resource access-grant tables.
+    const sharedWithScans = withEmailCalls.filter(
+      (c) =>
+        c.table.endsWith("_access_grants") &&
+        c.filters.some(([m, col, v]) => m === "eq" && col === "email" && v === "u@x.com"),
     );
     expect(recipientShareScan).toHaveLength(1);
-    // projects + tabular_reviews shared_with containment scans.
     expect(sharedWithScans.map((c) => c.table).sort()).toEqual([
-      "projects",
-      "tabular_reviews",
+      "project_access_grants",
+      "tabular_review_access_grants",
     ]);
 
     const { db: noEmailDb, calls: noEmailCalls } = makeFakeDb();
@@ -170,15 +173,19 @@ describe("buildUserAccountExport", () => {
       ),
     ).toEqual([]);
     expect(
-      noEmailCalls.filter((c) => c.filters.some(([m]) => m.startsWith("filter"))),
+      noEmailCalls.filter((c) => c.table.endsWith("_access_grants")),
     ).toEqual([]);
-    // Do not query the deferred workflow-submissions table: it is absent from
-    // dev's numbered migrations until the complete feature is adopted.
-    expect(
-      noEmailCalls.filter(
-        (c) => c.table === "workflow_open_source_submissions",
-      ),
-    ).toEqual([]);
+    // OSS-6: the user's workflow_open_source_submissions rows are exported
+    // (upstream a5fe6d6; table added by 0041), scoped to the submitter.
+    const submissionScans = noEmailCalls.filter(
+      (c) => c.table === "workflow_open_source_submissions",
+    );
+    expect(submissionScans).toHaveLength(1);
+    expect(submissionScans[0].filters).toContainEqual([
+      "eq",
+      "submitted_by_user_id",
+      "u1",
+    ]);
   });
 
   it("reports API keys as booleans only — never selects key material", async () => {

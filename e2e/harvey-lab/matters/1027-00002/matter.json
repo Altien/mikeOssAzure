@@ -1,0 +1,317 @@
+{
+  "matter_id": "1027-00002",
+  "client_id": "1027",
+  "matter_seq": "00002",
+  "extracted_at": "2026-09-15T20:35:32+00:00",
+  "source_documents": [
+    "Engagement/engagement-letter-pellegrino.docx",
+    "Transaction Documents/co-invest-lpa-execution-version.docx"
+  ],
+  "folders": [
+    "Analysis & Advice",
+    "Closing",
+    "Engagement",
+    "Transaction Documents"
+  ],
+  "folder_tree": {
+    "Analysis & Advice": 3,
+    "Closing": 3,
+    "Engagement": 1,
+    "Transaction Documents": 5
+  },
+  "documents": [
+    {
+      "path": "1027-00002/Analysis & Advice/key-terms-summary-issues-memo.docx",
+      "folder": "Analysis & Advice",
+      "name": "key-terms-summary-issues-memo.docx",
+      "ext": "docx",
+      "bytes": 67827
+    },
+    {
+      "path": "1027-00002/Analysis & Advice/negotiation-tracker-memo.xlsx",
+      "folder": "Analysis & Advice",
+      "name": "negotiation-tracker-memo.xlsx",
+      "ext": "xlsx",
+      "bytes": 20550
+    },
+    {
+      "path": "1027-00002/Analysis & Advice/tax-structuring-analysis-memo.docx",
+      "folder": "Analysis & Advice",
+      "name": "tax-structuring-analysis-memo.docx",
+      "ext": "docx",
+      "bytes": 62432
+    },
+    {
+      "path": "1027-00002/Closing/closing-checklist.xlsx",
+      "folder": "Closing",
+      "name": "closing-checklist.xlsx",
+      "ext": "xlsx",
+      "bytes": 12365
+    },
+    {
+      "path": "1027-00002/Closing/enforceability-opinion-letter.docx",
+      "folder": "Closing",
+      "name": "enforceability-opinion-letter.docx",
+      "ext": "docx",
+      "bytes": 46480
+    },
+    {
+      "path": "1027-00002/Closing/funds-flow-memorandum.docx",
+      "folder": "Closing",
+      "name": "funds-flow-memorandum.docx",
+      "ext": "docx",
+      "bytes": 55281
+    },
+    {
+      "path": "1027-00002/Engagement/engagement-letter-pellegrino.docx",
+      "folder": "Engagement",
+      "name": "engagement-letter-pellegrino.docx",
+      "ext": "docx",
+      "bytes": 51058
+    },
+    {
+      "path": "1027-00002/Transaction Documents/co-invest-lpa-execution-version.docx",
+      "folder": "Transaction Documents",
+      "name": "co-invest-lpa-execution-version.docx",
+      "ext": "docx",
+      "bytes": 79135
+    },
+    {
+      "path": "1027-00002/Transaction Documents/co-invest-lpa-redline-markup.docx",
+      "folder": "Transaction Documents",
+      "name": "co-invest-lpa-redline-markup.docx",
+      "ext": "docx",
+      "bytes": 84833
+    },
+    {
+      "path": "1027-00002/Transaction Documents/investor-questionnaire-pellegrino.docx",
+      "folder": "Transaction Documents",
+      "name": "investor-questionnaire-pellegrino.docx",
+      "ext": "docx",
+      "bytes": 56511
+    },
+    {
+      "path": "1027-00002/Transaction Documents/side-letter-pellegrino.docx",
+      "folder": "Transaction Documents",
+      "name": "side-letter-pellegrino.docx",
+      "ext": "docx",
+      "bytes": 53946
+    },
+    {
+      "path": "1027-00002/Transaction Documents/subscription-agreement-pellegrino.docx",
+      "folder": "Transaction Documents",
+      "name": "subscription-agreement-pellegrino.docx",
+      "ext": "docx",
+      "bytes": 57381
+    }
+  ],
+  "doc_counts": {
+    "docx": 10,
+    "xlsx": 2
+  },
+  "status_signals": {
+    "folder:closing": true,
+    "folder:post-closing": false,
+    "folder:early termination": false,
+    "folder:termination": false,
+    "folder:settlement": false,
+    "folder:appeal": false,
+    "folder:wind-down": false,
+    "file:closing-memo": false,
+    "file:final-invoice": false,
+    "file:matter-closing": false,
+    "file:closing-binder": false,
+    "file:engagement-terminat": false,
+    "file:disengagement": false
+  },
+  "doc_dates": {
+    "earliest": null,
+    "latest": null,
+    "all": []
+  },
+  "matter_name": "Pellegrino Capital Group — Co-Investment in Ridgeline-Clarion Co-Invest, L.P.",
+  "matter_description": "Representation of Pellegrino Capital Group LLC in connection with its $25,000,000 co-investment alongside Ridgeline Equity Partners Fund IV, L.P. in Ridgeline-Clarion Co-Invest, L.P., a Delaware co-investment vehicle formed to acquire Clarion Hospitality Holdings, Inc., including negotiation of the Co-Invest LPA, a side letter, and a subscription agreement, plus related tax analysis and closing deliverables.",
+  "matter_type": "fund co-investment / private equity LP-side representation",
+  "client": {
+    "name": "Pellegrino Capital Group LLC",
+    "entity_type": "Delaware limited liability company",
+    "industry": "private investment / capital management",
+    "contacts": [
+      {
+        "name": "Adriana Voss, Esq.",
+        "title": "Vice President & General Counsel, Pellegrino Capital Group LLC",
+        "email": null
+      },
+      {
+        "name": "Marco A. Pellegrino",
+        "title": "Founder & Managing Member, Pellegrino Capital Group LLC (not individually represented)",
+        "email": null
+      },
+      {
+        "name": "Daniella R. Pellegrino",
+        "title": "Chief Financial Officer, Pellegrino Capital Group LLC (not individually represented)",
+        "email": null
+      }
+    ]
+  },
+  "counterparties": [
+    {
+      "name": "Ridgeline Equity Partners Fund IV, L.P.",
+      "role": "co-investing fund alongside client"
+    },
+    {
+      "name": "Ridgeline-Clarion Co-Invest GP LLC",
+      "role": "general partner of the Co-Invest Vehicle"
+    },
+    {
+      "name": "Ridgeline Equity Management LLC",
+      "role": "sponsor"
+    },
+    {
+      "name": "Clarion Hospitality Holdings, Inc.",
+      "role": "target company"
+    },
+    {
+      "name": "Clarion Holdings Acquisition Corp.",
+      "role": "acquisition vehicle"
+    },
+    {
+      "name": "Brindoval Growth Capital Fund II, L.P.",
+      "role": "other co-investor (potential participant)"
+    }
+  ],
+  "other_parties": [
+    {
+      "name": "Hartwell Velmoran & Pratt LLP (Douglas W. Cheng, Partner; Meredith L. Tanaka, Associate)",
+      "role": "counsel to the Sponsor"
+    },
+    {
+      "name": "Aldridge Mayer Stevens LLP",
+      "role": "counsel to seller(s) of Clarion"
+    },
+    {
+      "name": "Whitfield Greer & Associates LLP (Robert K. Anand, Engagement Partner)",
+      "role": "client's independent tax and accounting advisor"
+    },
+    {
+      "name": "Continental Fiduciary Services, Inc.",
+      "role": "escrow agent"
+    },
+    {
+      "name": "Pinnacle National Bank, N.A.",
+      "role": "lender (credit facility for the Acquisition; outside scope of this engagement)"
+    }
+  ],
+  "firm": {
+    "responsible_partner": "Nicholas Stern",
+    "billing_partner": "Graham Sutherland",
+    "originating_partner": null,
+    "supervising_attorneys": [
+      "Nicholas Stern",
+      "Graham Sutherland"
+    ],
+    "associates": [
+      "Owen Fischer",
+      "Stephen Adler"
+    ],
+    "paralegals": [],
+    "other_staff": [],
+    "practice_group": "Funds & Asset Management",
+    "sub_practice": null,
+    "office": "Miami, FL (200 South Biscayne Boulevard)"
+  },
+  "practice_area": "Investment Funds",
+  "sub_practice_area": "Secondaries & Co-Investments",
+  "dates": {
+    "engagement_letter": "2025-11-18",
+    "opened": "2025-11-18",
+    "conflicts_cleared": null,
+    "closed": "2026-01-30",
+    "key_deadlines": [
+      {
+        "date": "2026-01-30",
+        "what": "Anticipated closing date (6-8 weeks from engagement letter; matches Closing Date defined in Co-Invest LPA)"
+      }
+    ]
+  },
+  "billing": {
+    "arrangement": "hourly",
+    "rates": [
+      {
+        "person": "Partners",
+        "rate": "$1,050-$1,250/hour (2025 standard rate range)"
+      },
+      {
+        "person": "Associates",
+        "rate": "$550-$825/hour (2025 standard rate range)"
+      },
+      {
+        "person": "Paralegals",
+        "rate": "$350-$450/hour (2025 standard rate range)"
+      }
+    ],
+    "budget": "$175,000-$250,000 estimated total fees (non-binding estimate, not a cap), exclusive of disbursements",
+    "retainer": null
+  },
+  "status": {
+    "value": "closed",
+    "as_of": "2026-01-30",
+    "basis": "The Amended and Restated LPA of Ridgeline-Clarion Co-Invest, L.P. is an 'Execution Version' dated as of January 30, 2026, with 'Closing Date' defined therein as January 30, 2026, indicating the co-investment closed; no separate post-closing/closing-confirmation letter to Pellegrino is among the sources, so the closed status is inferred from the executed transaction document rather than a firm closing letter."
+  },
+  "jurisdictions": [
+    "Delaware",
+    "Florida",
+    "New York",
+    "Tennessee"
+  ],
+  "regulators_or_courts": [],
+  "governing_law": "Delaware (Delaware Revised Uniform Limited Partnership Act, 6 Del. C. § 17-101 et seq., governs the Co-Invest LPA); Florida Rules of Professional Conduct govern the engagement letter",
+  "deal_or_case": {
+    "transaction_value": "$25,000,000 (Pellegrino's commitment) of $75,000,000 aggregate Co-Invest Vehicle commitments, within a $250,000,000 total AcquisitionCo equity capitalization (Fund IV committing $175,000,000)",
+    "case_number": null,
+    "filing_numbers": [
+      "Co-Invest LP EIN 93-4817265",
+      "Co-Invest GP EIN 93-4817302",
+      "AcquisitionCo EIN 93-4820119",
+      "Clarion EIN 62-1784503"
+    ],
+    "significant_events": [
+      {
+        "date": "2025-11-18",
+        "what": "Engagement letter executed / matter opened"
+      },
+      {
+        "date": "2025-12-12",
+        "what": "Stock Purchase Agreement for the Acquisition dated"
+      },
+      {
+        "date": "2026-01-30",
+        "what": "Closing Date / Execution Version of Amended and Restated Co-Invest LPA dated"
+      }
+    ]
+  },
+  "keywords": [
+    "fund co-investment",
+    "limited partnership agreement",
+    "side letter",
+    "MFN rights",
+    "LPAC",
+    "carried interest",
+    "clawback",
+    "subscription agreement",
+    "leveraged buyout",
+    "UBTI",
+    "FIRPTA",
+    "Section 704(b) allocations",
+    "private equity",
+    "Delaware LP",
+    "hospitality asset management"
+  ],
+  "evidence": {
+    "firm.responsible_partner": "engagement-letter-pellegrino.docx Section 4: 'Responsible Partner: Nicholas Stern, Partner, Funds & Asset Management Practice Group'",
+    "firm.billing_partner": "engagement-letter-pellegrino.docx Section 4: 'Billing Partner: Graham Sutherland, Partner, Funds & Asset Management Practice Group'",
+    "firm.practice_group": "engagement-letter-pellegrino.docx Section 4 lists 'Funds & Asset Management Practice Group' for all four staffed attorneys (Stern, Sutherland, Fischer, Adler)",
+    "status.value": "co-invest-lpa-execution-version.docx: title page reads 'Execution Version', and Section 1.1 defines '\"Closing Date\" means January 30, 2026'; recitals confirm the Partnership was formed and capitalized as contemplated by the engagement letter",
+    "billing.budget": "engagement-letter-pellegrino.docx Section 5.2: 'total legal fees for this engagement will be in the range of One Hundred Seventy-Five Thousand Dollars ($175,000) to Two Hundred Fifty Thousand Dollars ($250,000)'"
+  }
+}

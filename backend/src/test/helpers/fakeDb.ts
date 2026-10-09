@@ -9,8 +9,10 @@
  * cascades like userDataCleanup).
  *
  * Supported chains: from(t).select(cols)[.eq/.neq/.in/.is/.filter/.order/
- * .range]* awaited directly or via .single()/.maybeSingle(),
- * from(t).delete().eq/.in, from(t).update(payload).eq.
+ * .limit/.range]* awaited directly or via .single()/.maybeSingle(),
+ * from(t).insert(payload).select(...), from(t).delete().eq/.in,
+ * from(t).update(payload).eq, from(t).upsert(payload, options), and
+ * rpc(fn, args) (recorded with table = fn, op "rpc", payload = args).
  *
  * A call is recorded only when it is actually awaited (in `then`), so
  * `calls` reflects executed queries in await order — Promise.all batches
@@ -19,7 +21,7 @@
 
 export type DbCall = {
   table: string;
-  op: "select" | "delete" | "update";
+  op: "select" | "insert" | "delete" | "update" | "upsert" | "rpc";
   /** [method, column, value] tuples in chain order, e.g. ["eq","user_id","u1"] */
   filters: Array<[string, string, unknown]>;
   payload?: unknown;
@@ -49,9 +51,15 @@ export function makeFakeDb(
       };
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const builder: any = {
+        // A trailing .select() after a write (insert/update/upsert
+        // ...select().single()) keeps the write's op.
         select(columns?: string) {
-          call.op = "select";
           call.columns = columns;
+          return builder;
+        },
+        insert(payload: unknown) {
+          call.op = "insert";
+          call.payload = payload;
           return builder;
         },
         delete() {
@@ -61,6 +69,12 @@ export function makeFakeDb(
         update(payload: unknown) {
           call.op = "update";
           call.payload = payload;
+          return builder;
+        },
+        upsert(payload: unknown, options?: unknown) {
+          call.op = "upsert";
+          call.payload = payload;
+          if (options !== undefined) call.filters.push(["options", "", options]);
           return builder;
         },
         eq(column: string, value: unknown) {
@@ -86,6 +100,9 @@ export function makeFakeDb(
         order() {
           return builder;
         },
+        limit() {
+          return builder;
+        },
         range(from: number, to: number) {
           call.filters.push(["range", String(from), to]);
           return builder;
@@ -106,6 +123,11 @@ export function makeFakeDb(
         ) => resolve().then(onFulfilled, onRejected),
       };
       return builder;
+    },
+    rpc(fn: string, args?: unknown): Promise<DbResult> {
+      const call: DbCall = { table: fn, op: "rpc", filters: [], payload: args };
+      calls.push(call);
+      return Promise.resolve({ data: null, error: null, ...respond(call) });
     },
   };
 

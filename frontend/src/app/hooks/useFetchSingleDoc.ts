@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { getBrowserAccessToken, bounceIfUnauthorized } from "@/lib/auth-token";
+import { API_BASE } from "@/app/lib/mikeApi";
+import { authenticatedFetch } from "@/app/lib/authEvents";
 
 /**
- * /display returns either PDF bytes (when the active version has a PDF
- * rendition) or raw DOCX bytes otherwise. Reporting the type lets the
- * caller swap between DocView (PDF.js) and DocxView (docx-preview)
- * accordingly.
+ * PdfView's loader. /display returns PDF bytes (a stored or on-demand PDF
+ * rendition) for the files PdfView shows. Anything else is reported as
+ * "docx" so a caller can route it to DocxView. Spreadsheets and .docx files
+ * read their raw bytes from /file instead (see useFetchDocxBytes).
  */
 export type DocResult =
     | { type: "pdf"; buffer: ArrayBuffer }
@@ -17,17 +18,21 @@ export type DocResult =
 export function useFetchSingleDoc(
     documentId: string | null | undefined,
     versionId?: string | null,
+    displayUrl?: string | null,
+    refetchKey?: number | string,
 ) {
     const [result, setResult] = useState<DocResult>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const prevKeyRef = useRef<string | null>(null);
 
     useEffect(() => {
-        if (!documentId) return;
-        const requestKey = `${documentId}:${versionId ?? "current"}`;
-        if (requestKey === prevKeyRef.current) return;
-        prevKeyRef.current = requestKey;
+        if (!documentId) {
+            setResult(null);
+            setLoading(false);
+            setError(null);
+            return;
+        }
+        const controller = new AbortController();
 
         setLoading(true);
         setError(null);
@@ -37,36 +42,26 @@ export function useFetchSingleDoc(
 
         (async () => {
             try {
-                const token = await getBrowserAccessToken();
-                if (cancelled) return;
-
-                const apiBase =
-                    (process.env.NEXT_PUBLIC_API_BASE_URL ??
-                        "http://localhost:3001") + "/api";
+                // The private display endpoint uses the current HttpOnly
+                // session through the same-origin /api boundary.
                 const qs = versionId
                     ? `?version_id=${encodeURIComponent(versionId)}`
                     : "";
-                const response = await fetch(
-                    `${apiBase}/single-documents/${documentId}/display${qs}`,
-                    {
-                        headers: token
-                            ? { Authorization: `Bearer ${token}` }
-                            : {},
-                    },
+                const response = await authenticatedFetch(
+                    displayUrl ?? `${API_BASE}/single-documents/${documentId}/display${qs}`,
+                    { credentials: "include", signal: controller.signal },
                 );
-                bounceIfUnauthorized(response);
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 if (cancelled) return;
 
-                const contentType =
-                    response.headers.get("content-type") ?? "";
+                const contentType = response.headers.get("content-type") ?? "";
                 if (contentType.includes("application/pdf")) {
                     const buffer = await response.arrayBuffer();
                     if (!cancelled) setResult({ type: "pdf", buffer });
                 } else {
                     // Drain the body so the connection is reusable, but the
-                    // bytes are useless to the PDF viewer — the caller will
-                    // fall back to DocxView, which fetches `/docx` itself.
+                    // bytes are useless to the PDF viewer. Callers
+                    // should route DOC/DOCX files to DocxView directly.
                     await response.arrayBuffer().catch(() => {});
                     if (!cancelled) setResult({ type: "docx" });
                 }
@@ -79,9 +74,9 @@ export function useFetchSingleDoc(
 
         return () => {
             cancelled = true;
-            prevKeyRef.current = null;
+            controller.abort();
         };
-    }, [documentId, versionId]);
+    }, [displayUrl, documentId, versionId, refetchKey]);
 
     return { result, loading, error };
 }

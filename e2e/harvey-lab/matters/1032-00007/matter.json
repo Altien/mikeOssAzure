@@ -1,0 +1,350 @@
+{
+  "matter_id": "1032-00007",
+  "client_id": "1032",
+  "matter_seq": "00007",
+  "extracted_at": "2026-09-15T20:19:07+00:00",
+  "source_documents": [
+    "Engagement/engagement-letter-hsag-hsi.docx",
+    "Correspondence/quinn-to-friedl-settlement-status-email.eml",
+    "Correspondence/entry-of-appearance-letter.docx"
+  ],
+  "folders": [
+    "Correspondence",
+    "Engagement",
+    "Investigation",
+    "Regulatory Filings",
+    "Settlement"
+  ],
+  "folder_tree": {
+    "Correspondence": 4,
+    "Engagement": 1,
+    "Investigation": 3,
+    "Regulatory Filings": 1,
+    "Settlement": 3
+  },
+  "documents": [
+    {
+      "path": "1032-00007/Correspondence/entry-of-appearance-letter.docx",
+      "folder": "Correspondence",
+      "name": "entry-of-appearance-letter.docx",
+      "ext": "docx",
+      "bytes": 39457
+    },
+    {
+      "path": "1032-00007/Correspondence/first-production-cover-letter.docx",
+      "folder": "Correspondence",
+      "name": "first-production-cover-letter.docx",
+      "ext": "docx",
+      "bytes": 46784
+    },
+    {
+      "path": "1032-00007/Correspondence/material-litigation-notice-lodestar.docx",
+      "folder": "Correspondence",
+      "name": "material-litigation-notice-lodestar.docx",
+      "ext": "docx",
+      "bytes": 43941
+    },
+    {
+      "path": "1032-00007/Correspondence/quinn-to-friedl-settlement-status-email.eml",
+      "folder": "Correspondence",
+      "name": "quinn-to-friedl-settlement-status-email.eml",
+      "ext": "eml",
+      "bytes": 11409
+    },
+    {
+      "path": "1032-00007/Engagement/engagement-letter-hsag-hsi.docx",
+      "folder": "Engagement",
+      "name": "engagement-letter-hsag-hsi.docx",
+      "ext": "docx",
+      "bytes": 45917
+    },
+    {
+      "path": "1032-00007/Investigation/internal-investigation-plan-memo.docx",
+      "folder": "Investigation",
+      "name": "internal-investigation-plan-memo.docx",
+      "ext": "docx",
+      "bytes": 80845
+    },
+    {
+      "path": "1032-00007/Investigation/investigation-findings-memo.docx",
+      "folder": "Investigation",
+      "name": "investigation-findings-memo.docx",
+      "ext": "docx",
+      "bytes": 60601
+    },
+    {
+      "path": "1032-00007/Investigation/ofac-sanctions-exposure-memo.docx",
+      "folder": "Investigation",
+      "name": "ofac-sanctions-exposure-memo.docx",
+      "ext": "docx",
+      "bytes": 59239
+    },
+    {
+      "path": "1032-00007/Regulatory Filings/vsd-cover-letter-bis.docx",
+      "folder": "Regulatory Filings",
+      "name": "vsd-cover-letter-bis.docx",
+      "ext": "docx",
+      "bytes": 51702
+    },
+    {
+      "path": "1032-00007/Settlement/board-update-memo.docx",
+      "folder": "Settlement",
+      "name": "board-update-memo.docx",
+      "ext": "docx",
+      "bytes": 56413
+    },
+    {
+      "path": "1032-00007/Settlement/settlement-agreement-redline.docx",
+      "folder": "Settlement",
+      "name": "settlement-agreement-redline.docx",
+      "ext": "docx",
+      "bytes": 56677
+    },
+    {
+      "path": "1032-00007/Settlement/settlement-strategy-memo.docx",
+      "folder": "Settlement",
+      "name": "settlement-strategy-memo.docx",
+      "ext": "docx",
+      "bytes": 59846
+    }
+  ],
+  "doc_counts": {
+    "docx": 11,
+    "eml": 1
+  },
+  "status_signals": {
+    "folder:closing": false,
+    "folder:post-closing": false,
+    "folder:early termination": false,
+    "folder:termination": false,
+    "folder:settlement": true,
+    "folder:appeal": false,
+    "folder:wind-down": false,
+    "file:closing-memo": false,
+    "file:final-invoice": false,
+    "file:matter-closing": false,
+    "file:closing-binder": false,
+    "file:engagement-terminat": false,
+    "file:disengagement": false
+  },
+  "doc_dates": {
+    "earliest": null,
+    "latest": null,
+    "all": []
+  },
+  "matter_name": "Halcyon Semiconductor AG/Inc. - DOJ NSD Export Control Inquiry (NSD-CES-2025-04871)",
+  "matter_description": "Defense of Halcyon Semiconductor AG and its US subsidiary Halcyon Semiconductor Inc. in a DOJ National Security Division/Counterintelligence and Export Control Section inquiry into shipments of export-controlled HCA-9100 series chipsets to PRC-based end users, including an internal investigation, a voluntary self-disclosure to BIS, and negotiation of an administrative settlement agreement with a civil penalty and compliance monitor.",
+  "matter_type": "regulatory investigation - export control / national security enforcement defense (white collar)",
+  "client": {
+    "name": "Halcyon Semiconductor AG and Halcyon Semiconductor Inc.",
+    "entity_type": "Halcyon Semiconductor AG: Swiss corporation, publicly listed on XETRA/Frankfurt Stock Exchange (ticker HCA); Halcyon Semiconductor Inc.: wholly owned US subsidiary",
+    "industry": "Semiconductors (chipset manufacturing - HCA-9100 series, ECCN 3A001)",
+    "contacts": [
+      {
+        "name": "Marcus Friedl",
+        "title": "General Counsel, Halcyon Semiconductor AG",
+        "email": "marcus.friedl@halcyon-semi.com"
+      },
+      {
+        "name": "Derek Tran",
+        "title": "President, Halcyon Semiconductor Inc.",
+        "email": null
+      }
+    ]
+  },
+  "counterparties": [
+    {
+      "name": "U.S. Department of Justice, National Security Division, Counterintelligence and Export Control Section (NSD/CES)",
+      "role": "regulator / investigating and negotiating agency"
+    },
+    {
+      "name": "Bureau of Industry and Security, Office of Export Enforcement (U.S. Dept. of Commerce)",
+      "role": "regulator (voluntary self-disclosure recipient)"
+    },
+    {
+      "name": "Office of Foreign Assets Control (OFAC)",
+      "role": "regulator (potential referral, ultimately not made)"
+    }
+  ],
+  "other_parties": [
+    {
+      "name": "Braxton Merritt LLP (Elena Voss)",
+      "role": "co-counsel - corporate and securities counsel to Halcyon"
+    },
+    {
+      "name": "Kessler Pratt & Whitfield LLP (Dr. Tobias Engel)",
+      "role": "co-counsel - German and EU export control counsel"
+    },
+    {
+      "name": "Ashford Pennington (Dr. Miriam Hecht)",
+      "role": "compliance consultant (Phase I/Phase II compliance review, monitor-readiness)"
+    },
+    {
+      "name": "Zhonghe Microelectronics Co., Ltd.",
+      "role": "PRC end-user recipient of shipments under investigation"
+    },
+    {
+      "name": "Lansheng Harborline Technologies Ltd. (Chengdu, PRC)",
+      "role": "PRC end-user recipient of shipments under investigation (ultimately carved out of violations)"
+    },
+    {
+      "name": "Archipelago Component Solutions Pte. Ltd.",
+      "role": "intermediary/reseller through which shipments were routed"
+    }
+  ],
+  "firm": {
+    "responsible_partner": "Howard Quinn",
+    "billing_partner": "Conrad Ashby",
+    "originating_partner": null,
+    "supervising_attorneys": [],
+    "associates": [
+      "Liam Donahue (Lead)",
+      "Steven Hollander"
+    ],
+    "paralegals": [],
+    "other_staff": [
+      "Dr. Sabine Rücker, Of Counsel (German Trade Compliance Counsel, Frankfurt)"
+    ],
+    "practice_group": "White Collar & Investigations",
+    "sub_practice": "Export Controls / National Security",
+    "office": "Washington, D.C."
+  },
+  "practice_area": "Regulatory & Investigations",
+  "sub_practice_area": "International Trade, Sanctions & CFIUS",
+  "dates": {
+    "engagement_letter": "2025-10-11",
+    "opened": "2025-10-11",
+    "conflicts_cleared": null,
+    "closed": null,
+    "key_deadlines": [
+      {
+        "date": "2026-03-17",
+        "what": "Target exchange of penalty-narrative and OFAC non-referral compromise language between counsel"
+      },
+      {
+        "date": "2026-03-20",
+        "what": "Target date to circulate clean revised settlement draft"
+      },
+      {
+        "date": "2026-03-31",
+        "what": "Target for Board/Audit Committee settlement authorization (late March 2026)"
+      }
+    ]
+  },
+  "billing": {
+    "arrangement": "hourly",
+    "rates": [
+      {
+        "person": "Howard Quinn (Partner)",
+        "rate": "$1,875/hour"
+      },
+      {
+        "person": "Conrad Ashby (Partner)",
+        "rate": "$1,750/hour"
+      },
+      {
+        "person": "Liam Donahue (Associate)",
+        "rate": "$1,150/hour"
+      },
+      {
+        "person": "Steven Hollander (Associate)",
+        "rate": "$925/hour"
+      },
+      {
+        "person": "Dr. Sabine Rücker (Of Counsel)",
+        "rate": "€1,050/hour"
+      }
+    ],
+    "budget": "$2,800,000-$3,400,000 preliminary total fee estimate (not a cap or guarantee)",
+    "retainer": "No retainer requested at inception; Firm reserved the right to request one later"
+  },
+  "status": {
+    "value": "open",
+    "as_of": "2026-03-14",
+    "basis": "March 14, 2026 status email describes settlement negotiations as 'very close to final' but not yet executed, with Board/Audit Committee authorization still pending; no closing documents among sources"
+  },
+  "jurisdictions": [
+    "United States",
+    "Switzerland",
+    "People's Republic of China",
+    "Singapore"
+  ],
+  "regulators_or_courts": [
+    "U.S. Department of Justice, National Security Division, Counterintelligence and Export Control Section",
+    "Bureau of Industry and Security, Office of Export Enforcement",
+    "Office of Foreign Assets Control (OFAC)"
+  ],
+  "governing_law": "Export Administration Regulations, 15 C.F.R. Parts 730-774 (including § 744.21); U.S. export control and national security enforcement law",
+  "deal_or_case": {
+    "transaction_value": "$3,250,000 proposed civil penalty (Board authorization ceiling $3,500,000)",
+    "case_number": "NSD-CES-2025-04871",
+    "filing_numbers": [
+      "BIS Voluntary Self-Disclosure Reference OEE-VSD-2025-00319"
+    ],
+    "significant_events": [
+      {
+        "date": "2025-10-09",
+        "what": "DOJ voluntary request for information letter issued"
+      },
+      {
+        "date": "2025-10-11",
+        "what": "Engagement letter executed; matter opened"
+      },
+      {
+        "date": "2025-10-14",
+        "what": "Entry of appearance letter sent to DOJ NSD/CES"
+      },
+      {
+        "date": "2025-11-04",
+        "what": "Voluntary self-disclosure filed with BIS (OEE-VSD-2025-00319)"
+      },
+      {
+        "date": "2025-11-22",
+        "what": "OFAC and sanctions exposure analysis completed - no violations found"
+      },
+      {
+        "date": "2026-01-13",
+        "what": "Voluntary proffers by Ryan Oshiro and Janet Liang at C&H's DC office"
+      },
+      {
+        "date": "2026-02-24",
+        "what": "Resolution-in-principle framework agreed (18-month monitor, 3-year compliance period)"
+      },
+      {
+        "date": "2026-03-03",
+        "what": "DOJ issued draft administrative settlement agreement"
+      },
+      {
+        "date": "2026-03-10",
+        "what": "Company's redline of settlement agreement submitted to DOJ"
+      },
+      {
+        "date": "2026-03-14",
+        "what": "Call with DOJ NSD/CES on redline positions; status update to client"
+      }
+    ]
+  },
+  "keywords": [
+    "export controls",
+    "Export Administration Regulations",
+    "EAR",
+    "DOJ National Security Division",
+    "voluntary self-disclosure",
+    "BIS Office of Export Enforcement",
+    "civil penalty",
+    "compliance monitor",
+    "OFAC",
+    "administrative settlement agreement",
+    "ECCN 3A001",
+    "entity list",
+    "internal investigation",
+    "national security enforcement",
+    "chipset export diversion"
+  ],
+  "evidence": {
+    "client.entity_type": "engagement-letter-hsag-hsi.docx / entry-of-appearance-letter.docx: 'HSAG, a Swiss corporation'; HSI is 'organized under the laws of the State of Delaware'",
+    "firm.practice_group": "quinn-to-friedl-settlement-status-email.eml signature block: 'Howard Quinn, Partner | White Collar & Investigations'",
+    "status.value": "quinn-to-friedl-settlement-status-email.eml (Mar 14, 2026): 'We are very close to final...I expect an agreed draft within 7-10 business days' and 'Board/Audit Committee authorization is needed by late March' - agreement not yet executed",
+    "billing.budget": "engagement-letter-hsag-hsi.docx: 'we estimate that total professional fees for this engagement will be in the range of $2,800,000 to $3,400,000...not a cap or a guarantee'"
+  }
+}

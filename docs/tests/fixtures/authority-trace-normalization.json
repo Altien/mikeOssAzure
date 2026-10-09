@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "vectors": [
+    {
+      "name": "html entities and dash",
+      "raw": "A&amp;B &#8212; C",
+      "normalized": "A&B - C"
+    },
+    {
+      "name": "zero-width characters",
+      "raw": "A​B⁠C",
+      "normalized": "ABC"
+    },
+    {
+      "name": "unicode compatibility",
+      "raw": "ＡＢＣ ﬁ",
+      "normalized": "ABC fi"
+    },
+    {
+      "name": "smart punctuation",
+      "raw": "“quoted”—‘yes’…",
+      "normalized": "\"quoted\"-'yes'..."
+    },
+    {
+      "name": "line-break hyphenation",
+      "raw": "inter-\r\nnational",
+      "normalized": "international"
+    },
+    {
+      "name": "page and note markers",
+      "raw": "Before <<pg. 12>> after [^note]",
+      "normalized": "Before after"
+    },
+    {
+      "name": "exact match",
+      "raw": "Before exact words after",
+      "proposed": "exact words",
+      "match": "exact",
+      "quote": "exact words"
+    },
+    {
+      "name": "normalized match",
+      "raw": "Before “quoted”\r\nwords after",
+      "proposed": "\"quoted\" words",
+      "match": "normalized",
+      "quote": "“quoted”\r\nwords"
+    },
+    {
+      "name": "hyphenless match",
+      "raw": "The long-term outcome",
+      "proposed": "longterm outcome",
+      "match": "hyphenless",
+      "quote": "long-term outcome"
+    }
+  ]
+}

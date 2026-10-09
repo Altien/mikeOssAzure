@@ -1,7 +1,12 @@
 import crypto from "crypto";
 import dns from "dns/promises";
 import net from "net";
-import { getConfig } from "../config";
+import { getKeyVaultConfig } from "../config";
+import { readSecretEnv } from "../envSecrets";
+import { promisify } from "node:util";
+import { Agent, fetch as undiciFetch } from "undici";
+import { isBlockedIp } from "../privateIp";
+import { configuredApiPublicUrl } from "../runtimeConfig";
 import {
     BLOCKED_METADATA_HOSTS,
     HEADER_NAME_RE,
@@ -22,7 +27,7 @@ import {
 //  process.env.USER_API_KEYS_ENCRYPTION_SECRET` and derived the key with a
 // synchronous `scryptSync`. On dev, secrets are Key-Vault-primary
 // (internal design notes §2.4): the secret is resolved through `getConfig()`
-// (Key Vault canonical, env-var fallback for local dev), so the key
+// (Key Vault first, env-var fallback for local dev), so the key
 // accessor is async and cached as a Promise — mirroring
 // `lib/userApiKeys.ts`'s `getEncryptionKey()`. All encrypt/decrypt helpers
 // below are therefore async. Do NOT "simplify" these back to a sync
@@ -39,16 +44,17 @@ let keyPromise: Promise<Buffer> | null = null;
 async function encryptionKey(): Promise<Buffer> {
     if (!keyPromise) {
         keyPromise = (async () => {
-            // getConfig() looks up MCP_CONNECTORS_ENCRYPTION_KEY in env first
-            // (local dev / transition), then Key Vault. Fall back to the
-            // user-api-keys secret so a single configured secret can cover
-            // both subsystems, matching upstream's env fallback intent.
-            let secret = await getConfig(ENCRYPTION_SECRET_NAME).catch(() => "");
+            // Keep existing connector ciphertext readable: prefer the
+            // dedicated vault key, then its local env fallback, before the
+            // legacy user-api-keys fallback pair.
+            let secret = await getKeyVaultConfig(ENCRYPTION_SECRET_NAME).catch(() => "");
+            if (!secret) secret = readSecretEnv("MCP_CONNECTORS_ENCRYPTION_KEY");
             if (!secret) {
-                secret = await getConfig("user-api-keys-encryption-key").catch(
+                secret = await getKeyVaultConfig("user-api-keys-encryption-key").catch(
                     () => "",
                 );
             }
+            if (!secret) secret = readSecretEnv("USER_API_KEYS_ENCRYPTION_KEY");
             if (!secret) {
                 throw new Error(
                     `MCP connectors encryption secret (${ENCRYPTION_SECRET_NAME}) ` +
@@ -57,7 +63,10 @@ async function encryptionKey(): Promise<Buffer> {
                 );
             }
             return crypto.scryptSync(secret, "mike-user-mcp-v1", 32);
-        })();
+        })().catch((error) => {
+            keyPromise = null;
+            throw error;
+        });
     }
     return keyPromise;
 }
@@ -71,11 +80,12 @@ export function flushMcpEncryptionKey(): void {
 }
 
 export function mcpOAuthCallbackUrl() {
-    const base = (
-        process.env.API_PUBLIC_URL ||
-        process.env.BACKEND_URL ||
-        `http://localhost:${process.env.PORT ?? "3001"}`
-    ).replace(/\/+$/, "");
+    const configured = configuredApiPublicUrl();
+    if (!configured && process.env.NODE_ENV === "production") {
+        throw new Error("API_PUBLIC_URL is required for connector OAuth");
+    }
+    const base =
+        configured || `http://localhost:${process.env.PORT ?? "3001"}`;
     return `${base}/user/mcp-connectors/oauth/callback`;
 }
 
@@ -214,18 +224,63 @@ function truthyAnnotation(
     return annotations?.[key] === true;
 }
 
-export function toolRequiresConfirmation(
+export function isMcpWriteTool(
     annotations: Record<string, unknown> | null | undefined,
 ) {
-    // Gate only genuinely destructive tools behind human confirmation. We do
-    // NOT gate on openWorldHint (almost every useful connector — Gmail, Slack,
-    // GitHub — is "open world", so gating on it disables everything), and we
-    // require readOnlyHint to be *explicitly* false rather than merely absent
-    // (a missing hint must not be treated the same as readOnlyHint:false).
+    // Missing annotations do not establish read-only behavior. Only explicitly
+    // read-only, non-destructive tools may bypass the write protections.
     return (
         truthyAnnotation(annotations, "destructiveHint") ||
-        annotations?.readOnlyHint === false
+        annotations?.readOnlyHint !== true
     );
+}
+
+/** Also protect cached tools discovered before conservative classification. */
+export function mcpToolRequiresWriteAccess(
+    tool: Pick<ToolCacheRow, "annotations" | "requires_confirmation">,
+) {
+    return tool.requires_confirmation || isMcpWriteTool(tool.annotations);
+}
+
+const deriveCredentialFingerprint = promisify(crypto.scrypt);
+
+/** An opaque binding to the destination and credentials, stable across token refresh. */
+export async function mcpConnectionFingerprint(
+    connector: ConnectorRow,
+    oauthGrantId: string | null,
+) {
+    // Dev: the MCP cipher resolves its Key Vault-first key asynchronously.
+    const config = await decryptAuthConfig(connector);
+    // Use a slow, asynchronous derivation for potentially low-entropy custom
+    // credentials. The application key also prevents offline guessing from
+    // a fingerprint alone without blocking the request event loop.
+    const credentials =
+        connector.encrypted_auth_config || oauthGrantId
+            ? (
+                (await deriveCredentialFingerprint(
+                    JSON.stringify({
+                        oauthGrantId,
+                        bearerToken: config.bearerToken ?? null,
+                        headers: Object.entries(config.headers ?? {}).sort(([a], [b]) =>
+                            a.localeCompare(b),
+                        ),
+                    }),
+                    await encryptionKey(),
+                    32,
+                )) as Buffer
+            ).toString("hex")
+            : null;
+    return crypto
+        .createHash("sha256")
+        .update(
+            JSON.stringify([
+                connector.server_url,
+                connector.transport,
+                connector.auth_type,
+                credentials,
+            ]),
+        )
+        .digest("hex");
 }
 
 function toToolSummary(row: ToolCacheRow): McpToolSummary {
@@ -238,7 +293,7 @@ function toToolSummary(row: ToolCacheRow): McpToolSummary {
         enabled: row.enabled,
         readOnly: truthyAnnotation(row.annotations, "readOnlyHint"),
         destructive: truthyAnnotation(row.annotations, "destructiveHint"),
-        requiresConfirmation: row.requires_confirmation,
+        write: mcpToolRequiresWriteAccess(row),
         lastSeenAt: row.last_seen_at,
     };
 }
@@ -257,52 +312,24 @@ export async function toConnectorSummary(
         serverUrl: connector.server_url,
         authType: connector.auth_type ?? "none",
         enabled: connector.enabled,
+        requireWriteApproval: connector.require_write_approval !== false,
+        readOnly: connector.read_only === true,
         hasAuthConfig: !!connector.encrypted_auth_config,
         customHeaderKeys: Object.keys(authConfig.headers ?? {}),
         oauthConnected: !!oauthToken?.encrypted_access_token,
         toolPolicy: connector.tool_policy ?? {},
-        tools: tools.map(toToolSummary),
+        tools: tools.map((tool) => ({
+            ...toToolSummary(tool),
+            enabled: tool.enabled && !(connector.read_only && mcpToolRequiresWriteAccess(tool)),
+        })),
         toolCount,
         createdAt: connector.created_at,
         updatedAt: connector.updated_at,
     };
 }
 
-function isPrivateIpv4(ip: string) {
-    const parts = ip.split(".").map((part) => Number.parseInt(part, 10));
-    if (parts.length !== 4 || parts.some((part) => !Number.isFinite(part))) {
-        return true;
-    }
-    const [a, b] = parts;
-    return (
-        a === 0 ||
-        a === 10 ||
-        a === 127 ||
-        (a === 100 && b >= 64 && b <= 127) ||
-        (a === 169 && b === 254) ||
-        (a === 172 && b >= 16 && b <= 31) ||
-        (a === 192 && b === 168) ||
-        (a === 192 && b === 0) ||
-        (a === 198 && (b === 18 || b === 19)) ||
-        a >= 224
-    );
-}
-
-function isPrivateIpv6(ip: string) {
-    const normalized = ip.toLowerCase();
-    if (normalized === "::1" || normalized === "::") return true;
-    if (normalized.startsWith("fc") || normalized.startsWith("fd")) return true;
-    if (/^fe[89ab]:/.test(normalized)) return true;
-    const ipv4Tail = normalized.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    return ipv4Tail ? isPrivateIpv4(ipv4Tail[1]) : false;
-}
-
-function isBlockedIp(ip: string) {
-    const family = net.isIP(ip);
-    if (family === 4) return isPrivateIpv4(ip);
-    if (family === 6) return isPrivateIpv6(ip);
-    return true;
-}
+// Private/reserved IP classification lives in lib/privateIp.ts so every
+// guarded egress check reuses the exact same ranges.
 
 export async function validateRemoteMcpUrl(rawUrl: string): Promise<string> {
     let url: URL;
@@ -327,9 +354,17 @@ export async function validateRemoteMcpUrl(rawUrl: string): Promise<string> {
         throw new Error("MCP server URL points to a blocked host.");
     }
 
-    const literalFamily = net.isIP(hostname);
+    // URL.hostname wraps IPv6 literals in brackets ("[::1]"), which net.isIP
+    // does not recognize. Strip them so an IPv6 literal is classified by the
+    // private-IP guard rather than falling through to a DNS lookup that would
+    // treat the bracketed form as an (unresolvable) hostname.
+    const literalHost =
+        hostname.startsWith("[") && hostname.endsWith("]")
+            ? hostname.slice(1, -1)
+            : hostname;
+    const literalFamily = net.isIP(literalHost);
     const addresses = literalFamily
-        ? [{ address: hostname }]
+        ? [{ address: literalHost }]
         : await dns.lookup(hostname, { all: true, verbatim: true });
     if (!addresses.length || addresses.some(({ address }) => isBlockedIp(address))) {
         throw new Error("MCP server URL resolves to a blocked network address.");
@@ -399,18 +434,181 @@ export async function authConfigPatch(
     });
 }
 
+// A shared undici dispatcher whose DNS lookup runs the private-IP guard at the
+// moment a socket is opened and returns ONLY validated addresses. Because
+// undici connects to exactly what this lookup yields, the address we validate is
+// the address we connect to — there is no second, unguarded resolution for an
+// attacker to race (DNS-rebinding / TOCTOU). Reusing the dispatcher also lets
+// undici pool validated HTTPS connections instead of leaving a new Agent and
+// keep-alive socket behind for every MCP request.
+const guardedAgent = new Agent({
+    connect: {
+        lookup: (hostname, _options, callback) => {
+            dns.lookup(hostname, { all: true, verbatim: true })
+                .then((addresses) => {
+                    if (
+                        !addresses.length ||
+                        addresses.some(({ address }) => isBlockedIp(address))
+                    ) {
+                        callback(
+                            new Error(
+                                "MCP server URL resolves to a blocked network address.",
+                            ),
+                            [],
+                        );
+                        return;
+                    }
+                    callback(null, addresses);
+                })
+                .catch((err: unknown) =>
+                    callback(
+                        err instanceof Error ? err : new Error(String(err)),
+                        [],
+                    ),
+                );
+        },
+    },
+});
+
+// The single guarded egress helper for every outbound MCP request (connector
+// transport, OAuth discovery/registration/refresh). It rejects non-HTTPS,
+// credentialed, metadata-host and private-IP-literal URLs up front, pins the
+// connection to a connect-time-validated address, and refuses to auto-follow
+// redirects (`redirect: "manual"`) so a 3xx to an internal host cannot smuggle
+// egress past the guard.
+// Redirects are followed here rather than by the runtime so that every hop is
+// re-checked by validateRemoteMcpUrl — `redirect: "follow"` would let a public
+// URL bounce us to a private address the guard never saw. Refusing outright is
+// not an option either: RFC 8414 well-known discovery paths are commonly served
+// as redirects, and the MCP SDK treats any non-4xx as fatal, so a single 302
+// aborts discovery even when a later candidate URL would have worked.
+const MAX_MCP_REDIRECTS = 5;
+
 export async function guardedFetch(
     input: Parameters<typeof fetch>[0],
     init?: Parameters<typeof fetch>[1],
-) {
-    const url =
+): Promise<Response> {
+    const isRequest = typeof input === "object" && input instanceof Request;
+    let url =
         typeof input === "string"
             ? input
             : input instanceof URL
               ? input.toString()
               : input.url;
     await validateRemoteMcpUrl(url);
-    return fetch(input, { ...init, redirect: "manual" });
+    // The request MUST go through the `undici` package's own `fetch`, not the
+    // global one. Node's built-in fetch is a copy of undici frozen at the
+    // version Node was built with (6.x on Node 22), while `guardedAgent` comes
+    // from the `undici` package in package.json (8.x). Dispatchers and the
+    // request handlers fetch hands them share a private protocol that changed
+    // between those majors: an 8.x Agent validates the handler it receives
+    // and rejects the 6.x shape with `UND_ERR_INVALID_ARG: invalid
+    // onRequestStart method undefined`, which surfaces to callers as the
+    // opaque "fetch failed" — on every MCP connector request, always. Taking
+    // both halves from the same module makes the pairing hold no matter how
+    // Node's bundled copy and the package version drift apart.
+    const requestInit: Record<string, unknown> =
+        typeof input === "string" || input instanceof URL
+            ? { ...init }
+            : {
+                  method: input.method,
+                  headers: input.headers,
+                  body: input.body,
+                  ...(input.body ? { duplex: "half" } : {}),
+                  ...init,
+              };
+    let response = (await undiciFetch(url, {
+        ...requestInit,
+        redirect: "manual",
+        dispatcher: guardedAgent,
+    } as Parameters<typeof undiciFetch>[1])) as unknown as Response;
+
+    const method = (
+        (requestInit.method as string | undefined) ??
+        (isRequest ? input.method : null) ??
+        "GET"
+    ).toUpperCase();
+    // Only bodyless methods are followed. Replaying a POST body across a
+    // redirect is not something any MCP flow needs, and skipping it avoids
+    // having to reason about 307/308 body semantics.
+    if (method !== "GET" && method !== "HEAD") return response;
+
+    let headers = new Headers(
+        (requestInit.headers as HeadersInit | undefined) ??
+            (isRequest ? input.headers : undefined),
+    );
+
+    for (let hop = 0; hop < MAX_MCP_REDIRECTS; hop++) {
+        if (response.status < 300 || response.status > 399) return response;
+        const location = response.headers.get("location");
+        if (!location) return response;
+
+        let target: string;
+        try {
+            target = new URL(location, url).toString();
+        } catch {
+            return response;
+        }
+        await response.body?.cancel().catch(() => undefined);
+
+        const validated = await validateRemoteMcpUrl(target);
+        // Header names configured for connector authentication are arbitrary,
+        // so there is no complete denylist for secrets. On a cross-origin hop,
+        // retain only the small set needed for GET/HEAD content negotiation.
+        // Mutate the active set permanently so a later same-origin hop cannot
+        // restore credentials from the original request.
+        if (new URL(validated).origin !== new URL(url).origin) {
+            const safeHeaders = new Headers();
+            for (const name of ["accept", "accept-language"]) {
+                const value = headers.get(name);
+                if (value !== null) safeHeaders.set(name, value);
+            }
+            headers = safeHeaders;
+        }
+        url = validated;
+        response = (await undiciFetch(validated, {
+            ...requestInit,
+            method,
+            headers: Object.fromEntries(headers.entries()),
+            redirect: "manual",
+            dispatcher: guardedAgent,
+        } as Parameters<typeof undiciFetch>[1])) as unknown as Response;
+    }
+    return response;
+}
+
+/**
+ * `guardedFetch` for OAuth discovery, which must follow redirects: hosted MCP
+ * servers commonly serve the RFC 8414 well-known paths from one, and the SDK
+ * treats any 3xx as fatal. The transport keeps the strict version — a
+ * redirected tool call is a different question from a redirected metadata GET.
+ *
+ * Only GETs are followed. A token or registration POST carries the
+ * authorization code and client credentials, and those are sent exactly where
+ * discovery said to send them, never onward to a redirect target.
+ */
+export async function guardedDiscoveryFetch(
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+) {
+    const method = (init?.method ?? "GET").toUpperCase();
+    let response = await guardedFetch(input, init);
+    if (method !== "GET") return response;
+
+    let target =
+        typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+    for (let hop = 0; hop < 3; hop += 1) {
+        if (response.status < 300 || response.status >= 400) return response;
+        const location = response.headers.get("location");
+        if (!location) return response;
+        target = new URL(location, target).toString();
+        response = await guardedFetch(target, init);
+    }
+    return response;
 }
 
 export function base64Url(buffer: Buffer) {
@@ -419,10 +617,6 @@ export function base64Url(buffer: Buffer) {
         .replace(/\+/g, "-")
         .replace(/\//g, "_")
         .replace(/=+$/g, "");
-}
-
-function sha256Base64Url(value: string) {
-    return base64Url(crypto.createHash("sha256").update(value).digest());
 }
 
 export function stateHash(state: string) {

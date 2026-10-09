@@ -14,6 +14,7 @@ const { getConfigMock, createServerSupabaseMock } = vi.hoisted(() => ({
 
 vi.mock("./config", () => ({
   getConfig: getConfigMock,
+  getKeyVaultConfig: getConfigMock,
   flushConfigCache: vi.fn(),
 }));
 
@@ -29,7 +30,7 @@ import {
   flushEncryptionKey,
   _readLegacyRowForMigration,
   getOrganisationApiKeys,
-} from "./userApiKeys";
+} from "../modules/user/user.apiKeyStore"; // Dev drift: moved by upstream #295
 
 /**
  * Build a fake supabase-style client with one method per code path the
@@ -114,6 +115,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   if (envSnapshot.NODE_ENV === undefined) delete process.env.NODE_ENV;
   else process.env.NODE_ENV = envSnapshot.NODE_ENV;
 });
@@ -165,13 +167,17 @@ describe("organisation provider credentials", () => {
       "gemini-api-key": "org-gemini",
       "openai-api-key": "org-openai",
       "moonshot-api-key": "org-kimi",
+      "mistral-api-key": "org-mistral",
       "openrouter-api-key": "org-openrouter",
+      "ai-gateway-api-key": "org-vercel",
+      "opencode-api-key": "org-opencode",
       "courtlistener-api-token": "org-courtlistener",
       "azure-openai-endpoint": "https://org.openai.azure.com",
       "azure-openai-api-key": "org-azure",
       "azure-openai-api-version": "2024-10-21",
       "azure-openai-deployment": "org-deployment",
     };
+    vi.stubEnv("KEY_VAULT_NAME", "test-vault");
     getConfigMock.mockImplementation((name: string) =>
       values[name]
         ? Promise.resolve(values[name])
@@ -183,7 +189,10 @@ describe("organisation provider credentials", () => {
       gemini: "org-gemini",
       openai: "org-openai",
       kimi: "org-kimi",
+      mistral: "org-mistral",
       openrouter: "org-openrouter",
+      vercel: "org-vercel",
+      "opencode-go": "org-opencode",
       courtlistener: "org-courtlistener",
       azureOpenai: {
         endpoint: "https://org.openai.azure.com",
@@ -326,6 +335,8 @@ describe("getUserApiKeys — decryption + fallback", () => {
       gemini: "sk-gemini",
       openai: "sk-openai",
       openrouter: null,
+      vercel: null,
+      "opencode-go": null,
       courtlistener: null,
       azureOpenai: null,
     });
@@ -637,7 +648,11 @@ describe("getConfiguredProviders", () => {
       claude: true,
       gemini: false,
       openai: false,
+      kimi: false, // Dev drift: Dev keeps the Kimi provider slot
+      mistral: false,
       openrouter: false,
+      vercel: false,
+      "opencode-go": false,
       courtlistener: false,
       azure_openai: true,
     });
@@ -665,7 +680,11 @@ describe("getConfiguredProviders", () => {
       claude: true,
       gemini: false,
       openai: true,
+      kimi: false, // Dev drift: Dev keeps the Kimi provider slot
+      mistral: false,
       openrouter: false,
+      vercel: false,
+      "opencode-go": false,
       courtlistener: false,
       azure_openai: true,
     });
@@ -683,7 +702,11 @@ describe("getConfiguredProviders", () => {
       claude: false,
       gemini: false,
       openai: false,
+      kimi: false, // Dev drift: Dev keeps the Kimi provider slot
+      mistral: false,
       openrouter: false,
+      vercel: false,
+      "opencode-go": false,
       courtlistener: false,
       azure_openai: false,
     });

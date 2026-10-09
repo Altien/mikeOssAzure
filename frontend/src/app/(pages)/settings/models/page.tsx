@@ -1,0 +1,381 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { Check, ChevronDown, Loader2 } from "lucide-react";
+import {
+    DROPDOWN_ROWS_CLASS,
+    Dropdown,
+    DropdownContent,
+    DropdownItem,
+    DropdownLabel,
+    DropdownSeparator,
+    DropdownTrigger,
+} from "@/shared/ui/dropdown";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
+import { type ApiKeyState } from "@/app/lib/mikeApi";
+import {
+    MODELS,
+    SETTINGS_MODELS,
+    canonicalModelId,
+    mergeConfiguredModelOptions,
+    openCodeGoModelOptions,
+    openRouterModelOptions,
+    vercelModelOptions,
+    type ModelOption,
+} from "@/app/components/assistant/ModelToggle";
+import { orderedModelGroups } from "@/shared/ui/ModelToggleUI";
+import { isModelAvailable } from "@/app/lib/modelAvailability";
+import { FieldLabel } from "@/app/components/ui/form-field";
+import { SETTINGS_CONTROL_CLASS } from "@/app/components/settings/SettingsTextInput";
+import { SettingsSection } from "../SettingsSection";
+import { useAoaiDeployments, type AoaiDeployment } from "@/altien/models/aoaiDeployments";
+import { useConfiguredModels } from "@/app/hooks/useConfiguredModels";
+
+type ModelPreferenceField =
+    | "titleModel"
+    | "tabularModel"
+    | "memoryCuratorModel";
+
+export default function ModelPreferencesPage() {
+    const { profile, updateModelPreference } = useUserProfile();
+    const aoai = useAoaiDeployments();
+    const configuredModels = useConfiguredModels();
+    // Upstream 2f30082a: a configured model keeps its own id even when it
+    // shares a name with a retired catalog id.
+    const preferenceModelId = (id: string) =>
+        configuredModels.some((model) => model.id === id)
+            ? id
+            : canonicalModelId(id);
+    const [savingField, setSavingField] = useState<ModelPreferenceField | null>(
+        null,
+    );
+    const [savedField, setSavedField] = useState<ModelPreferenceField | null>(
+        null,
+    );
+    const [optimisticValues, setOptimisticValues] = useState<
+        Partial<Record<ModelPreferenceField, string>>
+    >({});
+    const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const openRouterSelection = profile?.openRouterModels ?? [];
+    const vercelSelection = profile?.vercelModels ?? [];
+    const selectedOpenRouterOptions =
+        openRouterModelOptions(openRouterSelection);
+    const selectedVercelOptions = vercelModelOptions(vercelSelection);
+    const selectedOpenCodeGoOptions = openCodeGoModelOptions(
+        profile?.openCodeGoModels ?? [],
+    );
+
+    useEffect(() => {
+        return () => {
+            if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+        };
+    }, []);
+
+    const handleModelChange = async (
+        field: ModelPreferenceField,
+        id: string,
+    ) => {
+        setOptimisticValues((current) => ({ ...current, [field]: id }));
+        setSavedField(null);
+        setSavingField(field);
+        const ok = await updateModelPreference(field, id || null);
+        setSavingField((current) => (current === field ? null : current));
+        if (ok) {
+            setSavedField(field);
+            if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+            savedTimerRef.current = setTimeout(() => {
+                setSavedField((current) =>
+                    current === field ? null : current,
+                );
+            }, 1600);
+        } else {
+            setOptimisticValues((current) => {
+                const next = { ...current };
+                delete next[field];
+                return next;
+            });
+        }
+    };
+
+    return (
+        <div className="space-y-8">
+            <section className="space-y-3">
+                <h2 className="text-2xl font-medium font-serif text-gray-900">
+                    Model Preferences
+                </h2>
+                <SettingsSection>
+                    <div className="px-4 py-5">
+                        <FieldLabel>Title generation model</FieldLabel>
+                        <p className="text-xs text-gray-400 mb-2">
+                            By default, titles use the cheapest model from the
+                            chat provider. Choose a model here to override that.
+                        </p>
+                        <ModelPreferenceDropdown
+                            value={preferenceModelId(
+                                optimisticValues.titleModel ??
+                                    profile?.titleModel ??
+                                    "",
+                            )}
+                            options={mergeConfiguredModelOptions(configuredModels, [
+                                ...SETTINGS_MODELS,
+                                ...selectedOpenRouterOptions,
+                                ...selectedVercelOptions,
+                                ...selectedOpenCodeGoOptions,
+                                ...aoai.modelOptions,
+                            ])}
+                            apiKeys={profile?.apiKeys}
+                            isSaving={savingField === "titleModel"}
+                            isSaved={savedField === "titleModel"}
+                            emptyOptionLabel="Automatic — same provider as chat"
+                            onChange={(id) =>
+                                handleModelChange("titleModel", id)
+                            }
+                        />
+                    </div>
+                    <div className="px-4 py-5">
+                        <FieldLabel>Tabular review model</FieldLabel>
+                        <p className="text-xs text-gray-400 mb-2">
+                            Preselected when creating a review. Each review
+                            stores its own model and can be changed separately.
+                        </p>
+                        <ModelPreferenceDropdown
+                            value={preferenceModelId(
+                                optimisticValues.tabularModel ??
+                                    profile?.tabularModel ??
+                                    "",
+                            )}
+                            options={mergeConfiguredModelOptions(configuredModels, [
+                                ...MODELS,
+                                ...selectedOpenRouterOptions,
+                                ...selectedVercelOptions,
+                                ...selectedOpenCodeGoOptions,
+                                ...aoai.modelOptions,
+                            ])}
+                            apiKeys={profile?.apiKeys}
+                            isSaving={savingField === "tabularModel"}
+                            isSaved={savedField === "tabularModel"}
+                            emptyOptionLabel="No default model"
+                            onChange={(id) =>
+                                handleModelChange("tabularModel", id)
+                            }
+                        />
+                    </div>
+                    {/* Upstream #451 (1672f736) memory curation preference,
+                        ported into Dev's settings layout with AOAI options. */}
+                    <div className="px-4 py-5">
+                        <FieldLabel>Memory curation model</FieldLabel>
+                        <p className="text-xs text-gray-400 mb-2">
+                            Used after conversations to identify durable
+                            information worth keeping. By default, memory uses
+                            the model selected for the chat.
+                        </p>
+                        <ModelPreferenceDropdown
+                            value={preferenceModelId(
+                                optimisticValues.memoryCuratorModel ??
+                                    profile?.memoryCuratorModel ??
+                                    "",
+                            )}
+                            options={mergeConfiguredModelOptions(configuredModels, [
+                                ...SETTINGS_MODELS,
+                                ...selectedOpenRouterOptions,
+                                ...selectedVercelOptions,
+                                ...selectedOpenCodeGoOptions,
+                                ...aoai.modelOptions,
+                            ])}
+                            apiKeys={profile?.apiKeys}
+                            isSaving={savingField === "memoryCuratorModel"}
+                            isSaved={savedField === "memoryCuratorModel"}
+                            emptyOptionLabel="Automatic — use chat model"
+                            onChange={(id) =>
+                                handleModelChange("memoryCuratorModel", id)
+                            }
+                        />
+                    </div>
+                </SettingsSection>
+            </section>
+            <OrganisationModelsNote deployments={aoai.deployments} loading={aoai.loading} error={aoai.error} />
+        </div>
+    );
+}
+
+// Dev-only (OSS-6, §2.3 item 3): provider credentials and the Azure OpenAI
+// connection are organisation settings; show where they are managed and
+// which AOAI deployments discovery found.
+function OrganisationModelsNote({
+    deployments,
+    loading,
+    error,
+}: {
+    deployments: AoaiDeployment[];
+    loading: boolean;
+    error: string | null;
+}) {
+    const installUrl =
+        (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") +
+        "/install";
+    return (
+        <div className="py-6">
+            <p className="max-w-xl text-sm text-gray-500">
+                Provider credentials and Azure OpenAI connection settings are
+                shared by the organisation and managed by an administrator
+                through{" "}
+                <a
+                    href={installUrl}
+                    className="font-medium text-gray-700 underline underline-offset-4"
+                >
+                    organisation setup
+                </a>
+                . Users can choose from the models the administrator has made
+                available.
+            </p>
+            {loading ? (
+                <p className="mt-4 max-w-xl text-xs text-gray-500">
+                    Loading deployments…
+                </p>
+            ) : error ? (
+                <p className="mt-4 max-w-xl text-xs text-red-600">
+                    Could not list deployments: {error}
+                </p>
+            ) : deployments.length === 0 ? (
+                <p className="mt-4 max-w-xl text-xs text-gray-500">
+                    No deployments are visible yet. Ask an administrator to
+                    check the Azure OpenAI settings in organisation setup or
+                    deploy a model in the configured Azure OpenAI resource.
+                </p>
+            ) : (
+                <div className="mt-4 max-w-xl">
+                    <div className="mb-2 text-xs font-medium text-gray-600">
+                        Discovered deployments ({deployments.length})
+                    </div>
+                    <ul className="space-y-1 text-xs text-gray-500">
+                        {deployments.map((d) => (
+                            <li key={d.name}>
+                                <span className="font-mono text-gray-700">
+                                    {d.name}
+                                </span>
+                                {d.model && (
+                                    <span className="ml-2 text-gray-400">
+                                        → {d.model}
+                                    </span>
+                                )}
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function ModelPreferenceDropdown({
+    value,
+    onChange,
+    apiKeys,
+    options,
+    isSaving,
+    isSaved,
+    emptyOptionLabel,
+}: {
+    value: string;
+    onChange: (id: string) => void;
+    apiKeys?: ApiKeyState;
+    options: ModelOption[];
+    isSaving?: boolean;
+    isSaved?: boolean;
+    emptyOptionLabel: string;
+}) {
+    const [isOpen, setIsOpen] = useState(false);
+    const availableOptions = options.filter((model) => {
+        if (model.source === "Configured") return true;
+        if (model.group === "Local") return true;
+        return apiKeys ? isModelAvailable(model.id, apiKeys) : false;
+    });
+    const selected = availableOptions.find((model) => model.id === value);
+    const availableGroups = orderedModelGroups(availableOptions).flatMap((group) => {
+        const items = availableOptions.filter((model) => model.group === group);
+        return items.length ? [{ group, items }] : [];
+    });
+    const routeCounts = availableOptions.reduce((counts, model) => {
+        const key = `${model.group}\u0000${model.label.toLocaleLowerCase()}`;
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+        return counts;
+    }, new Map<string, number>());
+
+    return (
+        <Dropdown onOpenChange={setIsOpen}>
+            <DropdownTrigger asChild>
+                <button
+                    type="button"
+                    disabled={isSaving}
+                    className={`flex h-9 items-center justify-between gap-2 hover:bg-gray-200/70 ${SETTINGS_CONTROL_CLASS}`}
+                >
+                    <span className="flex items-center gap-2 min-w-0">
+                        <span className="truncate text-gray-900">
+                            {!value
+                                ? emptyOptionLabel
+                                : (selected?.label ?? "Select a model")}
+                        </span>
+                    </span>
+                    {isSaving ? (
+                        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-gray-500" />
+                    ) : isSaved ? (
+                        <Check className="h-3.5 w-3.5 shrink-0 text-green-600" />
+                    ) : (
+                        <ChevronDown
+                            className={`h-3.5 w-3.5 shrink-0 text-gray-500 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
+                        />
+                    )}
+                </button>
+            </DropdownTrigger>
+            <DropdownContent
+                style={{ width: "var(--radix-dropdown-menu-trigger-width)" }}
+                align="start"
+            >
+                <DropdownItem
+                    className="cursor-pointer"
+                    onSelect={() => onChange("")}
+                >
+                    <span className="flex-1">{emptyOptionLabel}</span>
+                    {!value && (
+                        <Check className="h-3.5 w-3.5 text-gray-600 ml-1" />
+                    )}
+                </DropdownItem>
+                {availableGroups.length > 0 && <DropdownSeparator />}
+                {availableGroups.map(({ group, items }, groupIndex) => {
+                    return (
+                        <div key={group} className={DROPDOWN_ROWS_CLASS}>
+                            {groupIndex > 0 && <DropdownSeparator />}
+                            <DropdownLabel>
+                                {group}
+                            </DropdownLabel>
+                            {items.map((m) => {
+                                return (
+                                    <DropdownItem
+                                        key={m.id}
+                                        className="cursor-pointer"
+                                        onSelect={() => onChange(m.id)}
+                                    >
+                                        <span className="flex-1">
+                                            {m.label}
+                                        </span>
+                                        {m.source &&
+                                            (routeCounts.get(
+                                                `${m.group}\u0000${m.label.toLocaleLowerCase()}`,
+                                            ) ?? 0) > 1 && (
+                                            <span className="text-[9px] font-medium text-gray-400">
+                                                {m.source}
+                                            </span>
+                                        )}
+                                        {m.id === value && (
+                                            <Check className="h-3.5 w-3.5 text-gray-600 ml-1" />
+                                        )}
+                                    </DropdownItem>
+                                );
+                            })}
+                        </div>
+                    );
+                })}
+            </DropdownContent>
+        </Dropdown>
+    );
+}

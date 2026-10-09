@@ -1,0 +1,399 @@
+import { createServerSupabase } from "../../lib/supabase";
+import { resolvedDependencyBindings } from "./dependencies";
+import { getProjectSkillPin } from "./pins";
+import { throwOnDbError, type Db } from "./shared";
+
+function normalize(value: string) {
+  return value.trim().toLocaleLowerCase().replace(/[\s_-]+/g, " ");
+}
+
+/**
+ * Upper bound on the project documents a member may scope one skill run to.
+ * Selection is a narrowing of the approved `project_read` baseline, so the
+ * limit only guards the bind-time membership query.
+ */
+export const SKILL_RUN_MAX_SELECTED_DOCUMENTS = 50;
+
+export function parseExplicitSkillInvocation(message: string): string | null {
+  const slash = /^\s*\/skill[ \t]+([^\r\n]+)(?:\r?\n|$)/i.exec(message);
+  if (slash) return slash[1].trim().replace(/^["“]|["”]$/g, "").trim() || null;
+  const quoted =
+    /^\s*(?:run|use|load)[ \t]+skill[ \t]+["“]([^"”\r\n]+)["”]/i.exec(
+      message,
+    );
+  return quoted?.[1]?.trim() || null;
+}
+
+/**
+ * Looser ways a member asks for a skill: `use skill case-summariser`,
+ * `use the case-summariser skill`. These are still explicit — the member
+ * names the skill — but the wording alone cannot say where the name ends, so
+ * a candidate only counts once it matches an enabled skill exactly. That
+ * keeps "use the new skill" an ordinary sentence rather than an error, and
+ * keeps semantic auto-triggering out: nothing here infers a skill from what
+ * the member is trying to do.
+ */
+export function parseSkillInvocationCandidates(message: string): string[] {
+  const first = message.split(/\r?\n/, 1)[0] ?? "";
+  const candidates = new Set<string>();
+  const explicit = parseExplicitSkillInvocation(message);
+  if (explicit) candidates.add(explicit);
+  const unquoted = /\b(?:run|use|load)\s+skill\s+([^\s"“][^\s,.;:!?]*)/i.exec(
+    first,
+  );
+  if (unquoted?.[1]) candidates.add(unquoted[1]);
+  const trailing = /\b(?:run|use|load)\s+(?:the\s+)?(.+?)\s+skill\b/i.exec(
+    first,
+  );
+  if (trailing?.[1]) {
+    const phrase = trailing[1].replace(/^["“]|["”]$/g, "").trim();
+    candidates.add(phrase);
+    // "the case-summariser" and multi-word tails both reduce to their last
+    // word, which is where a canonical name usually sits.
+    const last = phrase.split(/\s+/).pop();
+    if (last && last !== phrase) candidates.add(last);
+  }
+  return [...candidates].filter(Boolean);
+}
+
+type EnabledSkillRow = {
+  id: unknown;
+  canonical_name: unknown;
+  display_name: unknown;
+  current_version_id: unknown;
+};
+
+async function enabledSkills(tenantId: string, db: Db) {
+  const skills = await db
+    .from("altien_skills")
+    .select("id, canonical_name, display_name, current_version_id")
+    .eq("tenant_id", tenantId)
+    .is("deleted_at", null);
+  throwOnDbError(skills);
+  return (skills.data ?? []) as EnabledSkillRow[];
+}
+
+function matchSkill(rows: EnabledSkillRow[], name: string) {
+  return rows.filter(
+    (skill) =>
+      normalize(String(skill.canonical_name)) === normalize(name) ||
+      normalize(String(skill.display_name)) === normalize(name),
+  );
+}
+
+/**
+ * An enabled skill this message names, for a chat that is not bound to one.
+ * Used to tell the member how to invoke it rather than silently answering as
+ * an ordinary chat — it never binds anything by itself.
+ */
+export async function mentionedEnabledSkillName(args: {
+  tenantId: string;
+  message: string;
+  db: Db;
+}): Promise<string | null> {
+  const rows = await enabledSkills(args.tenantId, args.db);
+  const named = rows.find((skill) => {
+    const canonical = String(skill.canonical_name);
+    if (!canonical.trim()) return false;
+    return new RegExp(
+      `(?:^|[^a-z0-9-])${canonical.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:[^a-z0-9-]|$)`,
+      "i",
+    ).test(args.message);
+  });
+  return named ? String(named.canonical_name) : null;
+}
+
+/**
+ * Story 30: the documents a member selected before the skill started. Every id
+ * must be a document of the run's own project — a selection can only narrow
+ * what the skill may read, never reach outside the bound project.
+ */
+export async function resolveSelectedProjectDocuments(args: {
+  projectId: string;
+  documentIds: readonly unknown[];
+  db: Db;
+}): Promise<string[]> {
+  const requested = [
+    ...new Set(
+      args.documentIds
+        .map((value) => (typeof value === "string" ? value.trim() : ""))
+        .filter(Boolean),
+    ),
+  ];
+  if (!requested.length) return [];
+  if (requested.length > SKILL_RUN_MAX_SELECTED_DOCUMENTS) {
+    throw new Error(
+      `A skill run can select at most ${SKILL_RUN_MAX_SELECTED_DOCUMENTS} project documents.`,
+    );
+  }
+  const rows = await args.db
+    .from("documents")
+    .select("id")
+    .eq("project_id", args.projectId)
+    .in("id", requested);
+  throwOnDbError(rows);
+  const found = new Set(
+    ((rows.data ?? []) as Array<{ id: unknown }>).map((row) => String(row.id)),
+  );
+  if (requested.some((id) => !found.has(id))) {
+    throw new Error(
+      "One or more selected documents are not available in this project.",
+    );
+  }
+  return requested;
+}
+
+export type ResolvedSkillBindingTarget = {
+  versionId: string;
+  contentHash: string;
+  pinned: boolean;
+};
+
+/**
+ * The version a chat in this project should bind to right now: the project pin
+ * when one exists, otherwise the skill's current version. Shared by the first
+ * bind, the upgrade offer, and the upgrade itself so an upgrade can never land
+ * on a version a fresh bind would have refused.
+ */
+async function resolveBindableVersion(args: {
+  tenantId: string;
+  projectId: string;
+  skillId: string;
+  label: string;
+  currentVersionId: string;
+  db: Db;
+}): Promise<ResolvedSkillBindingTarget> {
+  const pin = await getProjectSkillPin({
+    tenantId: args.tenantId,
+    projectId: args.projectId,
+    skillId: args.skillId,
+    db: args.db,
+  });
+  const versionId = pin?.versionId ?? args.currentVersionId;
+  if (!versionId) throw new Error(`Skill '${args.label}' is not enabled.`);
+  const version = await args.db
+    .from("altien_skill_versions")
+    .select("id, skill_id, state, original_content_hash, adapted_content_hash")
+    .eq("id", versionId)
+    .eq("skill_id", args.skillId)
+    .single();
+  if (version.error || !version.data || version.data.state !== "enabled") {
+    throw new Error(`Skill '${args.label}' has no runnable enabled version.`);
+  }
+  const contentHash = String(
+    version.data.adapted_content_hash ??
+      version.data.original_content_hash ??
+      "",
+  );
+  if (!contentHash) {
+    throw new Error(`Skill '${args.label}' has no recorded content hash.`);
+  }
+  return { versionId, contentHash, pinned: !!pin };
+}
+
+/** `resolveBindableVersion` plus the dependency re-resolution a bind records. */
+async function prepareBinding(args: {
+  tenantId: string;
+  projectId: string;
+  skillId: string;
+  label: string;
+  currentVersionId: string;
+  db: Db;
+}) {
+  const target = await resolveBindableVersion(args);
+  return {
+    ...target,
+    dependencies: await resolvedDependencyBindings(
+      target.versionId,
+      args.db,
+      args.tenantId,
+    ),
+  };
+}
+
+/**
+ * The newer enabled version a bound chat could be upgraded to, or null. Read
+ * path only: a skill whose current version is missing, disabled, or otherwise
+ * unbindable simply offers no upgrade rather than failing the chat load.
+ */
+export async function findChatSkillUpgrade(args: {
+  tenantId: string;
+  projectId: string;
+  skillId: string;
+  label: string;
+  currentVersionId: string;
+  boundVersionId: string;
+  db: Db;
+}): Promise<ResolvedSkillBindingTarget | null> {
+  if (!args.currentVersionId) return null;
+  try {
+    const target = await resolveBindableVersion(args);
+    return target.versionId === args.boundVersionId ? null : target;
+  } catch {
+    return null;
+  }
+}
+
+export async function bindExplicitSkillInvocation(args: {
+  tenantId: string;
+  projectId: string;
+  chatId: string;
+  userId: string;
+  message: string;
+  /** Story 30: project documents the member selected before the run starts. */
+  selectedDocumentIds?: readonly unknown[];
+  db?: Db;
+}) {
+  const candidates = parseSkillInvocationCandidates(args.message);
+  if (!candidates.length) return null;
+  const explicit = parseExplicitSkillInvocation(args.message);
+  const db = args.db ?? createServerSupabase();
+  const existing = await db
+    .from("altien_chat_skill_bindings")
+    .select("chat_id")
+    .eq("chat_id", args.chatId)
+    .maybeSingle();
+  throwOnDbError(existing);
+  if (existing.data) throw new Error("This chat is already bound to a skill.");
+
+  const rows = await enabledSkills(args.tenantId, db);
+  let requestedName = "";
+  let matches: EnabledSkillRow[] = [];
+  for (const candidate of candidates) {
+    const found = matchSkill(rows, candidate);
+    if (found.length) {
+      requestedName = candidate;
+      matches = found;
+      break;
+    }
+  }
+  if (matches.length !== 1) {
+    // `/skill x` and `use skill "x"` say plainly that a skill was meant, so a
+    // bad name is an error. A looser phrase that matches nothing is just an
+    // ordinary sentence and must not fail the member's message.
+    if (!explicit) return null;
+    throw new Error(
+      matches.length
+        ? `Skill name '${requestedName || explicit}' is ambiguous.`
+        : `Enabled skill '${explicit}' was not found.`,
+    );
+  }
+  const skill = matches[0];
+  const selectedDocumentIds = await resolveSelectedProjectDocuments({
+    projectId: args.projectId,
+    documentIds: args.selectedDocumentIds ?? [],
+    db,
+  });
+  const prepared = await prepareBinding({
+    tenantId: args.tenantId,
+    projectId: args.projectId,
+    skillId: String(skill.id),
+    label: requestedName,
+    currentVersionId: String(skill.current_version_id ?? ""),
+    db,
+  });
+  const binding = await db.from("altien_chat_skill_bindings").insert({
+    chat_id: args.chatId,
+    tenant_id: args.tenantId,
+    project_id: args.projectId,
+    root_skill_id: skill.id,
+    root_version_id: prepared.versionId,
+    bound_by: args.userId,
+    dependency_versions: prepared.dependencies,
+    selected_document_ids: selectedDocumentIds,
+  });
+  throwOnDbError(binding);
+  return {
+    skillId: String(skill.id),
+    displayName: String(skill.display_name),
+    versionId: prepared.versionId,
+    contentHash: prepared.contentHash,
+    pinned: prepared.pinned,
+    dependencies: prepared.dependencies,
+    selectedDocumentIds,
+  };
+}
+
+/**
+ * Rebinds a chat to a newer enabled version of the same skill. Only an explicit
+ * user action reaches this function, and the caller must name the exact version
+ * it was offered — Mike never upgrades a chat on its own, and never silently
+ * substitutes a different version than the one the member saw. The bind-time
+ * checks (pin resolution, enabled state, content hash, dependency
+ * re-resolution) run again through the shared bind path.
+ */
+export async function upgradeChatSkillBinding(args: {
+  tenantId: string;
+  projectId: string;
+  chatId: string;
+  userId: string;
+  /** The version id the member was shown and explicitly accepted. */
+  toVersionId: string;
+  db?: Db;
+}) {
+  const db = args.db ?? createServerSupabase();
+  const requested = args.toVersionId?.trim();
+  if (!requested) {
+    throw new Error("An explicit target version is required to upgrade.");
+  }
+  const binding = await db
+    .from("altien_chat_skill_bindings")
+    .select("*")
+    .eq("chat_id", args.chatId)
+    .eq("tenant_id", args.tenantId)
+    .eq("project_id", args.projectId)
+    .maybeSingle();
+  throwOnDbError(binding);
+  if (!binding.data) throw new Error("This chat is not bound to a skill.");
+  const boundVersionId = String(binding.data.root_version_id);
+  const skill = await db
+    .from("altien_skills")
+    .select("id, display_name, current_version_id")
+    .eq("id", binding.data.root_skill_id)
+    .eq("tenant_id", args.tenantId)
+    .is("deleted_at", null)
+    .single();
+  if (skill.error || !skill.data) {
+    throw new Error("The bound skill is no longer available.");
+  }
+  const label = String(skill.data.display_name);
+  const prepared = await prepareBinding({
+    tenantId: args.tenantId,
+    projectId: args.projectId,
+    skillId: String(skill.data.id),
+    label,
+    currentVersionId: String(skill.data.current_version_id ?? ""),
+    db,
+  });
+  if (prepared.versionId === boundVersionId) {
+    throw new Error(`'${label}' is already at its newest enabled version.`);
+  }
+  if (prepared.versionId !== requested) {
+    throw new Error(
+      "The offered upgrade changed; review the new version before upgrading.",
+    );
+  }
+  const updated = await db
+    .from("altien_chat_skill_bindings")
+    .update({
+      root_version_id: prepared.versionId,
+      dependency_versions: prepared.dependencies,
+      upgraded_from_version_id: boundVersionId,
+      upgraded_by: args.userId,
+      upgraded_at: new Date().toISOString(),
+    })
+    .eq("chat_id", args.chatId)
+    .eq("tenant_id", args.tenantId)
+    .eq("project_id", args.projectId);
+  throwOnDbError(updated);
+  return {
+    chatId: args.chatId,
+    skillId: String(skill.data.id),
+    displayName: label,
+    previousVersionId: boundVersionId,
+    versionId: prepared.versionId,
+    contentHash: prepared.contentHash,
+    pinned: prepared.pinned,
+    dependencies: prepared.dependencies,
+  };
+}

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="100 100 300 300" role="img" aria-labelledby="title desc">
+  <title id="title">Mike four-colour mark</title>
+  <desc id="desc">The canonical twelve-blade Mike mark grouped into four Altien colour bands.</desc>
+  <defs>
+    <path id="blade" d="M 40,0 A 4,4 0 0 1 43,-3 Q 95,-22 147,-3 A 4,4 0 0 1 150,0 A 4,4 0 0 1 147,3 Q 95,22 43,3 A 4,4 0 0 1 40,0 Z"/>
+  </defs>
+  <g transform="translate(250 250)">
+    <use href="#blade" fill="#16C7E8" transform="rotate(0)"/>
+    <use href="#blade" fill="#16C7E8" transform="rotate(30)"/>
+    <use href="#blade" fill="#16C7E8" transform="rotate(60)"/>
+    <use href="#blade" fill="#20E19A" transform="rotate(90)"/>
+    <use href="#blade" fill="#20E19A" transform="rotate(120)"/>
+    <use href="#blade" fill="#20E19A" transform="rotate(150)"/>
+    <use href="#blade" fill="#D7EF00" transform="rotate(180)"/>
+    <use href="#blade" fill="#D7EF00" transform="rotate(210)"/>
+    <use href="#blade" fill="#D7EF00" transform="rotate(240)"/>
+    <use href="#blade" fill="#E000C8" transform="rotate(270)"/>
+    <use href="#blade" fill="#E000C8" transform="rotate(300)"/>
+    <use href="#blade" fill="#E000C8" transform="rotate(330)"/>
+  </g>
+</svg>

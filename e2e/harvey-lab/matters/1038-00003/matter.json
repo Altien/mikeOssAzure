@@ -1,0 +1,336 @@
+{
+  "matter_id": "1038-00003",
+  "client_id": "1038",
+  "matter_seq": "00003",
+  "extracted_at": "2026-09-15T20:23:22+00:00",
+  "source_documents": [
+    "Engagement/new-matter-memorandum.docx",
+    "Engagement/engagement-letter-crh-shelf-registration.docx",
+    "Correspondence/kick-off-call-agenda-and-summary.docx",
+    "Transaction Documents/draft-board-resolutions-shelf-filing.docx"
+  ],
+  "folders": [
+    "Closing",
+    "Correspondence",
+    "Diligence",
+    "Engagement",
+    "Transaction Documents"
+  ],
+  "folder_tree": {
+    "Closing": 1,
+    "Correspondence": 1,
+    "Diligence": 4,
+    "Engagement": 2,
+    "Transaction Documents": 4
+  },
+  "documents": [
+    {
+      "path": "1038-00003/Closing/timeline-and-responsibility-chart.xlsx",
+      "folder": "Closing",
+      "name": "timeline-and-responsibility-chart.xlsx",
+      "ext": "xlsx",
+      "bytes": 15664
+    },
+    {
+      "path": "1038-00003/Correspondence/kick-off-call-agenda-and-summary.docx",
+      "folder": "Correspondence",
+      "name": "kick-off-call-agenda-and-summary.docx",
+      "ext": "docx",
+      "bytes": 63671
+    },
+    {
+      "path": "1038-00003/Diligence/corporate-authority-diligence-memo.docx",
+      "folder": "Diligence",
+      "name": "corporate-authority-diligence-memo.docx",
+      "ext": "docx",
+      "bytes": 62539
+    },
+    {
+      "path": "1038-00003/Diligence/existing-shelf-takedown-summary.docx",
+      "folder": "Diligence",
+      "name": "existing-shelf-takedown-summary.docx",
+      "ext": "docx",
+      "bytes": 51675
+    },
+    {
+      "path": "1038-00003/Diligence/preliminary-diligence-request-list.docx",
+      "folder": "Diligence",
+      "name": "preliminary-diligence-request-list.docx",
+      "ext": "docx",
+      "bytes": 57290
+    },
+    {
+      "path": "1038-00003/Diligence/wksi-eligibility-memorandum.docx",
+      "folder": "Diligence",
+      "name": "wksi-eligibility-memorandum.docx",
+      "ext": "docx",
+      "bytes": 57006
+    },
+    {
+      "path": "1038-00003/Engagement/engagement-letter-crh-shelf-registration.docx",
+      "folder": "Engagement",
+      "name": "engagement-letter-crh-shelf-registration.docx",
+      "ext": "docx",
+      "bytes": 50525
+    },
+    {
+      "path": "1038-00003/Engagement/new-matter-memorandum.docx",
+      "folder": "Engagement",
+      "name": "new-matter-memorandum.docx",
+      "ext": "docx",
+      "bytes": 54840
+    },
+    {
+      "path": "1038-00003/Transaction Documents/draft-board-resolutions-shelf-filing.docx",
+      "folder": "Transaction Documents",
+      "name": "draft-board-resolutions-shelf-filing.docx",
+      "ext": "docx",
+      "bytes": 50377
+    },
+    {
+      "path": "1038-00003/Transaction Documents/draft-equity-underwriting-agreement.docx",
+      "folder": "Transaction Documents",
+      "name": "draft-equity-underwriting-agreement.docx",
+      "ext": "docx",
+      "bytes": 74654
+    },
+    {
+      "path": "1038-00003/Transaction Documents/draft-form-s3-registration-statement.docx",
+      "folder": "Transaction Documents",
+      "name": "draft-form-s3-registration-statement.docx",
+      "ext": "docx",
+      "bytes": 48207
+    },
+    {
+      "path": "1038-00003/Transaction Documents/draft-secretarys-certificate.docx",
+      "folder": "Transaction Documents",
+      "name": "draft-secretarys-certificate.docx",
+      "ext": "docx",
+      "bytes": 45364
+    }
+  ],
+  "doc_counts": {
+    "docx": 11,
+    "xlsx": 1
+  },
+  "status_signals": {
+    "folder:closing": true,
+    "folder:post-closing": false,
+    "folder:early termination": false,
+    "folder:termination": false,
+    "folder:settlement": false,
+    "folder:appeal": false,
+    "folder:wind-down": false,
+    "file:closing-memo": false,
+    "file:final-invoice": false,
+    "file:matter-closing": false,
+    "file:closing-binder": false,
+    "file:engagement-terminat": false,
+    "file:disengagement": false
+  },
+  "doc_dates": {
+    "earliest": null,
+    "latest": null,
+    "all": []
+  },
+  "matter_name": "Cascade Retail Holdings - Universal Shelf Registration Statement (Form S-3)",
+  "matter_description": "Calderwood & Harkness LLP serves as issuer's counsel to Cascade Retail Holdings Inc. in preparing and filing a new $3.0 billion universal shelf registration statement on Form S-3 with the SEC (as a well-known seasoned issuer, for automatic effectiveness), to replace the Company's expiring $2.5 billion shelf, including preliminary diligence, drafting the base prospectus and prospectus-supplement templates, board authorization, and coordination with underwriters and auditors through effectiveness.",
+  "matter_type": "capital markets / securities offering (shelf registration, issuer's counsel)",
+  "client": {
+    "name": "Cascade Retail Holdings Inc.",
+    "entity_type": "Delaware corporation, publicly traded on Nasdaq Global Select Market (ticker: CRHI), SEC CIK 0001287450",
+    "industry": "omni-channel retail and e-commerce",
+    "contacts": [
+      {
+        "name": "Diane Kowalski",
+        "title": "Executive Vice President, General Counsel & Corporate Secretary",
+        "email": null
+      },
+      {
+        "name": "Marcus Cheng",
+        "title": "Senior Vice President, Chief Financial Officer",
+        "email": null
+      },
+      {
+        "name": "Anya Petrova",
+        "title": "Vice President, Deputy General Counsel - Securities & Corporate Governance",
+        "email": null
+      },
+      {
+        "name": "Thomas Briggs",
+        "title": "Vice President, Treasury & Capital Markets",
+        "email": null
+      }
+    ]
+  },
+  "counterparties": [],
+  "other_parties": [
+    {
+      "name": "U.S. Securities and Exchange Commission (SEC)",
+      "role": "regulator"
+    },
+    {
+      "name": "Redmond Zanthor & Co. LLC (Laura Whitfield, Derek Simmons)",
+      "role": "anticipated lead book-running manager / underwriter"
+    },
+    {
+      "name": "Pinnacle Bancorp Securities LLC (Nathan Reeves)",
+      "role": "anticipated co-manager / underwriter"
+    },
+    {
+      "name": "Hargrove & Lassiter LLP",
+      "role": "anticipated underwriters' counsel"
+    },
+    {
+      "name": "Granville & Hooper LLP",
+      "role": "Company's independent registered public accounting firm (auditor)"
+    },
+    {
+      "name": "Meridian Trust Company, N.A.",
+      "role": "transfer agent and registrar"
+    }
+  ],
+  "firm": {
+    "responsible_partner": "Robert Adeyemi",
+    "billing_partner": "Jennifer Kwon",
+    "originating_partner": null,
+    "supervising_attorneys": [
+      "Robert Adeyemi"
+    ],
+    "associates": [
+      "Eric Johannsen (Lead Associate)",
+      "Claire Dempsey (Working Associate)"
+    ],
+    "paralegals": [],
+    "other_staff": [],
+    "practice_group": "Capital Markets",
+    "sub_practice": null,
+    "office": "Seattle (1501 Fourth Avenue, Suite 4800)"
+  },
+  "practice_area": "Capital Markets",
+  "sub_practice_area": "Equity Offerings",
+  "dates": {
+    "engagement_letter": "2026-04-09",
+    "opened": "2026-04-06",
+    "conflicts_cleared": "2026-04-06",
+    "closed": null,
+    "key_deadlines": [
+      {
+        "date": "2026-04-21",
+        "what": "Delivery of diligence request list to CRH"
+      },
+      {
+        "date": "2026-05-05",
+        "what": "First draft of Form S-3 registration statement (base prospectus)"
+      },
+      {
+        "date": "2026-05-12",
+        "what": "First drafts of prospectus supplements (equity ATM, debt)"
+      },
+      {
+        "date": "2026-05-19",
+        "what": "Management diligence call"
+      },
+      {
+        "date": "2026-05",
+        "what": "Board of Directors meeting to approve shelf filing resolutions (mid-May 2026, exact date TBD)"
+      },
+      {
+        "date": "2026-05-26",
+        "what": "Target SEC filing date and automatic effectiveness of new registration statement (as WKSI)"
+      },
+      {
+        "date": "2026-06-28",
+        "what": "Expiration of prior shelf registration statement (File No. 333-248710)"
+      }
+    ]
+  },
+  "billing": {
+    "arrangement": "hourly",
+    "rates": [],
+    "budget": null,
+    "retainer": null
+  },
+  "status": {
+    "value": "open",
+    "as_of": "2026-04-14",
+    "basis": "No closing or effectiveness-confirmation documents among sources. Engagement letter (2026-04-09) and kick-off call materials (2026-04-14) show the engagement mid-stream toward a target SEC filing/effectiveness date of May 26, 2026; the engagement's scope explicitly runs 'through and including the effectiveness of the Registration Statement,' which is not yet confirmed as achieved in the sources reviewed."
+  },
+  "jurisdictions": [
+    "Delaware",
+    "Washington"
+  ],
+  "regulators_or_courts": [
+    "U.S. Securities and Exchange Commission (SEC)"
+  ],
+  "governing_law": null,
+  "deal_or_case": {
+    "transaction_value": "$3,000,000,000 aggregate offering amount (new universal shelf); prior shelf was $2,500,000,000 with $1,225,000,000 remaining capacity",
+    "case_number": null,
+    "filing_numbers": [
+      "Prior shelf: SEC File No. 333-248710 (filed 2023-06-12, effective 2023-06-28, expiring 2026-06-28)"
+    ],
+    "significant_events": [
+      {
+        "date": "2023-06-12",
+        "what": "Prior shelf registration statement (File No. 333-248710) filed with SEC"
+      },
+      {
+        "date": "2023-06-28",
+        "what": "Prior shelf declared effective ($2,500,000,000 aggregate offering amount)"
+      },
+      {
+        "date": "2023-08",
+        "what": "Underwritten common stock offering under prior shelf; ~$800,000,000 gross proceeds (Redmond Zanthor & Co. lead book-runner)"
+      },
+      {
+        "date": "2024-11",
+        "what": "Underwritten offering of $475,000,000 5.125% Senior Notes due 2034 under prior shelf (Redmond Zanthor and Pinnacle Bancorp Securities joint book-runners)"
+      },
+      {
+        "date": "2026-04-06",
+        "what": "New-matter memorandum approved; conflicts check cleared; matter 1038-00003 opened"
+      },
+      {
+        "date": "2026-04-09",
+        "what": "Engagement letter executed"
+      },
+      {
+        "date": "2026-04-11",
+        "what": "Kick-off call agenda circulated"
+      },
+      {
+        "date": "2026-04-14",
+        "what": "Kick-off call held with CRH, C&H, and anticipated underwriters"
+      },
+      {
+        "date": "2026-05-26",
+        "what": "Target filing date for new $3,000,000,000 shelf registration statement; automatic effectiveness as WKSI"
+      },
+      {
+        "date": "2026-06-28",
+        "what": "Expiration date of prior shelf registration statement"
+      }
+    ]
+  },
+  "keywords": [
+    "universal shelf registration",
+    "Form S-3",
+    "well-known seasoned issuer (WKSI)",
+    "automatic shelf registration",
+    "SEC EDGAR filing",
+    "at-the-market (ATM) equity program",
+    "Rule 415(a)(5) shelf expiration",
+    "Rule 462(e) automatic effectiveness",
+    "capital markets issuer's counsel",
+    "debt securities shelf offering",
+    "public float analysis",
+    "underwritten offering",
+    "Nasdaq CRHI"
+  ],
+  "evidence": {
+    "dates.opened": "new-matter-memorandum.docx dated April 6, 2026: \"CONFLICTS STATUS: CLEARED - as of April 6, 2026\" - used as the matter open date",
+    "status.value": "kick-off-call-agenda-and-summary.docx (April 2026) and engagement-letter-crh-shelf-registration.docx show the engagement actively in progress toward a target filing date of May 26, 2026, with no confirmation of actual filing/effectiveness among the sources reviewed",
+    "deal_or_case.transaction_value": "engagement-letter-crh-shelf-registration.docx: \"up to $3,000,000,000 (three billion dollars) in aggregate offering amount\""
+  }
+}

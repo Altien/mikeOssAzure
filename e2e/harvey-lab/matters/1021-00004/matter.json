@@ -1,0 +1,319 @@
+{
+  "matter_id": "1021-00004",
+  "client_id": "1021",
+  "matter_seq": "00004",
+  "extracted_at": "2026-09-15T20:10:56+00:00",
+  "source_documents": [
+    "Engagement/engagement-letter-vhg-trademark-enforcement.docx",
+    "Correspondence/client-status-update-letter-july-2025.docx",
+    "Correspondence/second-cease-and-desist-letter-to-cvr.docx",
+    "Pleadings/complaint-trademark-infringement.docx"
+  ],
+  "folders": [
+    "Correspondence",
+    "Engagement",
+    "Experts",
+    "Internal Memoranda",
+    "Pleadings"
+  ],
+  "folder_tree": {
+    "Correspondence": 2,
+    "Engagement": 1,
+    "Experts": 2,
+    "Internal Memoranda": 1,
+    "Pleadings": 6
+  },
+  "documents": [
+    {
+      "path": "1021-00004/Correspondence/client-status-update-letter-july-2025.docx",
+      "folder": "Correspondence",
+      "name": "client-status-update-letter-july-2025.docx",
+      "ext": "docx",
+      "bytes": 54743
+    },
+    {
+      "path": "1021-00004/Correspondence/second-cease-and-desist-letter-to-cvr.docx",
+      "folder": "Correspondence",
+      "name": "second-cease-and-desist-letter-to-cvr.docx",
+      "ext": "docx",
+      "bytes": 54673
+    },
+    {
+      "path": "1021-00004/Engagement/engagement-letter-vhg-trademark-enforcement.docx",
+      "folder": "Engagement",
+      "name": "engagement-letter-vhg-trademark-enforcement.docx",
+      "ext": "docx",
+      "bytes": 50964
+    },
+    {
+      "path": "1021-00004/Experts/expert-retention-letter-drummond.docx",
+      "folder": "Experts",
+      "name": "expert-retention-letter-drummond.docx",
+      "ext": "docx",
+      "bytes": 52266
+    },
+    {
+      "path": "1021-00004/Experts/expert-retention-letter-pinnacle.docx",
+      "folder": "Experts",
+      "name": "expert-retention-letter-pinnacle.docx",
+      "ext": "docx",
+      "bytes": 52709
+    },
+    {
+      "path": "1021-00004/Internal Memoranda/litigation-strategy-memorandum.docx",
+      "folder": "Internal Memoranda",
+      "name": "litigation-strategy-memorandum.docx",
+      "ext": "docx",
+      "bytes": 75959
+    },
+    {
+      "path": "1021-00004/Pleadings/complaint-trademark-infringement.docx",
+      "folder": "Pleadings",
+      "name": "complaint-trademark-infringement.docx",
+      "ext": "docx",
+      "bytes": 59658
+    },
+    {
+      "path": "1021-00004/Pleadings/declaration-of-jorge-quintana.docx",
+      "folder": "Pleadings",
+      "name": "declaration-of-jorge-quintana.docx",
+      "ext": "docx",
+      "bytes": 52963
+    },
+    {
+      "path": "1021-00004/Pleadings/declaration-of-leonard-yee.docx",
+      "folder": "Pleadings",
+      "name": "declaration-of-leonard-yee.docx",
+      "ext": "docx",
+      "bytes": 51971
+    },
+    {
+      "path": "1021-00004/Pleadings/memorandum-in-support-of-preliminary-injunction.docx",
+      "folder": "Pleadings",
+      "name": "memorandum-in-support-of-preliminary-injunction.docx",
+      "ext": "docx",
+      "bytes": 70005
+    },
+    {
+      "path": "1021-00004/Pleadings/notice-of-related-ttab-proceeding.docx",
+      "folder": "Pleadings",
+      "name": "notice-of-related-ttab-proceeding.docx",
+      "ext": "docx",
+      "bytes": 43906
+    },
+    {
+      "path": "1021-00004/Pleadings/proposed-preliminary-injunction-order.docx",
+      "folder": "Pleadings",
+      "name": "proposed-preliminary-injunction-order.docx",
+      "ext": "docx",
+      "bytes": 53889
+    }
+  ],
+  "doc_counts": {
+    "docx": 12
+  },
+  "status_signals": {
+    "folder:closing": false,
+    "folder:post-closing": false,
+    "folder:early termination": false,
+    "folder:termination": false,
+    "folder:settlement": false,
+    "folder:appeal": false,
+    "folder:wind-down": false,
+    "file:closing-memo": false,
+    "file:final-invoice": false,
+    "file:matter-closing": false,
+    "file:closing-binder": false,
+    "file:engagement-terminat": false,
+    "file:disengagement": false
+  },
+  "doc_dates": {
+    "earliest": null,
+    "latest": null,
+    "all": []
+  },
+  "matter_name": "VHG v. Coral Verimark Resorts LLC - Trademark Enforcement",
+  "matter_description": "C&H represents Verimark Hospitality Group Inc. in enforcing its VERIMARK family of trademarks against Coral Verimark Resorts LLC, including a federal district court action for trademark infringement, unfair competition, and dilution with a motion for preliminary injunction, and a related TTAB opposition proceeding against CVR's trademark application.",
+  "matter_type": "intellectual property litigation - trademark infringement enforcement (plaintiff-side)",
+  "client": {
+    "name": "Verimark Hospitality Group Inc.",
+    "entity_type": "Delaware corporation (Nasdaq: VMHG)",
+    "industry": "hospitality (branded resort and hotel properties)",
+    "contacts": [
+      {
+        "name": "Sonia M. Trevino",
+        "title": "Executive Vice President and General Counsel",
+        "email": null
+      },
+      {
+        "name": "Donald R. Hargrove",
+        "title": "Chief Executive Officer",
+        "email": null
+      },
+      {
+        "name": "Leonard Yee",
+        "title": "Vice President of Brand Protection",
+        "email": null
+      }
+    ]
+  },
+  "counterparties": [
+    {
+      "name": "Coral Verimark Resorts LLC",
+      "role": "opposing party (defendant / trademark infringer)"
+    }
+  ],
+  "other_parties": [
+    {
+      "name": "Alcántara Reeves LLP (Natasha K. Okonkwo)",
+      "role": "opposing counsel"
+    },
+    {
+      "name": "Broadleaf Investigations Inc.",
+      "role": "VHG's private investigation firm (evidence of consumer confusion)"
+    },
+    {
+      "name": "Pinnacle Brand Analytics LLC",
+      "role": "proposed testifying expert (consumer confusion survey)"
+    },
+    {
+      "name": "Drummond Appraisal Group Inc.",
+      "role": "proposed testifying expert (damages/economic analysis)"
+    },
+    {
+      "name": "United States District Court for the Southern District of Florida, Miami Division (Hon. Adrienne M. Castellano)",
+      "role": "court"
+    },
+    {
+      "name": "USPTO Trademark Trial and Appeal Board",
+      "role": "administrative tribunal (TTAB opposition proceeding)"
+    },
+    {
+      "name": "United States Court of Appeals for the Eleventh Circuit",
+      "role": "potential appellate court"
+    }
+  ],
+  "firm": {
+    "responsible_partner": "Marcus Delgado",
+    "billing_partner": "Catherine Bloom",
+    "originating_partner": null,
+    "supervising_attorneys": [],
+    "associates": [
+      "Peter Vassiliev",
+      "Wendy Schultz"
+    ],
+    "paralegals": [],
+    "other_staff": [],
+    "practice_group": "Intellectual Property",
+    "sub_practice": "Trademark Litigation",
+    "office": "Miami, Florida"
+  },
+  "practice_area": "IP & Technology",
+  "sub_practice_area": "IP Litigation",
+  "dates": {
+    "engagement_letter": "2025-07-22",
+    "opened": "2025-07-22",
+    "conflicts_cleared": null,
+    "closed": null,
+    "key_deadlines": [
+      {
+        "date": "2025-09-10",
+        "what": "Anticipated hearing on VHG's motion for preliminary injunction"
+      },
+      {
+        "date": "2026-01",
+        "what": "CVR's publicly announced planned opening of a third resort property in Destin, Florida"
+      }
+    ]
+  },
+  "billing": {
+    "arrangement": null,
+    "rates": [],
+    "budget": null,
+    "retainer": null
+  },
+  "status": {
+    "value": "open",
+    "as_of": "2025-07-23",
+    "basis": "client-status-update-letter-july-2025.docx confirms active, ongoing litigation just initiated on July 22, 2025 (Verified Complaint and Motion for Preliminary Injunction filed, Case No. 1:25-cv-22847-AMC), with the engagement team 'fully staffed and committed to the vigorous prosecution of this matter' and a pending PI hearing; no closing document is present among the sources."
+  },
+  "jurisdictions": [
+    "Florida"
+  ],
+  "regulators_or_courts": [
+    "United States District Court for the Southern District of Florida, Miami Division",
+    "USPTO Trademark Trial and Appeal Board",
+    "United States Court of Appeals for the Eleventh Circuit"
+  ],
+  "governing_law": "Federal law (Lanham Act, 15 U.S.C. § 1051 et seq.) and Florida state law (common law trademark infringement and Fla. Stat. § 501.204)",
+  "deal_or_case": {
+    "transaction_value": null,
+    "case_number": "1:25-cv-22847-AMC (S.D. Fla.)",
+    "filing_numbers": [
+      "U.S. Trademark Reg. No. 3,742,618 (VERIMARK)",
+      "U.S. Trademark Reg. No. 4,105,233 (VERIMARK HOSPITALITY)",
+      "U.S. Trademark Reg. No. 5,489,701 (VERIMARK V Design)",
+      "TTAB Opposition No. 91/287,456",
+      "CVR U.S. Trademark Application Serial No. 98/432,117 (subject of opposition and cancellation claim)"
+    ],
+    "significant_events": [
+      {
+        "date": "2024-01-08",
+        "what": "Coral Verimark Resorts LLC formed as a Florida LLC"
+      },
+      {
+        "date": "2024-03-01",
+        "what": "CVR commenced use in commerce of 'VERIMARK RESORTS' and 'VR Verimark' marks"
+      },
+      {
+        "date": "2024-05-14",
+        "what": "VHG's first cease-and-desist letter sent to CVR"
+      },
+      {
+        "date": "2024-06-07",
+        "what": "CVR's counsel responded, denying infringement"
+      },
+      {
+        "date": "2024-08-12",
+        "what": "C&H sent second cease-and-desist letter to CVR's counsel"
+      },
+      {
+        "date": "2024-12-03",
+        "what": "TTAB Opposition No. 91/287,456 filed on VHG's behalf against CVR's trademark application"
+      },
+      {
+        "date": "2025-02-18",
+        "what": "TTAB proceeding suspended by stipulation pending outcome of district court action"
+      },
+      {
+        "date": "2025-07-22",
+        "what": "Verified Complaint and Motion for Preliminary Injunction filed in S.D. Fla., Case No. 1:25-cv-22847-AMC"
+      },
+      {
+        "date": "2025-07-23",
+        "what": "C&H sent post-filing status update letter to client"
+      }
+    ]
+  },
+  "keywords": [
+    "trademark infringement",
+    "Lanham Act",
+    "TTAB opposition",
+    "likelihood of confusion",
+    "preliminary injunction",
+    "trademark dilution",
+    "cease and desist",
+    "FDUTPA",
+    "VERIMARK marks",
+    "incontestable registration",
+    "consumer confusion survey",
+    "brand enforcement",
+    "trademark cancellation"
+  ],
+  "evidence": {
+    "matter_type": "engagement-letter-vhg-trademark-enforcement.docx: 'The Firm will represent VHG in the prosecution of a federal trademark infringement, unfair competition, and trademark dilution action against CVR...The Firm will continue to prosecute the [TTAB] opposition proceeding'",
+    "status.value": "No closing letter, invoice, or dismissal document is among the sources; the most recent document (status update letter, July 23, 2025) describes an actively prosecuted, newly-filed federal case with an upcoming PI hearing.",
+    "governing_law": "Complaint and engagement letter cite the Lanham Act (federal) and Florida common law/Fla. Stat. § 501.204 (FDUTPA) as the bases for the claims asserted, rather than a contractual governing-law clause.",
+    "dates.opened": "The engagement letter for this specific district-court/TTAB engagement is dated July 22, 2025 and bears 'Matter No.: 1021-00004', although it references the firm's pre-existing TTAB opposition work for VHG (filed December 3, 2024) - it is unclear whether that earlier TTAB work was tracked under this same matter number or a prior one."
+  }
+}

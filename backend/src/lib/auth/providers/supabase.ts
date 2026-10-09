@@ -24,6 +24,7 @@ export async function validateSupabaseToken(
     principal: {
       userId: data.user.id,
       email: data.user.email?.toLowerCase() ?? "",
+      emailVerified: Boolean(data.user.email_confirmed_at),
       groups: [],
       roles: [],
       provider: "supabase",

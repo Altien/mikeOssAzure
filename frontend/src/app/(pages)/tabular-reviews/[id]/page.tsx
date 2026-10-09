@@ -1,11 +1,11 @@
-import { TRView } from "@/app/components/tabular/TabularReviewView";
+"use client";
 
-// See app/(pages)/projects/[id]/page.tsx for why we don't pass id —
-// usePathname() inside TRView reads the real URL.
-export function generateStaticParams() {
-    return [{ id: "_" }];
-}
+import { TRView } from "@/app/components/tabular/TabularReviewView";
+import { usePathParams } from "@/app/lib/usePathParams";
 
 export default function TabularReviewPage() {
-    return <TRView />;
+    // Static-export divergence (OSS-6): id from the live URL instead of
+    // `use(params)` (always "_" under output: "export"; see layout.tsx).
+    const { id } = usePathParams<"id">("/tabular-reviews/:id");
+    return <TRView reviewId={id} />;
 }

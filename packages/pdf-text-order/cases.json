@@ -1,0 +1,505 @@
+{
+  "cases": [
+    {
+      "name": "single-column prose keeps drawing order",
+      "note": "Ordinary prose is drawn top to bottom, so reading order and drawing order already agree. This is the common case that hid the mismatch.",
+      "items": [
+        {
+          "x": 72,
+          "y": 700,
+          "w": 30,
+          "h": 12
+        },
+        {
+          "x": 110,
+          "y": 700,
+          "w": 40,
+          "h": 12
+        },
+        {
+          "x": 72,
+          "y": 680,
+          "w": 40,
+          "h": 12
+        },
+        {
+          "x": 120,
+          "y": 680,
+          "w": 30,
+          "h": 12
+        }
+      ],
+      "expectedLines": [
+        [0, 1],
+        [2, 3]
+      ]
+    },
+    {
+      "name": "two-column table drawn column by column",
+      "note": "Items 0-2 are the left column and 3-5 the right, as a generator emits them. A table row reads across, so drawing order 0,1,2,3,4,5 must come back as 0,3,1,4,2,5. The cells are short next to the 188pt space between them, which is what marks this as columnar data rather than a page gutter.",
+      "items": [
+        {
+          "x": 72,
+          "y": 700,
+          "w": 40,
+          "h": 12
+        },
+        {
+          "x": 72,
+          "y": 680,
+          "w": 40,
+          "h": 12
+        },
+        {
+          "x": 72,
+          "y": 660,
+          "w": 40,
+          "h": 12
+        },
+        {
+          "x": 300,
+          "y": 700,
+          "w": 40,
+          "h": 12
+        },
+        {
+          "x": 300,
+          "y": 680,
+          "w": 40,
+          "h": 12
+        },
+        {
+          "x": 300,
+          "y": 660,
+          "w": 40,
+          "h": 12
+        }
+      ],
+      "expectedLines": [
+        [0, 3],
+        [1, 4],
+        [2, 5]
+      ]
+    },
+    {
+      "name": "two-column page reads down each column",
+      "note": "The layout that broke quote verification. Items 0-3 are the left column and 4-7 the right, each line filling a 210pt measure with an 18pt gutter between them. Unlike the table above, these lines must NOT be joined across the gutter: a quote spanning two lines of one column has to come back contiguous.",
+      "items": [
+        {
+          "x": 72,
+          "y": 700,
+          "w": 210,
+          "h": 11
+        },
+        {
+          "x": 72,
+          "y": 684,
+          "w": 210,
+          "h": 11
+        },
+        {
+          "x": 72,
+          "y": 668,
+          "w": 210,
+          "h": 11
+        },
+        {
+          "x": 72,
+          "y": 652,
+          "w": 180,
+          "h": 11
+        },
+        {
+          "x": 320,
+          "y": 700,
+          "w": 210,
+          "h": 11
+        },
+        {
+          "x": 320,
+          "y": 684,
+          "w": 210,
+          "h": 11
+        },
+        {
+          "x": 320,
+          "y": 668,
+          "w": 210,
+          "h": 11
+        },
+        {
+          "x": 320,
+          "y": 652,
+          "w": 150,
+          "h": 11
+        }
+      ],
+      "expectedLines": [[0], [1], [2], [3], [4], [5], [6], [7]]
+    },
+    {
+      "name": "full-width title above two columns stays in place",
+      "note": "Item 0 is a title spanning both columns, so it crosses the gutter. It must be emitted first, in place, without blocking column detection for the body beneath it \u2014 the failure mode of requiring a gutter unbroken over the whole page.",
+      "items": [
+        {
+          "x": 72,
+          "y": 730,
+          "w": 458,
+          "h": 18
+        },
+        {
+          "x": 72,
+          "y": 700,
+          "w": 210,
+          "h": 11
+        },
+        {
+          "x": 72,
+          "y": 684,
+          "w": 210,
+          "h": 11
+        },
+        {
+          "x": 72,
+          "y": 668,
+          "w": 210,
+          "h": 11
+        },
+        {
+          "x": 72,
+          "y": 652,
+          "w": 190,
+          "h": 11
+        },
+        {
+          "x": 320,
+          "y": 700,
+          "w": 210,
+          "h": 11
+        },
+        {
+          "x": 320,
+          "y": 684,
+          "w": 210,
+          "h": 11
+        },
+        {
+          "x": 320,
+          "y": 668,
+          "w": 210,
+          "h": 11
+        },
+        {
+          "x": 320,
+          "y": 652,
+          "w": 160,
+          "h": 11
+        }
+      ],
+      "expectedLines": [[0], [1], [2], [3], [4], [5], [6], [7], [8]]
+    },
+    {
+      "name": "two-column page drawn column by column reads down each column",
+      "note": "Same layout as above but emitted right column first, which is the order some generators use. Reading order must be independent of drawing order: 4,5,6,7 (left) then 0,1,2,3 (right).",
+      "items": [
+        {
+          "x": 320,
+          "y": 700,
+          "w": 210,
+          "h": 11
+        },
+        {
+          "x": 320,
+          "y": 684,
+          "w": 210,
+          "h": 11
+        },
+        {
+          "x": 320,
+          "y": 668,
+          "w": 210,
+          "h": 11
+        },
+        {
+          "x": 320,
+          "y": 652,
+          "w": 150,
+          "h": 11
+        },
+        {
+          "x": 72,
+          "y": 700,
+          "w": 210,
+          "h": 11
+        },
+        {
+          "x": 72,
+          "y": 684,
+          "w": 210,
+          "h": 11
+        },
+        {
+          "x": 72,
+          "y": 668,
+          "w": 210,
+          "h": 11
+        },
+        {
+          "x": 72,
+          "y": 652,
+          "w": 180,
+          "h": 11
+        }
+      ],
+      "expectedLines": [[4], [5], [6], [7], [0], [1], [2], [3]]
+    },
+    {
+      "name": "ragged right margin is not a gutter",
+      "note": "Unjustified prose leaves a wide blank wedge at the right, blank on most rows. It touches the region's right edge, so it is a margin and must never split the block into columns.",
+      "items": [
+        {
+          "x": 72,
+          "y": 700,
+          "w": 300,
+          "h": 11
+        },
+        {
+          "x": 72,
+          "y": 684,
+          "w": 120,
+          "h": 11
+        },
+        {
+          "x": 72,
+          "y": 668,
+          "w": 130,
+          "h": 11
+        },
+        {
+          "x": 72,
+          "y": 652,
+          "w": 110,
+          "h": 11
+        },
+        {
+          "x": 72,
+          "y": 636,
+          "w": 125,
+          "h": 11
+        }
+      ],
+      "expectedLines": [[0], [1], [2], [3], [4]]
+    },
+    {
+      "name": "a running header's page number is not a second column",
+      "note": "The blank strip between the header and the page number is interior, 228pt wide, and blank on every prose row beneath \u2014 a wider, cleaner candidate than any real gutter. Only one row has content to the right of it, so it is rejected: a column is a block of text. Header and page number stay on one line and the prose follows in order.",
+      "items": [
+        {
+          "x": 72,
+          "y": 760,
+          "w": 95.0,
+          "h": 10
+        },
+        {
+          "x": 520,
+          "y": 760,
+          "w": 10.0,
+          "h": 10
+        },
+        {
+          "x": 72,
+          "y": 700,
+          "w": 220.0,
+          "h": 10
+        },
+        {
+          "x": 72,
+          "y": 686,
+          "w": 220.0,
+          "h": 10
+        },
+        {
+          "x": 72,
+          "y": 672,
+          "w": 220.0,
+          "h": 10
+        },
+        {
+          "x": 72,
+          "y": 658,
+          "w": 220.0,
+          "h": 10
+        },
+        {
+          "x": 72,
+          "y": 644,
+          "w": 220.0,
+          "h": 10
+        },
+        {
+          "x": 72,
+          "y": 630,
+          "w": 220.0,
+          "h": 10
+        },
+        {
+          "x": 72,
+          "y": 616,
+          "w": 220.0,
+          "h": 10
+        },
+        {
+          "x": 72,
+          "y": 602,
+          "w": 220.0,
+          "h": 10
+        },
+        {
+          "x": 72,
+          "y": 588,
+          "w": 220.0,
+          "h": 10
+        },
+        {
+          "x": 72,
+          "y": 574,
+          "w": 220.0,
+          "h": 10
+        }
+      ],
+      "expectedLines": [
+        [0, 1],
+        [2],
+        [3],
+        [4],
+        [5],
+        [6],
+        [7],
+        [8],
+        [9],
+        [10],
+        [11]
+      ]
+    },
+    {
+      "name": "table of contents keeps each entry with its page number",
+      "note": "Leader-less contents entries leave a wide, perfectly aligned blank strip, but the page numbers beside it are tiny. The gutter dwarfs the blocks it divides, so this is columnar data: each title must stay joined to its number.",
+      "items": [
+        {
+          "x": 72,
+          "y": 700,
+          "w": 90,
+          "h": 11
+        },
+        {
+          "x": 72,
+          "y": 684,
+          "w": 100,
+          "h": 11
+        },
+        {
+          "x": 72,
+          "y": 668,
+          "w": 85,
+          "h": 11
+        },
+        {
+          "x": 72,
+          "y": 652,
+          "w": 95,
+          "h": 11
+        },
+        {
+          "x": 520,
+          "y": 700,
+          "w": 10,
+          "h": 11
+        },
+        {
+          "x": 520,
+          "y": 684,
+          "w": 10,
+          "h": 11
+        },
+        {
+          "x": 520,
+          "y": 668,
+          "w": 10,
+          "h": 11
+        },
+        {
+          "x": 520,
+          "y": 652,
+          "w": 10,
+          "h": 11
+        }
+      ],
+      "expectedLines": [
+        [0, 4],
+        [1, 5],
+        [2, 6],
+        [3, 7]
+      ]
+    },
+    {
+      "name": "baseline jitter within a row stays one line",
+      "note": "Small baseline differences are within tolerance, and the row is then ordered by x rather than by baseline.",
+      "items": [
+        {
+          "x": 72,
+          "y": 700,
+          "w": 40,
+          "h": 12
+        },
+        {
+          "x": 120,
+          "y": 701.5,
+          "w": 40,
+          "h": 12
+        },
+        {
+          "x": 96,
+          "y": 699,
+          "w": 20,
+          "h": 12
+        }
+      ],
+      "expectedLines": [[0, 2, 1]]
+    },
+    {
+      "name": "fixed baseline anchor stops rows chaining together",
+      "note": "Each item sits 1pt below the last, within the 2pt tolerance for h=4. Comparing against the line's anchor breaks after 2pt of total drift; comparing against the previous item would merge all four into one line.",
+      "items": [
+        {
+          "x": 72,
+          "y": 700,
+          "w": 40,
+          "h": 4
+        },
+        {
+          "x": 72,
+          "y": 699,
+          "w": 40,
+          "h": 4
+        },
+        {
+          "x": 72,
+          "y": 698,
+          "w": 40,
+          "h": 4
+        },
+        {
+          "x": 72,
+          "y": 697,
+          "w": 40,
+          "h": 4
+        }
+      ],
+      "expectedLines": [[0, 1, 2], [3]]
+    },
+    {
+      "name": "empty page produces no lines",
+      "items": [],
+      "expectedLines": []
+    }
+  ]
+}

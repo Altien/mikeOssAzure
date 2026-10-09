@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 420" role="img" aria-labelledby="title desc">
+  <title id="title">Mike OSS by Altien for Microsoft Azure</title>
+  <desc id="desc">Selected hybrid lock-up with the full Mike spectrum flower, Altien blue and pink product name, pink heart endorsement, Azure blue partner name, and a full-width heritage rainbow underline.</desc>
+  <defs>
+    <path id="blade" d="M 40,0 A 4,4 0 0 1 43,-3 Q 95,-22 147,-3 A 4,4 0 0 1 150,0 A 4,4 0 0 1 147,3 Q 95,22 43,3 A 4,4 0 0 1 40,0 Z"/>
+    <path id="heart" d="M 0,-26 C -38,-68 -96,-42 -96,12 C -96,54 -50,84 0,122 C 50,84 96,54 96,12 C 96,-42 38,-68 0,-26 Z"/>
+  </defs>
+
+  <rect width="1600" height="420" fill="#ffffff"/>
+
+  <!-- Full-spectrum Mike flower from concept E. -->
+  <g transform="translate(185 210) scale(.72)">
+    <use href="#blade" fill="#16c7e8" transform="rotate(0)"/>
+    <use href="#blade" fill="#11d8d1" transform="rotate(30)"/>
+    <use href="#blade" fill="#16e59a" transform="rotate(60)"/>
+    <use href="#blade" fill="#58e84b" transform="rotate(90)"/>
+    <use href="#blade" fill="#b7ee18" transform="rotate(120)"/>
+    <use href="#blade" fill="#f2ea00" transform="rotate(150)"/>
+    <use href="#blade" fill="#ffb21c" transform="rotate(180)"/>
+    <use href="#blade" fill="#ff6f3c" transform="rotate(210)"/>
+    <use href="#blade" fill="#f23baa" transform="rotate(240)"/>
+    <use href="#blade" fill="#e000c8" transform="rotate(270)"/>
+    <use href="#blade" fill="#a84dff" transform="rotate(300)"/>
+    <use href="#blade" fill="#4e74ff" transform="rotate(330)"/>
+  </g>
+
+  <!-- Altien heritage blue Mike with a pink OSS. -->
+  <text x="360" y="190" font-family="Segoe UI, Arial, sans-serif" font-size="104" font-weight="700" letter-spacing="-4">
+    <tspan fill="#3850a8">Mike</tspan><tspan dx="20" fill="#3850a8">OSS</tspan>
+  </text>
+
+  <!-- Pink-heart Altien endorsement from D, with B's Azure treatment. -->
+  <g transform="translate(384 272) scale(.22)">
+    <use href="#heart" fill="#e03090"/>
+  </g>
+  <text x="430" y="292" fill="#3850a8" font-family="Segoe UI, Arial, sans-serif" font-size="44" font-weight="600">by Altien</text>
+  <line x1="635" y1="243" x2="635" y2="302" stroke="#16c7e8" stroke-width="4"/>
+  <text x="672" y="292" fill="#0078d4" font-family="Segoe UI, Arial, sans-serif" font-size="43" font-weight="500">Microsoft Azure</text>
+
+</svg>

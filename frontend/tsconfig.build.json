@@ -1,0 +1,23 @@
+{
+  // The program `next build` type-checks (next.config.ts -> typescript.tsconfigPath).
+  //
+  // It is tsconfig.json minus test-only files. Tests may import shared fixtures
+  // (packages/pdf-text-order) and add-in sources (word-addin/src) from outside
+  // frontend/. The static export excludes those test-only sources while the
+  // complete CI typecheck still covers them through tsconfig.json.
+  //
+  // frontend/src/__tests__/architecture.test.ts asserts that no production
+  // source uses relative imports outside frontend/ and that these exclusions
+  // drop test-only files and nothing else.
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "node_modules",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "**/__tests__/**",
+    "vitest.config.mts",
+    "vitest.setup.ts"
+  ]
+}

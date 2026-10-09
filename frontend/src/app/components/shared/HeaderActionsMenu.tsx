@@ -2,12 +2,13 @@
 
 import { MoreHorizontal, type LucideIcon } from "lucide-react";
 import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { cn } from "@/lib/utils";
+    Dropdown,
+    DropdownContent,
+    DropdownItem,
+    DropdownTrigger,
+} from "@/shared/ui/dropdown";
+import { cn } from "@/app/lib/utils";
+import { LIQUID_GLASS_HOVER_CLASS } from "@/app/components/ui/liquid-surface";
 
 export type HeaderActionsMenuItem = {
     label: string;
@@ -20,30 +21,40 @@ export type HeaderActionsMenuItem = {
 export function HeaderActionsMenu({
     items,
     title = "Actions",
+    triggerClassName,
+    onCloseAutoFocus,
 }: {
     items: HeaderActionsMenuItem[];
     title?: string;
+    triggerClassName?: string;
+    onCloseAutoFocus?: (event: Event) => void;
 }) {
     return (
-        <DropdownMenu>
-            <DropdownMenuTrigger asChild>
+        <Dropdown>
+            <DropdownTrigger asChild>
                 <button
                     type="button"
                     className={cn(
                         "inline-flex h-7 w-7 items-center justify-center rounded-full text-gray-600 transition-all",
-                        "hover:bg-gray-100 hover:text-gray-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-300",
+                        LIQUID_GLASS_HOVER_CLASS,
+                        "hover:text-gray-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40",
+                        triggerClassName,
                     )}
                     aria-label={title}
                     title={title}
                 >
                     <MoreHorizontal className="h-4 w-4" />
                 </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="z-[160] w-48 bg-white">
+            </DropdownTrigger>
+            <DropdownContent
+                align="end"
+                className="w-48"
+                onCloseAutoFocus={onCloseAutoFocus}
+            >
                 {items.map((item) => {
                     const Icon = item.icon;
                     return (
-                        <DropdownMenuItem
+                        <DropdownItem
                             key={item.label}
                             disabled={item.disabled}
                             variant={
@@ -60,10 +71,10 @@ export function HeaderActionsMenu({
                         >
                             {Icon && <Icon className="h-3.5 w-3.5" />}
                             {item.label}
-                        </DropdownMenuItem>
+                        </DropdownItem>
                     );
                 })}
-            </DropdownMenuContent>
-        </DropdownMenu>
+            </DropdownContent>
+        </Dropdown>
     );
 }

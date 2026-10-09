@@ -3,24 +3,247 @@
 import {
     useEffect,
     useState,
+    type CSSProperties,
     type HTMLAttributes,
-    type MouseEvent,
+    type ComponentType,
+    type MouseEvent as ReactMouseEvent,
     type ReactNode,
+    type RefObject,
 } from "react";
-import { cn } from "@/lib/utils";
+import { Check, ChevronDown } from "lucide-react";
+import { cn } from "@/app/lib/utils";
 import {
-    CLOSE_ROW_ACTIONS_EVENT,
-    closeRowActionMenus,
-} from "@/app/components/shared/RowActions";
-import { GLASS_DROPDOWN } from "@/app/components/shared/HeaderFilterDropdown";
+    Dropdown,
+    DropdownAtPoint,
+    DropdownContent,
+    DropdownItem,
+    DropdownSeparator,
+    DropdownTrigger,
+} from "@/shared/ui/dropdown";
+import {
+    LIQUID_GLASS_SELECTED_CLASS,
+    LIQUID_GLASS_GROUP_HOVER_CLASS,
+    LIQUID_GLASS_HOVER_CLASS,
+    TABLE_SURFACE_CLASS,
+} from "@/app/components/ui/liquid-surface";
 
-export const TABLE_STICKY_CELL_BG = "bg-[#fafbfc]";
+export const CLOSE_ROW_ACTIONS_EVENT = "mike:close-row-actions";
+
+export function closeRowActionMenus() {
+    document.dispatchEvent(new Event(CLOSE_ROW_ACTIONS_EVENT));
+}
+
+export function rowActionSelectionIds(
+    rowId: string,
+    selectedIds: readonly string[],
+): string[] {
+    return selectedIds.includes(rowId) ? [...selectedIds] : [rowId];
+}
+
+export function selectedIdsAfterShiftClick<T>(
+    rowId: T,
+    selectedIds: readonly T[],
+): T[] {
+    return selectedIds.includes(rowId)
+        ? [...selectedIds]
+        : [...selectedIds, rowId];
+}
+
+export function selectionRangeIds<T>(
+    orderedIds: readonly T[],
+    anchorId: T | null,
+    targetId: T,
+): T[] {
+    const anchorIndex = anchorId === null ? -1 : orderedIds.indexOf(anchorId);
+    const targetIndex = orderedIds.indexOf(targetId);
+    if (anchorIndex < 0 || targetIndex < 0) return [targetId];
+    const start = Math.min(anchorIndex, targetIndex);
+    const end = Math.max(anchorIndex, targetIndex);
+    return orderedIds.slice(start, end + 1);
+}
+
+export function selectionAnchorAfterRowSelection<T>(
+    currentAnchorId: T | null,
+    targetId: T,
+    affectedIds: readonly T[],
+    selected: boolean,
+): T | null {
+    if (selected) return targetId;
+    return currentAnchorId !== null && affectedIds.includes(currentAnchorId)
+        ? null
+        : currentAnchorId;
+}
+
+export function selectedIdsAfterRangeClick<T>(
+    targetId: T,
+    orderedIds: readonly T[],
+    selectedIds: readonly T[],
+    anchorId: T | null,
+): T[] {
+    return [
+        ...new Set([
+            ...selectedIds,
+            ...selectionRangeIds(orderedIds, anchorId, targetId),
+        ]),
+    ];
+}
+
+function canPortalToDocument() {
+    return typeof document !== "undefined";
+}
+
 export const TABLE_PRIMARY_CELL_WIDTH_CLASS =
     "w-[248px] sm:w-[292px] md:w-[332px] shrink-0";
 export const TABLE_CHECKBOX_CLASS =
-    "h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-pointer accent-black";
+    "mr-3 h-2.5 w-2.5 shrink-0 rounded border-gray-200 cursor-pointer accent-black";
+
+// A child checkbox is centered beneath its parent folder's 16px chevron.
+// Root padding is 12px; advancing one level crosses the 10px checkbox, its
+// 12px margin, and half the 6px width difference between both controls.
+const TABLE_TREE_ROOT_PADDING_PX = 12;
+const TABLE_TREE_DEPTH_INDENT_PX = 25;
+
+export function tableTreeCellStyle(
+    depth: number,
+): CSSProperties | undefined {
+    if (depth <= 0) return undefined;
+    return {
+        paddingLeft:
+            TABLE_TREE_ROOT_PADDING_PX + depth * TABLE_TREE_DEPTH_INDENT_PX,
+    };
+}
 
 type DivProps = HTMLAttributes<HTMLDivElement>;
+
+export type TableFilterOption<T extends string> = {
+    value: T;
+    label: string;
+    icon?: ComponentType<{ className?: string }>;
+    className?: string;
+};
+
+export type TableSortDirection = "asc" | "desc";
+
+export function TableFilters<T extends string>({
+    label,
+    value,
+    allLabel,
+    options,
+    onChange,
+    widthClassName = "w-52",
+    align = "left",
+}: {
+    label: string;
+    value: T | null;
+    allLabel: string;
+    options: TableFilterOption<T>[];
+    onChange: (value: T | null) => void;
+    widthClassName?: string;
+    /**
+     * Which side the menu opens toward. "left" (default) anchors the menu's
+     * right edge to the button and extends leftward; "right" anchors the menu's
+     * left edge to the button and extends rightward.
+     */
+    align?: "left" | "right";
+}) {
+    const [open, setOpen] = useState(false);
+    const selected = options.find((option) => option.value === value);
+
+    return (
+        <Dropdown open={open} onOpenChange={setOpen}>
+            <DropdownTrigger asChild>
+                <button
+                    type="button"
+                    aria-label={label}
+                    title={selected?.label ?? label}
+                    className={`flex h-[18px] w-[22px] items-center justify-center rounded-sm transition-colors ${
+                        value
+                            ? `text-gray-700 ${LIQUID_GLASS_HOVER_CLASS} hover:text-gray-900`
+                            : `text-gray-400 ${LIQUID_GLASS_HOVER_CLASS} hover:text-gray-700`
+                    }`}
+                >
+                    <ChevronDown
+                        className={`h-3 w-3 transition-transform ${
+                            open ? "rotate-180" : ""
+                        }`}
+                    />
+                </button>
+            </DropdownTrigger>
+            <DropdownContent
+                align={align === "right" ? "start" : "end"}
+                className={`overflow-hidden ${widthClassName}`}
+            >
+                <DropdownItem
+                    selected={value === null}
+                    onSelect={() => onChange(null)}
+                    className="flex w-full items-center justify-between px-3 py-2"
+                >
+                    {allLabel}
+                    {!value && <Check className="h-3.5 w-3.5 text-gray-400" />}
+                </DropdownItem>
+                {options.length > 0 && (
+                    <DropdownSeparator className="-mx-1 bg-white/60" />
+                )}
+                {options.map((option) => {
+                    const Icon = option.icon;
+
+                    return (
+                        <DropdownItem
+                            key={option.value}
+                            selected={value === option.value}
+                            onSelect={() => onChange(option.value)}
+                            className="flex w-full items-center justify-between px-3 py-2"
+                        >
+                            <span
+                                className={`truncate pr-2 ${
+                                    Icon
+                                        ? "inline-flex items-center gap-1.5 font-medium"
+                                        : ""
+                                } ${option.className ?? ""}`}
+                            >
+                                {Icon && (
+                                    <Icon className="h-3.5 w-3.5 shrink-0" />
+                                )}
+                                {option.label}
+                            </span>
+                            {value === option.value && (
+                                <Check className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                            )}
+                        </DropdownItem>
+                    );
+                })}
+            </DropdownContent>
+        </Dropdown>
+    );
+}
+
+const SORT_OPTIONS: TableFilterOption<TableSortDirection>[] = [
+    { value: "asc", label: "Ascending" },
+    { value: "desc", label: "Descending" },
+];
+
+/** Ascending/descending sort menu for a column header. */
+export function TableSortFilter({
+    allLabel = "Default Order",
+    widthClassName = "w-40",
+    ...props
+}: {
+    label: string;
+    value: TableSortDirection | null;
+    onChange: (value: TableSortDirection | null) => void;
+    allLabel?: string;
+    widthClassName?: string;
+    align?: "left" | "right";
+}) {
+    return (
+        <TableFilters
+            {...props}
+            allLabel={allLabel}
+            widthClassName={widthClassName}
+            options={SORT_OPTIONS}
+        />
+    );
+}
 
 export function SkeletonLine({ className }: { className?: string }) {
     return (
@@ -30,11 +253,12 @@ export function SkeletonLine({ className }: { className?: string }) {
     );
 }
 
-export function SkeletonDot({ className }: { className?: string }) {
+export function SkeletonCheckbox({ className }: { className?: string }) {
     return (
         <div
+            aria-hidden="true"
             className={cn(
-                "h-2.5 w-2.5 shrink-0 rounded bg-gray-100 animate-pulse",
+                "mr-3 h-2.5 w-2.5 shrink-0 rounded bg-gray-100 animate-pulse",
                 className,
             )}
         />
@@ -44,14 +268,46 @@ export function SkeletonDot({ className }: { className?: string }) {
 export function TableScrollArea({
     children,
     className,
-    innerClassName,
-}: DivProps & { innerClassName?: string }) {
+    header,
+    viewportOverlay,
+    preserveGridBorder = false,
+    scrollRef,
+    onScroll,
+}: DivProps & {
+    header?: ReactNode;
+    viewportOverlay?: ReactNode;
+    preserveGridBorder?: boolean;
+    scrollRef?: RefObject<HTMLDivElement | null>;
+}) {
     return (
-        <div className={cn("w-full min-h-0 flex-1 overflow-auto", className)}>
+        <div
+            className={cn(
+                "mx-3 mb-2 min-h-0 min-w-0 flex-1 rounded-2xl md:mx-6.5 md:mb-3",
+                className,
+            )}
+        >
             <div
-                className={cn("flex min-h-full min-w-max flex-col", innerClassName)}
+                className={cn(
+                    "flex h-full min-h-0 min-w-0 flex-col overflow-hidden",
+                    TABLE_SURFACE_CLASS,
+                    preserveGridBorder && "tabular-review-table-surface",
+                )}
             >
-                {children}
+                <div className="relative flex min-h-0 min-w-0 flex-1">
+                    <div
+                        ref={scrollRef}
+                        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto overscroll-x-none"
+                        onScroll={onScroll}
+                    >
+                        {header && (
+                            <div className="table-sticky-header sticky top-0 z-[70] w-max min-w-full shrink-0">
+                                {header}
+                            </div>
+                        )}
+                        {children}
+                    </div>
+                    {viewportOverlay}
+                </div>
             </div>
         </div>
     );
@@ -61,7 +317,7 @@ export function TableHeaderRow({ children, className, ...props }: DivProps) {
     return (
         <div
             className={cn(
-                "flex h-8 items-center border-b border-gray-200 pr-3 text-xs font-medium text-gray-500 select-none md:pr-10",
+                "z-[70] flex h-10 min-w-max items-center pr-3 text-xs font-medium text-gray-700 select-none",
                 className,
             )}
             {...props}
@@ -75,60 +331,62 @@ export function TableRow({
     children,
     className,
     interactive = true,
+    selected = false,
     onContextMenu,
     rightClickDropdown,
     ...props
 }: DivProps & {
     interactive?: boolean;
+    selected?: boolean;
+    /**
+     * Dropdown items for this row's right-click menu, rendered inside a
+     * `DropdownAtPoint` at the cursor.
+     */
     rightClickDropdown?: ReactNode | ((close: () => void) => ReactNode);
 }) {
-    const [menuCoords, setMenuCoords] = useState<{
-        top: number;
-        left: number;
+    const [menuPoint, setMenuPoint] = useState<{
+        x: number;
+        y: number;
     } | null>(null);
 
     useEffect(() => {
-        if (!menuCoords) return;
-        function handleClick() {
-            setMenuCoords(null);
-        }
+        if (!menuPoint) return;
         function handleCloseRowActions() {
-            setMenuCoords(null);
+            setMenuPoint(null);
         }
-        document.addEventListener("click", handleClick);
-        document.addEventListener(CLOSE_ROW_ACTIONS_EVENT, handleCloseRowActions);
+        document.addEventListener(
+            CLOSE_ROW_ACTIONS_EVENT,
+            handleCloseRowActions,
+        );
         return () => {
-            document.removeEventListener("click", handleClick);
             document.removeEventListener(
                 CLOSE_ROW_ACTIONS_EVENT,
                 handleCloseRowActions,
             );
         };
-    }, [menuCoords]);
+    }, [menuPoint]);
 
     function closeRightClickDropdown() {
-        setMenuCoords(null);
+        setMenuPoint(null);
     }
 
-    function handleContextMenu(e: MouseEvent<HTMLDivElement>) {
+    function handleContextMenu(e: ReactMouseEvent<HTMLDivElement>) {
         onContextMenu?.(e);
         if (!rightClickDropdown || e.defaultPrevented) return;
         e.preventDefault();
         e.stopPropagation();
         closeRowActionMenus();
-        const menuWidth = 192;
-        setMenuCoords({
-            top: e.clientY,
-            left: Math.min(e.clientX, window.innerWidth - menuWidth - 8),
-        });
+        setMenuPoint({ x: e.clientX, y: e.clientY });
     }
 
     return (
         <>
             <div
                 className={cn(
-                    "group flex h-10 items-center border-b border-gray-50 pr-3 transition-colors md:pr-10",
-                    interactive && "cursor-pointer hover:bg-gray-100",
+                    "group flex h-10 min-w-max items-center pr-3 transition-colors",
+                    interactive && "cursor-pointer",
+                    interactive && !selected && LIQUID_GLASS_HOVER_CLASS,
+                    selected && LIQUID_GLASS_SELECTED_CLASS,
                     className,
                 )}
                 onContextMenu={handleContextMenu}
@@ -136,21 +394,19 @@ export function TableRow({
             >
                 {children}
             </div>
-            {menuCoords && rightClickDropdown && (
-                <div
-                    style={{
-                        position: "fixed",
-                        top: menuCoords.top,
-                        left: menuCoords.left,
-                    }}
-                    className={`z-[120] w-48 overflow-hidden ${GLASS_DROPDOWN}`}
+            {menuPoint && rightClickDropdown && canPortalToDocument() && (
+                <DropdownAtPoint
+                    point={menuPoint}
+                    onClose={closeRightClickDropdown}
+                    className="w-48"
+                    // React events bubble through the portal to the row.
                     onClick={(e) => e.stopPropagation()}
                     onContextMenu={(e) => e.preventDefault()}
                 >
                     {typeof rightClickDropdown === "function"
                         ? rightClickDropdown(closeRightClickDropdown)
                         : rightClickDropdown}
-                </div>
+                </DropdownAtPoint>
             )}
         </>
     );
@@ -159,8 +415,9 @@ export function TableRow({
 export function TableStickyCell({
     children,
     className,
+    style,
     widthClassName = TABLE_PRIMARY_CELL_WIDTH_CLASS,
-    bgClassName = TABLE_STICKY_CELL_BG,
+    bgClassName,
     header = false,
     hover = true,
 }: DivProps & {
@@ -171,14 +428,16 @@ export function TableStickyCell({
 }) {
     return (
         <div
+            style={style}
             className={cn(
-                "sticky left-0 z-[60] flex gap-4 pl-4 pr-2 text-left",
+                "sticky left-0 z-[60] flex pl-3 pr-2 text-left",
+                "table-sticky-cell",
                 widthClassName,
                 bgClassName,
                 header
-                    ? "items-center self-stretch"
+                    ? "z-[80] items-center self-stretch"
                     : "py-2 transition-colors",
-                !header && hover && "group-hover:bg-gray-100",
+                !header && hover && LIQUID_GLASS_GROUP_HOVER_CLASS,
                 className,
             )}
         >
@@ -190,10 +449,12 @@ export function TableStickyCell({
 export function TablePrimaryCell({
     children,
     className,
+    style,
     widthClassName = TABLE_PRIMARY_CELL_WIDTH_CLASS,
     bgClassName,
     selected,
     onSelectionChange,
+    selectionIndicator,
     checkboxTitle,
     label,
     editing = false,
@@ -206,6 +467,7 @@ export function TablePrimaryCell({
     bgClassName?: string;
     selected: boolean;
     onSelectionChange: () => void;
+    selectionIndicator?: ReactNode;
     checkboxTitle?: string;
     label?: ReactNode;
     editing?: boolean;
@@ -227,10 +489,10 @@ export function TablePrimaryCell({
                     }}
                     onBlur={onEditCommit}
                     onClick={(e) => e.stopPropagation()}
-                    className="min-w-0 flex-1 text-sm text-gray-800 bg-transparent outline-none"
+                    className="min-w-0 flex-1 text-xs text-gray-800 bg-transparent outline-none"
                 />
             ) : (
-                <span className="min-w-0 flex-1 truncate text-sm text-gray-800">
+                <span className="min-w-0 flex-1 truncate text-xs text-gray-800">
                     {label}
                 </span>
             )
@@ -240,19 +502,29 @@ export function TablePrimaryCell({
 
     return (
         <TableStickyCell
+            style={style}
             widthClassName={widthClassName}
-            bgClassName={bgClassName}
+            bgClassName={selected ? LIQUID_GLASS_SELECTED_CLASS : bgClassName}
             className={className}
+            hover={!selected}
         >
-            <div className="flex min-w-0 items-center gap-4">
-                <input
-                    type="checkbox"
-                    checked={selected}
-                    onChange={onSelectionChange}
-                    onClick={(e) => e.stopPropagation()}
-                    className={TABLE_CHECKBOX_CLASS}
-                    title={checkboxTitle}
-                />
+            <div className="flex min-w-0 items-center">
+                {selectionIndicator ?? (
+                    <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={onSelectionChange}
+                        onClick={(e) => e.stopPropagation()}
+                        className={TABLE_CHECKBOX_CLASS}
+                        title={checkboxTitle}
+                        aria-label={
+                            checkboxTitle ??
+                            (typeof label === "string"
+                                ? `Select ${label}`
+                                : undefined)
+                        }
+                    />
+                )}
                 {content}
             </div>
         </TableStickyCell>
@@ -261,7 +533,10 @@ export function TablePrimaryCell({
 
 export function TableHeaderCell({ children, className, ...props }: DivProps) {
     return (
-        <div className={cn("shrink-0 text-left", className)} {...props}>
+        <div
+            className={cn("flex shrink-0 items-center text-left", className)}
+            {...props}
+        >
             {children}
         </div>
     );
@@ -270,7 +545,7 @@ export function TableHeaderCell({ children, className, ...props }: DivProps) {
 export function TableCell({ children, className, ...props }: DivProps) {
     return (
         <div
-            className={cn("shrink-0 truncate text-sm text-gray-500", className)}
+            className={cn("shrink-0 truncate text-xs text-gray-500", className)}
             {...props}
         >
             {children}
@@ -296,7 +571,7 @@ export function TableEmptyState({
     return (
         <div
             className={cn(
-                "mx-auto flex w-full max-w-xs flex-1 flex-col items-start justify-center py-24",
+                "mx-auto flex w-full max-w-[260px] flex-1 flex-col items-start justify-center py-24 text-left",
                 className,
             )}
         >

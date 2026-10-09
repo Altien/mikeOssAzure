@@ -7,6 +7,7 @@ import {
 } from "vitest";
 import { createHmac } from "node:crypto";
 import { spawn } from "node:child_process";
+import { resolve } from "node:path";
 import {
   signDownload,
   verifyDownload,
@@ -241,7 +242,9 @@ describe("process guards vs the poison Download request", () => {
         process.execPath,
         ["--import", "tsx", "--input-type=module", "-e", CHILD_SERVER],
         {
-          cwd: new URL("../..", import.meta.url),
+          // Dev drift: tsconfig.test.json type-checks as CommonJS, where
+          // import.meta is a type error; __dirname is the CJS equivalent.
+          cwd: resolve(__dirname, "../.."),
           env: { ...process.env, NODE_ENV: "", DOWNLOAD_SIGNING_SECRET: "" },
         },
       );

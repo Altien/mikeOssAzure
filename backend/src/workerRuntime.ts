@@ -1,0 +1,182 @@
+// Everything that processes background work, bundled behind one start/stop
+// pair so the SAME code can run in any of three homes:
+//
+//   1. a worker_thread inside the API process (the default — background work
+//      stays off the main event loop even on a single-box deployment),
+//   2. inline on the API process's main thread (WORKERS_MODE=inline — the
+//      pre-thread behavior, kept as an escape hatch),
+//   3. a standalone worker process (src/worker.ts; WORKERS_MODE=none on the
+//      API side) — a separate container or machine pointed at the same
+//      Postgres/Redis. This is the path to dedicated worker hardware: same
+//      image, different command, zero code changes.
+//
+// Contents: the BullMQ workers (driver-gated), the DB-queue runner, the
+// stale-work reaper, and the workflow catalog boot sync.
+
+import { anyWorkerEnabled, startWorkers, stopWorkers } from "./workers";
+import { startDbJobRunner, stopDbJobRunner } from "./lib/dbq/runner";
+import {
+    DB_JOB_HANDLERS,
+    DB_JOB_FAILURE_HOOKS,
+    MCP_TOKEN_REFRESH_WINDOW_MS,
+} from "./jobs/registry";
+import { enqueueDbJob } from "./lib/dbq/enqueue";
+import { runStaleWorkSweep } from "./jobs/maintenance";
+import { startUploadProcessingWorkers } from "./modules/uploads/uploads.service";
+import { uploadProcessingConfiguration } from "./lib/runtimeConfig";
+import { createServerSupabase } from "./lib/supabase";
+import { initServerSessionKeys } from "./lib/serverSession";
+import { initDownloadSigningSecret } from "./lib/downloadTokens";
+import { initManifestSigningKey, manifestPublicKey } from "./lib/manifestSigning";
+import { enforceDocumentLifecycleMigration } from "./lib/dbq/lifecycleGuard";
+import { reportError } from "./lib/observability/sentry";
+import { safeErrorLog } from "./lib/safeError";
+
+const SWEEP_INTERVAL_MS = (() => {
+    const raw = Number(process.env.STALE_SWEEP_INTERVAL_MS);
+    return Number.isFinite(raw) && raw > 0 ? raw : 10 * 60 * 1000;
+})();
+
+/** How often to look for MCP OAuth tokens about to expire. */
+const MCP_REFRESH_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+
+/**
+ * How far past expiry the sweep still bothers. A connector nobody has used
+ * for a day is not worth waking the authorization server for every 5 minutes
+ * forever — the lazy refresh in oauthBearerToken picks it up the moment the
+ * user actually touches it. Without this floor, one abandoned connector with
+ * a dead grant re-enqueues a doomed job for the rest of the deployment's life.
+ */
+const MCP_REFRESH_MAX_EXPIRED_AGE_MS = 24 * 60 * 60 * 1000;
+
+let sweepTimer: ReturnType<typeof setInterval> | null = null;
+let initialSweep: ReturnType<typeof setTimeout> | null = null;
+let mcpRefreshTimer: ReturnType<typeof setInterval> | null = null;
+let stopUploadWorker: (() => void) | null = null;
+
+/**
+ * Queue a refresh for every MCP OAuth token expiring inside the handler's
+ * window. Fully best-effort: this is an optimization over the lazy refresh,
+ * so nothing it hits may take the worker runtime down.
+ */
+async function runMcpTokenRefreshSweep(): Promise<void> {
+    const db = createServerSupabase();
+    const now = Date.now();
+    const { data, error } = await db
+        .from("user_mcp_oauth_tokens")
+        .select("connector_id, expires_at")
+        .not("expires_at", "is", null)
+        .not("encrypted_refresh_token", "is", null)
+        .lt("expires_at", new Date(now + MCP_TOKEN_REFRESH_WINDOW_MS).toISOString())
+        .gt("expires_at", new Date(now - MCP_REFRESH_MAX_EXPIRED_AGE_MS).toISOString());
+    if (error) throw new Error(error.message);
+
+    for (const row of (data ?? []) as { connector_id: string }[]) {
+        if (!row.connector_id) continue;
+        // One live job per connector: overlapping sweeps, and several
+        // replicas sweeping at once, collapse into a single refresh.
+        await enqueueDbJob(db, {
+            kind: "mcp.refresh_token",
+            payload: { connectorId: row.connector_id },
+            dedupeKey: `mcp.refresh:${row.connector_id}`,
+            maxAttempts: 3,
+        });
+    }
+}
+let started = false;
+
+/** Start every background worker (idempotent). */
+export async function startAllWorkers(): Promise<void> {
+    if (started) return;
+    await enforceDocumentLifecycleMigration();
+    // Worker threads have independent module caches. The API's Key Vault
+    // warm-up cannot initialize this process's signing or session state.
+    await initServerSessionKeys();
+    await initDownloadSigningSecret();
+    await initManifestSigningKey();
+    manifestPublicKey();
+    const db = createServerSupabase();
+    const { error: tableError } = await db.from("db_jobs").select("id").limit(0);
+    if (tableError) throw new Error("DB job schema is unavailable");
+    const { error: claimError } = await db.rpc("claim_db_jobs", { p_limit: 0, p_stale_seconds: 600 });
+    if (claimError) throw new Error("DB job claim RPC is unavailable");
+    const missingJob = "00000000-0000-4000-8000-000000000000";
+    const missingClaim = "00000000-0000-4000-8000-000000000001";
+    const { error: renewError } = await db.rpc("renew_db_job", {
+        p_id: missingJob, p_attempts: 0, p_claim_token: missingClaim,
+    });
+    if (renewError) throw new Error("DB job renewal RPC is unavailable");
+    const { error: finishError } = await db.rpc("finish_db_job", {
+        p_id: missingJob, p_attempts: 0, p_claim_token: missingClaim,
+        p_status: "done", p_last_error: null, p_result: null, p_run_at: null,
+    });
+    if (finishError) throw new Error("DB job terminal RPC is unavailable");
+
+    // BullMQ workers: conversion/extraction when their flags are on, plus
+    // the app-jobs delivery worker — all only when the Redis driver is
+    // active (the registry's `enabled` predicates gate this).
+    if (anyWorkerEnabled()) {
+        startWorkers();
+    }
+
+    // The DB queue runs in every deployment (fast delivery when Redis is
+    // up, poll-driven otherwise) — see lib/dbq/runner.ts.
+    startDbJobRunner(DB_JOB_HANDLERS, DB_JOB_FAILURE_HOOKS);
+
+    // Upload-session processing: lease-based claims over Postgres, so any
+    // number of runtimes can poll concurrently without double-processing.
+    const uploadProcessing = uploadProcessingConfiguration();
+    stopUploadWorker = startUploadProcessingWorkers(uploadProcessing);
+    console.log(
+        `Upload processing started with ${uploadProcessing.concurrency} workers ` +
+            `and a ${uploadProcessing.maxRunningPerUser}-job per-user cap`,
+    );
+
+    // Stale-work reaper: a crash between "status = processing/generating"
+    // and the finalizing write strands rows in a transient state forever —
+    // nothing else owns them. Sweep shortly after boot (crash recovery) and
+    // on an interval.
+    const runSweep = () =>
+        void runStaleWorkSweep()
+            .then(({ documents, cells }) => {
+                if (documents || cells)
+                    console.warn("[stale-sweep] flipped", { documents, cells });
+            })
+            .catch((err) => {
+                reportError(err, { tags: { component: "stale-sweep" } });
+                console.warn("[stale-sweep] failed", safeErrorLog(err));
+            });
+    initialSweep = setTimeout(runSweep, 30_000);
+    initialSweep.unref();
+    sweepTimer = setInterval(runSweep, SWEEP_INTERVAL_MS);
+    sweepTimer.unref();
+
+    // MCP OAuth tokens: renew the ones about to expire on this schedule
+    // rather than inside whichever request first trips over the expiry. The
+    // lazy refresh in lib/mcp/oauth.ts stays as the last line of defense.
+    const runMcpRefresh = () =>
+        void runMcpTokenRefreshSweep().catch((err) => {
+            reportError(err, { tags: { component: "mcp-refresh-sweep" } });
+            console.warn("[mcp-refresh-sweep] failed", safeErrorLog(err));
+        });
+    mcpRefreshTimer = setInterval(runMcpRefresh, MCP_REFRESH_SWEEP_INTERVAL_MS);
+    mcpRefreshTimer.unref();
+    started = true;
+}
+
+/** Stop everything gracefully; safe to call more than once. */
+export async function stopAllWorkers(): Promise<void> {
+    if (initialSweep) clearTimeout(initialSweep);
+    if (sweepTimer) clearInterval(sweepTimer);
+    if (mcpRefreshTimer) clearInterval(mcpRefreshTimer);
+    initialSweep = null;
+    sweepTimer = null;
+    mcpRefreshTimer = null;
+    if (stopUploadWorker) {
+        stopUploadWorker();
+        stopUploadWorker = null;
+    }
+    await stopWorkers();
+    await stopDbJobRunner();
+    started = false;
+}

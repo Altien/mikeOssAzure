@@ -1,40 +1,149 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { Users, Upload } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Upload } from "lucide-react";
 import {
+    type Org,
+    UploadBatchError,
     addDocumentToProject,
     createProject,
-    uploadProjectDocument,
+    failedUploadMessage,
+    grantProjectAccess,
+    listOrgs,
+    setProjectMemoryEnabled,
+    uploadProjectDocuments,
 } from "@/app/lib/mikeApi";
-import { useDirectoryData } from "../shared/useDirectoryData";
 import { FileDirectory } from "../shared/FileDirectory";
-import { EmailPillInput } from "../shared/EmailPillInput";
-import type { Project } from "../shared/types";
-import { useAuth } from "@/contexts/AuthContext";
-import { Modal } from "../shared/Modal";
+import type { Document, Project } from "../shared/types";
+import { useAuth } from "@/app/contexts/AuthContext";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
+import { Modal } from "../modals/Modal";
+import { FieldLabel, FormTextInput } from "../ui/form-field";
+import { ModalSelect } from "../modals/ModalSelect";
+import { ToggleSwitchUI } from "@/shared/ui/ToggleSwitchUI";
+import { ProjectPracticeField } from "./ProjectPracticeField";
+import { userFacingApiError } from "@/app/lib/userFacingError";
+import { createSecureUuid } from "@/shared/lib/secureUuid";
+import {
+    CreateAccessStep,
+    type PendingDirectGrant,
+    type PendingOrgOverride,
+} from "../modals/CreateAccessStep";
+import { WarningPopup } from "../popups/WarningPopup";
+
+const PERSONAL_WORKSPACE = "__personal__";
 
 interface Props {
     open: boolean;
-    onClose: () => void;
+    /**
+     * Dismissal. `createdWithoutHandover` is true when the project exists but
+     * a later step failed, so it never reached `onCreated` — the caller has to
+     * refetch or the new project stays invisible until a reload.
+     */
+    onClose: (createdWithoutHandover?: boolean) => void;
     onCreated: (project: Project) => void;
 }
 
 export function NewProjectModal({ open, onClose, onCreated }: Props) {
+    const [step, setStep] = useState<"details" | "access" | "documents">(
+        "details",
+    );
     const [name, setName] = useState("");
     const [cmNumber, setCmNumber] = useState("");
-    const [sharedEmails, setSharedEmails] = useState<string[]>([]);
-    const [showMembers, setShowMembers] = useState(false);
-    const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
+    const [practice, setPractice] = useState("");
+    const [sharedUsers, setSharedUsers] = useState<PendingDirectGrant[]>([]);
+    const [orgOverrides, setOrgOverrides] = useState<PendingOrgOverride[]>([]);
+    const [orgs, setOrgs] = useState<Org[]>([]);
+    const [orgId, setOrgId] = useState<string>(PERSONAL_WORKSPACE);
+    const [memoryEnabled, setMemoryEnabled] = useState(true);
+    const memoryEditedRef = useRef(false);
+    const [selectedDocuments, setSelectedDocuments] = useState<Document[]>([]);
     const [pendingFiles, setPendingFiles] = useState<File[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
+    const [organizationLoadWarning, setOrganizationLoadWarning] =
+        useState(false);
+    // A project created with only some of its files attached. The modal holds
+    // it until the user has read which files are missing.
+    const [pendingProject, setPendingProject] = useState<Project | null>(null);
+    // Mirrors `createdProjectRef` for rendering: a ref does not re-render, and
+    // the wizard has to change shape the moment the project is real. Back
+    // still works — a failed grant or attachment is retried from the step it
+    // failed on — but the fields that identify the project (name, CM number,
+    // practice, workspace) lock, because a retry reuses the project already
+    // created and would ignore any edit made to them.
+    const [projectExists, setProjectExists] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const practiceEditedRef = useRef(false);
+    // The project is created before its grants are written and its documents
+    // are attached. Remember it so a retry after either kind of failure
+    // reuses the project the user already has instead of creating a second
+    // one.
+    const createdProjectRef = useRef<Project | null>(null);
+    // Attachment work already done against that project. A retry after a
+    // failed step must not re-upload a file or re-link a document that landed
+    // on the first attempt, or the project ends up with duplicates.
+    //
+    // Keyed by the File itself, not by its name. A name is neither unique nor
+    // stable: two files called `contract.pdf` from different folders are two
+    // uploads, and the server trims the name it stores, so ` notes.docx `
+    // came back as `notes.docx`, never matched the pending file, and was
+    // uploaded again on every retry. The identity of the object the user
+    // picked is the only thing that answers "have I already sent this one?".
+    const uploadedFilesRef = useRef<Set<File>>(new Set());
+    // The id each file is uploaded under, so an outcome can be traced back to
+    // the File that produced it even when two of them share a name.
+    const uploadClientIdsRef = useRef<Map<File, string>>(new Map());
+    const linkedDocumentIdsRef = useRef<Set<string>>(new Set());
     const { user } = useAuth();
+    const { profile } = useUserProfile();
+    const preferredPractice =
+        profile?.practiceAreas.find((area) => area.trim())?.trim() ?? "";
+    const projectMemoryDefault = profile?.projectMemoryDefault !== false;
     const ownEmail = user?.email?.trim().toLowerCase() ?? null;
     const formId = "new-project-modal-form";
 
-    const { loading: dirLoading, standaloneDocuments, projects: dirProjects } = useDirectoryData(open);
+    // Load the caller's organizations so a project can be created inside a
+    // firm instead of the caller's private workspace. Every row is a real
+    // organization now — there is no hidden personal one to filter out.
+    // The selector remains visible even when the caller has no organizations.
+    useEffect(() => {
+        if (!open) return;
+        let cancelled = false;
+        setOrganizationLoadWarning(false);
+        listOrgs()
+            .then((rows) => {
+                if (!cancelled) setOrgs(rows);
+            })
+            .catch(() => {
+                // Silently showing only "No organization" would look like the
+                // caller belongs to no firm, so say the list failed instead.
+                if (!cancelled) setOrganizationLoadWarning(true);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [open]);
+
+    useEffect(() => {
+        if (!open) {
+            practiceEditedRef.current = false;
+            return;
+        }
+        if (!preferredPractice || practiceEditedRef.current) return;
+        setPractice(preferredPractice);
+    }, [open, preferredPractice]);
+
+    // The account's saved default seeds this project's memory setting, until
+    // the creator says otherwise for this one project.
+    useEffect(() => {
+        if (!open) {
+            memoryEditedRef.current = false;
+            return;
+        }
+        if (memoryEditedRef.current) return;
+        setMemoryEnabled(projectMemoryDefault);
+    }, [open, projectMemoryDefault]);
 
     if (!open) return null;
 
@@ -42,67 +151,397 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
         const files = Array.from(e.target.files ?? []);
         e.target.value = "";
         if (!files.length) return;
-        setPendingFiles((prev) => [...prev, ...files.filter((f) => !prev.some((p) => p.name === f.name))]);
+        // Deduplicated by identity, not by name. The old name test silently
+        // dropped the second of two files called `contract.pdf` — a normal
+        // thing to attach from two different folders — and the user was never
+        // told one of their picks had not been taken.
+        setPendingFiles((prev) => [
+            ...prev,
+            ...files.filter((file) => !prev.includes(file)),
+        ]);
     }
 
-    async function handleSubmit(e: React.FormEvent) {
+    /** A stable per-file upload id, so outcomes map back to their File. */
+    function uploadClientId(file: File): string {
+        const existing = uploadClientIdsRef.current.get(file);
+        if (existing) return existing;
+        const clientId = createSecureUuid();
+        uploadClientIdsRef.current.set(file, clientId);
+        return clientId;
+    }
+
+    function finishCreation(project: Project) {
+        onCreated(project);
+        resetForm();
+        onClose();
+    }
+
+    function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
         e.preventDefault();
         if (!name.trim()) return;
+        if (step === "details") {
+            setStep("access");
+            return;
+        }
+        if (step === "access") {
+            setStep("documents");
+        }
+    }
+
+    async function createProjectFromDocuments() {
+        if (!name.trim() || loading || step !== "documents") return;
         setLoading(true);
         setError("");
         try {
-            const project = await createProject(
-                name.trim(),
-                cmNumber.trim() || undefined,
-                ownEmail
-                    ? sharedEmails.filter((email) => email !== ownEmail)
-                    : sharedEmails,
+            if (pendingProject) {
+                let project = pendingProject;
+                if (project.memory_enabled !== memoryEnabled) {
+                    await setProjectMemoryEnabled(project.id, memoryEnabled);
+                    project = { ...project, memory_enabled: memoryEnabled };
+                }
+                finishCreation(project);
+                return;
+            }
+            // Create, then grant each recipient through the role-aware access
+            // endpoint, which also supports recipients without an account.
+            let project = createdProjectRef.current;
+            if (!project) {
+                project = await createProject(
+                    name.trim(),
+                    cmNumber.trim() || undefined,
+                    practice.trim() && practice.trim() !== "Other"
+                        ? practice.trim()
+                        : undefined,
+                    orgId !== PERSONAL_WORKSPACE ? orgId : undefined,
+                    memoryEnabled,
+                );
+            } else if (project.memory_enabled !== memoryEnabled) {
+                // A failed grant or attachment leaves the newly created
+                // project available for retry. If the user goes Back and
+                // changes the memory choice, persist that choice before
+                // retrying anything else; changing only the optimistic row
+                // would violate an explicit opt-out.
+                await setProjectMemoryEnabled(project.id, memoryEnabled);
+                project = { ...project, memory_enabled: memoryEnabled };
+            }
+            createdProjectRef.current = project;
+            setProjectExists(true);
+
+            // Grants run before the attachment work: a refusal here stops the
+            // submit, and anything already uploaded or linked would otherwise
+            // have to be redone on the retry — which duplicated documents.
+            //
+            // Sequential: these are a handful of addresses, and one refusal
+            // should be reported with its own message rather than lost in a
+            // race. The endpoint upserts, so a retry after a partial failure
+            // is safe.
+            const recipients = (
+                orgId === PERSONAL_WORKSPACE ? sharedUsers : orgOverrides
+            ).filter((entry) => !ownEmail || entry.email !== ownEmail);
+            const grantFailures: { email: string; detail: string }[] = [];
+            for (const entry of recipients) {
+                try {
+                    await grantProjectAccess(
+                        project.id,
+                        entry.email,
+                        entry.role,
+                    );
+                } catch (err: unknown) {
+                    grantFailures.push({
+                        email: entry.email,
+                        detail: userFacingApiError(err, "the request failed"),
+                    });
+                }
+            }
+            if (grantFailures.length > 0) {
+                // The project exists, so say so — and stay open rather than
+                // navigating away from the only place that knows the sharing
+                // did not happen. Pressing Create again retries the grants
+                // against the same project.
+                // Say what happened to the documents too. The submit stops
+                // here, so nothing the user attached has been sent yet — and
+                // an error that mentions only the sharing reads as though the
+                // files went in, which is the opposite of the truth.
+                const stillPending =
+                    selectedDocuments.filter(
+                        (document) =>
+                            !linkedDocumentIdsRef.current.has(document.id),
+                    ).length +
+                    pendingFiles.filter(
+                        (file) => !uploadedFilesRef.current.has(file),
+                    ).length;
+                setError(
+                    `Project created, but access was not granted to ${grantFailures
+                        .map((failure) => failure.email)
+                        .join(", ")}: ${grantFailures[0].detail}${
+                        stillPending > 0
+                            ? ` The ${stillPending} selected ${
+                                  stillPending === 1 ? "file is" : "files are"
+                              } still pending and will be attached when you try again.`
+                            : ""
+                    }`,
+                );
+                // Stay open on THIS dialog: createdProjectRef holds the
+                // project, so pressing Create again retries only the grants.
+                return;
+            }
+
+            // Only documents this modal has not already linked: a retry after
+            // a later failure must not add the same document twice.
+            const documentsToLink = selectedDocuments.filter(
+                (document) => !linkedDocumentIdsRef.current.has(document.id),
             );
-            await Promise.all([
-                ...[...selectedDocIds].map((id) => addDocumentToProject(project.id, id).catch(() => {})),
-                ...pendingFiles.map((f) => uploadProjectDocument(project.id, f).catch(() => {})),
-            ]);
-            onCreated({ ...project, document_count: selectedDocIds.size + pendingFiles.length });
-            resetForm();
-            onClose();
+            const linkResults = await Promise.all(
+                documentsToLink.map((document) =>
+                    addDocumentToProject(project.id, document.id).then(
+                        () => true,
+                        () => false,
+                    ),
+                ),
+            );
+            documentsToLink.forEach((document, index) => {
+                if (linkResults[index])
+                    linkedDocumentIdsRef.current.add(document.id);
+            });
+            const failedLinkNames = documentsToLink
+                .filter((_, index) => !linkResults[index])
+                .map((document) => document.filename);
+
+            // Same for uploads, tracked by File identity through the client id
+            // each one is sent under — the outcome's `filename` is the
+            // server's trimmed version and cannot be trusted to match.
+            const filesToUpload = pendingFiles.filter(
+                (file) => !uploadedFilesRef.current.has(file),
+            );
+            const uploadInputs = filesToUpload.map((file) => ({
+                file,
+                clientId: uploadClientId(file),
+            }));
+            const fileByClientId = new Map(
+                uploadInputs.map((input) => [input.clientId, input.file]),
+            );
+            const recordCompletedUploads = (
+                outcomes: { clientId: string; status: string }[],
+            ) => {
+                for (const outcome of outcomes) {
+                    const file = fileByClientId.get(outcome.clientId);
+                    if (outcome.status === "completed" && file)
+                        uploadedFilesRef.current.add(file);
+                }
+            };
+            let uploadFailure: string | null = null;
+            if (uploadInputs.length > 0) {
+                try {
+                    const outcomes = await uploadProjectDocuments(
+                        project.id,
+                        uploadInputs,
+                    );
+                    recordCompletedUploads(outcomes);
+                    if (
+                        outcomes.some(
+                            (outcome) => outcome.status !== "completed",
+                        )
+                    ) {
+                        uploadFailure = failedUploadMessage(outcomes);
+                    }
+                } catch (uploadError) {
+                    // Aborts, session-creation failures, and batch validation
+                    // still throw; everything else comes back as outcomes.
+                    if (uploadError instanceof UploadBatchError) {
+                        recordCompletedUploads(uploadError.outcomes);
+                    }
+                    uploadFailure =
+                        uploadError instanceof UploadBatchError
+                            ? failedUploadMessage(uploadError.outcomes)
+                            : userFacingApiError(
+                                  uploadError,
+                                  "The attached files could not be uploaded. Please try again.",
+                              );
+                }
+            }
+
+            // Counted across attempts, not just this one, so a retry reports
+            // the project's real document count.
+            const attachedCount =
+                linkedDocumentIdsRef.current.size +
+                uploadedFilesRef.current.size;
+            const requestedCount =
+                selectedDocuments.length + pendingFiles.length;
+            const failureMessage = [
+                uploadFailure,
+                failedLinkNames.length > 0
+                    ? `${failedLinkNames.join(", ")} could not be added to the project.`
+                    : null,
+            ]
+                .filter(Boolean)
+                .join(" ");
+
+            // POST /projects returns a bare row with no role fields, and
+            // the list's fail-closed roleFrom() reads "no role fields" as
+            // viewer — so the creator had no row menu, no Edit details and no
+            // Delete on the project they just made until a refetch. This
+            // row's standing is not unknown: the caller IS the creator, and a
+            // creator derives Owner by definition. The same stamp the optimistic
+            // chat row gets in ChatHistoryContext, for the same reason.
+            const stamped = {
+                ...project,
+                is_owner: true,
+                access_role: "owner" as const,
+                access_scope:
+                    orgId !== PERSONAL_WORKSPACE
+                        ? ("organization" as const)
+                        : recipients.length > 0
+                          ? ("shared" as const)
+                          : ("private" as const),
+                organization_name:
+                    orgs.find((org) => org.id === orgId)?.name ?? null,
+                memory_enabled: memoryEnabled,
+                ...(orgId === PERSONAL_WORKSPACE && recipients.length > 0
+                    ? { direct_grant_count: recipients.length }
+                    : {}),
+            };
+
+            if (failureMessage) {
+                setError(failureMessage);
+                // Nothing the user attached made it in: stay put so the primary
+                // action retries the attachments against the same project,
+                // instead of closing on a project with no documents.
+                if (attachedCount === 0 && requestedCount > 0) return;
+                // Partial success: the project is real, so let the user read
+                // which files are missing before the modal hands it over.
+                setPendingProject({
+                    ...stamped,
+                    document_count: attachedCount,
+                });
+                return;
+            }
+
+            finishCreation({ ...stamped, document_count: attachedCount });
         } catch (err: unknown) {
-            setError((err as Error).message || "Failed to create project");
+            setError(userFacingApiError(err, "Failed to create project"));
         } finally {
             setLoading(false);
         }
     }
 
     function resetForm() {
+        createdProjectRef.current = null;
+        setProjectExists(false);
+        uploadedFilesRef.current = new Set();
+        uploadClientIdsRef.current = new Map();
+        linkedDocumentIdsRef.current = new Set();
+        setPendingProject(null);
+        setStep("details");
         setName("");
         setCmNumber("");
-        setSharedEmails([]);
-        setShowMembers(false);
-        setSelectedDocIds(new Set());
+        setPractice("");
+        practiceEditedRef.current = false;
+        setSharedUsers([]);
+        setOrgOverrides([]);
+        setSelectedDocuments([]);
         setPendingFiles([]);
+        setOrgId(PERSONAL_WORKSPACE);
+        setMemoryEnabled(projectMemoryDefault);
         setError("");
+        setOrganizationLoadWarning(false);
     }
 
     function handleClose() {
+        // Escape and the backdrop reach this too: dismissing a create that is
+        // still in flight would leave the outcome unreportable.
+        if (loading) return;
+        // The project exists but never reached onCreated, so the caller's list
+        // does not have it. Say so on the way out instead of leaving the row
+        // invisible until a reload.
+        const createdWithoutHandover = createdProjectRef.current !== null;
         resetForm();
-        onClose();
+        onClose(createdWithoutHandover);
     }
 
     return (
         <Modal
             open={open}
             onClose={handleClose}
-            breadcrumbs={["Projects", "New project"]}
-            secondaryAction={{
-                label: `Upload files${pendingFiles.length > 0 ? ` (${pendingFiles.length})` : ""}`,
-                icon: <Upload className="h-3.5 w-3.5" />,
-                onClick: () => fileInputRef.current?.click(),
-            }}
-            primaryAction={{
-                label: loading ? "Creating…" : "Create project",
-                type: "submit",
-                form: formId,
-                disabled: !name.trim() || loading,
-            }}
+            breadcrumbs={[
+                "Projects",
+                "New project",
+                step === "details"
+                    ? "Details"
+                    : step === "access"
+                      ? orgId === PERSONAL_WORKSPACE
+                          ? "Access"
+                          : "Organisational Access"
+                      : "Add Documents",
+            ]}
+            secondaryAction={
+                step === "documents"
+                    ? {
+                          label: `Upload${pendingFiles.length > 0 ? ` (${pendingFiles.length})` : ""}`,
+                          icon: <Upload className="h-3.5 w-3.5" />,
+                          onClick: () => fileInputRef.current?.click(),
+                          disabled: loading,
+                      }
+                    : step === "access"
+                      ? {
+                            label: "Back",
+                            type: "button",
+                            onClick: () => setStep("details"),
+                            disabled: loading,
+                        }
+                      : undefined
+            }
+            cancelAction={
+                step === "documents"
+                    ? {
+                          label: "Back",
+                          onClick: () => setStep("access"),
+                          // Back stays open once the project exists: a retry
+                          // persists a changed memory choice before anything
+                          // else, so the details step still describes
+                          // something that can change. The one field it no
+                          // longer describes is the workspace, which is locked
+                          // below rather than retiring the whole step.
+                          disabled: loading,
+                      }
+                    : step === "access"
+                      ? {
+                            label: "Skip",
+                            type: "button",
+                            onClick: () => {
+                                setSharedUsers([]);
+                                setOrgOverrides([]);
+                                setStep("documents");
+                            },
+                            disabled: loading,
+                        }
+                      : undefined
+            }
+            primaryAction={
+                step === "details"
+                    ? {
+                          label: "Next",
+                          type: "button",
+                          onClick: () => setStep("access"),
+                          disabled: !name.trim() || loading,
+                      }
+                    : step === "access"
+                      ? {
+                            label: "Next",
+                            type: "button",
+                            onClick: () => setStep("documents"),
+                            disabled: loading,
+                        }
+                      : {
+                            label: loading
+                                ? "Creating…"
+                                : pendingProject
+                                  ? "Continue"
+                                  : "Create project",
+                            type: "button",
+                            onClick: () => void createProjectFromDocuments(),
+                            disabled: !name.trim() || loading,
+                        }
+            }
         >
             <input
                 ref={fileInputRef}
@@ -116,65 +555,148 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                 onSubmit={handleSubmit}
                 className="flex flex-col flex-1 min-h-0"
             >
-                <input
-                    type="text"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="Project name"
-                    className="w-full text-2xl font-serif text-gray-800 placeholder-gray-300 focus:outline-none bg-transparent"
-                    autoFocus
-                />
+                {step === "details" ? (
+                    <div className="space-y-6">
+                        <div>
+                            <FieldLabel htmlFor="new-project-name">
+                                Project name
+                            </FieldLabel>
+                            <FormTextInput
+                                id="new-project-name"
+                                type="text"
+                                value={name}
+                                onChange={(e) => setName(e.target.value)}
+                                placeholder="Add project name"
+                                variant="minimal"
+                                // Once the project EXISTS the retry reuses
+                                // `createdProjectRef` and never reads these
+                                // fields again, so an edit made here on the
+                                // second attempt was silently discarded. The
+                                // fields that identify the project lock with
+                                // the workspace selector below.
+                                disabled={projectExists}
+                                autoFocus
+                            />
+                        </div>
 
-                <input
-                    type="text"
-                    value={cmNumber}
-                    onChange={(e) => setCmNumber(e.target.value)}
-                    placeholder="Add a CM number..."
-                    className="mt-1.5 w-full text-sm text-gray-500 placeholder-gray-300 focus:outline-none bg-transparent"
-                />
+                        <div>
+                            <FieldLabel htmlFor="new-project-cm-number">
+                                CM number
+                            </FieldLabel>
+                            <FormTextInput
+                                id="new-project-cm-number"
+                                type="text"
+                                value={cmNumber}
+                                onChange={(e) => setCmNumber(e.target.value)}
+                                placeholder="Add a CM number..."
+                                variant="minimal"
+                                className="text-xl text-gray-600"
+                                disabled={projectExists}
+                            />
+                        </div>
 
-                <div className="mt-4 flex flex-wrap items-center gap-2">
-                    <button
-                        type="button"
-                        onClick={() => setShowMembers((v) => !v)}
-                        className="flex items-center gap-1.5 rounded-full border border-gray-200 px-3 py-1 text-xs text-gray-600 hover:bg-gray-50 transition-colors"
-                    >
-                        <Users className="h-3 w-3 text-gray-400" />
-                        Members{sharedEmails.length > 0 ? ` (${sharedEmails.length})` : ""}
-                    </button>
-                </div>
+                        <div>
+                            <FieldLabel htmlFor="new-project-practice">
+                                Practice
+                            </FieldLabel>
+                            <ProjectPracticeField
+                                id="new-project-practice"
+                                value={practice}
+                                onChange={(value) => {
+                                    practiceEditedRef.current = true;
+                                    setPractice(value);
+                                }}
+                                disabled={projectExists}
+                            />
+                        </div>
 
-                {showMembers && (
-                    <div className="mt-3">
-                        <EmailPillInput
-                            emails={sharedEmails}
-                            onChange={setSharedEmails}
-                            validate={async (email) =>
-                                ownEmail && email === ownEmail
-                                    ? "You cannot share a project with yourself."
-                                    : null
-                            }
-                            placeholder="Add colleagues by email…"
+                        <div>
+                            <FieldLabel htmlFor="new-project-org">
+                                Share across Organisation
+                            </FieldLabel>
+                            <ModalSelect
+                                id="new-project-org"
+                                value={orgId}
+                                // Once the project EXISTS the retry reuses
+                                // `createdProjectRef`, so a switch from
+                                // Personal to an organization on the second
+                                // attempt left the project where it was first
+                                // created and applied the new organization's
+                                // overrides to it. The workspace is the one
+                                // choice a retry cannot honour.
+                                disabled={projectExists}
+                                onChange={(value) => {
+                                    setOrgId(value);
+                                    setSharedUsers([]);
+                                    setOrgOverrides([]);
+                                }}
+                                options={[
+                                    {
+                                        value: PERSONAL_WORKSPACE,
+                                        label: "No organization",
+                                    },
+                                    ...orgs.map((org) => ({
+                                        value: org.id,
+                                        label: org.name,
+                                    })),
+                                ]}
+                            />
+                            {projectExists && (
+                                <p className="mt-2 text-sm text-gray-500">
+                                    The project has been created, so its name,
+                                    CM number, practice and workspace can no
+                                    longer be changed here. Edit them from the
+                                    project once this finishes.
+                                </p>
+                            )}
+                        </div>
+
+                        <div>
+                            <FieldLabel as="p">Project memory</FieldLabel>
+                            <ToggleSwitchUI
+                                checked={memoryEnabled}
+                                onCheckedChange={(enabled) => {
+                                    memoryEditedRef.current = true;
+                                    setMemoryEnabled(enabled);
+                                }}
+                                aria-label="Enable project memory"
+                            >
+                                Let Mike remember shared project context
+                            </ToggleSwitchUI>
+                        </div>
+                    </div>
+                ) : step === "access" ? (
+                    <CreateAccessStep
+                        orgId={orgId === PERSONAL_WORKSPACE ? null : orgId}
+                        organizationName={
+                            orgs.find((org) => org.id === orgId)?.name ?? null
+                        }
+                        currentUserEmail={user?.email ?? null}
+                        currentUserId={user?.id ?? null}
+                        directGrants={sharedUsers}
+                        onDirectGrantsChange={setSharedUsers}
+                        orgOverrides={orgOverrides}
+                        onOrgOverridesChange={setOrgOverrides}
+                        ownerLabel="Project owners"
+                    />
+                ) : (
+                    <div className="flex min-h-0 flex-1 flex-col">
+                        <FileDirectory
+                            selectedDocuments={selectedDocuments}
+                            onChange={setSelectedDocuments}
+                            showTabs
                         />
                     </div>
                 )}
 
-                <div className="mt-4 space-y-2">
-                    <p className="text-xs font-medium text-gray-700">Select documents</p>
-                    <FileDirectory
-                        standaloneDocs={standaloneDocuments}
-                        directoryProjects={dirProjects}
-                        loading={dirLoading}
-                        selectedIds={selectedDocIds}
-                        onChange={setSelectedDocIds}
-                        emptyMessage="No existing documents"
-                    />
-                </div>
-
-                {error && (
-                    <p className="mt-3 text-sm text-red-500">{error}</p>
-                )}
+                {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
             </form>
+            <WarningPopup
+                open={organizationLoadWarning}
+                title="Organizations unavailable"
+                message="Your organizations could not be loaded. Close this message and try opening the project form again."
+                onClose={() => setOrganizationLoadWarning(false)}
+            />
         </Modal>
     );
 }

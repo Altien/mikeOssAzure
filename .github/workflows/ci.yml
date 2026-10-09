@@ -1,0 +1,86 @@
+# The Dev fork has three independent pnpm lock trees and a static-export web
+# bundle. Every command below must exist and exit successfully; no optional
+# test scripts or npm lockfiles are used.
+name: CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  # Include stacked PRs whose base is another feature branch.
+  pull_request:
+
+# Don't pile up runs on rapid pushes to the same PR: a new push cancels the
+# superseded run so it stops holding job slots (the org's concurrent-job cap is
+# shared by every workflow). Pushes to main each get their own group (keyed by
+# sha) and are never cancelled.
+concurrency:
+  group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - run: corepack enable && corepack prepare pnpm@11.1.2 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run test:coverage
+      - run: pnpm run build
+
+      # `npm run build` (tsc -p tsconfig.json) deliberately excludes the test
+      # files so they never reach dist/, which left them entirely unchecked.
+      # tsconfig.test.json re-includes them with noEmit, so a stale mock
+      # signature fails the build instead of silently passing at runtime.
+      - run: npm run typecheck:test
+
+      - run: npm run typecheck:contracts
+
+      - name: Google Workspace approval database guarantees
+        run: bash scripts/test-google-workspace-db.sh
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - run: corepack enable && corepack prepare pnpm@11.1.2 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run test:coverage
+      - run: pnpm run typecheck
+      - run: pnpm run lint
+      - run: pnpm run build
+      - run: pnpm run catalog:build
+
+  word-addin:
+    runs-on: ubuntu-latest
+    env:
+      REACT_APP_API_BASE_URL: /api
+    defaults:
+      run:
+        working-directory: word-addin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - run: corepack enable && corepack prepare pnpm@11.1.2 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - name: Build the Word image from the restricted context
+        working-directory: .
+        run: docker build -f word-addin/Dockerfile .

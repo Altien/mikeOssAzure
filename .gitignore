@@ -17,3 +17,16 @@ next-env.d.ts
 .DS_Store
 .vercel
 coverage
+
+# Local scratch / package-manager caches
+.pnpm-store/
+.tmp/
+tmp/
+
+# dev-cycle scratch files
+.current-issue.md
+.implementation-plan.md
+.implement-config
+
+# Local review artifact; it is a nested repository, not application source.
+/pr-267-analysis-site/

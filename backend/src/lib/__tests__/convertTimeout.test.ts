@@ -1,0 +1,112 @@
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import fs, { existsSync } from "node:fs";
+import { diagnosticErrorTags } from "../observability/sentryPrivacy";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const timing = vi.hoisted(() => ({ timeoutMs: 200 }));
+
+vi.mock("../runtimeConfig", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../runtimeConfig")>();
+  return { ...actual, uploadConversionTimeoutMs: () => timing.timeoutMs };
+});
+
+let directory: string;
+let officeFileToPdf: typeof import("../convert.js").officeFileToPdf;
+
+beforeEach(async () => {
+  directory = await mkdtemp(join(tmpdir(), "mike-convert-test-"));
+  // Stand in for a soffice process that never exits.
+  const binary = join(directory, "soffice");
+  // Replace the shell with the sleeper so SIGKILL targets the process holding
+  // the stdio pipes too. Otherwise the orphaned `sleep` keeps stderr open and
+  // Node cannot emit `close` until the full 30 seconds have elapsed.
+  await writeFile(binary, "#!/bin/sh\nexec sleep 30\n");
+  await chmod(binary, 0o755);
+  process.env.SOFFICE_BINARY_PATH = binary;
+  vi.resetModules();
+  ({ officeFileToPdf } = await import("../convert.js"));
+});
+
+afterEach(async () => {
+  vi.restoreAllMocks();
+  timing.timeoutMs = 200;
+  delete process.env.SOFFICE_BINARY_PATH;
+  await rm(directory, { recursive: true, force: true });
+});
+
+// Platform: the fake soffice is a POSIX `#!/bin/sh` script; Windows cannot
+// spawn it (spawn ENOENT), so these run only on POSIX hosts / CI.
+const posixOnly = it.skipIf(process.platform === "win32");
+
+describe("office conversion deadline", () => {
+  posixOnly("kills a conversion that outlives its deadline and removes its profile", async () => {
+    const outputDirectory = join(directory, "work");
+    const startedAt = Date.now();
+
+    const failure = await officeFileToPdf(
+      join(directory, "source.docx"),
+      outputDirectory,
+    ).catch((error) => error);
+    expect(failure.message).toMatch(/timed out after 200ms/);
+    expect(diagnosticErrorTags(failure)).toEqual({
+      failure_code: "conversion_timeout",
+    });
+
+    expect(Date.now() - startedAt).toBeLessThan(10_000);
+    expect(existsSync(join(outputDirectory, "libreoffice-profile"))).toBe(
+      false,
+    );
+  });
+});
+
+posixOnly("distinguishes an unavailable converter from a rejected document without stderr", async () => {
+  timing.timeoutMs = 5000;
+  await writeFile(
+    join(directory, "soffice"),
+    '#!/bin/sh\necho "PRIVATE_DOCUMENT" >&2\nexit 1\n',
+  );
+  const failure = await officeFileToPdf(
+    join(directory, "PRIVATE_DOCUMENT.docx"),
+    join(directory, "work"),
+  ).catch((error) => error);
+  expect(diagnosticErrorTags(failure)).toEqual({
+    failure_code: "conversion_failed",
+  });
+  vi.resetModules();
+  vi.spyOn(fs, "accessSync").mockImplementation(() => {
+    throw new Error("missing");
+  });
+  const converter = await import("../convert.js");
+  const missing = await converter
+    .officeFileToPdf("PRIVATE_DOCUMENT.docx", directory)
+    .catch((error) => error);
+  expect(diagnosticErrorTags(missing)).toEqual({
+    failure_code: "conversion_unavailable",
+  });
+});
+
+// MIKE-BACKEND-M: soffice can exit 0 without writing a PDF (it prints
+// "Error: source file could not be loaded" to stderr and still succeeds).
+// The follow-up access() then threw a bare ENOENT whose top frame was the
+// access call, so the issue read as a missing file rather than a rejected
+// conversion and the operator log lost LibreOffice's own explanation.
+posixOnly("reports a clean soffice exit that wrote no PDF as a failed conversion", async () => {
+  timing.timeoutMs = 5000;
+  await writeFile(
+    join(directory, "soffice"),
+    '#!/bin/sh\necho "Error: source file could not be loaded" >&2\nexit 0\n',
+  );
+  const failure = await officeFileToPdf(
+    join(directory, "PRIVATE_DOCUMENT.docx"),
+    join(directory, "work"),
+  ).catch((error) => error);
+  expect(failure).toBeInstanceOf(Error);
+  expect(diagnosticErrorTags(failure)).toEqual({
+    failure_code: "conversion_failed",
+  });
+  // Operator log keeps LibreOffice's reason; the missing-file error is the cause.
+  expect(failure.message).toContain("source file could not be loaded");
+  expect(failure.cause).toMatchObject({ code: "ENOENT" });
+});

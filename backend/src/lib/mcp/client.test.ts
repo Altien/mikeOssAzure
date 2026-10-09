@@ -5,7 +5,12 @@ const { getConfigMock, dnsLookupMock } = vi.hoisted(() => ({
   dnsLookupMock: vi.fn(),
 }));
 
-vi.mock("../config", () => ({ getConfig: getConfigMock }));
+// Dev drift: the MCP key now resolves Key Vault-first via getKeyVaultConfig,
+// with MCP_CONNECTORS_/USER_API_KEYS_ENCRYPTION_KEY env fallbacks.
+vi.mock("../config", () => ({
+  getConfig: getConfigMock,
+  getKeyVaultConfig: getConfigMock,
+}));
 // validateRemoteMcpUrl resolves hostnames to check for private ranges —
 // never let tests do live DNS.
 vi.mock("dns/promises", () => ({
@@ -20,7 +25,13 @@ import {
   validateRemoteMcpUrl,
 } from "./client";
 
-const ENV_SNAPSHOT_KEYS = ["API_PUBLIC_URL", "BACKEND_URL", "PORT"] as const;
+const ENV_SNAPSHOT_KEYS = [
+  "API_PUBLIC_URL",
+  "BACKEND_URL",
+  "PORT",
+  "MCP_CONNECTORS_ENCRYPTION_KEY",
+  "USER_API_KEYS_ENCRYPTION_KEY",
+] as const;
 const envSnapshot = {} as Record<string, string | undefined>;
 
 beforeEach(() => {
@@ -116,10 +127,10 @@ describe("mcpOAuthCallbackUrl", () => {
     );
   });
 
-  it("falls back to BACKEND_URL, then localhost with the configured port", () => {
+  it("never advertises an internal BACKEND_URL and uses localhost only in development", () => {
     process.env.BACKEND_URL = "https://backend.internal";
     expect(mcpOAuthCallbackUrl()).toBe(
-      "https://backend.internal/user/mcp-connectors/oauth/callback",
+      "http://localhost:3001/user/mcp-connectors/oauth/callback",
     );
 
     delete process.env.BACKEND_URL;

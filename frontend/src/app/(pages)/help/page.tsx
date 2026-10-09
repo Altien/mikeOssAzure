@@ -9,7 +9,7 @@ import {
     type HelpArticle,
     type HelpArticleSummary,
 } from "@/app/lib/mikeApi";
-import { cn } from "@/lib/utils";
+import { cn } from "@/app/lib/utils";
 
 // Styling mirrors the assistant's markdown rendering rather than pulling in a
 // typography plugin for one page.

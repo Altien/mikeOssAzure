@@ -5,3 +5,8 @@ allowBuilds:
   sharp: true
   unrs-resolver: true
   workerd: true
+overrides:
+  eslint-plugin-react-hooks: ~7.0.1
+  # GHSA-wq5f-xc86-pv6w (librsvg in sharp's prebuilt binary): Next and
+  # wrangler/miniflare both resolve sharp; hold every copy at the patched line.
+  sharp: ^0.35.5

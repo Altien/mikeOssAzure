@@ -1,98 +1,162 @@
-import { describe, it, expect } from "vitest";
-import { renderHook, act } from "@testing-library/react";
-import { useSelectedModel } from "./useSelectedModel";
-import { DEFAULT_MODEL_ID } from "../components/assistant/ModelToggle";
+import { act, renderHook } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+import { useSelectedModel, useSelectedReasoning } from "./useSelectedModel";
+import { canonicalModelId } from "../components/assistant/ModelToggle";
+import type { ApiKeyState } from "../lib/mikeApi";
 
-const STORAGE_KEY = "mike.selectedModel";
+const keys: ApiKeyState = {
+    claude: { configured: true, source: "user" },
+    gemini: { configured: false, source: null },
+    openai: { configured: true, source: "user" },
+    mistral: { configured: false, source: null },
+    openrouter: { configured: true, source: "user" },
+    vercel: { configured: false, source: null },
+    "opencode-go": { configured: false, source: null },
+    courtlistener: { configured: false, source: null },
+    kimi: { configured: false, source: null },
+    azure_openai: { configured: false, source: null },
+};
 
-describe("useSelectedModel: initial state", () => {
-    it("returns the default model when nothing is stored", () => {
+const routerSelections = {
+    openRouterModels: ["openai/gpt-5.4"],
+    vercelModels: [],
+    openCodeGoModels: [],
+};
+
+describe("useSelectedModel", () => {
+    it("has no invented default when neither saved source is usable", () => {
         const { result } = renderHook(() => useSelectedModel());
-
-        expect(result.current[0]).toBe(DEFAULT_MODEL_ID);
+        expect(result.current[0]).toBe("");
     });
 
-    it("hydrates from localStorage after the effect runs", () => {
-        // The hook's useState initial value is the default, then the
-        // effect synchronously reads localStorage and overwrites.
-        window.localStorage.setItem(STORAGE_KEY, "claude-opus-4-7");
-
-        const { result } = renderHook(() => useSelectedModel());
-
-        expect(result.current[0]).toBe("claude-opus-4-7");
+    it("uses the saved chat model before the shared last-selected model", () => {
+        const { result } = renderHook(() =>
+            useSelectedModel({
+                chatModel: "claude-fable-5-1",
+                lastSelectedModel: "gpt-6-luna",
+                apiKeys: keys,
+            }),
+        );
+        expect(result.current[0]).toBe("claude-fable-5-1");
     });
 
-    it("rejects a stored value that is not in ALLOWED_MODEL_IDS", () => {
-        // Defensive: if the stored value is a model that no longer
-        // exists (renamed, removed, or never valid), we fall back to
-        // the default instead of trusting the storage.
-        window.localStorage.setItem(STORAGE_KEY, "gpt-9000-imaginary");
-
-        const { result } = renderHook(() => useSelectedModel());
-
-        expect(result.current[0]).toBe(DEFAULT_MODEL_ID);
+    it("falls back to last-selected when the chat model has no current key", () => {
+        const { result } = renderHook(() =>
+            useSelectedModel({
+                chatModel: "gemini-3.8-flash",
+                lastSelectedModel: "gpt-6-luna",
+                apiKeys: keys,
+            }),
+        );
+        expect(result.current[0]).toBe("gpt-6-luna");
     });
 
-    it("accepts an aoai: prefixed model id (deployment names are user-defined)", () => {
-        // AOAI deployments validate by prefix, not the static set —
-        // the user's customised deployment name "prod-east" is fine.
-        window.localStorage.setItem(STORAGE_KEY, "aoai:prod-east");
-
+    it("keeps an explicit selection in component state only", () => {
         const { result } = renderHook(() => useSelectedModel());
 
-        expect(result.current[0]).toBe("aoai:prod-east");
+        act(() => result.current[1]("claude-fable-5-1"));
+
+        expect(result.current[0]).toBe("claude-fable-5-1");
+    });
+
+    it("accepts a deployment-configured model id", () => {
+        const { result } = renderHook(() =>
+            useSelectedModel({
+                chatModel: "local-qwen",
+                configuredModelIds: ["local-qwen"],
+                apiKeys: keys,
+            }),
+        );
+
+        expect(result.current[0]).toBe("local-qwen");
+        act(() => result.current[1]("local-qwen"));
+        expect(result.current[0]).toBe("local-qwen");
+    });
+
+    it("keeps a deployment override even when its id is in the legacy mapping", () => {
+        const { result } = renderHook(() => useSelectedModel({
+            chatModel: "gpt-5.4",
+            configuredModelIds: ["gpt-5.4"],
+            apiKeys: keys,
+        }));
+        expect(result.current[0]).toBe("gpt-5.4");
+        act(() => result.current[1]("gpt-5.4"));
+        expect(result.current[0]).toBe("gpt-5.4");
+    });
+
+    it("uses a chat router model while it remains in the saved list", () => {
+        const { result } = renderHook(() =>
+            useSelectedModel({
+                chatModel: "openrouter/openai/gpt-5.4",
+                lastSelectedModel: "gpt-6-luna",
+                routerSelections,
+                apiKeys: keys,
+            }),
+        );
+        expect(result.current[0]).toBe("openrouter/openai/gpt-5.4");
+    });
+
+    it("falls back when the chat router model is no longer saved", () => {
+        const { result } = renderHook(() =>
+            useSelectedModel({
+                chatModel: "openrouter/pricy/frontier",
+                lastSelectedModel: "gpt-6-luna",
+                routerSelections,
+                apiKeys: keys,
+            }),
+        );
+        expect(result.current[0]).toBe("gpt-6-luna");
+    });
+
+    it("does not flash the profile model while an existing chat loads", () => {
+        const { result, rerender } = renderHook(
+            ({ chatModel }: { chatModel: string | null | undefined }) =>
+                useSelectedModel({
+                    selectionKey: "chat-1",
+                    chatModel,
+                    lastSelectedModel: "gpt-6-luna",
+                    apiKeys: keys,
+                }),
+            { initialProps: { chatModel: undefined as string | null | undefined } },
+        );
+
+        expect(result.current[0]).toBe("");
+        rerender({ chatModel: "claude-fable-5-1" });
+        expect(result.current[0]).toBe("claude-fable-5-1");
     });
 });
 
-describe("useSelectedModel: setter", () => {
-    it("updates state and persists to localStorage", () => {
-        const { result } = renderHook(() => useSelectedModel());
-
-        // aoai:-prefixed ids are always allowed, so this stays valid as
-        // the static model list churns.
-        act(() => {
-            result.current[1]("aoai:prod-east");
-        });
-
-        expect(result.current[0]).toBe("aoai:prod-east");
-        expect(window.localStorage.getItem(STORAGE_KEY)).toBe("aoai:prod-east");
-    });
-
-    it("normalises an invalid id to the default — both state and storage", () => {
-        // Symmetrical with the read-time guard: setting an unknown
-        // id clamps to the default, so the storage cannot drift into
-        // an invalid state via a buggy caller.
-        const { result } = renderHook(() => useSelectedModel());
-
-        act(() => {
-            result.current[1]("not-a-real-model");
-        });
-
-        expect(result.current[0]).toBe(DEFAULT_MODEL_ID);
-        expect(window.localStorage.getItem(STORAGE_KEY)).toBe(DEFAULT_MODEL_ID);
-    });
-
-    it("accepts any aoai: prefixed id without checking against a list", () => {
-        const { result } = renderHook(() => useSelectedModel());
-
-        act(() => {
-            result.current[1]("aoai:custom-deployment-name");
-        });
-
-        expect(result.current[0]).toBe("aoai:custom-deployment-name");
-        expect(window.localStorage.getItem(STORAGE_KEY)).toBe(
-            "aoai:custom-deployment-name",
+describe("useSelectedReasoning", () => {
+    it("loads the chat level before the profile fallback", () => {
+        const { result } = renderHook(() =>
+            useSelectedReasoning({
+                selectionKey: "chat-1",
+                chatReasoningLevel: "low",
+                lastSelectedReasoningLevel: "xhigh",
+            }),
         );
+        expect(result.current[0]).toBe("low");
     });
 
-    it("returns a stable setter across renders", () => {
-        // useCallback with [] deps — important for downstream useEffect
-        // dependency arrays that include setModel.
-        const { result, rerender } = renderHook(() => useSelectedModel());
-        const firstSetter = result.current[1];
+    it("defaults a new user to high", () => {
+        const { result } = renderHook(() => useSelectedReasoning({}));
+        expect(result.current[0]).toBe("high");
+    });
 
-        rerender();
+    it("uses the profile reasoning level on surfaces without chat settings", () => {
+        const { result } = renderHook(() =>
+            useSelectedReasoning({ lastSelectedReasoningLevel: "low" }),
+        );
+        expect(result.current[0]).toBe("low");
+    });
+});
 
-        expect(result.current[1]).toBe(firstSetter);
+describe("canonicalModelId", () => {
+    it("maps only known legacy ids", () => {
+        expect(canonicalModelId("gemini-3.1-flash-lite-preview")).toBe(
+            "gemini-3.5-flash-lite",
+        );
+        expect(canonicalModelId("gpt-5.4-lite")).toBe("gpt-6-luna");
+        expect(canonicalModelId("claude-fable-5-1")).toBe("claude-fable-5-1");
     });
 });

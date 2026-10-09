@@ -1,54 +1,87 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-    isSupportedDocumentFile,
-    partitionSupportedDocumentFiles,
-    formatUnsupportedDocumentWarning,
     SUPPORTED_DOCUMENT_ACCEPT,
     UNSUPPORTED_DOCUMENT_WARNING_MESSAGE,
+    formatUnsupportedDocumentWarning,
+    isSupportedDocumentFile,
+    partitionSupportedDocumentFiles,
 } from "./documentUploadValidation";
 
-const file = (name: string) => new File([""], name);
+const file = (name: string) => new File(["content"], name);
 
 describe("isSupportedDocumentFile", () => {
-    it("accepts pdf/docx/doc, case-insensitively", () => {
-        for (const name of ["a.pdf", "b.DOCX", "c.Doc", "multi.part.PDF"]) {
-            expect(isSupportedDocumentFile(file(name))).toBe(true);
-        }
-    });
-
-    it("rejects other extensions and extensionless names", () => {
-        for (const name of ["a.txt", "b.xlsx", "c.pdf.exe", "noextension", ""]) {
-            expect(isSupportedDocumentFile(file(name))).toBe(false);
-        }
-    });
-
-    it("stays in sync with the <input accept> attribute", () => {
-        // If someone extends one list but not the other, uploads either
-        // get silently filtered or the picker hides valid files.
-        const acceptExts = SUPPORTED_DOCUMENT_ACCEPT.split(",").map((e) =>
-            e.replace(".", ""),
+    it("accepts every extension advertised in SUPPORTED_DOCUMENT_ACCEPT", () => {
+        // Keeps the <input accept=...> string and the validation set in sync:
+        // if one gains an extension the other must too.
+        const extensions = SUPPORTED_DOCUMENT_ACCEPT.split(",").map((s) =>
+            s.replace(/^\./, ""),
         );
-        for (const ext of acceptExts) {
-            expect(isSupportedDocumentFile(file(`x.${ext}`))).toBe(true);
+        expect(extensions.length).toBeGreaterThan(0);
+        for (const ext of extensions) {
+            expect(isSupportedDocumentFile(file(`contract.${ext}`))).toBe(true);
         }
+    });
+
+    it("is case-insensitive on the extension", () => {
+        expect(isSupportedDocumentFile(file("SCAN.PDF"))).toBe(true);
+        expect(isSupportedDocumentFile(file("Deed.DocX"))).toBe(true);
+    });
+
+    it("rejects unsupported types", () => {
+        expect(isSupportedDocumentFile(file("notes.txt"))).toBe(false);
+        expect(isSupportedDocumentFile(file("photo.png"))).toBe(false);
+        expect(isSupportedDocumentFile(file("archive.zip"))).toBe(false);
+    });
+
+    it("uses only the last extension for multi-dot filenames", () => {
+        expect(isSupportedDocumentFile(file("v1.2.final.pdf"))).toBe(true);
+        expect(isSupportedDocumentFile(file("report.pdf.exe"))).toBe(false);
+    });
+
+    it("treats dotfiles like '.pdf' as having a pdf extension", () => {
+        // ".pdf".split(".").pop() === "pdf" — documents current behavior.
+        expect(isSupportedDocumentFile(file(".pdf"))).toBe(true);
+    });
+
+    it("treats an extensionless name equal to an extension as supported", () => {
+        // "pdf".split(".").pop() === "pdf" — documents current behavior; a
+        // file literally named "pdf" passes the extension check.
+        expect(isSupportedDocumentFile(file("pdf"))).toBe(true);
+        expect(isSupportedDocumentFile(file("README"))).toBe(false);
     });
 });
 
 describe("partitionSupportedDocumentFiles", () => {
-    it("splits files preserving order within each bucket", () => {
-        const files = [file("a.pdf"), file("b.txt"), file("c.docx"), file("d.png")];
+    it("splits a mixed list preserving order within each bucket", () => {
+        const a = file("a.pdf");
+        const b = file("b.txt");
+        const c = file("c.docx");
+        const d = file("d.gif");
+        const { supported, unsupported } = partitionSupportedDocumentFiles([
+            a,
+            b,
+            c,
+            d,
+        ]);
+        expect(supported).toEqual([a, c]);
+        expect(unsupported).toEqual([b, d]);
+    });
 
-        const { supported, unsupported } = partitionSupportedDocumentFiles(files);
-
-        expect(supported.map((f) => f.name)).toEqual(["a.pdf", "c.docx"]);
-        expect(unsupported.map((f) => f.name)).toEqual(["b.txt", "d.png"]);
+    it("returns two empty arrays for an empty input", () => {
+        expect(partitionSupportedDocumentFiles([])).toEqual({
+            supported: [],
+            unsupported: [],
+        });
     });
 });
 
 describe("formatUnsupportedDocumentWarning", () => {
-    it("returns null for an empty list and the fixed message otherwise", () => {
+    it("returns null when nothing was rejected", () => {
         expect(formatUnsupportedDocumentWarning([])).toBeNull();
-        expect(formatUnsupportedDocumentWarning([file("a.txt")])).toBe(
+    });
+
+    it("returns the shared warning message when files were rejected", () => {
+        expect(formatUnsupportedDocumentWarning([file("x.txt")])).toBe(
             UNSUPPORTED_DOCUMENT_WARNING_MESSAGE,
         );
     });

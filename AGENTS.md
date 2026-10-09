@@ -1,5 +1,47 @@
 # Agent Guidance
 
+## Backend Structure
+
+Read `docs/backend-architecture.md` before adding or moving backend code.
+`backend/src/app.ts` mounts one router per domain. HTTP parsing and response
+mapping live in `backend/src/modules/<domain>/*.routes.ts`; data access and
+domain logic live behind exactly one named `*.service.ts` facade per module.
+Workers and other modules import that facade. `lib/` and `middleware/` never
+import modules, and `backend/src/routes/` is retired. Keep `buildApp()` free of
+startup side effects; required auth and document-lifecycle probes complete
+before the API listens or a worker claims jobs.
+
+`backend/src/__tests__/architecture.test.ts` enforces these boundaries.
+Document-version mutations belong to the documents module and use its
+lifecycle facade. Queue job handlers live in their domains and are composed
+in `backend/src/jobs/registry.ts`. Shared API/event types live in
+`packages/contracts/`. Preserve Dev's Entra/local session policy, Key Vault
+credential precedence, private Blob transport, text user IDs, and claim-token
+fences while applying this structure.
+
+Database changes use the next numbered `backend/migrations/NNNN_*.sql` file.
+The same numbered history initializes fresh and existing private PostgreSQL
+databases. Use `web_anon`, `authenticated`, and `service_role` grants with
+explicit signatures; this deployment has no Supabase auth schema or RLS.
+
+## Shared UI guidance
+
+Read `docs/design-system.md` for non-trivial UI changes. Prefer existing
+primitives in `frontend/src/app/components/ui/`, shared web/Word controls in
+`frontend/src/shared/ui/`, and shell components in
+`frontend/src/app/components/shared/` before introducing feature markup or
+dependencies. When a shared control is used by Word, keep its Tailwind `@source`
+entry in `word-addin/src/taskpane/styles.css`. Keep loading states aligned with
+the corresponding layout.
+
+Use plain text for informational labels unless an established interactive pill
+control is appropriate. Preserve visible focus, accessible names for icon-only
+buttons, `type="button"` on non-submit form buttons, and ARIA selection state.
+Use `TABLE_CHECKBOX_CLASS` for standalone table checkboxes. Backend calls should
+go through `mikeApi.ts` so runtime auth and `/api` routing remain consistent.
+Never display raw backend, provider, or database errors; use the established
+generic user-facing fallback while retaining intentional 4xx messages.
+
 ## Upstream Compatibility
 
 This project is based on an upstream open-source repository. Prefer the smallest practical changes that achieve the local/Azure migration goals so future upstream changes remain easy to merge.
@@ -42,13 +84,13 @@ How runtime config works now:
 
 - `GET /config` on the backend returns `{ authProvider, entra: {…} }` from
   server env / Key Vault. Unauthenticated, cacheable.
-- `frontend/src/contexts/ConfigContext.tsx` fetches `/config` once on app
+- `frontend/src/app/contexts/ConfigContext.tsx` fetches `/config` once on app
   load and exposes the values via `useConfig()`.
 - The same React hook also caches `authProvider` in `localStorage` under
   `mike.config.authProvider` so module-level helpers
   (`getBrowserAccessToken`, `getCachedAuthProvider`) can answer "what mode
   are we in?" without a React context.
-- Sign-out goes through `GET /auth/logout` so the backend, not the
+- Sign-out goes through `GET /api/auth/logout` so the backend, not the
   browser, constructs the Microsoft logout URL.
 
 Rules to keep this honest:
@@ -122,3 +164,10 @@ Before committing changes that touch `.env*` files or env-var lookups:
 3. No tenant-specific identifiers (Entra GUIDs, deployment FQDNs,
    resource names) should appear in any tracked `.env*.example` or any
    committed source file. Use placeholders.
+
+## Branch Names
+
+Name branches after the change they contain, using a descriptive prefix such as
+`docs/`, `fix/`, `feat/`, `refactor/`, `test/`, or `chore/` (for example,
+`docs/shorten-readme-telemetry`). Never use `claude/` as a prefix. Upstream
+migration branches keep their established `upstream-sync/` prefix.

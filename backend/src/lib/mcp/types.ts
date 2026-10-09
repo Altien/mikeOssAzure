@@ -1,6 +1,4 @@
-import { createServerSupabase } from "../supabase";
-
-export type Db = ReturnType<typeof createServerSupabase>;
+export type { Db } from "../supabase";
 
 export type McpTransport = "streamable_http";
 export type McpAuthType = "none" | "bearer" | "oauth";
@@ -16,6 +14,10 @@ export type McpConnectorSummary = {
     serverUrl: string;
     authType: McpAuthType;
     enabled: boolean;
+    /** Write tools wait for the user's approval in the conversation. */
+    requireWriteApproval: boolean;
+    /** Disables write tools while preserving individual tool choices. */
+    readOnly?: boolean;
     hasAuthConfig: boolean;
     customHeaderKeys: string[];
     oauthConnected: boolean;
@@ -35,20 +37,23 @@ export type McpToolSummary = {
     enabled: boolean;
     readOnly: boolean;
     destructive: boolean;
-    requiresConfirmation: boolean;
+    /** Potentially changes data, including tools without read-only annotations. */
+    write: boolean;
     lastSeenAt: string;
 };
 
-export type McpToolEvent =
-    | {
-          type: "mcp_tool_call";
-          connector_id: string;
-          connector_name: string;
-          tool_name: string;
-          openai_tool_name: string;
-          status: "ok" | "error";
-          error?: string;
-      };
+export type { McpToolEvent } from "@mike/contracts";
+import type { ConnectorApprovalItem, McpToolEvent } from "@mike/contracts";
+
+/**
+ * What to do with a connector tool call: run it now, pause for the user's
+ * approval, or answer without running (the tool is unavailable or failed to
+ * prepare). Shared by MCP, Google Workspace and Google Drive.
+ */
+export type ConnectorCallPlan =
+    | { type: "run" }
+    | { type: "approval"; item: Omit<ConnectorApprovalItem, "id"> }
+    | { type: "result"; content: string; event: McpToolEvent };
 
 export type ConnectorRow = {
     id: string;
@@ -58,6 +63,8 @@ export type ConnectorRow = {
     server_url: string;
     auth_type: McpAuthType;
     enabled: boolean;
+    require_write_approval?: boolean | null;
+    read_only?: boolean;
     tool_policy: Record<string, unknown> | null;
     encrypted_auth_config: string | null;
     auth_config_iv: string | null;
@@ -68,6 +75,8 @@ export type ConnectorRow = {
 
 export type OAuthTokenRow = {
     id: string;
+    /** Changes on interactive authorization, not access-token refresh. */
+    grant_id?: string;
     connector_id: string;
     encrypted_access_token: string | null;
     access_token_iv: string | null;
@@ -119,6 +128,7 @@ export type ToolCacheRow = {
     output_schema: Record<string, unknown> | null;
     annotations: Record<string, unknown> | null;
     enabled: boolean;
+    /** Write tool: stored under its historical column name. */
     requires_confirmation: boolean;
     last_seen_at: string;
 };

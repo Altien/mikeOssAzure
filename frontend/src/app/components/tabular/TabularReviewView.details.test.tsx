@@ -1,0 +1,362 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+    getProject,
+    getTabularReview,
+    listProjects,
+    streamTabularGeneration,
+    updateTabularReview,
+} from "@/app/lib/mikeApi";
+import type { TabularReview } from "@/app/components/shared/types";
+import { TRView } from "./TabularReviewView";
+
+const { apiKeyState } = vi.hoisted(() => ({
+    apiKeyState: {
+        claude: { configured: true, source: "user" },
+        gemini: { configured: false, source: null },
+        openai: { configured: false, source: null },
+        openrouter: { configured: false, source: null },
+        vercel: { configured: false, source: null },
+        "opencode-go": { configured: false, source: null },
+        courtlistener: { configured: false, source: null },
+    },
+}));
+
+// The grid, side panels and chat are out of scope. This file pins the ONE
+// question the details dialog has to answer consistently: which role may
+// edit a review's details, asked at the menu, at the dialog, and at the save.
+vi.mock("next/navigation", () => ({
+    useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+    useSearchParams: () => new URLSearchParams(),
+}));
+vi.mock("@/app/lib/mikeApi", () => ({
+    MikeApiError: class MikeApiError extends Error {},
+    clearTabularCells: vi.fn(),
+    deleteTabularReview: vi.fn(),
+    getTabularReview: vi.fn(),
+    getProject: vi.fn(),
+    getTabularReviewPeople: vi.fn(async () => ({ owner: null, members: [] })),
+    // #383's review-model toggle loads the local-model catalog on render.
+    getOllamaModels: vi.fn(async () => []),
+    listProjects: vi.fn(async () => []),
+    regenerateTabularCell: vi.fn(),
+    streamTabularGeneration: vi.fn(),
+    updateTabularReview: vi.fn(async (_id: string, patch: unknown) => patch),
+    uploadReviewDocument: vi.fn(),
+}));
+vi.mock("@/app/contexts/AuthContext", () => ({
+    useAuth: () => ({ user: { id: "me", email: "me@firm.test" } }),
+}));
+vi.mock("@/app/contexts/UserProfileContext", () => ({
+    useUserProfile: () => ({
+        profile: { apiKeys: apiKeyState },
+        apiKeysDegraded: false,
+    }),
+}));
+vi.mock("@/app/contexts/SidebarContext", () => ({
+    useSidebar: () => ({ setSidebarOpen: vi.fn() }),
+}));
+vi.mock("@/app/hooks/useConfiguredModels", () => ({
+    useConfiguredModels: () => [],
+}));
+vi.mock("../assistant/ModelToggle", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../assistant/ModelToggle")>()),
+    ModelToggle: ({
+        onChange,
+    }: {
+        onChange: (model: string) => void;
+    }) => (
+        <button onClick={() => onChange("model-next")}>change model</button>
+    ),
+}));
+vi.mock("./TRTable", () => ({ TRTable: () => <div /> }));
+vi.mock("./TRSidePanel", () => ({ TRSidePanel: () => null }));
+vi.mock("./TRChatPanel", () => ({ TRChatPanel: () => null }));
+vi.mock("./AddColumnModal", () => ({ AddColumnModal: () => null }));
+vi.mock("./TRWorkflowModal", () => ({ TRWorkflowModal: () => null }));
+vi.mock("../modals/AddDocumentsModal", () => ({ AddDocumentsModal: () => null }));
+vi.mock("../modals/AccessModal", () => ({ AccessModal: () => null }));
+vi.mock("../popups/ApiKeyMissingPopup", () => ({
+    ApiKeyMissingPopup: ({
+        open,
+        title,
+        message,
+    }: {
+        open: boolean;
+        title?: string;
+        message?: string;
+    }) =>
+        open ? (
+            <div>
+                <span>{title}</span>
+                <span>{message}</span>
+            </div>
+        ) : null,
+}));
+vi.mock("./TabularReviewDetailsModal", () => ({
+    TabularReviewDetailsModal: ({
+        open,
+        canEdit,
+        onSave,
+    }: {
+        open: boolean;
+        canEdit: boolean;
+        onSave: (values: { title: string; projectId?: string | null }) => void;
+    }) =>
+        open ? (
+            <div>
+                <span data-testid="details-can-edit">{String(canEdit)}</span>
+                <button onClick={() => onSave({ title: "Renamed" })}>
+                    save details
+                </button>
+                <button onClick={() => onSave({ title: "T", projectId: "p9" })}>
+                    move to p9
+                </button>
+            </div>
+        ) : null,
+}));
+
+function review(over: Partial<TabularReview>): TabularReview {
+    return {
+        id: "r1",
+        project_id: null,
+        user_id: "someone-else",
+        title: "Diligence",
+        columns_config: [],
+        document_ids: [],
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+        ...over,
+    } as TabularReview;
+}
+
+function mockDetail(over: Partial<TabularReview>) {
+    vi.mocked(getTabularReview).mockResolvedValue({
+        review: review(over),
+        cells: [],
+        rows: [],
+        documents: [],
+    });
+}
+
+async function openActionsMenu() {
+    await waitFor(() =>
+        expect(screen.getByLabelText("Actions")).toBeInTheDocument(),
+    );
+    fireEvent.pointerDown(
+        screen.getByLabelText("Actions"),
+        new MouseEvent("pointerdown", { bubbles: true }),
+    );
+    fireEvent.click(screen.getByLabelText("Actions"));
+    await waitFor(() =>
+        expect(screen.getByText("Edit details")).toBeInTheDocument(),
+    );
+}
+
+describe("TabularReviewView details gate", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+            matches: true,
+            media: query,
+            onchange: null,
+            addListener: vi.fn(),
+            removeListener: vi.fn(),
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+            dispatchEvent: vi.fn(),
+        }));
+    });
+
+    it("shows the rejected-key warning when review generation reports it", async () => {
+        vi.mocked(getTabularReview).mockResolvedValue({
+            review: review({
+                access_role: "editor",
+                model: "claude-sonnet-5",
+                columns_config: [
+                    { index: 0, name: "Term", prompt: "Find it" },
+                ],
+            }),
+            cells: [],
+            rows: [
+                {
+                    id: "row-1",
+                    review_id: "r1",
+                    label: "Contract.pdf",
+                    row_type: "document",
+                    folder_id: null,
+                    library_folder_id: null,
+                    document_id: "doc-1",
+                    sort_index: 0,
+                    source_document_ids: ["doc-1"],
+                },
+            ],
+            documents: [],
+        });
+        vi.mocked(streamTabularGeneration).mockResolvedValue(
+            new Response(
+                'data: {"type":"error","message":"The Anthropic API key was rejected.","safe_to_display":true,"code":"invalid_api_key"}\n\ndata: [DONE]\n\n',
+                { status: 200 },
+            ),
+        );
+
+        render(<TRView reviewId="r1" />);
+
+        fireEvent.click(await screen.findByTitle("Run review"));
+
+        expect(await screen.findByText("API key rejected")).toBeInTheDocument();
+        expect(
+            screen.getByText(/Anthropic \(Claude\) API key was rejected/),
+        ).toBeInTheDocument();
+    });
+
+    it("lets a member open and save details, matching the server's PATCH", async () => {
+        // PATCH /tabular-review/:id gates title on content.edit — 403 "Only a
+        // review member can change review settings". The menu used to demand
+        // access.manage, so a member was refused at the door for a save the
+        // server would have accepted.
+        mockDetail({ access_role: "editor" });
+        render(<TRView reviewId="r1" />);
+
+        await openActionsMenu();
+        fireEvent.click(screen.getByText("Edit details"));
+
+        expect(screen.getByTestId("details-can-edit")).toHaveTextContent("true");
+        fireEvent.click(screen.getByText("save details"));
+        await waitFor(() =>
+            expect(updateTabularReview).toHaveBeenCalledWith("r1", {
+                title: "Renamed",
+            }),
+        );
+    });
+
+    it("warns when the review project cannot be loaded", async () => {
+        mockDetail({ access_role: "editor", project_id: "p1" });
+        vi.mocked(getProject).mockRejectedValue(new Error("network unavailable"));
+
+        render(<TRView reviewId="r1" projectId="p1" />);
+
+        expect(
+            await screen.findByText("Project unavailable"),
+        ).toBeInTheDocument();
+        expect(
+            screen.getByText(
+                "The project for this tabular review could not be loaded. Please try again.",
+            ),
+        ).toBeInTheDocument();
+    });
+
+    it("does not warn on page load when the optional project list fails", async () => {
+        mockDetail({ access_role: "editor", project_id: null });
+        vi.mocked(listProjects).mockRejectedValueOnce(
+            new Error("network unavailable"),
+        );
+
+        render(<TRView reviewId="r1" />);
+
+        await waitFor(() => expect(listProjects).toHaveBeenCalled());
+        expect(screen.queryByText("Project unavailable")).toBeNull();
+    });
+
+    it("refuses a viewer with the editor tier, not the owner one", async () => {
+        mockDetail({ access_role: "viewer" });
+        render(<TRView reviewId="r1" />);
+
+        await openActionsMenu();
+        fireEvent.click(screen.getByText("Edit details"));
+
+        expect(
+            await screen.findByText(
+                "Only an editor can edit tabular review details.",
+            ),
+        ).toBeInTheDocument();
+        expect(screen.queryByTestId("details-can-edit")).not.toBeInTheDocument();
+    });
+
+    it("refuses a non-creator admin the project move the server reserves for the creator", async () => {
+        // `creatorScopedAllowed` — the review's creator, or an admin only once
+        // the creator's account is gone. Gating this on access.manage let an
+        // admin who did not create the review through to a 403.
+        mockDetail({ access_role: "owner", user_id: "someone-else" });
+        render(<TRView reviewId="r1" />);
+
+        await openActionsMenu();
+        fireEvent.click(screen.getByText("Edit details"));
+        fireEvent.click(screen.getByText("move to p9"));
+
+        expect(
+            await screen.findByText(
+                "Only the person who created this review can move it to another project.",
+            ),
+        ).toBeInTheDocument();
+        expect(updateTabularReview).not.toHaveBeenCalled();
+    });
+
+    it("lets the review's creator move it", async () => {
+        mockDetail({ access_role: "editor", user_id: "me" });
+        render(<TRView reviewId="r1" />);
+
+        await openActionsMenu();
+        fireEvent.click(screen.getByText("Edit details"));
+        fireEvent.click(screen.getByText("move to p9"));
+
+        await waitFor(() =>
+            expect(updateTabularReview).toHaveBeenCalledWith("r1", {
+                title: "T",
+                project_id: "p9",
+            }),
+        );
+    });
+
+    it("lets an admin move a review whose creator's account is gone", async () => {
+        mockDetail({ access_role: "owner", user_id: null as unknown as string });
+        render(<TRView reviewId="r1" />);
+
+        await openActionsMenu();
+        fireEvent.click(screen.getByText("Edit details"));
+        fireEvent.click(screen.getByText("move to p9"));
+
+        await waitFor(() =>
+            expect(updateTabularReview).toHaveBeenCalledWith("r1", {
+                title: "T",
+                project_id: "p9",
+            }),
+        );
+    });
+
+    it("lets an org admin change the model of a review they did not create", async () => {
+        // The server gates `model` in the same content.edit arm as the title.
+        // The old gate was bare `is_owner === false` — the file's last
+        // leftover of the ownership model — which refused admins and members
+        // a change the server accepts, with admin-tier popup copy.
+        mockDetail({ access_role: "owner", is_owner: false });
+        render(<TRView reviewId="r1" />);
+
+        await waitFor(() =>
+            expect(screen.getByText("change model")).toBeInTheDocument(),
+        );
+        fireEvent.click(screen.getByText("change model"));
+
+        await waitFor(() =>
+            expect(updateTabularReview).toHaveBeenCalledWith("r1", {
+                model: "model-next",
+            }),
+        );
+    });
+
+    it("refuses a viewer's model change with the member tier", async () => {
+        mockDetail({ access_role: "viewer", is_owner: false });
+        render(<TRView reviewId="r1" />);
+
+        await waitFor(() =>
+            expect(screen.getByText("change model")).toBeInTheDocument(),
+        );
+        fireEvent.click(screen.getByText("change model"));
+
+        expect(
+            await screen.findByText(/Only an editor can change the tabular review model/,
+            ),
+        ).toBeInTheDocument();
+        expect(updateTabularReview).not.toHaveBeenCalled();
+    });
+});

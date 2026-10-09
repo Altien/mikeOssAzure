@@ -1,33 +1,46 @@
-import type { Provider } from "./types";
+import { getConfiguredModel } from "./registry";
+import { REASONING_LEVELS, type Provider, type ReasoningLevel } from "./types";
 
 // ---------------------------------------------------------------------------
 // Canonical model IDs
 // ---------------------------------------------------------------------------
 // Main-chat tier (top-end) — user picks one of these per message.
 export const CLAUDE_MAIN_MODELS = [
-    "claude-fable-5",
-    "claude-opus-4-8",
-    "claude-opus-4-7",
-    "claude-sonnet-4-6",
+    "claude-fable-5-1",
+    "claude-opus-5-5",
+    "claude-sonnet-5-5",
 ] as const;
 export const GEMINI_MAIN_MODELS = [
-    "gemini-3.5-flash",
+    "gemini-3.8-flash",
     "gemini-3.1-pro-preview",
-    "gemini-3-flash-preview",
 ] as const;
-export const OPENAI_MAIN_MODELS = ["gpt-5.5", "gpt-5.4"] as const;
+export const OPENAI_MAIN_MODELS = [
+    "gpt-6-astra",
+    "gpt-6.1-sol",
+    "gpt-6-luna",
+] as const;
+export const MISTRAL_MAIN_MODELS = [
+    "mistral-large-4",
+    "mistral-medium-3-5",
+    "mistral-small-2603",
+] as const;
 export const KIMI_MAIN_MODELS = ["kimi-k3"] as const;
 
 // Mid-tier (used for tabular review) — user picks one in account settings.
-export const CLAUDE_MID_MODELS = ["claude-sonnet-4-6"] as const;
-export const GEMINI_MID_MODELS = ["gemini-3.5-flash", "gemini-3-flash-preview"] as const;
-export const OPENAI_MID_MODELS = ["gpt-5.4"] as const;
+export const CLAUDE_MID_MODELS = ["claude-sonnet-5-5"] as const;
+export const GEMINI_MID_MODELS = ["gemini-3.8-flash"] as const;
+export const OPENAI_MID_MODELS = ["gpt-6.1-sol"] as const;
+export const MISTRAL_MID_MODELS = [
+    "mistral-medium-3-5",
+    "mistral-small-2603",
+] as const;
 
 // Low-tier (used for title generation, lightweight extractions) — user picks
 // one in account settings.
 export const CLAUDE_LOW_MODELS = ["claude-haiku-4-5"] as const;
-export const GEMINI_LOW_MODELS = ["gemini-3.1-flash-lite-preview"] as const;
-export const OPENAI_LOW_MODELS = ["gpt-5.4-lite"] as const;
+export const GEMINI_LOW_MODELS = ["gemini-3.5-flash-lite"] as const;
+export const OPENAI_LOW_MODELS = ["gpt-6-luna"] as const;
+export const MISTRAL_LOW_MODELS = ["mistral-small-2603"] as const;
 
 // Azure OpenAI model ids are dynamic — they're derived from deployment
 // names discovered against the configured AOAI endpoint at runtime, so
@@ -35,33 +48,132 @@ export const OPENAI_LOW_MODELS = ["gpt-5.4-lite"] as const;
 // which providerForModel routes to the AOAI adapter.
 export const AZURE_OPENAI_PREFIX = "aoai:";
 
-export const DEFAULT_MAIN_MODEL = "gemini-3-flash-preview";
-export const DEFAULT_TITLE_MODEL = "gemini-3.1-flash-lite-preview";
-export const DEFAULT_TABULAR_MODEL = "gemini-3-flash-preview";
+// Upstream divergence (sync-log: ef9b5afd): upstream removed
+// DEFAULT_MAIN_MODEL, DEFAULT_TITLE_MODEL and DEFAULT_TABULAR_MODEL as
+// test-only. Dev keeps DEFAULT_TITLE_MODEL: user.settings'
+// fallbackTitleModel (Dev's fast_model helper for Altien skill paths)
+// returns it when the organisation has a Gemini key or no other credential.
+export const DEFAULT_TITLE_MODEL = "gemini-3.5-flash-lite";
+
+const STANDARD_REASONING_LEVELS: readonly ReasoningLevel[] =
+    REASONING_LEVELS.filter((level) => level !== "max");
+const ALWAYS_REASONING_LEVELS: readonly ReasoningLevel[] =
+    REASONING_LEVELS.filter((level) => level !== "none");
+
+/** Explicit AI SDK reasoning levels supported by the selected model family. */
+export function reasoningLevelsForModel(
+    model: string,
+): readonly ReasoningLevel[] {
+    const catalogId = model.replace(/^(?:openrouter|vercel)\//, "");
+    // Astra, Sol 6.1, and current Fable/Opus cannot disable thinking.
+    if (
+        /(?:^|\/)(?:gpt-6-astra|gpt-6\.1-sol|claude-fable-5-1|claude-opus-5-5)(?:$|-)/.test(
+            catalogId,
+        )
+    ) {
+        return catalogId.includes("claude-")
+            ? STANDARD_REASONING_LEVELS.filter((level) => level !== "none")
+            : ALWAYS_REASONING_LEVELS;
+    }
+    if (/(?:^|\/)gpt-(?:5\.6|6(?:\.1)?)(?:-|$)/.test(catalogId)) {
+        return REASONING_LEVELS;
+    }
+    if (/(?:^|\/)mistral-(?:large-4|medium-3-5|small-2603)$/.test(catalogId)) {
+        return ["none", "high"];
+    }
+    return STANDARD_REASONING_LEVELS;
+}
+
+/** Move a stale saved level to the nearest level supported by the model. */
+export function normalizeReasoningLevelForModel(
+    model: string,
+    reasoning: ReasoningLevel | undefined,
+): ReasoningLevel | undefined {
+    if (!reasoning) return undefined;
+    const supported = reasoningLevelsForModel(model);
+    if (supported.includes(reasoning)) return reasoning;
+    const requestedIndex = REASONING_LEVELS.indexOf(reasoning);
+    return supported.reduce((nearest, candidate) => {
+        const nearestDistance = Math.abs(
+            REASONING_LEVELS.indexOf(nearest) - requestedIndex,
+        );
+        const candidateDistance = Math.abs(
+            REASONING_LEVELS.indexOf(candidate) - requestedIndex,
+        );
+        return candidateDistance <= nearestDistance ? candidate : nearest;
+    }, supported[0] ?? "high");
+}
+
+// OpenCode Go publishes one catalog across three incompatible wire protocols:
+// OpenAI Responses, Anthropic Messages, and OpenAI Chat Completions. The live
+// /models payload does not identify a model's protocol, so keep these lists
+// fail-closed and in sync with https://opencode.ai/docs/go/#endpoints. A new
+// catalog entry is not offered until Mike can actually speak its protocol.
+export const OPENCODE_GO_CHAT_COMPLETIONS_MODEL_IDS: ReadonlySet<string> =
+    new Set([
+        "glm-5",
+        "glm-5.1",
+        "glm-5.2",
+        "glm-5.3",
+        "kimi-k2.6",
+        "kimi-k2.7-code",
+        "kimi-k3",
+        "deepseek-v4-pro",
+        "deepseek-v4-flash",
+        "mimo-v2.5",
+        "mimo-v2.5-pro",
+        "hy3",
+    ]);
+
+export const OPENCODE_GO_MESSAGES_MODEL_IDS: ReadonlySet<string> = new Set([
+    "minimax-m3",
+    "minimax-m2.7",
+    "minimax-m2.5",
+    "qwen3.8-max",
+    "qwen3.7-max",
+    "qwen3.7-plus",
+    "qwen3.6-plus",
+]);
 
 const ALL_MODELS = new Set<string>([
     ...CLAUDE_MAIN_MODELS,
     ...GEMINI_MAIN_MODELS,
     ...OPENAI_MAIN_MODELS,
     ...KIMI_MAIN_MODELS,
+    ...MISTRAL_MAIN_MODELS,
     ...CLAUDE_MID_MODELS,
     ...GEMINI_MID_MODELS,
     ...OPENAI_MID_MODELS,
+    ...MISTRAL_MID_MODELS,
     ...CLAUDE_LOW_MODELS,
     ...GEMINI_LOW_MODELS,
     ...OPENAI_LOW_MODELS,
+    ...MISTRAL_LOW_MODELS,
 ]);
 
 // ---------------------------------------------------------------------------
 // Provider inference
 // ---------------------------------------------------------------------------
 
+// Upstream divergence (sync-log: fe942475): NOT SUPPORTED — the self-hosted
+// stack's local Ollama provider (`ollama/<tag>` ids, GET /models/ollama) was
+// deferred; dev is an Azure deployment with no local model runtime. Keep dev's
+// behaviour during conflict resolution; do not re-enable this upstream feature
+// until the complete feature is intentionally adopted.
 export function providerForModel(model: string): Provider {
+    // Deployment-declared models win over the prefix rules so an operator can
+    // name a self-hosted endpoint whatever they like.
+    const configured = getConfiguredModel(model);
+    if (configured) return configured.provider;
+    if (model.startsWith("openrouter/")) return "openrouter";
+    if (model.startsWith("vercel/")) return "vercel";
+    if (model.startsWith("opencode-go/")) return "opencode-go";
     if (model.startsWith("claude")) return "claude";
     if (model.startsWith("gemini")) return "gemini";
     if (model.startsWith("kimi-")) return "kimi";
     if (model.startsWith(AZURE_OPENAI_PREFIX)) return "azureOpenai";
     if (model.startsWith("gpt-")) return "openai";
+    if (model.startsWith("mistral-")) return "mistral";
     throw new Error(`Unknown model id: ${model}`);
 }
 
@@ -69,10 +181,72 @@ export function isAllowedModelId(id: string): boolean {
     // Static models are listed in ALL_MODELS; AOAI ids are accepted by
     // prefix because deployment names are user-defined and only known
     // at runtime via deployment discovery.
-    return ALL_MODELS.has(id) || id.startsWith(AZURE_OPENAI_PREFIX);
+    return ALL_MODELS.has(id) || getConfiguredModel(id) !== null || /^opencode-go\/[^\s]+$/.test(id) || id.startsWith(AZURE_OPENAI_PREFIX) || /^(?:openrouter|vercel)\/[^\s/]+\/[^\s]+$/.test(id);
 }
 
+// Renamed/retired static ids → their current equivalents. Stored preferences
+// and localStorage selections outlive catalog renames; mapping here keeps an
+// old saved value working instead of silently kicking it to the fallback.
+export const LEGACY_MODEL_IDS: Record<string, string> = {
+    "claude-fable-5": "claude-fable-5-1",
+    "claude-opus-5": "claude-opus-5-5",
+    "claude-opus-4-8": "claude-opus-5-5",
+    "claude-opus-4-7": "claude-opus-5-5",
+    "claude-sonnet-5": "claude-sonnet-5-5",
+    "claude-sonnet-4-6": "claude-sonnet-5-5",
+    "gemini-3.7-flash": "gemini-3.8-flash",
+    "gemini-3.6-flash": "gemini-3.8-flash",
+    "gemini-3.5-flash": "gemini-3.8-flash",
+    "gemini-3-flash-preview": "gemini-3.8-flash",
+    "gemini-3.1-flash-lite": "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite-preview": "gemini-3.5-flash-lite",
+    "gpt-5.6-sol": "gpt-6-astra",
+    "gpt-5.6-terra": "gpt-6.1-sol",
+    "gpt-5.6-luna": "gpt-6-luna",
+    "gpt-5.5": "gpt-6.1-sol",
+    "gpt-5.4": "gpt-6.1-sol",
+    "gpt-5.4-mini": "gpt-6-luna",
+    "gpt-5.4-lite": "gpt-6-luna",
+};
+
 export function resolveModel(id: string | null | undefined, fallback: string): string {
-    if (id && isAllowedModelId(id)) return id;
+    // A deployment-declared model keeps its own id even when it shares a name
+    // with a retired catalog id (upstream 2f30082a).
+    const canonical =
+        id && getConfiguredModel(id)
+            ? id
+            : id
+              ? (LEGACY_MODEL_IDS[id] ?? id)
+              : id;
+    if (canonical && isAllowedModelId(canonical)) return canonical;
     return fallback;
+}
+
+export function openRouterModelId(model: string): string {
+    return model.replace(/^openrouter\//, "");
+}
+
+export function vercelModelId(model: string): string {
+    return model.replace(/^vercel\//, "");
+}
+
+export function openCodeGoModelId(model: string): string {
+    return model.replace(/^opencode-go\//, "");
+}
+
+export function isOpenCodeGoChatCompletionsModel(model: string): boolean {
+    return OPENCODE_GO_CHAT_COMPLETIONS_MODEL_IDS.has(
+        openCodeGoModelId(model),
+    );
+}
+
+export function isOpenCodeGoMessagesModel(model: string): boolean {
+    return OPENCODE_GO_MESSAGES_MODEL_IDS.has(openCodeGoModelId(model));
+}
+
+export function isSupportedOpenCodeGoModel(model: string): boolean {
+    return (
+        isOpenCodeGoChatCompletionsModel(model) ||
+        isOpenCodeGoMessagesModel(model)
+    );
 }

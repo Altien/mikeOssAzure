@@ -13,9 +13,21 @@ vi.mock("../lib/auth/providers/entra.js", () => ({
 vi.mock("./tenantAccess.js", () => ({
   tenantAccess: vi.fn(),
 }));
-vi.mock("../lib/userSettings.js", () => ({
+vi.mock("../lib/userLookup.js", () => ({
   upsertUserProfile: vi.fn(),
 }));
+vi.mock("../lib/supabase.js", () => ({
+  createServerSupabase: () => ({
+    from: () => ({
+      select: () => ({
+        eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }),
+      }),
+    }),
+  }),
+}));
+vi.mock("../lib/serverSession.js", () => ({ readServerSession: vi.fn(), refreshServerSession: vi.fn() }));
+vi.mock("../lib/auth/providers/entraRefresh.js", () => ({ renewEntraCredential: vi.fn() }));
+vi.mock("../lib/auth/providers/supabaseSession.js", () => ({ renewSupabaseCredential: vi.fn() }));
 
 // Dev exports only requireAuth — the mirror's requireValidJwt (auth
 // without tenantAccess) never landed here.
@@ -24,7 +36,8 @@ import { validateSupabaseToken } from "../lib/auth/providers/supabase.js";
 import { validateLocalToken } from "../lib/auth/providers/local.js";
 import { validateEntraToken } from "../lib/auth/providers/entra.js";
 import { tenantAccess } from "./tenantAccess.js";
-import { upsertUserProfile } from "../lib/userSettings.js";
+import { upsertUserProfile } from "../lib/userLookup.js";
+import { readServerSession, refreshServerSession } from "../lib/serverSession.js";
 
 type FakeRes = Response & {
   locals: Record<string, unknown>;
@@ -35,6 +48,8 @@ type FakeRes = Response & {
 function makeReq(authHeader?: string): Request {
   return {
     headers: authHeader ? { authorization: authHeader } : {},
+    method: "GET",
+    get: () => undefined,
   } as unknown as Request;
 }
 
@@ -52,6 +67,7 @@ function makeRes(): FakeRes {
     res.body = body;
     return res;
   }) as FakeRes["json"];
+  res.setHeader = vi.fn() as FakeRes["setHeader"];
   return res;
 }
 
@@ -68,6 +84,7 @@ let originalAuthProvider: string | undefined;
 
 beforeEach(() => {
   originalAuthProvider = process.env.AUTH_PROVIDER;
+  vi.mocked(readServerSession).mockReset().mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -88,7 +105,7 @@ describe("requireAuth — header handling", () => {
 
     expect(res.statusCode).toBe(401);
     expect(res.body).toEqual({
-      detail: "Missing or invalid Authorization header",
+      detail: "Invalid or expired session",
     });
     expect(next).not.toHaveBeenCalled();
     expect(tenantAccess).not.toHaveBeenCalled();
@@ -106,11 +123,84 @@ describe("requireAuth — header handling", () => {
   });
 });
 
+describe("requireAuth — opaque cookie boundary", () => {
+  beforeEach(() => {
+    process.env.AUTH_PROVIDER = "supabase";
+    process.env.FRONTEND_URL = "https://web.example.test";
+    vi.mocked(validateSupabaseToken).mockResolvedValue({ ok: true, principal: validPrincipal });
+    vi.mocked(upsertUserProfile).mockResolvedValue(undefined);
+    vi.mocked(tenantAccess).mockImplementation(async (_req, _res, next) => next());
+    vi.mocked(readServerSession).mockResolvedValue({
+      row: { token_expires_at: new Date(Date.now() + 3600_000).toISOString() },
+      credential: { provider: "supabase", userId: validPrincipal.userId, accessToken: "server-held", refreshToken: "server-refresh" },
+    } as Awaited<ReturnType<typeof readServerSession>>);
+  });
+
+  it("never falls back to a cookie after an explicit bad Authorization header", async () => {
+    const req = makeReq("Bearer ");
+    const res = makeRes();
+    await requireAuth(req, res, vi.fn());
+    expect(res.statusCode).toBe(401);
+    expect(readServerSession).not.toHaveBeenCalled();
+  });
+
+  it("validates the provider identity from the server-held cookie on every request", async () => {
+    const req = makeReq();
+    const res = makeRes();
+    const next = vi.fn();
+    await requireAuth(req, res, next);
+    expect(validateSupabaseToken).toHaveBeenCalledWith("server-held");
+    expect(res.locals.authSource).toBe("cookie");
+    expect(next).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a cookie-authenticated write from an untrusted Origin", async () => {
+    const req = makeReq();
+    req.method = "POST";
+    // Dev drift: double cast for the tsconfig.test.json type-check gate.
+    req.get = vi.fn(() => "https://attacker.example") as unknown as Request["get"];
+    const res = makeRes();
+    await requireAuth(req, res, vi.fn());
+    expect(res.statusCode).toBe(403);
+    expect(readServerSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects a cookie whose live provider identity differs from its persisted text user ID", async () => {
+    vi.mocked(readServerSession).mockResolvedValueOnce({
+      row: { token_expires_at: new Date(Date.now() + 3600_000).toISOString() },
+      credential: { provider: "supabase", userId: "another-user", accessToken: "server-held" },
+    } as Awaited<ReturnType<typeof readServerSession>>);
+    const res = makeRes();
+    await requireAuth(makeReq(), res, vi.fn());
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("uses the winner's credential when another replica wins the refresh CAS", async () => {
+    vi.mocked(readServerSession)
+      .mockResolvedValueOnce({
+        row: { version: 3, token_expires_at: new Date(Date.now() - 1000).toISOString() },
+        credential: { provider: "supabase", userId: validPrincipal.userId, accessToken: "expired", refreshToken: "old-refresh" },
+      } as Awaited<ReturnType<typeof readServerSession>>)
+      .mockResolvedValueOnce({
+        row: { version: 4, token_expires_at: new Date(Date.now() + 3600_000).toISOString() },
+        credential: { provider: "supabase", userId: validPrincipal.userId, accessToken: "winner-token", refreshToken: "winner-refresh" },
+      } as Awaited<ReturnType<typeof readServerSession>>);
+    vi.mocked(refreshServerSession).mockResolvedValueOnce(false);
+    const res = makeRes();
+    const next = vi.fn();
+    await requireAuth(makeReq(), res, next);
+    expect(validateSupabaseToken).toHaveBeenCalledWith("winner-token");
+    expect(res.locals.token).toBe("winner-token");
+    expect(next).toHaveBeenCalledOnce();
+  });
+});
+
 describe("requireAuth — provider routing", () => {
   it("uses the supabase provider by default", async () => {
     delete process.env.AUTH_PROVIDER;
     vi.mocked(validateSupabaseToken).mockResolvedValue({
       ok: true,
+      // Dev drift: the validator result has no authSource; requireAuth sets it.
       principal: validPrincipal,
     });
     vi.mocked(upsertUserProfile).mockResolvedValue(undefined);
@@ -271,6 +361,7 @@ describe("requireAuth — success path", () => {
       userId: "user-123",
       userEmail: "caller@example.com",
       token: "tok-ok",
+      authSource: "bearer",
       principal: validPrincipal,
     });
   });
@@ -299,7 +390,7 @@ describe("requireAuth — success path", () => {
     expect(tenantAccess).toHaveBeenCalledWith(req, res, next);
   });
 
-  it("returns 500 with the error message when upsertUserProfile throws an Error", async () => {
+  it("returns a generic 500 when profile initialization fails", async () => {
     vi.mocked(upsertUserProfile).mockRejectedValueOnce(
       new Error("db unreachable"),
     );
@@ -311,7 +402,7 @@ describe("requireAuth — success path", () => {
     await requireAuth(req, res, next);
 
     expect(res.statusCode).toBe(500);
-    expect(res.body).toEqual({ detail: "db unreachable" });
+    expect(res.body).toEqual({ detail: "Unable to initialize user profile" });
     expect(tenantAccess).not.toHaveBeenCalled();
   });
 

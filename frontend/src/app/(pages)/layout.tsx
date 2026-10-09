@@ -1,13 +1,16 @@
 "use client";
 
-import { useCallback, useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useMemo, useState, useEffect } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { PanelLeft } from "lucide-react";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth } from "@/app/contexts/AuthContext";
 import { ChatHistoryProvider } from "@/app/contexts/ChatHistoryContext";
 import { SidebarContext } from "@/app/contexts/SidebarContext";
 import { PageChromeContext } from "@/app/contexts/PageChromeContext";
 import { AppSidebar } from "@/app/components/shared/AppSidebar";
+import { FullScreenLoader } from "@/app/components/shared/FullScreenLoader";
+import { HeaderButtonUI, HeaderButtonsUI } from "@/shared/ui/HeaderButtonsUI";
+import { cn } from "@/app/lib/utils";
 
 export default function MikeLayout({
     children,
@@ -15,7 +18,18 @@ export default function MikeLayout({
     children: React.ReactNode;
 }) {
     const { isAuthenticated, authLoading } = useAuth();
+    const [hasMounted, setHasMounted] = useState(false);
+    useEffect(() => {
+        // An outer auth provider may settle before this streamed boundary
+        // hydrates. Its first client render must still match the SSR loader.
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- one hydration transition, independent of auth or streamed content
+        setHasMounted(true);
+    }, []);
     const router = useRouter();
+    const pathname = usePathname();
+    const isChatPage =
+        /^\/assistant\/chat\/[^/]+\/?$/.test(pathname) ||
+        /^\/projects\/[^/]+\/assistant\/chat\/[^/]+\/?$/.test(pathname);
     const [mobileActionsContainer, setMobileActionsContainer] =
         useState<HTMLDivElement | null>(null);
 
@@ -34,6 +48,12 @@ export default function MikeLayout({
         return true;
     });
 
+    // Persist what is actually on screen. The mount initializer above reads
+    // this key back but `isSidebarOpen` starts open on desktop regardless, so
+    // storing anything else leaves the restored preference disagreeing with
+    // the rendered sidebar and the first toggle click is spent re-syncing
+    // them. Remembering a collapsed sidebar across reloads needs the mount
+    // path to apply the stored value too — a separate change.
     useEffect(() => {
         if (typeof window !== "undefined" && window.innerWidth >= 768) {
             localStorage.setItem("sidebarOpen", isSidebarOpen.toString());
@@ -68,41 +88,41 @@ export default function MikeLayout({
         [],
     );
 
+    const setSidebarOpen = useCallback((open: boolean) => {
+        const isSmall =
+            typeof window !== "undefined" && window.innerWidth < 768;
+        if (isSmall) {
+            if (!open) setIsSidebarOpen(false);
+            return;
+        }
+        setIsSidebarOpen(open);
+        setIsSidebarOpenDesktop(open);
+    }, []);
+
+    const pageChromeValue = useMemo(
+        () => ({ mobileActionsContainer }),
+        [mobileActionsContainer],
+    );
+
+    const sidebarValue = useMemo(() => ({ setSidebarOpen }), [setSidebarOpen]);
+
     useEffect(() => {
         if (!authLoading && !isAuthenticated) {
             router.push("/login");
         }
     }, [authLoading, isAuthenticated, router]);
 
-    if (authLoading) {
-        return (
-            <div className="flex h-screen items-center justify-center">
-                <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-300 border-t-gray-700" />
-            </div>
-        );
+    if (!hasMounted || authLoading) {
+        return <FullScreenLoader />;
     }
 
     if (!isAuthenticated) return null;
 
     return (
         <ChatHistoryProvider>
-            <PageChromeContext.Provider value={{ mobileActionsContainer }}>
-                <SidebarContext.Provider
-                    value={{
-                        setSidebarOpen: (open) => {
-                            const isSmall =
-                                typeof window !== "undefined" &&
-                                window.innerWidth < 768;
-                            if (isSmall) {
-                                if (!open) setIsSidebarOpen(false);
-                                return;
-                            }
-                            setIsSidebarOpen(open);
-                            setIsSidebarOpenDesktop(open);
-                        },
-                    }}
-                >
-                    <div className="h-dvh flex flex-col bg-gray-50/80">
+            <PageChromeContext.Provider value={pageChromeValue}>
+                <SidebarContext.Provider value={sidebarValue}>
+                    <div className="h-dvh flex flex-col bg-app-background">
                         <div className="flex-1 flex min-w-0 overflow-visible">
                             <AppSidebar
                                 isOpen={isSidebarOpen}
@@ -110,18 +130,35 @@ export default function MikeLayout({
                             />
                             <div className="flex-1 flex flex-col h-dvh md:overflow-hidden relative w-full">
                                 {/* Mobile header */}
-                                <div className="relative z-20 flex md:hidden items-center gap-3 overflow-visible px-4 pt-3 pb-2 shrink-0">
-                                    <button
-                                        onClick={handleSidebarToggle}
-                                        className="flex h-9 w-9 items-center justify-center rounded-full bg-white/70 text-gray-700 shadow-[0_8px_24px_rgba(15,23,42,0.12)] ring-1 ring-white/70 backdrop-blur-md transition-all hover:bg-white/90 active:scale-95"
-                                        title="Open sidebar"
-                                        aria-label="Open sidebar"
+                                <div
+                                    data-slot="mobile-header"
+                                    className={cn(
+                                        "z-30 flex items-center gap-3 overflow-visible px-4 md:hidden",
+                                        isChatPage
+                                            ? "pointer-events-none fixed inset-x-0 top-0 bg-transparent pb-2 pt-3"
+                                            : "relative shrink-0 pb-2 pt-3",
+                                    )}
+                                >
+                                    <HeaderButtonsUI
+                                        className={cn(
+                                            "pointer-events-auto",
+                                            // Only the chat page floats this
+                                            // bar over scrolling content.
+                                            isChatPage && "backdrop-blur-2xl",
+                                        )}
                                     >
-                                        <PanelLeft className="h-4 w-4" />
-                                    </button>
+                                        <HeaderButtonUI
+                                            iconOnly
+                                            onClick={handleSidebarToggle}
+                                            title="Open sidebar"
+                                            aria-label="Open sidebar"
+                                        >
+                                            <PanelLeft className="h-4 w-4" />
+                                        </HeaderButtonUI>
+                                    </HeaderButtonsUI>
                                     <div
                                         ref={handleMobileActionsContainerRef}
-                                        className="ml-auto flex min-w-0 flex-1 items-center justify-end"
+                                        className="pointer-events-auto ml-auto flex min-w-0 flex-1 items-center justify-end"
                                     />
                                 </div>
                                 <main className="flex h-full w-full flex-1 flex-col overflow-y-auto md:overflow-hidden">

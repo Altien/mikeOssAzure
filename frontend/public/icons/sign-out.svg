@@ -1,0 +1,26 @@
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="door" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#E3E7EC" stop-opacity="0.97"/>
+      <stop offset="0.45" stop-color="#CBD1D9" stop-opacity="0.95"/>
+      <stop offset="0.82" stop-color="#A9B2BE" stop-opacity="0.96"/>
+      <stop offset="1" stop-color="#BCC4CE" stop-opacity="0.96"/>
+    </linearGradient>
+    <radialGradient id="sheen">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.6" stop-color="#FFFFFF" stop-opacity="0.7"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="clipDoor"><rect x="6" y="5" width="39" height="54" rx="8"/></clipPath>
+  </defs>
+
+  <rect x="6" y="5" width="39" height="54" rx="8" fill="url(#door)"/>
+
+  <g clip-path="url(#clipDoor)">
+    <ellipse cx="25.5" cy="10" rx="17" ry="5" fill="url(#sheen)" opacity="0.3"/>
+    <ellipse cx="11.5" cy="32" rx="4" ry="15" fill="url(#sheen)" opacity="0.18"/>
+  </g>
+
+  <path d="M24 26.5H43.5V20.5L58 32L43.5 43.5V37.5H24Z"
+        fill="#4F92F7" stroke="#4F92F7" stroke-width="3" stroke-linejoin="round"/>
+</svg>

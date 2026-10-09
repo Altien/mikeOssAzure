@@ -10,6 +10,13 @@ const PROVIDER_KEY_PATTERNS = [
   /\bAIza[A-Za-z0-9_\-]{20,}\b/g,
 ];
 
+export class UserFacingError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "UserFacingError";
+  }
+}
+
 export function redactSensitiveText(value: string): string {
   let redacted = value;
   for (const pattern of SECRET_CONTEXT_PATTERNS) {
@@ -56,4 +63,13 @@ export function safeErrorLog(error: unknown): {
     name: null,
     message: safeErrorMessage(error),
   };
+}
+
+/** Diagnostics for credential-bearing integrations: never serialize provider
+ * messages, response bodies, database details, URLs, or exception stacks. */
+export function safeError(error: unknown): { category: string } {
+    if (error instanceof TypeError) return { category: "type_error" };
+    if (error instanceof SyntaxError) return { category: "invalid_response" };
+    if (error instanceof Error) return { category: "operation_failed" };
+    return { category: "unknown_failure" };
 }

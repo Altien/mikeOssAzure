@@ -1,0 +1,250 @@
+// Imported from the pure types module (not the API client, whose runtime
+// imports include the Sentry SDK) so this module's compile graph stays free
+// of Office globals and add-in-only packages: the drift-guard test in
+// frontend/src/wordAddin imports this file across packages.
+import type { ApiKeyStatus } from "../types";
+
+/**
+ * Keep this catalog, its labels, and DEFAULT_MODEL_ID in sync with
+ * frontend/src/app/components/assistant/ModelToggle.tsx until both clients use
+ * a single shared package.
+ */
+export type ModelGroup = string;
+
+/** Kept in sync with frontend ModelToggle.tsx ROUTER_SLUGS. */
+export const ROUTER_SLUGS = ["openrouter", "vercel", "opencode-go"] as const;
+
+export interface ModelOption {
+  id: string;
+  label: string;
+  group: ModelGroup;
+  source?: string;
+}
+
+export const STATIC_MODELS: readonly ModelOption[] = [
+  { id: "claude-fable-5-1", label: "Claude Fable 5.1", group: "Anthropic" },
+  { id: "claude-opus-5-5", label: "Claude Opus 5.5", group: "Anthropic" },
+  { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5", group: "Anthropic" },
+  { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash", group: "Google" },
+  { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro (Preview)", group: "Google" },
+  { id: "gpt-6-astra", label: "GPT-6 Astra", group: "OpenAI" },
+  { id: "gpt-6.1-sol", label: "GPT-6.1 Sol", group: "OpenAI" },
+  { id: "gpt-6-luna", label: "GPT-6 Luna", group: "OpenAI" },
+  { id: "kimi-k3", label: "Kimi K3", group: "Kimi" },
+  { id: "mistral-large-4", label: "Mistral Large 4 (Preview)", group: "Mistral AI" },
+  { id: "mistral-medium-3-5", label: "Mistral Medium 3.5", group: "Mistral AI" },
+  { id: "mistral-small-2603", label: "Mistral Small 4", group: "Mistral AI" },
+];
+
+for (const model of STATIC_MODELS) model.source = "Direct";
+
+export const DEFAULT_MODEL_ID = "";
+export const ALLOWED_MODEL_IDS = new Set(
+  STATIC_MODELS.map((model) => model.id),
+);
+
+/**
+ * Renamed/retired static ids → their current equivalents. Persisted chat and
+ * profile values can outlive a catalog rename, so both clients canonicalize
+ * them identically. Kept in sync with backend/src/lib/llm/models.ts and the
+ * web ModelToggle; the frontend drift guard pins this mapping.
+ */
+export const LEGACY_MODEL_IDS: Record<string, string> = {
+  "claude-fable-5": "claude-fable-5-1",
+  "claude-opus-5": "claude-opus-5-5",
+  "claude-opus-4-8": "claude-opus-5-5",
+  "claude-opus-4-7": "claude-opus-5-5",
+  "claude-sonnet-5": "claude-sonnet-5-5",
+  "claude-sonnet-4-6": "claude-sonnet-5-5",
+  "gemini-3.7-flash": "gemini-3.8-flash",
+  "gemini-3.6-flash": "gemini-3.8-flash",
+  "gemini-3.5-flash": "gemini-3.8-flash",
+  "gemini-3-flash-preview": "gemini-3.8-flash",
+  "gemini-3.1-flash-lite": "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite-preview": "gemini-3.5-flash-lite",
+  "gpt-5.6-sol": "gpt-6-astra",
+  "gpt-5.6-terra": "gpt-6.1-sol",
+  "gpt-5.6-luna": "gpt-6-luna",
+  "gpt-5.5": "gpt-6.1-sol",
+  "gpt-5.4": "gpt-6.1-sol",
+  "gpt-5.4-mini": "gpt-6-luna",
+  "gpt-5.4-lite": "gpt-6-luna",
+};
+
+export function canonicalModelId(id: string): string {
+  return LEGACY_MODEL_IDS[id] ?? id;
+}
+
+const MODEL_NAME_ACRONYMS: Record<string, string> = {
+  ai: "AI",
+  gpt: "GPT",
+  oss: "OSS",
+  r1: "R1",
+};
+
+export function modelDisplayName(modelId: string): string {
+  const normalized = modelId
+    .replace(/^(?:openrouter|vercel|opencode-go|ollama)\//, "")
+    .split("/")
+    .at(-1)!
+    .replace(/(\d)-(\d)/g, "$1.$2");
+  const [rawName, variant] = normalized.split(":", 2);
+  const name = rawName ?? normalized;
+  const label = name
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((token) => {
+      const lower = token.toLowerCase();
+      if (MODEL_NAME_ACRONYMS[lower]) return MODEL_NAME_ACRONYMS[lower];
+      if (/^\d+[bk]$/i.test(token)) return token.toUpperCase();
+      return token.charAt(0).toUpperCase() + token.slice(1);
+    })
+    .join(" ");
+  if (!variant) return label;
+  const variantLabel = variant
+    .split(/[-_]+/)
+    .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
+    .join(" ");
+  return `${label} (${variantLabel})`;
+}
+
+/**
+ * The stored selection is the router's raw catalog id (e.g.
+ * "anthropic/claude-sonnet-4.5" or "openrouter/auto"); the app-level model id
+ * always prefixes the router slug verbatim, with no inner stripping, so both
+ * this client and the web app send the identical string for the same stored
+ * selection ("openrouter/openrouter/auto" for OpenRouter's "openrouter/auto").
+ */
+export function openRouterModelOptions(models: string[]): ModelOption[] {
+  return models.map((model) => ({
+    id: `openrouter/${model}`,
+    label: modelDisplayName(model),
+    group: underlyingProviderGroup(model, "openrouter"),
+    source: "OpenRouter",
+  }));
+}
+
+export function vercelModelOptions(models: string[]): ModelOption[] {
+  return models.map((model) => ({
+    id: `vercel/${model}`,
+    label: modelDisplayName(model),
+    group: underlyingProviderGroup(model, "vercel"),
+    source: "Vercel AI Gateway",
+  }));
+}
+
+export function openCodeGoModelOptions(models: string[]): ModelOption[] {
+  return models.map((model) => ({
+    id: `opencode-go/${model}`,
+    label: modelDisplayName(model),
+    group: underlyingProviderGroup(model, "opencode-go"),
+    source: "OpenCode Go",
+  }));
+}
+
+const ROUTER_VENDOR_GROUPS: Record<string, string> = {
+  anthropic: "Anthropic",
+  claude: "Anthropic",
+  google: "Google",
+  gemini: "Google",
+  openai: "OpenAI",
+  gpt: "OpenAI",
+  moonshot: "Moonshot AI",
+  moonshotai: "Moonshot AI",
+  kimi: "Moonshot AI",
+  zhipu: "Zhipu AI",
+  zhipuai: "Zhipu AI",
+  zai: "Zhipu AI",
+  minimax: "MiniMax",
+  qwen: "Alibaba",
+  alibaba: "Alibaba",
+  deepseek: "DeepSeek",
+  xiaomi: "Xiaomi",
+  mimo: "Xiaomi",
+  mistral: "Mistral AI",
+  mistralai: "Mistral AI",
+};
+
+export function underlyingProviderGroup(
+  catalogModelId: string,
+  router: (typeof ROUTER_SLUGS)[number],
+): string {
+  const vendor = catalogModelId.includes("/")
+    ? catalogModelId.split("/", 1)[0]!.toLowerCase()
+    : catalogModelId.toLowerCase().split(/[-_.]/, 1)[0]!;
+  const mapped = ROUTER_VENDOR_GROUPS[vendor];
+  if (mapped) return mapped;
+  if (catalogModelId.includes("/")) {
+    return vendor
+      .split(/[-_]/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+  }
+  if (router === "opencode-go") {
+    if (/^glm-/i.test(catalogModelId)) return "Zhipu AI";
+    if (/^kimi-/i.test(catalogModelId)) return "Moonshot AI";
+    if (/^minimax-/i.test(catalogModelId)) return "MiniMax";
+    if (/^qwen/i.test(catalogModelId)) return "Alibaba";
+    if (/^deepseek-/i.test(catalogModelId)) return "DeepSeek";
+    if (/^mimo-/i.test(catalogModelId)) return "Xiaomi";
+  }
+  return "Other providers";
+}
+
+export function isAllowedModelId(id: string, configuredIds: readonly string[] = []): boolean {
+  return (
+    configuredIds.includes(id) ||
+    ALLOWED_MODEL_IDS.has(id) ||
+    id.startsWith("aoai:") ||
+    ROUTER_SLUGS.some((slug) => id.startsWith(`${slug}/`))
+  );
+}
+
+export function isModelAvailable(
+  modelId: string,
+  status: ApiKeyStatus | null,
+  configuredIds: readonly string[] = [],
+): boolean {
+  if (configuredIds.includes(modelId)) return true;
+  if (modelId.startsWith("ollama/")) return true;
+  // Unknown status (the key-status preflight failed even after a retry) fails
+  // OPEN: the backend authoritatively rejects a model it cannot serve, so
+  // blocking sends here on a flaky WKWebView request would brick the composer
+  // for requests the backend would happily accept.
+  if (!status) return true;
+  if (modelId.startsWith("aoai:")) return !!status.azure_openai;
+  if (modelId.startsWith("openrouter/")) return !!status.openrouter;
+  if (modelId.startsWith("vercel/")) return !!status.vercel;
+  if (modelId.startsWith("opencode-go/")) return !!status["opencode-go"];
+  const model = STATIC_MODELS.find((item) => item.id === canonicalModelId(modelId));
+  if (!model || model.group === "Local") return false;
+  if (model.group === "Anthropic") return !!status.claude;
+  if (model.group === "Google") return !!status.gemini;
+  if (model.group === "Kimi") return !!status.kimi;
+  if (model.group === "Mistral AI") return !!status.mistral;
+  return !!status.openai;
+}
+
+export function missingModelProvider(modelId: string): string {
+  if (modelId.startsWith("aoai:")) return "Azure OpenAI";
+  const group = STATIC_MODELS.find((item) => item.id === canonicalModelId(modelId))?.group;
+  if (group === "Kimi") return "Kimi";
+  if (modelId.startsWith("openrouter/") || group === "OpenRouter") {
+    return "OpenRouter";
+  }
+  if (modelId.startsWith("vercel/") || group === "Vercel AI Gateway") {
+    return "Vercel AI Gateway";
+  }
+  if (modelId.startsWith("opencode-go/") || group === "OpenCode Go") {
+    return "OpenCode Go";
+  }
+  if (group === "Mistral AI") return "Mistral AI";
+  return group === "Anthropic"
+    ? "Anthropic"
+    : group === "Google"
+      ? "Google"
+      : group === "OpenAI"
+        ? "OpenAI"
+        : "model provider";
+}

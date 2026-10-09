@@ -1,0 +1,313 @@
+{
+  "matter_id": "1020-00003",
+  "client_id": "1020",
+  "matter_seq": "00003",
+  "extracted_at": "2026-09-15T20:35:32+00:00",
+  "source_documents": [
+    "Engagement/engagement-letter-gap-2022-02-21.docx",
+    "Correspondence/client-closing-letter-2022-07-15.docx",
+    "Correspondence/expense-reimbursement-letter-ridgeline-2022-07-11.docx",
+    "Transaction Documents/indenture-draft-v6-2022-06-15.docx"
+  ],
+  "folders": [
+    "Advice",
+    "Closing",
+    "Correspondence",
+    "Diligence",
+    "Engagement",
+    "Transaction Documents"
+  ],
+  "folder_tree": {
+    "Advice": 1,
+    "Closing": 3,
+    "Correspondence": 2,
+    "Diligence": 1,
+    "Engagement": 1,
+    "Transaction Documents": 4
+  },
+  "documents": [
+    {
+      "path": "1020-00003/Advice/termination-analysis-memo-2022-07-08.docx",
+      "folder": "Advice",
+      "name": "termination-analysis-memo-2022-07-08.docx",
+      "ext": "docx",
+      "bytes": 61527
+    },
+    {
+      "path": "1020-00003/Closing/10b-5-disclosure-letter-draft.docx",
+      "folder": "Closing",
+      "name": "10b-5-disclosure-letter-draft.docx",
+      "ext": "docx",
+      "bytes": 43661
+    },
+    {
+      "path": "1020-00003/Closing/closing-checklist-draft.xlsx",
+      "folder": "Closing",
+      "name": "closing-checklist-draft.xlsx",
+      "ext": "xlsx",
+      "bytes": 16431
+    },
+    {
+      "path": "1020-00003/Closing/officers-certificate-draft.docx",
+      "folder": "Closing",
+      "name": "officers-certificate-draft.docx",
+      "ext": "docx",
+      "bytes": 47614
+    },
+    {
+      "path": "1020-00003/Correspondence/client-closing-letter-2022-07-15.docx",
+      "folder": "Correspondence",
+      "name": "client-closing-letter-2022-07-15.docx",
+      "ext": "docx",
+      "bytes": 52028
+    },
+    {
+      "path": "1020-00003/Correspondence/expense-reimbursement-letter-ridgeline-2022-07-11.docx",
+      "folder": "Correspondence",
+      "name": "expense-reimbursement-letter-ridgeline-2022-07-11.docx",
+      "ext": "docx",
+      "bytes": 43532
+    },
+    {
+      "path": "1020-00003/Diligence/due-diligence-request-list.docx",
+      "folder": "Diligence",
+      "name": "due-diligence-request-list.docx",
+      "ext": "docx",
+      "bytes": 65517
+    },
+    {
+      "path": "1020-00003/Engagement/engagement-letter-gap-2022-02-21.docx",
+      "folder": "Engagement",
+      "name": "engagement-letter-gap-2022-02-21.docx",
+      "ext": "docx",
+      "bytes": 48874
+    },
+    {
+      "path": "1020-00003/Transaction Documents/indenture-draft-v6-2022-06-15.docx",
+      "folder": "Transaction Documents",
+      "name": "indenture-draft-v6-2022-06-15.docx",
+      "ext": "docx",
+      "bytes": 102792
+    },
+    {
+      "path": "1020-00003/Transaction Documents/preliminary-offering-memorandum-2022-06-01.docx",
+      "folder": "Transaction Documents",
+      "name": "preliminary-offering-memorandum-2022-06-01.docx",
+      "ext": "docx",
+      "bytes": 91766
+    },
+    {
+      "path": "1020-00003/Transaction Documents/purchase-agreement-executed-2022-06-20.docx",
+      "folder": "Transaction Documents",
+      "name": "purchase-agreement-executed-2022-06-20.docx",
+      "ext": "docx",
+      "bytes": 65746
+    },
+    {
+      "path": "1020-00003/Transaction Documents/registration-rights-agreement-draft-2022-06-15.docx",
+      "folder": "Transaction Documents",
+      "name": "registration-rights-agreement-draft-2022-06-15.docx",
+      "ext": "docx",
+      "bytes": 58832
+    }
+  ],
+  "doc_counts": {
+    "docx": 11,
+    "xlsx": 1
+  },
+  "status_signals": {
+    "folder:closing": true,
+    "folder:post-closing": false,
+    "folder:early termination": false,
+    "folder:termination": false,
+    "folder:settlement": false,
+    "folder:appeal": false,
+    "folder:wind-down": false,
+    "file:closing-memo": false,
+    "file:final-invoice": false,
+    "file:matter-closing": false,
+    "file:closing-binder": false,
+    "file:engagement-terminat": false,
+    "file:disengagement": false
+  },
+  "doc_dates": {
+    "earliest": "2022-02-21",
+    "latest": "2022-07-15",
+    "all": [
+      "2022-02-21",
+      "2022-06-01",
+      "2022-06-15",
+      "2022-06-20",
+      "2022-07-08",
+      "2022-07-11",
+      "2022-07-15"
+    ]
+  },
+  "matter_name": "Proposed Rule 144A Private Placement of $30,000,000 Senior Unsecured Notes - Greenfield Agricultural Partners LLC (Issuer's Counsel)",
+  "matter_description": "Issuer's counsel to Greenfield Agricultural Partners LLC in a proposed Rule 144A private placement of $30,000,000 senior unsecured notes due 2027; the offering was terminated by the initial purchaser prior to closing under a market-out provision.",
+  "matter_type": "capital markets / debt offering (Rule 144A private placement)",
+  "client": {
+    "name": "Greenfield Agricultural Partners LLC",
+    "entity_type": "Iowa limited liability company",
+    "industry": "Agricultural production and specialty crop-protection product manufacturing",
+    "contacts": [
+      {
+        "name": "Douglas Evanston",
+        "title": "General Counsel & Corporate Secretary",
+        "email": null
+      },
+      {
+        "name": "Linda Shao-Perkins",
+        "title": "Chief Financial Officer",
+        "email": null
+      }
+    ]
+  },
+  "counterparties": [
+    {
+      "name": "Ridgeline Securities LLC",
+      "role": "initial purchaser / placement agent"
+    }
+  ],
+  "other_parties": [
+    {
+      "name": "Heartland Trust Company, National Association",
+      "role": "proposed trustee / paying agent"
+    },
+    {
+      "name": "Pryor, Glendenning & Haas LLP",
+      "role": "initial purchaser's counsel"
+    },
+    {
+      "name": "Brantley & Whitford LLP",
+      "role": "trustee's counsel"
+    },
+    {
+      "name": "Clarendon Harris & Co. LLP",
+      "role": "independent auditor"
+    },
+    {
+      "name": "Pinnacle Ratings Group, Inc.",
+      "role": "rating agency (indicative)"
+    },
+    {
+      "name": "Tallgrass Capital Holdings LP",
+      "role": "majority owner / sponsor (68.2%)"
+    }
+  ],
+  "firm": {
+    "responsible_partner": "Robert Adeyemi",
+    "billing_partner": "Jennifer Kwon",
+    "originating_partner": null,
+    "supervising_attorneys": [],
+    "associates": [
+      "Claire Dempsey (Lead Associate)",
+      "Audrey Zhou (Working Associate)"
+    ],
+    "paralegals": [],
+    "other_staff": [],
+    "practice_group": "Capital Markets",
+    "sub_practice": null,
+    "office": "New York (600 Lexington Avenue)"
+  },
+  "practice_area": "Capital Markets",
+  "sub_practice_area": "Debt Offerings",
+  "dates": {
+    "engagement_letter": "2022-02-21",
+    "opened": "2022-02-21",
+    "conflicts_cleared": null,
+    "closed": "2022-07-15",
+    "key_deadlines": []
+  },
+  "billing": {
+    "arrangement": "hourly",
+    "rates": [
+      {
+        "person": "Robert Adeyemi (Partner)",
+        "rate": "$1,300/hr"
+      },
+      {
+        "person": "Jennifer Kwon (Partner)",
+        "rate": "$1,250/hr"
+      },
+      {
+        "person": "Claire Dempsey (Lead Associate)",
+        "rate": "$925/hr"
+      },
+      {
+        "person": "Audrey Zhou (Working Associate)",
+        "rate": "$700/hr"
+      }
+    ],
+    "budget": "$350,000-$425,000 estimated total fees (not a cap)",
+    "retainer": null
+  },
+  "status": {
+    "value": "terminated early",
+    "as_of": "2022-07-15",
+    "basis": "Client closing letter (July 15, 2022): 'the offering was terminated prior to closing, and no Notes were issued, sold, or delivered to any investor' and confirms 'the administrative closing of the above-referenced matter.'"
+  },
+  "jurisdictions": [
+    "Iowa",
+    "New York",
+    "Delaware"
+  ],
+  "regulators_or_courts": [
+    "Securities and Exchange Commission (SEC)",
+    "FINRA"
+  ],
+  "governing_law": "New York",
+  "deal_or_case": {
+    "transaction_value": "$30,000,000",
+    "case_number": null,
+    "filing_numbers": [
+      "CUSIP 39572L AA 3 (reserved, never activated)",
+      "ISIN US39572LAA35 (reserved, never activated)"
+    ],
+    "significant_events": [
+      {
+        "date": "2022-02-21",
+        "what": "Engagement letter executed; matter opened"
+      },
+      {
+        "date": "2022-06-15",
+        "what": "Indenture draft v.6 (final exchanged draft) circulated"
+      },
+      {
+        "date": "2022-06-20",
+        "what": "Purchase Agreement executed by GAP and Ridgeline Securities"
+      },
+      {
+        "date": "2022-06-28",
+        "what": "Pricing call failed to build sufficient order book; offering pulled"
+      },
+      {
+        "date": "2022-07-01",
+        "what": "Ridgeline terminated Purchase Agreement under Section 9(b) market-out provision"
+      },
+      {
+        "date": "2022-07-15",
+        "what": "Matter formally closed (terminated)"
+      }
+    ]
+  },
+  "keywords": [
+    "Rule 144A",
+    "private placement",
+    "senior unsecured notes",
+    "offering memorandum",
+    "indenture",
+    "purchase agreement",
+    "registration rights agreement",
+    "market-out provision",
+    "high-yield bonds",
+    "qualified institutional buyers",
+    "initial purchaser",
+    "expense reimbursement",
+    "termination"
+  ],
+  "evidence": {
+    "status.value": "Client closing letter, July 15, 2022, Section I: offering 'terminated prior to closing, and no Notes were issued, sold, or delivered to any investor'; letter formally confirms 'administrative closing.'",
+    "client.industry": "Client closing letter: proceeds were to fund 'the construction and commissioning of the Company's new adjuvant blending facility... a significant expansion of the Company's specialty crop-protection product manufacturing capabilities.'"
+  }
+}

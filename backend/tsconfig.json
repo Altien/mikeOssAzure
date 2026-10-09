@@ -1,17 +1,24 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "CommonJS",
-    "moduleResolution": "node",
-    "ignoreDeprecations": "5.0",
+    "module": "Node16",
+    "moduleResolution": "Node16",
     "outDir": "./dist",
+    // Emitted next to each .js so `node --enable-source-maps` (set through
+    // NODE_OPTIONS in the Dockerfile and the start script) rewrites stack
+    // frames to the .ts file and line — what Sentry shows for a backend error.
+    "sourceMap": true,
     "rootDir": "./src",
     "strict": true,
+    // Unused imports, locals and private functions fail the build instead of
+    // accumulating unnoticed.
+    "noUnusedLocals": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "types": ["node", "express", "cors", "multer"],
+    "types": ["node", "express", "cors"],
     "paths": {
+      "@mike/contracts": ["../packages/contracts/index.d.ts"],
       "@/*": ["./src/*"]
     }
   },
