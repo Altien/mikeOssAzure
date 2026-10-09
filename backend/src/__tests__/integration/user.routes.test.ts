@@ -645,7 +645,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .get("/user/custom-instructions")
+                .get("/api/user/custom-instructions")
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
@@ -657,7 +657,7 @@ describe("user.routes", () => {
             supabaseState.missingColumns = ["custom_instructions"];
 
             const res = await request(app)
-                .get("/user/custom-instructions")
+                .get("/api/user/custom-instructions")
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
@@ -671,7 +671,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .put("/user/custom-instructions")
+                .put("/api/user/custom-instructions")
                 .set(...AUTH)
                 .send({ content: "Be concise.\r\n\n" });
 
@@ -684,14 +684,14 @@ describe("user.routes", () => {
 
         it("rejects over-long or non-string content", async () => {
             const tooLong = await request(app)
-                .put("/user/custom-instructions")
+                .put("/api/user/custom-instructions")
                 .set(...AUTH)
                 .send({ content: "x".repeat(8001) });
             expect(tooLong.status).toBe(400);
             expect(tooLong.body.detail).toMatch(/8000 characters or fewer/);
 
             const wrongType = await request(app)
-                .put("/user/custom-instructions")
+                .put("/api/user/custom-instructions")
                 .set(...AUTH)
                 .send({ content: 1 });
             expect(wrongType.status).toBe(400);
