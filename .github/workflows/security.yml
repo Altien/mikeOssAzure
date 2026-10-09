@@ -40,7 +40,7 @@ jobs:
 
   # Blocking for EVERY tree in the matrix below: high/critical advisories
   # fail the build unless their GHSA id is documented (with a reason) in
-  # scripts/audit-allowlist.json — see scripts/audit-gate.mjs. Auditing
+  # scripts/audit-allowlist.json — see scripts/pnpm-audit-gate.mjs. Auditing
   # straight from the pnpm lockfile needs no dependency install.
   # Advisories with no non-breaking fix anywhere in the ecosystem get an
   # allowlist entry instead of demoting the whole job to report-only (which
