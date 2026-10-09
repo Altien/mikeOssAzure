@@ -42,6 +42,12 @@ because the existing document pipeline does not support that format.
   copy and never overwrites an existing template.
 - Preserve source/license notices and distinguish Bonterms' per-document license
   exceptions. Catalog updates never replace users' imported copies.
+- Dev deployment: the bundled files are application assets. `next build` copies
+  them into the static export, and the backend serves them with the rest of the
+  export (`express.static`, outside `/api`, no authentication). An added copy
+  goes through the authenticated `/api` upload session into the user's private
+  Blob storage like any other upload. The folder presets route reads its folder
+  id from the URL (`usePathParams`), as other static-export routes do.
 
 ## Non-goals / out of scope
 
