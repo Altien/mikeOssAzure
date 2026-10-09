@@ -35,6 +35,7 @@ import {
     CLAUDE_MAIN_MODELS,
     GEMINI_MAIN_MODELS,
     OPENAI_MAIN_MODELS,
+    KIMI_MAIN_MODELS,
     MISTRAL_MAIN_MODELS,
     LEGACY_MODEL_IDS as BACKEND_LEGACY_MODEL_IDS,
     reasoningLevelsForModel as backendReasoningLevels,
@@ -47,6 +48,8 @@ describe("word add-in catalog parity", () => {
             ...CLAUDE_MAIN_MODELS,
             ...GEMINI_MAIN_MODELS,
             ...OPENAI_MAIN_MODELS,
+            // Dev (OSS-6): Kimi K3 stays a first-class catalog provider.
+            ...KIMI_MAIN_MODELS,
             ...MISTRAL_MAIN_MODELS,
         ]);
         expect(LEGACY_MODEL_IDS).toEqual(BACKEND_LEGACY_MODEL_IDS);

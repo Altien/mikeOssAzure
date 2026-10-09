@@ -214,6 +214,7 @@ describe("UserProfileContext: bootstrap fetch on mount", () => {
             claude: { configured: false, source: null },
             gemini: { configured: true, source: "env" },
             openai: { configured: false, source: null },
+            mistral: { configured: false, source: null },
             openrouter: { configured: false, source: null },
             vercel: { configured: false, source: null },
             "opencode-go": { configured: false, source: null },
