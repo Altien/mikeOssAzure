@@ -1,7 +1,24 @@
+import { availableParallelism, totalmem } from "node:os";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 import tsconfigPaths from "vite-tsconfig-paths";
 import react from "@vitejs/plugin-react";
+
+// Local worker cap. Vitest's default for `vitest run` is one fork per CPU
+// core minus one, so on a 10-12 core laptop a single `pnpm test` starts 9-11
+// forks, and running the frontend and backend suites together doubles that.
+// The frontend forks each boot jsdom. That was enough to crash a teammate's
+// laptop. Locally we use at most half the cores and at most one worker per
+// 4 GiB of RAM (8 GiB -> 2, 16 GiB -> 4). CI runners are dedicated machines,
+// so they keep Vitest's default. To change the cap for one run, pass
+// `--maxWorkers=<n>` or set VITEST_MAX_WORKERS.
+const localMaxWorkers = Math.max(
+    Math.min(
+        Math.floor(availableParallelism() / 2),
+        Math.floor(totalmem() / (4 * 1024 ** 3)),
+    ),
+    1,
+);
 
 export default defineConfig({
     plugins: [tsconfigPaths(), react()],
@@ -20,6 +37,7 @@ export default defineConfig({
     },
     test: {
         environment: "jsdom",
+        maxWorkers: process.env.CI ? undefined : localMaxWorkers,
         globals: false,
         include: ["src/**/*.{test,spec}.{ts,tsx}"],
         setupFiles: ["src/test/setup.ts"],
