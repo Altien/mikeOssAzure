@@ -16,7 +16,10 @@ leave the process. It retains bounded error identity, code location, operation
 labels, normalized route, status, and validated request IDs. Request bodies,
 headers, cookies, URLs with queries, chat or document text, user identities,
 breadcrumbs, replay, attachments, traces, and non-error envelopes are excluded.
-`sendDefaultPii` stays false. Browser Sentry starts only after runtime config
+With SDK v11, every SDK option sets `dataCollection` to collect nothing optional
+(no user info, cookies, headers, bodies, URL query parameters, AI inputs or
+outputs, stack-frame variables or context lines); the backend also keeps
+`maxRequestBodySize: "none"`. Browser Sentry starts only after runtime config
 loads; the add-in does the same for its task pane and commands. It is safe for
 `/config` to expose a DSN because it only authorizes submission of reports,
 not access to stored reports.

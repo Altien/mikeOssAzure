@@ -226,7 +226,9 @@ describe("initSentry", () => {
     expect(options.initialScope).toEqual({
       tags: { service: "mike-backend", role: "worker", install: "community", build_mode: "test", diagnostics_version: "2" },
     });
-    expect(sentryMock.httpIntegration).toHaveBeenCalledWith();
+    expect(sentryMock.httpIntegration).toHaveBeenCalledWith({
+      maxRequestBodySize: "none",
+    });
     // Crash parity: an unhandled rejection must still take the process
     // down, as it does without a DSN (Node's default), not be swallowed.
     expect(sentryMock.onUnhandledRejectionIntegration).toHaveBeenCalledWith({

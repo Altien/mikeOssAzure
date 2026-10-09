@@ -833,7 +833,10 @@ export function initSentry(
     // means they never sit in memory on the event either.
     integrations: [
       privacyBoundaryIntegration(),
-      Sentry.httpIntegration(),
+      // Dev (sync-log: f4cf97c7): upstream relies on dataCollection.httpBodies
+      // alone in SDK v11. Dev also keeps the integration's own body limit
+      // (v11 renamed maxIncomingRequestBodySize to maxRequestBodySize).
+      Sentry.httpIntegration({ maxRequestBodySize: "none" }),
       Sentry.captureConsoleIntegration({ levels: ["error"] }),
       // Node 22 crashes on an unhandled rejection; the SDK's default "warn"
       // mode registers its own listener, which silently turns that crash
