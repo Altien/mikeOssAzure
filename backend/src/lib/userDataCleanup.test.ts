@@ -118,7 +118,7 @@ describe("deleteUserProjects", () => {
 
   // Dev drift: upstream #295 moved storage cleanup to the documents module's
   // inline/durable cleanup; storage-key assertions now live in
-  // lib/__tests__/userDataCleanup.test.ts ("cascades project contents and
+  // modules/user/__tests__/user.dataCleanup.test.ts ("cascades project contents and
   // storage files for owned projects"). This keeps the ownership filter check.
   it("only deletes projects the user owns", async () => {
     const { db, calls } = makeFakeDb((call) => {
@@ -158,4 +158,5 @@ describe("deleteUserProjects", () => {
 // (storage objects + prefixes, owned tables, OSS submissions, workflow shares,
 // shared_with scrubbing, no-email path, prefix-failure retry, and Dev's
 // user_router_models erasure) lives in the stateful-fake suites
-// lib/__tests__/userDataCleanup.test.ts and userDataCleanup.orgs.test.ts.
+// modules/user/__tests__/user.dataCleanup.test.ts and
+// user.dataCleanup.orgs.test.ts.
