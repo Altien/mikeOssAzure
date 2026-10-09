@@ -135,21 +135,6 @@ Before requesting review, please make sure:
 - The PR description has a one-paragraph summary, a "test plan"
   section listing what you exercised, and any rollback / risk notes.
 
-## Testing
-
-We are putting together a proper test suite over the coming weeks;
-until that lands, contributions should include a written test plan
-in the PR description describing how you exercised the change. Once
-the suite is in place this section will be updated with concrete
-expectations (which suites must pass, where to put new tests, fixture
-conventions).
-
-In the meantime, the local docker stack
-(`docker-compose.dev.yml` plus `npm run dev --prefix backend` and
-`npm run dev --prefix frontend`) is the canonical "does it actually
-work" environment. Please exercise the golden path and at least one
-failure mode before opening a PR.
-
 ## Migrations
 
 Nothing migrates on boot — several replicas can start against one database,
