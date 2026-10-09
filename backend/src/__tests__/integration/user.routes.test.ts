@@ -324,7 +324,7 @@ describe("user.routes", () => {
         saveUserApiKey.mockResolvedValue(undefined);
         hasEnvApiKey.mockReturnValue(false);
         normalizeApiKeyProvider.mockImplementation((v: string) =>
-            ["claude", "openai", "gemini", "openrouter", "vercel"].includes(v)
+            ["claude", "openai", "gemini", "mistral", "openrouter", "vercel"].includes(v)
                 ? v
                 : null,
         );
@@ -847,6 +847,20 @@ describe("user.routes", () => {
             expect(res.body).toEqual(ORG_KEY_REFUSAL);
             expect(saveUserApiKey).not.toHaveBeenCalled();
             expect(JSON.stringify(res.body)).not.toContain("sk-");
+        });
+
+        it("refuses a personal Mistral key and names the organisation secret", async () => {
+            const res = await request(app)
+                .put("/api/user/api-keys/mistral")
+                .set(...AUTH)
+                .send({ api_key: "personal-mistral-key" });
+
+            expect(res.status).toBe(403);
+            expect(res.body.code).toBe("organisation_api_key_required");
+            expect(res.body.detail).toContain("mistral-api-key");
+            expect(res.body.detail).toContain("/install");
+            expect(saveUserApiKey).not.toHaveBeenCalled();
+            expect(JSON.stringify(res.body)).not.toContain("personal-mistral-key");
         });
 
         it("refuses the delete form (api_key omitted) as well", async () => {

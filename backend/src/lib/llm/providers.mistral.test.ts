@@ -150,11 +150,14 @@ describe("direct Mistral adapter", () => {
 
   it("rejects a missing key without falling through to Ollama", async () => {
     vi.stubEnv("MISTRAL_API_KEY", "");
+    vi.stubEnv("KEY_VAULT_NAME", "");
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
+    // Dev: the credential is organisation-owned, so the error names the Key
+    // Vault secret an administrator sets in /install, not an env var.
     await expect(
       completeWithProvider({ model: "mistral-small-2603", user: "Title" }),
-    ).rejects.toThrow("MISTRAL_API_KEY");
+    ).rejects.toThrow("mistral-api-key");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

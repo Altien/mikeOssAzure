@@ -17,16 +17,20 @@ use 3.8 Flash. A saved title-model override continues to take precedence.
 
 ## Mistral setup
 
-Create an API key in [Mistral Studio](https://console.mistral.ai/), then save it
-under Settings → Bring Your Own Keys → Mistral AI API Key. Self-hosted deployments
-can instead set `MISTRAL_API_KEY` in `backend/.env`. Personal keys override the
-deployment key; removing a personal key restores the environment fallback.
+Create an API key in [Mistral Studio](https://console.mistral.ai/). In this
+deployment provider credentials belong to the organisation: an administrator
+stores the key once through `/install` (AI providers → Mistral AI API key), which
+writes the Key Vault secret `mistral-api-key`. The backend reads that secret
+first and falls back to `MISTRAL_API_KEY` only for local development. Users do
+not save personal keys; Settings → API Keys shows whether the organisation
+credential is configured, and a personal key write returns
+`organisation_api_key_required`.
 
-Before deploying this version to an existing database, apply
-`backend/migrations/20261007_01_add_mistral_user_api_key_provider.sql` using the
-normal [deployment procedure](deployment.md). Fresh installs use the updated
-`backend/schema.sql`. The migration only extends the existing provider constraint;
-encrypted storage, ownership checks, and RLS are unchanged.
+Dev divergence (sync-log: 2f30082a): upstream's
+`20261007_01_add_mistral_user_api_key_provider.sql` only widens the
+`user_api_keys` provider constraint for personal keys. Dev stores no personal
+provider keys, so no numbered migration was added. Azure OpenAI deployments and
+Kimi K3 remain first-class organisation providers alongside this catalog.
 
 Mistral requests use the native `@ai-sdk/mistral` adapter at
 `https://api.mistral.ai/v1`. Streaming, tool calls, tool results, and reasoning

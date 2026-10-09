@@ -167,6 +167,7 @@ describe("organisation provider credentials", () => {
       "gemini-api-key": "org-gemini",
       "openai-api-key": "org-openai",
       "moonshot-api-key": "org-kimi",
+      "mistral-api-key": "org-mistral",
       "openrouter-api-key": "org-openrouter",
       "ai-gateway-api-key": "org-vercel",
       "opencode-api-key": "org-opencode",
@@ -188,6 +189,7 @@ describe("organisation provider credentials", () => {
       gemini: "org-gemini",
       openai: "org-openai",
       kimi: "org-kimi",
+      mistral: "org-mistral",
       openrouter: "org-openrouter",
       vercel: "org-vercel",
       "opencode-go": "org-opencode",
@@ -647,6 +649,7 @@ describe("getConfiguredProviders", () => {
       gemini: false,
       openai: false,
       kimi: false, // Dev drift: Dev keeps the Kimi provider slot
+      mistral: false,
       openrouter: false,
       vercel: false,
       "opencode-go": false,
@@ -678,6 +681,7 @@ describe("getConfiguredProviders", () => {
       gemini: false,
       openai: true,
       kimi: false, // Dev drift: Dev keeps the Kimi provider slot
+      mistral: false,
       openrouter: false,
       vercel: false,
       "opencode-go": false,
@@ -699,6 +703,7 @@ describe("getConfiguredProviders", () => {
       gemini: false,
       openai: false,
       kimi: false, // Dev drift: Dev keeps the Kimi provider slot
+      mistral: false,
       openrouter: false,
       vercel: false,
       "opencode-go": false,

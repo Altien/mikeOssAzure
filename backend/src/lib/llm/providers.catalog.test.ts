@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { completeWithProvider } from "./providers";
 
 describe("current provider model compatibility", () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
 
   it.each([
     ["gpt-6-astra", "low"],
@@ -11,6 +14,9 @@ describe("current provider model compatibility", () => {
   ])(
     "uses Responses and supported reasoning for %s completions",
     async (model, effort) => {
+      // Dev divergence: Chat Completions is the default OpenAI transport
+      // (8de323f0); OPENAI_API_MODE=responses selects upstream's Responses.
+      vi.stubEnv("OPENAI_API_MODE", "responses");
       const fetchMock = vi.fn().mockResolvedValue(
         Response.json({
           id: "resp_test",
@@ -44,6 +50,45 @@ describe("current provider model compatibility", () => {
       expect(JSON.parse(init.body)).toMatchObject({
         model,
         reasoning: { effort },
+      });
+    },
+  );
+
+  it.each([
+    ["gpt-6-astra", "low"],
+    ["gpt-6-luna", "none"],
+  ])(
+    "sends supported reasoning over Dev's default Chat Completions for %s",
+    async (model, effort) => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        Response.json({
+          id: "chatcmpl_test",
+          object: "chat.completion",
+          created: 1,
+          model,
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: "Title" },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      await expect(
+        completeWithProvider({
+          model,
+          user: "Title",
+          apiKeys: { openai: "test-key" },
+        }),
+      ).resolves.toBe("Title");
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe("https://api.openai.com/v1/chat/completions");
+      expect(JSON.parse(init.body)).toMatchObject({
+        model,
+        reasoning_effort: effort,
       });
     },
   );

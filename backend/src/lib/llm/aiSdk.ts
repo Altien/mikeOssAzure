@@ -623,18 +623,18 @@ export async function completeAiSdkText(
   config: AiSdkAdapterConfig,
 ): Promise<string> {
   const { generateText } = await import("ai");
-  const completionReasoning = params.reasoningEffort
-    ? normalizeReasoningLevelForModel(config.modelId, params.reasoningEffort)
-    : undefined;
+  // Upstream 2f30082a: lightweight completions disable reasoning by default
+  // ("none", moved to the nearest supported level). Dev keeps an explicit
+  // caller effort (Altien skills ask for "low").
+  const completionReasoning = normalizeReasoningLevelForModel(
+    config.modelId,
+    params.reasoningEffort ?? "none",
+  );
   const result = await generateText({
     model: config.model,
     system: params.systemPrompt,
     prompt: params.user,
     maxOutputTokens: params.maxTokens ?? 512,
-    // Dev keeps the caller's reasoningEffort (upstream always sends "none");
-    // upstream 2f30082a's intent is kept by moving the level to the nearest
-    // one the model supports (Astra, Sol 6.1 and current Fable/Opus cannot
-    // disable thinking).
     reasoning: config.provider === "kimi" || config.supportsReasoning === false
       ? undefined
       : completionReasoning === "max" ? "xhigh" : completionReasoning,

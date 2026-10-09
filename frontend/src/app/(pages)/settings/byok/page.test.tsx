@@ -68,6 +68,8 @@ describe("organisation API key status", () => {
         ).toHaveLength(3);
         expect(screen.getByText("Kimi K3")).toBeInTheDocument();
         expect(screen.getByText("Key Vault: moonshot-api-key")).toBeInTheDocument();
+        expect(screen.getByText("Mistral AI")).toBeInTheDocument();
+        expect(screen.getByText("Key Vault: mistral-api-key")).toBeInTheDocument();
         expect(
             screen.getAllByText("Administrator action required").length,
         ).toBeGreaterThan(0);

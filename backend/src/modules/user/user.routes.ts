@@ -395,6 +395,7 @@ const ORGANISATION_CREDENTIALS: Record<
     gemini: { label: "Gemini", secretNames: ["gemini-api-key"] },
     openai: { label: "OpenAI", secretNames: ["openai-api-key"] },
     kimi: { label: "Kimi K3", secretNames: ["moonshot-api-key"] },
+    mistral: { label: "Mistral AI", secretNames: ["mistral-api-key"] },
     openrouter: { label: "OpenRouter", secretNames: ["openrouter-api-key"] },
     "opencode-go": { label: "OpenCode Go", secretNames: ["opencode-api-key"] },
     vercel: { label: "Vercel AI Gateway", secretNames: ["ai-gateway-api-key"] },

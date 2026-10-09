@@ -260,6 +260,28 @@ const items: ManifestItem[] = [
         },
     },
     {
+        // Upstream 2f30082a added direct Mistral models with per-user keys;
+        // Dev keeps it an organisation credential in Key Vault.
+        id: "ai-mistral-key",
+        label: "Mistral AI API key",
+        section: "AI providers",
+        required: false,
+        check: () => checkKvSecret("mistral-api-key", { redacted: true }),
+        fixedBy: {
+            type: "in-app-form",
+            submitTo: "kv",
+            fields: [{
+                name: "mistral-api-key",
+                label: "Mistral AI API key",
+                type: "password",
+                required: true,
+                helpText:
+                    "Organisation-wide key for direct Mistral models. " +
+                    "Create one in Mistral Studio (console.mistral.ai).",
+            }],
+        },
+    },
+    {
         id: "ai-gemini-key",
         label: "Google Gemini API key",
         section: "AI providers",

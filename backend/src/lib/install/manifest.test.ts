@@ -17,6 +17,16 @@ it("stores OpenCode Go once per organisation in its canonical Key Vault secret",
     });
 });
 
+it("stores the direct Mistral credential once per organisation in Key Vault", () => {
+    expect(findManifestItem("ai-mistral-key")).toMatchObject({
+        section: "AI providers",
+        required: false,
+        fixedBy: { type: "in-app-form", submitTo: "kv", fields: [
+            { name: "mistral-api-key", type: "password", required: true },
+        ] },
+    });
+});
+
 describe("Kimi K3 install manifest item", () => {
     it("stores one organisation Moonshot key in Key Vault", () => {
         expect(findManifestItem("ai-kimi-key")).toMatchObject({
