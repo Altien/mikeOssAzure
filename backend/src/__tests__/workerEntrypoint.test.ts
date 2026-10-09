@@ -8,6 +8,9 @@ import { pathToFileURL } from "node:url";
 
 const backendRoot = path.resolve(__dirname, "../..");
 const secret = (byte: number) => Buffer.alloc(32, byte).toString("base64url");
+// Child-process boot budget, and each test's timeout above it (spawn + kill).
+const READINESS_MS = 20_000;
+const TEST_TIMEOUT_MS = READINESS_MS + 10_000;
 
 async function withStubDb(fn: (url: string) => Promise<void>) {
     // Worker readiness probes auth_sessions, db_jobs and the claim RPC. The
@@ -62,7 +65,10 @@ async function assertWorkerReady(cwd: string, env: Record<string, string>) {
                         resolve("ready");
                     }
                 }, 25);
-                setTimeout(() => { clearInterval(timer); resolve("ready"); }, 8_000);
+                // The child transpiles the whole worker graph with tsx before
+                // its readiness probes: ~5-6 s alone, past 8 s under full-suite
+                // load. A hung or crashed worker still fails (exit / no banner).
+                setTimeout(() => { clearInterval(timer); resolve("ready"); }, READINESS_MS);
             }),
         ]);
         expect(outcome, output).toBe("ready");
@@ -79,7 +85,7 @@ describe("standalone worker entrypoint", () => {
         await withStubDb(async url => {
             await assertWorkerReady(backendRoot, workerEnv(url));
         });
-    }, 20_000);
+    }, TEST_TIMEOUT_MS);
 
     it("loads required configuration from a bare-metal .env", async () => {
         await withStubDb(async url => {
@@ -106,5 +112,5 @@ describe("standalone worker entrypoint", () => {
                 rmSync(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
             }
         });
-    }, 20_000);
+    }, TEST_TIMEOUT_MS);
 });

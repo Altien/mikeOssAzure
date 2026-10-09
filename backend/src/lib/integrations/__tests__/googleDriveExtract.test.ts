@@ -71,7 +71,9 @@ describe("isolated Google Drive document parsing", () => {
                 "application/pdf",
             ),
         ).toContain("payment 17 days");
-    });
+        // The forked child boots tsx and loads the PDF parser (~1.6 s alone);
+        // under full-suite load that exceeded the 5 s default.
+    }, 15_000);
     it("rejects expanded DOCX content above the configured budget", async () => {
         vi.stubEnv("GOOGLE_DRIVE_DOCX_EXPANDED_MB", "1");
         const zip = new JSZip();

@@ -207,7 +207,9 @@ it("preserves the chosen grouped source and collapsed pane through 300 row refre
     // Actual navigation still resets to the next cell's requested source.
     view.rerender(<TRSidePanel {...props} cell={{ ...cell, id: "cell-2" }} />);
     expect(screen.getByText("PDF doc-1")).toBeInTheDocument();
-});
+    // 300 synchronous re-renders take ~2.7 s alone and exceed the 5 s default
+    // under full-suite load; the count is the point of the test.
+}, 15_000);
 
 it.each(["membership", "document"] as const)(
     "retires a grouped source removed from the %s list without reopening it on refresh",

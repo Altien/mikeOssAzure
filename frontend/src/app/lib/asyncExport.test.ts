@@ -96,10 +96,15 @@ describe("runUserExport", () => {
 
     it("gives up after the poll limit instead of polling forever", async () => {
         getUserExportStatusMock.mockResolvedValue({ status: "pending" });
+        // Fake timers: 150 real 10 ms sleeps took 2-5 s under full-suite load
+        // (Windows timer granularity) and hit the 5 s default timeout.
+        vi.useFakeTimers();
 
-        await expect(runUserExport("tabular-reviews")).rejects.toThrow(
+        const outcome = expect(runUserExport("tabular-reviews")).rejects.toThrow(
             "Export timed out",
         );
+        await vi.runAllTimersAsync();
+        await outcome;
         expect(getUserExportStatusMock).toHaveBeenCalledTimes(150);
         expect(downloadUserExportMock).not.toHaveBeenCalled();
     });

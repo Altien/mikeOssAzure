@@ -131,7 +131,9 @@ describe("TRChatPanel header", () => {
         }
         expect(screen.getByText("Selection 16")).toBeInTheDocument();
         expect(screen.queryByText("Selection 0")).not.toBeInTheDocument();
-    });
+        // 32 userEvent menu clicks take ~2.6 s alone and exceed the 5 s
+        // default under full-suite load; the race needs all sixteen.
+    }, 15_000);
 
     it("ignores an old history failure while the latest selection is still loading", async () => {
         type History = Awaited<ReturnType<typeof getTabularChatMessages>>;

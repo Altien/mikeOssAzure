@@ -99,7 +99,9 @@ describe("PersonalisationPage", () => {
       "Saved",
     );
     expect(screen.queryByText("(optional)")).not.toBeInTheDocument();
-  });
+    // Nine userEvent menu interactions take ~2.3 s alone and exceed the 5 s
+    // default under full-suite load.
+  }, 15_000);
 
   it("still saves unrelated fields while an Other box is empty, and says why", async () => {
     const user = userEvent.setup();

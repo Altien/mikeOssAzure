@@ -96,7 +96,9 @@ describe("OnboardingPracticePage", () => {
       }),
     );
     expect(replace).toHaveBeenCalledWith("/assistant");
-  });
+    // Eleven userEvent interactions plus typing take ~2.8 s alone and exceed
+    // the 5 s default under full-suite load.
+  }, 15_000);
 
   it("requires free text when Other is selected", async () => {
     const user = userEvent.setup();
