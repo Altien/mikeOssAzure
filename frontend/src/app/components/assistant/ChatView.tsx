@@ -462,8 +462,8 @@ export function ChatView({
      * AssistantMessage when the user clicks an EditCard's View button.
      */
     const openEditor = useCallback(
-        (ann: EditAnnotation, filename: string, changeNumber?: number) => {
-            const document = {
+        async (ann: EditAnnotation, filename: string, changeNumber?: number) => {
+            const resolution = await resolvePanelDocumentVersionResult({
                 document_id: ann.document_id,
                 title: filename,
                 type: panelDocumentType(filename),
@@ -471,7 +471,12 @@ export function ChatView({
                 quotes: [],
                 version_id: ann.version_id ?? null,
                 version_number: ann.version_number ?? null,
-            };
+            });
+            if (resolution.status !== "resolved") {
+                reportUnresolvedDocument(resolution.status);
+                return;
+            }
+            const document = resolution.document;
             upsertTab({
                 kind: "edit",
                 id: assistantSidePanelTabId(document),
@@ -480,7 +485,7 @@ export function ChatView({
                 changeNumber,
             });
         },
-        [upsertTab],
+        [reportUnresolvedDocument, upsertTab],
     );
 
     /**
@@ -1298,12 +1303,12 @@ export function ChatView({
                                             chatKey={chatId}
                                             canSend={canSend}
                                             chatLoading={chatLoading}
-                                            onSubmit={(response, content, files) => {
-                                                void handleChat(
+                                            onSubmit={(response, content, files) =>
+                                                handleChat(
                                                     { role: "user", content, files },
                                                     { askInputsResponse: response },
-                                                );
-                                            }}
+                                                )
+                                            }
                                             onCancel={cancel}
                                         >
                                             <ChatInput
