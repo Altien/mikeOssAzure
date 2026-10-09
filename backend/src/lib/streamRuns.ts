@@ -173,6 +173,7 @@ function frameChunk(frame: Frame): string {
 function remove(run: StoredRun) {
     if (run.retention) clearTimeout(run.retention);
     if (run.lifetime) clearTimeout(run.lifetime);
+    if (run.idle) clearTimeout(run.idle);
     if (run.grace) clearTimeout(run.grace);
     if (run.heartbeat) clearInterval(run.heartbeat);
     runs.delete(run.id);
@@ -447,6 +448,9 @@ function remoteRun<Meta>(row: RunRow): StreamRun<Meta> {
         get seq() { return Number(row.seq); },
         get finished() { return row.state === "finished" || row.state === "owner_lost"; },
         get stopped() { return row.state === "stopping"; },
+        // Dev (sync-log: d3a6565a): the stop reason lives only on the owner;
+        // a remote reader learns it from the owner's terminal frame.
+        stopReason: null,
         write: () => false, finish: () => {}, stop: () => {},
         subscribe(from, subscriber) {
             let detached = false;
