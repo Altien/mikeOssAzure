@@ -195,11 +195,7 @@ export function courtlistenerOpinionMetadata(
   if (!opinion) return null;
   const opinionId =
     numberField(opinion, "opinionId") ?? numberField(opinion, "id");
-  const text =
-    stringField(opinion, "text") ??
-    (stringField(opinion, "html")
-      ? stripOpinionHtml(stringField(opinion, "html")!)
-      : null);
+  const text = opinionText(opinion);
   const cached =
     typeof opinionId === "number"
       ? externalSources?.get(
@@ -264,12 +260,7 @@ export function cachedCaseOpinionTexts(
               courtlistenerExternalSourceId(record.clusterId, opinionId),
             )
           : undefined;
-      const text =
-        cached?.source.text ??
-        stringField(opinion, "text") ??
-        (stringField(opinion, "html")
-          ? stripOpinionHtml(stringField(opinion, "html")!)
-          : null);
+      const text = cached?.source.text ?? opinionText(opinion);
       if (!text) return null;
       return {
         opinion_id: opinionId,

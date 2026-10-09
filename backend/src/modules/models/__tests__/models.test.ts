@@ -26,7 +26,6 @@ vi.mock("../../user/user.service", () => ({
 }));
 
 import { modelsRouter } from "../models.routes";
-import { resetModelRegistryCache } from "../../../lib/llm/registry";
 import {
     INTERNAL_ERROR_CODE,
     INTERNAL_ERROR_MESSAGE,

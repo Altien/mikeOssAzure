@@ -11,7 +11,6 @@ import { installProcessGuards } from "./lib/processGuards";
 installProcessGuards();
 import { parentPort } from "node:worker_threads";
 import { startAllWorkers, stopAllWorkers } from "./workerRuntime";
-import { flushSentry, reportError } from "./lib/observability/sentry";
 import { initSentry } from "./lib/observability/sentry";
 
 initSentry("worker-thread");

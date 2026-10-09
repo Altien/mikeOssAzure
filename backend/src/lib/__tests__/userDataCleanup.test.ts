@@ -800,7 +800,7 @@ describe("deleteUserAccountData", () => {
     });
 
     it("propagates document/workflow prefix cleanup failure for durable retry", async () => {
-        const { db, tables } = fixture();
+        const { db } = fixture();
         listFilesMock.mockImplementation(async (prefix: string) => {
             if (prefix === "exports/u1/") return [];
             throw new Error("storage unavailable");

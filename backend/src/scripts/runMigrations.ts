@@ -9,10 +9,6 @@ import { resolveProviderSecret } from "../lib/envSecrets";
 
 const AAD_SCOPE = "https://ossrdbms-aad.database.windows.net/.default";
 
-function getAuthProvider() {
-  return (process.env.AUTH_PROVIDER ?? "supabase").toLowerCase();
-}
-
 function runNodePgMigrate(databaseUrl: string): Promise<number> {
   return new Promise((resolve, reject) => {
     // node-pg-migrate ships as an npm bin. On Windows the resolver is

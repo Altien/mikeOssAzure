@@ -24,13 +24,11 @@ import {
 } from "../../../../altien/authorityTrace/core/service";
 import type {
   VerificationArtifact,
-  VerificationArtifactStore,
 } from "../../../../altien/authorityTrace/core/service";
 import {
   executeMcpToolCall,
   type McpToolEvent,
 } from "../../../../lib/mcpConnectors";
-import { createServerSupabase } from "../../../../lib/supabase";
 import {
   APPROVAL_UNAVAILABLE_MESSAGE,
   planConnectorToolCall,

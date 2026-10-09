@@ -1752,7 +1752,6 @@ async function renderCustomDomainPage(
 ): Promise<string> {
     const kvName = process.env.KEY_VAULT_NAME ?? "<your-kv>";
     const rgName = process.env.RESOURCE_GROUP ?? "<your-rg>";
-    const subscriptionId = process.env.SUBSCRIPTION_ID ?? "<your-subscription-id>";
     const frontendClientId = (await getConfig("entra-client-id").catch(() => "")) || "<your-frontend-app-id>";
     // The Container App Environment name is conventionally `cae-mike-<env>`
     // where <env> is the suffix after `kv-mike-`. Derive defensively;

@@ -2,7 +2,7 @@ import express from "express";
 import { randomUUID } from "node:crypto";
 import cors from "cors";
 import helmet from "helmet";
-import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+import rateLimit from "express-rate-limit";
 import cookieParser from "cookie-parser";
 import path from "node:path";
 import fs from "node:fs";

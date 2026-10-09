@@ -36,13 +36,13 @@ type Envelope = {
 };
 type Assembly = { parts: (string | undefined)[]; bytes: number; expires: NodeJS.Timeout };
 
-const LEASE_SECONDS = 30;
-const NODE_SECONDS = 30;
+// Run leases and node registrations last 30 seconds and finished runs are
+// retained for 60 seconds; those intervals are SQL literals in the queries
+// below (clock_timestamp() + interval ...), not parameters.
 // A 2 MB Word result gains a small JSON envelope before encryption.
 const MAX_RELAY_BYTES = 3 * 1024 * 1024;
 const FRAGMENT_BYTES = 2700;
 const CHANNEL_PREFIX = "mike_stream_";
-const RETENTION_SECONDS = 60;
 
 function channel(id: string): string {
   if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error("Invalid stream node id");

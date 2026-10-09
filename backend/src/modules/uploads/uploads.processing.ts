@@ -30,7 +30,6 @@ import { uploadJobWallClockMs } from "../../lib/runtimeConfig";
 import {
   copyFile,
   createFileReadStream,
-  deleteFileBestEffort,
   StorageOperationError,
   uploadFileFromPath,
   versionStorageKey,

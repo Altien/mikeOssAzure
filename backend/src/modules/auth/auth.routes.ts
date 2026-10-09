@@ -414,7 +414,7 @@ authRouter.get("/oauth-callback/:provider", async (req, res) => {
   try {
     const state = await consumeOAuthState(stateToken, nonce);
     if (!state || state.provider !== provider) { res.status(400).json({ detail: "Invalid or expired OAuth state" }); return; }
-    const { user, session } = await exchangeSupabaseOAuth(code, state.codeVerifier);
+    const { session } = await exchangeSupabaseOAuth(code, state.codeVerifier);
     const credential = supabaseCredential(session);
     if (!(await admit(req, res, credential))) return;
     if (state.requestId) {

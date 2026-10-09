@@ -20,7 +20,7 @@ import {
     type RouterModelSelections,
 } from "./routerModels";
 import { resolveRequestedModel } from "./routerModels";
-import { createServerSupabase, type Db } from "./supabase";
+import { type Db } from "./supabase";
 import { UserFacingError } from "./safeError";
 
 export const MODEL_REQUIRED_DETAIL =

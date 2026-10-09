@@ -1,7 +1,6 @@
 import {
   mkdir,
   mkdtemp,
-  readFile,
   readdir,
   rm,
   utimes,
@@ -234,12 +233,6 @@ const baseFile = {
   status: "uploaded",
   error_code: null,
   document_created_at: null as string | null,
-};
-
-// A file row whose first attempt already wrote the destination document.
-const createdFile = {
-  ...baseFile,
-  document_created_at: "2026-09-16T00:00:00.000Z",
 };
 
 const baseSession = {
