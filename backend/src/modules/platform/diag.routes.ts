@@ -36,15 +36,6 @@ import { validateSupabaseToken } from "../../lib/auth/providers/supabase.js";
 
 export const diagRouter = Router();
 
-function escape(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
 function parseCsv(value: string | undefined): string[] {
   return (value ?? "")
     .split(",")
