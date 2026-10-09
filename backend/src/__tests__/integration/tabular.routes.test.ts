@@ -803,7 +803,7 @@ describe("tabular.routes", () => {
             filterAccessibleDocumentIds.mockResolvedValue([]);
 
             const res = await request(app)
-                .get("/tabular-review/r1")
+                .get("/api/tabular-review/r1")
                 .set(...AUTH);
 
             expect(res.status).toBe(200);

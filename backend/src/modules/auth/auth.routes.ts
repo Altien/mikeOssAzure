@@ -4,6 +4,7 @@ import { getConfig } from "../../lib/config";
 import { validateEntraToken } from "../../lib/auth/providers/entra";
 import { validateLocalToken } from "../../lib/auth/providers/local";
 import { validateSupabaseToken } from "../../lib/auth/providers/supabase";
+import { authorizationEmail } from "../../lib/auth/types";
 import { requestOriginIsTrusted, requestOriginIsWordAddin } from "../../lib/origins";
 import {
   clearServerSessionCookie, consumeAuthHandoff, consumeOAuthState,
@@ -121,7 +122,7 @@ async function admit(req: Request, res: Response, credential: ServerCredential):
   }
   res.locals.principal = result.principal;
   res.locals.userId = result.principal.userId;
-  res.locals.userEmail = result.principal.email;
+  res.locals.userEmail = authorizationEmail(result.principal);
   let allowed = false;
   await tenantAccess(req, res, () => { allowed = true; });
   if (!allowed) return false;

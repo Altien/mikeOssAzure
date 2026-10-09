@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { validateSupabaseToken } from "../lib/auth/providers/supabase.js";
 import { validateLocalToken } from "../lib/auth/providers/local.js";
 import { validateEntraToken } from "../lib/auth/providers/entra.js";
+import { authorizationEmail } from "../lib/auth/types.js";
 import { tenantAccess } from "./tenantAccess.js";
 import { upsertUserProfile } from "../lib/userLookup.js";
 import { createServerSupabase } from "../lib/supabase.js";
@@ -134,7 +135,10 @@ export async function requireAuth(
   }
 
   res.locals.userId = result.principal.userId;
-  res.locals.userEmail = result.principal.email;
+  // Grant/invitation matching input: an unconfirmed address matches nothing
+  // (upstream d146998d; see authorizationEmail). The profile mirror below
+  // keeps the IdP email for display.
+  res.locals.userEmail = authorizationEmail(result.principal);
   res.locals.token = token;
   res.locals.principal = result.principal;
   res.locals.authSource = cookieSession ? "cookie" : "bearer";

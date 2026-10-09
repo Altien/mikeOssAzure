@@ -105,7 +105,13 @@ describe("validateSupabaseToken — token validation", () => {
 
   it("returns a fully-populated principal on success", async () => {
     getUser.mockResolvedValueOnce({
-      data: { user: { id: "user-123", email: "Caller@Example.com" } },
+      data: {
+        user: {
+          id: "user-123",
+          email: "Caller@Example.com",
+          email_confirmed_at: "2026-01-01T00:00:00Z",
+        },
+      },
     });
 
     const result = await validateSupabaseToken("tok");
@@ -115,10 +121,29 @@ describe("validateSupabaseToken — token validation", () => {
       principal: {
         userId: "user-123",
         email: "caller@example.com",
+        emailVerified: true,
         groups: [],
         roles: [],
         provider: "supabase",
       },
+    });
+  });
+
+  // Sync d146998d: grant/invitation matching ignores an unconfirmed address,
+  // so the provider reports whether Supabase confirmed it.
+  it("reports an unconfirmed email as not verified", async () => {
+    getUser.mockResolvedValueOnce({
+      data: { user: { id: "user-123", email: "victim@example.com", email_confirmed_at: null } },
+    });
+
+    const result = await validateSupabaseToken("tok");
+
+    expect(result).toEqual({
+      ok: true,
+      principal: expect.objectContaining({
+        email: "victim@example.com",
+        emailVerified: false,
+      }),
     });
   });
 
