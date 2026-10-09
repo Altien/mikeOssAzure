@@ -9,17 +9,54 @@ import { pillButtonUIClassName } from "@/shared/ui/PillButtonUI.styles";
 import { authGlassCardUIClassName } from "@/shared/ui/AuthStylesUI";
 import { authErrorDescription, safeAuthNext } from "@/app/lib/authRedirects";
 import { getAuthSession } from "@/app/lib/authApi";
+import {
+    UserVisibleError,
+    describeError,
+    supportMailtoFor,
+    type UserFacingError,
+} from "@/app/lib/userFacingError";
+import { LINK_SPENT_MESSAGE, authMessages } from "@/app/lib/authMessages";
+
+/** The shared auth table with this screen's deltas: on the callback route
+ *  every spent one-time code is the same spent confirmation link. */
+const CALLBACK_ERROR_MESSAGES = authMessages({
+    otp_expired: LINK_SPENT_MESSAGE,
+});
+
+/**
+ * A spent or tampered link is a 4xx and deserves the "request a new one"
+ * line; a dropped connection or a 5xx is not the link's fault and must not
+ * send the user chasing a replacement email that would work fine.
+ */
+function describeCallbackError(
+    error: unknown,
+    action: string,
+): UserFacingError {
+    const described = describeError(error, {
+        action,
+        codeMessages: CALLBACK_ERROR_MESSAGES,
+        fallback: LINK_SPENT_MESSAGE,
+    });
+    const linkIsSpent =
+        described.status !== null &&
+        described.status >= 400 &&
+        described.status < 500 &&
+        described.kind !== "rate_limited";
+    return linkIsSpent && !described.code
+        ? { ...described, message: LINK_SPENT_MESSAGE }
+        : described;
+}
 
 function AuthCallbackContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
-    const [error, setError] = useState<string | null>(null);
+    const [error, setError] = useState<UserFacingError | null>(null);
     const isErrorPreview =
         process.env.NODE_ENV !== "production" &&
         searchParams.get("preview") === "confirmation-error";
-    const displayedError = isErrorPreview
+    const displayedMessage = isErrorPreview
         ? "This confirmation link is invalid or has expired."
-        : error;
+        : (error?.message ?? null);
 
     useEffect(() => {
         if (isErrorPreview) return;
@@ -32,25 +69,32 @@ function AuthCallbackContent() {
                 window.location.hash,
             );
             if (providerError) {
-                setError(providerError);
+                // Already a user-facing sentence chosen by authRedirects.
+                setError(
+                    describeError(
+                        new UserVisibleError(providerError, {
+                            kind: "validation",
+                        }),
+                        { action: "confirm your request" },
+                    ),
+                );
                 return;
             }
 
-            // OAuth codes are exchanged only by the backend callback, which
-            // holds the one-use PKCE verifier and browser-bound state.
+            // Upstream divergence (sync-log: c94052d7): only the backend exchanges
+            // codes with server-held PKCE and browser-bound state.
             if (searchParams.has("code")) {
-                setError("This confirmation link is invalid or has expired.");
+                setError(describeError(new UserVisibleError(LINK_SPENT_MESSAGE, { kind: "validation" })));
                 return;
             }
             let session;
-            try {
-                session = await getAuthSession();
-            } catch {
-                setError("Authentication could not be completed. Please try again.");
+            try { session = await getAuthSession(); }
+            catch (caught) {
+                if (!cancelled) setError(describeCallbackError(caught, "confirm your request"));
                 return;
             }
             if (!session) {
-                setError("This confirmation link is invalid or has expired.");
+                if (!cancelled) setError(describeError(new UserVisibleError(LINK_SPENT_MESSAGE, { kind: "validation" })));
                 return;
             }
 
@@ -63,7 +107,7 @@ function AuthCallbackContent() {
         return () => {
             cancelled = true;
         };
-    }, [isErrorPreview, router, searchParams]);
+    }, [isErrorPreview, refreshSession, router, searchParams]);
 
     return (
         <div className="relative flex min-h-dvh items-center justify-center bg-gray-50/80 px-6 py-10">
@@ -72,14 +116,30 @@ function AuthCallbackContent() {
             </div>
             <div className="w-full max-w-md">
                 <div className={authGlassCardUIClassName}>
-                    {displayedError ? (
+                    {displayedMessage ? (
                         <>
                             <h1 className="text-2xl font-medium font-serif text-gray-950">
                                 Unable to confirm
                             </h1>
-                            <p className="mt-3 text-sm leading-relaxed text-gray-600">
-                                {displayedError}
+                            <p
+                                role="alert"
+                                className="mt-3 text-sm leading-relaxed text-gray-600"
+                            >
+                                {displayedMessage}
                             </p>
+                            {error?.supportable && (
+                                <p className="mt-3 text-sm text-gray-500">
+                                    <a
+                                        href={supportMailtoFor(
+                                            error,
+                                            "Failed to complete an auth callback.",
+                                        )}
+                                        className="font-medium underline underline-offset-2"
+                                    >
+                                        Contact support
+                                    </a>
+                                </p>
+                            )}
                             <Link
                                 href="/login"
                                 className={pillButtonUIClassName({

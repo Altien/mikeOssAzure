@@ -4,7 +4,7 @@ import { useState } from "react";
 import { authInputUIClassName } from "@/shared/ui/AuthStylesUI";
 import {
     MIN_PASSWORD_LENGTH,
-    minimumPasswordMessage,
+    minimumPasswordMessage, isPasswordTooLong, maximumPasswordMessage,
 } from "@/app/components/auth/passwordPolicy";
 import { Modal } from "@/app/components/modals/Modal";
 import { InputUI } from "@/shared/ui/InputUI";
@@ -14,6 +14,11 @@ import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { requestPasswordReset, requestReauthentication } from "@/app/lib/authApi";
 import { SettingsSection } from "@/app/(pages)/settings/SettingsSection";
 import { FieldLabel } from "@/app/components/ui/form-field";
+
+import { authMessages, PASSWORD_LENGTH_MESSAGE } from "@/app/lib/authMessages";
+import { UserVisibleError, describeError, supportMailtoFor, type UserFacingError } from "@/app/lib/userFacingError";
+
+const PASSWORD_ERROR_MESSAGES = authMessages({ validation_failed: PASSWORD_LENGTH_MESSAGE, invalid_request: PASSWORD_LENGTH_MESSAGE, reauthentication_needed: "Log in again before setting a password." });
 
 export function PasswordSettingsSection() {
     const { user, setPassword } = useAuth();
@@ -25,9 +30,7 @@ export function PasswordSettingsSection() {
     const [reauthSending, setReauthSending] = useState(false);
     const [reauthStatus, setReauthStatus] = useState<string | null>(null);
     const [passwordSaving, setPasswordSaving] = useState(false);
-    const [passwordSetError, setPasswordSetError] = useState<string | null>(
-        null,
-    );
+    const [passwordSetError, setPasswordSetError] = useState<UserFacingError | null>(null);
     const [passwordStatus, setPasswordStatus] = useState<string | null>(null);
     const [passwordResetSending, setPasswordResetSending] = useState(false);
 
@@ -37,11 +40,15 @@ export function PasswordSettingsSection() {
     async function addPassword() {
         setPasswordSetError(null);
         if (password.length < MIN_PASSWORD_LENGTH) {
-            setPasswordSetError(`${minimumPasswordMessage}.`);
+            setPasswordSetError(describeError(new UserVisibleError(`${minimumPasswordMessage}.`, {kind: "validation"})));
+            return;
+        }
+        if (isPasswordTooLong(password)) {
+            setPasswordSetError(describeError(new UserVisibleError(maximumPasswordMessage, { kind: "validation" })));
             return;
         }
         if (password !== confirmPassword) {
-            setPasswordSetError("Passwords do not match.");
+            setPasswordSetError(describeError(new UserVisibleError("The two passwords don't match.", { kind: "validation" })));
             return;
         }
 
@@ -50,7 +57,7 @@ export function PasswordSettingsSection() {
             await setPassword(password, reauthCode || undefined);
             const synced = await syncPasswordSet();
             if (!synced) {
-                throw new Error(
+                throw new UserVisibleError(
                     "Your password was set, but its account status could not be refreshed. Reload the page and try again.",
                 );
             }
@@ -62,9 +69,7 @@ export function PasswordSettingsSection() {
             setPasswordStatus("Password added to your account.");
         } catch (error) {
             setPasswordSetError(
-                error instanceof Error
-                    ? error.message
-                    : "Unable to set your password.",
+                describeError(error, { action: "set your password", codeMessages: PASSWORD_ERROR_MESSAGES, fallback: "Unable to set your password. Try again." }),
             );
         } finally {
             setPasswordSaving(false);
@@ -80,10 +85,8 @@ export function PasswordSettingsSection() {
             setPasswordStatus(
                 `Password-reset instructions sent to ${user.email}.`,
             );
-        } catch {
-            setPasswordStatus(
-                "Unable to send a password-reset email right now. Please try again.",
-            );
+        } catch (error) {
+            setPasswordStatus(describeError(error, { action: "send the reset email", codeMessages: PASSWORD_ERROR_MESSAGES, fallback: "Unable to send a password-reset email right now. Try again." }).message);
         } finally {
             setPasswordResetSending(false);
         }
@@ -95,8 +98,8 @@ export function PasswordSettingsSection() {
         try {
             await requestReauthentication();
             setReauthStatus("A verification code was sent to your email.");
-        } catch {
-            setPasswordSetError("Unable to send a verification code. Try again shortly.");
+        } catch (error) {
+            setPasswordSetError(describeError(error, { action: "send a verification code", codeMessages: PASSWORD_ERROR_MESSAGES, fallback: "Unable to send a verification code. Try again shortly." }));
         } finally {
             setReauthSending(false);
         }
@@ -233,7 +236,8 @@ export function PasswordSettingsSection() {
                     </div>
                     {passwordSetError && (
                         <p className="text-sm text-red-600" role="alert">
-                            {passwordSetError}
+                            {passwordSetError.message}
+                            {passwordSetError.supportable && <a className="ml-2 underline" href={supportMailtoFor(passwordSetError, "Failed to set an account password.")}>Contact support</a>}
                         </p>
                     )}
                 </div>

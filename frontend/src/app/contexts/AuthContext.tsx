@@ -21,6 +21,8 @@ import {
 } from "@/app/lib/authApi";
 import { AUTH_SESSION_INVALIDATED_EVENT, advanceAuthEpoch } from "@/app/lib/authEvents";
 import { setReportingUser } from "@/app/lib/errorReporting";
+import { isOnAuthRoute, notifyError } from "@/app/lib/userFacingError";
+import { clearToasts } from "@/shared/ui/ToastUI";
 
 type User = AuthUser;
 
@@ -59,6 +61,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const identityRef = useRef<string | null>(null);
     const sessionRequestRef = useRef<{ generation: number; promise: Promise<User | null> } | null>(null);
 
+    // Upstream divergence (sync-log: c94052d7): retain Dev generation fences while
+    // discarding retry closures whenever a session ends or its identity changes.
+    const applySessionUser = useCallback((nextUser: User | null) => {
+        if (!nextUser || identityRef.current !== nextUser.id) clearToasts();
+        if (identityRef.current !== (nextUser?.id ?? null)) {
+            identityRef.current = nextUser?.id ?? null;
+            advanceAuthEpoch();
+        }
+        setUser(nextUser);
+    }, []);
+
     const broadcastAuthState = useCallback(
         (state: AuthSyncMessage["state"]) => {
             const message: AuthSyncMessage = {
@@ -95,16 +108,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             });
             sessionRequestRef.current = { generation, promise };
         }
-        const nextUser = await sessionRequestRef.current.promise;
+        let nextUser: User | null;
+        try { nextUser = await sessionRequestRef.current.promise; }
+        catch (error) { if (generation !== authGeneration.current) return null; throw error; }
         if (generation !== authGeneration.current) return null;
-        if (identityRef.current !== nextUser?.id) {
-            identityRef.current = nextUser?.id ?? null;
-            advanceAuthEpoch();
-        }
-        setUser(nextUser);
+        applySessionUser(nextUser);
         setAuthError(null);
         return nextUser;
-    }, []);
+    }, [applySessionUser]);
+
+    const checkBackgroundSession = useCallback(() => {
+        const generation = authGeneration.current;
+        const reportFailure = (error: unknown) => {
+            if (generation !== authGeneration.current) return;
+            setAuthError(SESSION_ERROR_MESSAGE);
+            if (isOnAuthRoute()) return;
+            notifyError(error, {
+                action: "check your session", dedupeKey: "auth-session",
+                onRetry: async () => {
+                    if (generation !== authGeneration.current) return;
+                    try { await fetchAndApplySession(); }
+                    catch (retryError) { reportFailure(retryError); }
+                },
+            });
+        };
+        return fetchAndApplySession().catch(reportFailure);
+    }, [fetchAndApplySession]);
 
     useEffect(() => {
         clearLegacyBrowserAuthStorage();
@@ -120,7 +149,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 authGeneration.current += 1;
                 identityRef.current = null;
                 advanceAuthEpoch();
-                setUser(null);
+                applySessionUser(null);
                 setAuthError(null);
                 setAuthLoading(false);
                 return;
@@ -128,9 +157,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
             authGeneration.current += 1;
             advanceAuthEpoch();
-            void fetchAndApplySession().catch(() => {
-                setAuthError(SESSION_ERROR_MESSAGE);
-            });
+            void checkBackgroundSession();
         };
 
         const onChannelMessage = (event: MessageEvent<AuthSyncMessage>) => {
@@ -159,21 +186,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             authGeneration.current += 1;
             identityRef.current = null;
             advanceAuthEpoch();
-            setUser(null);
+            applySessionUser(null);
             setAuthError(EXPIRED_SESSION_MESSAGE);
             setAuthLoading(false);
             broadcastAuthState("signed-out");
         };
         const onVisibilityChange = () => {
             if (document.visibilityState !== "visible") return;
-            void fetchAndApplySession().catch(() => {
-                setAuthError(SESSION_ERROR_MESSAGE);
-            });
+            void checkBackgroundSession();
         };
         const onFocus = () => {
-            void fetchAndApplySession().catch(() => {
-                setAuthError(SESSION_ERROR_MESSAGE);
-            });
+            void checkBackgroundSession();
         };
 
         channel?.addEventListener("message", onChannelMessage);
@@ -182,10 +205,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         window.addEventListener("focus", onFocus);
         document.addEventListener("visibilitychange", onVisibilityChange);
 
-        void fetchAndApplySession()
-            .catch(() => {
-                setAuthError(SESSION_ERROR_MESSAGE);
-            })
+        void checkBackgroundSession()
             .finally(() => setAuthLoading(false));
 
         return () => {
@@ -203,7 +223,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 onVisibilityChange,
             );
         };
-    }, [broadcastAuthState, fetchAndApplySession]);
+    }, [applySessionUser, broadcastAuthState, checkBackgroundSession]);
 
     const refreshSession = useCallback(async () => {
         const generation = authGeneration.current;
@@ -223,13 +243,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, [broadcastAuthState, fetchAndApplySession]);
 
     const signOut = useCallback(async () => {
+        clearToasts();
         const generation = ++authGeneration.current;
         identityRef.current = null;
         advanceAuthEpoch();
         try {
             const result = await logout("local");
             if (generation !== authGeneration.current) return;
-            setUser(null);
+            applySessionUser(null);
             setAuthError(null);
             broadcastAuthState("signed-out");
             if (result.logoutUrl) window.location.assign(result.logoutUrl);
@@ -238,9 +259,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 setAuthError("Unable to sign out. Please try again.");
             throw error;
         }
-    }, [broadcastAuthState]);
+    }, [applySessionUser, broadcastAuthState]);
 
     const signInLocal = useCallback(async (email: string) => {
+        clearToasts();
         const generation = ++authGeneration.current;
         advanceAuthEpoch();
         await loginLocal(email);
@@ -250,18 +272,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, [broadcastAuthState, fetchAndApplySession]);
 
     const updateEmail = useCallback(async (email: string) => {
+        const generation = authGeneration.current;
+        const identity = identityRef.current;
         const { user: nextUser } = await updateAuthEmail(
             email,
             "/settings?emailChange=processed",
         );
-        setUser(nextUser);
+        if (generation === authGeneration.current && identity === identityRef.current && nextUser.id === identity) applySessionUser(nextUser);
         return nextUser;
-    }, []);
+    }, [applySessionUser]);
 
     const setPassword = useCallback(async (password: string, nonce?: string) => {
+        const generation = authGeneration.current;
+        const identity = identityRef.current;
         const { user: nextUser } = await updateAuthPassword(password, false, nonce);
-        setUser(nextUser);
-    }, []);
+        if (generation === authGeneration.current && identity === identityRef.current && nextUser.id === identity) applySessionUser(nextUser);
+    }, [applySessionUser]);
 
     // A fresh object here re-renders every consumer of this context on every
     // provider render, sign-in state change or not. Each callback above is
