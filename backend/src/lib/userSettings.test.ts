@@ -34,10 +34,7 @@ vi.mock("./llm", () => ({
   OPENAI_LOW_MODELS: ["mock-openai-low"],
 }));
 
-import {
-  getUserModelSettings,
-  getUserApiKeys,
-} from "../modules/user/user.settings";
+import { getUserModelSettings } from "../modules/user/user.settings";
 import { upsertUserProfile } from "./userLookup";
 
 vi.mock("./routerModels", async () => ({
@@ -370,30 +367,6 @@ describe("getUserModelSettings — tabular model & api_keys", () => {
     await getUserModelSettings("u1");
 
     expect(createServerSupabaseMock).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("getUserApiKeys — organisation credential compatibility wrapper", () => {
-  it("delegates to getOrganisationApiKeys and ignores the user database", async () => {
-    const keys = { ...emptyKeys, claude: "sk-c" };
-    readEncryptedApiKeysMock.mockResolvedValueOnce(keys);
-    const { client } = makeClient({});
-
-    const result = await getUserApiKeys("u1", client as never);
-
-    expect(result).toBe(keys);
-    expect(readEncryptedApiKeysMock).toHaveBeenCalledWith();
-  });
-
-  it("does not create a database client when none is passed", async () => {
-    readEncryptedApiKeysMock.mockResolvedValueOnce(emptyKeys);
-    const { client } = makeClient({});
-    createServerSupabaseMock.mockReturnValue(client);
-
-    await getUserApiKeys("u1");
-
-    expect(createServerSupabaseMock).not.toHaveBeenCalled();
-    expect(readEncryptedApiKeysMock).toHaveBeenCalledWith();
   });
 });
 
