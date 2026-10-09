@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ApiKeyField } from "./ApiKeyField";
+import { MikeApiError } from "@/app/lib/mikeApi";
 
 vi.mock("@/app/components/popups/MfaVerificationPopup", () => ({
   MfaVerificationPopup: () => null,
@@ -90,6 +91,32 @@ describe("ApiKeyField", () => {
         "Failed to save Anthropic (Claude) API Key. Please try again.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("shows the backend's reason when it rejects the key or its setting", async () => {
+    const user = userEvent.setup();
+    renderField({
+      onSave: vi.fn().mockRejectedValue(
+        new MikeApiError({
+          status: 400,
+          message:
+            "A public https base URL (for example https://llm.example.com/v1) is required with an OpenAI-compatible endpoint key.",
+        }),
+      ),
+    });
+
+    await user.type(
+      screen.getByLabelText("Anthropic (Claude) API Key"),
+      "sk-ant-test",
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(
+      await screen.findByText(/A public https base URL .* is required/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Failed to save Anthropic/),
+    ).not.toBeInTheDocument();
   });
 
   it("shows the warning popup when removing rejects", async () => {

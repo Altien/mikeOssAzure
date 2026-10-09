@@ -7,6 +7,7 @@ import { SettingsTextInput } from "@/app/components/settings/SettingsTextInput";
 import { FieldLabel, FormTextInput } from "@/app/components/ui/form-field";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsDescription, SettingsLabel } from "./SettingsText";
+import { MikeApiError } from "@/app/lib/mikeApi";
 import { settingsGlassIconButtonClassName } from "@/app/(pages)/settings/settingsStyles";
 
 // Upstream divergence (sync-log: 25779536): Entra owns MFA and shared
@@ -133,8 +134,8 @@ export function ApiKeyField({
       } else {
         setWarningMessage(`Failed to save ${label}. Please try again.`);
       }
-    } catch {
-        setWarningMessage(`Failed to save ${label}. Please try again.`);
+    } catch (error) {
+        setWarningMessage(error instanceof MikeApiError && error.status === 400 ? error.message : `Failed to save ${label}. Please try again.`);
     } finally {
       setIsSaving(false);
     }

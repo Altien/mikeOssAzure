@@ -323,7 +323,7 @@ describe("ModelToggle availability states", () => {
                 value=""
                 onChange={vi.fn()}
                 apiKeys={keys({ openrouter: true })}
-                openRouterModels={[]}
+                routerModels={{ openrouter: [] }}
                 onNoModelsClick={onNoModelsClick}
             />,
         );
@@ -368,7 +368,7 @@ describe("ModelToggle provider grouping", () => {
                 value="gemini-3.8-flash"
                 onChange={vi.fn()}
                 apiKeys={keys({ gemini: true, "opencode-go": true })}
-                openCodeGoModels={["glm-5"]}
+                routerModels={{ "opencode-go": ["glm-5"] }}
             />,
         );
 
@@ -386,7 +386,7 @@ describe("ModelToggle provider grouping", () => {
                 value="gemini-3.8-flash"
                 onChange={vi.fn()}
                 apiKeys={keys({ gemini: true })}
-                openCodeGoModels={["glm-5"]}
+                routerModels={{ "opencode-go": ["glm-5"] }}
             />,
         );
 
@@ -402,7 +402,7 @@ describe("ModelToggle provider grouping", () => {
                 value="claude-fable-5-1"
                 onChange={vi.fn()}
                 apiKeys={keys({ claude: true, openrouter: true })}
-                openRouterModels={["anthropic/claude-fable-5-1"]}
+                routerModels={{ openrouter: ["anthropic/claude-fable-5-1"] }}
             />,
         );
 
@@ -413,9 +413,9 @@ describe("ModelToggle provider grouping", () => {
     });
 
     it.each([
-        { source: "OpenRouter", provider: "openrouter", models: { openRouterModels: ["openai/gpt-4o"] }, id: "openrouter/openai/gpt-4o" },
-        { source: "Azure", provider: "azure", models: { azureModels: ["gpt-4o"] }, id: "azure/gpt-4o" },
-        { source: "Bedrock", provider: "bedrock", models: { bedrockModels: ["us.anthropic.claude-sonnet-4-6-v1:0"] }, id: "bedrock/us.anthropic.claude-sonnet-4-6-v1:0" },
+        { source: "OpenRouter", provider: "openrouter", models: { openrouter: ["openai/gpt-4o"] }, id: "openrouter/openai/gpt-4o" },
+        { source: "Azure", provider: "azure", models: { azure: ["gpt-4o"] }, id: "azure/gpt-4o" },
+        { source: "Bedrock", provider: "bedrock", models: { bedrock: ["us.anthropic.claude-sonnet-4-6-v1:0"] }, id: "bedrock/us.anthropic.claude-sonnet-4-6-v1:0" },
     ])("identifies $source even without a direct copy of the model", async ({ source, provider, models, id }) => {
         const user = userEvent.setup();
         const onChange = vi.fn();
@@ -424,7 +424,7 @@ describe("ModelToggle provider grouping", () => {
                 value={id}
                 onChange={onChange}
                 apiKeys={keys({ [provider]: true })}
-                {...models}
+                routerModels={models}
             />,
         );
 

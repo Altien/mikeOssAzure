@@ -3,11 +3,10 @@ import { ModelToggleUI, nearestReasoningLevelForModel, reasoningLevelsForModel, 
 import { getAzureModels, type ApiKeyStatus, type ConfiguredModelOption } from "../../api/mikeApi";
 import {
   isModelAvailable,
-  openCodeGoModelOptions,
-  openRouterModelOptions,
-  vercelModelOptions,
+  routerModelOptions,
   STATIC_MODELS,
   type ModelOption,
+  type RouterModelSelections,
 } from "../../lib/modelCatalog";
 
 export function ModelToggle({
@@ -15,9 +14,7 @@ export function ModelToggle({
   onChange,
   keyStatus,
   keyStatusLoading = false,
-  openRouterModels,
-  vercelModels,
-  openCodeGoModels,
+  routerModels,
   configuredModels,
   compact = false,
   onNoModelsClick,
@@ -30,9 +27,8 @@ export function ModelToggle({
   /** True while the key-status preflight is in flight: render a neutral
    *  disabled trigger instead of flashing "No Models". */
   keyStatusLoading?: boolean;
-  openRouterModels: string[];
-  vercelModels: string[];
-  openCodeGoModels: string[];
+  /** The user's saved models, per router. */
+  routerModels: RouterModelSelections;
   configuredModels: readonly ConfiguredModelOption[];
   compact?: boolean;
   onNoModelsClick?: () => void;
@@ -54,22 +50,13 @@ export function ModelToggle({
   }, []);
 
   const models = useMemo(() => {
-    const openRouterOptions = openRouterModelOptions(openRouterModels);
-    const vercelOptions = vercelModelOptions(vercelModels);
-    const openCodeGoOptions = openCodeGoModelOptions(openCodeGoModels);
-    const otherModels = [
-      ...STATIC_MODELS,
-      ...openRouterOptions,
-      ...vercelOptions,
-      ...openCodeGoOptions,
-      ...azureModels,
-    ];
+    const otherModels = [...STATIC_MODELS, ...routerModelOptions(routerModels), ...azureModels];
     const configuredIds = new Set(configuredModels.map((model) => model.id));
     return [...otherModels.filter((model) => !configuredIds.has(model.id)), ...configuredModels].filter(
       (model) =>
         model.source === "Configured" || model.group === "Local" || isModelAvailable(model.id, keyStatus),
     );
-  }, [keyStatus, azureModels, openRouterModels, vercelModels, openCodeGoModels, configuredModels]);
+  }, [keyStatus, azureModels, routerModels, configuredModels]);
   const selected = models.find((model) => model.id === value);
   const supportedReasoningLevels = reasoningLevelsForModel(value);
   const normalizedReasoningLevel = reasoningLevel

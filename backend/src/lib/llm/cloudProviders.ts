@@ -46,6 +46,24 @@ const AZURE_ENDPOINT_HOST_SUFFIXES = [
     ".services.ai.azure.com",
 ];
 
+// AWS partitions outside the commercial one have their own DNS suffix.
+const AWS_PARTITION_DNS_SUFFIXES: ReadonlyArray<[RegExp, string]> = [
+    [/^cn-/, "amazonaws.com.cn"],
+    [/^us-isob-/, "sc2s.sgov.gov"],
+    [/^us-isof-/, "csp.hci.ic.gov"],
+    [/^us-iso-/, "c2s.ic.gov"],
+    [/^eu-isoe-/, "cloud.adc-e.uk"],
+    [/^eusc-/, "amazonaws.eu"],
+];
+
+/** The DNS suffix of the partition a (normalized) AWS region belongs to. */
+export function awsDnsSuffix(region: string): string {
+    return (
+        AWS_PARTITION_DNS_SUFFIXES.find(([prefix]) => prefix.test(region))?.[1] ??
+        "amazonaws.com"
+    );
+}
+
 export function normalizeAwsRegion(value: unknown): string | null {
     if (typeof value !== "string") return null;
     const region = value.trim().toLowerCase();

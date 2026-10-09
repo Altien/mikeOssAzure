@@ -1,6 +1,4 @@
 import { isProviderDisabled } from "../../lib/llm/providerPreferences";
-import { bedrockCredentials, azureCredentials, azureFoundryCredentials, vertexCredentials, customEndpointCredentials } from "../../lib/llm/cloudProviders";
-import { resolveProviderSecret } from "../../lib/envSecrets";
 // Shared types + helpers used across the tabular extraction files.
 //
 // These are module-internal: they are exported here so sibling files
@@ -20,9 +18,8 @@ import {
 } from "../../lib/llm/registry";
 import { getUserModelSettings } from "../user/user.service";
 import { resolveRequestedModel } from "../../lib/routerModels";
-import { TABULAR_MODEL_REQUIRED_DETAIL } from "../../lib/modelSelection";
+import { TABULAR_MODEL_REQUIRED_DETAIL, hasApiKeyForModel } from "../../lib/modelSelection";
 import { UserFacingError } from "../../lib/safeError";
-import { resolveSecret } from "../../lib/envSecrets";
 import type { Db } from "../../lib/supabase";
 import type { ServiceFailure } from "../../lib/serviceResult";
 
@@ -156,7 +153,7 @@ export async function missingModelApiKey(
 ): Promise<MissingApiKey | null> {
     const provider = providerForModel(model);
     if (isProviderDisabled(provider, apiKeys)) {
-        return { provider, model, detail: "This model provider is turned off. Turn it on in Model Providers or select another model." };
+        return { provider, model, detail: `${providerLabel(provider)} is turned off. Turn it on in Settings → Bring Your Own Keys or select a different tabular review model.` };
     }
     if (provider === "openai-compatible") {
         const configured = getConfiguredModel(model);
@@ -169,15 +166,8 @@ export async function missingModelApiKey(
         if (configured?.endpoint?.trim() && configured.apiKey?.trim() && configured.deployment?.trim()) return null;
         return { provider, model, detail: "Azure OpenAI is not configured for this organisation. Ask an administrator to configure its endpoint, API key and deployment on /install." };
     }
-    const cloud = provider === "bedrock" ? await bedrockCredentials(apiKeys)
-        : provider === "azure" ? await azureCredentials(apiKeys)
-        : provider === "azure-foundry" ? await azureFoundryCredentials(apiKeys)
-        : provider === "vertex" ? await vertexCredentials(apiKeys)
-        : provider === "custom" ? await customEndpointCredentials(apiKeys) : undefined;
-    if (cloud) return null;
-    if (cloud === undefined && apiKeys[provider]?.trim()) return null;
-    if (cloud === undefined && provider === "xai" && await resolveProviderSecret("xai-api-key")) return null;
-    if (cloud === undefined && provider !== "xai" && (await resolveSecret(SERVER_KEY_SECRETS[provider])).length > 0) return null;
+    // Use the same awaited credential and companion-setting policy as chat.
+    if (await hasApiKeyForModel(model, apiKeys)) return null;
     return {
         provider,
         model,

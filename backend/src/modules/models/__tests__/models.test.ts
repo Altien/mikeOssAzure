@@ -491,3 +491,31 @@ describe("GET /models/custom", () => {
         expect(JSON.stringify(blocked.body)).not.toContain("blocked network");
     });
 });
+
+describe("catalog loaders separate Mike's own failures from the provider's", () => {
+    const fetchMock = vi.fn();
+    beforeEach(() => {
+        vi.stubGlobal("fetch", fetchMock);
+        fetchMock.mockReset();
+    });
+    afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
+
+    it.each(["bedrock", "xai", "custom"])("answers 500, not 502, when reading the %s key fails", async (provider) => {
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+        getUserApiKeys.mockRejectedValue(new Error("database unavailable"));
+        const response = await request(app).get(`/api/models/${provider}`);
+        expect(response.status).toBe(500);
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(guardedFetch).not.toHaveBeenCalled();
+        consoleError.mockRestore();
+    });
+
+    it("lists Bedrock models from the region's own partition host", async () => {
+        getUserApiKeys.mockResolvedValue({ bedrock: "private-key", providerSettings: { bedrock: { region: "us-iso-east-1" } } });
+        fetchMock.mockResolvedValueOnce(Response.json({ modelSummaries: [] }))
+            .mockResolvedValueOnce(Response.json({ inferenceProfileSummaries: [] }));
+        const response = await request(app).get("/api/models/bedrock");
+        expect(response.status).toBe(200);
+        expect(fetchMock.mock.calls[0][0]).toBe("https://bedrock.us-iso-east-1.c2s.ic.gov/foundation-models?byOutputModality=TEXT");
+    });
+});

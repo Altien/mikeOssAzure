@@ -2,6 +2,7 @@ import { createServerSupabase } from "./supabase";
 import { UserFacingError } from "./safeError";
 import type { Db } from "./supabase";
 import { resolveModel } from "./llm/models";
+import { getConfiguredModel } from "./llm/registry";
 
 export type RouterSlug =
     | "openrouter"
@@ -36,6 +37,10 @@ export type RouterModelSelections = Record<RouterSlug, string[]>;
 
 /** The router a namespaced app-level model id routes through, if any. */
 export function routerForModelId(model: string): RouterSlug | null {
+    // A deployment-declared model keeps whatever id the operator gave it,
+    // including one that starts with a router slug ("azure/gpt-4o"). It is
+    // not a router model and is not gated by anyone's saved selection.
+    if (getConfiguredModel(model)) return null;
     // "azure-foundry/" does not start with "azure/", so no slug shadows
     // another; the trailing slash is what keeps that true.
     return ROUTER_SLUGS.find((slug) => model.startsWith(`${slug}/`)) ?? null;
@@ -100,7 +105,7 @@ export async function resolveRequestedModel(
     }
     if (onOutsideSelection === "throw") {
         throw new UserFacingError(
-            `Model ${resolved} is not in your saved ${ROUTER_LABELS[router]} models — add it in Settings → Bring Your Own Keys → Routers.`,
+            `Model ${resolved} is not in your saved ${ROUTER_LABELS[router]} models — add it under ${ROUTER_LABELS[router]} in Settings → Bring Your Own Keys.`,
         );
     }
     console.warn(

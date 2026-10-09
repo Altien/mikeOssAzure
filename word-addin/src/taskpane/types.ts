@@ -214,6 +214,13 @@ export interface ApiKeyStatus {
   openrouter: boolean;
   vercel: boolean;
   "opencode-go": boolean;
+  // Absent from a backend that predates these providers.
+  bedrock?: boolean;
+  azure?: boolean;
+  "azure-foundry"?: boolean;
+  vertex?: boolean;
+  xai?: boolean;
+  custom?: boolean;
   courtlistener: boolean;
   sources?: Partial<
     Record<
@@ -224,6 +231,12 @@ export interface ApiKeyStatus {
       | "openrouter"
       | "vercel"
       | "opencode-go"
+      | "bedrock"
+      | "azure"
+      | "azure-foundry"
+      | "vertex"
+      | "xai"
+      | "custom"
       | "courtlistener",
       "user" | "env" | null
     >

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  awsDnsSuffix,
   azureClientTarget,
   azureFoundryCredentials,
   customEndpointCredentials,
@@ -257,5 +258,18 @@ describe("credentials for a request", () => {
         providerSettings: { custom: { baseUrl: "https://llm.example.com/v1" } },
       }),
     ).toEqual({ apiKey: "sk-1", baseUrl: "https://llm.example.com/v1" });
+  });
+});
+
+describe("awsDnsSuffix", () => {
+  it.each([
+    ["us-east-1", "amazonaws.com"],
+    ["us-gov-west-1", "amazonaws.com"],
+    ["cn-north-1", "amazonaws.com.cn"],
+    ["us-iso-east-1", "c2s.ic.gov"],
+    ["us-isob-east-1", "sc2s.sgov.gov"],
+    ["eusc-de-east-1", "amazonaws.eu"],
+  ])("maps %s to %s", (region, suffix) => {
+    expect(awsDnsSuffix(region)).toBe(suffix);
   });
 });

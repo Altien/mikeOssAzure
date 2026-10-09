@@ -1,6 +1,7 @@
 import type { Db } from "../../lib/supabase";
-import { bedrockCredentials } from "../../lib/llm/cloudProviders";
+import { awsDnsSuffix, bedrockCredentials } from "../../lib/llm/cloudProviders";
 import { getUserExecutionApiKeys as getUserApiKeys } from "../user/user.service";
+import { catalogFailureReason } from "./models.compatible";
 import type { CatalogModel, CatalogResult } from "./models.service";
 
 function modelId(value: unknown): value is string {
@@ -9,18 +10,25 @@ function modelId(value: unknown): value is string {
 
 /** Regional foundation models and account-visible inference profiles. No keys leave the backend. */
 export async function listBedrockModels(db: Db, userId: string): Promise<CatalogResult> {
+    // Reading the user's keys is Mike's own work: a failure there is an
+    // internal error to log, not a provider outage.
+    let credentials: Awaited<ReturnType<typeof bedrockCredentials>>;
     try {
-        const credentials = await bedrockCredentials(await getUserApiKeys(userId, db));
-        if (!credentials) return {
-            ok: false, kind: "missing_api_key", code: "missing_api_key",
-            detail: "An Amazon Bedrock API key and AWS region are required to list models.",
-        };
-        const suffix = credentials.region.startsWith("cn-") ? "amazonaws.com.cn" : "amazonaws.com";
-        const base = `https://bedrock.${credentials.region}.${suffix}`;
+        credentials = await bedrockCredentials(await getUserApiKeys(userId, db));
+    } catch (error) {
+        return { ok: false, kind: "error", error };
+    }
+    if (!credentials) return {
+        ok: false, kind: "missing_api_key", code: "missing_api_key",
+        detail: "An Amazon Bedrock API key and AWS region are required to list models.",
+    };
+    const { apiKey, region } = credentials;
+    try {
+        const base = `https://bedrock.${region}.${awsDnsSuffix(region)}`;
         const signal = AbortSignal.timeout(15_000);
         const read = async (path: string): Promise<Record<string, unknown>> => {
             const response = await fetch(`${base}${path}`, {
-                headers: { Authorization: `Bearer ${credentials.apiKey}` },
+                headers: { Authorization: `Bearer ${apiKey}` },
                 redirect: "error", signal,
             });
             // Do not retain provider response bodies: they may contain account or credential details.
@@ -57,7 +65,7 @@ export async function listBedrockModels(db: Db, userId: string): Promise<Catalog
             if (token) seen.add(token);
         } while (token);
         return { ok: true, models: [...models.values()].sort((a, b) => a.label.localeCompare(b.label)) };
-    } catch {
-        return { ok: false, kind: "upstream", error: new Error("Amazon Bedrock model catalog could not be loaded.") };
+    } catch (error) {
+        return { ok: false, kind: "upstream", error: new Error(`Amazon Bedrock model catalog could not be loaded: ${catalogFailureReason(error)}`) };
     }
 }

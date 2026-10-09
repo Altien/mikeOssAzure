@@ -44,11 +44,7 @@ function VisibleNoModelsWarning({
                 label: "Open Bring Your Own Keys",
                 onClick: () => {
                     onClose();
-                    router.push(
-                        routerModelsMissing
-                            ? "/settings/byok"
-                            : "/settings/byok",
-                    );
+                    router.push("/settings/byok");
                 },
             }}
         />

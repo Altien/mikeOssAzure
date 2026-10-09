@@ -22,6 +22,7 @@ import {
     type UserProfile as ApiUserProfile,
     completeUserOnboarding,
     getUserProfile,
+    MikeApiError,
     isMfaRequiredError,
     saveApiKey,
     setApiKeyEnabled,
@@ -38,11 +39,18 @@ import type { Message } from "@/app/components/shared/types";
 import { applyDarkMode } from "@/app/lib/theme";
 import { publishTabularChatSettingsUpdate } from "@/app/lib/tabularChatSettingsEvents";
 import {
+    ROUTER_PROFILE_FIELDS,
+    ROUTER_SLUGS,
+    routerModelsFromProfile,
+    type RouterProfileField,
+    type RouterSlug,
+} from "@/app/lib/routerModels";
+import {
     clearConfiguredModels,
     refreshConfiguredModels,
 } from "@/app/hooks/useConfiguredModels";
 
-interface UserProfile {
+interface UserProfile extends Record<RouterProfileField, string[]> {
     displayName: string | null;
     organisation: string | null;
     jurisdiction: string | null;
@@ -64,20 +72,24 @@ interface UserProfile {
     mfaOnLogin: boolean;
     legalResearchUs: boolean;
     quickActionsVisible: boolean;
-    openRouterModels: string[];
-    vercelModels: string[];
-    openCodeGoModels: string[];
-    bedrockModels: string[];
-    azureModels: string[];
-    azureFoundryModels: string[];
-    vertexModels: string[];
-    xaiModels: string[];
-    customModels: string[];
     darkMode: boolean;
     projectMemoryDefault: boolean;
     apiKeys: ApiKeyState;
     /** Settings saved with the user's own keys (region, endpoint, location, base URL). */
     apiKeySettings: ApiKeySettings;
+}
+
+/** Each router's saved selection, under its profile field name. */
+function routerProfileFields(
+    profile: Parameters<typeof routerModelsFromProfile>[0],
+): Record<RouterProfileField, string[]> {
+    const selections = routerModelsFromProfile(profile);
+    return Object.fromEntries(
+        ROUTER_SLUGS.map((slug) => [
+            ROUTER_PROFILE_FIELDS[slug],
+            selections[slug],
+        ]),
+    ) as Record<RouterProfileField, string[]>;
 }
 
 interface UserProfileContextType {
@@ -115,15 +127,11 @@ interface UserProfileContextType {
     updateMfaOnLogin: (enabled: boolean) => Promise<boolean>;
     updateLegalResearchUs: (enabled: boolean) => Promise<boolean>;
     updateQuickActionsVisible: (visible: boolean) => Promise<boolean>;
-    updateOpenRouterModels: (models: string[]) => Promise<boolean>;
-    updateVercelModels: (models: string[]) => Promise<boolean>;
-    updateOpenCodeGoModels: (models: string[]) => Promise<boolean>;
-    updateBedrockModels: (models: string[]) => Promise<boolean>;
-    updateAzureModels: (models: string[]) => Promise<boolean>;
-    updateAzureFoundryModels: (models: string[]) => Promise<boolean>;
-    updateVertexModels: (models: string[]) => Promise<boolean>;
-    updateXaiModels: (models: string[]) => Promise<boolean>;
-    updateCustomModels: (models: string[]) => Promise<boolean>;
+    /** Replace the saved model selection of one router. */
+    updateRouterModels: (
+        router: RouterSlug,
+        models: string[],
+    ) => Promise<boolean>;
     updateDarkMode: (enabled: boolean) => Promise<void>;
     updateProjectMemoryDefault: (enabled: boolean) => Promise<void>;
     updateApiKey: (
@@ -213,33 +221,7 @@ function toProfile(data: ApiUserProfile): UserProfile {
         lastSelectedReasoningLevel: profile.lastSelectedReasoningLevel ?? "high",
         mfaOnLogin: profile.mfaOnLogin === true,
         projectMemoryDefault: profile.projectMemoryDefault !== false,
-        openRouterModels: Array.isArray(profile.openRouterModels)
-            ? profile.openRouterModels
-            : [],
-        vercelModels: Array.isArray(profile.vercelModels)
-            ? profile.vercelModels
-            : [],
-        openCodeGoModels: Array.isArray(profile.openCodeGoModels)
-            ? profile.openCodeGoModels
-            : [],
-        bedrockModels: Array.isArray(profile.bedrockModels)
-            ? profile.bedrockModels
-            : [],
-        azureModels: Array.isArray(profile.azureModels)
-            ? profile.azureModels
-            : [],
-        azureFoundryModels: Array.isArray(profile.azureFoundryModels)
-            ? profile.azureFoundryModels
-            : [],
-        vertexModels: Array.isArray(profile.vertexModels)
-            ? profile.vertexModels
-            : [],
-        xaiModels: Array.isArray(profile.xaiModels)
-            ? profile.xaiModels
-            : [],
-        customModels: Array.isArray(profile.customModels)
-            ? profile.customModels
-            : [],
+        ...routerProfileFields(profile),
         apiKeys,
         apiKeySettings: apiKeyStatus.settings ?? {},
     };
@@ -323,15 +305,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 mfaOnLogin: false,
                 legalResearchUs: true,
                 quickActionsVisible: true,
-                openRouterModels: [],
-                vercelModels: [],
-                openCodeGoModels: [],
-                bedrockModels: [],
-                azureModels: [],
-                azureFoundryModels: [],
-                vertexModels: [],
-                xaiModels: [],
-                customModels: [],
+                ...routerProfileFields(null),
                 darkMode: false,
                 projectMemoryDefault: true,
                 apiKeys: emptyApiKeys(),
@@ -620,156 +594,15 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
         [user],
     );
 
-    const updateOpenRouterModels = useCallback(
-        async (openRouterModels: string[]): Promise<boolean> => {
-            if (!user) return false;
-            try {
-                const updated = await updateUserProfile({ openRouterModels });
-                setProfile((prev) =>
-                    prev ? { ...prev, ...toProfile(updated) } : null,
-                );
-                return true;
-            } catch {
-                return false;
-            }
-        },
-        [user],
-    );
-
-    const updateVercelModels = useCallback(
-        async (vercelModels: string[]): Promise<boolean> => {
-            if (!user) return false;
-            try {
-                const updated = await updateUserProfile({ vercelModels });
-                setProfile((prev) =>
-                    prev ? { ...prev, ...toProfile(updated) } : null,
-                );
-                return true;
-            } catch {
-                return false;
-            }
-        },
-        [user],
-    );
-
-    const updateOpenCodeGoModels = useCallback(
-        async (openCodeGoModels: string[]): Promise<boolean> => {
-            if (!user) return false;
-            try {
-                const updated = await updateUserProfile({ openCodeGoModels });
-                setProfile((prev) =>
-                    prev ? { ...prev, ...toProfile(updated) } : null,
-                );
-                return true;
-            } catch {
-                return false;
-            }
-        },
-        [user],
-    );
-
-    const updateBedrockModels = useCallback(
-        async (bedrockModels: string[]): Promise<boolean> => {
+    const updateRouterModels = useCallback(
+        async (router: RouterSlug, models: string[]): Promise<boolean> => {
             if (!user) return false;
             try {
                 const current = accountGuard(user.id);
                 if (!current()) return false;
-                const updated = await updateUserProfile({ bedrockModels }, current);
-                if (!current()) return false;
-                setProfile((prev) =>
-                    prev ? { ...prev, ...toProfile(updated) } : null,
-                );
-                return true;
-            } catch {
-                return false;
-            }
-        },
-        [user, accountGuard],
-    );
-
-    const updateAzureModels = useCallback(
-        async (azureModels: string[]): Promise<boolean> => {
-            if (!user) return false;
-            try {
-                const current = accountGuard(user.id);
-                if (!current()) return false;
-                const updated = await updateUserProfile({ azureModels }, current);
-                if (!current()) return false;
-                setProfile((prev) =>
-                    prev ? { ...prev, ...toProfile(updated) } : null,
-                );
-                return true;
-            } catch {
-                return false;
-            }
-        },
-        [user, accountGuard],
-    );
-
-    const updateAzureFoundryModels = useCallback(
-        async (azureFoundryModels: string[]): Promise<boolean> => {
-            if (!user) return false;
-            try {
-                const current = accountGuard(user.id);
-                if (!current()) return false;
-                const updated = await updateUserProfile({ azureFoundryModels }, current);
-                if (!current()) return false;
-                setProfile((prev) =>
-                    prev ? { ...prev, ...toProfile(updated) } : null,
-                );
-                return true;
-            } catch {
-                return false;
-            }
-        },
-        [user, accountGuard],
-    );
-
-    const updateVertexModels = useCallback(
-        async (vertexModels: string[]): Promise<boolean> => {
-            if (!user) return false;
-            try {
-                const current = accountGuard(user.id);
-                if (!current()) return false;
-                const updated = await updateUserProfile({ vertexModels }, current);
-                if (!current()) return false;
-                setProfile((prev) =>
-                    prev ? { ...prev, ...toProfile(updated) } : null,
-                );
-                return true;
-            } catch {
-                return false;
-            }
-        },
-        [user, accountGuard],
-    );
-
-    const updateXaiModels = useCallback(
-        async (xaiModels: string[]): Promise<boolean> => {
-            if (!user) return false;
-            try {
-                const current = accountGuard(user.id);
-                if (!current()) return false;
-                const updated = await updateUserProfile({ xaiModels }, current);
-                if (!current()) return false;
-                setProfile((prev) =>
-                    prev ? { ...prev, ...toProfile(updated) } : null,
-                );
-                return true;
-            } catch {
-                return false;
-            }
-        },
-        [user, accountGuard],
-    );
-
-    const updateCustomModels = useCallback(
-        async (customModels: string[]): Promise<boolean> => {
-            if (!user) return false;
-            try {
-                const current = accountGuard(user.id);
-                if (!current()) return false;
-                const updated = await updateUserProfile({ customModels }, current);
+                const updated = await updateUserProfile({
+                    [ROUTER_PROFILE_FIELDS[router]]: models,
+                }, current);
                 if (!current()) return false;
                 setProfile((prev) =>
                     prev ? { ...prev, ...toProfile(updated) } : null,
@@ -854,6 +687,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 return true;
             } catch (error) {
                 if (isMfaRequiredError(error)) throw error;
+                if (error instanceof MikeApiError && error.status === 400) throw error;
                 return false;
             }
         },
@@ -880,6 +714,11 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 return true;
             } catch (error) {
                 if (isMfaRequiredError(error)) throw error;
+                // A 400 carries the backend's own explanation of what is
+                // wrong with the key or its setting; let the field show it.
+                if (error instanceof MikeApiError && error.status === 400) {
+                    throw error;
+                }
                 return false;
             }
         },
@@ -923,15 +762,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             updateMfaOnLogin,
             updateLegalResearchUs,
             updateQuickActionsVisible,
-            updateOpenRouterModels,
-            updateVercelModels,
-            updateOpenCodeGoModels,
-            updateBedrockModels,
-            updateAzureModels,
-            updateAzureFoundryModels,
-            updateVertexModels,
-            updateXaiModels,
-            updateCustomModels,
+            updateRouterModels,
             updateDarkMode,
             updateProjectMemoryDefault,
             updateApiKey,
@@ -954,15 +785,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             updateMfaOnLogin,
             updateLegalResearchUs,
             updateQuickActionsVisible,
-            updateOpenRouterModels,
-            updateVercelModels,
-            updateOpenCodeGoModels,
-            updateBedrockModels,
-            updateAzureModels,
-            updateAzureFoundryModels,
-            updateVertexModels,
-            updateXaiModels,
-            updateCustomModels,
+            updateRouterModels,
             updateDarkMode,
             updateProjectMemoryDefault,
             updateApiKey,

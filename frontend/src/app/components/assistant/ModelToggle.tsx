@@ -10,6 +10,11 @@ import {
 } from "@/shared/ui/ModelToggleUI";
 import { isModelAvailable } from "@/app/lib/modelAvailability";
 import type { ApiKeyState } from "@/app/lib/mikeApi";
+import {
+  ROUTER_SLUGS,
+  type RouterModelSelections,
+  type RouterSlug,
+} from "@/app/lib/routerModels";
 import { useConfiguredModels } from "@/app/hooks/useConfiguredModels";
 import { useAoaiDeployments } from "@/altien/models/aoaiDeployments";
 
@@ -117,22 +122,16 @@ export function modelDisplayName(modelId: string): string {
   return `${label} (${variantLabel})`;
 }
 
-/**
- * Router slugs, which double as model-id prefixes and API-key provider names.
- * Kept in sync with backend/src/lib/routerModels.ts ROUTER_SLUGS.
- */
-export const ROUTER_SLUGS = [
-  "openrouter",
-  "vercel",
-  "opencode-go",
-  "bedrock",
-  "azure",
-  "azure-foundry",
-  "vertex",
-  "xai",
-  "custom",
-] as const;
-export type RouterSlug = (typeof ROUTER_SLUGS)[number];
+export {
+  ROUTER_PROFILE_FIELDS,
+  ROUTER_SLUGS,
+  routerModelsFromProfile,
+  type RouterModelSelections,
+  type RouterProfileField,
+  type RouterSlug,
+} from "@/app/lib/routerModels";
+
+const NO_ROUTER_MODELS: RouterModelSelections = {};
 
 const ROUTER_VENDOR_GROUPS: Record<string, string> = {
   anthropic: "Anthropic",
@@ -202,15 +201,8 @@ interface Props {
   /** True while the profile is still loading: render a neutral disabled
    *  trigger instead of flashing "No Models" on every page load. */
   apiKeysLoading?: boolean;
-  openRouterModels?: string[];
-  vercelModels?: string[];
-  openCodeGoModels?: string[];
-  bedrockModels?: string[];
-  azureModels?: string[];
-  azureFoundryModels?: string[];
-  vertexModels?: string[];
-  xaiModels?: string[];
-  customModels?: string[];
+  /** The user's saved models, per router. */
+  routerModels?: RouterModelSelections;
   compact?: boolean;
   tone?: "muted" | "default";
   /** Render as a full-width liquid-glass control inside a modal form. */
@@ -306,14 +298,26 @@ export function azureModelOptions(models: string[]): ModelOption[] {
   }));
 }
 
+/**
+ * Vertex and Foundry ids may state their wire protocol up front
+ * ("anthropic:prod-sonnet") when the name does not reveal it; that prefix is
+ * for the backend, not part of the model's name.
+ */
+export function withoutExplicitProtocol(modelId: string): string {
+  return modelId.replace(/^(?:anthropic|openai|gemini):/, "");
+}
+
 /** Foundry deployments are named by their owner too. */
 export function azureFoundryModelOptions(models: string[]): ModelOption[] {
-  return models.map((model) => ({
-    id: `azure-foundry/${model}`,
-    label: modelDisplayName(model),
-    group: underlyingProviderGroup(model, "azure-foundry"),
-    source: "Foundry",
-  }));
+  return models.map((model) => {
+    const name = withoutExplicitProtocol(model);
+    return {
+      id: `azure-foundry/${model}`,
+      label: modelDisplayName(name),
+      group: underlyingProviderGroup(name, "azure-foundry"),
+      source: "Foundry",
+    };
+  });
 }
 
 /**
@@ -322,7 +326,9 @@ export function azureFoundryModelOptions(models: string[]): ModelOption[] {
  * on partner models ("meta/llama-4-maverick-maas").
  */
 export function vertexCatalogModel(modelId: string): string {
-  return modelId.replace(/@[^/]*$/, "").replace(/-maas$/, "");
+  return withoutExplicitProtocol(modelId)
+    .replace(/@[^/]*$/, "")
+    .replace(/-maas$/, "");
 }
 
 export function vertexModelOptions(models: string[]): ModelOption[] {
@@ -365,6 +371,30 @@ export function openCodeGoModelOptions(models: string[]): ModelOption[] {
   }));
 }
 
+const ROUTER_MODEL_OPTIONS: Record<
+  RouterSlug,
+  (models: string[]) => ModelOption[]
+> = {
+  openrouter: openRouterModelOptions,
+  vercel: vercelModelOptions,
+  "opencode-go": openCodeGoModelOptions,
+  bedrock: bedrockModelOptions,
+  azure: azureModelOptions,
+  "azure-foundry": azureFoundryModelOptions,
+  vertex: vertexModelOptions,
+  xai: xaiModelOptions,
+  custom: customModelOptions,
+};
+
+/** Picker options for every saved router model, in router order. */
+export function routerModelOptions(
+  selections: RouterModelSelections,
+): ModelOption[] {
+  return ROUTER_SLUGS.flatMap((slug) =>
+    ROUTER_MODEL_OPTIONS[slug](selections[slug] ?? []),
+  );
+}
+
 /** Deployment declarations override any static or router entry with the same id. */
 export function mergeConfiguredModelOptions(
   configured: readonly ModelOption[],
@@ -382,15 +412,7 @@ export function ModelToggle({
   onChange,
   apiKeys,
   apiKeysLoading = false,
-  openRouterModels = [],
-  vercelModels = [],
-  openCodeGoModels = [],
-  bedrockModels = [],
-  azureModels = [],
-  azureFoundryModels = [],
-  vertexModels = [],
-  xaiModels = [],
-  customModels = [],
+  routerModels = NO_ROUTER_MODELS,
   compact = false,
   tone,
   modalInput = false,
@@ -403,15 +425,7 @@ export function ModelToggle({
   const configuredModels = useConfiguredModels();
   const models = mergeConfiguredModelOptions(configuredModels, [
     ...MODELS,
-    ...openRouterModelOptions(openRouterModels),
-    ...vercelModelOptions(vercelModels),
-    ...openCodeGoModelOptions(openCodeGoModels),
-    ...bedrockModelOptions(bedrockModels),
-    ...azureModelOptions(azureModels),
-    ...azureFoundryModelOptions(azureFoundryModels),
-    ...vertexModelOptions(vertexModels),
-    ...xaiModelOptions(xaiModels),
-    ...customModelOptions(customModels),
+    ...routerModelOptions(routerModels),
     ...extraModels.map((model) => ({
       ...model,
       label: modelDisplayName(model.id),
@@ -444,17 +458,7 @@ export function ModelToggle({
     ? (models.find((model) => model.id === value)?.label ?? "Select model")
     : (selected?.label ??
       (availableModels.length > 0 ? "Select model" : "No Models"));
-  const emptyReason = noModelsReason(apiKeys, {
-    openrouter: openRouterModels,
-    vercel: vercelModels,
-    "opencode-go": openCodeGoModels,
-    bedrock: bedrockModels,
-    azure: azureModels,
-    "azure-foundry": azureFoundryModels,
-    vertex: vertexModels,
-    xai: xaiModels,
-    custom: customModels,
-  });
+  const emptyReason = noModelsReason(apiKeys, routerModels);
   return (
     <ModelToggleUI
       value={value}

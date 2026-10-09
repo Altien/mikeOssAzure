@@ -72,9 +72,14 @@ export function reasoningLevelsForModel(
         .at(-1)!
         .replace(/^(?:[a-z]+(?:-[a-z]+)*\.)?anthropic\./, "")
     : modelId
-          .replace(/^(?:openrouter|vercel)\//, "")
-          // Vertex pins Claude versions as "claude-opus-5-5@20260101".
-          .replace(/^(vertex\/[^@]+)@/, "$1-");
+        .replace(/^(?:openrouter|vercel)\//, "")
+        // An explicit protocol is not part of the model name.
+        .replace(
+          /^((?:vertex|azure-foundry)\/)(?:anthropic|openai|gemini):/,
+          "$1",
+        )
+        // Vertex pins Claude versions as "claude-opus-5-5@20260101".
+        .replace(/^(vertex\/[^@]+)@/, "$1-");
   // Astra, Sol 6.1, and current Fable/Opus cannot disable thinking.
   if (
     /(?:^|\/)(?:gpt-6-astra|gpt-6\.1-sol|claude-fable-5-1|claude-opus-5-5)(?:$|-)/.test(

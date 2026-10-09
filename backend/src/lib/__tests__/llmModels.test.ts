@@ -22,6 +22,8 @@ import {
     normalizeReasoningLevelForModel,
     reasoningLevelsForModel,
     isAzureFoundryClaudeDeployment,
+    azureFoundryDeploymentName,
+    vertexModelId,
     vertexModelProtocol,
 } from "../llm/models";
 
@@ -294,6 +296,40 @@ describe("vercelModelId", () => {
         expect(vercelModelId("vercel/vercel/v0-1.5-md")).toBe(
             "vercel/v0-1.5-md",
         );
+    });
+});
+
+describe("explicit protocols for Vertex and Foundry ids", () => {
+    it("override the protocol inferred from the name", () => {
+        // A Foundry Claude deployment that was not named after its model.
+        expect(
+            isAzureFoundryClaudeDeployment("azure-foundry/anthropic:prod-sonnet"),
+        ).toBe(true);
+        expect(
+            isAzureFoundryClaudeDeployment("azure-foundry/openai:claude-router"),
+        ).toBe(false);
+        expect(azureFoundryDeploymentName("azure-foundry/anthropic:prod-sonnet")).toBe(
+            "prod-sonnet",
+        );
+        // A Vertex partner model with no publisher/ prefix.
+        expect(vertexModelProtocol("vertex/openai:mistral-large-2411")).toBe(
+            "maas",
+        );
+        expect(vertexModelProtocol("vertex/gemini:claude-lookalike")).toBe(
+            "gemini",
+        );
+        expect(vertexModelProtocol("vertex/anthropic:sonnet-pinned")).toBe(
+            "anthropic",
+        );
+        expect(vertexModelId("vertex/openai:mistral-large-2411")).toBe(
+            "mistral-large-2411",
+        );
+    });
+
+    it("do not hide the model from reasoning-level rules", () => {
+        expect(
+            reasoningLevelsForModel("azure-foundry/anthropic:claude-opus-5-5"),
+        ).not.toContain("none");
     });
 });
 

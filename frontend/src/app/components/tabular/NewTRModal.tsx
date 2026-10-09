@@ -22,8 +22,8 @@ import {
     ModelToggle,
     type NoModelsReason,
     ROUTER_SLUGS,
-    type RouterSlug,
 } from "../assistant/ModelToggle";
+import { routerModelsFromProfile } from "@/app/lib/routerModels";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { isModelAvailable } from "@/app/lib/modelAvailability";
 import { NoModelsWarningPopup } from "../popups/NoModelsWarningPopup";
@@ -184,17 +184,7 @@ export function NewTRModal({
         const router = ROUTER_SLUGS.find(
             (slug) => defaultModel.startsWith(`${slug}/`),
         );
-        const selectedByRouter: Record<RouterSlug, string[]> = {
-            openrouter: profile.openRouterModels,
-            vercel: profile.vercelModels,
-            "opencode-go": profile.openCodeGoModels,
-            bedrock: profile.bedrockModels,
-            azure: profile.azureModels,
-            "azure-foundry": profile.azureFoundryModels,
-            vertex: profile.vertexModels,
-            xai: profile.xaiModels,
-            custom: profile.customModels,
-        };
+        const selectedByRouter = routerModelsFromProfile(profile);
         const routerSelectionValid =
             !router ||
             selectedByRouter[router].includes(
@@ -576,15 +566,7 @@ export function NewTRModal({
                                 onChange={setSelectedModel}
                                 apiKeys={apiKeys}
                                 apiKeysLoading={profileLoading && !profile}
-                                openRouterModels={profile?.openRouterModels}
-                                vercelModels={profile?.vercelModels}
-                                openCodeGoModels={profile?.openCodeGoModels}
-                                bedrockModels={profile?.bedrockModels}
-                                azureModels={profile?.azureModels}
-                                azureFoundryModels={profile?.azureFoundryModels}
-                                vertexModels={profile?.vertexModels}
-                                xaiModels={profile?.xaiModels}
-                                customModels={profile?.customModels}
+                                routerModels={routerModelsFromProfile(profile)}
                                 onNoModelsClick={setNoModelsWarning}
                                 modalInput
                             />

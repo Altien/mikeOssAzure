@@ -12,6 +12,19 @@ const XAI_BASE_URL = "https://api.x.ai/v1";
 const XAI_NON_CHAT_MODEL_RE = /imag|video|voice|tts|speech/i;
 
 /**
+ * Why a catalog request failed, for the server log. The loaders throw plain
+ * Errors that carry only a status code or a fixed phrase, never a response
+ * body; anything else (a network or DNS failure) is reduced to its error
+ * name so a user-supplied URL or key cannot end up in the message.
+ */
+export function catalogFailureReason(error: unknown): string {
+    if (error instanceof Error && error.constructor === Error) {
+        return error.message;
+    }
+    return error instanceof Error ? error.name : "unknown error";
+}
+
+/**
  * The usable ids in a `{ data: [{ id }] }` payload. An id is stored verbatim
  * in user_router_models and prefixed with the provider slug to build the
  * app-level model id, so one with whitespace could never round-trip.
@@ -59,16 +72,23 @@ export async function listXaiModels(
     db: Db,
     userId: string,
 ): Promise<CatalogResult> {
+    // Reading the user's keys is Mike's own work: a failure there is an
+    // internal error to log, not a provider outage.
+    let key: string | undefined;
     try {
-        const key = (await getUserApiKeys(userId, db)).xai?.trim();
-        if (!key) {
-            return {
-                ok: false,
-                kind: "missing_api_key",
-                code: "missing_api_key",
-                detail: "An xAI API key is required to list models.",
-            };
-        }
+        key = (await getUserApiKeys(userId, db)).xai?.trim();
+    } catch (error) {
+        return { ok: false, kind: "error", error };
+    }
+    if (!key) {
+        return {
+            ok: false,
+            kind: "missing_api_key",
+            code: "missing_api_key",
+            detail: "An xAI API key is required to list models.",
+        };
+    }
+    try {
         const models = await readModels(fetch, XAI_BASE_URL, key);
         return {
             ok: true,
@@ -76,11 +96,13 @@ export async function listXaiModels(
                 (model) => !XAI_NON_CHAT_MODEL_RE.test(model.id),
             ),
         };
-    } catch {
+    } catch (error) {
         return {
             ok: false,
             kind: "upstream",
-            error: new Error("xAI model catalog could not be loaded."),
+            error: new Error(
+                `xAI model catalog could not be loaded: ${catalogFailureReason(error)}`,
+            ),
         };
     }
 }
@@ -93,18 +115,23 @@ export async function listCustomEndpointModels(
     db: Db,
     userId: string,
 ): Promise<CatalogResult> {
+    let credentials: Awaited<ReturnType<typeof customEndpointCredentials>>;
     try {
-        const credentials = await customEndpointCredentials(
+        credentials = await customEndpointCredentials(
             await getUserApiKeys(userId, db),
         );
-        if (!credentials) {
-            return {
-                ok: false,
-                kind: "missing_api_key",
-                code: "missing_api_key",
-                detail: "An API key and base URL are required to list models.",
-            };
-        }
+    } catch (error) {
+        return { ok: false, kind: "error", error };
+    }
+    if (!credentials) {
+        return {
+            ok: false,
+            kind: "missing_api_key",
+            code: "missing_api_key",
+            detail: "An API key and base URL are required to list models.",
+        };
+    }
+    try {
         return {
             ok: true,
             models: await readModels(
@@ -113,12 +140,12 @@ export async function listCustomEndpointModels(
                 credentials.apiKey,
             ),
         };
-    } catch {
+    } catch (error) {
         return {
             ok: false,
             kind: "upstream",
             error: new Error(
-                "The OpenAI-compatible endpoint's model list could not be loaded.",
+                `The OpenAI-compatible endpoint's model list could not be loaded: ${catalogFailureReason(error)}`,
             ),
         };
     }

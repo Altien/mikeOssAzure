@@ -129,6 +129,14 @@ saved list.
   resolves to one. Endpoints on a private network belong in
   `MIKE_MODEL_CONFIG_JSON`.
 
+Vertex AI and Foundry infer the protocol from the model or deployment name.
+When a name does not reveal it, save the ID with an explicit protocol:
+`anthropic:<name>` for Anthropic Messages, `openai:<name>` for Chat
+Completions (the partner-model endpoint on Vertex), or `gemini:<name>` for the
+Gemini API on Vertex. The prefix selects the protocol and is not sent upstream;
+for example a Foundry Claude deployment named `prod-sonnet` is saved as
+`anthropic:prod-sonnet`.
+
 Before deploying, apply numbered migrations 0107 and 0108 for provider
 constraints and account preferences. Dev retains text user identities and
 application access control; Supabase RLS/schema.sql are not imported.

@@ -39,7 +39,12 @@ import type {
   WordChatSubmission,
   WordChatSubmitOptions,
 } from "../../lib/wordChatTypes";
-import { isModelAvailable, missingModelProvider } from "../../lib/modelCatalog";
+import {
+  ROUTER_SLUGS,
+  isModelAvailable,
+  missingModelProvider,
+  routerModelsFromProfile,
+} from "../../lib/modelCatalog";
 import { loadWithRetry } from "../../lib/composerPreflight";
 import {
   slashCommandQueryFromValue,
@@ -114,9 +119,9 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
     >(null);
     const [keyStatus, setKeyStatus] = useState<ApiKeyStatus | null>(null);
     const [keyStatusLoading, setKeyStatusLoading] = useState(true);
-    const [openRouterModels, setOpenRouterModels] = useState<string[]>([]);
-    const [vercelModels, setVercelModels] = useState<string[]>([]);
-    const [openCodeGoModels, setOpenCodeGoModels] = useState<string[]>([]);
+    const [routerModels, setRouterModels] = useState(() =>
+      routerModelsFromProfile(null),
+    );
     const [configuredModels, setConfiguredModels] = useState<ConfiguredModelOption[]>([]);
     const configuredModelIds = React.useMemo(() => configuredModels.map((item) => item.id), [configuredModels]);
     const [profileLastSelectedModel, setProfileLastSelectedModel] = useState<
@@ -127,9 +132,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
       sessionKey,
       chatModel,
       lastSelectedModel: lastSelectedModel ?? profileLastSelectedModel,
-      routerSelections: profileLoaded
-        ? { openRouterModels, vercelModels, openCodeGoModels }
-        : null,
+      routerSelections: profileLoaded ? routerModels : null,
       apiKeyStatus: keyStatus,
       configuredModelIds,
     });
@@ -246,9 +249,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
         if (cancelled) return;
         setKeyStatus(status);
         if (profile) {
-          setOpenRouterModels(profile.openRouterModels ?? []);
-          setVercelModels(profile.vercelModels ?? []);
-          setOpenCodeGoModels(profile.openCodeGoModels ?? []);
+          setRouterModels(routerModelsFromProfile(profile));
           setProfileLastSelectedModel(profile.lastSelectedChatModel ?? null);
           setProfileLastSelectedReasoningLevel(
             profile.lastSelectedReasoningLevel ?? "high",
@@ -629,9 +630,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
                     }}
                     keyStatus={keyStatus}
                     keyStatusLoading={keyStatusLoading}
-                    openRouterModels={openRouterModels}
-                    vercelModels={vercelModels}
-                    openCodeGoModels={openCodeGoModels}
+                    routerModels={routerModels}
                     configuredModels={configuredModels}
                     compact={compactControls}
                     reasoningLevel={resolvedReasoningLevel}
@@ -644,12 +643,10 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
                           .then(() => onReasoningSelected(next));
                     }}
                     onNoModelsClick={() => {
-                      const routerHasNoModels =
-                        (keyStatus?.openrouter &&
-                          openRouterModels.length === 0) ||
-                        (keyStatus?.vercel && vercelModels.length === 0) ||
-                        (keyStatus?.["opencode-go"] &&
-                          openCodeGoModels.length === 0);
+                      const routerHasNoModels = ROUTER_SLUGS.some(
+                        (slug) =>
+                          keyStatus?.[slug] && routerModels[slug].length === 0,
+                      );
                       setModelError(
                         routerHasNoModels
                           ? "Your router is connected, but it has no saved models. Open your provider in Bring Your Own Keys and add a model under Model Selections."

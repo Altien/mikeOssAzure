@@ -74,6 +74,11 @@ export function reasoningLevelsForModel(
               .replace(/^(?:[a-z]+(?:-[a-z]+)*\.)?anthropic\./, "")
         : model
               .replace(/^(?:openrouter|vercel)\//, "")
+              // An explicit protocol is not part of the model name.
+              .replace(
+                  /^((?:vertex|azure-foundry)\/)(?:anthropic|openai|gemini):/,
+                  "$1",
+              )
               // Vertex pins Claude versions as "claude-opus-5-5@20260101".
               .replace(/^(vertex\/[^@]+)@/, "$1-");
     // Astra, Sol 6.1, and current Fable/Opus cannot disable thinking.
@@ -257,36 +262,67 @@ export function azureDeploymentName(model: string): string {
     return model.replace(/^azure\//, "");
 }
 
-/** Azure AI Foundry deployment name, without the app-level prefix. */
+// Vertex AI and Azure AI Foundry serve several wire protocols, and neither
+// tells an API key which one a model speaks. Mike infers it from the name,
+// and a saved id can state it outright for names the inference gets wrong:
+// "anthropic:prod-sonnet", "openai:mistral-large-2411", "gemini:my-tuned-model".
+const EXPLICIT_PROTOCOL_RE = /^(anthropic|openai|gemini):/;
+
+type ExplicitProtocol = "anthropic" | "openai" | "gemini";
+
+function splitExplicitProtocol(id: string): {
+    protocol: ExplicitProtocol | null;
+    id: string;
+} {
+    const match = EXPLICIT_PROTOCOL_RE.exec(id);
+    return match
+        ? {
+              protocol: match[1] as ExplicitProtocol,
+              id: id.slice(match[0].length),
+          }
+        : { protocol: null, id };
+}
+
+/**
+ * Azure AI Foundry deployment name, without the app-level prefix or an
+ * explicit protocol.
+ */
 export function azureFoundryDeploymentName(model: string): string {
-    return model.replace(/^azure-foundry\//, "");
+    return splitExplicitProtocol(model.replace(/^azure-foundry\//, "")).id;
 }
 
 /**
  * Foundry serves Claude over the Anthropic Messages API and everything else
- * over Chat Completions. A deployment's protocol is not discoverable with an
- * API key, so it is read from the deployment name, which defaults to the
- * model name ("claude-opus-5-5").
+ * over Chat Completions. Without an explicit protocol it is read from the
+ * deployment name, which defaults to the model name ("claude-opus-5-5").
  */
 export function isAzureFoundryClaudeDeployment(model: string): boolean {
-    return /claude/i.test(azureFoundryDeploymentName(model));
+    const { protocol, id } = splitExplicitProtocol(
+        model.replace(/^azure-foundry\//, ""),
+    );
+    if (protocol) return protocol === "anthropic";
+    return /claude/i.test(id);
 }
 
-/** Vertex AI model id, without the app-level prefix. */
+/** Vertex AI model id, without the app-level prefix or an explicit protocol. */
 export function vertexModelId(model: string): string {
-    return model.replace(/^vertex\//, "");
+    return splitExplicitProtocol(model.replace(/^vertex\//, "")).id;
 }
 
 /**
  * Vertex AI speaks three protocols: Anthropic Messages for Claude
  * ("claude-opus-5-5@20260101"), OpenAI-compatible Chat Completions for
  * partner and open models, which are named publisher/model
- * ("meta/llama-4-maverick-maas"), and its own API for Gemini.
+ * ("meta/llama-4-maverick-maas"), and its own API for Gemini. An explicit
+ * "openai:" means the Chat Completions endpoint.
  */
 export function vertexModelProtocol(
     model: string,
 ): "anthropic" | "maas" | "gemini" {
-    const id = vertexModelId(model);
+    const { protocol, id } = splitExplicitProtocol(
+        model.replace(/^vertex\//, ""),
+    );
+    if (protocol) return protocol === "openai" ? "maas" : protocol;
     if (id.startsWith("claude")) return "anthropic";
     return id.includes("/") ? "maas" : "gemini";
 }

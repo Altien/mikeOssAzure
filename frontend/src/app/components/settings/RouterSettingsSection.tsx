@@ -18,7 +18,11 @@ import {
   getVercelModels,
   type RouterCatalogModel,
 } from "@/app/lib/mikeApi";
-import type { RouterSlug } from "@/app/components/assistant/ModelToggle";
+import {
+  ROUTER_SLUGS,
+  routerModelsFromProfile,
+  type RouterSlug,
+} from "@/app/lib/routerModels";
 import { SettingsDescription } from "./SettingsText";
 
 const COST_FORMATTER = new Intl.NumberFormat("en-US", {
@@ -60,7 +64,7 @@ const CATALOG_MODEL_ID_RE = /^[^\s/]+\/[^\s]+$/;
  */
 const ROUTER_MODEL_ID: Record<
   RouterSlug,
-  { pattern: RegExp; shape: string; example: string }
+  { pattern: RegExp; shape: string; example: string; hint?: string }
 > = {
   openrouter: {
     pattern: CATALOG_MODEL_ID_RE,
@@ -91,11 +95,13 @@ const ROUTER_MODEL_ID: Record<
     pattern: /^[^\s]+$/,
     shape: "a deployment name with no spaces",
     example: "claude-opus-5-5",
+    hint: "Claude deployments are recognised by name. If a deployment is named differently, add it as anthropic:<name>, or openai:<name> for any other model.",
   },
   vertex: {
     pattern: /^[^\s]+$/,
     shape: "a Vertex AI model ID with no spaces",
     example: "gemini-3.1-pro-preview",
+    hint: "Claude and publisher/model IDs are recognised by name. For other partner models add openai:<id>; anthropic:<id> and gemini:<id> also work.",
   },
   xai: {
     pattern: /^[^\s]+$/,
@@ -148,46 +154,41 @@ function catalogModelMatches(model: RouterCatalogModel, query: string) {
   );
 }
 
-export function RouterSettingsSection({ provider }: { provider?: RouterSlug } = {}) {
-  const {
-    profile,
-    updateOpenRouterModels,
-    updateVercelModels,
-    updateOpenCodeGoModels,
-    updateBedrockModels,
-    updateAzureModels,
-    updateAzureFoundryModels,
-    updateVertexModels,
-    updateXaiModels,
-    updateCustomModels,
-  } = useUserProfile();
-  const configured = (slug: RouterSlug) =>
-    (!provider || provider === slug) &&
-    profile?.apiKeys[slug]?.configured === true;
-  const azureFoundryConfigured = configured("azure-foundry");
-  const vertexConfigured = configured("vertex");
-  const xaiConfigured = configured("xai");
-  const customConfigured = configured("custom");
-  const openRouterConfigured = (!provider || provider === "openrouter") && profile?.apiKeys.openrouter.configured === true;
-  const vercelConfigured = (!provider || provider === "vercel") && profile?.apiKeys.vercel.configured === true;
-  const openCodeGoConfigured =
-    (!provider || provider === "opencode-go") && profile?.apiKeys["opencode-go"].configured === true;
-  const bedrockConfigured = (!provider || provider === "bedrock") && profile?.apiKeys.bedrock.configured === true;
-  const azureConfigured = (!provider || provider === "azure") && profile?.apiKeys.azure.configured === true;
+/** How each router's models are listed, where it publishes a catalog. */
+const ROUTER_SETTINGS: Record<
+  RouterSlug,
+  { label: string; loadCatalog?: () => Promise<RouterCatalogModel[]> }
+> = {
+  openrouter: { label: "OpenRouter", loadCatalog: getOpenRouterModels },
+  vercel: { label: "Vercel AI Gateway", loadCatalog: getVercelModels },
+  "opencode-go": { label: "OpenCode Go", loadCatalog: getOpenCodeGoModels },
+  bedrock: { label: "Amazon Bedrock", loadCatalog: getBedrockModels },
+  azure: { label: "Azure OpenAI" },
+  "azure-foundry": { label: "Azure AI Foundry" },
+  vertex: { label: "Google Vertex AI" },
+  xai: { label: "xAI", loadCatalog: getXaiModels },
+  custom: {
+    label: "OpenAI-compatible endpoint",
+    loadCatalog: getCustomEndpointModels,
+  },
+};
 
-  if (
-    !openRouterConfigured &&
-    !vercelConfigured &&
-    !openCodeGoConfigured &&
-    !bedrockConfigured &&
-    !azureConfigured &&
-    !azureFoundryConfigured &&
-    !vertexConfigured &&
-    !xaiConfigured &&
-    !customConfigured
-  ) {
-    return null;
-  }
+export function RouterSettingsSection({ provider }: { provider?: RouterSlug } = {}) {
+  const { profile, updateRouterModels } = useUserProfile();
+  const selections = routerModelsFromProfile(profile);
+  const routers = ROUTER_SLUGS.filter(
+    (slug) =>
+      (!provider || provider === slug) &&
+      profile?.apiKeys[slug]?.configured === true,
+  );
+  if (routers.length === 0) return null;
+
+  // A catalog belongs to one account, region or endpoint: remount the
+  // setting when that changes so the list is read again.
+  const catalogScope: Partial<Record<RouterSlug, string>> = {
+    bedrock: profile?.apiKeySettings?.bedrock?.region ?? "",
+    custom: profile?.apiKeySettings?.custom?.baseUrl ?? "",
+  };
 
   return (
     <section id="routers" className="scroll-mt-6 space-y-3">
@@ -196,86 +197,16 @@ export function RouterSettingsSection({ provider }: { provider?: RouterSlug } = 
         Add the models you want to use. Saved models appear in model selectors.
       </SettingsDescription>
       <div className="space-y-4">
-        {openRouterConfigured && (
+        {routers.map((slug) => (
           <RouterModelsSetting
-            provider="openrouter"
-            label="OpenRouter"
-            selection={profile?.openRouterModels ?? []}
-            loadCatalog={getOpenRouterModels}
-            onSave={updateOpenRouterModels}
+            key={`${slug}:${catalogScope[slug] ?? ""}`}
+            provider={slug}
+            label={ROUTER_SETTINGS[slug].label}
+            selection={selections[slug]}
+            loadCatalog={ROUTER_SETTINGS[slug].loadCatalog}
+            onSave={(models) => updateRouterModels(slug, models)}
           />
-        )}
-        {vercelConfigured && (
-          <RouterModelsSetting
-            provider="vercel"
-            label="Vercel AI Gateway"
-            selection={profile?.vercelModels ?? []}
-            loadCatalog={getVercelModels}
-            onSave={updateVercelModels}
-          />
-        )}
-        {openCodeGoConfigured && (
-          <RouterModelsSetting
-            provider="opencode-go"
-            label="OpenCode Go"
-            selection={profile?.openCodeGoModels ?? []}
-            loadCatalog={getOpenCodeGoModels}
-            onSave={updateOpenCodeGoModels}
-          />
-        )}
-        {bedrockConfigured && (
-          <RouterModelsSetting
-            key={`bedrock:${profile?.apiKeySettings?.bedrock?.region ?? ""}`}
-            provider="bedrock"
-            label="Amazon Bedrock"
-            loadCatalog={getBedrockModels}
-            selection={profile?.bedrockModels ?? []}
-            onSave={updateBedrockModels}
-          />
-        )}
-        {azureConfigured && (
-          <RouterModelsSetting
-            provider="azure"
-            label="Azure OpenAI"
-            selection={profile?.azureModels ?? []}
-            onSave={updateAzureModels}
-          />
-        )}
-        {azureFoundryConfigured && (
-          <RouterModelsSetting
-            provider="azure-foundry"
-            label="Azure AI Foundry"
-            selection={profile?.azureFoundryModels ?? []}
-            onSave={updateAzureFoundryModels}
-          />
-        )}
-        {vertexConfigured && (
-          <RouterModelsSetting
-            provider="vertex"
-            label="Google Vertex AI"
-            selection={profile?.vertexModels ?? []}
-            onSave={updateVertexModels}
-          />
-        )}
-        {xaiConfigured && (
-          <RouterModelsSetting
-            provider="xai"
-            label="xAI"
-            selection={profile?.xaiModels ?? []}
-            loadCatalog={getXaiModels}
-            onSave={updateXaiModels}
-          />
-        )}
-        {customConfigured && (
-          <RouterModelsSetting
-            key={`custom:${profile?.apiKeySettings?.custom?.baseUrl ?? ""}`}
-            provider="custom"
-            label="OpenAI-compatible endpoint"
-            selection={profile?.customModels ?? []}
-            loadCatalog={getCustomEndpointModels}
-            onSave={updateCustomModels}
-          />
-        )}
+        ))}
       </div>
     </section>
   );
@@ -603,6 +534,11 @@ function RouterModelsSetting({
             </OptionPill>
           ))}
         </div>
+      )}
+      {ROUTER_MODEL_ID[provider].hint && (
+        <p className="text-xs text-gray-500">
+          {ROUTER_MODEL_ID[provider].hint}
+        </p>
       )}
       {error && <p className="text-xs text-red-600">{error}</p>}
     </div>

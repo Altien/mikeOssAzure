@@ -113,6 +113,18 @@ describe("cloud platform options", () => {
         });
     });
 
+    it("keeps an explicit protocol in the id but out of the label", () => {
+        expect(azureFoundryModelOptions(["anthropic:prod-sonnet"])[0]).toMatchObject({
+            id: "azure-foundry/anthropic:prod-sonnet",
+            label: "Prod Sonnet",
+        });
+        expect(vertexModelOptions(["openai:mistral-large-2411"])[0]).toMatchObject({
+            id: "vertex/openai:mistral-large-2411",
+            label: "Mistral Large 2411",
+            group: "Mistral AI",
+        });
+    });
+
     it("labels Azure deployments by name", () => {
         expect(azureModelOptions(["gpt-6.1-sol"])[0]).toEqual({
             id: "azure/gpt-6.1-sol",

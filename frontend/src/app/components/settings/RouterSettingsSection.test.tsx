@@ -73,15 +73,18 @@ vi.mock("@/app/contexts/UserProfileContext", () => ({
             xaiModels: [],
             customModels: [],
         },
-        updateOpenRouterModels,
-        updateVercelModels: vi.fn(),
-        updateOpenCodeGoModels,
-        updateBedrockModels,
-        updateAzureModels: vi.fn(),
-        updateAzureFoundryModels: vi.fn(),
-        updateVertexModels,
-        updateXaiModels,
-        updateCustomModels,
+        // One save callback keyed by router; each test asserts on its own.
+        updateRouterModels: (router: string, models: string[]) => {
+            const save: Record<string, (models: string[]) => unknown> = {
+                openrouter: updateOpenRouterModels,
+                "opencode-go": updateOpenCodeGoModels,
+                bedrock: updateBedrockModels,
+                vertex: updateVertexModels,
+                xai: updateXaiModels,
+                custom: updateCustomModels,
+            };
+            return save[router]?.(models) ?? Promise.resolve(true);
+        },
     }),
 }));
 

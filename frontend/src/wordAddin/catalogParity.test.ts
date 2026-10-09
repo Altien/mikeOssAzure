@@ -41,6 +41,17 @@ import {
     reasoningLevelsForModel as backendReasoningLevels,
 } from "../../../backend/src/lib/llm/models";
 import { reasoningLevelsForModel } from "../shared/ui/ModelToggleUI";
+import { routerModelOptions as webRouterModelOptions } from "../app/components/assistant/ModelToggle";
+import {
+    ROUTER_PROFILE_FIELDS as WEB_ROUTER_PROFILE_FIELDS,
+    ROUTER_SLUGS as WEB_ROUTER_SLUGS,
+} from "../app/lib/routerModels";
+import {
+    ROUTER_PROFILE_FIELDS as ADDIN_ROUTER_PROFILE_FIELDS,
+    ROUTER_SLUGS as ADDIN_ROUTER_SLUGS,
+    routerModelOptions as addinRouterModelOptions,
+} from "../../../word-addin/src/taskpane/lib/modelCatalog";
+import { ROUTER_SLUGS as BACKEND_ROUTER_SLUGS } from "../../../backend/src/lib/routerModels";
 
 describe("word add-in catalog parity", () => {
     it("keeps both clients aligned with backend model IDs and reasoning capabilities", () => {
@@ -234,6 +245,70 @@ describe("word add-in catalog parity", () => {
                     )
                     .toBe(webIsModelAvailable(id, webState));
             }
+        }
+    });
+});
+
+describe("router parity across the web app, the add-in and the backend", () => {
+    const selections = {
+        openrouter: ["anthropic/claude-sonnet-4.5", "openrouter/auto"],
+        vercel: ["openai/gpt-5.4"],
+        "opencode-go": ["glm-5"],
+        bedrock: ["us.anthropic.claude-opus-5-5", "meta.llama4-v1:0"],
+        azure: ["gpt-6.1-sol"],
+        "azure-foundry": ["claude-opus-5-5", "anthropic:prod-sonnet"],
+        vertex: [
+            "gemini-3.1-pro-preview",
+            "claude-opus-5-5@20260101",
+            "meta/llama-4-maverick-maas",
+            "openai:mistral-large-2411",
+        ],
+        xai: ["grok-4.3"],
+        custom: ["deepseek/deepseek-v4", "my-model"],
+    };
+
+    it("lists the same routers, in the same order, with the same profile fields", () => {
+        expect([...ADDIN_ROUTER_SLUGS]).toEqual([...WEB_ROUTER_SLUGS]);
+        expect([...BACKEND_ROUTER_SLUGS]).toEqual([...WEB_ROUTER_SLUGS]);
+        expect(ADDIN_ROUTER_PROFILE_FIELDS).toEqual(WEB_ROUTER_PROFILE_FIELDS);
+    });
+
+    it("builds identical picker options for every router", () => {
+        expect(addinRouterModelOptions(selections)).toEqual(
+            webRouterModelOptions(selections),
+        );
+    });
+
+    it("accepts and gates every router's models in the add-in", () => {
+        const status = {
+            claude: false,
+            gemini: false,
+            openai: false,
+            mistral: false,
+            openrouter: false,
+            vercel: false,
+            "opencode-go": false,
+            courtlistener: false,
+        } as ApiKeyStatus;
+        for (const slug of WEB_ROUTER_SLUGS) {
+            const id = `${slug}/some-model`;
+            expect(addinIsAllowedModelId(id)).toBe(true);
+            expect(addinIsModelAvailable(id, status)).toBe(false);
+            expect(addinIsModelAvailable(id, { ...status, [slug]: true })).toBe(
+                true,
+            );
+        }
+    });
+
+    it("agrees on reasoning levels for ids that state their protocol", () => {
+        for (const id of [
+            "azure-foundry/anthropic:claude-opus-5-5",
+            "vertex/anthropic:claude-opus-5-5@20260101",
+            "vertex/openai:mistral-large-2411",
+        ]) {
+            expect(reasoningLevelsForModel(id)).toEqual(
+                backendReasoningLevels(id),
+            );
         }
     });
 });
