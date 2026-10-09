@@ -34,6 +34,10 @@ jobs:
           node-version: 24
       - run: corepack enable && corepack prepare pnpm@11.1.2 --activate
       - run: pnpm install --frozen-lockfile
+      # Upstream divergence (sync-log: e436b039): protocol fixture only.
+      # The retired Supabase browser harness remains unsupported in Dev.
+      - name: Anthropic fixture protocol contract
+        run: node --test ../e2e/anthropic-stub.check.mjs
       - run: pnpm run test:coverage
       - run: pnpm run build
 
