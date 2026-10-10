@@ -1,13 +1,11 @@
 "use client";
 
-import { findPendingAskInput } from "@/app/lib/pendingAskInput";
 import { useDocumentViewers } from "@/app/hooks/useDocumentViewers";
 import { useDocumentPermissions } from "@/app/hooks/useDocumentPermissions";
 
 import {
     useCallback,
     useEffect,
-    useLayoutEffect,
     useMemo,
     useReducer,
     useRef,
@@ -16,17 +14,13 @@ import {
 import { useRouter } from "next/navigation";
 import {
     ArrowUpRight,
-    Brain,
     ChevronLeft,
     ChevronRight,
     FolderOpen,
     FolderPlus,
-    Pencil,
-    Trash2,
 } from "lucide-react";
 import {
     UploadBatchError,
-    deleteChat,
     deleteDocument,
     failedUploadMessage,
     getDocument,
@@ -41,37 +35,41 @@ import {
     moveSubfolderToFolder,
     resolveProjectFolderPath,
 } from "@/app/lib/mikeApi";
-import { loadAssistantChat } from "@/app/lib/assistantTurns";
 import {
     chatActivityAt,
     sortChatsByActivity,
     touchChatActivity,
 } from "@/app/lib/chatActivity";
 import { useAssistantHistoryStatuses } from "@/app/hooks/useAssistantHistoryStatuses";
-import { useAssistantChat } from "@/app/hooks/useAssistantChat";
 import { useChatRoute } from "@/app/hooks/useChatRoute";
-import { useAssistantMessageLayout } from "@/app/hooks/useAssistantMessageLayout";
+import { usePathParams } from "@/app/lib/usePathParams";
+import {
+    CHAT_DEFAULT,
+    DOCUMENT_MIN,
+    EXPLORER_DEFAULT,
+    fitPanelWidths,
+    fitsWithExplorer,
+    resizeChatSplit,
+    resizePanel,
+    type WorkspacePanelWidths,
+} from "@/app/lib/workspacePanelWidths";
+import {
+    ProjectChatPanel,
+    type ProjectChatPanelHandle,
+} from "@/app/components/projects/ProjectChatPanel";
 import { useProjectPicker } from "@/app/hooks/useProjectPicker";
 import {
-    isChatAttachmentDrag,
     isExternalFileDrag,
     isDocumentViewerDrag,
     isProjectItemDrag,
 } from "@/app/lib/projectDragTypes";
 import { useExplorerDownload } from "@/app/hooks/useExplorerDownload";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
-import { UserMessage } from "@/app/components/assistant/UserMessage";
-import { AssistantMessage } from "@/app/components/assistant/AssistantMessage";
-import { ChatInput } from "@/app/components/assistant/ChatInput";
-import { ChatInputPrompt } from "@/app/components/assistant/ChatInputPrompt";
-import { ResponseSelectionMenuUI } from "@/shared/ui/ResponseSelectionMenuUI";
-import type { ChatInputHandle } from "@/app/components/assistant/ChatInput";
 import {
     ProjectExplorer,
     type ProjectExplorerHandle,
 } from "@/app/components/projects/ProjectExplorer";
 import { ProjectMemoryModal } from "@/app/components/projects/ProjectMemoryModal";
-import { ChatPanelHeader } from "@/app/components/shared/ChatPanelHeader";
 import { ProjectDocumentTabs } from "@/app/components/projects/ProjectDocumentTabs";
 import {
     ProjectDocumentPanels,
@@ -86,15 +84,7 @@ import { ProjectPickerModal } from "@/app/components/modals/ProjectPickerModal";
 import { DocumentUploadMenu } from "@/app/components/shared/DocumentUploadMenu";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
-import { ApiKeyMissingPopup } from "@/app/components/popups/ApiKeyMissingPopup";
-import {
-    getModelProvider,
-    providerLabel,
-} from "@/app/lib/modelAvailability";
 import { PermissionDeniedPopup } from "@/app/components/popups/PermissionDeniedPopup";
-import { MikeIcon } from "@/shared/ui/MikeIconUI";
-import { useAuth } from "@/app/contexts/AuthContext";
-import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { useSidebar } from "@/app/contexts/SidebarContext";
 import { HeaderActionsMenu } from "@/app/components/shared/HeaderActionsMenu";
 import type {
@@ -104,7 +94,6 @@ import type {
     Citation,
     Document,
     EditAnnotation,
-    Message,
     Project,
 } from "@/app/components/shared/types";
 import { panelDocumentFromCitation, panelDocumentFromCaseEvent, panelDocumentType } from "@/app/components/shared/types";
@@ -117,21 +106,9 @@ import {
     folderDeleteDialogReducer,
     removeDeletedDocumentTabs,
 } from "@/app/lib/folderDeleteState";
-import { usePathParams } from "@/app/lib/usePathParams";
-// Upstream divergence (OSS-6, Â§2.3 item 7): dev's skill runtime (bound-skill
-// chip + explicit upgrade banner) and Authority Trace tab, hooked in from
-// src/altien. Each hook-in site below is marked "Dev (OSS-6)".
-import {
-    ChatSkillChip,
-    ChatSkillUpgradeBanner,
-    useChatSkillRuntime,
-} from "@/altien/skillRuntime/chatSkillRuntime";
-import {
-    AuthorityTraceTabItem,
-    useProjectChatAuthorityTrace,
-} from "@/altien/authorityTrace/projectChatAuthorityTrace";
-import { AuthorityTracePanel } from "@/altien/authorityTrace/AuthorityTracePanel";
 import { can, roleFromLoaded } from "@/app/lib/permissions";
+import { AuthorityTraceTabItem, useProjectChatAuthorityTrace } from "@/altien/authorityTrace/projectChatAuthorityTrace";
+import { AuthorityTracePanel } from "@/altien/authorityTrace/AuthorityTracePanel";
 import { LIQUID_GLASS_FLAT_CLASS } from "@/app/components/ui/liquid-surface";
 import { cn } from "@/app/lib/utils";
 import { readDocumentDragPayload } from "@/app/lib/docTableSelection";
@@ -148,109 +125,6 @@ import {
     formatUnsupportedDocumentWarning,
     partitionSupportedDocumentFiles,
 } from "@/app/lib/documentUploadValidation";
-
-interface Props {
-    params: Promise<{ id: string; chatId?: string }>;
-}
-
-const ICON_SIZE = 28;
-const GAP = 14;
-const EXPLORER_MIN = 160;
-const EXPLORER_DEFAULT = 280;
-const DOCUMENT_MIN = 320;
-const CHAT_MIN = 320;
-const CHAT_DEFAULT = 420;
-const PANEL_DIVIDERS_WIDTH = 12;
-const COLLAPSED_EXPLORER_FOOTPRINT = 42;
-const DEFAULT_ASSISTANT_BOTTOM_PADDING = 116;
-const ASSISTANT_HEADER_HEIGHT = 48;
-
-type WorkspacePanelWidths = {
-    explorer: number;
-    chat: number;
-};
-
-function fitExpandedPanelWidths(
-    widths: WorkspacePanelWidths,
-    workspaceWidth: number,
-): WorkspacePanelWidths {
-    const availableWidth = workspaceWidth - DOCUMENT_MIN - PANEL_DIVIDERS_WIDTH;
-    const currentTotal = widths.explorer + widths.chat;
-    if (currentTotal <= availableWidth) return widths;
-
-    const minimumTotal = EXPLORER_MIN + CHAT_MIN;
-    if (availableWidth <= minimumTotal) {
-        return { explorer: EXPLORER_MIN, chat: CHAT_MIN };
-    }
-
-    const availableExtra = availableWidth - minimumTotal;
-    const explorerExtra = widths.explorer - EXPLORER_MIN;
-    const chatExtra = widths.chat - CHAT_MIN;
-    const currentExtra = explorerExtra + chatExtra;
-    if (currentExtra <= 0) return widths;
-
-    const scale = availableExtra / currentExtra;
-    return {
-        explorer: EXPLORER_MIN + explorerExtra * scale,
-        chat: CHAT_MIN + chatExtra * scale,
-    };
-}
-
-function AssistantGreeting({ username }: { username: string }) {
-    const { profile } = useUserProfile();
-    const [loaded, setLoaded] = useState(false);
-    const [iconOffset, setIconOffset] = useState(0);
-    const [textOffset, setTextOffset] = useState(0);
-    const textRef = useRef<HTMLHeadingElement>(null);
-
-    useLayoutEffect(() => {
-        if (!profile || !textRef.current) return;
-        const h1Width = textRef.current.offsetWidth;
-        setIconOffset((h1Width + GAP) / 2);
-        setTextOffset((ICON_SIZE + GAP) / 2);
-    }, [profile]);
-
-    useEffect(() => {
-        if (!iconOffset) return;
-        const t = setTimeout(() => setLoaded(true), 100);
-        return () => clearTimeout(t);
-    }, [iconOffset]);
-
-    return (
-        <div className="flex-1 flex items-center justify-center">
-            <div className="relative flex items-center justify-center h-[28px]">
-                <div
-                    className="absolute h-[30px]"
-                    style={{
-                        left: "50%",
-                        transform: loaded
-                            ? `translateX(calc(-50% - ${iconOffset}px))`
-                            : "translateX(-50%)",
-                        transition:
-                            "transform 900ms cubic-bezier(0.25, 0.46, 0.45, 0.94)",
-                    }}
-                >
-                    <MikeIcon size={ICON_SIZE} />
-                </div>
-                <h1
-                    ref={textRef}
-                    className="absolute text-3xl font-serif font-light text-gray-900 whitespace-nowrap"
-                    style={{
-                        left: "50%",
-                        transform: loaded
-                            ? `translateX(calc(-50% + ${textOffset}px))`
-                            : "translateX(-50%)",
-                        opacity: loaded ? 1 : 0,
-                        transition:
-                            "transform 900ms cubic-bezier(0.25, 0.46, 0.45, 0.94), opacity 800ms ease-in-out 300ms",
-                    }}
-                >
-                    Hi, {username}
-                </h1>
-            </div>
-        </div>
-    );
-}
 
 /** Drag-handle divider for resizing panels */
 function Divider({ onDrag }: { onDrag: (dx: number) => void }) {
@@ -302,17 +176,10 @@ function Divider({ onDrag }: { onDrag: (dx: number) => void }) {
 }
 
 export default function ProjectAssistantChatPage() {
-    // Static-export divergence (OSS-6): project id from the live URL instead
-    // of `use(params)` (always "_" under output: "export"). The chat id comes
-    // from upstream's useChatRoute, which also reads usePathname().
     const { id: projectId } = usePathParams<"id">("/projects/:id");
     const router = useRouter();
 
     const { setSidebarOpen } = useSidebar();
-    const { user, authLoading } = useAuth();
-    const { profile } = useUserProfile();
-    const username =
-        profile?.displayName?.trim() || user?.email?.split("@")[0] || "there";
     const explorerDownload = useExplorerDownload();
 
     const [project, setProject] = useState<Project | null>(null);
@@ -322,19 +189,12 @@ export default function ProjectAssistantChatPage() {
         openChat,
         adoptChat,
         claimCreated,
+        sideChatId,
+        openSideChat,
+        adoptSideChat,
+        closeSideChat,
     } = useChatRoute(`/projects/${projectId}/assistant/chat`);
-    const activeChatIdRef = useRef(activeChatId);
-    useLayoutEffect(() => {
-        activeChatIdRef.current = activeChatId;
-    }, [activeChatId]);
     const [projectChats, setProjectChats] = useState<Chat[] | null>(null);
-    const [chatTitle, setChatTitle] = useState<string | null>(null);
-    const [chatTitleEdit, setChatTitleEdit] = useState<{
-        chatId: string;
-        title: string;
-    } | null>(null);
-    const editingChatTitle =
-        chatTitleEdit?.chatId === activeChatId ? chatTitleEdit : null;
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
     const [editorGateAction, setEditorGateAction] = useState<string | null>(
         null,
@@ -343,9 +203,6 @@ export default function ProjectAssistantChatPage() {
         title: string;
         message: string;
     } | null>(null);
-    const [chatLoaded, setChatLoaded] = useState(false);
-    const [deletingChat, setDeletingChat] = useState(false);
-    const [composerResetKey, setComposerResetKey] = useState(0);
     const [projectMemoryOpen, setProjectMemoryOpen] = useState(false);
     const [folderDeleteDialog, dispatchFolderDeleteDialog] = useReducer(
         folderDeleteDialogReducer,
@@ -359,9 +216,22 @@ export default function ProjectAssistantChatPage() {
     const [panelWidths, setPanelWidths] = useState<WorkspacePanelWidths>({
         explorer: EXPLORER_DEFAULT,
         chat: CHAT_DEFAULT,
+        sideChat: CHAT_DEFAULT,
     });
     const explorerWidth = panelWidths.explorer;
-    const chatWidth = panelWidths.chat;
+    const sideChatOpen = sideChatId !== null;
+    // "Add to chat" from the explorer or a document tab goes to the chat the
+    // reader last used.
+    const primaryChatPanelRef = useRef<ProjectChatPanelHandle>(null);
+    const sideChatPanelRef = useRef<ProjectChatPanelHandle>(null);
+    const [activeChatPane, setActiveChatPane] = useState<"primary" | "side">(
+        "primary",
+    );
+    const addDocToChat = (document: Document) =>
+        (
+            (activeChatPane === "side" ? sideChatPanelRef.current : null) ??
+            primaryChatPanelRef.current
+        )?.addDoc(document);
     const [explorerCollapsed, setExplorerCollapsed] = useState(false);
     const workspaceRef = useRef<HTMLDivElement>(null);
 
@@ -378,7 +248,6 @@ export default function ProjectAssistantChatPage() {
         Array<{ clientId: string; filename: string }>
     >([]);
     const [explorerDragOver, setExplorerDragOver] = useState(false);
-    const [chatDragOver, setChatDragOver] = useState(false);
     const [documentDragOver, setDocumentDragOver] = useState(false);
     const [documentDropError, setDocumentDropError] = useState<string | null>(
         null,
@@ -397,72 +266,22 @@ export default function ProjectAssistantChatPage() {
     >({});
     const openRequest = useRef(0);
     const activeTab = tabs.find((t) => t.documentId === activeTabId) ?? null;
-    // Dev (OSS-6): skill runtime + Authority Trace tab state.
-    // Upstream #559 derives citation quotes from the active tab's annotation,
-    // so the trace tab (no document) needs only the selection reset.
-    const skillRuntime = useChatSkillRuntime(projectId, activeChatId);
+    const activeCitation =
+        activeTab?.annotation?.kind === "citation"
+            ? activeTab.annotation.citation
+            : null;
     const authorityTrace = useProjectChatAuthorityTrace({
         activeTabId,
         setActiveTabId,
-        onOpen: () => {
-            setSelectedDocId(null);
-        },
+        onOpen: () => setSelectedDocId(null),
         onClose: () => {
             const fallback = tabs.at(-1) ?? null;
             setActiveTabId(fallback?.documentId ?? null);
             setSelectedDocId(fallback?.documentId ?? null);
         },
     });
-    const tabItemRefs = useRef<Record<string, HTMLDivElement | null>>({});
-
-    const activeCitation =
-        activeTab?.annotation?.kind === "citation"
-            ? activeTab.annotation.citation
-            : null;
-    const chatInputRef = useRef<ChatInputHandle | null>(null);
-    const messagesContainerRef = useRef<HTMLDivElement>(null);
-    const latestUserMessageRef = useRef<HTMLDivElement>(null);
-
-    const {
-        setCurrentChatId,
-        newChatMessages,
-        setNewChatMessages,
-        chats,
-        renameChat: renameChatInHistory,
-    } = useChatHistoryContext();
-    const [initialMessages] = useState<Message[]>(newChatMessages ?? []);
-    const [chatModel, setChatModel] = useState<string | null | undefined>(
-        initialMessages.length > 0
-            ? (initialMessages[0]?.model ?? null)
-            : undefined,
-    );
-    const [chatReasoningLevel, setChatReasoningLevel] = useState<
-        NonNullable<Message["reasoning"]> | null | undefined
-    >(
-        initialMessages.length > 0
-            ? (initialMessages[0]?.reasoning ?? null)
-            : undefined,
-    );
-    const {
-        messages,
-        rejectedApiKey,
-        dismissInvalidApiKey,
-        isResponseLoading,
-        handleChat,
-        setMessages,
-        cancel,
-        detach,
-        resetChat,
-    } = useAssistantChat({
-        initialMessages,
-        onChatCreated: adoptChat,
-        chatId: activeChatId || undefined,
-        projectId,
-    });
-    // The model is what we asked for, so it identifies whose key was rejected.
-    const rejectedKeyProvider = rejectedApiKey?.model
-        ? getModelProvider(rejectedApiKey.model)
-        : null;
+    const authorityTraceTabRefs = useRef<Record<string, HTMLDivElement | null>>({});
+    const { chats } = useChatHistoryContext();
     const availableProjectChats = useMemo(() => {
         const byId = new Map<string, Chat>();
         for (const chat of projectChats ?? []) byId.set(chat.id, chat);
@@ -496,17 +315,16 @@ export default function ProjectAssistantChatPage() {
         chatIds: projectChatIds,
         onActivity: touchProjectChat,
     });
+    // An answer that finished in the side chat was read as it arrived.
+    const chatHistoryStatuses = useMemo(() => {
+        if (!sideChatId || projectHistoryStatuses[sideChatId] !== "complete") {
+            return projectHistoryStatuses;
+        }
+        const next = { ...projectHistoryStatuses };
+        delete next[sideChatId];
+        return next;
+    }, [projectHistoryStatuses, sideChatId]);
 
-    // Server ladder: writing to a project chat needs content.edit on the
-    // project.
-    //
-    // While the project, chat owner, or session is loading, access is unknown,
-    // and unknown is neither a licence nor a refusal. Treating it as a licence
-    // left a viewer typing into a live composer for the whole load window;
-    // treating it as a refusal flashed the read-only placeholder at people who
-    // do have edit access. So the composer is not rendered at all until all
-    // three inputs resolve â€” the message shimmer stands in for the whole
-    // surface, and what appears afterwards is already correct.
     const projectRole = roleFromLoaded(project);
     const canEditContent = can(projectRole, "content.edit");
     const documentPermissions = useDocumentPermissions(
@@ -515,48 +333,8 @@ export default function ProjectAssistantChatPage() {
         canEditContent,
     );
     const canManageProject = can(projectRole, "access.manage");
-    // There is no creator exception on a PROJECT chat. The server derives the
-    // caller's whole standing here from the project role
-    // (ensureSharedRowAccess): content.edit to write or rename, and
-    // container.delete to delete. Adding "â€¦or I started this thread" to the
-    // client made all three gates disagree with the server in both
-    // directions â€” an editor who created the chat was offered a Delete that
-    // came back 403, and a viewer demoted after starting a thread kept a live
-    // composer on it. The ladder is the only answer this page asks for.
-    //
-    // Three answers, not two â€” the same tri-state the standalone chat page
-    // adopted. `can(null, â€¦)` is false, and false here is a SENTENCE: the
-    // composer reads "Viewing only â€” sending needs edit access". A project
-    // owner opening their own chat cold saw that accusation for the length of
-    // GET /projects/:id. `null` keeps the composer closed while we wait
-    // without asserting anything about who the reader is.
+    // "Add to chat" follows the composer: closed until the role is known.
     const canSendChat = projectRole === null ? null : canEditContent;
-    const canDeleteChat = can(projectRole, "container.delete");
-    const composerReady = chatLoaded && projectLoaded && !authLoading;
-    // Rename and Delete are offered by the header menu, whose handlers return
-    // in silence while the role is unknown â€” deliberately, since accusing
-    // somebody before the payload lands is a guess, but a menu item that
-    // quietly does nothing when clicked is indistinguishable from a broken
-    // one. Disable them for that window, the way the upload button already
-    // does with `!canEditContent`.
-    const roleKnown = projectRole !== null;
-    const pendingInitialUserMessageRef = useRef<Message | null>(
-        initialMessages.length === 1 && initialMessages[0].role === "user"
-            ? initialMessages[0]
-            : null,
-    );
-
-    const hasAutoSent = useRef(false);
-    const hasInitialScrolled = useRef(false);
-    const { minHeight, scrollLatestUserToTop } = useAssistantMessageLayout({
-        containerRef: messagesContainerRef,
-        userMessageRef: latestUserMessageRef,
-        ready: chatLoaded,
-        messageCount: messages.length,
-        chatKey: activeChatId,
-        bottomPadding: DEFAULT_ASSISTANT_BOTTOM_PADDING,
-        headerHeight: ASSISTANT_HEADER_HEIGHT,
-    });
 
     const clearFolderDeleteDismissTimer = useCallback(() => {
         if (folderDeleteDismissTimerRef.current === null) return;
@@ -567,10 +345,6 @@ export default function ProjectAssistantChatPage() {
     useEffect(() => {
         return () => clearFolderDeleteDismissTimer();
     }, [clearFolderDeleteDismissTimer]);
-
-    useEffect(() => {
-        setChatTitleEdit(null);
-    }, [activeChatId]);
 
     useEffect(() => {
         setSidebarOpen(false);
@@ -630,152 +404,11 @@ export default function ProjectAssistantChatPage() {
         };
     }, [projectId]);
 
-    // Whenever the assistant mutates project documents â€” creating a new
-    // doc, creating a new version via edit_document, or replicating a doc â€”
-    // refresh the project so the explorer picks up the new/changed files
-    // without a manual reload. Keyed by completed mutation events only, so
-    // we refetch once the backend has finished persisting the change.
-    const projectMutationSignature = useMemo(() => {
-        const created: string[] = [];
-        const replicated: string[] = [];
-        const edited = new Set<string>();
-        for (const msg of messages) {
-            for (const ev of msg.events ?? []) {
-                if ("isStreaming" in ev && ev.isStreaming) continue;
-                if (ev.type === "doc_created" && ev.document_id) {
-                    created.push(
-                        `${ev.document_id}:${ev.version_id ?? ""}:${ev.filename}`,
-                    );
-                    continue;
-                }
-                if (ev.type === "doc_replicated") {
-                    for (const c of ev.copies ?? []) {
-                        replicated.push(
-                            `${c.document_id}:${c.version_id}:${c.new_filename}`,
-                        );
-                    }
-                    continue;
-                }
-                if (ev.type === "doc_edited") {
-                    edited.add(
-                        `${ev.document_id}:${ev.version_id ?? ""}:${ev.version_number ?? ""}`,
-                    );
-                }
-            }
-        }
-        return [
-            `created=${created.sort().join(",")}`,
-            `replicated=${replicated.sort().join(",")}`,
-            `edited=${Array.from(edited).sort().join(",")}`,
-        ].join("|");
-    }, [messages]);
-
     useEffect(() => {
         void refreshProject();
-    }, [projectMutationSignature, refreshProject]);
+    }, [refreshProject]);
 
-    useEffect(() => {
-        setCurrentChatId(activeChatId || null);
-    }, [activeChatId, setCurrentChatId]);
-
-    useEffect(() => {
-        if (claimCreated(activeChatId)) {
-            const firstUserMessage = messages.find(
-                (message) => message.role === "user",
-            );
-            setChatModel(firstUserMessage?.model ?? null);
-            setChatReasoningLevel(firstUserMessage?.reasoning ?? null);
-            return;
-        }
-        let cancelled = false;
-        setChatLoaded(false);
-        setChatTitle(null);
-        setChatModel(undefined);
-        setChatReasoningLevel(undefined);
-        setMessages([]);
-        hasInitialScrolled.current = false;
-
-        if (!activeChatId) {
-            setChatLoaded(true);
-            return () => {
-                cancelled = true;
-            };
-        }
-
-        loadAssistantChat(activeChatId)
-            .then(({ chat, messages: loaded, skillBinding }) => {
-                if (cancelled) return;
-                setChatTitle(chat.title);
-                skillRuntime.setBinding(skillBinding ?? null); // Dev (OSS-6)
-                setChatModel(chat.model ?? null);
-                setChatReasoningLevel(chat.reasoning_level ?? null);
-                setMessages(loaded);
-                setProjectChats((current) => {
-                    if (!current) return current;
-                    const nextChat = { ...chat, project_id: projectId };
-                    return current.some((entry) => entry.id === chat.id)
-                        ? current.map((entry) =>
-                              entry.id === chat.id ? nextChat : entry,
-                          )
-                        : [nextChat, ...current];
-                });
-            })
-            .catch(() => {
-                if (!cancelled)
-                    router.replace(`/projects/${projectId}/assistant`);
-            })
-            .finally(() => {
-                if (!cancelled) setChatLoaded(true);
-            });
-
-        return () => {
-            cancelled = true;
-        };
-    }, [activeChatId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    useEffect(() => {
-        const match = availableProjectChats.find(
-            (chat) => chat.id === activeChatId,
-        );
-        if (match?.title) setChatTitle(match.title);
-    }, [activeChatId, availableProjectChats]);
-
-    useEffect(() => {
-        const pendingMessage = pendingInitialUserMessageRef.current;
-        if (
-            pendingMessage &&
-            !hasAutoSent.current &&
-            !isResponseLoading &&
-            messages.length === 1
-        ) {
-            hasAutoSent.current = true;
-            pendingInitialUserMessageRef.current = null;
-            setNewChatMessages(null);
-            void handleChat(pendingMessage);
-        }
-    }, [messages.length, isResponseLoading, handleChat, setNewChatMessages]);
-
-    useEffect(() => {
-        const last = messages[messages.length - 1];
-        if (last?.role === "user") return scrollLatestUserToTop();
-    }, [messages, scrollLatestUserToTop]);
-
-    useEffect(() => {
-        if (!chatLoaded || hasInitialScrolled.current || messages.length === 0)
-            return;
-        const container = messagesContainerRef.current;
-        const el = latestUserMessageRef.current;
-        if (!container || !el) return;
-        return scrollLatestUserToTop("auto", () => {
-            hasInitialScrolled.current = true;
-        });
-    }, [activeChatId, chatLoaded, messages.length, scrollLatestUserToTop]);
-
-    useEffect(() => {
-        if (chatLoaded && isResponseLoading) return scrollLatestUserToTop();
-    }, [chatLoaded, isResponseLoading, scrollLatestUserToTop]);
-
-    // â”€â”€ Tabs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Tabs ──────────────────────────────────────────────────────────────────
     function openTab(
         docId: string,
         filename: string,
@@ -845,22 +478,7 @@ export default function ProjectAssistantChatPage() {
         setSelectedDocId(docId);
     }
 
-    // â”€â”€ Handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    const handleSubmit = useCallback(
-        (message: Message, options?: Parameters<typeof handleChat>[1]) => {
-            if (!activeTab || activeTab.sourceDocument?.type === "case")
-                return handleChat(message, options);
-            return handleChat(message, {
-                ...options,
-                displayedDoc: {
-                    filename: activeTab.filename,
-                    documentId: activeTab.documentId,
-                },
-            });
-        },
-        [activeTab, handleChat],
-    );
-
+    // ── Handlers ──────────────────────────────────────────────────────────────
     const handleDocClick = (doc: Document) => {
         openTab(doc.id, doc.filename, undefined, null, doc.file_type);
     };
@@ -1046,137 +664,7 @@ export default function ProjectAssistantChatPage() {
         void refreshProject(args.documentId);
     };
 
-    const handleChatDrop = (event: React.DragEvent) => {
-        if (!isChatAttachmentDrag(event.dataTransfer)) return;
-        event.preventDefault();
-        event.stopPropagation();
-        setChatDragOver(false);
-        const docId = event.dataTransfer.getData("application/mike-doc");
-        if (!docId) {
-            const files = Array.from(event.dataTransfer.files);
-            if (files.length > 0) chatInputRef.current?.addFiles(files);
-            return;
-        }
-        const doc = project?.documents?.find((d) => d.id === docId);
-        if (doc) chatInputRef.current?.addDoc(doc);
-    };
-
-    // â”€â”€ Chat actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    function navigateToChat(nextChatId: string) {
-        clearProjectHistoryStatus(nextChatId);
-        if (nextChatId === activeChatId) return;
-        // Leaving a thread is not Stop: detach so the answer still finishes
-        // and is persisted server-side, instead of being cut to
-        // "Cancelled by user." in the chat the user just left.
-        detach();
-        openChat(nextChatId);
-    }
-
-    function handleNewChat() {
-        if (!canEditContent) {
-            if (project) setEditorGateAction("create a chat");
-            return;
-        }
-        resetChat();
-        openChat("");
-        setComposerResetKey((current) => current + 1);
-    }
-
-    async function handleDeleteChat() {
-        if (!activeChatId) return;
-        if (!canDeleteChat) {
-            // Only accuse somebody of lacking a role once we know they do:
-            // `projectRole` is null for the whole load window, and a refusal
-            // popup raised then is a guess.
-            if (projectRole) setOwnerOnlyAction("delete this chat");
-            return;
-        }
-        setDeletingChat(true);
-        try {
-            await deleteChat(activeChatId);
-            router.push(`/projects/${projectId}/assistant`);
-        } catch (error) {
-            // Without this the refusal was an unhandled rejection and the
-            // page just sat there, indistinguishable from a slow delete.
-            setChatActionError({
-                title: "Chat not deleted",
-                message: userFacingApiError(
-                    error,
-                    "The chat could not be deleted. Please try again.",
-                ),
-            });
-        } finally {
-            setDeletingChat(false);
-        }
-    }
-
-    async function handleRenameChat(nextTitle?: string) {
-        if (!activeChatId) return;
-        if (!canEditContent) {
-            if (projectRole) setEditorGateAction("rename this chat");
-            return;
-        }
-        if (nextTitle === undefined) {
-            setChatTitleEdit({
-                chatId: activeChatId,
-                title: chatTitle ?? "New Chat",
-            });
-            return;
-        }
-        setChatTitleEdit(null);
-        const trimmed = nextTitle.trim();
-        if (!trimmed || trimmed === chatTitle) return;
-        const previousTitle = chatTitle;
-        const previousUpdatedAt = projectChats?.find(
-            (chat) => chat.id === activeChatId,
-        )?.updated_at;
-        setChatTitle(trimmed);
-        setProjectChats((current) =>
-            touchChatActivity(
-                (current ?? []).map((chat) =>
-                    chat.id === activeChatId
-                        ? { ...chat, title: trimmed }
-                        : chat,
-                ),
-                activeChatId,
-            ),
-        );
-        try {
-            await renameChatInHistory(activeChatId, trimmed);
-        } catch (error) {
-            // ChatHistoryContext rethrows so the calling surface can speak.
-            // Unhandled, the header title stayed changed while the switcher
-            // row snapped back â€” the user saw two different titles and no
-            // reason for either.
-            if (activeChatIdRef.current === activeChatId) {
-                setChatTitle((current) =>
-                    current === trimmed ? previousTitle : current,
-                );
-            }
-            setProjectChats((current) =>
-                sortChatsByActivity(
-                    (current ?? []).map((chat) =>
-                        chat.id === activeChatId && chat.title === trimmed
-                            ? {
-                                  ...chat,
-                                  title: previousTitle,
-                                  updated_at: previousUpdatedAt,
-                              }
-                            : chat,
-                    ),
-                ),
-            );
-            setChatActionError({
-                title: "Chat not renamed",
-                message: userFacingApiError(
-                    error,
-                    "The chat could not be renamed. Please try again.",
-                ),
-            });
-        }
-    }
-
-    // â”€â”€ Upload â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Upload ────────────────────────────────────────────────────────────────
     function addUploadedDocuments(documents: Document[]) {
         if (documents.length === 0) return;
         setProject((current) => {
@@ -1428,7 +916,7 @@ export default function ProjectAssistantChatPage() {
         }
     };
 
-    // â”€â”€ Folder handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Folder handlers ───────────────────────────────────────────────────────
     const handleCreateFolder = async (
         parentId: string | null,
         name: string,
@@ -1690,80 +1178,57 @@ export default function ProjectAssistantChatPage() {
         }
     };
 
-    // â”€â”€ Resize handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    const onExplorerDividerDrag = useCallback((dx: number) => {
-        setPanelWidths((current) => {
-            const requestedWidth = Math.max(
-                EXPLORER_MIN,
-                current.explorer + dx,
-            );
-            const workspaceWidth = workspaceRef.current?.clientWidth;
-            if (!workspaceWidth) {
-                return { ...current, explorer: requestedWidth };
-            }
+    // ── Resize handlers ───────────────────────────────────────────────────────
+    const panelLayout = useMemo(
+        () => ({ explorerCollapsed, sideChatOpen }),
+        [explorerCollapsed, sideChatOpen],
+    );
 
-            const maximumWidth = Math.max(
-                EXPLORER_MIN,
-                workspaceWidth -
-                    DOCUMENT_MIN -
-                    PANEL_DIVIDERS_WIDTH -
-                    current.chat,
+    const onExplorerDividerDrag = useCallback(
+        (dx: number) => {
+            setPanelWidths((current) =>
+                resizePanel(
+                    current,
+                    "explorer",
+                    current.explorer + dx,
+                    workspaceRef.current?.clientWidth,
+                    panelLayout,
+                ),
             );
-            return {
-                ...current,
-                explorer: Math.min(requestedWidth, maximumWidth),
-            };
-        });
-    }, []);
+        },
+        [panelLayout],
+    );
 
     const onChatDividerDrag = useCallback(
         (dx: number) => {
-            setPanelWidths((current) => {
-                const requestedWidth = Math.max(CHAT_MIN, current.chat - dx);
-                const workspaceWidth = workspaceRef.current?.clientWidth;
-                if (!workspaceWidth) {
-                    return { ...current, chat: requestedWidth };
-                }
-
-                const occupiedWidth = explorerCollapsed
-                    ? COLLAPSED_EXPLORER_FOOTPRINT
-                    : current.explorer + PANEL_DIVIDERS_WIDTH;
-                const maximumWidth = Math.max(
-                    CHAT_MIN,
-                    workspaceWidth - DOCUMENT_MIN - occupiedWidth,
-                );
-                return {
-                    ...current,
-                    chat: Math.min(requestedWidth, maximumWidth),
-                };
-            });
+            setPanelWidths((current) =>
+                resizePanel(
+                    current,
+                    "chat",
+                    current.chat - dx,
+                    workspaceRef.current?.clientWidth,
+                    panelLayout,
+                ),
+            );
         },
-        [explorerCollapsed],
+        [panelLayout],
     );
 
+    const onChatSplitDividerDrag = useCallback((dx: number) => {
+        setPanelWidths((current) => resizeChatSplit(current, dx));
+    }, []);
+
+    // The document view gives up width as panels open or the window narrows,
+    // but never its minimum: the explorer and chats shrink to make room.
     useEffect(() => {
         const workspace = workspaceRef.current;
         if (!workspace) return;
 
         const fitPanels = () => {
             if (workspace.clientWidth <= 0) return;
-            setPanelWidths((current) => {
-                if (!explorerCollapsed) {
-                    return fitExpandedPanelWidths(
-                        current,
-                        workspace.clientWidth,
-                    );
-                }
-
-                const maximumChatWidth = Math.max(
-                    CHAT_MIN,
-                    workspace.clientWidth -
-                        DOCUMENT_MIN -
-                        COLLAPSED_EXPLORER_FOOTPRINT,
-                );
-                if (current.chat <= maximumChatWidth) return current;
-                return { ...current, chat: maximumChatWidth };
-            });
+            setPanelWidths((current) =>
+                fitPanelWidths(current, workspace.clientWidth, panelLayout),
+            );
         };
 
         fitPanels();
@@ -1775,7 +1240,63 @@ export default function ProjectAssistantChatPage() {
         const observer = new ResizeObserver(fitPanels);
         observer.observe(workspace);
         return () => observer.disconnect();
-    }, [explorerCollapsed]);
+    }, [panelLayout]);
+
+    function handleOpenSideChat() {
+        // Two chats, the explorer and a readable document do not fit a
+        // narrow workspace; the explorer is the one that folds away.
+        const workspaceWidth = workspaceRef.current?.clientWidth;
+        if (workspaceWidth && !fitsWithExplorer(workspaceWidth, true)) {
+            setExplorerCollapsed(true);
+        }
+        openSideChat("");
+    }
+
+    // The document on screen rides along with a message as context.
+    const displayedDoc = useMemo(
+        () =>
+            !activeTab || activeTab.sourceDocument?.type === "case"
+                ? null
+                : {
+                      filename: activeTab.filename,
+                      documentId: activeTab.documentId,
+                  },
+        [activeTab],
+    );
+    const reportChatActionError = useCallback(
+        (error: { title: string; message: string }) =>
+            setChatActionError(error),
+        [],
+    );
+    const chatPanelProps = {
+        projectId,
+        project,
+        projectLoaded,
+        claimCreated,
+        chats: availableProjectChats,
+        chatsLoading: projectChats === null,
+        setProjectChats,
+        responseStatuses: chatHistoryStatuses,
+        onClearResponseStatus: clearProjectHistoryStatus,
+        displayedDoc,
+        activeCitation,
+        resolvingEdits,
+        resolvedEditStatuses,
+        onDocClick: handleDocClick,
+        onCitationClick: handleCitationClick,
+        onCaseClick: handleCaseClick,
+        onOpenDocument: handleOpenDocument,
+        onEditViewClick: handleEditViewClick,
+        onEditResolveStart: handleEditResolveStart,
+        onEditResolved: handleEditResolved,
+        onEditError: handleEditError,
+        onProjectMutated: refreshProject,
+        onOpenMemory: () => setProjectMemoryOpen(true),
+        onEditorGate: setEditorGateAction,
+        onOwnerGate: setOwnerOnlyAction,
+        onActionError: reportChatActionError,
+        onAuthorityTraceOpen: authorityTrace.open,
+    };
 
     return (
         <div
@@ -1933,7 +1454,7 @@ export default function ProjectAssistantChatPage() {
                                     e.stopPropagation();
                                     await handleMoveFolder(folderId, null);
                                 }
-                                // External file drops are not stopped â€” they bubble to handleExplorerFileDrop
+                                // External file drops are not stopped — they bubble to handleExplorerFileDrop
                             }}
                         >
                             {explorerDragOver && (
@@ -1958,7 +1479,7 @@ export default function ProjectAssistantChatPage() {
                                 }
                                 downloading={explorerDownload.downloading}
                                 onAddToChat={(document) =>
-                                    chatInputRef.current?.addDoc(document)
+                                    addDocToChat(document)
                                 }
                                 addToChatDisabled={!canSendChat}
                                 onCreateFolder={
@@ -2039,7 +1560,7 @@ export default function ProjectAssistantChatPage() {
                 )}
                 <ProjectDocumentTabs
                     onAddToChat={(document) =>
-                        chatInputRef.current?.addDoc(document)
+                        addDocToChat(document)
                     }
                     addToChatDisabled={!canSendChat}
                     onDownloadDoc={(document) => documentViewers.download(document.id, document.id, tabs.find((tab) => tab.documentId === document.id)?.versionId, document.filename)}
@@ -2064,10 +1585,9 @@ export default function ProjectAssistantChatPage() {
                         )
                     }
                 >
-                    <AuthorityTraceTabItem trace={authorityTrace} tabItemRefs={tabItemRefs} />
+                    <AuthorityTraceTabItem trace={authorityTrace} tabItemRefs={authorityTraceTabRefs} />
                 </ProjectDocumentTabs>
-                {/* Dev (OSS-6): Authority Trace overlays the document panels. */}
-                <div className="relative flex min-h-0 flex-1 flex-col">
+                <div className="relative min-h-0 flex-1">
                 <ProjectDocumentPanels
                     canEdit={canEditContent}
                     documentPermissions={documentPermissions}
@@ -2113,11 +1633,11 @@ export default function ProjectAssistantChatPage() {
                     onEditError={handleEditError}
                     onWarningDismiss={dismissTabWarning}
                 />
-                {authorityTrace.active && authorityTrace.runId && (
-                    <div className="absolute inset-0 z-10 overflow-auto bg-app-surface">
-                        <AuthorityTracePanel runId={authorityTrace.runId} />
-                    </div>
-                )}
+                    {authorityTrace.active && authorityTrace.runId && (
+                        <div className="absolute inset-0 z-10 overflow-auto bg-app-surface">
+                            <AuthorityTracePanel runId={authorityTrace.runId} />
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -2135,299 +1655,42 @@ export default function ProjectAssistantChatPage() {
             />
             <Divider onDrag={onChatDividerDrag} />
 
-            {/* RIGHT: Assistant Panel */}
-            <div
-                style={{ width: chatWidth }}
-                className={cn(
-                    "relative flex shrink-0 flex-col overflow-hidden rounded-l-lg rounded-r-2xl",
-                    LIQUID_GLASS_FLAT_CLASS,
-                )}
-                onDragEnter={(event) => {
-                    if (!isChatAttachmentDrag(event.dataTransfer)) return;
-                    event.preventDefault();
-                    if (isExternalFileDrag(event.dataTransfer)) {
-                        setChatDragOver(true);
-                    }
-                }}
-                onDragOver={(event) => {
-                    if (!isChatAttachmentDrag(event.dataTransfer)) return;
-                    event.preventDefault();
-                    event.dataTransfer.dropEffect = "copy";
-                    if (isExternalFileDrag(event.dataTransfer)) {
-                        setChatDragOver(true);
-                    }
-                }}
-                onDragLeave={(event) => {
-                    if (
-                        !event.currentTarget.contains(
-                            event.relatedTarget as Node,
-                        )
-                    ) {
-                        setChatDragOver(false);
-                    }
-                }}
-                onDrop={handleChatDrop}
-            >
-                {chatDragOver && (
-                    <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center rounded-l-lg rounded-r-2xl bg-white/50 backdrop-blur-md">
-                        <p className="font-serif text-xl text-gray-900">
-                            Drop files here to add to chat
-                        </p>
-                    </div>
-                )}
-                <div className="absolute inset-x-0 top-0 z-40">
-                    <ChatPanelHeader
-                        chats={availableProjectChats}
-                        currentChatId={activeChatId}
-                        currentTitle={chatTitle}
-                        titleAdornment={<ChatSkillChip binding={skillRuntime.binding} />}
-                        loading={projectChats === null}
-                        responseStatuses={projectHistoryStatuses}
-                        newChatDisabled={!canEditContent}
-                        onLoad={navigateToChat}
-                        onNewChat={handleNewChat}
-                        titleEdit={
-                            editingChatTitle
-                                ? {
-                                      value: editingChatTitle.title,
-                                      onChange: (title) =>
-                                          setChatTitleEdit({
-                                              ...editingChatTitle,
-                                              title,
-                                          }),
-                                      onSave: () =>
-                                          void handleRenameChat(
-                                              editingChatTitle.title,
-                                          ),
-                                      onCancel: () => setChatTitleEdit(null),
-                                  }
-                                : undefined
-                        }
-                        actions={
-                            <HeaderActionsMenu
-                                triggerClassName="h-6 w-6"
-                                onCloseAutoFocus={(event) => {
-                                    if (editingChatTitle)
-                                        event.preventDefault();
-                                }}
-                                items={[
-                                    {
-                                        label: "Rename",
-                                        icon: Pencil,
-                                        onSelect: () => void handleRenameChat(),
-                                        disabled:
-                                            !chatLoaded ||
-                                            !activeChatId ||
-                                            !roleKnown,
-                                    },
-                                    {
-                                        label: "Memory",
-                                        icon: Brain,
-                                        onSelect: () =>
-                                            setProjectMemoryOpen(true),
-                                        disabled: !project,
-                                    },
-                                    {
-                                        label: deletingChat
-                                            ? "Deleting..."
-                                            : "Delete",
-                                        icon: Trash2,
-                                        onSelect: () => void handleDeleteChat(),
-                                        disabled:
-                                            deletingChat ||
-                                            !chatLoaded ||
-                                            !activeChatId ||
-                                            !roleKnown,
-                                        variant: "danger" as const,
-                                    },
-                                ].filter((item) =>
-                                    activeChatId
-                                        ? true
-                                        : item.label === "Memory",
-                                )}
-                            />
-                        }
-                    />
-                    <ChatSkillUpgradeBanner runtime={skillRuntime} />
-                </div>
-                <div
-                    aria-hidden="true"
-                    className="pointer-events-none absolute left-0 right-3 top-0 z-30 h-16 bg-gradient-to-b from-app-surface/85 via-app-surface/60 via-50% to-transparent"
-                />
-                <div
-                    aria-hidden="true"
-                    className="pointer-events-none absolute bottom-0 left-0 right-3 z-20 h-28 bg-gradient-to-t from-app-surface to-transparent"
-                />
-
-                {/* Messages / greeting / shimmer */}
-                {!chatLoaded ? (
-                    <div className="flex-1 space-y-4 px-4 pb-4 pt-16">
-                        <div className="flex justify-end">
-                            <div className="bg-gray-100 rounded-2xl p-4 w-3/4">
-                                <div className="theme-shimmer h-3 bg-[length:200%_100%] animate-[shimmer_2s_ease-in-out_infinite] rounded w-full" />
-                            </div>
-                        </div>
-                        <div className="space-y-2">
-                            {[1, 2, 3].map((i) => (
-                                <div
-                                    key={i}
-                                    className={`theme-shimmer h-3 bg-[length:200%_100%] animate-[shimmer_2s_ease-in-out_infinite] rounded ${i === 3 ? "w-4/6" : "w-full"}`}
-                                />
-                            ))}
-                        </div>
-                    </div>
-                ) : messages.length === 0 ? (
-                    <div className="flex-1 flex flex-col min-h-0">
-                        <AssistantGreeting username={username} />
-                    </div>
-                ) : (
-                    <div
-                        ref={messagesContainerRef}
-                        className="min-h-0 flex-1 space-y-6 overflow-y-auto px-4 pt-[72px] md:space-y-8 md:pt-20"
-                        style={{
-                            paddingBottom: DEFAULT_ASSISTANT_BOTTOM_PADDING,
-                            scrollbarGutter: "stable",
+            {/* RIGHT: Assistant panel, and a second chat beside it */}
+            <ProjectChatPanel
+                {...chatPanelProps}
+                ref={primaryChatPanelRef}
+                chatId={activeChatId}
+                openChat={openChat}
+                adoptChat={adoptChat}
+                hiddenChatId={sideChatId}
+                width={panelWidths.chat}
+                roundedClassName={
+                    sideChatOpen ? "rounded-lg" : "rounded-l-lg rounded-r-2xl"
+                }
+                onActivate={() => setActiveChatPane("primary")}
+                onOpenSideChat={sideChatOpen ? undefined : handleOpenSideChat}
+            />
+            {sideChatId !== null && (
+                <>
+                    <Divider onDrag={onChatSplitDividerDrag} />
+                    <ProjectChatPanel
+                        {...chatPanelProps}
+                        ref={sideChatPanelRef}
+                        isSideChat
+                        chatId={sideChatId}
+                        openChat={openSideChat}
+                        adoptChat={adoptSideChat}
+                        hiddenChatId={activeChatId || null}
+                        width={panelWidths.sideChat}
+                        roundedClassName="rounded-l-lg rounded-r-2xl"
+                        onActivate={() => setActiveChatPane("side")}
+                        onClose={() => {
+                            setActiveChatPane("primary");
+                            closeSideChat();
                         }}
-                    >
-                        {(() => {
-                            const lastUserIdx = messages
-                                .map((m) => m.role)
-                                .lastIndexOf("user");
-                            const lastAssistantIdx = messages
-                                .map((m) => m.role)
-                                .lastIndexOf("assistant");
-                            // The message still waiting on the user's input
-                            // or approval, if any.
-                            const pendingAskInputIndex =
-                                findPendingAskInput(messages)?.messageIndex ??
-                                -1;
-                            return messages.map((msg, i) =>
-                                msg.role === "user" ? (
-                                    <div
-                                        key={i}
-                                        ref={
-                                            i === lastUserIdx
-                                                ? latestUserMessageRef
-                                                : null
-                                        }
-                                    >
-                                        <UserMessage
-                                            content={msg.content ?? ""}
-                                            files={msg.files}
-                                            workflow={msg.workflow}
-                                            onFileClick={(file) => {
-                                                if (!file.document_id) return;
-                                                handleOpenDocument({
-                                                    documentId:
-                                                        file.document_id,
-                                                    filename: file.filename,
-                                                    versionId: null,
-                                                    versionNumber: null,
-                                                });
-                                            }}
-                                        />
-                                    </div>
-                                ) : (
-                                    <AssistantMessage
-                                        key={i}
-                                        events={msg.events}
-                                        isStreaming={
-                                            i === messages.length - 1 &&
-                                            isResponseLoading
-                                        }
-                                        awaitingInput={
-                                            i === pendingAskInputIndex
-                                        }
-                                        isError={!!msg.error}
-                                        citations={msg.citations}
-                                        citationStatus={msg.citationStatus}
-                                        activeCitation={activeCitation}
-                                        onCitationClick={handleCitationClick}
-                                        onCaseClick={handleCaseClick}
-                                        onOpenCitationSource={(citation) => {
-                                            void handleCitationClick(
-                                                citation,
-                                                false,
-                                            );
-                                        }}
-                                        minHeight={
-                                            i === lastAssistantIdx
-                                                ? minHeight
-                                                : "0px"
-                                        }
-                                        onEditViewClick={handleEditViewClick}
-                                        onEditResolveStart={
-                                            handleEditResolveStart
-                                        }
-                                        isEditReloading={(editId) =>
-                                            !!resolvingEdits[editId]
-                                        }
-                                        isDocReloading={(documentId) =>
-                                            Object.values(
-                                                resolvingEdits,
-                                            ).includes(documentId)
-                                        }
-                                        resolvedEditStatuses={
-                                            resolvedEditStatuses
-                                        }
-                                        onOpenDocument={handleOpenDocument}
-                                        onEditError={handleEditError}
-                                        onEditResolved={handleEditResolved}
-                                        onAuthorityTraceOpen={authorityTrace.open}
-                                    />
-                                ),
-                            );
-                        })()}
-                    </div>
-                )}
-
-                {/* ChatInput */}
-                <ResponseSelectionMenuUI
-                    canAsk={canSendChat === true}
-                    onAddExcerpt={(excerpt) =>
-                        chatInputRef.current?.addExcerpt(excerpt)
-                    }
-                />
-                {composerReady && (
-                    <div className="absolute bottom-3 left-3 right-3 z-30">
-                        <div className="pointer-events-none absolute -bottom-3 inset-x-0 z-0 h-7 bg-app-surface" />
-                        <div className="relative z-20 w-full">
-                            <ChatInputPrompt
-                                messages={messages}
-                                chatKey={activeChatId}
-                                canSend={canSendChat}
-                                chatLoading={!chatLoaded}
-                                onSubmit={(response, content, files) => {
-                                    void handleSubmit(
-                                        { role: "user", content, files },
-                                        { askInputsResponse: response },
-                                    );
-                                }}
-                                onCancel={cancel}
-                            >
-                                <ChatInput
-                                    key={`${activeChatId || "new"}:${composerResetKey}`}
-                                    ref={chatInputRef}
-                                    onSubmit={handleSubmit}
-                                    onCancel={cancel}
-                                    isLoading={isResponseLoading}
-                                    chatKey={activeChatId}
-                                    chatModel={chatModel}
-                                    chatReasoningLevel={chatReasoningLevel}
-                                    canSend={canSendChat}
-                                    chatLoading={!chatLoaded}
-                                    enableGlobalFileDrop={false}
-                                    dropUploadsToProject={false}
-                                    projectId={projectId}
-                                    onDocumentClick={handleDocClick}
-                                    projectName={project?.name}
-                                    projectCmNumber={project?.cm_number}
-                                />
-                            </ChatInputPrompt>
-                        </div>
-                    </div>
-                )}
-            </div>
+                    />
+                </>
+            )}
             {project && (
                 <AddDocumentsModal
                     open={addDocumentsOpen}
@@ -2445,16 +1708,6 @@ export default function ProjectAssistantChatPage() {
                     uploadStateId={`project-chat:${projectId}`}
                 />
             )}
-            <ApiKeyMissingPopup
-                open={rejectedApiKey !== null}
-                title="API key rejected"
-                message={`${
-                    rejectedKeyProvider
-                        ? `The ${providerLabel(rejectedKeyProvider)} API key`
-                        : "That API key"
-                } was rejected. If it is your own key, check it in Settings; otherwise contact your administrator.`}
-                onClose={dismissInvalidApiKey}
-            />
             <WarningPopup
                 open={!!projectPicker.error}
                 onClose={projectPicker.clearError}
