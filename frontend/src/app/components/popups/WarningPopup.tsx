@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { useEffect, type ReactNode } from "react";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { NoticeCardUI } from "@/shared/ui/NoticeCardUI";
+import { useNoticeStackSlot } from "@/shared/ui/ToastUI";
 
 /**
  * A single warning that the calling component opens and closes itself.
@@ -13,10 +14,14 @@ import { NoticeCardUI } from "@/shared/ui/NoticeCardUI";
  * needs on top: the `open` prop, a portal to the top centre of the page, and
  * closing on Escape.
  *
- * Use a WarningPopup when the message is about something the user just did
- * on this screen and should stay until they close it. Use `notifyError` /
- * `showToast` when the message comes from background work or from code that
- * has no component of its own. docs/design-system.md has the full rule.
+ * Every warning in the web app is a WarningPopup. A component renders one
+ * for a failure on its own screen; `notifyError` reaches code that has no
+ * component, and `AppToasts` draws what it raises with this same popup.
+ * Toasts are for success and information. docs/design-system.md has the
+ * full rule.
+ *
+ * While the toast viewport is mounted the card joins its column, so a popup
+ * and a toast stack instead of overlapping.
  */
 
 interface WarningPopupAction {
@@ -33,6 +38,9 @@ interface WarningPopupProps {
     children?: ReactNode;
     icon?: ReactNode;
     primaryAction?: WarningPopupAction;
+    /** Extra buttons or links for the action row, before `primaryAction`. */
+    actions?: ReactNode;
+    /** Dev extension: second explicit action before the primary action. */
     secondaryAction?: WarningPopupAction;
     className?: string;
 }
@@ -45,9 +53,12 @@ export function WarningPopup({
     children,
     icon,
     primaryAction,
+    actions,
     secondaryAction,
     className,
 }: WarningPopupProps) {
+    const stackSlot = useNoticeStackSlot();
+
     useEffect(() => {
         if (!open) return;
         const handleKeyDown = (event: KeyboardEvent) => {
@@ -59,38 +70,55 @@ export function WarningPopup({
 
     if (!open) return null;
 
+    const card = (
+        <NoticeCardUI
+            tone="error"
+            role="alert"
+            aria-live="assertive"
+            aria-atomic="true"
+            title={title}
+            message={message}
+            icon={icon}
+            onDismiss={onClose}
+            dismissLabel="Dismiss warning"
+            className={className}
+            actions={
+                actions || secondaryAction || primaryAction ? (
+                    <>
+                        {secondaryAction ? (
+                            <PillButtonUI
+                                tone="white"
+                                size="sm"
+                                onClick={secondaryAction.onClick}
+                                disabled={secondaryAction.disabled}
+                            >
+                                {secondaryAction.label}
+                            </PillButtonUI>
+                        ) : null}
+                        {actions}
+                        {primaryAction ? (
+                            <PillButtonUI
+                                tone="black"
+                                size="sm"
+                                onClick={primaryAction.onClick}
+                                disabled={primaryAction.disabled}
+                            >
+                                {primaryAction.label}
+                            </PillButtonUI>
+                        ) : null}
+                    </>
+                ) : undefined
+            }
+        >
+            {children}
+        </NoticeCardUI>
+    );
+
+    if (stackSlot) return createPortal(card, stackSlot);
+
     return createPortal(
         <div className="pointer-events-none fixed left-1/2 top-5 z-[220] w-[min(92vw,520px)] -translate-x-1/2 px-4">
-            <NoticeCardUI
-                tone="error"
-                role="alert"
-                aria-live="assertive"
-                aria-atomic="true"
-                title={title}
-                message={message}
-                icon={icon}
-                onDismiss={onClose}
-                dismissLabel="Dismiss warning"
-                className={className}
-                actions={
-                    primaryAction || secondaryAction ? (
-                        <>
-                            {secondaryAction && (
-                                <PillButtonUI tone="white" size="sm" onClick={secondaryAction.onClick} disabled={secondaryAction.disabled}>
-                                    {secondaryAction.label}
-                                </PillButtonUI>
-                            )}
-                            {primaryAction && (
-                                <PillButtonUI tone="black" size="sm" onClick={primaryAction.onClick} disabled={primaryAction.disabled}>
-                                    {primaryAction.label}
-                                </PillButtonUI>
-                            )}
-                        </>
-                    ) : undefined
-                }
-            >
-                {children}
-            </NoticeCardUI>
+            {card}
         </div>,
         document.body,
     );
