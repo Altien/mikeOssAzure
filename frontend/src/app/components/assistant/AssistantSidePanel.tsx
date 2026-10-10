@@ -197,8 +197,8 @@ interface Props {
     onOpenDocuments?: () => void;
     /**
      * How many chats share the page with the panel. Each keeps its minimum
-     * width, and beside two chats the panel opens narrow rather than at half
-     * the page.
+     * width, and beside two chats the panel opens at a third of the page
+     * rather than half.
      */
     chatCount?: number;
 }
@@ -206,7 +206,6 @@ interface Props {
 const MIN_WIDTH = 300;
 const MAX_WIDTH_OFFSET = 56; // sidebar width
 const MIN_CHAT_WIDTH = 400;
-const TWO_CHAT_WIDTH = 360;
 
 /** The widest the panel may be while every chat keeps its minimum width. */
 export function maxAssistantSidePanelWidth(
@@ -224,16 +223,16 @@ function tabTitle(tab: AssistantSidePanelTab): string {
     return tab.document.title;
 }
 
-/** The width the panel opens at: half the page, or narrow beside two chats. */
+/** The width the panel opens at: half the page, or a third beside two chats. */
 export function defaultAssistantSidePanelWidth(
     viewportWidth: number,
     chatCount: number,
 ): number {
     return Math.min(
         maxAssistantSidePanelWidth(viewportWidth, chatCount),
-        chatCount > 1
-            ? TWO_CHAT_WIDTH
-            : Math.round((viewportWidth - MAX_WIDTH_OFFSET) / 2),
+        Math.round(
+            (viewportWidth - MAX_WIDTH_OFFSET) / (chatCount > 1 ? 3 : 2),
+        ),
     );
 }
 
@@ -276,7 +275,7 @@ export function AssistantSidePanel({
                   single: defaultAssistantSidePanelWidth(window.innerWidth, 1),
                   split: defaultAssistantSidePanelWidth(window.innerWidth, 2),
               }
-            : { single: 600, split: TWO_CHAT_WIDTH },
+            : { single: 600, split: 400 },
     );
     const panelWidth = split ? panelWidths.split : panelWidths.single;
 
