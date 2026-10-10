@@ -1,8 +1,8 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useReasoningDisclosure } from "@/shared/hooks/useReasoningDisclosure";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ChevronDown, Download, Loader2 } from "lucide-react";
+import { Download, Loader2 } from "lucide-react";
 import {
     getBrowserAccessToken,
     bounceIfUnauthorized,
@@ -24,7 +24,6 @@ const THINKING_PHRASES = [
     "Reviewing...",
     "Reasoning...",
 ];
-const REASONING_COLLAPSED_MAX_HEIGHT_REM = 9;
 
 // ---------------------------------------------------------------------------
 // Event block primitives
@@ -72,6 +71,88 @@ export function EventBlock({
 
 // ---------------------------------------------------------------------------
 
+function ReasoningContent({ text }: { text: string }) {
+    const viewportRef = useRef<HTMLDivElement>(null);
+    const contentRef = useRef<HTMLDivElement>(null);
+    const [hasMoreBelow, setHasMoreBelow] = useState(false);
+    const hasMoreBelowRef = useRef(false);
+
+    useEffect(() => {
+        const viewport = viewportRef.current;
+        const content = contentRef.current;
+        if (!viewport || !content) return;
+
+        let frame: number | null = null;
+        let disposed = false;
+        const measure = () => {
+            frame = null;
+            if (disposed) return;
+            const visible =
+                viewport.scrollHeight > viewport.clientHeight &&
+                viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight > 2;
+            // Streaming can trigger many layout notifications. Dispatch only
+            // when visibility changes, rather than on every incoming chunk.
+            if (visible === hasMoreBelowRef.current) return;
+            hasMoreBelowRef.current = visible;
+            setHasMoreBelow(visible);
+        };
+        const scheduleMeasure = () => {
+            if (!disposed && frame === null) {
+                frame = requestAnimationFrame(measure);
+            }
+        };
+        const observer = new ResizeObserver(scheduleMeasure);
+        observer.observe(viewport);
+        observer.observe(content);
+        viewport.addEventListener("scroll", scheduleMeasure, { passive: true });
+        scheduleMeasure();
+        return () => {
+            disposed = true;
+            observer.disconnect();
+            viewport.removeEventListener("scroll", scheduleMeasure);
+            if (frame !== null) cancelAnimationFrame(frame);
+        };
+    }, []);
+
+    return (
+        <div className="relative mt-2">
+            <div
+                ref={viewportRef}
+                role="region"
+                aria-label="Thought process"
+                tabIndex={0}
+                className="max-h-36 overflow-y-auto overscroll-contain focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+            >
+                <div
+                    ref={contentRef}
+                    className="text-sm font-serif text-gray-400 prose prose-sm max-w-none [&>*]:text-gray-400 [&>*]:text-sm"
+                >
+                    <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                            code: (props) => (
+                                <code
+                                    className="font-serif text-gray-600"
+                                    {...withoutMarkdownNode(props)}
+                                />
+                            ),
+                        }}
+                    >
+                        {text}
+                    </ReactMarkdown>
+                </div>
+            </div>
+            {hasMoreBelow && (
+                <div
+                    aria-hidden="true"
+                    data-slot="reasoning-scroll-fade"
+                    className="pointer-events-none absolute inset-x-0 bottom-0 h-10 backdrop-blur-xs [mask-image:linear-gradient(to_bottom,transparent,black)]"
+                />
+            )}
+        </div>
+    );
+}
+
 export function ReasoningBlock({
     text,
     isStreaming,
@@ -81,14 +162,7 @@ export function ReasoningBlock({
     isStreaming: boolean;
     showConnector?: boolean;
 }) {
-    const {
-        contentRef,
-        isContentOpen,
-        isExpanded,
-        isOverflowing,
-        setIsExpanded,
-        toggleContent,
-    } = useReasoningDisclosure(isStreaming);
+    const { isContentOpen, toggleContent } = useReasoningDisclosure(isStreaming);
     const [thinkingIndex, setThinkingIndex] = useState(0);
 
     useEffect(() => {
@@ -99,87 +173,22 @@ export function ReasoningBlock({
         return () => clearInterval(interval);
     }, [isStreaming]);
 
-    const isCollapsed = isContentOpen && isOverflowing && !isExpanded;
-
     return (
         <EventBlock
             showConnector={showConnector}
             isStreaming={isStreaming}
             dotColor="gray"
         >
-            <button
-                type="button"
-                aria-expanded={isContentOpen}
-                onClick={toggleContent}
-                className="flex items-center text-sm font-serif text-gray-500 hover:text-gray-600 transition-colors"
-            >
-                <span className="font-medium">
-                    {isStreaming
+            <EventDisclosureButton
+                open={isContentOpen}
+                onToggle={toggleContent}
+                label={
+                    isStreaming
                         ? THINKING_PHRASES[thinkingIndex]
-                        : "Thought process"}
-                </span>
-                <ChevronDown
-                    size={10}
-                    aria-hidden="true"
-                    className={`relative top-px ml-1 transition-transform duration-200 ${isContentOpen ? "" : "-rotate-90"}`}
-                />
-            </button>
-            {isContentOpen && (
-                <div className="mt-2">
-                    <div
-                        className={`relative ${isCollapsed ? "overflow-hidden" : ""}`}
-                        style={
-                            isCollapsed
-                                ? {
-                                      maxHeight: `${REASONING_COLLAPSED_MAX_HEIGHT_REM}rem`,
-                                  }
-                                : undefined
-                        }
-                    >
-                        <div
-                            ref={contentRef}
-                            className="text-sm font-serif text-gray-400 prose prose-sm max-w-none [&>*]:text-gray-400 [&>*]:text-sm"
-                        >
-                            <ReactMarkdown
-                                remarkPlugins={[remarkGfm]}
-                                components={{
-                                    code: (props) => (
-                                        <code
-                                            className="font-serif text-gray-600"
-                                            {...withoutMarkdownNode(props)}
-                                        />
-                                    ),
-                                }}
-                            >
-                                {text}
-                            </ReactMarkdown>
-                        </div>
-                        {isCollapsed && (
-                            <>
-                                <div className="content-bottom-fade pointer-events-none absolute inset-x-0 bottom-0 h-10" />
-                                <button
-                                    type="button"
-                                    onClick={() => setIsExpanded(true)}
-                                    className="absolute left-1/2 bottom-2 z-10 -translate-x-1/2 text-gray-400 transition-colors hover:text-gray-600"
-                                    aria-label="Expand thought process"
-                                >
-                                    <ChevronDown className="h-3.5 w-3.5" />
-                                </button>
-                            </>
-                        )}
-                    </div>
-                    {isOverflowing && isContentOpen && isExpanded && (
-                        <button
-                            type="button"
-                            onClick={() => setIsExpanded(false)}
-                            className="mx-auto mt-2 flex text-gray-400 transition-colors hover:text-gray-600"
-                            aria-label="Minimise thought process"
-                        >
-                            <ChevronDown className="h-3.5 w-3.5 rotate-180" />
-                        </button>
-                    )}
-                </div>
-            )}
+                        : "Thought process"
+                }
+            />
+            {isContentOpen && <ReasoningContent text={text} />}
         </EventBlock>
     );
 }
