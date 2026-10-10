@@ -96,6 +96,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
         loadMoreChats,
         setCurrentChatId,
         sideChatId,
+        requestSideChat,
     } =
         useChatHistoryContext();
     const [signOutWarningOpen, setSignOutWarningOpen] = useState(false);
@@ -115,6 +116,15 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
         () => (chats ?? []).map((chat) => chat.id),
         [chats],
     );
+    const onAssistantPage =
+        pathname === "/assistant" || pathname.startsWith("/assistant/chat/");
+    function openInSideChat(chatId: string) {
+        // The assistant page, when it is the one on screen, opens the chat
+        // beside its current one without a navigation; from anywhere else
+        // the chat arrives in the URL it reads on mount.
+        if (onAssistantPage) requestSideChat(chatId);
+        else router.push(`/assistant?side=${encodeURIComponent(chatId)}`);
+    }
     const {
         statuses: assistantHistoryStatuses,
         clearStatus: clearAssistantHistoryStatus,
@@ -613,6 +623,20 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                                         assistantHistoryStatuses[
                                                             chat.id
                                                         ]
+                                                    }
+                                                    onOpenInSideChat={
+                                                        // Assistant chats only: a
+                                                        // project's chats open in
+                                                        // its own workspace. Not a
+                                                        // chat already on screen.
+                                                        chat.project_id ||
+                                                        chat.id === routeChatId ||
+                                                        chat.id === sideChatId
+                                                            ? undefined
+                                                            : () =>
+                                                                  openInSideChat(
+                                                                      chat.id,
+                                                                  )
                                                     }
                                                     onSelect={() => {
                                                         clearAssistantHistoryStatus(
