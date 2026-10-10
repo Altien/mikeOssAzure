@@ -281,7 +281,12 @@ export default function ProjectAssistantChatPage() {
         },
     });
     const authorityTraceTabRefs = useRef<Record<string, HTMLDivElement | null>>({});
-    const { chats } = useChatHistoryContext();
+    const { chats, setSideChatId } = useChatHistoryContext();
+    // The sidebar treats a chat on screen as read, in either panel.
+    useEffect(() => {
+        setSideChatId(sideChatId || null);
+        return () => setSideChatId(null);
+    }, [sideChatId, setSideChatId]);
     const availableProjectChats = useMemo(() => {
         const byId = new Map<string, Chat>();
         for (const chat of projectChats ?? []) byId.set(chat.id, chat);
@@ -312,18 +317,10 @@ export default function ProjectAssistantChatPage() {
         clearStatus: clearProjectHistoryStatus,
     } = useAssistantHistoryStatuses({
         activeChatId: activeChatId || null,
+        sideChatId: sideChatId || null,
         chatIds: projectChatIds,
         onActivity: touchProjectChat,
     });
-    // An answer that finished in the side chat was read as it arrived.
-    const chatHistoryStatuses = useMemo(() => {
-        if (!sideChatId || projectHistoryStatuses[sideChatId] !== "complete") {
-            return projectHistoryStatuses;
-        }
-        const next = { ...projectHistoryStatuses };
-        delete next[sideChatId];
-        return next;
-    }, [projectHistoryStatuses, sideChatId]);
 
     const projectRole = roleFromLoaded(project);
     const canEditContent = can(projectRole, "content.edit");
@@ -1276,7 +1273,7 @@ export default function ProjectAssistantChatPage() {
         chats: availableProjectChats,
         chatsLoading: projectChats === null,
         setProjectChats,
-        responseStatuses: chatHistoryStatuses,
+        responseStatuses: projectHistoryStatuses,
         onClearResponseStatus: clearProjectHistoryStatus,
         displayedDoc,
         activeCitation,

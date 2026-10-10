@@ -68,6 +68,7 @@ vi.mock("@/app/contexts/SidebarContext", () => ({
 }));
 vi.mock("@/app/contexts/ChatHistoryContext", () => ({
     useChatHistoryContext: () => ({
+        setSideChatId: () => {},
         setCurrentChatId: vi.fn(),
         newChatMessages: null,
         setNewChatMessages: vi.fn(),
