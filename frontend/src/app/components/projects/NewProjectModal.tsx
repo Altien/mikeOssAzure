@@ -31,7 +31,7 @@ import {
     type PendingDirectGrant,
     type PendingOrgOverride,
 } from "../modals/CreateAccessStep";
-import { PublicAccessToggle } from "../modals/PublicAccessToggle";
+import { AccessVisibilityField } from "../modals/AccessVisibilityField";
 
 const PERSONAL_WORKSPACE = "__personal__";
 
@@ -628,7 +628,7 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                         </div>
 
                         {orgId !== PERSONAL_WORKSPACE ? (
-                            <PublicAccessToggle
+                            <AccessVisibilityField
                                 visibility={visibility}
                                 onChange={(next) => {
                                     setVisibility(next);
@@ -654,6 +654,12 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
 
                         <div>
                             <FieldLabel as="p">Project memory</FieldLabel>
+                            <p
+                                id="new-project-memory-description"
+                                className="-mt-1 mb-2 text-xs leading-4 text-gray-500"
+                            >
+                                Let Mike remember shared project context
+                            </p>
                             <ToggleSwitchUI
                                 checked={memoryEnabled}
                                 onCheckedChange={(enabled) => {
@@ -661,8 +667,9 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                                     setMemoryEnabled(enabled);
                                 }}
                                 aria-label="Enable project memory"
+                                aria-describedby="new-project-memory-description"
                             >
-                                Let Mike remember shared project context
+                                {memoryEnabled ? "On" : "Off"}
                             </ToggleSwitchUI>
                         </div>
                     </div>

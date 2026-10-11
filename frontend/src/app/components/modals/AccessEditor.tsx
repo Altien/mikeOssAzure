@@ -439,8 +439,9 @@ function OrganizationAssignmentList({
  * here. This editor is what follows from that choice:
  *
  *   - PRIVATE: the individuals it has been shared with, each at a role
- *   - PUBLIC: every member of the organization can open it, so there is
- *     nobody to add; what is left is the members walled off from it
+ *   - PUBLIC: every member of the organization can already open and edit
+ *     it, so what is left to decide is who else OWNS it, and who is walled
+ *     off from it
  *
  * Only members of the organization can be named: sharing does not reach
  * outside it. The organization's owners are not listed and cannot be added
@@ -561,23 +562,10 @@ export function OrganizationAccessEditor({
         ? "workflow"
         : "project";
     const organizationLabel = organizationName || "the organisation";
-    const visibilityHeading = isPublic ? "Public" : "Private";
-    const visibilityDescription = isPublic
-        ? `Every member of ${organizationLabel} can open and edit this ${resourceNoun}.`
-        : `Only the people below can open this ${resourceNoun}. Owners of ${organizationLabel} always can.`;
     const peopleDescription = `Share this ${resourceNoun} with members of ${organizationLabel}. It cannot be shared outside the organisation.`;
-    // On a public item everybody already has access, so nobody is added by
-    // name. Anyone it was shared with while private keeps the role they were
-    // given, and is still shown so that role can be changed or removed.
-    //
-    // The creator is not one of those people: they are an Owner because they
-    // made the item, not because somebody gave them a role. Listing them
-    // alone under "People with a different role" read as a grant that did
-    // not exist, so on a public item the list is of grants only.
-    const listedAssignments = isPublic
-        ? sharedAssignments.filter((assignment) => !assignment.isCreator)
-        : sharedAssignments;
-    const showPeopleList = !isPublic || listedAssignments.length > 0;
+    // Everyone can already open and edit a public item, so the only standing
+    // left to hand out is ownership of it.
+    const ownerDescription = `Add ${organizationLabel} members as owners with rights to manage access, settings and delete the ${resourceNoun}. Everyone in ${organizationLabel} can already open and edit it.`;
     const denyDescription = `Deny ${organizationLabel} members from accessing this ${resourceNoun}, although it is open to everyone else.`;
     // A wall only means something on a public item; on a private one, not
     // being added is the wall. An existing list is still shown, so that
@@ -589,79 +577,78 @@ export function OrganizationAccessEditor({
             data-slot="organization-access-editor"
             className="flex min-h-0 flex-1 flex-col gap-4 pb-1"
         >
-            <section data-slot="organization-access-visibility">
-                <p className="text-sm font-medium text-gray-700">
-                    {visibilityHeading}
-                </p>
-                <p className="mt-1 text-xs leading-4 text-gray-500">
-                    {visibilityDescription}
-                </p>
-            </section>
-
-            {showPeopleList ? (
-                <section className="space-y-2">
-                    {isPublic ? (
-                        <p className="text-sm font-medium text-gray-700">
-                            People with a different role
-                        </p>
-                    ) : (
-                        <div className="flex items-end gap-2">
-                            <div className="min-w-0 flex-1">
-                                <OrganizationMemberPicker
-                                    id="organization-people-picker"
-                                    label="People"
-                                    placeholder="Search members…"
-                                    description={peopleDescription}
-                                    members={availableMembers}
-                                    disabled={disabled || loading}
-                                    onSelect={(member) =>
-                                        onAssign(member, newRole)
-                                    }
-                                />
-                            </div>
-                            <Dropdown>
-                                <DropdownTrigger asChild>
-                                    <button
-                                        type="button"
-                                        aria-label={`Role for the next person added: ${accessRoleLabel(newRole)}`}
-                                        disabled={disabled || loading}
-                                        className={`${INPUT_GROUP_ROLE_TRIGGER_CLASS} rounded-lg ${accessRoleTextTone(newRole)}`}
-                                    >
-                                        <span>{accessRoleLabel(newRole)}</span>
-                                        <ChevronDown className="h-3 w-3 shrink-0 text-gray-300" />
-                                    </button>
-                                </DropdownTrigger>
-                                <DropdownContent align="end" className="w-32">
-                                    {PROJECT_ROLES.map((role) => (
-                                        <DropdownItem
-                                            key={role}
-                                            selected={newRole === role}
-                                            onSelect={() => setNewRole(role)}
-                                            className={`flex items-center justify-between ${accessRoleMenuTone(role)}`}
-                                        >
-                                            <span>{accessRoleLabel(role)}</span>
-                                            {newRole === role ? (
-                                                <Check className="h-3.5 w-3.5 text-gray-300" />
-                                            ) : null}
-                                        </DropdownItem>
-                                    ))}
-                                </DropdownContent>
-                            </Dropdown>
-                        </div>
-                    )}
-                    <OrganizationAssignmentList
-                        label="People with access"
-                        assignments={listedAssignments}
-                        emptyMessage="Not shared with anyone yet."
-                        loading={loading}
-                        disabled={disabled}
-                        onRemove={onRemove}
-                        onRoleChange={(assignment, role) =>
-                            onAssign(assignment, role)
-                        }
+            <section className="space-y-2">
+                {isPublic ? (
+                    <OrganizationMemberPicker
+                        id="organization-owner-picker"
+                        label={ownerLabel}
+                        placeholder="Search members…"
+                        description={ownerDescription}
+                        members={availableMembers}
+                        disabled={disabled || loading}
+                        onSelect={(member) => onAssign(member, "owner")}
                     />
-                </section>
-            ) : null}
+                ) : (
+                    <div className="flex items-end gap-2">
+                        <div className="min-w-0 flex-1">
+                            <OrganizationMemberPicker
+                                id="organization-people-picker"
+                                label="People"
+                                placeholder="Search members…"
+                                description={peopleDescription}
+                                members={availableMembers}
+                                disabled={disabled || loading}
+                                onSelect={(member) => onAssign(member, newRole)}
+                            />
+                        </div>
+                        <Dropdown>
+                            <DropdownTrigger asChild>
+                                <button
+                                    type="button"
+                                    aria-label={`Role for the next person added: ${accessRoleLabel(newRole)}`}
+                                    disabled={disabled || loading}
+                                    className={`${INPUT_GROUP_ROLE_TRIGGER_CLASS} rounded-lg ${accessRoleTextTone(newRole)}`}
+                                >
+                                    <span>{accessRoleLabel(newRole)}</span>
+                                    <ChevronDown className="h-3 w-3 shrink-0 text-gray-300" />
+                                </button>
+                            </DropdownTrigger>
+                            <DropdownContent align="end" className="w-32">
+                                {PROJECT_ROLES.map((role) => (
+                                    <DropdownItem
+                                        key={role}
+                                        selected={newRole === role}
+                                        onSelect={() => setNewRole(role)}
+                                        className={`flex items-center justify-between ${accessRoleMenuTone(role)}`}
+                                    >
+                                        <span>{accessRoleLabel(role)}</span>
+                                        {newRole === role ? (
+                                            <Check className="h-3.5 w-3.5 text-gray-300" />
+                                        ) : null}
+                                    </DropdownItem>
+                                ))}
+                            </DropdownContent>
+                        </Dropdown>
+                    </div>
+                )}
+                <OrganizationAssignmentList
+                    label={
+                        isPublic ? `${ownerLabel} list` : "People with access"
+                    }
+                    assignments={sharedAssignments}
+                    emptyMessage={
+                        isPublic
+                            ? "No additional Owners added."
+                            : "Not shared with anyone yet."
+                    }
+                    loading={loading}
+                    disabled={disabled}
+                    onRemove={onRemove}
+                    onRoleChange={(assignment, role) =>
+                        onAssign(assignment, role)
+                    }
+                />
+            </section>
 
             {error ? (
                 <p role="alert" className="text-xs text-red-500">

@@ -8,7 +8,7 @@ import {
     FieldLabel,
     FormTextInput,
 } from "@/app/components/ui/form-field";
-import { PublicAccessToggle } from "@/app/components/modals/PublicAccessToggle";
+import { AccessVisibilityField } from "@/app/components/modals/AccessVisibilityField";
 import type {
     ContentVisibility,
     Project,
@@ -256,7 +256,7 @@ export function ProjectDetailsModal({
                 </div>
 
                 {project.org_id ? (
-                    <PublicAccessToggle
+                    <AccessVisibilityField
                         visibility={visibilityDraft}
                         onChange={(next) => {
                             setVisibilityDraft(next);

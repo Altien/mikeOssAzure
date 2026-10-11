@@ -170,8 +170,8 @@ describe("NewWorkflowModal editing", () => {
         expect(
             document.querySelector('[data-slot="workflow-workspace"]'),
         ).toHaveTextContent("Elite Law LLP");
-        const publicToggle = screen.getByRole("switch", { name: "Public" });
-        expect(publicToggle).toHaveAttribute("aria-checked", "false");
+        const publicToggle = screen.getByRole("button", { name: "Public" });
+        expect(publicToggle).toHaveAttribute("aria-pressed", "false");
 
         await user.click(publicToggle);
         expect(
@@ -209,7 +209,7 @@ describe("NewWorkflowModal editing", () => {
             />,
         );
 
-        expect(screen.getByRole("switch", { name: "Public" })).toBeDisabled();
+        expect(screen.getByRole("button", { name: "Public" })).toBeDisabled();
         const title = screen.getByLabelText("Title");
         await user.clear(title);
         await user.type(title, "Renamed");
@@ -224,7 +224,7 @@ describe("NewWorkflowModal editing", () => {
     it("offers no Public toggle for a personal workflow", () => {
         render(<NewWorkflowModal open onClose={vi.fn()} onCreated={vi.fn()} />);
         expect(
-            screen.queryByRole("switch", { name: "Public" }),
+            screen.queryByRole("group", { name: "Access" }),
         ).not.toBeInTheDocument();
     });
 
@@ -460,8 +460,8 @@ describe("NewWorkflowModal editing", () => {
             screen.queryByLabelText("Share across Organisation"),
         ).not.toBeInTheDocument();
         const jurisdiction = screen.getByLabelText("Jurisdiction");
-        const publicToggle = screen.getByRole("switch", { name: "Public" });
-        expect(publicToggle).toHaveAttribute("aria-checked", "false");
+        const publicToggle = screen.getByRole("button", { name: "Public" });
+        expect(publicToggle).toHaveAttribute("aria-pressed", "false");
         expect(
             jurisdiction.compareDocumentPosition(publicToggle) &
                 Node.DOCUMENT_POSITION_FOLLOWING,
@@ -473,7 +473,6 @@ describe("NewWorkflowModal editing", () => {
         expect(
             screen.getByRole("dialog", { name: "Organisational Access" }),
         ).toBeVisible();
-        expect(screen.getByText("Private")).toBeInTheDocument();
         expect(
             await screen.findByRole("searchbox", { name: "People" }),
         ).toBeInTheDocument();
@@ -481,14 +480,17 @@ describe("NewWorkflowModal editing", () => {
             screen.queryByRole("button", { name: "Deny list" }),
         ).not.toBeInTheDocument();
 
-        // Public: everybody is in, and what is left is the deny list.
+        // Public: everybody is in; what is left is more owners and the
+        // deny list.
         await user.click(screen.getByRole("button", { name: "Back" }));
-        await user.click(screen.getByRole("switch", { name: "Public" }));
+        await user.click(screen.getByRole("button", { name: "Public" }));
         await user.click(screen.getByRole("button", { name: "Next" }));
-        expect(screen.getByText("Public")).toBeInTheDocument();
         expect(
             screen.queryByRole("searchbox", { name: "People" }),
         ).not.toBeInTheDocument();
+        expect(
+            await screen.findByRole("searchbox", { name: "Workflow owners" }),
+        ).toBeInTheDocument();
         const denyToggle = await screen.findByRole("button", {
             name: "Deny list",
         });
@@ -508,7 +510,7 @@ describe("NewWorkflowModal editing", () => {
 
         await user.click(screen.getByRole("button", { name: "Tabular" }));
         await user.type(screen.getByLabelText("Title"), "Firm workflow");
-        await user.click(screen.getByRole("switch", { name: "Public" }));
+        await user.click(screen.getByRole("button", { name: "Public" }));
         while (!screen.queryByRole("button", { name: /^Create/ })) {
             await user.click(screen.getByRole("button", { name: "Next" }));
         }

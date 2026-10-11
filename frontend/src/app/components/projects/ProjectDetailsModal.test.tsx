@@ -137,8 +137,11 @@ describe("ProjectDetailsModal", () => {
                 />,
             );
 
-            const toggle = screen.getByRole("switch", { name: "Public" });
-            expect(toggle).toHaveAttribute("aria-checked", "false");
+            const toggle = screen.getByRole("button", { name: "Public" });
+            expect(toggle).toHaveAttribute("aria-pressed", "false");
+            expect(
+                screen.getByRole("button", { name: "Private" }),
+            ).toHaveAttribute("aria-pressed", "true");
             // Nothing changed yet, so nothing to save.
             expect(screen.getByRole("button", { name: "Update" })).toBeDisabled();
 
@@ -171,9 +174,10 @@ describe("ProjectDetailsModal", () => {
                 />,
             );
 
-            const toggle = screen.getByRole("switch", { name: "Public" });
-            expect(toggle).toHaveAttribute("aria-checked", "true");
-            await user.click(toggle);
+            expect(
+                screen.getByRole("button", { name: "Public" }),
+            ).toHaveAttribute("aria-pressed", "true");
+            await user.click(screen.getByRole("button", { name: "Private" }));
             await user.click(screen.getByRole("button", { name: "Update" }));
 
             expect(onSave).toHaveBeenCalledWith(
@@ -213,9 +217,10 @@ describe("ProjectDetailsModal", () => {
                     onSave={vi.fn()}
                 />,
             );
-            const toggle = screen.getByRole("switch", { name: "Public" });
-            expect(toggle).toHaveAttribute("aria-checked", "true");
+            const toggle = screen.getByRole("button", { name: "Public" });
+            expect(toggle).toHaveAttribute("aria-pressed", "true");
             expect(toggle).toBeDisabled();
+            expect(screen.getByRole("button", { name: "Private" })).toBeDisabled();
         });
 
         it("is not offered for a personal project", () => {
@@ -229,7 +234,7 @@ describe("ProjectDetailsModal", () => {
                 />,
             );
             expect(
-                screen.queryByRole("switch", { name: "Public" }),
+                screen.queryByRole("group", { name: "Access" }),
             ).not.toBeInTheDocument();
         });
     });

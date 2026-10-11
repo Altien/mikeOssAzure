@@ -289,7 +289,8 @@ describe("OrganizationAccessEditor — deny list", () => {
 
 // Whether an item is public or private is set with its details. The editor is
 // what follows: the individuals a private item is shared with, or — for a
-// public one, which everybody can already open — the people walled off.
+// public one, which everybody can already open and edit — who else owns it
+// and who is walled off.
 describe("OrganizationAccessEditor — public and private", () => {
     const MEMBERS = [
         {
@@ -353,19 +354,33 @@ describe("OrganizationAccessEditor — public and private", () => {
         return screen.getByRole("listbox", { name: "People matches" });
     };
 
-    it("has no switch of its own: the setting lives with the item's details", () => {
-        renderEditor();
+    it("neither holds nor announces the setting: that lives with the item's details", () => {
+        const { unmount } = render(
+            <OrganizationAccessEditor
+                members={MEMBERS}
+                assignments={[SHARED]}
+                organizationName="Elite Law LLP"
+                onAssign={vi.fn()}
+                onRemove={vi.fn()}
+            />,
+        );
         expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+        expect(screen.queryByText("Private")).not.toBeInTheDocument();
+        unmount();
+
         renderEditor({ visibility: "organization" });
         expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+        expect(screen.queryByText("Public")).not.toBeInTheDocument();
     });
 
-    it("says a private item is private, and who that leaves in", () => {
+    it("offers a private item a people picker, and no deny list", () => {
         renderEditor();
-        expect(screen.getByText("Private")).toBeInTheDocument();
+        expect(
+            screen.getByRole("searchbox", { name: "People" }),
+        ).toBeInTheDocument();
         expect(
             screen.getByText(
-                "Only the people below can open this project. Owners of Elite Law LLP always can.",
+                "Share this project with members of Elite Law LLP. It cannot be shared outside the organisation.",
             ),
         ).toBeInTheDocument();
         // No wall to build on an item nobody was let into.
@@ -374,39 +389,93 @@ describe("OrganizationAccessEditor — public and private", () => {
         ).not.toBeInTheDocument();
     });
 
-    it("says a public item is open to everyone, with nobody to add and a deny list", () => {
-        renderEditor({ visibility: "organization", assignments: [] });
-        expect(screen.getByText("Public")).toBeInTheDocument();
-        expect(
-            screen.getByText(
-                "Every member of Elite Law LLP can open and edit this project.",
-            ),
-        ).toBeInTheDocument();
-        // Everybody is already in, so there is nobody to name.
+    it("lets more owners be added to a public item, which everyone can already open", () => {
+        const { onAssign } = renderEditor({
+            visibility: "organization",
+            assignments: [],
+        });
+        // Ownership is the only standing left to hand out, so there is no
+        // role to choose and no general people picker.
         expect(
             screen.queryByRole("searchbox", { name: "People" }),
         ).not.toBeInTheDocument();
         expect(
-            screen.queryByRole("list", { name: "People with access" }),
+            screen.queryByRole("button", {
+                name: /^Role for the next person added/,
+            }),
         ).not.toBeInTheDocument();
+        expect(
+            screen.getByText(
+                "Add Elite Law LLP members as owners with rights to manage access, settings and delete the project. Everyone in Elite Law LLP can already open and edit it.",
+            ),
+        ).toBeInTheDocument();
+
+        const owners = screen.getByRole("searchbox", {
+            name: "Project owners",
+        });
+        fireEvent.focus(owners);
+        fireEvent.change(owners, { target: { value: "jane" } });
+        fireEvent.click(
+            within(
+                screen.getByRole("listbox", { name: "Project owners matches" }),
+            ).getByText("Jane Lee"),
+        );
+        expect(onAssign).toHaveBeenCalledWith(
+            expect.objectContaining({ user_id: "user-jane" }),
+            "owner",
+        );
+        expect(
+            screen.getByText("No additional Owners added."),
+        ).toBeInTheDocument();
         expect(
             screen.getByRole("button", { name: "Deny list" }),
         ).toBeInTheDocument();
     });
 
-    it("still shows people who hold a different role on a public item", async () => {
-        // Somebody it was shared with while private keeps the role they were
-        // given. Hiding that would hide who is a Viewer, or an Owner.
-        const user = userEvent.setup();
-        const { onRemove } = renderEditor({ visibility: "organization" });
+    it("names a workflow's owners on a public workflow", () => {
+        renderEditor({
+            visibility: "organization",
+            ownerLabel: "Workflow owners",
+            assignments: [],
+        });
         expect(
-            screen.getByText("People with a different role"),
+            screen.getByRole("searchbox", { name: "Workflow owners" }),
         ).toBeInTheDocument();
+    });
+
+    it("lists a public item's creator, added owners and anyone holding another role", async () => {
+        // Somebody it was shared with while private keeps the role they were
+        // given. Hiding that would hide who is a Viewer.
+        const user = userEvent.setup();
+        const { onRemove } = renderEditor({
+            visibility: "organization",
+            assignments: [
+                {
+                    key: "creator",
+                    user_id: "user-me",
+                    email: "me@firm.example",
+                    display_name: "Me",
+                    role: "owner",
+                    isCreator: true,
+                },
+                SHARED,
+            ],
+        });
+        const list = screen.getByRole("list", { name: "Project owners list" });
+        expect(within(list).getByText("me@firm.example")).toBeInTheDocument();
+        // The creator is always an Owner: nothing to change or remove.
         expect(
-            screen.queryByRole("searchbox", { name: "People" }),
+            within(list).queryByRole("button", {
+                name: "Actions for me@firm.example",
+            }),
         ).not.toBeInTheDocument();
-        const list = screen.getByRole("list", { name: "People with access" });
         expect(within(list).getByText("sam@firm.example")).toBeInTheDocument();
+        expect(
+            within(list).getByRole("button", {
+                name: "Role for sam@firm.example",
+            }),
+        ).toHaveTextContent("Viewer");
+
         await user.click(
             within(list).getByRole("button", {
                 name: "Actions for sam@firm.example",
@@ -416,45 +485,6 @@ describe("OrganizationAccessEditor — public and private", () => {
         expect(onRemove).toHaveBeenCalledWith(
             expect.objectContaining({ user_id: "user-sam" }),
         );
-    });
-
-    it("does not present the creator as somebody given a different role on a public item", () => {
-        // They are an Owner because they made it. Alone under "People with
-        // a different role" they read as a grant that does not exist.
-        const CREATOR = {
-            key: "creator",
-            user_id: "user-me",
-            email: "me@firm.example",
-            display_name: "Me",
-            role: "owner" as const,
-            isCreator: true,
-        };
-        const { unmount } = render(
-            <OrganizationAccessEditor
-                members={MEMBERS}
-                assignments={[CREATOR]}
-                organizationName="Elite Law LLP"
-                visibility="organization"
-                onAssign={vi.fn()}
-                onRemove={vi.fn()}
-            />,
-        );
-        expect(
-            screen.queryByText("People with a different role"),
-        ).not.toBeInTheDocument();
-        expect(screen.queryByText("me@firm.example")).not.toBeInTheDocument();
-        unmount();
-
-        // With a real grant beside them, the grant is listed and they are not.
-        renderEditor({
-            visibility: "organization",
-            assignments: [CREATOR, SHARED],
-        });
-        const list = screen.getByRole("list", { name: "People with access" });
-        expect(within(list).getByText("sam@firm.example")).toBeInTheDocument();
-        expect(
-            within(list).queryByText("me@firm.example"),
-        ).not.toBeInTheDocument();
     });
 
     it("still lists the creator, as Owner, on a private item", () => {

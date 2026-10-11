@@ -193,11 +193,17 @@ describe("NewProjectModal sharing", () => {
     expect(
       screen.queryByLabelText("Share across Organisation"),
     ).not.toBeInTheDocument();
-    const publicToggle = screen.getByRole("switch", { name: "Public" });
-    expect(publicToggle).toHaveAttribute("aria-checked", "false");
+    // Access: Private by default, Public as the other pill.
+    const access = screen.getByRole("group", { name: "Access" });
+    expect(
+      within(access).getByRole("button", { name: "Private" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(
+      within(access).getByRole("button", { name: "Public" }),
+    ).toHaveAttribute("aria-pressed", "false");
     expect(
       screen.getByText(
-        "Private. Only the people you share this project with can open it.",
+        "Only the people you share this project with can open it.",
       ),
     ).toBeInTheDocument();
 
@@ -225,7 +231,7 @@ describe("NewProjectModal sharing", () => {
     activeWorkspace.id = "personal";
     renderModal();
     expect(
-      screen.queryByRole("switch", { name: "Public" }),
+      screen.queryByRole("group", { name: "Access" }),
     ).not.toBeInTheDocument();
   });
 
@@ -246,6 +252,35 @@ describe("NewProjectModal sharing", () => {
         true,
       ),
     );
+  });
+
+  it("describes project memory under its label and reads On or Off beside the switch", async () => {
+    const user = userEvent.setup({ delay: null });
+    renderModal();
+
+    const memory = screen.getByRole("switch", { name: "Enable project memory" });
+    expect(memory).toHaveTextContent("On");
+    expect(memory).toHaveAccessibleDescription(
+      "Let Mike remember shared project context",
+    );
+    // The explanation sits between the label and the switch, not beside it.
+    const label = screen.getByText("Project memory");
+    const description = screen.getByText(
+      "Let Mike remember shared project context",
+    );
+    expect(memory).not.toHaveTextContent("Let Mike remember");
+    expect(
+      label.compareDocumentPosition(description) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      description.compareDocumentPosition(memory) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    await user.click(memory);
+    expect(memory).toHaveTextContent("Off");
+    expect(memory).toHaveAttribute("aria-checked", "false");
   });
 
   it("creates new projects with memory enabled by default", async () => {
@@ -707,9 +742,10 @@ describe("NewProjectModal sharing", () => {
         expect(
             screen.getByRole("dialog", { name: "Organisational Access" }),
         ).toBeVisible();
-        // The setting was made on the details step; this one only shows it.
-        expect(screen.getByText("Private")).toBeInTheDocument();
-        expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+        // The setting was made on the details step, not here.
+        expect(
+            screen.queryByRole("group", { name: "Access" }),
+        ).not.toBeInTheDocument();
         expect(
             screen.queryByRole("button", { name: "Deny list" }),
         ).not.toBeInTheDocument();
@@ -772,9 +808,9 @@ describe("NewProjectModal sharing", () => {
         vi.mocked(listOrgMembers).mockResolvedValue(ORG_MEMBERS as never);
         renderModal();
     await user.type(screen.getByPlaceholderText("Add project name"), "Matter");
-        const publicToggle = screen.getByRole("switch", { name: "Public" });
+        const publicToggle = screen.getByRole("button", { name: "Public" });
         await user.click(publicToggle);
-        expect(publicToggle).toHaveAttribute("aria-checked", "true");
+        expect(publicToggle).toHaveAttribute("aria-pressed", "true");
         expect(
             screen.getByText(
                 "Everyone in Elite Law LLP can open and edit this project.",
@@ -785,11 +821,21 @@ describe("NewProjectModal sharing", () => {
         expect(
             screen.getByRole("dialog", { name: "Organisational Access" }),
         ).toBeVisible();
-        expect(screen.getByText("Public")).toBeInTheDocument();
-        // Everybody is already in, so there is nobody to add by name.
+        // Everybody can already open and edit it, so what is offered is
+        // adding owners — not a general people picker.
         expect(
             screen.queryByRole("searchbox", { name: "People" }),
         ).not.toBeInTheDocument();
+        const ownerPicker = await screen.findByRole("searchbox", {
+            name: "Project owners",
+        });
+        await user.type(ownerPicker, "lead");
+        await user.click(
+            await screen.findByRole("option", { name: /Project Lead/ }),
+        );
+        const owners = screen.getByRole("list", { name: "Project owners list" });
+        expect(within(owners).getByText("Project Lead")).toBeInTheDocument();
+    expect(within(owners).getByText("Project Creator")).toBeInTheDocument();
 
         await user.click(
             await screen.findByRole("button", { name: "Deny list" }),
@@ -820,7 +866,12 @@ describe("NewProjectModal sharing", () => {
                 "deny",
             ),
         );
-        expect(grantProjectAccess).toHaveBeenCalledTimes(1);
+        expect(grantProjectAccess).toHaveBeenCalledWith(
+            "p1",
+            "lead@elite.test",
+            "owner",
+        );
+        expect(grantProjectAccess).toHaveBeenCalledTimes(2);
     });
 
     it("drops the people lined up for a private project when it is made public", async () => {
@@ -842,7 +893,7 @@ describe("NewProjectModal sharing", () => {
         );
 
         await user.click(screen.getByRole("button", { name: "Back" }));
-        await user.click(screen.getByRole("switch", { name: "Public" }));
+        await user.click(screen.getByRole("button", { name: "Public" }));
         while (!screen.queryByRole("button", { name: "Create project" })) {
             await user.click(screen.getByRole("button", { name: "Next" }));
         }
@@ -886,7 +937,7 @@ describe("NewProjectModal sharing", () => {
 
         await user.click(screen.getByRole("button", { name: "Back" }));
         await user.click(screen.getByRole("button", { name: "Back" }));
-        await user.click(screen.getByRole("switch", { name: "Public" }));
+        await user.click(screen.getByRole("button", { name: "Public" }));
         while (!screen.queryByRole("button", { name: "Create project" })) {
             await user.click(screen.getByRole("button", { name: "Next" }));
         }

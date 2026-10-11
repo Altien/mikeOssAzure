@@ -477,10 +477,10 @@ describe("AccessModal — per-recipient roles", () => {
         ).toBeVisible();
 
         // Public or private is set with the item's details, not here.
-        expect(await screen.findByText("Private")).toBeInTheDocument();
+        const peoplePicker = await screen.findByRole("searchbox", {
+            name: "People",
+        });
         expect(screen.queryByRole("switch")).not.toBeInTheDocument();
-
-        const peoplePicker = screen.getByRole("searchbox", { name: "People" });
         const peopleDescription = screen.getByText(
             "Share this project with members of Elite Law LLP. It cannot be shared outside the organisation.",
         );
@@ -523,7 +523,7 @@ describe("AccessModal — per-recipient roles", () => {
         ).not.toBeInTheDocument();
     });
 
-    it("shows an organization's public item as open to everyone, with the deny list", async () => {
+    it("offers an organization's public item more owners and the deny list", async () => {
         const user = userEvent.setup();
         render(
             <AccessModal
@@ -544,16 +544,28 @@ describe("AccessModal — per-recipient roles", () => {
             />,
         );
 
-        expect(await screen.findByText("Public")).toBeInTheDocument();
-        expect(
-            await screen.findByText(
-                "Every member of Elite Law LLP can open and edit this project.",
-            ),
-        ).toBeInTheDocument();
-        // Everybody is already in: nobody to add by name.
+        // Everybody can already open and edit it, so what is offered is
+        // adding owners — not a general people picker.
+        const owners = await screen.findByRole("searchbox", {
+            name: "Project owners",
+        });
         expect(
             screen.queryByRole("searchbox", { name: "People" }),
         ).not.toBeInTheDocument();
+        expect(
+            await screen.findByText(
+                "Add Elite Law LLP members as owners with rights to manage access, settings and delete the project. Everyone in Elite Law LLP can already open and edit it.",
+            ),
+        ).toBeInTheDocument();
+        await user.type(owners, "jane");
+        expect(
+            within(
+                await screen.findByRole("listbox", {
+                    name: "Project owners matches",
+                }),
+            ).getByText("Jane Lee"),
+        ).toBeInTheDocument();
+        await user.clear(owners);
 
         const denyToggle = screen.getByRole("button", { name: "Deny list" });
         expect(denyToggle).toHaveAttribute("aria-expanded", "false");

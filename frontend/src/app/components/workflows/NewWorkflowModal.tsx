@@ -31,7 +31,7 @@ import {
 } from "@/app/onboarding/options";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
-import { PublicAccessToggle } from "../modals/PublicAccessToggle";
+import { AccessVisibilityField } from "../modals/AccessVisibilityField";
 import {
     PERSONAL_WORKSPACE as ACTIVE_PERSONAL_WORKSPACE,
     useWorkspace,
@@ -1013,7 +1013,7 @@ export function NewWorkflowModal({
                             </div>
                         ) : null}
                         {orgId !== PERSONAL_WORKSPACE ? (
-                            <PublicAccessToggle
+                            <AccessVisibilityField
                                 visibility={visibility}
                                 onChange={(next) => {
                                     setVisibility(next);
