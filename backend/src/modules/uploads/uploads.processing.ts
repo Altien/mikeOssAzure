@@ -17,6 +17,9 @@ import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { pathToFileURL } from "node:url";
 
+import JSZip from "jszip";
+import { XMLParser } from "fast-xml-parser";
+
 import { AppError } from "../../lib/appError";
 import { recordAudit } from "../../lib/audit";
 import { runIsolated } from "../../lib/dbq/jobScope";
@@ -60,7 +63,10 @@ import { runWithJobTenant } from "../../lib/tenantContext";
 import { withLogContext } from "../../lib/logging/contextLight";
 import { log } from "../../lib/logging/root";
 import { createDocumentVersion, updateDocumentVersion } from "../documents/documents.service";
-import { UPLOAD_VERIFICATION_LEASE_SECONDS } from "./uploads.manifest";
+import {
+  MAX_UPLOAD_SIZE_BYTES,
+  UPLOAD_VERIFICATION_LEASE_SECONDS,
+} from "./uploads.manifest";
 
 type UploadSessionRow = {
   id: string;
@@ -138,6 +144,15 @@ class InvalidPdfFileError extends Error {
   constructor() {
     super("invalid_pdf_file");
     this.name = "InvalidPdfFileError";
+  }
+}
+
+class InvalidUploadedFileError extends Error {
+  readonly code = "invalid_docx_package" as const;
+
+  constructor() {
+    super("invalid_docx_package");
+    this.name = "InvalidUploadedFileError";
   }
 }
 
@@ -396,6 +411,133 @@ async function requireSealedFile(
   }
 }
 
+const DOCX_MAIN_DOCUMENT_CONTENT_TYPE =
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml";
+const DOCX_CONTENT_TYPES_MAX_BYTES = 256 * 1024;
+const contentTypesParser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: "@_",
+});
+
+type DocxContentTypeOverride = {
+  "@_PartName"?: string;
+  "@_ContentType"?: string;
+};
+
+function zipEntryUncompressedSize(entry: JSZip.JSZipObject): number | null {
+  const data = (entry as JSZip.JSZipObject & {
+    _data?: { uncompressedSize?: unknown };
+  })._data;
+  const size = data?.uncompressedSize;
+  return typeof size === "number" && Number.isFinite(size) ? size : null;
+}
+
+type BoundedZipEntryStream = {
+  on(event: "data", listener: (chunk: Buffer) => void): BoundedZipEntryStream;
+  on(event: "error", listener: (error: unknown) => void): BoundedZipEntryStream;
+  on(event: "end", listener: () => void): BoundedZipEntryStream;
+  pause(): void;
+  resume(): void;
+};
+
+async function readZipEntryBounded(
+  entry: JSZip.JSZipObject,
+  maxBytes: number,
+): Promise<string> {
+  const declaredSize = zipEntryUncompressedSize(entry);
+  if (
+    declaredSize === null ||
+    declaredSize < 0 ||
+    declaredSize > maxBytes
+  ) {
+    throw new InvalidUploadedFileError();
+  }
+
+  const chunks: Buffer[] = [];
+  let actualSize = 0;
+  const stream = entry.internalStream("nodebuffer") as unknown as BoundedZipEntryStream;
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    stream.on("data", (chunk) => {
+      if (settled) return;
+      actualSize += chunk.byteLength;
+      if (actualSize > maxBytes) {
+        settled = true;
+        stream.pause();
+        reject(new InvalidUploadedFileError());
+        return;
+      }
+      chunks.push(chunk);
+    });
+    stream.on("error", () => {
+      if (settled) return;
+      settled = true;
+      reject(new InvalidUploadedFileError());
+    });
+    stream.on("end", () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    });
+    stream.resume();
+  });
+
+  if (actualSize !== declaredSize) {
+    throw new InvalidUploadedFileError();
+  }
+  return Buffer.concat(chunks, actualSize).toString("utf8");
+}
+
+function hasDocxMainDocumentOverride(contentTypes: string): boolean {
+  const parsed = contentTypesParser.parse(contentTypes) as {
+    Types?: {
+      Override?: DocxContentTypeOverride | DocxContentTypeOverride[];
+    };
+  };
+  const overrides = parsed.Types?.Override;
+  return (Array.isArray(overrides) ? overrides : overrides ? [overrides] : []).some(
+    (override) =>
+      override["@_PartName"] === "/word/document.xml" &&
+      override["@_ContentType"] === DOCX_MAIN_DOCUMENT_CONTENT_TYPE,
+  );
+}
+
+async function validateUploadedFilePackage(
+  file: UploadFileRow,
+  artifact: SealedFileArtifact,
+): Promise<void> {
+  if (file.file_type !== "docx") return;
+
+  try {
+    // The manifest caps uploads at 100 MiB. Enforce that policy before
+    // loading the sealed archive into memory for ZIP parsing.
+    if (artifact.size > MAX_UPLOAD_SIZE_BYTES) {
+      throw new InvalidUploadedFileError();
+    }
+
+    const zip = await JSZip.loadAsync(await readFile(artifact.filePath));
+    const contentTypesPart = zip.file("[Content_Types].xml");
+    const relationshipsPart = zip.file("_rels/.rels");
+    const documentPart = zip.file("word/document.xml");
+
+    if (!contentTypesPart || !relationshipsPart || !documentPart) {
+      throw new InvalidUploadedFileError();
+    }
+
+    const contentTypes = await readZipEntryBounded(
+      contentTypesPart,
+      DOCX_CONTENT_TYPES_MAX_BYTES,
+    );
+    if (!hasDocxMainDocumentOverride(contentTypes)) {
+      throw new InvalidUploadedFileError();
+    }
+  } catch (error) {
+    if (error instanceof InvalidUploadedFileError) throw error;
+    throw new InvalidUploadedFileError();
+  }
+}
+
 // Prepare immutable, claim-specific storage objects before publishing any
 // document/reference row. A reclaimed worker may finish its copy or PDF work,
 // but only the current claim can publish these paths in one database RPC.
@@ -569,6 +711,7 @@ async function prepareUploadFile(
   const slug = claimToken.replace(/-/g, "");
   try {
     if (file.file_type === "pdf") await validatePdfFile(artifact.filePath);
+    await validateUploadedFilePackage(file, artifact);
     // An email is stored as the Markdown it converts to. size_bytes stays that
     // of the sealed upload, which the publish RPC checks against the manifest;
     // publishEmailParts corrects it once the row exists.
@@ -722,6 +865,14 @@ export async function processUploadJob(
       if (error instanceof InvalidPdfFileError) {
         uploadEvent("invalid_pdf_file");
         await finish(null, "invalid_pdf_file");
+        return;
+      }
+      // Upstream d9a7c365: a DOCX whose package is malformed or oversized
+      // cannot succeed on retry. Terminal through the publish RPC (migration
+      // 0245), unreported, like invalid_pdf_file.
+      if (error instanceof InvalidUploadedFileError) {
+        uploadEvent(error.code);
+        await finish(null, error.code);
         return;
       }
       console.error("[upload-worker] file processing failed", {

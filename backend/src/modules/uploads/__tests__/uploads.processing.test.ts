@@ -11,6 +11,7 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
+import JSZip from "jszip";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { diagnosticErrorTags } from "../../../lib/observability/sentryPrivacy";
 import { MAX_EMAIL_NESTING_DEPTH } from "../../../lib/email";
@@ -292,6 +293,56 @@ const baseSession = {
   status: "processing",
 };
 
+function withDeclaredZipEntrySize(
+  bytes: Buffer,
+  entryName: string,
+  declaredSize: number,
+): Buffer {
+  const result = Buffer.from(bytes);
+  const nameBytes = Buffer.from(entryName);
+  let nameOffset = 0;
+  while ((nameOffset = result.indexOf(nameBytes, nameOffset)) !== -1) {
+    const centralDirectoryOffset = nameOffset - 46;
+    if (
+      centralDirectoryOffset >= 0 &&
+      result.readUInt32LE(centralDirectoryOffset) === 0x02014b50 &&
+      result.readUInt16LE(centralDirectoryOffset + 28) === nameBytes.length
+    ) {
+      result.writeUInt32LE(declaredSize, centralDirectoryOffset + 24);
+      return result;
+    }
+    nameOffset += nameBytes.length;
+  }
+  throw new Error(`ZIP entry not found: ${entryName}`);
+}
+
+async function minimalDocxBytes(
+  contentTypesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>`,
+): Promise<Buffer> {
+  const zip = new JSZip();
+  zip.file("[Content_Types].xml", contentTypesXml);
+  zip.file(
+    "_rels/.rels",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`,
+  );
+  zip.file(
+    "word/document.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body><w:p><w:r><w:t>Hello</w:t></w:r></w:p></w:body>
+</w:document>`,
+  );
+  return await zip.generateAsync({ type: "nodebuffer" });
+}
+
 describe("upload processing", () => {
   let processingTempRoot: string;
 
@@ -352,7 +403,10 @@ describe("upload processing", () => {
   ) => {
     mocks.countPagesWithoutText.mockImplementation(async () => measured);
     const claimToken = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-    const file = { ...baseFile, file_type: fileType, filename };
+    // A DOCX must be a real Word package to pass validation (d9a7c365).
+    const bytes = fileType === "docx" ? await minimalDocxBytes() : pdfBytes;
+    mocks.createFileReadStream.mockImplementation(() => Readable.from([bytes]));
+    const file = { ...baseFile, file_type: fileType, filename, expected_size_bytes: bytes.length };
     const db = scriptedDb([
       { data: { id: "job-1", session_id: baseSession.id, file_id: baseFile.id, attempts: 1, locked_by: "worker-1", claim_token: claimToken }, error: null },
       { data: baseSession, error: null },
@@ -639,9 +693,67 @@ describe("upload processing", () => {
     },
   );
 
+  // Upstream d9a7c365: a .docx upload must be a bounded Word package. Dev
+  // finishes an invalid one terminally with p_failure "invalid_docx_package"
+  // (migration 0245) before any copy, unreported.
+  function docxPackageJob(bytes: Buffer) {
+    const { db, failures } = pdfHeaderJob(bytes);
+    db.remaining.splice(2, 1, { data: { ...baseFile, filename: "fake.docx", file_type: "docx",
+      content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      expected_size_bytes: bytes.length }, error: null });
+    return { db, failures };
+  }
+
+  it("accepts a minimal Word package", async () => {
+    const { db, failures } = docxPackageJob(await minimalDocxBytes());
+    await processUploadJob(db as never, "job-1", "worker-1");
+    expect(failures).toEqual([null]);
+    expect(mocks.copyFile).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["a ZIP that is not a Word package", async () => {
+      const zip = new JSZip();
+      zip.file("not-word.txt", "hello");
+      return await zip.generateAsync({ type: "nodebuffer" });
+    }],
+    ["a package whose content type is not assigned to word/document.xml", () => minimalDocxBytes(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <!-- application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml -->
+</Types>`,
+    )],
+    ["an oversized content-types part", () => minimalDocxBytes("x".repeat(256 * 1024 + 1))],
+    ["an oversized XML entry whose ZIP metadata understates its size", async () =>
+      withDeclaredZipEntrySize(await minimalDocxBytes("x".repeat(256 * 1024 + 1)), "[Content_Types].xml", 1)],
+    ["bytes that are not a ZIP at all", async () => Buffer.from("plain text")],
+  ])(
+    "finishes %s terminally as invalid_docx_package before destination writes",
+    async (_label, build) => {
+      const { db, failures } = docxPackageJob(await build());
+      await processUploadJob(db as never, "job-1", "worker-1");
+      expect(failures).toEqual(["invalid_docx_package"]);
+      expect(mocks.copyFile).not.toHaveBeenCalled();
+      expect(mocks.officeFileToPdf).not.toHaveBeenCalled();
+      expect(mocks.reportError).not.toHaveBeenCalled();
+      expect(db.remaining).toHaveLength(0);
+    },
+  );
+
   describe("editor-save compare-and-swap (sync 6e3ef6fa)", () => {
     const claimToken = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-    const sealedHash = createHash("sha256").update(pdfBytes).digest("hex");
+    // The sealed upload is a real Word package so it passes DOCX validation
+    // (d9a7c365); sealedHash is its digest.
+    let sealedHash = "";
+    let officeBytes = Buffer.alloc(0);
+    beforeEach(async () => {
+      officeBytes = await minimalDocxBytes();
+      sealedHash = createHash("sha256").update(officeBytes).digest("hex");
+      mocks.createFileReadStream.mockImplementation(() => Readable.from([officeBytes]));
+      docxFile.expected_size_bytes = officeBytes.length;
+    });
     const startedFrom = "a".repeat(64);
     const replaceSession = {
       ...baseSession,
