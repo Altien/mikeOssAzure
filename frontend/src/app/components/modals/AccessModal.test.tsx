@@ -482,7 +482,7 @@ describe("AccessModal — per-recipient roles", () => {
         });
         expect(screen.queryByRole("switch")).not.toBeInTheDocument();
         const peopleDescription = screen.getByText(
-            "Share this project with members of Elite Law LLP. It cannot be shared outside the organisation.",
+            "Share this project with members of Elite Law LLP. They are added as Editors; change a person's role in the list below. It cannot be shared outside the organisation.",
         );
         expect(
             screen.getByRole("button", { name: "About People" }),

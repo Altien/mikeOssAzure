@@ -502,7 +502,6 @@ export function OrganizationAccessEditor({
         assignment: OrganizationAccessAssignment,
     ) => Promise<unknown> | unknown;
 }) {
-    const [newRole, setNewRole] = useState<ProjectRole>("editor");
     const isPublic = visibility === "organization";
     const assignedKeys = new Set(
         assignments.map(
@@ -572,7 +571,7 @@ export function OrganizationAccessEditor({
         ? "workflow"
         : "project";
     const organizationLabel = organizationName || "the organisation";
-    const peopleDescription = `Share this ${resourceNoun} with members of ${organizationLabel}. It cannot be shared outside the organisation.`;
+    const peopleDescription = `Share this ${resourceNoun} with members of ${organizationLabel}. They are added as Editors; change a person's role in the list below. It cannot be shared outside the organisation.`;
     // Everyone can already open and edit a public item, so the only standing
     // left to hand out is ownership of it.
     const ownerDescription = `Add ${organizationLabel} members as owners with rights to manage access, settings and delete the ${resourceNoun}. Everyone in ${organizationLabel} can already open and edit it.`;
@@ -599,47 +598,18 @@ export function OrganizationAccessEditor({
                         onSelect={(member) => onAssign(member, "owner")}
                     />
                 ) : (
-                    <div className="flex items-end gap-2">
-                        <div className="min-w-0 flex-1">
-                            <OrganizationMemberPicker
-                                id="organization-people-picker"
-                                label="People"
-                                placeholder="Search members…"
-                                description={peopleDescription}
-                                members={availableMembers}
-                                disabled={disabled || loading}
-                                onSelect={(member) => onAssign(member, newRole)}
-                            />
-                        </div>
-                        <Dropdown>
-                            <DropdownTrigger asChild>
-                                <button
-                                    type="button"
-                                    aria-label={`Role for the next person added: ${accessRoleLabel(newRole)}`}
-                                    disabled={disabled || loading}
-                                    className={`${INPUT_GROUP_ROLE_TRIGGER_CLASS} rounded-lg ${accessRoleTextTone(newRole)}`}
-                                >
-                                    <span>{accessRoleLabel(newRole)}</span>
-                                    <ChevronDown className="h-3 w-3 shrink-0 text-gray-300" />
-                                </button>
-                            </DropdownTrigger>
-                            <DropdownContent align="end" className="w-32">
-                                {PROJECT_ROLES.map((role) => (
-                                    <DropdownItem
-                                        key={role}
-                                        selected={newRole === role}
-                                        onSelect={() => setNewRole(role)}
-                                        className={`flex items-center justify-between ${accessRoleMenuTone(role)}`}
-                                    >
-                                        <span>{accessRoleLabel(role)}</span>
-                                        {newRole === role ? (
-                                            <Check className="h-3.5 w-3.5 text-gray-300" />
-                                        ) : null}
-                                    </DropdownItem>
-                                ))}
-                            </DropdownContent>
-                        </Dropdown>
-                    </div>
+                    // Everybody is added as an Editor. Whoever needs more or
+                    // less is changed in their row below, where the role can
+                    // be seen beside the person it belongs to.
+                    <OrganizationMemberPicker
+                        id="organization-people-picker"
+                        label="People"
+                        placeholder="Search members…"
+                        description={peopleDescription}
+                        members={availableMembers}
+                        disabled={disabled || loading}
+                        onSelect={(member) => onAssign(member, "editor")}
+                    />
                 )}
                 <OrganizationAssignmentList
                     label={

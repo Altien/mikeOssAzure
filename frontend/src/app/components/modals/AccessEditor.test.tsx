@@ -378,11 +378,6 @@ describe("OrganizationAccessEditor — public and private", () => {
         expect(
             screen.getByRole("searchbox", { name: "People" }),
         ).toBeInTheDocument();
-        expect(
-            screen.getByText(
-                "Share this project with members of Elite Law LLP. It cannot be shared outside the organisation.",
-            ),
-        ).toBeInTheDocument();
         // No wall to build on an item nobody was let into.
         expect(
             screen.queryByRole("button", { name: /^Deny list/ }),
@@ -590,28 +585,31 @@ describe("OrganizationAccessEditor — public and private", () => {
         ).toBeInTheDocument();
     });
 
-    it("shares a private item with a member at the role chosen for the next person", async () => {
-        const user = userEvent.setup();
+    it("adds a member to a private item as an Editor, with no role to choose first", () => {
         const { onAssign } = renderEditor();
+        // The role is set in the person's row afterwards, not beside the
+        // search field.
+        expect(
+            screen.queryByRole("button", {
+                name: /^Role for the next person added/,
+            }),
+        ).not.toBeInTheDocument();
 
-        // Editor unless told otherwise.
         fireEvent.click(within(searchPeople("jane")).getByText("Jane Lee"));
-        expect(onAssign).toHaveBeenLastCalledWith(
+        expect(onAssign).toHaveBeenCalledTimes(1);
+        expect(onAssign).toHaveBeenCalledWith(
             expect.objectContaining({ user_id: "user-jane" }),
             "editor",
         );
+    });
 
-        await user.click(
-            screen.getByRole("button", {
-                name: "Role for the next person added: Editor",
-            }),
-        );
-        await user.click(screen.getByRole("menuitem", { name: "Viewer" }));
-        fireEvent.click(within(searchPeople("jane")).getByText("Jane Lee"));
-        expect(onAssign).toHaveBeenLastCalledWith(
-            expect.objectContaining({ user_id: "user-jane" }),
-            "viewer",
-        );
+    it("tells the person adding people where the role is changed", () => {
+        renderEditor();
+        expect(
+            screen.getByText(
+                "Share this project with members of Elite Law LLP. They are added as Editors; change a person's role in the list below. It cannot be shared outside the organisation.",
+            ),
+        ).toBeInTheDocument();
     });
 
     it("offers only members who can still be added", () => {
