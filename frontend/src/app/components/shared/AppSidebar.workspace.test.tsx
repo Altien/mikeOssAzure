@@ -206,13 +206,15 @@ describe("AppSidebar workspace switcher", () => {
       [...element.classList].filter((name) => /^px-/.test(name));
     expect(horizontalPadding(label)).toEqual(horizontalPadding(option));
     expect(label).toHaveClass("normal-case", "tracking-normal");
-    // The weight the sidebar's own section headings use.
-    expect(label).toHaveClass("font-semibold");
+    // The size and weight the sidebar's own section headings use, in
+    // place of the 10px the shared label sets for capitals.
+    expect(label).toHaveClass("text-xs", "font-semibold");
+    expect(label).not.toHaveClass("text-[10px]");
     // `hidden`: the open menu takes the rest of the page out of the
     // accessibility tree.
     expect(
       screen.getByRole("button", { name: "Recent Projects", hidden: true }),
-    ).toHaveClass("font-semibold");
+    ).toHaveClass("text-xs", "font-semibold");
     expect(label).not.toHaveClass("uppercase");
     expect(label).not.toHaveClass("tracking-wider");
   });
