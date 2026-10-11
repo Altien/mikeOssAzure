@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listProjectSummaries } from "@/app/lib/mikeApi";
@@ -81,6 +81,9 @@ const project = (id: string, name: string) => ({
   updated_at: "2026-09-01T00:00:00.000Z",
 });
 
+const heading = () =>
+  document.querySelector('[data-slot="sidebar-heading"]') as HTMLElement;
+
 const openAccountMenu = (user: ReturnType<typeof userEvent.setup>) =>
   user.click(screen.getByRole("button", { name: "Account menu" }));
 
@@ -96,22 +99,82 @@ describe("AppSidebar workspace switcher", () => {
     const user = userEvent.setup();
     render(<AppSidebar isOpen onToggle={vi.fn()} />);
 
-    expect(screen.queryByText(/Workspace:/)).not.toBeInTheDocument();
+    expect(heading()).toHaveTextContent("Mike");
     await openAccountMenu(user);
     expect(screen.getByRole("menuitem", { name: "Settings" })).toBeVisible();
     expect(screen.queryByRole("menuitemradio")).not.toBeInTheDocument();
     expect(screen.queryByText("Workspace")).not.toBeInTheDocument();
   });
 
-  it("names the active workspace beside the account and lists the others", async () => {
+  it("heads the sidebar with the organization's name in its workspace", () => {
+    state.organizations = [ACME, BETA];
+    state.workspaceId = ACME.id;
+    render(<AppSidebar isOpen onToggle={vi.fn()} />);
+
+    expect(heading()).toHaveTextContent("Acme LLP");
+    expect(heading()).not.toHaveTextContent("Mike");
+    // Still the way home, whatever it is called.
+    expect(screen.getByRole("link", { name: "Acme LLP" })).toHaveAttribute(
+      "href",
+      "/assistant",
+    );
+  });
+
+  it("heads the sidebar with plain Mike for personal work, even with organizations to switch to", () => {
+    state.organizations = [ACME, BETA];
+    state.workspaceId = "personal";
+    render(<AppSidebar isOpen onToggle={vi.fn()} />);
+
+    expect(heading()).toHaveTextContent("Mike");
+    expect(screen.queryByText("Personal")).not.toBeInTheDocument();
+  });
+
+  it("shows a placeholder, not Mike, while a remembered organization's name loads", () => {
+    // "Mike" means personal work. Saying it for the moment before the
+    // organization's name arrives would name the wrong workspace.
+    state.organizations = null;
+    state.workspaceId = ACME.id;
+    render(<AppSidebar isOpen onToggle={vi.fn()} />);
+
+    expect(
+      screen.getByRole("status", { name: "Loading workspace" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Mike")).not.toBeInTheDocument();
+  });
+
+  it("keeps a long organization name inside the fixed header row, with the full name on hover", () => {
+    const long = {
+      id: "org-long",
+      name: "Hargreaves Whitcombe Delacroix & Partners International LLP",
+      role: "member" as const,
+    };
+    state.organizations = [long];
+    state.workspaceId = long.id;
+    render(<AppSidebar isOpen onToggle={vi.fn()} />);
+
+    expect(heading()).toHaveClass("line-clamp-2", "break-words");
+    expect(heading()).toHaveAttribute("title", long.name);
+    expect(
+      screen.getByRole("button", { name: "Close sidebar" }).parentElement,
+    ).toHaveClass("h-11");
+  });
+
+  it("names nothing beside the account button", () => {
+    state.organizations = [ACME];
+    state.workspaceId = ACME.id;
+    render(<AppSidebar isOpen onToggle={vi.fn()} />);
+
+    expect(screen.queryByText(/Workspace:/)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Account menu" }),
+    ).not.toHaveTextContent("Acme LLP");
+  });
+
+  it("lists the workspaces in the account menu and marks the active one", async () => {
     state.organizations = [ACME, BETA];
     state.workspaceId = ACME.id;
     const user = userEvent.setup();
     render(<AppSidebar isOpen onToggle={vi.fn()} />);
-
-    expect(screen.getByText("Acme LLP").closest("p")).toHaveTextContent(
-      "Workspace: Acme LLP",
-    );
 
     await openAccountMenu(user);
     const options = screen.getAllByRole("menuitemradio");
@@ -148,8 +211,8 @@ describe("AppSidebar workspace switcher", () => {
     const user = userEvent.setup();
     render(<AppSidebar isOpen={false} onToggle={vi.fn()} />);
 
-    // No room for the name beside a collapsed account button.
-    expect(screen.queryByText(/Workspace:/)).not.toBeInTheDocument();
+    // The collapsed sidebar has no heading to name the workspace in.
+    expect(document.querySelector('[data-slot="sidebar-heading"]')).toBeNull();
     await openAccountMenu(user);
     expect(
       screen.getByRole("menuitemradio", { name: "Acme LLP" }),
@@ -198,6 +261,6 @@ describe("AppSidebar workspace switcher", () => {
     expect(
       vi.mocked(listProjectSummaries).mock.calls[0][0]?.workspace,
     ).toBeUndefined();
-    expect(within(document.body).queryByText(/Workspace:/)).toBeNull();
+    expect(heading()).toHaveTextContent("Mike");
   });
 });

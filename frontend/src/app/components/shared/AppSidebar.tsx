@@ -211,9 +211,17 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                   })),
               ]
             : null;
-    const activeWorkspaceName = workspaceOptions
-        ? (activeOrganization?.name ?? PERSONAL_WORKSPACE_LABEL)
-        : null;
+    // The sidebar is headed by whose work it is showing: the organization's
+    // name in its workspace, and plain "Mike" for personal work. `null` while
+    // a remembered organization's name is still loading — saying "Mike" for
+    // that moment would be naming the wrong workspace.
+    const sidebarHeading = activeOrganization
+        ? activeOrganization.name
+        : workspaceId &&
+            workspaceId !== PERSONAL_WORKSPACE &&
+            organizations === null
+          ? null
+          : "Mike";
     const [recentProjects, setRecentProjects] = useState<Project[] | null>(
         null,
     );
@@ -401,26 +409,50 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
             >
                 {/* Toggle + Logo */}
                 <div
-                    className={`h-11 shrink-0 items-center justify-between px-1.5 ${
+                    className={`h-11 shrink-0 items-center justify-between gap-1 px-1.5 ${
                         !isOpen ? "hidden md:flex" : "flex"
                     }`}
                 >
                     {isOpen && (
-                        <div className="px-1.5">
+                        <div className="min-w-0 flex-1 px-1.5">
                             <Link
                                 href="/assistant"
-                                className="flex items-center gap-1.5 hover:opacity-80 transition-opacity"
+                                className="flex min-w-0 items-center gap-1.5 hover:opacity-80 transition-opacity"
                             >
                                 <span className="flex shrink-0 px-px">
                                     <MikeIcon size={18} />
                                 </span>
-                                <span
-                                    className={`text-xl font-light font-serif ${
-                                        shouldAnimate ? "sidebar-fade-in" : ""
-                                    }`}
-                                >
-                                    Mike
-                                </span>
+                                {sidebarHeading === null ? (
+                                    <span
+                                        data-slot="sidebar-heading-loading"
+                                        role="status"
+                                        aria-label="Loading workspace"
+                                        className="h-5 w-28 rounded bg-gray-200 animate-pulse"
+                                    />
+                                ) : (
+                                    // The row keeps its fixed height, so an
+                                    // organization's name is set smaller than
+                                    // "Mike" and may run to a second line.
+                                    // Only a name longer than that is cut,
+                                    // and the title carries it in full.
+                                    <span
+                                        data-slot="sidebar-heading"
+                                        title={
+                                            activeOrganization
+                                                ? sidebarHeading
+                                                : undefined
+                                        }
+                                        className={cn(
+                                            "min-w-0 font-light font-serif",
+                                            activeOrganization
+                                                ? "line-clamp-2 break-words text-base leading-tight"
+                                                : "text-xl",
+                                            shouldAnimate && "sidebar-fade-in",
+                                        )}
+                                    >
+                                        {sidebarHeading}
+                                    </span>
+                                )}
                             </Link>
                         </div>
                     )}
@@ -723,18 +755,6 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
 
                 {/* User Profile */}
                 <div className="mt-auto p-1">
-                    {/* Whose work the lists are showing. Its own line, so a
-                        long organization name wraps instead of being cut off
-                        inside the fixed-height account button below. */}
-                    {user && isOpen && activeWorkspaceName ? (
-                        <p
-                            data-slot="active-workspace"
-                            className="break-words px-2 pb-1.5 text-[11px] leading-tight text-gray-500"
-                        >
-                            <span className="text-gray-400">Workspace: </span>
-                            {activeWorkspaceName}
-                        </p>
-                    ) : null}
                     {user && (
                         <Dropdown
                             open={isDropdownOpen}
