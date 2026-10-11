@@ -142,21 +142,21 @@ describe("AppSidebar workspace switcher", () => {
     expect(screen.queryByText("Mike")).not.toBeInTheDocument();
   });
 
-  it("keeps a long organization name inside the fixed header row, with the full name on hover", () => {
-    const long = {
-      id: "org-long",
-      name: "Hargreaves Whitcombe Delacroix & Partners International LLP",
-      role: "member" as const,
-    };
-    state.organizations = [long];
-    state.workspaceId = long.id;
-    render(<AppSidebar isOpen onToggle={vi.fn()} />);
-
-    expect(heading()).toHaveClass("line-clamp-2", "break-words");
-    expect(heading()).toHaveAttribute("title", long.name);
+  it("sets an organization's name at the size Mike is, in the same fixed header row", () => {
+    state.organizations = [ACME];
+    state.workspaceId = ACME.id;
+    const { unmount } = render(<AppSidebar isOpen onToggle={vi.fn()} />);
+    const organizationClasses = heading().className;
+    expect(heading()).toHaveClass("text-xl");
     expect(
       screen.getByRole("button", { name: "Close sidebar" }).parentElement,
     ).toHaveClass("h-11");
+    unmount();
+
+    // Switching workspace must not change how the header looks.
+    state.workspaceId = "personal";
+    render(<AppSidebar isOpen onToggle={vi.fn()} />);
+    expect(heading().className).toBe(organizationClasses);
   });
 
   it("names nothing beside the account button", () => {
