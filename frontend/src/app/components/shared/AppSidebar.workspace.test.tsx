@@ -252,6 +252,17 @@ describe("AppSidebar workspace switcher", () => {
     expect(await screen.findByText("My own matter")).toBeInTheDocument();
   });
 
+  it("lines the empty projects placeholder up with the Recent Projects button", async () => {
+    render(<AppSidebar isOpen onToggle={vi.fn()} />);
+
+    const placeholder = await screen.findByText("No projects yet");
+    const button = screen.getByRole("button", { name: "Recent Projects" });
+    const horizontalPadding = (element: HTMLElement) =>
+      [...element.classList].filter((name) => /^px-/.test(name));
+    expect(horizontalPadding(placeholder)).toEqual(horizontalPadding(button));
+    expect(horizontalPadding(placeholder)).toEqual(["px-3.5"]);
+  });
+
   it("does not narrow the recent projects outside a workspace provider", async () => {
     state.workspaceId = null;
     state.organizations = null;

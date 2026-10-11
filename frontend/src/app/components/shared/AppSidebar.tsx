@@ -567,7 +567,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                         </div>
                                     ) : displayedRecentProjects.length === 0 ? (
                                         <div
-                                            className={`px-4.5 py-2 text-xs text-gray-500 ${
+                                            className={`px-3.5 py-2 text-xs text-gray-500 ${
                                                 shouldAnimate
                                                     ? "sidebar-fade-in-2"
                                                     : ""
