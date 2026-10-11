@@ -654,12 +654,6 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
 
                         <div>
                             <FieldLabel as="p">Project memory</FieldLabel>
-                            <p
-                                id="new-project-memory-description"
-                                className="-mt-1 mb-2 text-xs leading-4 text-gray-500"
-                            >
-                                Let Mike remember shared project context
-                            </p>
                             <ToggleSwitchUI
                                 checked={memoryEnabled}
                                 onCheckedChange={(enabled) => {
@@ -667,7 +661,6 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                                     setMemoryEnabled(enabled);
                                 }}
                                 aria-label="Enable project memory"
-                                aria-describedby="new-project-memory-description"
                             >
                                 {memoryEnabled ? "On" : "Off"}
                             </ToggleSwitchUI>

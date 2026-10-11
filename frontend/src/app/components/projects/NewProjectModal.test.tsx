@@ -254,30 +254,18 @@ describe("NewProjectModal sharing", () => {
     );
   });
 
-  it("describes project memory under its label and reads On or Off beside the switch", async () => {
+  it("labels project memory once, and reads On or Off beside the switch", async () => {
     const user = userEvent.setup({ delay: null });
     renderModal();
 
+    expect(screen.getByText("Project memory")).toBeInTheDocument();
+    // The label says what it is; no second line explaining it.
+    expect(
+      screen.queryByText("Let Mike remember shared project context"),
+    ).not.toBeInTheDocument();
+
     const memory = screen.getByRole("switch", { name: "Enable project memory" });
     expect(memory).toHaveTextContent("On");
-    expect(memory).toHaveAccessibleDescription(
-      "Let Mike remember shared project context",
-    );
-    // The explanation sits between the label and the switch, not beside it.
-    const label = screen.getByText("Project memory");
-    const description = screen.getByText(
-      "Let Mike remember shared project context",
-    );
-    expect(memory).not.toHaveTextContent("Let Mike remember");
-    expect(
-      label.compareDocumentPosition(description) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      description.compareDocumentPosition(memory) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-
     await user.click(memory);
     expect(memory).toHaveTextContent("Off");
     expect(memory).toHaveAttribute("aria-checked", "false");
