@@ -1,0 +1,198 @@
+"use client";
+
+// The active workspace: which of the caller's organizations — or their
+// personal content — the lists are currently showing.
+//
+// A person may belong to several organizations and also holds personal
+// content. The lists show one of those at a time, so it is always clear whose
+// work is on screen. The choice is a filter on what the caller can already
+// open; it never grants access, and the server re-checks membership on every
+// request (backend/src/lib/workspace.ts).
+
+import {
+    createContext,
+    useCallback,
+    useContext,
+    useEffect,
+    useMemo,
+    useState,
+    type ReactNode,
+} from "react";
+import { useAuth } from "@/app/contexts/AuthContext";
+import { listOrgs, type Org } from "@/app/lib/mikeApi";
+
+export const PERSONAL_WORKSPACE = "personal";
+export const PERSONAL_WORKSPACE_LABEL = "Personal";
+
+const STORAGE_PREFIX = "mike.activeWorkspace.";
+
+interface WorkspaceContextValue {
+    /**
+     * "personal", an organization id, or `null` outside a WorkspaceProvider.
+     * `null` means "do not narrow": surfaces that render without the app
+     * shell keep listing everything, as they did before workspaces.
+     */
+    workspaceId: string | null;
+    /** The organizations the caller belongs to; `null` until first loaded. */
+    organizations: Org[] | null;
+    /** The active organization, or `null` in the personal workspace. */
+    activeOrganization: Org | null;
+    setWorkspace: (workspaceId: string) => void;
+    refreshOrganizations: () => Promise<void>;
+}
+
+const WorkspaceContext = createContext<WorkspaceContextValue>({
+    workspaceId: null,
+    organizations: null,
+    activeOrganization: null,
+    setWorkspace: () => {},
+    refreshOrganizations: async () => {},
+});
+
+// A convenience remembered per account and per browser: it can come back
+// empty or throw (private windows, blocked site data), and the app must work
+// the same without it.
+function readStoredWorkspace(userId: string | undefined): string {
+    if (!userId) return PERSONAL_WORKSPACE;
+    try {
+        return (
+            window.localStorage.getItem(STORAGE_PREFIX + userId) ||
+            PERSONAL_WORKSPACE
+        );
+    } catch {
+        return PERSONAL_WORKSPACE;
+    }
+}
+
+function storeWorkspace(userId: string | undefined, workspaceId: string) {
+    if (!userId) return;
+    try {
+        window.localStorage.setItem(STORAGE_PREFIX + userId, workspaceId);
+    } catch {
+        // Not remembered across reloads; nothing else depends on it.
+    }
+}
+
+export function WorkspaceProvider({ children }: { children: ReactNode }) {
+    const { user } = useAuth();
+    const userId = user?.id;
+    const [selection, setSelection] = useState(() => ({
+        userId,
+        workspaceId: readStoredWorkspace(userId),
+    }));
+    const [organizations, setOrganizations] = useState<Org[] | null>(null);
+
+    // A different account signed in under the same mounted provider: its
+    // remembered workspace applies, not the previous account's.
+    if (selection.userId !== userId) {
+        setSelection({ userId, workspaceId: readStoredWorkspace(userId) });
+        setOrganizations(null);
+    }
+    const storedWorkspaceId = selection.workspaceId;
+
+    const refreshOrganizations = useCallback(async () => {
+        if (!userId) return;
+        let next: Org[];
+        try {
+            next = await listOrgs();
+        } catch {
+            // Keep whatever was known. A failed read is not evidence that the
+            // caller left their organization, so the selection stands.
+            return;
+        }
+        setOrganizations(next);
+        // The remembered workspace is only as good as the membership behind
+        // it. One the caller no longer belongs to falls back to Personal
+        // rather than leaving every list empty — and stays there, so being
+        // invited back later does not silently move them again.
+        setSelection((current) =>
+            current.userId !== userId ||
+            current.workspaceId === PERSONAL_WORKSPACE ||
+            next.some((org) => org.id === current.workspaceId)
+                ? current
+                : { userId, workspaceId: PERSONAL_WORKSPACE },
+        );
+    }, [userId]);
+
+    useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- start the organizations request once the account is known
+        void refreshOrganizations();
+    }, [refreshOrganizations]);
+
+    // Membership changes somewhere else entirely — an owner's roster page, an
+    // invitation accepted in another tab — so the list is re-read when the
+    // person comes back to this one.
+    useEffect(() => {
+        const onVisible = () => {
+            if (document.visibilityState === "visible")
+                void refreshOrganizations();
+        };
+        document.addEventListener("visibilitychange", onVisible);
+        return () =>
+            document.removeEventListener("visibilitychange", onVisible);
+    }, [refreshOrganizations]);
+
+    // Derived as well as reset above, so the very render that learns the
+    // organization is gone already asks for Personal.
+    const activeOrganization =
+        storedWorkspaceId === PERSONAL_WORKSPACE
+            ? null
+            : (organizations?.find((org) => org.id === storedWorkspaceId) ??
+              null);
+    const workspaceId =
+        storedWorkspaceId !== PERSONAL_WORKSPACE &&
+        organizations !== null &&
+        !activeOrganization
+            ? PERSONAL_WORKSPACE
+            : storedWorkspaceId;
+
+    useEffect(() => {
+        storeWorkspace(userId, workspaceId);
+    }, [userId, workspaceId]);
+
+    const setWorkspace = useCallback(
+        (next: string) => {
+            const known =
+                next === PERSONAL_WORKSPACE ||
+                (organizations ?? []).some((org) => org.id === next);
+            if (!known) return;
+            setSelection({ userId, workspaceId: next });
+        },
+        [organizations, userId],
+    );
+
+    const value = useMemo(
+        () => ({
+            workspaceId,
+            organizations,
+            activeOrganization,
+            setWorkspace,
+            refreshOrganizations,
+        }),
+        [
+            workspaceId,
+            organizations,
+            activeOrganization,
+            setWorkspace,
+            refreshOrganizations,
+        ],
+    );
+
+    return (
+        <WorkspaceContext.Provider value={value}>
+            {children}
+        </WorkspaceContext.Provider>
+    );
+}
+
+export function useWorkspace(): WorkspaceContextValue {
+    return useContext(WorkspaceContext);
+}
+
+/**
+ * The `workspace` argument for a list request: the active workspace, or
+ * `undefined` outside a provider so the request is not narrowed.
+ */
+export function useWorkspaceParam(): string | undefined {
+    return useContext(WorkspaceContext).workspaceId ?? undefined;
+}

@@ -318,6 +318,7 @@ describe("workspace filter SQL", () => {
         ["get_workflow_filter_options", "w.org_id", 3],
         ["get_projects_overview", "p.org_id", 1],
         ["get_project_ids_overview", "p.org_id", 1],
+        ["get_project_summaries", "p.org_id", 1],
         ["get_workflows_overview", "w.org_id", 3],
         ["get_workflow_ids_overview", "w.org_id", 3],
     ];

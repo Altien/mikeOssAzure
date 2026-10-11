@@ -9,6 +9,7 @@ import {
 import type { TabularReview } from "@/app/components/shared/types";
 import { listTabularReviewIds, listTabularReviews } from "@/app/lib/mikeApi";
 import { appendUniqueRows, paginationError, splitOverfetchedPage } from "@/app/lib/paginatedRows";
+import { useWorkspaceParam } from "@/app/contexts/WorkspaceContext";
 
 export type TabularReviewSortKey = "name" | "columns" | "documents" | "created";
 export type TabularReviewSortDirection = "asc" | "desc";
@@ -44,6 +45,11 @@ export function usePaginatedTabularReviews(options: {
     const loadMoreControllerRef = useRef<AbortController | null>(null);
 
     const { projectId, search, selectionKey, scope = "all", sort } = options;
+    // A project's own review list is already scoped by the project, which may
+    // sit in a different workspace from the active one when it is opened by
+    // link. Only the cross-project list follows the active workspace.
+    const activeWorkspace = useWorkspaceParam();
+    const workspace = projectId ? undefined : activeWorkspace;
     const sortKey = sort?.key;
     const sortDirection = sort?.direction;
     const selectionQueryPending =
@@ -52,6 +58,7 @@ export function usePaginatedTabularReviews(options: {
         projectId ?? null,
         selectionKey ?? null,
         search ?? null,
+        workspace ?? null,
         scope,
         sortKey ?? null,
         sortDirection ?? null,
@@ -106,6 +113,7 @@ export function usePaginatedTabularReviews(options: {
         void listTabularReviews(projectId, {
             limit: PAGE_SIZE + 1,
             search: search || undefined,
+            workspace,
             scope,
             sortKey,
             sortDirection,
@@ -138,7 +146,15 @@ export function usePaginatedTabularReviews(options: {
             controller.abort();
             loadMoreControllerRef.current?.abort();
         };
-    }, [projectId, retryVersion, scope, search, sortDirection, sortKey]);
+    }, [
+        projectId,
+        retryVersion,
+        scope,
+        search,
+        sortDirection,
+        sortKey,
+        workspace,
+    ]);
 
     const loadMore = useCallback(async () => {
         if (loading || loadingMoreRef.current || !hasMore) return;
@@ -157,6 +173,7 @@ export function usePaginatedTabularReviews(options: {
                 limit: PAGE_SIZE + 1,
                 offset,
                 search: search || undefined,
+                workspace,
                 scope,
                 sortKey,
                 sortDirection,
@@ -194,6 +211,7 @@ export function usePaginatedTabularReviews(options: {
         reviews.length,
         scope,
         search,
+        workspace,
         sortDirection,
         sortKey,
     ]);
@@ -219,6 +237,7 @@ export function usePaginatedTabularReviews(options: {
         try {
             const rows = await listTabularReviewIds(projectId, {
                 search: search || undefined,
+                workspace,
                 scope,
             });
             if (requestVersion !== requestVersionRef.current) return;
@@ -259,6 +278,7 @@ export function usePaginatedTabularReviews(options: {
         reviews,
         scope,
         search,
+        workspace,
         selectionQueryPending,
         setSelectedReviewIds,
     ]);

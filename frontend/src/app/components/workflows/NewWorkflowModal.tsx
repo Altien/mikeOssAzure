@@ -30,6 +30,10 @@ import {
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import {
+    PERSONAL_WORKSPACE as ACTIVE_PERSONAL_WORKSPACE,
+    useWorkspace,
+} from "@/app/contexts/WorkspaceContext";
+import {
     CreateAccessStep,
     type PendingDirectGrant,
     type PendingOrgOverride,
@@ -194,7 +198,17 @@ export function NewWorkflowModal({
     const [loading, setLoading] = useState(false);
     const [orgs, setOrgs] = useState<Org[]>([]);
     const [orgsError, setOrgsError] = useState("");
-    const [orgId, setOrgId] = useState(PERSONAL_WORKSPACE);
+    // A new workflow starts in the workspace the person is working in.
+    // `null` means "they have not chosen otherwise", so the default follows a
+    // workspace switch made while this modal is closed. Editing sets the
+    // workflow's own organization explicitly.
+    const { workspaceId: activeWorkspaceId } = useWorkspace();
+    const defaultOrgId =
+        activeWorkspaceId && activeWorkspaceId !== ACTIVE_PERSONAL_WORKSPACE
+            ? activeWorkspaceId
+            : PERSONAL_WORKSPACE;
+    const [orgChoice, setOrgId] = useState<string | null>(null);
+    const orgId = orgChoice ?? defaultOrgId;
     const [directGrants, setDirectGrants] = useState<PendingDirectGrant[]>([]);
     const [orgOverrides, setOrgOverrides] = useState<PendingOrgOverride[]>([]);
     const [selectedAssets, setSelectedAssets] = useState<Document[]>([]);
@@ -295,7 +309,7 @@ export function NewWorkflowModal({
         setImportedSkillMd("");
         setImportedSkillName(null);
         setMarkdownImportError("");
-        setOrgId(PERSONAL_WORKSPACE);
+        setOrgId(null);
         setStep("details");
         setDirectGrants([]);
         setOrgOverrides([]);

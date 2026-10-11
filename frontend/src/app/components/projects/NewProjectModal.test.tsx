@@ -19,8 +19,23 @@ import {
 } from "@/app/lib/mikeApi";
 import { NewProjectModal } from "./NewProjectModal";
 
-const { useUserProfile } = vi.hoisted(() => ({
+const { useUserProfile, activeWorkspace } = vi.hoisted(() => ({
     useUserProfile: vi.fn(),
+    // `null` is "no workspace provider": the modal behaves as it always has.
+    activeWorkspace: { id: null as string | null },
+}));
+
+vi.mock("@/app/contexts/WorkspaceContext", async (importOriginal) => ({
+    ...(await importOriginal<
+        typeof import("@/app/contexts/WorkspaceContext")
+    >()),
+    useWorkspace: () => ({
+        workspaceId: activeWorkspace.id,
+        organizations: null,
+        activeOrganization: null,
+        setWorkspace: vi.fn(),
+        refreshOrganizations: vi.fn(),
+    }),
 }));
 
 // `importOriginal` keeps the real `MikeApiError`, which `userFacingApiError`
@@ -122,6 +137,7 @@ function renderModal(onCreated = vi.fn()) {
 describe("NewProjectModal sharing", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        activeWorkspace.id = null;
         vi.mocked(listOrgs).mockResolvedValue([]);
         vi.mocked(listOrgMembers).mockResolvedValue([]);
         vi.mocked(createProject).mockResolvedValue(CREATED as never);
@@ -175,6 +191,60 @@ describe("NewProjectModal sharing", () => {
             ),
         ).toBeInTheDocument();
     });
+
+  it("starts a new project in the active workspace's organization", async () => {
+    activeWorkspace.id = "org-1";
+    vi.mocked(listOrgs).mockResolvedValue([
+      { id: "org-1", name: "Acme LLP", role: "member" },
+    ] as never);
+    const user = userEvent.setup({ delay: null });
+    renderModal();
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Share across Organisation")).toHaveTextContent(
+        "Acme LLP",
+      ),
+    );
+    await user.type(screen.getByPlaceholderText("Add project name"), "P");
+    while (!screen.queryByRole("button", { name: "Create project" })) {
+      const next = screen.getByRole("button", { name: "Next" });
+      await waitFor(() => expect(next).toBeEnabled());
+      await user.click(next);
+    }
+    await user.click(screen.getByRole("button", { name: "Create project" }));
+
+    await waitFor(() =>
+      expect(createProject).toHaveBeenCalledWith(
+        "P",
+        undefined,
+        undefined,
+        "org-1",
+        true,
+      ),
+    );
+  });
+
+  it("starts a new project as personal in the personal workspace", async () => {
+    activeWorkspace.id = "personal";
+    vi.mocked(listOrgs).mockResolvedValue([
+      { id: "org-1", name: "Acme LLP", role: "member" },
+    ] as never);
+    const user = userEvent.setup({ delay: null });
+    renderModal();
+
+    await user.type(screen.getByPlaceholderText("Add project name"), "P");
+    await submit(user);
+
+    await waitFor(() =>
+      expect(createProject).toHaveBeenCalledWith(
+        "P",
+        undefined,
+        undefined,
+        undefined,
+        true,
+      ),
+    );
+  });
 
   it("creates new projects with memory enabled by default", async () => {
     const user = userEvent.setup({ delay: null });

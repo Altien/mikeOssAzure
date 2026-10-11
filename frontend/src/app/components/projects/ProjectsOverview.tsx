@@ -25,6 +25,7 @@ import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { userFacingApiError } from "@/app/lib/userFacingError";
 import { useAuth } from "@/app/contexts/AuthContext";
+import { useWorkspaceParam } from "@/app/contexts/WorkspaceContext";
 import type { Project } from "@/app/components/shared/types";
 import { can, roleFrom } from "@/app/lib/permissions";
 import { NewProjectModal } from "./NewProjectModal";
@@ -146,6 +147,7 @@ export function ProjectsOverview() {
     });
     const rowSelectionAnchorIdRef = useRef<string | null>(null);
     const { user, isAuthenticated, authLoading } = useAuth();
+    const workspace = useWorkspaceParam();
     const previewEmptyStates = searchParams.get("emptyStates") === "1";
     const debouncedSearch = useDebouncedValue(search, 250);
 
@@ -181,7 +183,7 @@ export function ProjectsOverview() {
     useEffect(() => {
         if (authLoading || !isAuthenticated) return;
         const controller = new AbortController();
-        getProjectFilterOptions(controller.signal)
+        getProjectFilterOptions(controller.signal, workspace)
             .then((data) => {
                 if (!controller.signal.aborted) setFilterOptions(data);
             })
@@ -192,7 +194,7 @@ export function ProjectsOverview() {
         return () => {
             controller.abort();
         };
-    }, [authLoading, isAuthenticated]);
+    }, [authLoading, isAuthenticated, workspace]);
 
 
     const practices = filterOptions.practices;

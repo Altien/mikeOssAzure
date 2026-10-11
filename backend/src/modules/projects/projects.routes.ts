@@ -98,10 +98,17 @@ projectsRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
   }
 
   if (req.query.view === "summary") {
+    const workspace = await resolveWorkspaceFilter(
+      db,
+      userId,
+      req.query.workspace,
+    );
+    if (!workspace.ok) return void sendWorkspaceFailure(res, workspace);
     const result = await getProjectSummaries(db, {
       userId,
       userEmail,
       pagination: parsePaginationQuery(req.query as Record<string, unknown>),
+      workspace: workspace.workspace,
     });
     if (!result.ok) return void sendInternalError(res, result.error);
     return void res.json(result.data);

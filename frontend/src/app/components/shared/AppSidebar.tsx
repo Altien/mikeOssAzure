@@ -14,10 +14,16 @@ import {
     ChevronDown,
     PackageOpen,
     Loader2,
+    Check,
 } from "lucide-react";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
+import {
+    PERSONAL_WORKSPACE,
+    PERSONAL_WORKSPACE_LABEL,
+    useWorkspace,
+} from "@/app/contexts/WorkspaceContext";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { MikeIcon } from "@/shared/ui/MikeIconUI";
@@ -26,6 +32,10 @@ import {
     Dropdown,
     DropdownContent,
     DropdownItem,
+    DropdownLabel,
+    DropdownRadioGroup,
+    DropdownRadioItem,
+    DropdownSeparator,
     DropdownTrigger,
 } from "@/shared/ui/dropdown";
 import { SidebarProjectItem } from "@/app/components/shared/SidebarProjectItem";
@@ -177,6 +187,33 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
         [],
     );
     const userId = user?.id ?? null;
+    const {
+        workspaceId,
+        organizations,
+        activeOrganization,
+        setWorkspace,
+    } = useWorkspace();
+    const workspaceParam = workspaceId ?? undefined;
+    // Recent projects are remembered per account AND per workspace, so a
+    // switch never paints the previous workspace's matters from cache.
+    const projectsCacheKey = userId ? `${userId}:${workspaceId ?? ""}` : null;
+    const activeProjectsKeyRef = useRef<string | null>(null);
+    // The switcher only exists for somebody who has more than one place to
+    // be. With no organizations there is nothing to choose between, and the
+    // menu stays exactly as it was.
+    const workspaceOptions =
+        workspaceId && organizations && organizations.length > 0
+            ? [
+                  { id: PERSONAL_WORKSPACE, name: PERSONAL_WORKSPACE_LABEL },
+                  ...organizations.map((org) => ({
+                      id: org.id,
+                      name: org.name,
+                  })),
+              ]
+            : null;
+    const activeWorkspaceName = workspaceOptions
+        ? (activeOrganization?.name ?? PERSONAL_WORKSPACE_LABEL)
+        : null;
     const [recentProjects, setRecentProjects] = useState<Project[] | null>(
         null,
     );
@@ -186,7 +223,9 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
     const loadingMoreRecentProjectsRef = useRef(false);
     const displayedRecentProjects =
         recentProjects ??
-        (userId ? recentProjectsCache.get(userId)?.projects : undefined) ??
+        (projectsCacheKey
+            ? recentProjectsCache.get(projectsCacheKey)?.projects
+            : undefined) ??
         null;
 
     useEffect(() => {
@@ -198,7 +237,10 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
             return;
         }
 
-        const cached = recentProjectsCache.get(userId);
+        const cacheKey = projectsCacheKey;
+        if (!cacheKey) return;
+        activeProjectsKeyRef.current = cacheKey;
+        const cached = recentProjectsCache.get(cacheKey);
         if (cached) {
             setRecentProjects(cached.projects);
             setHasMoreRecentProjects(cached.hasMore);
@@ -212,13 +254,14 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
 
         listProjectSummaries({
             limit: RECENT_PROJECT_PAGE_SIZE + 1,
+            workspace: workspaceParam,
             signal: controller.signal,
         })
             .then((projects) => {
                 if (controller.signal.aborted) return;
                 const next = projects.slice(0, RECENT_PROJECT_PAGE_SIZE);
                 const hasMore = projects.length > RECENT_PROJECT_PAGE_SIZE;
-                recentProjectsCache.set(userId, { projects: next, hasMore });
+                recentProjectsCache.set(cacheKey, { projects: next, hasMore });
                 setRecentProjects(next);
                 setHasMoreRecentProjects(hasMore);
             })
@@ -229,7 +272,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
             });
 
         return () => controller.abort();
-    }, [userId]);
+    }, [userId, projectsCacheKey, workspaceParam]);
 
     const loadMoreRecentProjects = useCallback(async () => {
         if (
@@ -241,13 +284,19 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
             return;
         }
 
+        const cacheKey = projectsCacheKey;
+        if (!cacheKey) return;
         loadingMoreRecentProjectsRef.current = true;
         setLoadingMoreRecentProjects(true);
         try {
             const projects = await listProjectSummaries({
                 limit: RECENT_PROJECT_PAGE_SIZE + 1,
                 offset: recentProjects.length,
+                workspace: workspaceParam,
             });
+            // The workspace changed while this page was in flight: it
+            // belongs to a list that is no longer on screen.
+            if (activeProjectsKeyRef.current !== cacheKey) return;
             const page = projects.slice(0, RECENT_PROJECT_PAGE_SIZE);
             setRecentProjects((current) => {
                 const existing = new Set(
@@ -257,7 +306,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                     ...(current ?? []),
                     ...page.filter((project) => !existing.has(project.id)),
                 ];
-                recentProjectsCache.set(userId, {
+                recentProjectsCache.set(cacheKey, {
                     projects: next,
                     hasMore: projects.length > RECENT_PROJECT_PAGE_SIZE,
                 });
@@ -272,7 +321,13 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
             loadingMoreRecentProjectsRef.current = false;
             setLoadingMoreRecentProjects(false);
         }
-    }, [hasMoreRecentProjects, recentProjects, userId]);
+    }, [
+        hasMoreRecentProjects,
+        projectsCacheKey,
+        recentProjects,
+        userId,
+        workspaceParam,
+    ]);
 
     const handleRecentProjectsScroll = useCallback(
         (event: UIEvent<HTMLDivElement>) => {
@@ -668,6 +723,18 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
 
                 {/* User Profile */}
                 <div className="mt-auto p-1">
+                    {/* Whose work the lists are showing. Its own line, so a
+                        long organization name wraps instead of being cut off
+                        inside the fixed-height account button below. */}
+                    {user && isOpen && activeWorkspaceName ? (
+                        <p
+                            data-slot="active-workspace"
+                            className="break-words px-2 pb-1.5 text-[11px] leading-tight text-gray-500"
+                        >
+                            <span className="text-gray-400">Workspace: </span>
+                            {activeWorkspaceName}
+                        </p>
+                    ) : null}
                     {user && (
                         <Dropdown
                             open={isDropdownOpen}
@@ -718,6 +785,38 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                       : "w-56",
                               )}
                           >
+                              {workspaceOptions ? (
+                                  <>
+                                      <DropdownLabel>Workspace</DropdownLabel>
+                                      <DropdownRadioGroup
+                                          aria-label="Workspace"
+                                          value={
+                                              workspaceId ?? PERSONAL_WORKSPACE
+                                          }
+                                          onValueChange={setWorkspace}
+                                          className="max-h-44 overflow-y-auto"
+                                      >
+                                          {workspaceOptions.map((option) => (
+                                              <DropdownRadioItem
+                                                  key={option.id}
+                                                  value={option.id}
+                                                  className="min-h-8 gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-gray-700"
+                                              >
+                                                  <span className="min-w-0 flex-1 whitespace-normal break-words">
+                                                      {option.name}
+                                                  </span>
+                                                  {option.id === workspaceId ? (
+                                                      <Check
+                                                          aria-hidden="true"
+                                                          className="h-3.5 w-3.5 shrink-0 text-gray-500"
+                                                      />
+                                                  ) : null}
+                                              </DropdownRadioItem>
+                                          ))}
+                                      </DropdownRadioGroup>
+                                      <DropdownSeparator className="my-1" />
+                                  </>
+                              ) : null}
                               <DropdownItem
                                   selected={pathname === "/history"}
                                   onSelect={() => router.push("/history")}

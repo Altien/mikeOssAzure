@@ -166,15 +166,17 @@ export async function getProjectSummaries(
     userId: string;
     userEmail?: string;
     pagination: { limit: number; offset: number };
+    workspace?: WorkspaceFilter;
   },
 ): Promise<{ ok: true; data: unknown } | ProjectsDbFailure> {
-  const { userId, userEmail, pagination } = args;
+  const { userId, userEmail, pagination, workspace } = args;
   const normalizedUserEmail = userEmail?.trim().toLowerCase();
   const { data, error } = await db.rpc("get_project_summaries", {
     p_user_id: userId,
     p_user_email: normalizedUserEmail ?? null,
     p_limit: pagination.limit,
     p_offset: pagination.offset,
+    ...workspaceRpcArg(workspace),
   });
   if (error) return { ok: false, error };
   const withMemory = await attachProjectMemoryEnabled(

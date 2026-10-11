@@ -603,6 +603,7 @@ describe("projects.routes", () => {
 
     it.each([
       ["/projects?limit=20", "get_projects_overview"],
+      ["/projects?view=summary", "get_project_summaries"],
       ["/projects/ids", "get_project_ids_overview"],
       ["/projects/filter-options", "get_project_filter_options"],
     ])("calls %s without a workspace exactly as before", async (path, rpc) => {
@@ -617,6 +618,7 @@ describe("projects.routes", () => {
 
     it.each([
       ["/projects?limit=20&workspace=personal", "get_projects_overview"],
+      ["/projects?view=summary&workspace=personal", "get_project_summaries"],
       ["/projects/ids?workspace=personal", "get_project_ids_overview"],
       [
         "/projects/filter-options?workspace=personal",
@@ -660,7 +662,12 @@ describe("projects.routes", () => {
       });
     });
 
-    it.each(["/projects?limit=20", "/projects/ids", "/projects/filter-options"])(
+    it.each([
+      "/projects?limit=20",
+      "/projects?view=summary",
+      "/projects/ids",
+      "/projects/filter-options",
+    ])(
       "404s %s for an organization the caller is not in, without listing anything",
       async (path) => {
         supabaseState.tables.org_members = { data: null, error: null };

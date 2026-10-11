@@ -3490,3 +3490,69 @@ describe("dev divergences", () => {
         expect(await blob.text()).toBe("csv-bytes");
     });
 });
+
+// ---------------------------------------------------------------------------
+// Active workspace: every scoped list can be narrowed, and none is narrowed
+// unless a workspace is named — the route treats the parameter's absence as
+// "every workspace", which is what callers outside the app shell rely on.
+// ---------------------------------------------------------------------------
+describe("workspace parameter on list requests", () => {
+    const ORG = "7b1d9d0e-3c5a-4f6e-9a51-0c2f7d3e8a11";
+    const requests: [string, (workspace?: string) => Promise<unknown>, string][] = [
+        ["listProjectsPage", (workspace) => listProjectsPage({ workspace }), "/api/projects"],
+        [
+            "listProjectSummaries",
+            (workspace) => listProjectSummaries({ workspace }),
+            "/api/projects",
+        ],
+        ["listProjectIds", (workspace) => listProjectIds({ workspace }), "/api/projects/ids"],
+        [
+            "getProjectFilterOptions",
+            (workspace) => getProjectFilterOptions(undefined, workspace),
+            "/api/projects/filter-options",
+        ],
+        ["listChats", (workspace) => listChats({ workspace }), "/api/chat"],
+        [
+            "listTabularReviews",
+            (workspace) => listTabularReviews(undefined, { workspace }),
+            "/api/tabular-review",
+        ],
+        [
+            "listTabularReviewIds",
+            (workspace) => listTabularReviewIds(undefined, { workspace }),
+            "/api/tabular-review/ids",
+        ],
+        ["listWorkflowsPage", (workspace) => listWorkflowsPage({ workspace }), "/api/workflows"],
+        ["listWorkflowIds", (workspace) => listWorkflowIds({ workspace }), "/api/workflows/ids"],
+        [
+            "getWorkflowFilterOptions",
+            (workspace) => getWorkflowFilterOptions({ workspace }),
+            "/api/workflows/filter-options",
+        ],
+    ];
+
+    const workspaceOf = (url: string) =>
+        new URL(url, "http://localhost").searchParams.get("workspace");
+    const pathOf = (url: string) => new URL(url, "http://localhost").pathname;
+
+    it.each(requests)("%s sends the workspace it is given", async (_name, request, path) => {
+        // A fresh response per call: a Response body can only be read once.
+        fetchMock.mockImplementation(async () => jsonResponse([]));
+
+        await request(ORG);
+        expect(pathOf(lastFetchCall().url)).toBe(path);
+        expect(workspaceOf(lastFetchCall().url)).toBe(ORG);
+
+        await request("personal");
+        expect(workspaceOf(lastFetchCall().url)).toBe("personal");
+    });
+
+    it.each(requests)("%s sends no workspace when none is given", async (_name, request, path) => {
+        // A fresh response per call: a Response body can only be read once.
+        fetchMock.mockImplementation(async () => jsonResponse([]));
+
+        await request();
+        expect(pathOf(lastFetchCall().url)).toBe(path);
+        expect(workspaceOf(lastFetchCall().url)).toBeNull();
+    });
+});

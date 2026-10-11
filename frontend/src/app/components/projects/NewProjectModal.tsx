@@ -23,6 +23,10 @@ import { ModalSelect } from "../modals/ModalSelect";
 import { ToggleSwitchUI } from "@/shared/ui/ToggleSwitchUI";
 import { ProjectPracticeField } from "./ProjectPracticeField";
 import { userFacingApiError } from "@/app/lib/userFacingError";
+import {
+    PERSONAL_WORKSPACE as ACTIVE_PERSONAL_WORKSPACE,
+    useWorkspace,
+} from "@/app/contexts/WorkspaceContext";
 import { createSecureUuid } from "@/shared/lib/secureUuid";
 import {
     CreateAccessStep,
@@ -54,7 +58,16 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
     const [sharedUsers, setSharedUsers] = useState<PendingDirectGrant[]>([]);
     const [orgOverrides, setOrgOverrides] = useState<PendingOrgOverride[]>([]);
     const [orgs, setOrgs] = useState<Org[]>([]);
-    const [orgId, setOrgId] = useState<string>(PERSONAL_WORKSPACE);
+    // A new project starts in the workspace the person is working in. `null`
+    // means "they have not chosen otherwise", so the default follows a
+    // workspace switch made while this modal is closed.
+    const { workspaceId: activeWorkspaceId } = useWorkspace();
+    const defaultOrgId =
+        activeWorkspaceId && activeWorkspaceId !== ACTIVE_PERSONAL_WORKSPACE
+            ? activeWorkspaceId
+            : PERSONAL_WORKSPACE;
+    const [orgChoice, setOrgId] = useState<string | null>(null);
+    const orgId = orgChoice ?? defaultOrgId;
     const [memoryEnabled, setMemoryEnabled] = useState(true);
     const memoryEditedRef = useRef(false);
     const [selectedDocuments, setSelectedDocuments] = useState<Document[]>([]);
@@ -440,7 +453,7 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
         setOrgOverrides([]);
         setSelectedDocuments([]);
         setPendingFiles([]);
-        setOrgId(PERSONAL_WORKSPACE);
+        setOrgId(null);
         setMemoryEnabled(projectMemoryDefault);
         setError("");
         setOrganizationLoadWarning(false);

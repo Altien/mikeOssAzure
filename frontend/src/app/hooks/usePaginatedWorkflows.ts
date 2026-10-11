@@ -13,6 +13,7 @@ import {
     listWorkflowsPage,
 } from "@/app/lib/mikeApi";
 import { appendUniqueRows, paginationError, splitOverfetchedPage } from "@/app/lib/paginatedRows";
+import { useWorkspaceParam } from "@/app/contexts/WorkspaceContext";
 
 export type WorkflowSortKey = "name" | "type" | "created";
 export type WorkflowSortDirection = "asc" | "desc";
@@ -77,6 +78,9 @@ export function usePaginatedWorkflows(options: {
     const loadingMoreRef = useRef(false);
     const loadMoreControllerRef = useRef<AbortController | null>(null);
 
+    // The active workspace narrows the list like any other filter: a change
+    // resets the pages and the selection through the query key below.
+    const workspace = useWorkspaceParam();
     const {
         type,
         search,
@@ -97,6 +101,7 @@ export function usePaginatedWorkflows(options: {
         type ?? null,
         selectionKey ?? null,
         search ?? null,
+        workspace ?? null,
         scope,
         practiceFilter,
         languageFilter,
@@ -169,6 +174,7 @@ export function usePaginatedWorkflows(options: {
             limit: PAGE_SIZE + 1,
             type,
             search: search || undefined,
+            workspace,
             scope,
             practice: practiceFilter || undefined,
             language: languageFilter || undefined,
@@ -212,6 +218,7 @@ export function usePaginatedWorkflows(options: {
         languageFilter,
         jurisdictionFilter,
         search,
+        workspace,
         sortDirection,
         sortKey,
     dbEnabled,
@@ -235,6 +242,7 @@ export function usePaginatedWorkflows(options: {
                 offset,
                 type,
                 search: search || undefined,
+                workspace,
                 scope,
                 practice: practiceFilter || undefined,
                 language: languageFilter || undefined,
@@ -277,6 +285,7 @@ export function usePaginatedWorkflows(options: {
         languageFilter,
         jurisdictionFilter,
         search,
+        workspace,
         sortDirection,
         sortKey,
     ]);
@@ -334,6 +343,7 @@ export function usePaginatedWorkflows(options: {
             const rows = await listWorkflowIds({
                 type,
                 search: search || undefined,
+                workspace,
           scope: selectionScope,
                 practice: practiceFilter || undefined,
                 language: languageFilter || undefined,
@@ -382,6 +392,7 @@ export function usePaginatedWorkflows(options: {
         languageFilter,
         jurisdictionFilter,
         search,
+        workspace,
         selectionQueryPending,
         setSelectedWorkflowIds,
     ],
