@@ -382,7 +382,7 @@ export function AccessModal({
                 onClose={onClose}
                 breadcrumbs={[
                     ...breadcrumb.slice(0, -1),
-                    "Organisational Access",
+                    "People",
                 ]}
             >
                 <div className="flex min-h-0 flex-1 flex-col pb-5">

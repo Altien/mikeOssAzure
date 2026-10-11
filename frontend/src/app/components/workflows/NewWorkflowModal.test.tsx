@@ -471,7 +471,7 @@ describe("NewWorkflowModal editing", () => {
         await user.type(screen.getByLabelText("Title"), "Firm workflow");
         await user.click(screen.getByRole("button", { name: "Next" }));
         expect(
-            screen.getByRole("dialog", { name: "Organisational Access" }),
+            screen.getByRole("dialog", { name: "People" }),
         ).toBeVisible();
         expect(
             await screen.findByRole("searchbox", { name: "People" }),

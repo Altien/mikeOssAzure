@@ -473,7 +473,7 @@ describe("AccessModal — per-recipient roles", () => {
         const user = userEvent.setup();
         renderRoleAware({ orgId: "org-1" });
         expect(
-            screen.getByRole("dialog", { name: "Organisational Access" }),
+            screen.getByRole("dialog", { name: "People" }),
         ).toBeVisible();
 
         // Public or private is set with the item's details, not here.

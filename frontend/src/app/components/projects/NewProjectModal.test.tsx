@@ -728,7 +728,7 @@ describe("NewProjectModal sharing", () => {
         // Left private on the details step.
         await user.click(screen.getByRole("button", { name: "Next" }));
         expect(
-            screen.getByRole("dialog", { name: "Organisational Access" }),
+            screen.getByRole("dialog", { name: "People" }),
         ).toBeVisible();
         // The setting was made on the details step, not here.
         expect(
@@ -807,7 +807,7 @@ describe("NewProjectModal sharing", () => {
 
         await user.click(screen.getByRole("button", { name: "Next" }));
         expect(
-            screen.getByRole("dialog", { name: "Organisational Access" }),
+            screen.getByRole("dialog", { name: "People" }),
         ).toBeVisible();
         // Everybody can already open and edit it, so what is offered is
         // adding owners — not a general people picker.

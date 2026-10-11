@@ -487,7 +487,7 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                     : step === "access"
                       ? orgId === PERSONAL_WORKSPACE
                           ? "Access"
-                          : "Organisational Access"
+                          : "People"
                       : "Add Documents",
             ]}
             secondaryAction={

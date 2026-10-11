@@ -754,7 +754,7 @@ export function NewWorkflowModal({
                                 ? "Add Assets"
                                 : orgId === PERSONAL_WORKSPACE
                                   ? "Access"
-                                  : "Organisational Access",
+                                  : "People",
                       ]
                     : []),
             ]}
