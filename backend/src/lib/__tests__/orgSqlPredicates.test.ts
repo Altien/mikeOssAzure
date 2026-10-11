@@ -235,6 +235,51 @@ describe("private-by-default organization access in SQL", () => {
     });
 });
 
+// The Public and Private tabs. Each list RPC that takes a scope must offer
+// both, on the paged list AND its select-all sibling, or "select all" picks
+// rows the visible list does not show.
+describe("public and not-public list scopes in SQL", () => {
+    const migration = readFileSync(
+        resolve(ROOT, "migrations/0114_public_private_list_scopes.sql"),
+        "utf8",
+    );
+    describe.each([
+        ["the migration", migration],
+    ])("%s", (_name, sql) => {
+        it("filters projects by the scope the lists label, on the list and its ids", () => {
+            const scope = "public.project_access_scope(p.id, p.org_id, p.visibility)";
+            expect(
+                sql.split(`p_scope = 'public'\n          and ${scope} = 'organization'`)
+                    .length - 1,
+            ).toBe(1);
+            expect(
+                sql.split(`p_scope = 'public'\n        and ${scope} = 'organization'`)
+                    .length - 1,
+            ).toBe(1);
+            // Private is everything that is not public, shared or not.
+            expect(sql).toContain(
+                `p_scope = 'nonpublic'\n          and ${scope} <> 'organization'`,
+            );
+            expect(sql).toContain(
+                `p_scope = 'nonpublic'\n        and ${scope} <> 'organization'`,
+            );
+        });
+
+        it("filters workflows the same way, on the list and its ids", () => {
+            expect(
+                sql.split(
+                    "or (p_scope = 'public' and vw.access_scope = 'organization')",
+                ).length - 1,
+            ).toBe(2);
+            expect(
+                sql.split(
+                    "or (p_scope = 'nonpublic' and vw.access_scope <> 'organization')",
+                ).length - 1,
+            ).toBe(2);
+        });
+    });
+});
+
 it("keeps at least one owner per organization in SQL", () => {
     const schema = readFileSync(resolve(ROOT, "migrations/0110_org_owner_role.sql"), "utf8");
     const migration = readFileSync(

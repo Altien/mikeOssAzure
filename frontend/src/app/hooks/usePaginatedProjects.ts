@@ -19,12 +19,17 @@ export type ProjectSortKey =
   | "reviews"
   | "created";
 export type ProjectSortDirection = "asc" | "desc";
+// "public" and "nonpublic" back the Public and Private tabs: open to the
+// whole organization, or not (private to its creator, or shared with
+// individuals).
 export type ProjectScope =
     | "all"
     | "mine"
     | "shared"
     | "collaborative"
-    | "private";
+    | "private"
+    | "public"
+    | "nonpublic";
 
 const PAGE_SIZE = 30;
 

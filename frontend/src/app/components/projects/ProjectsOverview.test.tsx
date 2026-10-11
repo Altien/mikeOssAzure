@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectsOverview } from "./ProjectsOverview";
@@ -129,7 +129,7 @@ describe("ProjectsOverview tabs", () => {
         activeTab.current = "unknown";
         render(<ProjectsOverview />);
 
-        const tabs = ["All", "Shared", "Private"].map((label) =>
+        const tabs = ["All", "Public", "Private"].map((label) =>
             screen.getByRole("button", { name: label }),
         );
         expect(tabs[0].compareDocumentPosition(tabs[1])).toBe(
@@ -151,27 +151,45 @@ describe("ProjectsOverview tabs", () => {
         expect(setActiveTab).toHaveBeenCalledWith("all");
     });
 
-    it("filters Private and Shared from the Access column header", async () => {
+    it("filters Public and Private from the Access column header", async () => {
         const user = userEvent.setup();
         render(<ProjectsOverview />);
 
         await user.click(
             screen.getByRole("button", { name: "Filter by access" }),
         );
-        await user.click(screen.getByRole("menuitem", { name: "Shared" }));
+        expect(
+            screen.getAllByRole("menuitem").map((item) => item.textContent),
+        ).toEqual(["All Access", "Public", "Private"]);
+        await user.click(screen.getByRole("menuitem", { name: "Public" }));
 
-        expect(setActiveTab).toHaveBeenCalledWith("shared");
+        expect(setActiveTab).toHaveBeenCalledWith("public");
     });
 
     it("maps each tab to its backend scope", () => {
-        activeTab.current = "shared";
-        const shared = render(<ProjectsOverview />);
-        expect(lastScope()).toBe("collaborative");
-        shared.unmount();
+        activeTab.current = "public";
+        const open = render(<ProjectsOverview />);
+        expect(lastScope()).toBe("public");
+        open.unmount();
 
+        // Private is everything that is not public, shared with individuals
+        // or not — not only the projects nobody else can open.
         activeTab.current = "private";
         render(<ProjectsOverview />);
-        expect(lastScope()).toBe("private");
+        expect(lastScope()).toBe("nonpublic");
+    });
+
+    it("says there are no public projects, without offering to create one there", () => {
+        activeTab.current = "public";
+        render(<ProjectsOverview />);
+        expect(screen.getByText("No public projects")).toBeInTheDocument();
+    });
+
+    it("falls back to All for a tab that no longer exists", () => {
+        // An old link or remembered tab may still name "shared".
+        activeTab.current = "shared";
+        render(<ProjectsOverview />);
+        expect(lastScope()).toBe("all");
     });
 
     it("offers project creation when All is empty", () => {
@@ -183,7 +201,7 @@ describe("ProjectsOverview tabs", () => {
         expect(screen.queryByText(/No all projects/i)).not.toBeInTheDocument();
     });
 
-    it("shows private, shared, and organisation access scopes", () => {
+    it("labels each row's access Public, Private or Private (Shared)", () => {
         const baseProject = {
             user_id: "user-1",
             cm_number: null,
@@ -217,10 +235,22 @@ describe("ProjectsOverview tabs", () => {
         render(<ProjectsOverview />);
 
         expect(screen.getByText("Access")).toBeInTheDocument();
-        expect(screen.getAllByText("Private")).toHaveLength(2);
-        expect(screen.getByText("3 users")).toBeInTheDocument();
-        expect(screen.getByText("Elite Law LLP")).toBeInTheDocument();
-        expect(screen.getByTitle("Shared with Elite Law LLP")).toBeVisible();
+        const accessOf = (name: string) =>
+            within(
+                screen.getByText(name).closest(".group") as HTMLElement,
+            );
+        expect(
+            accessOf("Private matter").getByText("Private"),
+        ).toBeInTheDocument();
+        expect(
+            accessOf("Shared matter").getByText("Private (Shared)"),
+        ).toBeInTheDocument();
+        expect(accessOf("Firm matter").getByText("Public")).toBeInTheDocument();
+        // How many people, and whose "everyone", are in the hover detail.
+        expect(screen.getByTitle("Shared with 3 users")).toBeVisible();
+        expect(
+            screen.getByTitle("Shared with everyone in Elite Law LLP"),
+        ).toBeVisible();
     });
 
     it("refetches when the new-project modal closes on a project it never handed over", async () => {

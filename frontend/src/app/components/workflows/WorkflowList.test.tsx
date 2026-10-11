@@ -430,13 +430,18 @@ describe("WorkflowList pack toolbar", () => {
     render(<WorkflowList />);
 
     expect(screen.getByText("Access")).toBeInTheDocument();
+    // One of three: Public, Private, or Private (Shared).
     expect(screen.getByText("Private")).toBeInTheDocument();
-    expect(screen.getByText("2 users")).toBeInTheDocument();
-    expect(screen.getByText("Elite Law LLP")).toBeInTheDocument();
-    expect(screen.getByTitle("Shared with Elite Law LLP")).toBeVisible();
+    expect(screen.getByText("Private (Shared)")).toBeInTheDocument();
+    expect(screen.getByText("Public")).toBeInTheDocument();
+    // How many people, and whose "everyone", are in the hover detail.
+    expect(screen.getByTitle("Shared with 2 users")).toBeVisible();
+    expect(
+      screen.getByTitle("Shared with everyone in Elite Law LLP"),
+    ).toBeVisible();
   });
 
-  it("filters Private and Shared from the Access column header", async () => {
+  it("filters Public and Private from the Access column header", async () => {
     const user = userEvent.setup();
     activeTab.current = "all";
     render(<WorkflowList />);
@@ -444,11 +449,11 @@ describe("WorkflowList pack toolbar", () => {
     await user.click(
       screen.getByRole("button", { name: "Filter by access" }),
     );
-    await user.click(screen.getByRole("menuitem", { name: "Shared" }));
+    await user.click(screen.getByRole("menuitem", { name: "Public" }));
 
     const calls = usePaginatedWorkflowsSpy.mock.calls;
     expect(calls.at(-1)?.[0]).toEqual(
-      expect.objectContaining({ scope: "collaborative" }),
+      expect.objectContaining({ scope: "public" }),
     );
 
     await user.click(
@@ -456,7 +461,8 @@ describe("WorkflowList pack toolbar", () => {
     );
     await user.click(screen.getByRole("menuitem", { name: "Private" }));
     expect(usePaginatedWorkflowsSpy.mock.calls.at(-1)?.[0]).toEqual(
-      expect.objectContaining({ scope: "private" }),
+      // Private is everything that is not public, shared or not.
+      expect.objectContaining({ scope: "nonpublic" }),
     );
   });
 

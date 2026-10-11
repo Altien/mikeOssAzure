@@ -91,23 +91,25 @@ function getProjectCreatorLabel(
     );
 }
 
-type ProjectFilter = "all" | "shared" | "private";
+// Public: open to the whole organization. Private: everything else, whether
+// it is its creator's alone or shared with individuals.
+type ProjectFilter = "all" | "public" | "private";
 type ProjectSortKey = "name" | "cm" | "files" | "chats" | "reviews" | "created";
 
 const PROJECT_FILTERS: { id: ProjectFilter; label: string }[] = [
     { id: "all", label: "All" },
-    { id: "shared", label: "Shared" },
+    { id: "public", label: "Public" },
     { id: "private", label: "Private" },
 ];
 const PROJECT_FILTER_IDS = PROJECT_FILTERS.map((filter) => filter.id);
 const PROJECT_FILTER_SCOPES: Record<ProjectFilter, ProjectScope> = {
     all: "all",
-    shared: "collaborative",
-    private: "private",
+    public: "public",
+    private: "nonpublic",
 };
-const ACCESS_FILTER_OPTIONS: TableFilterOption<"private" | "shared">[] = [
+const ACCESS_FILTER_OPTIONS: TableFilterOption<"public" | "private">[] = [
+    { value: "public", label: "Public" },
     { value: "private", label: "Private" },
-    { value: "shared", label: "Shared" },
 ];
 
 export function ProjectsOverview() {
@@ -691,9 +693,9 @@ export function ProjectsOverview() {
                     </TableEmptyState>
                 ) : visibleProjects.length === 0 ? (
                     <TableEmptyState>
-                        {activeFilter === "shared" ? (
+                        {activeFilter === "public" ? (
                             <p className="text-sm text-gray-400">
-                                No shared projects
+                                No public projects
                             </p>
                         ) : (
                             <EmptyState

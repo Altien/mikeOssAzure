@@ -1,21 +1,27 @@
 import { workspaceRpcArg, type WorkspaceFilter } from "../../lib/workspace";
 
-// "owned" and "shared" retain the list's original source semantics, while
-// "private" and "collaborative" power the Access-column filter. The latter
-// groups direct grants and organisation access together as collaborative.
+// "owned" and "shared" retain the list's original source semantics.
+// "public" and "nonpublic" power the Access-column filter: open to the whole
+// organization, or not (private to its creator, or shared with individuals).
+// "private" and "collaborative" are the filter's older pair, kept for older
+// clients.
 export type WorkflowScope =
     | "all"
     | "owned"
     | "shared"
     | "private"
-    | "collaborative";
+    | "collaborative"
+    | "public"
+    | "nonpublic";
 
 export function parseWorkflowScope(value: unknown): WorkflowScope {
     if (
         value === "owned" ||
         value === "shared" ||
         value === "private" ||
-        value === "collaborative"
+        value === "collaborative" ||
+        value === "public" ||
+        value === "nonpublic"
     )
         return value;
     return "all";

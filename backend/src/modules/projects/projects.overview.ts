@@ -1,18 +1,25 @@
 import { workspaceRpcArg, type WorkspaceFilter } from "../../lib/workspace";
 
+// "public" and "nonpublic" back the list's Public and Private tabs: open to
+// the whole organization, or not (private to its creator, or shared with
+// individuals). The older values keep their meaning for older clients.
 export type ProjectScope =
     | "all"
     | "mine"
     | "shared"
     | "collaborative"
-    | "private";
+    | "private"
+    | "public"
+    | "nonpublic";
 
 export function parseProjectScope(value: unknown): ProjectScope {
     if (
         value === "mine" ||
         value === "shared" ||
         value === "collaborative" ||
-        value === "private"
+        value === "private" ||
+        value === "public" ||
+        value === "nonpublic"
     )
         return value;
     return "all";

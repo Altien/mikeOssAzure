@@ -17,12 +17,17 @@ import { useWorkspaceParam } from "@/app/contexts/WorkspaceContext";
 
 export type WorkflowSortKey = "name" | "type" | "created";
 export type WorkflowSortDirection = "asc" | "desc";
+// "public" and "nonpublic" back the Access column's filter: open to the
+// whole organization, or not (private to its creator, or shared with
+// individuals).
 export type WorkflowScope =
     | "all"
     | "owned"
     | "shared"
     | "private"
-    | "collaborative";
+    | "collaborative"
+    | "public"
+    | "nonpublic";
 type WorkflowTypeFilter = "assistant" | "tabular" | undefined;
 
 const PAGE_SIZE = 30;

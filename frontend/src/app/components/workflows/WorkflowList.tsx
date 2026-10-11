@@ -80,10 +80,12 @@ const WORKFLOW_TABS: { id: WorkflowListTab; label: string }[] = [
 ];
 const WORKFLOW_TAB_IDS = WORKFLOW_TABS.map((tab) => tab.id);
 
-type AccessFilter = "private" | "shared";
+// Public: open to the whole organization. Private: everything else, whether
+// it is its creator's alone or shared with individuals.
+type AccessFilter = "public" | "private";
 const ACCESS_FILTER_OPTIONS: TableFilterOption<AccessFilter>[] = [
+  { value: "public", label: "Public" },
   { value: "private", label: "Private" },
-  { value: "shared", label: "Shared" },
 ];
 
 function workflowFilterOptions(
@@ -188,9 +190,9 @@ export function WorkflowList({
     jurisdictionFilter,
     scope:
       accessFilter === "private"
-        ? "private"
-        : accessFilter === "shared"
-          ? "collaborative"
+        ? "nonpublic"
+        : accessFilter === "public"
+          ? "public"
           : "all",
     sort: nameSortDirection
       ? { key: "name", direction: nameSortDirection }
