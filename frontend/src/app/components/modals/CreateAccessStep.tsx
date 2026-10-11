@@ -8,7 +8,7 @@ import {
     type OrgMember,
     type UserLookupResult,
 } from "@/app/lib/mikeApi";
-import type { ProjectRole } from "@/app/lib/permissions";
+import { isOrgAdmin, type ProjectRole } from "@/app/lib/permissions";
 import {
     OrganizationAccessEditor,
     AccessEditor,
@@ -185,7 +185,7 @@ export function CreateAccessStep({
             user_id: member.user_id,
             email: member.email,
             display_name: member.display_name,
-            role: member.role === "admin" ? "owner" : "editor",
+            role: isOrgAdmin(member.role) ? "owner" : "editor",
             isCreator,
         };
     });

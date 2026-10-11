@@ -759,7 +759,7 @@ describe("workflows.routes", () => {
       // passed. That is a database failure, not a bad request, and the whole
       // statement rolls back.
       const { db, upserts } = orgShareDb({
-        upsertError: "org_members_protect_last_admin",
+        upsertError: "org_members_protect_last_owner",
       });
       vi.mocked(createServerSupabase).mockImplementationOnce(() => db);
 

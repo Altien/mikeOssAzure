@@ -30,7 +30,7 @@ import {
   type Org,
   type OrgInvitation,
 } from "@/app/lib/mikeApi";
-import { ORG_ROLE_LABELS } from "@/app/lib/permissions";
+import { ORG_ROLE_LABELS, isOrgAdmin } from "@/app/lib/permissions";
 import { userFacingApiError } from "@/app/lib/userFacingError";
 import { LIQUID_SUBTLE_PANEL_SURFACE_CLASS } from "@/app/components/ui/liquid-surface";
 import { CreateOrganizationModal } from "./OrganizationModals";
@@ -155,7 +155,7 @@ export function OrganizationsOverview() {
   const visibleOrgs = useMemo(() => {
     if (activeFilter === "invites") return [];
     const filtered = (orgs ?? []).filter((org) =>
-      activeFilter === "managed" ? org.role === "admin" : org.role !== "admin",
+      activeFilter === "managed" ? isOrgAdmin(org.role) : !isOrgAdmin(org.role),
     );
     if (!sort) return filtered;
     const multiplier = sort.direction === "asc" ? 1 : -1;

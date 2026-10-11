@@ -555,9 +555,9 @@ export type AccountDeletionOrgBlocker = {
 /**
  * The organizations that make this account undeletable, and why.
  *
- * PRODUCT DECISION: an account that is the SOLE ADMIN of an organization
+ * PRODUCT DECISION: an account that is the SOLE OWNER of an organization
  * which still has other members, or still owns content, cannot be deleted.
- * The user must appoint another admin or delete the organization first.
+ * The user must appoint another owner or delete the organization first.
  *
  * Both of the alternatives were implemented here before, and both were wrong:
  *
@@ -595,18 +595,18 @@ export async function listOrgsBlockingAccountDeletion(
         org_id: string;
         role: string;
     }[]) {
-        if (m.role !== "admin") continue;
+        if (m.role !== "owner") continue;
 
-        const { data: otherAdmins, error: otherAdminsError } = await db
+        const { data: otherOwners, error: otherOwnersError } = await db
             .from("org_members")
             .select("id")
             .eq("org_id", m.org_id)
-            .eq("role", "admin")
+            .eq("role", "owner")
             .neq("id", m.id)
             .limit(1);
-        await throwIfError(otherAdminsError, "Failed to load org admins");
-        // Somebody else can administer it: leaving is unremarkable.
-        if (((otherAdmins ?? []) as unknown[]).length > 0) continue;
+        await throwIfError(otherOwnersError, "Failed to load org owners");
+        // Somebody else owns it too: leaving is unremarkable.
+        if (((otherOwners ?? []) as unknown[]).length > 0) continue;
 
         const { data: otherMembers, error: otherMembersError } = await db
             .from("org_members")
@@ -651,7 +651,7 @@ export async function listOrgsBlockingAccountDeletion(
  * people or content in it:
  *
  *  - The departing user's membership row is removed.
- *  - A sole admin whose org still has members or content is REFUSED â€” see
+ *  - A sole owner whose org still has members or content is REFUSED — see
  *    listOrgsBlockingAccountDeletion for why neither auto-promotion nor
  *    "leave it to the cascade" is an acceptable alternative. The route
  *    answers 409 long before this runs, and deleteUserAccountData re-asks
@@ -680,16 +680,16 @@ export async function deleteUserOrganizations(
         org_id: string;
         role: string;
     }[]) {
-        if (m.role === "admin") {
-            const { data: otherAdmins, error: otherAdminsError } = await db
+        if (m.role === "owner") {
+            const { data: otherOwners, error: otherOwnersError } = await db
                 .from("org_members")
                 .select("id")
                 .eq("org_id", m.org_id)
-                .eq("role", "admin")
+                .eq("role", "owner")
                 .neq("id", m.id)
                 .limit(1);
-            await throwIfError(otherAdminsError, "Failed to load org admins");
-            if (((otherAdmins ?? []) as unknown[]).length === 0) {
+            await throwIfError(otherOwnersError, "Failed to load org owners");
+            if (((otherOwners ?? []) as unknown[]).length === 0) {
                 const { data: otherMembers, error: otherMembersError } =
                     await db
                         .from("org_members")
@@ -713,12 +713,12 @@ export async function deleteUserOrganizations(
                     // rather than improvise a successor.
                     //
                     // NonRetryableJobError, not Error: an organization does
-                    // not acquire a second admin because the queue asked
+                    // not acquire a second owner because the queue asked
                     // twenty more times over the next few hours. A plain
                     // Error burned the whole retry budget re-deriving the
                     // same refusal and buried the reason under the repeats.
                     throw new NonRetryableJobError(
-                        `Cannot delete this account while it is the only admin of organization ${m.org_id}`,
+                        `Cannot delete this account while it is the only owner of organization ${m.org_id}`,
                     );
                 }
 
@@ -807,7 +807,7 @@ export async function deleteProjectsByIds(db: Db, projectIds: string[]) {
  * Remove the projects a user created â€” but only the personal ones.
  *
  * A project that belongs to an organization is the organization's, not the
- * creator's: the firm's other admins are still administering it and its
+ * creator's: the firm's other owners and admins are still administering it and its
  * matter documents are still live. Those projects are DETACHED instead
  * (user_id â†’ NULL, which the nullable FK now permits) so they survive their
  * creator's departure with their contents intact. Only `org_id IS NULL`
@@ -871,7 +871,7 @@ export async function deleteUserAccountData(
     const blockers = await listOrgsBlockingAccountDeletion(db, userId);
     if (blockers.length > 0) {
         throw new NonRetryableJobError(
-            `Cannot delete this account while it is the only admin of ${blockers
+            `Cannot delete this account while it is the only owner of ${blockers
                 .map((blocker) => `${blocker.org_id} (${blocker.reason})`)
                 .join(", ")}`,
         );

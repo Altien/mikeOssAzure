@@ -130,6 +130,7 @@ describe("OrganizationSettingsModal", () => {
       <OrganizationSettingsModal
         open
         org={org}
+        canDelete
         onClose={vi.fn()}
         onUpdated={vi.fn()}
         onDeleted={onDeleted}
@@ -160,6 +161,7 @@ describe("OrganizationSettingsModal", () => {
       <OrganizationSettingsModal
         open
         org={org}
+        canDelete
         onClose={vi.fn()}
         onUpdated={vi.fn()}
         onDeleted={vi.fn()}
@@ -179,6 +181,26 @@ describe("OrganizationSettingsModal", () => {
     ).toBeInTheDocument();
     expect(
       screen.queryByText("Organization settings not saved"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers an admin the rename but not the delete", () => {
+    // Deleting an organization is an owner's decision. The server answers an
+    // admin with a 403, so the control is not drawn for one.
+    render(
+      <OrganizationSettingsModal
+        open
+        org={org}
+        canDelete={false}
+        onClose={vi.fn()}
+        onUpdated={vi.fn()}
+        onDeleted={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText("Organization name")).toHaveValue(org.name);
+    expect(
+      screen.queryByRole("button", { name: "Delete organization" }),
     ).not.toBeInTheDocument();
   });
 });

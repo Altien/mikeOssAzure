@@ -62,7 +62,14 @@ import {
   type OrgMember,
   type OrgResources,
 } from "@/app/lib/mikeApi";
-import { ORG_ROLE_LABELS, type OrgRole } from "@/app/lib/permissions";
+import {
+  ORG_ROLE_LABELS,
+  ORG_ROLES,
+  canManageOrgRole,
+  isOrgAdmin,
+  isOrgOwner,
+  type OrgRole,
+} from "@/app/lib/permissions";
 import { userFacingApiError } from "@/app/lib/userFacingError";
 import {
   InviteOrganizationMemberModal,
@@ -80,6 +87,7 @@ const TABS: { id: OrganizationTab; label: string }[] = [
 const EMPTY_RESOURCES: OrgResources = { projects: [], workflows: [] };
 
 const ROLE_FILTER_OPTIONS: TableFilterOption<OrgRole>[] = [
+  { value: "owner", label: ORG_ROLE_LABELS.owner, className: "text-amber-700" },
   { value: "admin", label: ORG_ROLE_LABELS.admin, className: "text-blue-700" },
   {
     value: "member",
@@ -164,7 +172,7 @@ export function OrganizationWorkspace({ orgId }: { orgId: string }) {
       const [nextMembers, nextResources, nextInvitations] = await Promise.all([
         listOrgMembers(orgId),
         listOrgResources(orgId),
-        nextOrg.role === "admin"
+        isOrgAdmin(nextOrg.role)
           ? listOrgInvitations(orgId)
           : Promise.resolve([] as OrgInvitation[]),
       ]);
@@ -184,7 +192,7 @@ export function OrganizationWorkspace({ orgId }: { orgId: string }) {
   }, [applyMembers, orgId]);
 
   const refreshInvitations = useCallback(async () => {
-    if (org?.role !== "admin") return;
+    if (!isOrgAdmin(org?.role)) return;
     const ticket = ++invitationsRequestRef.current;
     const nextInvitations = await listOrgInvitations(orgId);
     if (ticket !== invitationsRequestRef.current) return;
@@ -232,16 +240,38 @@ export function OrganizationWorkspace({ orgId }: { orgId: string }) {
     void load();
   }, [load]);
 
-  const isAdmin = org?.role === "admin";
+  const viewerRole = org?.role ?? null;
+  const isAdmin = isOrgAdmin(viewerRole);
+  const isOwner = isOrgOwner(viewerRole);
+
+  /**
+   * Mirrors the server: the viewer must outrank both the role the member
+   * holds and the one they would be given, owners excepted. Offering a change
+   * the server refuses only ever produced a 403.
+   */
+  function canChangeRole(member: OrgMember, role: OrgRole) {
+    return (
+      canManageOrgRole(viewerRole, member.role) &&
+      canManageOrgRole(viewerRole, role)
+    );
+  }
+
+  /** Leaving is always allowed; removing somebody else needs standing. */
+  function canRemove(member: OrgMember) {
+    return (
+      member.user_id === user?.id || canManageOrgRole(viewerRole, member.role)
+    );
+  }
 
   /**
    * Demoting yourself is the one role change that rewrites what this page is
    * allowed to do, so it is confirmed before it runs rather than silently
-   * pulling the admin controls out from under the click.
+   * pulling the controls out from under the click.
    */
   function requestRoleChange(member: OrgMember, role: OrgRole) {
-    if (!isAdmin || member.role === role || busyMemberId) return;
-    if (member.user_id === user?.id && role !== "admin") {
+    if (!canChangeRole(member, role) || member.role === role || busyMemberId)
+      return;
+    if (member.user_id === user?.id) {
       setPendingSelfRoleChange({ member, role });
       return;
     }
@@ -249,7 +279,8 @@ export function OrganizationWorkspace({ orgId }: { orgId: string }) {
   }
 
   async function changeRole(member: OrgMember, role: OrgRole) {
-    if (!isAdmin || member.role === role || busyMemberId) return;
+    if (!canChangeRole(member, role) || member.role === role || busyMemberId)
+      return;
     setBusyMemberId(member.user_id);
     setActionError(null);
     try {
@@ -260,12 +291,12 @@ export function OrganizationWorkspace({ orgId }: { orgId: string }) {
         ),
       );
       // The membership row is not the only place this role lives: `org.role`
-      // gates every admin-only control and request on the page. Without this
-      // the demoted admin keeps a UI they no longer have rights for, and each
-      // action 403s until a reload.
+      // gates every owner- and admin-only control and request on the page.
+      // Without this the demoted person keeps a UI they no longer have rights
+      // for, and each action 403s until a reload.
       if (member.user_id === user?.id) {
         setOrg((current) => (current ? { ...current, role } : current));
-        if (role !== "admin") setInvitations([]);
+        if (!isOrgAdmin(role)) setInvitations([]);
       }
     } catch (error) {
       setActionError(userFacingApiError(error, "Could not change that role."));
@@ -309,6 +340,16 @@ export function OrganizationWorkspace({ orgId }: { orgId: string }) {
     );
     if (selectedMembers.some((member) => member.user_id === user?.id)) {
       setActionError("Use Leave organization to remove yourself.");
+      return;
+    }
+    if (
+      selectedMembers.some(
+        (member) => !canManageOrgRole(viewerRole, member.role),
+      )
+    ) {
+      setActionError(
+        "Only an organization owner can remove admins and other owners.",
+      );
       return;
     }
     setRemoveSelectedOpen(true);
@@ -357,11 +398,7 @@ export function OrganizationWorkspace({ orgId }: { orgId: string }) {
       selectedMemberIds.includes(member.id) &&
       selectedMemberIds.length > 1 &&
       isAdmin;
-    if (
-      !appliesToSelection &&
-      (!member || (!isAdmin && member.user_id !== user?.id))
-    )
-      return null;
+    if (!appliesToSelection && (!member || !canRemove(member))) return null;
     return (
       <DropdownItem
         variant="destructive"
@@ -454,7 +491,7 @@ export function OrganizationWorkspace({ orgId }: { orgId: string }) {
           selectedMemberIds={selectedMemberIds}
           onSelectedMemberIdsChange={setSelectedMemberIds}
           currentUserId={user?.id ?? null}
-          isAdmin={isAdmin}
+          viewerRole={viewerRole}
           busyMemberId={busyMemberId}
           onRetry={load}
           onRoleChange={requestRoleChange}
@@ -514,6 +551,7 @@ export function OrganizationWorkspace({ orgId }: { orgId: string }) {
           <OrganizationSettingsModal
             open={settingsOpen}
             org={org}
+            canDelete={isOwner}
             onClose={() => setSettingsOpen(false)}
             onUpdated={(updated) => {
               setOrg((current) => ({
@@ -547,8 +585,16 @@ export function OrganizationWorkspace({ orgId }: { orgId: string }) {
       />
       <ConfirmPopup
         open={pendingSelfRoleChange !== null}
-        title="Give up admin access?"
-        message="You will lose admin access to this organization and can no longer manage its people, settings or invitations."
+        title={
+          pendingSelfRoleChange?.role === "admin"
+            ? "Step down to admin?"
+            : "Give up owner access?"
+        }
+        message={
+          pendingSelfRoleChange?.role === "admin"
+            ? "You will stay an admin, but can no longer delete this organization or appoint and remove its admins and owners."
+            : "You will lose owner access to this organization and can no longer manage its people, settings or invitations."
+        }
         confirmLabel="Continue"
         confirmStatus={busyMemberId ? "loading" : "idle"}
         onCancel={() => {
@@ -594,7 +640,7 @@ function PeopleTable({
   selectedMemberIds,
   onSelectedMemberIdsChange,
   currentUserId,
-  isAdmin,
+  viewerRole,
   busyMemberId,
   onRetry,
   onRoleChange,
@@ -607,7 +653,8 @@ function PeopleTable({
   selectedMemberIds: string[];
   onSelectedMemberIdsChange: Dispatch<SetStateAction<string[]>>;
   currentUserId: string | null;
-  isAdmin: boolean;
+  /** The viewer's own organization role; null while it is still loading. */
+  viewerRole: OrgRole | null;
   busyMemberId: string | null;
   onRetry: () => Promise<void>;
   onRoleChange: (member: OrgMember, role: OrgRole) => void;
@@ -768,7 +815,15 @@ function PeopleTable({
         <TableBody>
           {visibleMembers.map((member) => {
             const label = member.display_name || member.email || member.user_id;
-            const canRemove = isAdmin || member.user_id === currentUserId;
+            const canRemove =
+              member.user_id === currentUserId ||
+              canManageOrgRole(viewerRole, member.role);
+            // The roles the viewer may hand this member. With one or none
+            // there is nothing to choose, so the role renders as plain text
+            // instead of a menu that could only fail.
+            const assignableRoles = canManageOrgRole(viewerRole, member.role)
+              ? ORG_ROLES.filter((role) => canManageOrgRole(viewerRole, role))
+              : [];
             const isSelected = selectedMemberIds.includes(member.id);
             return (
               <TableRow
@@ -799,7 +854,7 @@ function PeopleTable({
                   <OrganizationRoleTab
                     role={member.role}
                     label={label}
-                    editable={isAdmin}
+                    assignableRoles={assignableRoles}
                     disabled={busyMemberId === member.user_id}
                     onChange={(role) => onRoleChange(member, role)}
                   />
@@ -837,20 +892,23 @@ function PeopleTable({
 function OrganizationRoleTab({
   role,
   label,
-  editable,
+  assignableRoles,
   disabled,
   onChange,
 }: {
   role: OrgRole;
   label: string;
-  editable: boolean;
+  assignableRoles: OrgRole[];
   disabled: boolean;
   onChange: (role: OrgRole) => void;
 }) {
+  const editable = assignableRoles.length > 1;
   const tone =
-    role === "admin"
-      ? "bg-blue-100 text-blue-700"
-      : "bg-violet-100 text-violet-700";
+    role === "owner"
+      ? "bg-amber-100 text-amber-700"
+      : role === "admin"
+        ? "bg-blue-100 text-blue-700"
+        : "bg-violet-100 text-violet-700";
   const className = `inline-flex h-6 min-w-20 items-center justify-center gap-1 rounded-full px-2 text-[11px] font-medium ${tone}`;
 
   if (!editable) {
@@ -875,7 +933,9 @@ function OrganizationRoleTab({
         </button>
       </DropdownTrigger>
       <DropdownContent align="start" className="w-36">
-        {ROLE_FILTER_OPTIONS.map((option) => (
+        {ROLE_FILTER_OPTIONS.filter((option) =>
+          assignableRoles.includes(option.value),
+        ).map((option) => (
           <DropdownItem
             key={option.value}
             selected={role === option.value}

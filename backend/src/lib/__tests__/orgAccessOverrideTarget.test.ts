@@ -35,7 +35,17 @@ describe("organization override target shared by projects and workflows", () => 
   it.each([
     ["creator", "member", "The creator is always an owner"],
     ["creator", "admin", "The creator is always an owner"],
-    ["someone", "admin", "Organization admins always have owner access"],
+    ["creator", "owner", "The creator is always an owner"],
+    [
+      "someone",
+      "admin",
+      "Organization owners and admins always have owner access",
+    ],
+    [
+      "someone",
+      "owner",
+      "Organization owners and admins always have owner access",
+    ],
   ])("protects %s with org role %s", async (user_id, role, detail) => {
     const fake = scriptedDb([
       { table: "user_profiles", data: { user_id } },

@@ -132,12 +132,69 @@ it("keeps organization scope exclusive to projects and workflows", () => {
     expect(migration).toContain("tabular_reviews_org_requires_project");
 });
 
-it("makes organization Admin ownership immutable in SQL", () => {
-    const migration = SOURCES[ORG_ACCESS_MIGRATION];
-    for (const sql of [SCHEMA, migration]) {
-        const adminBranches = [...sql.matchAll(/when m\.role = 'admin' then 'owner'/g)];
-        expect(adminBranches).toHaveLength(2);
-        expect(sql).toContain("Organization admins always have owner access");
-        expect(sql).toContain("org_members_cleanup_admin_overrides");
+it("makes organization Owner and Admin ownership immutable in SQL", () => {
+    const migration = readFileSync(
+        resolve(ROOT, "migrations/0110_org_owner_role.sql"),
+        "utf8",
+    );
+    for (const sql of [migration]) {
+        const implicitOwnerBranches = [
+            ...sql.matchAll(/when m\.role in \('owner', 'admin'\) then 'owner'/g),
+        ];
+        expect(implicitOwnerBranches).toHaveLength(2);
+        // The pre-owner shape admitted admins only; an owner fell through to
+        // the override and the Editor default.
+        expect(sql).not.toMatch(/when m\.role = 'admin' then 'owner'/);
+        expect(sql).toContain(
+            "Organization owners and admins always have owner access",
+        );
+        expect(sql).toContain("if new.role in ('owner', 'admin') then");
     }
+    expect(SOURCES["schema.sql"]).toContain("org_members_cleanup_admin_overrides");
+});
+
+it("keeps at least one owner per organization in SQL", () => {
+    const schema = SOURCES["schema.sql"];
+    const migration = readFileSync(
+        resolve(ROOT, "migrations/0110_org_owner_role.sql"),
+        "utf8",
+    );
+    for (const sql of [schema, migration]) {
+        expect(sql).toContain("check (role in ('owner', 'admin', 'member'))");
+        expect(sql).toContain("org_members_last_owner_guard");
+        expect(sql).toContain("An organization must keep at least one owner");
+    }
+    // The guard the owner one replaces must not survive on either path: left
+    // in place it refuses to move a sole admin off 'admin', which is the
+    // backfill, and afterwards it would demand an admin no rule requires.
+    expect(schema).not.toContain("org_members_protect_last_admin");
+    expect(migration).toContain(
+        "drop trigger if exists org_members_last_admin_guard on public.org_members",
+    );
+    expect(migration).toContain(
+        "drop function if exists public.org_members_protect_last_admin()",
+    );
+    // The new guard is installed before the backfill runs.
+    expect(migration.indexOf("create trigger org_members_last_owner_guard"))
+        .toBeLessThan(migration.indexOf("update public.org_members m"));
+    // Invitations never carry ownership.
+    expect(schema).toMatch(
+        /create table if not exists public\.org_invitations[\s\S]*?check \(role in \('admin', 'member'\)\)/,
+    );
+});
+
+it("backfills owners only into organizations that have none", () => {
+    const migration = readFileSync(
+        resolve(ROOT, "migrations/0110_org_owner_role.sql"),
+        "utf8",
+    );
+    const backfill = migration.slice(
+        migration.indexOf("update public.org_members m"),
+        migration.indexOf("-- 4. Content access"),
+    );
+    expect(backfill).toContain("set role = 'owner'");
+    expect(backfill).toContain("where m.role = 'admin'");
+    // Without this guard a second run promotes every admin an owner has
+    // appointed since the first.
+    expect(backfill).toMatch(/and not exists \([\s\S]*existing_owner\.role = 'owner'/);
 });

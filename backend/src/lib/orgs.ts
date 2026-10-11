@@ -2,20 +2,25 @@
 //
 // These functions are the service layer behind modules/orgs/orgs.routes.ts. They take an
 // explicit Supabase client (`db`) plus request-derived primitives, enforce the
-// admin/member role model, and RETURN typed discriminated results the thin
-// route handlers map onto HTTP status codes. They never touch req/res.
+// owner/admin/member role model, and RETURN typed discriminated results the
+// thin route handlers map onto HTTP status codes. They never touch req/res.
 //
 // Role model (see also backend/src/lib/access.ts):
-//   admin  — administers the organization: settings, invitations, member
-//            roles and removal.
+//   owner  — accountable for the organization: everything an admin can do,
+//            plus deleting it and appointing or removing admins and owners.
+//   admin  — runs the organization day to day: settings, invitations, and
+//            removing members.
 //   member — reads the organization and its roster. No org mutations.
-// Both roles receive Editor on organization content unless an item-specific
-// override assigns Owner, Viewer or Deny.
+// Owners and admins receive Owner on organization content. Members receive
+// Editor unless an item-specific override assigns Owner, Viewer or Deny.
 //
-// There is no owner tier. An owner role that only one person could hold made
-// every org a single point of failure and forced two nearly identical "can
-// manage" checks; instead the database guarantees an org always retains at
-// least one admin (org_members_protect_last_admin), and admins are peers.
+// Nobody acts on a peer or a superior, owners excepted (canManageOrgRole): an
+// admin cannot appoint a second admin, promote themselves or remove an owner.
+//
+// Several people may be owners. An earlier owner tier that only one person
+// could hold made every org a single point of failure; the database instead
+// guarantees an org always retains at least one owner
+// (org_members_protect_last_owner), and owners are peers.
 //
 // Membership is never granted directly. An admin creates an INVITATION; the
 // org_members row appears only when the invited account accepts it. Adding
@@ -25,10 +30,13 @@
 import type { Db } from "./supabase";
 import { recordAudit } from "./audit";
 import {
+    canManageOrgRole,
     getOrgRole,
     isOrgAdmin,
+    isOrgOwner,
     isOrgRole,
     normalizeEmail,
+    strongerOrgRole,
     type OrgRole,
 } from "./access";
 
@@ -78,14 +86,14 @@ function isUniqueViolation(error: DbError): boolean {
 }
 
 /**
- * The org_members_protect_last_admin trigger closes the read-then-act race on
- * last-admin protection at the DB level; when it fires, translate its 23514
- * into the same `last_admin` result the sequential in-process check produces.
+ * The org_members_protect_last_owner trigger closes the read-then-act race on
+ * last-owner protection at the DB level; when it fires, translate its 23514
+ * into the same `last_owner` result the sequential in-process check produces.
  */
-function isLastAdminViolation(error: DbError): boolean {
+function isLastOwnerViolation(error: DbError): boolean {
     return (
         error?.code === "23514" &&
-        (error?.message ?? "").includes("at least one admin")
+        (error?.message ?? "").includes("at least one owner")
     );
 }
 
@@ -100,9 +108,12 @@ export type OrgResult<T> =
     | ({ ok: true } & T)
     | { ok: false; kind: "validation"; detail: string }
     | { ok: false; kind: "forbidden" }
+    // An admin asked for something only an owner may do. Separate from
+    // `forbidden` so the refusal can name the role that would be allowed.
+    | { ok: false; kind: "owner_required" }
     | { ok: false; kind: "not_found" }
     | { ok: false; kind: "conflict"; detail: string }
-    | { ok: false; kind: "last_admin" }
+    | { ok: false; kind: "last_owner" }
     | { ok: false; kind: "expired" }
     | { ok: false; kind: "db_error"; detail: string };
 
@@ -173,18 +184,18 @@ export async function createOrg(
             detail: error?.message ?? "Failed to create organization",
         };
 
-    // The creator is the org's first admin. This is the ONLY path that writes
+    // The creator is the org's first owner. This is the ONLY path that writes
     // org_members without an accepted invitation.
     const { error: memberError } = await db
         .from("org_members")
-        .insert({ org_id: org.id, user_id: params.userId, role: "admin" });
+        .insert({ org_id: org.id, user_id: params.userId, role: "owner" });
     if (memberError) {
-        // Roll back the org so we never leave an org without an admin.
+        // Roll back the org so we never leave an org without an owner.
         await db.from("organizations").delete().eq("id", org.id);
         return { ok: false, kind: "db_error", detail: memberError.message };
     }
 
-    return { ok: true, org: { ...org, role: "admin", member_count: 1 } };
+    return { ok: true, org: { ...org, role: "owner", member_count: 1 } };
 }
 
 export async function getOrg(
@@ -237,6 +248,7 @@ export async function deleteOrg(
     const role = await getOrgRole(params.userId, params.orgId, db);
     if (!role) return { ok: false, kind: "not_found" };
     if (!isOrgAdmin(role)) return { ok: false, kind: "forbidden" };
+    if (!isOrgOwner(role)) return { ok: false, kind: "owner_required" };
 
     const { data: org } = await db
         .from("organizations")
@@ -296,7 +308,7 @@ export async function deleteOrg(
  * put up to withhold. Listing a row whose link then 404s leaks the thing the
  * override was bought to hide.
  *
- * Denials cannot touch an admin or a resource's creator (the
+ * Denials cannot touch an owner, an admin or a resource's creator (the
  * `validate_org_access_override` trigger refuses to write one), so the two
  * short-circuits below are the same ones `project_access_role` takes in SQL —
  * kept here so this filter reads as that predicate rather than as a rule of
@@ -455,12 +467,12 @@ export async function listMembers(
     };
 }
 
-async function countAdmins(db: Db, orgId: string): Promise<number> {
+async function countOwners(db: Db, orgId: string): Promise<number> {
     const { data } = await db
         .from("org_members")
         .select("user_id")
         .eq("org_id", orgId)
-        .eq("role", "admin");
+        .eq("role", "owner");
     return ((data ?? []) as unknown[]).length;
 }
 
@@ -485,11 +497,21 @@ export async function updateMember(
     const targetRole = await getOrgRole(params.targetUserId, params.orgId, db);
     if (!targetRole) return { ok: false, kind: "not_found" };
 
-    // Last-admin protection: demoting the sole admin would strand the org
-    // with nobody able to invite, remove or re-role anyone.
-    if (targetRole === "admin" && nextRole !== "admin") {
-        const admins = await countAdmins(db, params.orgId);
-        if (admins <= 1) return { ok: false, kind: "last_admin" };
+    // Both ends of the change are checked: the role the person holds now and
+    // the one they would hold after. Checking only the new role would let an
+    // admin demote an owner to member; checking only the current one would
+    // let an admin promote a member to owner.
+    if (
+        !canManageOrgRole(actorRole, targetRole) ||
+        !canManageOrgRole(actorRole, nextRole)
+    )
+        return { ok: false, kind: "owner_required" };
+
+    // Last-owner protection: demoting the sole owner would strand the org
+    // with nobody able to delete it or appoint an admin.
+    if (targetRole === "owner" && nextRole !== "owner") {
+        const owners = await countOwners(db, params.orgId);
+        if (owners <= 1) return { ok: false, kind: "last_owner" };
     }
 
     const { data: member, error } = await db
@@ -500,8 +522,8 @@ export async function updateMember(
         .select("*")
         .single();
     if (error || !member) {
-        if (isLastAdminViolation(error))
-            return { ok: false, kind: "last_admin" };
+        if (isLastOwnerViolation(error))
+            return { ok: false, kind: "last_owner" };
         return {
             ok: false,
             kind: "db_error",
@@ -548,11 +570,17 @@ export async function removeMember(
     const targetRole = await getOrgRole(params.targetUserId, params.orgId, db);
     if (!targetRole) return { ok: false, kind: "not_found" };
 
-    // Last-admin protection: never remove the sole admin, not even by their
+    // Leaving is always the member's own call. Removing somebody else is
+    // not: an admin may remove members, and only an owner may remove an
+    // admin or another owner.
+    if (!isSelf && !canManageOrgRole(actorRole, targetRole))
+        return { ok: false, kind: "owner_required" };
+
+    // Last-owner protection: never remove the sole owner, not even by their
     // own hand — they must appoint a successor first.
-    if (targetRole === "admin") {
-        const admins = await countAdmins(db, params.orgId);
-        if (admins <= 1) return { ok: false, kind: "last_admin" };
+    if (targetRole === "owner") {
+        const owners = await countOwners(db, params.orgId);
+        if (owners <= 1) return { ok: false, kind: "last_owner" };
     }
 
     const { error } = await db
@@ -561,8 +589,8 @@ export async function removeMember(
         .eq("org_id", params.orgId)
         .eq("user_id", params.targetUserId);
     if (error) {
-        if (isLastAdminViolation(error))
-            return { ok: false, kind: "last_admin" };
+        if (isLastOwnerViolation(error))
+            return { ok: false, kind: "last_owner" };
         if (isResourceOwnerViolation(error))
             return {
                 ok: false,
@@ -606,6 +634,17 @@ type InvitationRow = {
     declined_at: string | null;
     cancelled_at: string | null;
 };
+
+/**
+ * The roles an invitation may carry. Ownership is never offered to an email
+ * address: an owner grants it to somebody who has already joined, through
+ * updateMember, where both people are known to the organization.
+ */
+type InvitableRole = Exclude<OrgRole, "owner">;
+
+function isInvitableRole(value: unknown): value is InvitableRole {
+    return value === "admin" || value === "member";
+}
 
 function isExpired(row: { status: string; expires_at: string }): boolean {
     return (
@@ -665,13 +704,23 @@ export async function createInvitation(
     // Coercing 'owner' to 'member' behind a 201 would answer a request for a
     // tier this product deleted by inventing a quieter one, and the caller
     // would have no way to tell.
-    if (params.role !== undefined && params.role !== null && !isOrgRole(params.role))
+    if (
+        params.role !== undefined &&
+        params.role !== null &&
+        !isInvitableRole(params.role)
+    )
         return {
             ok: false,
             kind: "validation",
             detail: "Role must be admin or member",
         };
-    const role: OrgRole = isOrgRole(params.role) ? params.role : "member";
+    const role: InvitableRole = isInvitableRole(params.role)
+        ? params.role
+        : "member";
+    // Inviting somebody as an admin is appointing an admin, which is an
+    // owner's decision however the person arrives.
+    if (!canManageOrgRole(actorRole, role))
+        return { ok: false, kind: "owner_required" };
 
     // Someone who already belongs here needs no invitation. Resolved through
     // the mirrored profile email so the check never scans auth.users.
@@ -837,6 +886,10 @@ export async function cancelInvitation(
         .maybeSingle();
     const row = invite as InvitationRow | null;
     if (!row) return { ok: false, kind: "not_found" };
+    // An admin invitation is an owner's appointment in progress; an admin
+    // withdrawing it would be overruling one.
+    if (!canManageOrgRole(actorRole, row.role))
+        return { ok: false, kind: "owner_required" };
     // A cancelled invitation was withdrawn by an admin, not answered by the
     // recipient — reporting it as "already answered" tells them something
     // untrue about their own actions. It reads as missing instead, which is
@@ -888,6 +941,10 @@ export async function resendInvitation(
         .maybeSingle();
     const row = invite as InvitationRow | null;
     if (!row) return { ok: false, kind: "not_found" };
+    // Extending an admin invitation keeps an appointment open, so it takes
+    // the same standing as making one.
+    if (!canManageOrgRole(actorRole, row.role))
+        return { ok: false, kind: "owner_required" };
     // Resending an answered invitation would silently re-open a decision the
     // recipient already made. Only pending ones (expired included) refresh.
     // A cancelled invitation was withdrawn by an admin, not answered by the
@@ -1033,12 +1090,13 @@ export async function acceptInvitation(
     const existing = await getOrgRole(params.userId, invite.org_id, db);
     // Roles are FLOORS, not ceilings. Accepting an admin invitation while
     // already a member raises you to admin; accepting a member invitation
-    // while already an admin leaves you an admin, because an invitation is an
-    // offer of access, not an instruction to reduce it. Demotion is what
-    // PATCH /orgs/:orgId/members exists for, where an admin does it on
-    // purpose and the last-admin guard gets a say.
-    const effectiveRole: OrgRole =
-        existing === "admin" ? "admin" : (invite.role as OrgRole);
+    // while already an admin or owner leaves you where you are, because an
+    // invitation is an offer of access, not an instruction to reduce it.
+    // Demotion is what PATCH /orgs/:orgId/members exists for, where an owner
+    // does it on purpose and the last-owner guard gets a say.
+    const effectiveRole: OrgRole = existing
+        ? strongerOrgRole(existing, invite.role)
+        : invite.role;
 
     if (!existing) {
         const { error } = await db.from("org_members").insert({

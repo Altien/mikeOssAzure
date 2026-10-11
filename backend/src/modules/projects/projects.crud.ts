@@ -12,6 +12,8 @@ import {
 import {
   checkProjectAccess,
   getOrgRole,
+  isOrgAdmin,
+  isOrgRole,
 } from "../../lib/access";
 import { can } from "../../lib/permissions";
 import {
@@ -278,7 +280,7 @@ export async function searchProjectDirectory(
     // One batched read for the whole page, not a verdict per row: this is a
     // filter over a result set and must not become an N+1. Mirrors
     // listOrgResources, including its exemptions — the creator and org
-    // admins keep Owner and cannot be denied.
+    // owners and admins keep Owner and cannot be denied.
     // Scoped by ORG, not by an .in() over every candidate project id: that
     // list grows with the firm's matters and is spliced verbatim into the
     // PostgREST query string, so a large tenant sent a URL past the server's
@@ -303,8 +305,9 @@ export async function searchProjectDirectory(
       const projectId = project.id as string;
       const orgId = project.org_id as string | null;
       const isCreator = project.user_id === userId;
-      const isOrgAdmin = !!orgId && orgRoleByOrgId.get(orgId) === "admin";
-      if (!isCreator && !isOrgAdmin && deniedProjectIds.has(projectId))
+      const orgRole = orgId ? orgRoleByOrgId.get(orgId) : undefined;
+      const administersOrg = isOrgRole(orgRole) && isOrgAdmin(orgRole);
+      if (!isCreator && !administersOrg && deniedProjectIds.has(projectId))
         continue;
       projectsById.set(projectId, project);
     }

@@ -201,7 +201,7 @@ describe("processClaimedJob fencing", () => {
 
     it("fails a NonRetryableJobError immediately, with attempts left", async () => {
         // A job the domain REFUSES is not a job the network flaked on.
-        // Account deletion for the only admin of a live organization will be
+        // Account deletion for the only owner of a live organization will be
         // refused identically on every one of its 20 attempts; retrying it
         // for hours buries the reason and leaves the user's request in limbo.
         const db = makeDb();

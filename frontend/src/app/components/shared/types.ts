@@ -53,7 +53,7 @@ export interface Project {
    */
   access_role?: "owner" | "editor" | "viewer";
   /** The caller's role in the owning organization, if the project has one. */
-  org_role?: "admin" | "member" | null;
+  org_role?: "owner" | "admin" | "member" | null;
   org_id?: string | null;
   access_scope?: ResourceAccessScope;
   organization_name?: string | null;

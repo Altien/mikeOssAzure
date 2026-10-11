@@ -16,11 +16,11 @@ import {
 import { type Db, errorMessage } from "./user.shared";
 
 /**
- * Turn the sole-admin blockers into instructions the user can actually act
- * on. The two reasons need DIFFERENT actions â€” appointing a successor fixes
+ * Turn the sole-owner blockers into instructions the user can actually act
+ * on. The two reasons need DIFFERENT actions — appointing a successor fixes
  * an org that still has members, and does nothing for an org whose only
- * problem is that it still owns matters â€” so a single "make another member
- * an admin" sentence sent the second group off to look for members who do
+ * problem is that it still owns matters — so a single "make another member
+ * an owner" sentence sent the second group off to look for members who do
  * not exist. A mixed batch gets both sentences, each naming its own orgs.
  */
 export function describeAccountDeletionBlockers(
@@ -35,12 +35,12 @@ export function describeAccountDeletionBlockers(
     const withMembers = named("members");
     if (withMembers)
         sentences.push(
-            `You are the only admin of ${withMembers}. Make another member an admin, or delete the organization, before deleting your account.`,
+            `You are the only owner of ${withMembers}. Make another member an owner, or delete the organization, before deleting your account.`,
         );
     const withContent = named("content");
     if (withContent)
         sentences.push(
-            `You are the only admin of ${withContent}, which still owns content. Delete or move the organization's projects, workflows, documents and reviews, or delete the organization, before deleting your account.`,
+            `You are the only owner of ${withContent}, which still owns content. Delete or move the organization's projects, workflows, documents and reviews, or delete the organization, before deleting your account.`,
         );
     return sentences.join(" ");
 }
@@ -56,6 +56,15 @@ export async function deleteUserAccount(
     | { ok: false; error: unknown; kind?: undefined }
 > {
     try {
+        // ORGANIZATIONS FIRST. An account that is the only owner of an
+        // organization which still has members or content cannot be deleted:
+        // promoting an arbitrary successor hands a firm's matters to whoever
+        // joined first (and silently clears their `deny` overrides), while
+        // removing the member outright is refused by
+        // org_member_protect_resource_ownership and leaves the organization
+        // memberless, invisible and undeletable. Answer 409 and let the user
+        // choose a successor. This check runs BEFORE the enqueue so nothing
+        // is scheduled, revoked, or destroyed.
         const blockers = await listOrgsBlockingAccountDeletion(db, userId);
         if (blockers.length > 0)
             return { ok: false, kind: "org_successor_required", blockers };

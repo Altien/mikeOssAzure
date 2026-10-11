@@ -72,9 +72,9 @@ function recordWrites(db: any) {
 // rows (as Postgres would). Supports the query subset the cleanup uses:
 // select/eq/neq/in/order/limit/delete/update + thenable.
 //
-// `options.lastAdminTrigger` additionally simulates the database trigger
-// org_members_protect_last_admin (migration 20260902_01): deleting an
-// organization's last admin raises SQLSTATE 23514, EXCEPT when the org row
+// `options.lastOwnerTrigger` additionally simulates the database trigger
+// org_members_protect_last_owner (migration 20261011_01): deleting an
+// organization's last owner raises SQLSTATE 23514, EXCEPT when the org row
 // is already gone or the member's auth.users row is already gone. Seed an
 // `auth_users` table to say which accounts still exist — without the trigger
 // the account-deletion path can only be tested against a mocked cascade,
@@ -82,7 +82,7 @@ function recordWrites(db: any) {
 function makeDb(
     initial: Record<string, Row[]>,
     options: {
-        lastAdminTrigger?: boolean;
+        lastOwnerTrigger?: boolean;
         selectErrors?: Record<string, string>;
     } = {},
 ) {
@@ -125,7 +125,7 @@ function makeDb(
             }
             if (op === "delete" && table === "org_members") {
                 const blocked = matched.find((r) => {
-                    if (r.role !== "admin") return false;
+                    if (r.role !== "owner") return false;
                     const orgGone = !(tables.organizations ?? []).some(
                         (o) => o.id === r.org_id,
                     );
@@ -136,16 +136,16 @@ function makeDb(
                     return !(tables.org_members ?? []).some(
                         (o) =>
                             o.org_id === r.org_id &&
-                            o.role === "admin" &&
+                            o.role === "owner" &&
                             o.user_id !== r.user_id,
                     );
                 });
-                if (options.lastAdminTrigger && blocked) {
+                if (options.lastOwnerTrigger && blocked) {
                     return Promise.resolve({
                         data: null,
                         error: {
                             message:
-                                "An organization must keep at least one admin",
+                                "An organization must keep at least one owner",
                             code: "23514",
                         },
                     });
@@ -241,7 +241,7 @@ describe("deleteUserOrganizations", () => {
         // The old behaviour promoted "the earliest remaining member": a firm's
         // administration handed to whoever joined first, with no audit row and
         // no consent — and cleanup_org_admin_access_overrides then deleted the
-        // new admin's `deny` overrides, so a person deliberately walled off
+        // new owner's `deny` overrides, so a person deliberately walled off
         // from a matter became its owner because somebody else closed their
         // account. The route refuses with a 409 long before this runs; this
         // throw is the defense-in-depth copy on the durable job path.
@@ -252,7 +252,7 @@ describe("deleteUserOrganizations", () => {
                     id: "m1",
                     org_id: "shared1",
                     user_id: "u1",
-                    role: "admin",
+                    role: "owner",
                     created_at: 1,
                 },
                 {
@@ -274,10 +274,10 @@ describe("deleteUserOrganizations", () => {
 
         const error = await rejection(deleteUserOrganizations(db, "u1"));
         // NonRetryableJobError, not Error: no number of retries gives an
-        // organization a second admin, and a plain Error burned the whole
+        // organization a second owner, and a plain Error burned the whole
         // retry budget re-deriving the same refusal.
         expect(error).toBeInstanceOf(NonRetryableJobError);
-        expect((error as Error).message).toMatch(/only admin of organization shared1/);
+        expect((error as Error).message).toMatch(/only owner of organization shared1/);
 
         // Nothing moved: no promotion, no departure, no deletion.
         expect(db._tables.organizations).toHaveLength(1);
@@ -286,25 +286,25 @@ describe("deleteUserOrganizations", () => {
         expect(members.find((m) => m.user_id === "u2")?.role).toBe("member");
     });
 
-    it("leaves a co-admin's org untouched", async () => {
+    it("leaves a co-owner's org untouched", async () => {
         const db = makeDb({
             organizations: [{ id: "o1", name: "Acme" }],
             org_members: [
-                { id: "m1", org_id: "o1", user_id: "u1", role: "admin", created_at: 1 },
-                { id: "m2", org_id: "o1", user_id: "u2", role: "admin", created_at: 2 },
+                { id: "m1", org_id: "o1", user_id: "u1", role: "owner", created_at: 1 },
+                { id: "m2", org_id: "o1", user_id: "u2", role: "owner", created_at: 2 },
             ],
         });
         await deleteUserOrganizations(db, "u1");
         const members = db._tables.org_members as Row[];
         expect(members).toHaveLength(1);
-        expect(members[0]).toMatchObject({ user_id: "u2", role: "admin" });
+        expect(members[0]).toMatchObject({ user_id: "u2", role: "owner" });
     });
 
     it("deletes an org only when nobody and nothing is left in it", async () => {
         const db = makeDb({
             organizations: [{ id: "empty", name: "Empty" }],
             org_members: [
-                { id: "m1", org_id: "empty", user_id: "u1", role: "admin", created_at: 1 },
+                { id: "m1", org_id: "empty", user_id: "u1", role: "owner", created_at: 1 },
             ],
             projects: [],
         });
@@ -324,17 +324,17 @@ describe("deleteUserOrganizations", () => {
         const db = makeDb({
             organizations: [{ id: "o1", name: "Acme" }],
             org_members: [
-                { id: "m1", org_id: "o1", user_id: "u1", role: "admin", created_at: 1 },
+                { id: "m1", org_id: "o1", user_id: "u1", role: "owner", created_at: 1 },
             ],
             projects: [],
             workflows: [{ id: "w1", org_id: "o1", user_id: null }],
         });
         const error = await rejection(deleteUserOrganizations(db, "u1"));
         // NonRetryableJobError, not Error: no number of retries gives an
-        // organization a second admin, and a plain Error burned the whole
+        // organization a second owner, and a plain Error burned the whole
         // retry budget re-deriving the same refusal.
         expect(error).toBeInstanceOf(NonRetryableJobError);
-        expect((error as Error).message).toMatch(/only admin of organization o1/);
+        expect((error as Error).message).toMatch(/only owner of organization o1/);
         expect(db._tables.organizations).toHaveLength(1);
         expect(db._tables.workflows).toEqual([
             { id: "w1", org_id: "o1", user_id: null },
@@ -349,7 +349,7 @@ describe("deleteUserOrganizations", () => {
         const db = makeDb({
             organizations: [{ id: "o1", name: "Acme" }],
             org_members: [
-                { id: "m1", org_id: "o1", user_id: "u1", role: "admin", created_at: 1 },
+                { id: "m1", org_id: "o1", user_id: "u1", role: "owner", created_at: 1 },
             ],
             projects: [],
             documents: [],
@@ -357,35 +357,35 @@ describe("deleteUserOrganizations", () => {
         });
         const error = await rejection(deleteUserOrganizations(db, "u1"));
         // NonRetryableJobError, not Error: no number of retries gives an
-        // organization a second admin, and a plain Error burned the whole
+        // organization a second owner, and a plain Error burned the whole
         // retry budget re-deriving the same refusal.
         expect(error).toBeInstanceOf(NonRetryableJobError);
-        expect((error as Error).message).toMatch(/only admin of organization o1/);
+        expect((error as Error).message).toMatch(/only owner of organization o1/);
         expect(db._tables.organizations).toHaveLength(1);
     });
 
     it("refuses when the org still holds the firm's projects", async () => {
         // The org cannot be deleted (its content FKs are ON DELETE RESTRICT)
-        // and the sole admin cannot leave it memberless, so the only honest
+        // and the sole owner cannot leave it memberless, so the only honest
         // answer is to refuse the account deletion.
         const db = makeDb({
             organizations: [{ id: "o1", name: "Acme" }],
             org_members: [
-                { id: "m1", org_id: "o1", user_id: "u1", role: "admin", created_at: 1 },
+                { id: "m1", org_id: "o1", user_id: "u1", role: "owner", created_at: 1 },
             ],
             projects: [{ id: "p1", org_id: "o1", user_id: "u1" }],
         });
         const error = await rejection(deleteUserOrganizations(db, "u1"));
         // NonRetryableJobError, not Error: no number of retries gives an
-        // organization a second admin, and a plain Error burned the whole
+        // organization a second owner, and a plain Error burned the whole
         // retry budget re-deriving the same refusal.
         expect(error).toBeInstanceOf(NonRetryableJobError);
-        expect((error as Error).message).toMatch(/only admin of organization o1/);
+        expect((error as Error).message).toMatch(/only owner of organization o1/);
         expect(db._tables.organizations).toHaveLength(1);
         expect(db._tables.projects).toHaveLength(1);
     });
 
-    it("does not leave the last admin's membership for a cascade that never comes", async () => {
+    it("does not leave the last owner's membership for a cascade that never comes", async () => {
         // The half-finished-deletion bug, and the reason the product now
         // refuses. Leaving the row for auth.users to cascade produced a
         // memberless organization in theory; in practice the cascade never
@@ -401,40 +401,40 @@ describe("deleteUserOrganizations", () => {
                         id: "m1",
                         org_id: "o1",
                         user_id: "u1",
-                        role: "admin",
+                        role: "owner",
                         created_at: 1,
                     },
                 ],
                 projects: [{ id: "p1", org_id: "o1", user_id: "u1" }],
                 auth_users: [{ id: "u1" }],
             },
-            { lastAdminTrigger: true },
+            { lastOwnerTrigger: true },
         );
 
         const error = await rejection(deleteUserOrganizations(db, "u1"));
         // NonRetryableJobError, not Error: no number of retries gives an
-        // organization a second admin, and a plain Error burned the whole
+        // organization a second owner, and a plain Error burned the whole
         // retry budget re-deriving the same refusal.
         expect(error).toBeInstanceOf(NonRetryableJobError);
-        expect((error as Error).message).toMatch(/only admin of organization o1/);
+        expect((error as Error).message).toMatch(/only owner of organization o1/);
         expect(db._tables.org_members).toHaveLength(1);
         expect(db._tables.organizations).toHaveLength(1);
         expect(db._tables.projects).toHaveLength(1);
     });
 
     it("still deletes a membership the trigger has no reason to refuse", async () => {
-        // The other admin is the trigger's own escape: with a co-admin left,
+        // The other owner is the trigger's own escape: with a co-owner left,
         // the explicit delete is legal and remains the tidier path.
         const db = makeDb(
             {
                 organizations: [{ id: "o1", name: "Acme" }],
                 org_members: [
-                    { id: "m1", org_id: "o1", user_id: "u1", role: "admin", created_at: 1 },
-                    { id: "m2", org_id: "o1", user_id: "u2", role: "admin", created_at: 2 },
+                    { id: "m1", org_id: "o1", user_id: "u1", role: "owner", created_at: 1 },
+                    { id: "m2", org_id: "o1", user_id: "u2", role: "owner", created_at: 2 },
                 ],
                 auth_users: [{ id: "u1" }, { id: "u2" }],
             },
-            { lastAdminTrigger: true },
+            { lastOwnerTrigger: true },
         );
         await deleteUserOrganizations(db, "u1");
         expect((db._tables.org_members as Row[]).map((m) => m.user_id)).toEqual([
@@ -451,7 +451,7 @@ describe("deleteUserOrganizations", () => {
             {
                 organizations: [{ id: "o1", name: "Acme" }],
                 org_members: [
-                    { id: "m1", org_id: "o1", user_id: "u1", role: "admin", created_at: 1 },
+                    { id: "m1", org_id: "o1", user_id: "u1", role: "owner", created_at: 1 },
                 ],
                 projects: [{ id: "p1", org_id: "o1", user_id: "u1" }],
             },
@@ -491,11 +491,11 @@ describe("deleteUserOrganizations", () => {
 });
 
 describe("listOrgsBlockingAccountDeletion", () => {
-    it("blocks a sole admin whose org still has members", async () => {
+    it("blocks a sole owner whose org still has members", async () => {
         const db = makeDb({
             organizations: [{ id: "o1", name: "Acme LLP" }],
             org_members: [
-                { id: "m1", org_id: "o1", user_id: "u1", role: "admin", created_at: 1 },
+                { id: "m1", org_id: "o1", user_id: "u1", role: "owner", created_at: 1 },
                 { id: "m2", org_id: "o1", user_id: "u2", role: "member", created_at: 2 },
             ],
         });
@@ -506,13 +506,13 @@ describe("listOrgsBlockingAccountDeletion", () => {
         ]);
     });
 
-    it("blocks a sole admin whose empty org still owns content", async () => {
+    it("blocks a sole owner whose empty org still owns content", async () => {
         // Nobody is left to promote, and the org cannot be deleted either:
         // its content foreign keys are ON DELETE RESTRICT.
         const db = makeDb({
             organizations: [{ id: "o1", name: "Solo LLP" }],
             org_members: [
-                { id: "m1", org_id: "o1", user_id: "u1", role: "admin", created_at: 1 },
+                { id: "m1", org_id: "o1", user_id: "u1", role: "owner", created_at: 1 },
             ],
             projects: [{ id: "p1", org_id: "o1", user_id: "u1" }],
         });
@@ -529,7 +529,7 @@ describe("listOrgsBlockingAccountDeletion", () => {
         const db = makeDb({
             organizations: [{ id: "o1", name: "Empty" }],
             org_members: [
-                { id: "m1", org_id: "o1", user_id: "u1", role: "admin", created_at: 1 },
+                { id: "m1", org_id: "o1", user_id: "u1", role: "owner", created_at: 1 },
             ],
             projects: [],
         });
@@ -538,12 +538,41 @@ describe("listOrgsBlockingAccountDeletion", () => {
         );
     });
 
-    it("does not block when another admin can take over", async () => {
+    it("does not block when another owner can take over", async () => {
+        const db = makeDb({
+            organizations: [{ id: "o1", name: "Acme" }],
+            org_members: [
+                { id: "m1", org_id: "o1", user_id: "u1", role: "owner", created_at: 1 },
+                { id: "m2", org_id: "o1", user_id: "u2", role: "owner", created_at: 2 },
+            ],
+            projects: [{ id: "p1", org_id: "o1", user_id: "u1" }],
+        });
+        await expect(listOrgsBlockingAccountDeletion(db, "u1")).resolves.toEqual(
+            [],
+        );
+    });
+
+    it("blocks a sole owner even when the org also has an admin", async () => {
+        // An admin is not a successor: they cannot delete the organization or
+        // appoint anyone, so leaving it to them strands it just the same.
+        const db = makeDb({
+            organizations: [{ id: "o1", name: "Acme" }],
+            org_members: [
+                { id: "m1", org_id: "o1", user_id: "u1", role: "owner", created_at: 1 },
+                { id: "m2", org_id: "o1", user_id: "u2", role: "admin", created_at: 2 },
+            ],
+        });
+        await expect(listOrgsBlockingAccountDeletion(db, "u1")).resolves.toEqual(
+            [{ org_id: "o1", name: "Acme", reason: "members" }],
+        );
+    });
+
+    it("does not block an admin, who is never the organization's last owner", async () => {
         const db = makeDb({
             organizations: [{ id: "o1", name: "Acme" }],
             org_members: [
                 { id: "m1", org_id: "o1", user_id: "u1", role: "admin", created_at: 1 },
-                { id: "m2", org_id: "o1", user_id: "u2", role: "admin", created_at: 2 },
+                { id: "m2", org_id: "o1", user_id: "u2", role: "owner", created_at: 2 },
             ],
             projects: [{ id: "p1", org_id: "o1", user_id: "u1" }],
         });
@@ -557,7 +586,7 @@ describe("listOrgsBlockingAccountDeletion", () => {
             organizations: [{ id: "o1", name: "Acme" }],
             org_members: [
                 { id: "m1", org_id: "o1", user_id: "u1", role: "member", created_at: 1 },
-                { id: "m2", org_id: "o1", user_id: "u2", role: "admin", created_at: 2 },
+                { id: "m2", org_id: "o1", user_id: "u2", role: "owner", created_at: 2 },
             ],
             projects: [{ id: "p1", org_id: "o1", user_id: "u1" }],
         });
@@ -573,9 +602,9 @@ describe("listOrgsBlockingAccountDeletion", () => {
                 { id: "o2", name: "Org B" },
             ],
             org_members: [
-                { id: "m1", org_id: "o1", user_id: "u1", role: "admin", created_at: 1 },
+                { id: "m1", org_id: "o1", user_id: "u1", role: "owner", created_at: 1 },
                 { id: "m2", org_id: "o1", user_id: "u2", role: "member", created_at: 2 },
-                { id: "m3", org_id: "o2", user_id: "u1", role: "admin", created_at: 3 },
+                { id: "m3", org_id: "o2", user_id: "u1", role: "owner", created_at: 3 },
             ],
             chats: [{ id: "c1", org_id: "o2" }],
         });
@@ -595,7 +624,7 @@ describe("listOrgsBlockingAccountDeletion", () => {
             {
                 organizations: [{ id: "o1", name: "Acme" }],
                 org_members: [
-                    { id: "m1", org_id: "o1", user_id: "u1", role: "admin", created_at: 1 },
+                    { id: "m1", org_id: "o1", user_id: "u1", role: "owner", created_at: 1 },
                 ],
                 projects: [{ id: "p1", org_id: "o1", user_id: "u1" }],
             },
@@ -652,7 +681,7 @@ describe("deleteUserProjects and organization ownership", () => {
 
 describe("deleteUserAccountData refuses before it destroys", () => {
     it("throws NonRetryableJobError without issuing a single write", async () => {
-        // THE ORDERING BUG. The sole-admin question used to be asked by
+        // THE ORDERING BUG. The sole-owner question used to be asked by
         // deleteUserOrganizations, at the very END of the cascade — so the
         // refusal was real, but it arrived after the account's projects,
         // documents, storage objects and audit rows had already been
@@ -669,7 +698,7 @@ describe("deleteUserAccountData refuses before it destroys", () => {
                         id: "m1",
                         org_id: "o1",
                         user_id: "u1",
-                        role: "admin",
+                        role: "owner",
                         created_at: 1,
                     },
                     {
@@ -695,10 +724,10 @@ describe("deleteUserAccountData refuses before it destroys", () => {
             deleteUserAccountData(db, "u1", "u1@example.com"),
         );
 
-        // Non-retryable: the org does not acquire a second admin because the
+        // Non-retryable: the org does not acquire a second owner because the
         // queue asks twenty more times over the next few hours.
         expect(error).toBeInstanceOf(NonRetryableJobError);
-        expect((error as Error).message).toMatch(/only admin of o1 \(members\)/);
+        expect((error as Error).message).toMatch(/only owner of o1 \(members\)/);
         // Nothing was written — not a delete, not the org-project detach.
         expect(writes).toEqual([]);
         // ...and nothing was removed from storage either.

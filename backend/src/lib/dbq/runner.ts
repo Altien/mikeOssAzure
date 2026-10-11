@@ -102,7 +102,7 @@ export type DbJobFailureHook = (db: Db, job: DbJob) => Promise<void>;
  *
  * The retry budget is for flaky networks and busy databases. Spending 20
  * attempts over hours on a job the domain will refuse identically every time
- * (account deletion for the only admin of an organization that still has
+ * (account deletion for the only owner of an organization that still has
  * members) buries the real reason under a wall of repeats and leaves the
  * user's request in limbo far longer than it needs to be.
  */

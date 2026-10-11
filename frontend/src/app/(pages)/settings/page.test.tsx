@@ -199,7 +199,7 @@ describe("SettingsPage Google email changes", () => {
     it("keeps the session and shows the reason when deletion is refused", async () => {
         const user = userEvent.setup();
         const detail =
-            "You are the only admin of Elite Law LLP. Make another member an admin, or delete the organization, before deleting your account.";
+            "You are the only owner of Elite Law LLP. Make another member an owner, or delete the organization, before deleting your account.";
         state.deleteAccount.mockRejectedValue(
             new MikeApiError({
                 status: 409,

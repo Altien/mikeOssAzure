@@ -535,11 +535,11 @@ describe("projects.routes", () => {
       ]);
     });
 
-    it("keeps an org admin's view of a project carrying a stale deny row", async () => {
+    it.each(["admin", "owner"])("keeps an org %s's view of a project carrying a stale deny row", async (role) => {
       vi.mocked(createServerSupabase).mockImplementationOnce(
         () =>
           directorySearchDb({
-            memberships: [{ org_id: "o1", role: "admin" }],
+            memberships: [{ org_id: "o1", role }],
             orgProjects: [WALLED],
             denies: ["p-walled"],
           }) as unknown as ReturnType<typeof createServerSupabase>,

@@ -1340,7 +1340,7 @@ describe("user.routes", () => {
         // SOLE-ADMIN REFUSAL. Deleting this account would either hand the
         // organization to an arbitrary successor or strand it with no members
         // at all, so the product refuses and names the organizations.
-        it("DELETE /user/account returns 409 for the sole admin of a live org", async () => {
+        it("DELETE /user/account returns 409 for the sole owner of a live org", async () => {
             listOrgsBlockingAccountDeletion.mockResolvedValue([
                 { org_id: "o1", name: "Org A", reason: "members" },
                 { org_id: "o2", name: "Org B", reason: "content" },
@@ -1353,7 +1353,7 @@ describe("user.routes", () => {
             expect(res.status).toBe(409);
             expect(res.body.code).toBe("org_successor_required");
             expect(res.body.detail).toBe(
-                "You are the only admin of Org A. Make another member an admin, or delete the organization, before deleting your account. You are the only admin of Org B, which still owns content. Delete or move the organization's projects, workflows, documents and reviews, or delete the organization, before deleting your account.",
+                "You are the only owner of Org A. Make another member an owner, or delete the organization, before deleting your account. You are the only owner of Org B, which still owns content. Delete or move the organization's projects, workflows, documents and reviews, or delete the organization, before deleting your account.",
             );
             expect(res.body.organizations).toEqual([
                 { org_id: "o1", name: "Org A", reason: "members" },
@@ -1361,14 +1361,14 @@ describe("user.routes", () => {
             ]);
             // Nothing was scheduled, nothing was revoked, nothing was
             // destroyed — the user is still signed in and can appoint an
-            // admin. The old behaviour answered 204, revoked the session and
+            // owner. The old behaviour answered 204, revoked the session and
             // then failed the job forever.
             expect(supabaseState.inserts.db_jobs ?? []).toHaveLength(0);
             expect(adminSignOut).not.toHaveBeenCalled();
             expect(deleteUserAccountData).not.toHaveBeenCalled();
         });
 
-        it("DELETE /user/account refuses the inline path for a sole admin too", async () => {
+        it("DELETE /user/account refuses the inline path for a sole owner too", async () => {
             // The no-runner fallback runs the cascade synchronously, so the
             // check must gate it as well.
             dbJobsEnabled.mockReturnValue(false);

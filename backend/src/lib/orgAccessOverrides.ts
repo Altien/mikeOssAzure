@@ -1,6 +1,18 @@
 import type { Db } from "./supabase";
 import type { ProjectRole } from "./permissions";
 
+// Declared here rather than imported from ./access, which imports this file.
+type OrgRole = "owner" | "admin" | "member";
+
+function isOrgRole(value: unknown): value is OrgRole {
+    return value === "owner" || value === "admin" || value === "member";
+}
+
+/** Owners and admins hold Owner on organization content implicitly. */
+function hasImplicitOwnerAccess(role: OrgRole): boolean {
+    return role === "owner" || role === "admin";
+}
+
 export type OrgResourceKind =
     | "project"
     | "workflow";
@@ -63,7 +75,7 @@ export async function findOrgMemberByEmail(
 ): Promise<
     | {
           ok: true;
-          member: { userId: string; email: string; orgRole: "admin" | "member" };
+          member: { userId: string; email: string; orgRole: OrgRole };
       }
     | { ok: false; kind: "not_found" | "db_error"; detail: string }
 > {
@@ -101,7 +113,7 @@ export async function findOrgMemberByEmail(
             detail: "Only current organization members can be assigned a role",
         };
     const orgRole = (membership as { role?: unknown }).role;
-    if (orgRole !== "admin" && orgRole !== "member")
+    if (!isOrgRole(orgRole))
         return {
             ok: false,
             kind: "db_error",
@@ -110,8 +122,9 @@ export async function findOrgMemberByEmail(
     return { ok: true, member: { userId, email, orgRole } };
 }
 
-/** A resource creator and an organization admin retain owner access. Keep the
- * target lookup and this rule identical for project and workflow assignments.
+/** A resource creator and an organization owner or admin retain owner access.
+ * Keep the target lookup and this rule identical for project and workflow
+ * assignments.
  * Callers still authorize the actor's access.manage permission first.
  */
 export async function findAssignableOrgMember(
@@ -125,7 +138,7 @@ export async function findAssignableOrgMember(
           member: {
               userId: string;
               email: string;
-              orgRole: "admin" | "member";
+              orgRole: OrgRole;
           };
       }
     | { ok: false; kind: "validation"; detail: string }
@@ -143,11 +156,11 @@ export async function findAssignableOrgMember(
             kind: "validation",
             detail: "The creator is always an owner",
         };
-    if (target.member.orgRole === "admin")
+    if (hasImplicitOwnerAccess(target.member.orgRole))
         return {
             ok: false,
             kind: "validation",
-            detail: "Organization admins always have owner access",
+            detail: "Organization owners and admins always have owner access",
         };
     return target;
 }
@@ -178,7 +191,7 @@ export async function listOrgAccessPeople(
 
     const memberRows = (memberships ?? []) as {
         user_id: string;
-        role: "admin" | "member";
+        role: OrgRole;
     }[];
     const userIds = memberRows.map(
         (membership) => membership.user_id,
@@ -207,17 +220,17 @@ export async function listOrgAccessPeople(
         const userId = membership.user_id;
         const profile = profileByUserId.get(userId);
         if (!profile?.email) continue;
+        const implicitOwner = hasImplicitOwnerAccess(membership.role);
         people.push({
             user_id: userId,
             email: profile.email,
             display_name: profile.display_name ?? null,
             role:
-                userId === params.creatorId || membership.role === "admin"
+                userId === params.creatorId || implicitOwner
                     ? "owner"
                     : overrideByUserId.get(userId) ??
                       "editor",
-            has_override:
-                membership.role !== "admin" && overrideByUserId.has(userId),
+            has_override: !implicitOwner && overrideByUserId.has(userId),
         });
     }
     return { ok: true, people };

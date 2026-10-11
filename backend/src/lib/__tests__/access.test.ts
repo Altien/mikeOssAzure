@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+    canManageOrgRole,
     checkProjectAccess,
     checkWorkflowAccess,
     creatorScopedAllowed,
@@ -7,9 +8,12 @@ import {
     ensureDocAccess,
     ensureReviewAccess,
     filterAccessibleDocumentIds,
+    isOrgAdmin,
+    isOrgOwner,
     listAccessibleProjectIds,
     orgRoleToProjectRole,
     resolveContentOrgId,
+    strongerOrgRole,
 } from "../access";
 
 type Row = Record<string, unknown>;
@@ -353,9 +357,37 @@ describe("access helpers", () => {
 // ---------------------------------------------------------------------------
 
 describe("org role inheritance", () => {
-    it("maps org Admin to Owner and org Member to Editor", () => {
+    it("maps org Owner and Admin to Owner and org Member to Editor", () => {
+        expect(orgRoleToProjectRole("owner")).toBe("owner");
         expect(orgRoleToProjectRole("admin")).toBe("owner");
         expect(orgRoleToProjectRole("member")).toBe("editor");
+    });
+
+    it("treats an owner as able to do everything an admin can", () => {
+        expect(isOrgAdmin("owner")).toBe(true);
+        expect(isOrgAdmin("admin")).toBe(true);
+        expect(isOrgAdmin("member")).toBe(false);
+        expect(isOrgAdmin(null)).toBe(false);
+        expect(isOrgOwner("owner")).toBe(true);
+        expect(isOrgOwner("admin")).toBe(false);
+    });
+
+    it("lets owners manage every role and everyone else only those below", () => {
+        const roles = ["owner", "admin", "member"] as const;
+        const allowed = (actor: (typeof roles)[number]) =>
+            roles.filter((role) => canManageOrgRole(actor, role));
+        expect(allowed("owner")).toEqual(["owner", "admin", "member"]);
+        // Not "admin": an admin who could manage admins could appoint one,
+        // or remove the peer who was about to object.
+        expect(allowed("admin")).toEqual(["member"]);
+        expect(allowed("member")).toEqual([]);
+        expect(canManageOrgRole(null, "member")).toBe(false);
+    });
+
+    it("picks the stronger of two organization roles", () => {
+        expect(strongerOrgRole("member", "admin")).toBe("admin");
+        expect(strongerOrgRole("owner", "admin")).toBe("owner");
+        expect(strongerOrgRole("admin", "admin")).toBe("admin");
     });
 
     const db = makeDb({
@@ -415,7 +447,7 @@ describe("org role inheritance", () => {
         });
     });
 
-    it("keeps Admin as Owner while applying overrides to Members", async () => {
+    it("keeps Owner and Admin as Owner while applying overrides to Members", async () => {
         const overrideDb = makeDb({
             projects: [
                 { id: "overridden", user_id: "founder", org_id: "org-1" },
@@ -423,6 +455,7 @@ describe("org role inheritance", () => {
             org_members: [
                 { org_id: "org-1", user_id: "founder", role: "admin" },
                 { org_id: "org-1", user_id: "admin-editor", role: "admin" },
+                { org_id: "org-1", user_id: "owner-denied", role: "owner" },
                 { org_id: "org-1", user_id: "member-viewer", role: "member" },
                 { org_id: "org-1", user_id: "member-denied", role: "member" },
             ],
@@ -432,6 +465,12 @@ describe("org role inheritance", () => {
                     org_id: "org-1",
                     user_id: "admin-editor",
                     role: "editor",
+                },
+                {
+                    project_id: "overridden",
+                    org_id: "org-1",
+                    user_id: "owner-denied",
+                    role: "deny",
                 },
                 {
                     project_id: "overridden",
@@ -456,7 +495,35 @@ describe("org role inheritance", () => {
                     user_id: "admin-editor",
                     role: "deny",
                 },
+                {
+                    workflow_id: "workflow-overridden",
+                    org_id: "org-1",
+                    user_id: "owner-denied",
+                    role: "deny",
+                },
             ],
+        });
+        // A stale deny row must not bind an organization owner on either
+        // resource kind: nothing else can recover a matter everyone else has
+        // been walled off from.
+        await expect(
+            checkProjectAccess("overridden", "owner-denied", null, overrideDb),
+        ).resolves.toMatchObject({
+            ok: true,
+            orgRole: "owner",
+            projectRole: "owner",
+        });
+        await expect(
+            checkWorkflowAccess(
+                "workflow-overridden",
+                "owner-denied",
+                null,
+                overrideDb,
+            ),
+        ).resolves.toMatchObject({
+            ok: true,
+            orgRole: "owner",
+            projectRole: "owner",
         });
         await expect(
             checkProjectAccess("overridden", "admin-editor", null, overrideDb),
@@ -990,7 +1057,7 @@ describe("listAccessibleProjectIds", () => {
         ]);
     });
 
-    it("hides a denied org project but keeps the creator's and the admin's", async () => {
+    it("hides a denied org project but keeps the creator's, the admin's and the owner's", async () => {
         // The two exemptions checkProjectAccess applies, re-derived inline:
         // the creator and an org admin keep Owner and cannot be denied. Get
         // this wrong in the batched shape and a partner loses their own
@@ -999,6 +1066,7 @@ describe("listAccessibleProjectIds", () => {
             org_members: [
                 { org_id: "org-1", user_id: "member", role: "member" },
                 { org_id: "org-1", user_id: "boss", role: "admin" },
+                { org_id: "org-1", user_id: "principal", role: "owner" },
                 { org_id: "org-1", user_id: "author", role: "member" },
             ],
             projects: [
@@ -1022,6 +1090,12 @@ describe("listAccessibleProjectIds", () => {
                 {
                     project_id: "walled",
                     org_id: "org-1",
+                    user_id: "principal",
+                    role: "deny",
+                },
+                {
+                    project_id: "walled",
+                    org_id: "org-1",
                     user_id: "author",
                     role: "deny",
                 },
@@ -1040,6 +1114,14 @@ describe("listAccessibleProjectIds", () => {
             listAccessibleProjectIds(
                 "boss",
                 "boss@example.com",
+                makeRecordingDb(tables).db,
+            ),
+        ).resolves.toEqual(["walled", "open"]);
+        // Nor can an org owner.
+        await expect(
+            listAccessibleProjectIds(
+                "principal",
+                "principal@example.com",
                 makeRecordingDb(tables).db,
             ),
         ).resolves.toEqual(["walled", "open"]);

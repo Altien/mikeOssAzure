@@ -6,7 +6,7 @@ import { OrganizationWorkspace } from "./OrganizationWorkspace";
 
 const mocks = vi.hoisted(() => ({
   push: vi.fn(),
-  role: "admin" as "admin" | "member",
+  role: "owner" as "owner" | "admin" | "member",
   getOrg: vi.fn(),
   listOrgMembers: vi.fn(),
   listOrgResources: vi.fn(),
@@ -53,7 +53,7 @@ beforeEach(() => {
     removeEventListener: vi.fn(),
     dispatchEvent: vi.fn(),
   }));
-  mocks.role = "admin";
+  mocks.role = "owner";
   mocks.getOrg.mockImplementation(async () => ({
     id: "org-1",
     name: "Elite Law LLP",
@@ -66,7 +66,7 @@ beforeEach(() => {
       user_id: "me",
       display_name: "William Chen",
       email: "me@firm.example",
-      role: "admin",
+      role: "owner",
       created_at: "2026-08-30T00:00:00Z",
     },
     {
@@ -137,7 +137,7 @@ describe("OrganizationWorkspace", () => {
     expect(screen.queryByRole("button", { name: "Reviews" })).not.toBeInTheDocument();
   });
 
-  it("lets admins change a member's role from the colored role tab", async () => {
+  it("lets owners change a member's role from the colored role tab", async () => {
     const user = userEvent.setup();
     mocks.updateOrgMember.mockResolvedValue({});
     render(<OrganizationWorkspace orgId="org-1" />);
@@ -162,12 +162,12 @@ describe("OrganizationWorkspace", () => {
     ).toHaveClass("bg-blue-100", "text-blue-700");
   });
 
-  it("shows last-admin failures with the warning primitive", async () => {
+  it("shows last-owner failures with the warning primitive", async () => {
     const user = userEvent.setup();
     mocks.updateOrgMember.mockRejectedValue(
       new MikeApiError({
         status: 409,
-        message: "An organization must keep at least one admin.",
+        message: "An organization must keep at least one owner.",
       }),
     );
     render(<OrganizationWorkspace orgId="org-1" />);
@@ -180,7 +180,7 @@ describe("OrganizationWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Continue" }));
 
     expect(
-      await screen.findByText("An organization must keep at least one admin."),
+      await screen.findByText("An organization must keep at least one owner."),
     ).toBeInTheDocument();
     expect(screen.getByText("Organization action failed")).toBeInTheDocument();
     expect(
@@ -226,7 +226,7 @@ describe("OrganizationWorkspace", () => {
     expect(screen.queryByText("Jane Lee")).not.toBeInTheDocument();
   });
 
-  it("warns an admin who includes themselves in bulk removal", async () => {
+  it("warns an owner who includes themselves in bulk removal", async () => {
     const user = userEvent.setup();
     render(<OrganizationWorkspace orgId="org-1" />);
     await screen.findByText("William Chen");
@@ -240,14 +240,14 @@ describe("OrganizationWorkspace", () => {
       screen.getByRole("menuitem", { name: "Remove all selected" }),
     );
 
-    // The refusal is about the route, not about admin arithmetic: leaving is
-    // a different action, and saying "must keep at least one admin" was wrong
-    // however many admins the organization had.
+    // The refusal is about the route, not about owner arithmetic: leaving is
+    // a different action, and saying "must keep at least one owner" was wrong
+    // however many owners the organization had.
     expect(
       await screen.findByText("Use Leave organization to remove yourself."),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText("An organization must keep at least one admin."),
+      screen.queryByText("An organization must keep at least one owner."),
     ).not.toBeInTheDocument();
     expect(mocks.removeOrgMember).not.toHaveBeenCalled();
   });
@@ -271,7 +271,7 @@ describe("OrganizationWorkspace", () => {
     );
   });
 
-  it("drops admin-only controls as soon as an admin demotes themselves", async () => {
+  it("drops owner and admin controls as soon as an owner demotes themselves", async () => {
     const user = userEvent.setup();
     mocks.updateOrgMember.mockResolvedValue({});
     render(<OrganizationWorkspace orgId="org-1" />);
@@ -282,8 +282,8 @@ describe("OrganizationWorkspace", () => {
     );
     await user.click(screen.getByRole("menuitem", { name: "Member" }));
 
-    // Losing your own admin rights is confirmed before it happens.
-    expect(screen.getByText("Give up admin access?")).toBeInTheDocument();
+    // Losing your own owner rights is confirmed before it happens.
+    expect(screen.getByText("Give up owner access?")).toBeInTheDocument();
     expect(mocks.updateOrgMember).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Continue" }));
 
@@ -335,13 +335,13 @@ describe("OrganizationWorkspace", () => {
     await waitFor(() =>
       expect(mocks.updateOrgMember).toHaveBeenCalledTimes(1),
     );
-    expect(screen.getByText("Give up admin access?")).toBeInTheDocument();
+    expect(screen.getByText("Give up owner access?")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Continuing..." })).toBeDisabled();
 
     settle?.();
 
     await waitFor(() =>
-      expect(screen.queryByText("Give up admin access?")).not.toBeInTheDocument(),
+      expect(screen.queryByText("Give up owner access?")).not.toBeInTheDocument(),
     );
   });
 
@@ -495,7 +495,7 @@ describe("OrganizationWorkspace", () => {
         user_id: "me",
         display_name: "William Chen",
         email: "me@firm.example",
-        role: "admin",
+        role: "owner",
         created_at: "2026-08-30T00:00:00Z",
       },
     ];
@@ -536,7 +536,7 @@ describe("OrganizationWorkspace", () => {
       user_id: "me",
       display_name: "William Chen",
       email: "me@firm.example",
-      role: "admin",
+      role: "owner",
       created_at: "2026-08-30T00:00:00Z",
     };
     const lee = {
@@ -630,5 +630,246 @@ describe("OrganizationWorkspace", () => {
 
     await user.click(screen.getByRole("button", { name: "Workflows" }));
     expect(screen.getByText("Disclosure workflow")).toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // An admin runs the organization day to day; an owner decides who does.
+  // The server refuses each of these, so offering them only produced a 403.
+  // -------------------------------------------------------------------------
+  describe("as an admin who is not an owner", () => {
+    beforeEach(() => {
+      mocks.role = "admin";
+      mocks.listOrgMembers.mockResolvedValue([
+        {
+          id: "m1",
+          user_id: "me",
+          display_name: "William Chen",
+          email: "me@firm.example",
+          role: "admin",
+          created_at: "2026-08-30T00:00:00Z",
+        },
+        {
+          id: "m2",
+          user_id: "u2",
+          display_name: "Jane Lee",
+          email: "jane@firm.example",
+          role: "member",
+          created_at: "2026-09-01T00:00:00Z",
+        },
+        {
+          id: "m3",
+          user_id: "u3",
+          display_name: "Olive Owner",
+          email: "olive@firm.example",
+          role: "owner",
+          created_at: "2026-08-01T00:00:00Z",
+        },
+        {
+          id: "m4",
+          user_id: "u4",
+          display_name: "Adam Admin",
+          email: "adam@firm.example",
+          role: "admin",
+          created_at: "2026-08-02T00:00:00Z",
+        },
+      ]);
+    });
+
+    it("shows every role as plain text, because none of them is theirs to change", async () => {
+      render(<OrganizationWorkspace orgId="org-1" />);
+      await screen.findByText("Olive Owner");
+
+      for (const name of [
+        "William Chen",
+        "Jane Lee",
+        "Olive Owner",
+        "Adam Admin",
+      ]) {
+        expect(
+          screen.queryByRole("button", { name: `Change role for ${name}` }),
+        ).not.toBeInTheDocument();
+      }
+      expect(screen.getByText("Owner")).toHaveClass(
+        "bg-amber-100",
+        "text-amber-700",
+      );
+    });
+
+    it("offers removal for members and for themselves only", async () => {
+      render(<OrganizationWorkspace orgId="org-1" />);
+      await screen.findByText("Olive Owner");
+
+      expect(
+        screen.getByRole("button", { name: "Actions for Jane Lee" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Actions for William Chen" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Actions for Olive Owner" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Actions for Adam Admin" }),
+      ).not.toBeInTheDocument();
+
+      // The right-click menu is the same decision reached another way.
+      fireEvent.contextMenu(screen.getByText("Olive Owner"), {
+        clientX: 40,
+        clientY: 40,
+      });
+      expect(screen.queryByRole("menuitem")).not.toBeInTheDocument();
+    });
+
+    it("refuses a bulk removal that includes an owner or another admin", async () => {
+      const user = userEvent.setup();
+      render(<OrganizationWorkspace orgId="org-1" />);
+      await screen.findByText("Olive Owner");
+
+      await user.click(
+        screen.getByRole("checkbox", { name: "Select Jane Lee" }),
+      );
+      await user.click(
+        screen.getByRole("checkbox", { name: "Select Olive Owner" }),
+      );
+      await user.click(screen.getByRole("button", { name: "Actions" }));
+      await user.click(
+        screen.getByRole("menuitem", { name: "Remove all selected" }),
+      );
+
+      expect(
+        await screen.findByText(
+          "Only an organization owner can remove admins and other owners.",
+        ),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText("Remove selected people?"),
+      ).not.toBeInTheDocument();
+      expect(mocks.removeOrgMember).not.toHaveBeenCalled();
+    });
+
+    it("lets them rename the organization but not delete it", async () => {
+      const user = userEvent.setup();
+      render(<OrganizationWorkspace orgId="org-1" />);
+      await screen.findByText("Olive Owner");
+
+      await user.click(
+        screen.getByRole("button", { name: "Organization settings" }),
+      );
+      await user.click(screen.getByText("Organization settings"));
+      expect(screen.getByLabelText("Organization name")).toHaveValue(
+        "Elite Law LLP",
+      );
+      expect(
+        screen.queryByRole("button", { name: "Delete organization" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("invites members only, and leaves an owner's admin invitation alone", async () => {
+      const user = userEvent.setup();
+      mocks.listOrgInvitations.mockResolvedValue([
+        {
+          id: "i1",
+          org_id: "org-1",
+          email: "partner@firm.example",
+          role: "admin",
+          invited_by: "u3",
+          status: "pending",
+          expires_at: "2026-12-01T00:00:00Z",
+          created_at: "2026-10-01T00:00:00Z",
+          accepted_at: null,
+        },
+        {
+          id: "i2",
+          org_id: "org-1",
+          email: "associate@firm.example",
+          role: "member",
+          invited_by: "me",
+          status: "pending",
+          expires_at: "2026-12-01T00:00:00Z",
+          created_at: "2026-10-01T00:00:00Z",
+          accepted_at: null,
+        },
+      ]);
+      render(<OrganizationWorkspace orgId="org-1" />);
+      await screen.findByText("Olive Owner");
+
+      await user.click(screen.getByRole("button", { name: "Add member" }));
+      // No picker: Member is the only role an admin may hand out.
+      expect(screen.queryByLabelText("Role")).not.toBeInTheDocument();
+      expect(
+        screen.getByText(/Only an organization owner can invite admins\./),
+      ).toBeInTheDocument();
+
+      expect(
+        screen.getByRole("button", {
+          name: "Resend invitation to partner@firm.example",
+        }),
+      ).toBeDisabled();
+      expect(
+        screen.getByRole("button", {
+          name: "Cancel invitation to partner@firm.example",
+        }),
+      ).toBeDisabled();
+      expect(
+        screen.getByRole("button", {
+          name: "Cancel invitation to associate@firm.example",
+        }),
+      ).toBeEnabled();
+    });
+  });
+
+  it("lets an owner hand out every role, ownership included", async () => {
+    const user = userEvent.setup();
+    mocks.updateOrgMember.mockResolvedValue({});
+    render(<OrganizationWorkspace orgId="org-1" />);
+    await screen.findByText("Jane Lee");
+
+    await user.click(
+      screen.getByRole("button", { name: "Change role for Jane Lee" }),
+    );
+    expect(
+      screen.getAllByRole("menuitem").map((item) => item.textContent),
+    ).toEqual(["Owner", "Admin", "Member"]);
+    await user.click(screen.getByRole("menuitem", { name: "Owner" }));
+
+    await waitFor(() =>
+      expect(mocks.updateOrgMember).toHaveBeenCalledWith(
+        "org-1",
+        "u2",
+        "owner",
+      ),
+    );
+  });
+
+  it("words an owner stepping down to admin as losing ownership, not administration", async () => {
+    const user = userEvent.setup();
+    mocks.updateOrgMember.mockResolvedValue({});
+    render(<OrganizationWorkspace orgId="org-1" />);
+    await screen.findByText("William Chen");
+
+    await user.click(
+      screen.getByRole("button", { name: "Change role for William Chen" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Admin" }));
+
+    expect(screen.getByText("Step down to admin?")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() =>
+      expect(mocks.updateOrgMember).toHaveBeenCalledWith(
+        "org-1",
+        "me",
+        "admin",
+      ),
+    );
+    // Still an admin: settings stay, deletion and role changes go.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Change role for Jane Lee" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole("button", { name: "Organization settings" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add member" })).toBeEnabled();
   });
 });

@@ -11,9 +11,10 @@ import type { Db } from "./supabase";
  *
  * The creator is Owner. For personal content, access otherwise comes from one
  * role-aware direct grant. Projects and workflows may instead be organization
- * scoped: Admins inherit Owner, Members inherit Editor, and a per-resource
- * override can assign Owner, Editor, Viewer, or Deny. Chats and reviews only
- * inherit organization access through a parent project.
+ * scoped: organization Owners and Admins inherit Owner, Members inherit
+ * Editor, and a per-resource override can assign a Member Owner, Editor,
+ * Viewer, or Deny. Chats and reviews only inherit organization access through
+ * a parent project.
  *
  * Personal content is simply `org_id IS NULL` — there is no hidden personal
  * organization. Content without an org is reachable through branches 1 and 2
@@ -41,28 +42,66 @@ export {
 } from "./permissions";
 
 /**
- * Organizations have exactly two roles. Admins administer the organization
- * (members, invitations, settings) and inherit Owner on organization content;
- * members collaborate and inherit Editor.
+ * Organizations have three roles, strongest first. Owners are accountable for
+ * the organization: they alone delete it and appoint or remove admins and
+ * other owners. Admins run it day to day (members, invitations, settings).
+ * Members collaborate. Owners and admins inherit Owner on organization
+ * content; members inherit Editor.
  */
-export type OrgRole = "admin" | "member";
+export type OrgRole = "owner" | "admin" | "member";
 
-export const ORG_ROLES: OrgRole[] = ["admin", "member"];
+export const ORG_ROLES: OrgRole[] = ["owner", "admin", "member"];
+
+const ORG_ROLE_RANK: Record<OrgRole, number> = {
+    member: 0,
+    admin: 1,
+    owner: 2,
+};
 
 export function isOrgRole(value: unknown): value is OrgRole {
     return typeof value === "string" && (ORG_ROLES as string[]).includes(value);
 }
 
-/** Only org admins may administer an org (members, invitations, settings). */
+/** Only an org owner may delete the org or decide who administers it. */
+export function isOrgOwner(role: OrgRole | null | undefined): boolean {
+    return role === "owner";
+}
+
+/**
+ * Whether the role may administer an org (members, invitations, settings).
+ * An owner can do everything an admin can.
+ */
 export function isOrgAdmin(role: OrgRole | null | undefined): boolean {
-    return role === "admin";
+    return role === "owner" || role === "admin";
+}
+
+/** The stronger of two organization roles. */
+export function strongerOrgRole(a: OrgRole, b: OrgRole): OrgRole {
+    return ORG_ROLE_RANK[a] >= ORG_ROLE_RANK[b] ? a : b;
+}
+
+/**
+ * Whether `actor` may give somebody `role`, or act on somebody who holds it:
+ * invite at it, change it, remove its holder.
+ *
+ * Owners are peers and may act at every level, their own included. Everyone
+ * else acts only strictly below themselves, which is what stops an admin
+ * from appointing a second admin, promoting themselves or removing an owner.
+ */
+export function canManageOrgRole(
+    actor: OrgRole | null | undefined,
+    role: OrgRole,
+): boolean {
+    if (!actor) return false;
+    if (actor === "owner") return true;
+    return ORG_ROLE_RANK[actor] > ORG_ROLE_RANK[role];
 }
 
 /**
  * Map each organization role to its default content role.
  */
 export function orgRoleToProjectRole(role: OrgRole): ProjectRole {
-    return role === "admin" ? "owner" : "editor";
+    return isOrgAdmin(role) ? "owner" : "editor";
 }
 
 /** Normalize an email the way every grant/invitation row stores it. */
@@ -190,14 +229,15 @@ export async function checkProjectAccess(
 
     const isCreator = !!proj.user_id && proj.user_id === userId;
 
-    // Organization scope is exclusive. Admins always inherit Owner and cannot
-    // be downgraded or denied by a resource override. Members inherit Editor;
+    // Organization scope is exclusive. Owners and Admins always inherit Owner
+    // and cannot be downgraded or denied by a resource override. Members
+    // inherit Editor;
     // the creator remains Owner and an explicit override may promote, reduce,
     // or deny another Member's inherited access.
     if (proj.org_id) {
         const orgRole = await getOrgRole(userId, proj.org_id, db);
         if (!orgRole) return { ok: false };
-        if (isCreator || orgRole === "admin")
+        if (isCreator || isOrgAdmin(orgRole))
             return {
                 ok: true,
                 isCreator,
@@ -294,7 +334,7 @@ async function organizationResourceAccess(
     const orgRole = await getOrgRole(userId, row.org_id, db);
     if (!orgRole) return { ok: false };
     const isCreator = !!row.user_id && row.user_id === userId;
-    if (isCreator || orgRole === "admin")
+    if (isCreator || isOrgAdmin(orgRole))
         return resourceAccessFor("owner", orgRole, isCreator);
     const override = await getOrgAccessOverrideRole(
         db,
@@ -657,8 +697,9 @@ export async function listAccessibleProjectIds(
 ): Promise<string[]> {
     const normalizedEmail = normalizeEmail(userEmail);
 
-    // Roles, not just ids: an org ADMIN cannot be denied a project, which is
-    // one of the two exemptions the override filter below has to honour.
+    // Roles, not just ids: an org OWNER or ADMIN cannot be denied a project,
+    // which is one of the two exemptions the override filter below has to
+    // honour.
     const { data: membershipRows, error: membershipError } = await db
         .from("org_members")
         .select("org_id, role")
@@ -760,10 +801,11 @@ export async function listAccessibleProjectIds(
     for (const project of personalGranted) ids.add(project.id);
     for (const project of orgProjects) {
         // The two exemptions checkProjectAccess applies: the creator and an
-        // org admin always keep Owner and cannot be denied.
+        // org owner or admin always keep Owner and cannot be denied.
         const isCreator = !!project.user_id && project.user_id === userId;
-        const isOrgAdmin = orgRoleByOrgId.get(project.org_id) === "admin";
-        if (!isCreator && !isOrgAdmin && deniedProjectIds.has(project.id))
+        const orgRole = orgRoleByOrgId.get(project.org_id);
+        const administersOrg = isOrgRole(orgRole) && isOrgAdmin(orgRole);
+        if (!isCreator && !administersOrg && deniedProjectIds.has(project.id))
             continue;
         ids.add(project.id);
     }
