@@ -11,8 +11,9 @@
 //   admin  — runs the organization day to day: settings, invitations, and
 //            removing members.
 //   member — reads the organization and its roster. No org mutations.
-// Owners and admins receive Owner on organization content. Members receive
-// Editor unless an item-specific override assigns Owner, Viewer or Deny.
+// Organization content is private by default. Owners can open every project
+// and workflow; an admin or member reaches what they created, what was shared
+// with them, and what has been made public (resolveOrgContentRole).
 //
 // Nobody acts on a peer or a superior, owners excepted (canManageOrgRole): an
 // admin cannot appoint a second admin, promote themselves or remove an owner.
@@ -36,9 +37,11 @@ import {
     isOrgOwner,
     isOrgRole,
     normalizeEmail,
+    resolveOrgContentRole,
     strongerOrgRole,
     type OrgRole,
 } from "./access";
+import { isOrgAccessOverrideRole } from "./orgAccessOverrides";
 
 type DbError = { code?: string; message: string } | null;
 
@@ -302,17 +305,15 @@ export async function deleteOrg(
  * The organization's projects and workflows, as the CALLER may see them.
  *
  * Membership is what makes this list reachable, but it is not what decides
- * its contents. A `deny` override is the ethical-wall tier: the member must
- * not learn that the matter exists, and the columns here — a project's name
- * and its cm_number, a workflow's title — are exactly the detail a wall is
- * put up to withhold. Listing a row whose link then 404s leaks the thing the
- * override was bought to hide.
+ * its contents. Inside an organization a project or workflow is private until
+ * it is shared or made public, so most of what the organization holds is not
+ * a given member's to see — and the columns here (a project's name and its
+ * cm_number, a workflow's title) are exactly the detail privacy withholds.
+ * Listing a row whose link then 404s leaks the thing it was meant to hide.
  *
- * Denials cannot touch an owner, an admin or a resource's creator (the
- * `validate_org_access_override` trigger refuses to write one), so the two
- * short-circuits below are the same ones `project_access_role` takes in SQL —
- * kept here so this filter reads as that predicate rather than as a rule of
- * its own.
+ * The verdict per row is resolveOrgContentRole, the same one the single-item
+ * checks and the SQL role functions reach. An organization owner sees
+ * everything; that is what stops a matter being orphaned.
  */
 export async function listOrgResources(
     db: Db,
@@ -327,76 +328,88 @@ export async function listOrgResources(
     if (!role) return { ok: false, kind: "not_found" };
 
     // One batched read per override table, not one per resource: this is a
-    // filter over a page of rows, and it must not become an N+1.
-    const [projectsResult, workflowsResult, projectDenials, workflowDenials] =
+    // filter over a page of rows, and it must not become an N+1. Every
+    // override the caller holds is read, not only the denials: a grant is
+    // what admits a member to a private item.
+    const [projectsResult, workflowsResult, projectOverrides, workflowOverrides] =
         await Promise.all([
             db
                 .from("projects")
-                .select("id, user_id, org_id, name, cm_number, practice, created_at, updated_at")
+                .select("id, user_id, org_id, visibility, name, cm_number, practice, created_at, updated_at")
                 .eq("org_id", params.orgId)
                 .order("created_at", { ascending: false }),
             db
                 .from("workflows")
                 .select(
-                    "id, user_id, org_id, title, type, practice, created_at",
+                    "id, user_id, org_id, visibility, title, type, practice, created_at",
                 )
                 .eq("org_id", params.orgId)
                 .order("created_at", { ascending: false }),
             db
                 .from("project_org_access_overrides")
-                .select("project_id")
+                .select("project_id, role")
                 .eq("org_id", params.orgId)
-                .eq("user_id", params.userId)
-                .eq("role", "deny"),
+                .eq("user_id", params.userId),
             db
                 .from("workflow_org_access_overrides")
-                .select("workflow_id")
+                .select("workflow_id, role")
                 .eq("org_id", params.orgId)
-                .eq("user_id", params.userId)
-                .eq("role", "deny"),
+                .eq("user_id", params.userId),
         ]);
     const failed = [
         projectsResult,
         workflowsResult,
-        projectDenials,
-        workflowDenials,
+        projectOverrides,
+        workflowOverrides,
     ].find((result) => result.error)?.error;
     if (failed)
         return { ok: false, kind: "db_error", detail: failed.message };
 
-    // Fail closed: an unreadable override table must hide rows, never reveal
-    // them. `error` is handled above, so an empty set here means "no denials".
-    const deniedIds = (rows: unknown, key: string) =>
-        new Set(
+    // Fail closed: an unreadable override table is an error above, never an
+    // empty map — which would read as "no grants and no denials".
+    const overridesBy = (rows: unknown, key: string) =>
+        new Map(
             ((rows ?? []) as Record<string, unknown>[])
-                .map((row) => row[key])
-                .filter((id): id is string => typeof id === "string"),
+                .filter((row) => typeof row[key] === "string")
+                .map((row) => [row[key] as string, row.role]),
         );
-    const deniedProjectIds = deniedIds(projectDenials.data, "project_id");
-    const deniedWorkflowIds = deniedIds(workflowDenials.data, "workflow_id");
+    const projectOverrideById = overridesBy(projectOverrides.data, "project_id");
+    const workflowOverrideById = overridesBy(
+        workflowOverrides.data,
+        "workflow_id",
+    );
 
-    const visible = <T extends { id?: unknown; user_id?: unknown }>(
+    const visible = <
+        T extends { id?: unknown; user_id?: unknown; visibility?: unknown },
+    >(
         rows: T[],
-        denied: Set<string>,
+        overrideById: Map<string, unknown>,
     ) =>
         rows.filter((row) => {
-            if (isOrgAdmin(role)) return true;
-            if (row.user_id && row.user_id === params.userId) return true;
-            return typeof row.id !== "string" || !denied.has(row.id);
+            const override =
+                typeof row.id === "string" ? overrideById.get(row.id) : null;
+            return (
+                resolveOrgContentRole({
+                    isCreator: !!row.user_id && row.user_id === params.userId,
+                    orgRole: role,
+                    override: isOrgAccessOverrideRole(override)
+                        ? override
+                        : null,
+                    visibility: row.visibility,
+                }) !== null
+            );
         });
 
+    type Row = { id?: unknown; user_id?: unknown; visibility?: unknown };
     return {
         ok: true,
         projects: visible(
-            (projectsResult.data ?? []) as { id?: unknown; user_id?: unknown }[],
-            deniedProjectIds,
+            (projectsResult.data ?? []) as Row[],
+            projectOverrideById,
         ),
         workflows: visible(
-            (workflowsResult.data ?? []) as {
-                id?: unknown;
-                user_id?: unknown;
-            }[],
-            deniedWorkflowIds,
+            (workflowsResult.data ?? []) as Row[],
+            workflowOverrideById,
         ),
     };
 }

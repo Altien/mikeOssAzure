@@ -8,9 +8,12 @@ function isOrgRole(value: unknown): value is OrgRole {
     return value === "owner" || value === "admin" || value === "member";
 }
 
-/** Owners and admins hold Owner on organization content implicitly. */
+/**
+ * An organization's owners hold Owner on its content implicitly, so that no
+ * matter is ever orphaned. Nobody else has standing they were not given.
+ */
 function hasImplicitOwnerAccess(role: OrgRole): boolean {
-    return role === "owner" || role === "admin";
+    return role === "owner";
 }
 
 export type OrgResourceKind =
@@ -122,9 +125,10 @@ export async function findOrgMemberByEmail(
     return { ok: true, member: { userId, email, orgRole } };
 }
 
-/** A resource creator and an organization owner or admin retain owner access.
- * Keep the target lookup and this rule identical for project and workflow
- * assignments.
+/** A resource creator and an organization owner retain owner access, so
+ * neither can be given a role or denied. Everyone else in the organization,
+ * admins included, can. Keep the target lookup and this rule identical for
+ * project and workflow assignments.
  * Callers still authorize the actor's access.manage permission first.
  */
 export async function findAssignableOrgMember(
@@ -160,11 +164,19 @@ export async function findAssignableOrgMember(
         return {
             ok: false,
             kind: "validation",
-            detail: "Organization owners and admins always have owner access",
+            detail: "Organization owners always have owner access",
         };
     return target;
 }
 
+/**
+ * The people an organization's project or workflow concerns: everyone who can
+ * open it, with the role they hold, plus anyone walled off from it (`deny`).
+ *
+ * A member the item has not been shared with is NOT listed. In a private item
+ * that is most of the organization, and listing them at a role they do not
+ * hold is how a roster starts lying about who can read a matter.
+ */
 export async function listOrgAccessPeople(
     db: Db,
     params: {
@@ -172,6 +184,8 @@ export async function listOrgAccessPeople(
         resourceId: string;
         orgId: string;
         creatorId: string | null;
+        /** The item's visibility; anything but "organization" is private. */
+        visibility: unknown;
     },
 ): Promise<
     | { ok: true; people: OrgAccessPerson[] }
@@ -220,17 +234,23 @@ export async function listOrgAccessPeople(
         const userId = membership.user_id;
         const profile = profileByUserId.get(userId);
         if (!profile?.email) continue;
-        const implicitOwner = hasImplicitOwnerAccess(membership.role);
+        const implicitOwner =
+            userId === params.creatorId ||
+            hasImplicitOwnerAccess(membership.role);
+        const override = implicitOwner
+            ? undefined
+            : overrideByUserId.get(userId);
+        const role: OrgAssignableRole | null = implicitOwner
+            ? "owner"
+            : (override ??
+              (params.visibility === "organization" ? "editor" : null));
+        if (!role) continue;
         people.push({
             user_id: userId,
             email: profile.email,
             display_name: profile.display_name ?? null,
-            role:
-                userId === params.creatorId || implicitOwner
-                    ? "owner"
-                    : overrideByUserId.get(userId) ??
-                      "editor",
-            has_override: !implicitOwner && overrideByUserId.has(userId),
+            role,
+            has_override: override !== undefined,
         });
     }
     return { ok: true, people };

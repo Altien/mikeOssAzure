@@ -426,11 +426,18 @@ describe("projects.routes", () => {
       orgProjects?: Record<string, unknown>[];
       memberships?: { org_id: string; role: string }[];
       denies?: string[];
+      /** Per-project grants the caller holds: project id -> role. */
+      grants?: Record<string, string>;
     }) {
       const personal = options.personal ?? [];
       const orgProjects = options.orgProjects ?? [];
       const memberships = options.memberships ?? [];
-      const denied = new Set(options.denies ?? []);
+      const overrides: Record<string, string> = {
+        ...options.grants,
+        ...Object.fromEntries(
+          (options.denies ?? []).map((id) => [id, "deny"]),
+        ),
+      };
 
       const build = (resolve: (f: Record<string, unknown>) => unknown[]) => {
         const filters: Record<string, unknown> = {};
@@ -465,18 +472,21 @@ describe("projects.routes", () => {
               return personal;
             });
           if (table === "project_org_access_overrides")
-            // The deny read is scoped by the caller's memberships (org_id),
-            // their user_id and role — never by every org project's id.
+            // The override read is scoped by the caller's memberships
+            // (org_id) and their user_id — never by every org project's id.
             return build((filters) => {
               const orgIds = (filters["in:org_id"] as string[] | undefined) ?? [];
               if (filters["in:project_id"]) return [];
               return orgProjects
                 .filter(
                   (project) =>
-                    denied.has(project.id as string) &&
+                    (project.id as string) in overrides &&
                     orgIds.includes(project.org_id as string),
                 )
-                .map((project) => ({ project_id: project.id }));
+                .map((project) => ({
+                  project_id: project.id,
+                  role: overrides[project.id as string],
+                }));
             });
           if (table === "org_members") return build(() => memberships);
           return build(() => []);
@@ -489,14 +499,18 @@ describe("projects.routes", () => {
       };
     }
 
+    // Open to the whole organization, so it is a denial and nothing else
+    // that walls a member off it.
     const WALLED = {
       id: "p-walled",
       name: "Matter P",
       cm_number: "2026-0042",
       org_id: "o1",
       user_id: "u2",
+      visibility: "organization",
       updated_at: "2026-09-01T00:00:00Z",
     };
+    const PRIVATE = { ...WALLED, id: "p-private", visibility: "private" };
 
     it("hides an org project the caller is denied on", async () => {
       vi.mocked(createServerSupabase).mockImplementationOnce(
@@ -535,11 +549,11 @@ describe("projects.routes", () => {
       ]);
     });
 
-    it.each(["admin", "owner"])("keeps an org %s's view of a project carrying a stale deny row", async (role) => {
+    it("keeps an org owner's view of a project carrying a stale deny row", async () => {
       vi.mocked(createServerSupabase).mockImplementationOnce(
         () =>
           directorySearchDb({
-            memberships: [{ org_id: "o1", role }],
+            memberships: [{ org_id: "o1", role: "owner" }],
             orgProjects: [WALLED],
             denies: ["p-walled"],
           }) as unknown as ReturnType<typeof createServerSupabase>,
@@ -553,6 +567,71 @@ describe("projects.routes", () => {
       expect(res.body.map((project: { id: string }) => project.id)).toEqual([
         "p-walled",
       ]);
+    });
+
+    it("walls an org admin off a project they are denied on, like any member", async () => {
+      vi.mocked(createServerSupabase).mockImplementationOnce(
+        () =>
+          directorySearchDb({
+            memberships: [{ org_id: "o1", role: "admin" }],
+            orgProjects: [WALLED],
+            denies: ["p-walled"],
+          }) as unknown as ReturnType<typeof createServerSupabase>,
+      );
+
+      const res = await request(app)
+        .get("/projects?view=directory-search&search=Matter")
+        .set(...AUTH);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([]);
+    });
+
+    // Private by default. The picker serves a project's name, matter number
+    // and document filenames, so a private project must not appear in it for
+    // a member it was not shared with.
+    it.each(["member", "admin"])(
+      "keeps a private org project out of an org %s's picker",
+      async (role) => {
+        vi.mocked(createServerSupabase).mockImplementationOnce(
+          () =>
+            directorySearchDb({
+              memberships: [{ org_id: "o1", role }],
+              orgProjects: [PRIVATE],
+            }) as unknown as ReturnType<typeof createServerSupabase>,
+        );
+
+        const res = await request(app)
+          .get("/projects?view=directory-search&search=Matter")
+          .set(...AUTH);
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual([]);
+      },
+    );
+
+    it("offers a private org project to a member it was shared with, and to an owner", async () => {
+      for (const options of [
+        { memberships: [{ org_id: "o1", role: "member" }], grants: { "p-private": "viewer" } },
+        { memberships: [{ org_id: "o1", role: "owner" }] },
+      ]) {
+        vi.mocked(createServerSupabase).mockImplementationOnce(
+          () =>
+            directorySearchDb({
+              ...options,
+              orgProjects: [PRIVATE],
+            }) as unknown as ReturnType<typeof createServerSupabase>,
+        );
+
+        const res = await request(app)
+          .get("/projects?view=directory-search&search=Matter")
+          .set(...AUTH);
+
+        expect(res.status).toBe(200);
+        expect(res.body.map((project: { id: string }) => project.id)).toEqual([
+          "p-private",
+        ]);
+      }
     });
     });
 

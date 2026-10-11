@@ -359,6 +359,7 @@ describe("organization resources", () => {
                     id: "workflow1",
                     user_id: "member1",
                     org_id: "o1",
+                    visibility: "organization",
                     title: "Disclosure workflow",
                     type: "tabular",
                     practice: "Corporate",
@@ -374,7 +375,7 @@ describe("organization resources", () => {
             workflows: [{ id: "workflow1" }],
         });
         expect(db._selects.workflows).toEqual([
-            "id, user_id, org_id, title, type, practice, created_at",
+            "id, user_id, org_id, visibility, title, type, practice, created_at",
         ]);
     });
 
@@ -389,12 +390,12 @@ describe("organization resources", () => {
                 { org_id: "o1", user_id: "member2", role: "member" },
             ],
             projects: [
-                { id: "walled", user_id: "member2", org_id: "o1", name: "Project Nimbus", cm_number: "1234-5678" },
-                { id: "open", user_id: "member2", org_id: "o1", name: "Shared matter" },
+                { id: "walled", user_id: "member2", org_id: "o1", visibility: "organization", name: "Project Nimbus", cm_number: "1234-5678" },
+                { id: "open", user_id: "member2", org_id: "o1", visibility: "organization", name: "Shared matter" },
             ],
             workflows: [
-                { id: "walled-wf", user_id: "member2", org_id: "o1", title: "Nimbus diligence" },
-                { id: "open-wf", user_id: "member2", org_id: "o1", title: "Standard diligence" },
+                { id: "walled-wf", user_id: "member2", org_id: "o1", visibility: "organization", title: "Nimbus diligence" },
+                { id: "open-wf", user_id: "member2", org_id: "o1", visibility: "organization", title: "Standard diligence" },
             ],
             project_org_access_overrides: [
                 { project_id: "walled", org_id: "o1", user_id: "member1", role: "deny" },
@@ -429,10 +430,11 @@ describe("organization resources", () => {
         expect(other.workflows).toHaveLength(2);
     });
 
-    // Mirrors project_access_role: a denial cannot bind an owner, an admin
-    // or the resource's creator, and validate_org_access_override refuses to
-    // write one. A stale row must not hide the resource from them.
-    it("ignores a stale denial against an owner, an admin or the creator", async () => {
+    // Mirrors project_access_role: a denial cannot bind an organization
+    // owner or the resource's creator, and validate_org_access_override
+    // refuses to write one. A stale row must not hide the resource from them.
+    // An admin has no such standing: a wall holds against one.
+    it("ignores a stale denial against an owner or the creator, but not against an admin", async () => {
         const db = makeDb({
             org_members: [
                 { org_id: "o1", user_id: "owner1", role: "owner" },
@@ -440,7 +442,7 @@ describe("organization resources", () => {
                 { org_id: "o1", user_id: "creator1", role: "member" },
             ],
             projects: [
-                { id: "p1", user_id: "creator1", org_id: "o1", name: "Matter" },
+                { id: "p1", user_id: "creator1", org_id: "o1", visibility: "organization", name: "Matter" },
             ],
             workflows: [],
             project_org_access_overrides: [
@@ -451,7 +453,7 @@ describe("organization resources", () => {
             workflow_org_access_overrides: [],
         });
 
-        for (const userId of ["owner1", "orgadmin1", "creator1"]) {
+        for (const userId of ["owner1", "creator1"]) {
             const result = await listOrgResources(db, { userId, orgId: "o1" });
             expect(result).toMatchObject({ ok: true });
             if (!result.ok) return;
@@ -459,6 +461,65 @@ describe("organization resources", () => {
                 expect.objectContaining({ id: "p1" }),
             ]);
         }
+        const admin = await listOrgResources(db, {
+            userId: "orgadmin1",
+            orgId: "o1",
+        });
+        expect(admin).toMatchObject({ ok: true, projects: [] });
+    });
+
+    // Private by default: being in the organization is not, on its own, a
+    // reason to see a matter. The name and matter number of a private project
+    // are what privacy withholds, so the row must not travel at all.
+    it("lists a private project or workflow only for its creator, the owners and members it was shared with", async () => {
+        const db = makeDb({
+            org_members: [
+                { org_id: "o1", user_id: "owner1", role: "owner" },
+                { org_id: "o1", user_id: "orgadmin1", role: "admin" },
+                { org_id: "o1", user_id: "creator1", role: "member" },
+                { org_id: "o1", user_id: "shared1", role: "member" },
+                { org_id: "o1", user_id: "member1", role: "member" },
+            ],
+            projects: [
+                { id: "secret", user_id: "creator1", org_id: "o1", visibility: "private", name: "Project Nimbus", cm_number: "1234-5678" },
+            ],
+            workflows: [
+                { id: "secret-wf", user_id: "creator1", org_id: "o1", visibility: "private", title: "Nimbus diligence" },
+            ],
+            project_org_access_overrides: [
+                { project_id: "secret", org_id: "o1", user_id: "shared1", role: "viewer" },
+            ],
+            workflow_org_access_overrides: [
+                { workflow_id: "secret-wf", org_id: "o1", user_id: "shared1", role: "editor" },
+            ],
+        });
+
+        for (const userId of ["owner1", "creator1", "shared1"]) {
+            const result = await listOrgResources(db, { userId, orgId: "o1" });
+            expect(result).toMatchObject({
+                ok: true,
+                projects: [expect.objectContaining({ id: "secret" })],
+                workflows: [expect.objectContaining({ id: "secret-wf" })],
+            });
+        }
+        for (const userId of ["orgadmin1", "member1"]) {
+            const result = await listOrgResources(db, { userId, orgId: "o1" });
+            expect(result).toEqual({ ok: true, projects: [], workflows: [] });
+            expect(JSON.stringify(result)).not.toContain("Nimbus");
+        }
+    });
+
+    it("treats a row with no visibility as private", async () => {
+        // Fail closed: a row this code cannot classify must not be listed for
+        // the whole organization.
+        const db = makeDb({
+            org_members: [{ org_id: "o1", user_id: "member1", role: "member" }],
+            projects: [{ id: "p1", user_id: "someone", org_id: "o1", name: "Matter" }],
+            workflows: [],
+        });
+        await expect(
+            listOrgResources(db, { userId: "member1", orgId: "o1" }),
+        ).resolves.toEqual({ ok: true, projects: [], workflows: [] });
     });
 
     it("scopes the denial lookup to the caller, not to the whole org", async () => {
@@ -468,7 +529,7 @@ describe("organization resources", () => {
                 { org_id: "o1", user_id: "member2", role: "member" },
             ],
             projects: [
-                { id: "p1", user_id: "someone", org_id: "o1", name: "Matter" },
+                { id: "p1", user_id: "someone", org_id: "o1", visibility: "organization", name: "Matter" },
             ],
             workflows: [],
             // member2 is walled off; member1 is not.

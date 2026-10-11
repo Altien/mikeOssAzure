@@ -33,6 +33,7 @@ export async function listWorkflowPeople(
       resourceId: workflowId,
       orgId,
       creatorId: access.workflow.user_id,
+      visibility: access.workflow.visibility,
     });
     if (!listed.ok) return { ok: false, kind: "db_error", error: listed.detail };
     const creator = listed.people.find(
@@ -114,6 +115,7 @@ export async function listWorkflowShares(
       resourceId: workflowId,
       orgId,
       creatorId: wf.user_id,
+      visibility: wf.visibility,
     });
     if (!listed.ok) return { ok: false, kind: "db_error", error: listed.detail };
     return {

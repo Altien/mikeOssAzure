@@ -11,8 +11,9 @@ import {
     isOrgAdmin,
     isOrgOwner,
     listAccessibleProjectIds,
-    orgRoleToProjectRole,
+    parseContentVisibility,
     resolveContentOrgId,
+    resolveOrgContentRole,
     strongerOrgRole,
 } from "../access";
 
@@ -357,10 +358,145 @@ describe("access helpers", () => {
 // ---------------------------------------------------------------------------
 
 describe("org role inheritance", () => {
-    it("maps org Owner and Admin to Owner and org Member to Editor", () => {
-        expect(orgRoleToProjectRole("owner")).toBe("owner");
-        expect(orgRoleToProjectRole("admin")).toBe("owner");
-        expect(orgRoleToProjectRole("member")).toBe("editor");
+    // The rule every read path shares. Organization content is private by
+    // default; these are all the ways somebody comes to hold a role on it.
+    describe("resolveOrgContentRole", () => {
+        const resolve = (input: {
+            isCreator?: boolean;
+            orgRole: "owner" | "admin" | "member";
+            override?: "owner" | "editor" | "viewer" | "deny" | null;
+            visibility?: unknown;
+        }) =>
+            resolveOrgContentRole({
+                isCreator: false,
+                override: null,
+                visibility: "private",
+                ...input,
+            });
+
+        it.each(["admin", "member"] as const)(
+            "gives an organization %s nothing on a private item",
+            (orgRole) => {
+                expect(resolve({ orgRole })).toBeNull();
+            },
+        );
+
+        it("gives the creator and the organization's owners Owner, whatever else is set", () => {
+            for (const visibility of ["private", "organization"]) {
+                for (const override of [null, "viewer", "deny"] as const) {
+                    expect(
+                        resolve({ orgRole: "owner", visibility, override }),
+                    ).toBe("owner");
+                    expect(
+                        resolve({
+                            orgRole: "member",
+                            isCreator: true,
+                            visibility,
+                            override,
+                        }),
+                    ).toBe("owner");
+                }
+            }
+        });
+
+        it.each(["owner", "editor", "viewer"] as const)(
+            "gives a member it was shared with the %s role they were given",
+            (override) => {
+                expect(resolve({ orgRole: "member", override })).toBe(override);
+                // An admin is a member as far as content goes.
+                expect(resolve({ orgRole: "admin", override })).toBe(override);
+            },
+        );
+
+        it("gives every member Editor on a public item", () => {
+            expect(
+                resolve({ orgRole: "member", visibility: "organization" }),
+            ).toBe("editor");
+            expect(
+                resolve({ orgRole: "admin", visibility: "organization" }),
+            ).toBe("editor");
+        });
+
+        it("lets an individual grant stand on a public item, in either direction", () => {
+            expect(
+                resolve({
+                    orgRole: "member",
+                    visibility: "organization",
+                    override: "viewer",
+                }),
+            ).toBe("viewer");
+            expect(
+                resolve({
+                    orgRole: "member",
+                    visibility: "organization",
+                    override: "owner",
+                }),
+            ).toBe("owner");
+        });
+
+        it("walls a denied member off a public item, an admin included", () => {
+            for (const orgRole of ["member", "admin"] as const) {
+                expect(
+                    resolve({
+                        orgRole,
+                        visibility: "organization",
+                        override: "deny",
+                    }),
+                ).toBeNull();
+            }
+        });
+
+        it("treats anything but 'organization' as private", () => {
+            // Fail closed: a value this code does not know must not open an
+            // item to everybody.
+            for (const visibility of [undefined, null, "", "public", "all", 1]) {
+                expect(resolve({ orgRole: "member", visibility })).toBeNull();
+            }
+        });
+    });
+
+    describe("parseContentVisibility", () => {
+        it("leaves visibility alone when none is sent", () => {
+            expect(parseContentVisibility(undefined, "org-1")).toEqual({
+                ok: true,
+                visibility: undefined,
+            });
+            expect(parseContentVisibility(null, null)).toEqual({
+                ok: true,
+                visibility: undefined,
+            });
+        });
+
+        it("accepts either setting for an organization's item", () => {
+            expect(parseContentVisibility("organization", "org-1")).toEqual({
+                ok: true,
+                visibility: "organization",
+            });
+            expect(parseContentVisibility("private", "org-1")).toEqual({
+                ok: true,
+                visibility: "private",
+            });
+        });
+
+        it("refuses to make a personal item public", () => {
+            // There is no "everyone" for a personal item to be opened to.
+            expect(parseContentVisibility("organization", null)).toMatchObject({
+                ok: false,
+            });
+            expect(parseContentVisibility("private", null)).toEqual({
+                ok: true,
+                visibility: "private",
+            });
+        });
+
+        it.each(["public", "everyone", "", 1, true, {}])(
+            "refuses %j",
+            (value) => {
+                expect(parseContentVisibility(value, "org-1")).toMatchObject({
+                    ok: false,
+                });
+            },
+        );
     });
 
     it("treats an owner as able to do everything an admin can", () => {
@@ -390,15 +526,30 @@ describe("org role inheritance", () => {
         expect(strongerOrgRole("admin", "admin")).toBe("admin");
     });
 
+    // org-project is private, org-public is open to the whole organization.
+    // boss owns the organization, partner administers it, staffer is a
+    // plain member; none of them created either project.
     const db = makeDb({
         projects: [
-            { id: "org-project", user_id: "founder", org_id: "org-1" },
+            {
+                id: "org-project",
+                user_id: "founder",
+                org_id: "org-1",
+                visibility: "private",
+            },
+            {
+                id: "org-public",
+                user_id: "founder",
+                org_id: "org-1",
+                visibility: "organization",
+            },
             { id: "other-org-project", user_id: "stranger", org_id: "org-2" },
             { id: "personal-project", user_id: "founder", org_id: null },
         ],
         org_members: [
             { org_id: "org-1", user_id: "founder", role: "admin" },
-            { org_id: "org-1", user_id: "boss", role: "admin" },
+            { org_id: "org-1", user_id: "boss", role: "owner" },
+            { org_id: "org-1", user_id: "partner", role: "admin" },
             { org_id: "org-1", user_id: "staffer", role: "member" },
             { org_id: "org-2", user_id: "outsider", role: "admin" },
         ],
@@ -417,40 +568,69 @@ describe("org role inheritance", () => {
                 email: "counsel@outside.example",
                 role: "owner",
             },
+            {
+                project_id: "org-public",
+                email: "staffer@firm.example",
+                role: "viewer",
+            },
+            {
+                project_id: "org-public",
+                email: "counsel@outside.example",
+                role: "owner",
+            },
         ],
         documents: [],
     });
 
-    it("inherits Owner for an org Admin", async () => {
+    it("gives an organization Owner Owner on a project nobody shared with them", async () => {
         await expect(
             checkProjectAccess("org-project", "boss", "nobody@firm.example", db),
         ).resolves.toMatchObject({
             ok: true,
             isCreator: false,
-            orgRole: "admin",
+            orgRole: "owner",
             projectRole: "owner",
         });
     });
 
-    it("inherits Editor for a plain org Member", async () => {
+    it.each(["partner", "staffer"])(
+        "gives %s, who is in the organization, nothing on a private project",
+        async (userId) => {
+            // Membership is no longer access. An admin runs the organization;
+            // that does not make every matter in it theirs to read.
+            await expect(
+                checkProjectAccess(
+                    "org-project",
+                    userId,
+                    "nobody@firm.example",
+                    db,
+                ),
+            ).resolves.toEqual({ ok: false });
+        },
+    );
+
+    it.each([
+        ["partner", "admin"],
+        ["staffer", "member"],
+    ])("gives %s Editor on a public project", async (userId, orgRole) => {
         await expect(
-            checkProjectAccess(
-                "org-project",
-                "staffer",
-                "nobody@firm.example",
-                db,
-            ),
+            checkProjectAccess("org-public", userId, "nobody@firm.example", db),
         ).resolves.toMatchObject({
             ok: true,
-            orgRole: "member",
+            orgRole,
             projectRole: "editor",
         });
     });
 
-    it("keeps Owner and Admin as Owner while applying overrides to Members", async () => {
+    it("keeps an organization Owner as Owner while applying overrides to everyone else", async () => {
         const overrideDb = makeDb({
             projects: [
-                { id: "overridden", user_id: "founder", org_id: "org-1" },
+                {
+                    id: "overridden",
+                    user_id: "founder",
+                    org_id: "org-1",
+                    visibility: "organization",
+                },
             ],
             org_members: [
                 { org_id: "org-1", user_id: "founder", role: "admin" },
@@ -486,7 +666,12 @@ describe("org role inheritance", () => {
                 },
             ],
             workflows: [
-                { id: "workflow-overridden", user_id: "founder", org_id: "org-1" },
+                {
+                    id: "workflow-overridden",
+                    user_id: "founder",
+                    org_id: "org-1",
+                    visibility: "organization",
+                },
             ],
             workflow_org_access_overrides: [
                 {
@@ -525,12 +710,13 @@ describe("org role inheritance", () => {
             orgRole: "owner",
             projectRole: "owner",
         });
+        // An admin is shared with, and walled off, like any other member.
         await expect(
             checkProjectAccess("overridden", "admin-editor", null, overrideDb),
         ).resolves.toMatchObject({
             ok: true,
             orgRole: "admin",
-            projectRole: "owner",
+            projectRole: "editor",
         });
         await expect(
             checkWorkflowAccess(
@@ -539,11 +725,7 @@ describe("org role inheritance", () => {
                 null,
                 overrideDb,
             ),
-        ).resolves.toMatchObject({
-            ok: true,
-            orgRole: "admin",
-            projectRole: "owner",
-        });
+        ).resolves.toEqual({ ok: false });
         await expect(
             checkProjectAccess("overridden", "member-viewer", null, overrideDb),
         ).resolves.toMatchObject({ ok: true, projectRole: "viewer" });
@@ -552,15 +734,27 @@ describe("org role inheritance", () => {
         ).resolves.toEqual({ ok: false });
     });
 
-    it("ignores direct grants for organization projects", async () => {
-        // Org Admin + viewer direct grant stays Owner.
+    it("ignores direct email grants for organization projects", async () => {
+        // An organization's project is shared through its member overrides.
+        // A leftover email grant neither demotes, admits nor promotes.
+        //
+        // Org Owner + viewer direct grant stays Owner.
         await expect(
             checkProjectAccess("org-project", "boss", "boss@firm.example", db),
         ).resolves.toMatchObject({ projectRole: "owner" });
-        // Org Member + viewer direct grant stays Editor.
+        // Org Member + viewer direct grant on a PRIVATE project: no access.
         await expect(
             checkProjectAccess(
                 "org-project",
+                "staffer",
+                "staffer@firm.example",
+                db,
+            ),
+        ).resolves.toEqual({ ok: false });
+        // Org Member + viewer direct grant on a public project stays Editor.
+        await expect(
+            checkProjectAccess(
+                "org-public",
                 "staffer",
                 "staffer@firm.example",
                 db,
@@ -571,7 +765,7 @@ describe("org role inheritance", () => {
     it("does not let a direct grant promote an organization member", async () => {
         await expect(
             checkProjectAccess(
-                "org-project",
+                "org-public",
                 "staffer",
                 "counsel@outside.example",
                 db,
@@ -614,7 +808,12 @@ describe("org role inheritance", () => {
     it("inherits only the project verdict when a document belongs to a project", async () => {
         const crossDb = makeDb({
             projects: [
-                { id: "p", user_id: "someone", org_id: "org-2" },
+                {
+                    id: "p",
+                    user_id: "someone",
+                    org_id: "org-2",
+                    visibility: "organization",
+                },
             ],
             org_members: [
                 { org_id: "org-1", user_id: "u", role: "admin" },
@@ -734,8 +933,9 @@ describe("creator-scoped operations", () => {
 // pin each exclusive scope and project inheritance.
 // ---------------------------------------------------------------------------
 describe("ensureChatAccess", () => {
-    // alice created proj-a inside org-a and is an org admin there; dave is
-    // another org admin, carol a plain org member, erin an outside
+    // alice created proj-a inside org-a, open to the whole organization, and
+    // is an org admin there; dave owns the organization, carol is a plain
+    // org member, erin an outside
     // collaborator holding a viewer grant on proj-a and nothing else. bob
     // belongs to org-b only (the other tenant). frank is a member of nothing
     // and simply authored some of the chats.
@@ -743,11 +943,16 @@ describe("ensureChatAccess", () => {
         org_members: [
             { org_id: "org-a", user_id: "alice", role: "admin" },
             { org_id: "org-a", user_id: "carol", role: "member" },
-            { org_id: "org-a", user_id: "dave", role: "admin" },
+            { org_id: "org-a", user_id: "dave", role: "owner" },
             { org_id: "org-b", user_id: "bob", role: "admin" },
         ],
         projects: [
-            { id: "proj-a", user_id: "alice", org_id: "org-a" },
+            {
+                id: "proj-a",
+                user_id: "alice",
+                org_id: "org-a",
+                visibility: "organization",
+            },
         ],
         project_access_grants: [
             { project_id: "proj-a", email: "erin@example.com", role: "viewer" },
@@ -824,7 +1029,7 @@ describe("ensureChatAccess", () => {
             ensureChatAccess(chat, "dave", "dave@example.com", db),
         ).resolves.toMatchObject({
             ok: true,
-            orgRole: "admin",
+            orgRole: "owner",
             projectRole: "owner",
         });
         await expect(
@@ -1001,6 +1206,7 @@ describe("listAccessibleProjectIds", () => {
             id: `p${String(index).padStart(4, "0")}`,
             user_id: "founder",
             org_id: "org-1",
+            visibility: "organization",
         }));
 
     it("pages through an org with more projects than one read returns", async () => {
@@ -1031,7 +1237,7 @@ describe("listAccessibleProjectIds", () => {
         ]);
     });
 
-    it("reads the deny overrides once for the whole org, not once per project", async () => {
+    it("reads the overrides once for the whole org, not once per project", async () => {
         const { db, queries } = makeRecordingDb({
             org_members: [{ org_id: "org-1", user_id: "u1", role: "member" }],
             projects: orgProjects(40),
@@ -1050,18 +1256,17 @@ describe("listAccessibleProjectIds", () => {
         // Scoped by ORG, not by an `.in()` over every candidate project id —
         // that list is spliced into the PostgREST query string and grows with
         // the firm's matters until the request line is refused.
-        expect(overrideReads[0].filters).toEqual([
-            "in:org_id",
-            "eq:user_id",
-            "eq:role",
-        ]);
+        // Every override the caller holds, not just the denials: a grant is
+        // what admits them to a private project.
+        expect(overrideReads[0].filters).toEqual(["in:org_id", "eq:user_id"]);
     });
 
-    it("hides a denied org project but keeps the creator's, the admin's and the owner's", async () => {
+    it("hides a denied org project from a member and an admin, but not from its creator or an owner", async () => {
         // The two exemptions checkProjectAccess applies, re-derived inline:
-        // the creator and an org admin keep Owner and cannot be denied. Get
-        // this wrong in the batched shape and a partner loses their own
-        // matter to a deny row somebody else's role should never have.
+        // the creator and an organization owner keep Owner and cannot be
+        // denied. Get this wrong in the batched shape and a partner loses
+        // their own matter to a deny row their role should never have. An
+        // admin has no such exemption: a wall holds against them.
         const tables = {
             org_members: [
                 { org_id: "org-1", user_id: "member", role: "member" },
@@ -1070,8 +1275,18 @@ describe("listAccessibleProjectIds", () => {
                 { org_id: "org-1", user_id: "author", role: "member" },
             ],
             projects: [
-                { id: "walled", user_id: "author", org_id: "org-1" },
-                { id: "open", user_id: "author", org_id: "org-1" },
+                {
+                id: "walled",
+                user_id: "author",
+                org_id: "org-1",
+                visibility: "organization",
+            },
+                {
+                id: "open",
+                user_id: "author",
+                org_id: "org-1",
+                visibility: "organization",
+            },
             ],
             project_access_grants: [],
             project_org_access_overrides: [
@@ -1109,15 +1324,16 @@ describe("listAccessibleProjectIds", () => {
                 makeRecordingDb(tables).db,
             ),
         ).resolves.toEqual(["open"]);
-        // An org admin cannot be denied.
+        // An org admin can be: administering the organization is not a
+        // reason to read a matter they have been walled off from.
         await expect(
             listAccessibleProjectIds(
                 "boss",
                 "boss@example.com",
                 makeRecordingDb(tables).db,
             ),
-        ).resolves.toEqual(["walled", "open"]);
-        // Nor can an org owner.
+        ).resolves.toEqual(["open"]);
+        // An org owner cannot.
         await expect(
             listAccessibleProjectIds(
                 "principal",
@@ -1136,6 +1352,70 @@ describe("listAccessibleProjectIds", () => {
     });
 });
 
+describe("listAccessibleProjectIds and private organization projects", () => {
+    // One organization, four projects by the same author:
+    //   private    nobody else has been given it
+    //   granted    private, shared with `member` as a viewer
+    //   public     open to the whole organization
+    //   walled     public, with `member` denied
+    const tables = {
+        org_members: [
+            { org_id: "org-1", user_id: "member", role: "member" },
+            { org_id: "org-1", user_id: "manager", role: "admin" },
+            { org_id: "org-1", user_id: "principal", role: "owner" },
+            { org_id: "org-1", user_id: "author", role: "member" },
+        ],
+        projects: ["private", "granted", "public", "walled"].map((id) => ({
+            id,
+            user_id: "author",
+            org_id: "org-1",
+            visibility:
+                id === "public" || id === "walled" ? "organization" : "private",
+        })),
+        project_access_grants: [],
+        project_org_access_overrides: [
+            {
+                project_id: "granted",
+                org_id: "org-1",
+                user_id: "member",
+                role: "viewer",
+            },
+            {
+                project_id: "walled",
+                org_id: "org-1",
+                user_id: "member",
+                role: "deny",
+            },
+        ],
+    };
+    const idsFor = async (userId: string) =>
+        (
+            await listAccessibleProjectIds(
+                userId,
+                `${userId}@example.com`,
+                makeRecordingDb(tables).db,
+            )
+        ).sort();
+
+    it("lists a member only what was shared with them or made public", async () => {
+        expect(await idsFor("member")).toEqual(["granted", "public"]);
+    });
+
+    it("gives an admin no more than a member who was shared nothing", async () => {
+        expect(await idsFor("manager")).toEqual(["public", "walled"]);
+    });
+
+    it("lists everything for the organization's owner and for the author", async () => {
+        const everything = ["granted", "private", "public", "walled"];
+        expect(await idsFor("principal")).toEqual(everything);
+        expect(await idsFor("author")).toEqual(everything);
+    });
+
+    it("lists nothing for somebody outside the organization", async () => {
+        expect(await idsFor("stranger")).toEqual([]);
+    });
+});
+
 describe("listAccessibleProjectIds fails closed", () => {
     // A failed read used to be indistinguishable from an empty one: PostgREST
     // answers `{ data: null, error }`, and `?? []` turned that into "no rows".
@@ -1144,8 +1424,18 @@ describe("listAccessibleProjectIds fails closed", () => {
     const base = () => ({
         org_members: [{ org_id: "org-1", user_id: "u1", role: "member" }],
         projects: [
-            { id: "walled", user_id: "founder", org_id: "org-1" },
-            { id: "open", user_id: "founder", org_id: "org-1" },
+            {
+                id: "walled",
+                user_id: "founder",
+                org_id: "org-1",
+                visibility: "organization",
+            },
+            {
+                id: "open",
+                user_id: "founder",
+                org_id: "org-1",
+                visibility: "organization",
+            },
         ],
         project_access_grants: [],
         project_org_access_overrides: [
@@ -1173,7 +1463,7 @@ describe("listAccessibleProjectIds fails closed", () => {
         });
         await expect(
             listAccessibleProjectIds("u1", "u1@example.com", db),
-        ).rejects.toThrow(/deny override read failed: statement timeout/);
+        ).rejects.toThrow(/access override read failed: statement timeout/);
     });
 
     it("throws instead of truncating when a project page read fails", async () => {
@@ -1200,12 +1490,19 @@ describe("listAccessibleProjectIds with capped deny responses", () => {
         id: `denied-${String(index).padStart(4, "0")}`,
         user_id: "colleague",
         org_id: "firm",
+        // Public, so it is the denial and nothing else that keeps each out.
+        visibility: "organization",
     }));
     const tables = {
         org_members: [{ org_id: "firm", user_id: "member", role: "member" }],
         projects: [
             ...projects,
-            { id: "open", user_id: "colleague", org_id: "firm" },
+            {
+                id: "open",
+                user_id: "colleague",
+                org_id: "firm",
+                visibility: "organization",
+            },
         ],
         project_org_access_overrides: projects.map((project) => ({
             project_id: project.id,
@@ -1234,6 +1531,6 @@ describe("listAccessibleProjectIds with capped deny responses", () => {
         });
         await expect(
             listAccessibleProjectIds("member", undefined, db),
-        ).rejects.toThrow(/deny override read failed: statement timeout/);
+        ).rejects.toThrow(/access override read failed: statement timeout/);
     });
 });

@@ -164,7 +164,10 @@ function directorySearchDb(options: {
                                 denied.has(project.id as string) &&
                                 orgIds.includes(project.org_id as string),
                         )
-                        .map((project) => ({ project_id: project.id }));
+                        .map((project) => ({
+                            project_id: project.id,
+                            role: "deny",
+                        }));
                 });
             if (table === "org_members") return build(table, () => memberships);
             return build(table, () => []);
@@ -265,7 +268,7 @@ describe("GET /projects?view=directory-search", () => {
         ]);
     });
 
-    it("asks for the deny overrides by org, never by a list of project ids", async () => {
+    it("asks for the caller's overrides by org, never by a list of project ids", async () => {
         // The candidate-id list grows with the firm's matters and is spliced
         // verbatim into the PostgREST query string, so a large tenant sent a
         // URL past the server's request-line limit; the read then failed and
@@ -285,11 +288,9 @@ describe("GET /projects?view=directory-search", () => {
             (read) => read.table === "project_org_access_overrides",
         );
         expect(overrideReads).toHaveLength(1);
-        expect(overrideReads[0].filters).toEqual([
-            "in:org_id",
-            "eq:user_id",
-            "eq:role",
-        ]);
+        // Every override the caller holds, not only the denials: a grant is
+        // what admits them to a private project.
+        expect(overrideReads[0].filters).toEqual(["in:org_id", "eq:user_id"]);
         expect(overrideReads[0].filters).not.toContain("in:project_id");
     });
 });

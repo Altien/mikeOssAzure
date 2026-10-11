@@ -41,7 +41,10 @@ vi.mock("../../middleware/auth", async () => {
     return authMock();
 });
 
-vi.mock("../../lib/access", () => ({
+vi.mock("../../lib/access", async (importOriginal) => ({
+    // Pure helpers (visibility parsing) come from the real module; only the
+    // database-backed checks are stubbed.
+    ...(await importOriginal<typeof import("../../lib/access")>()),
     checkProjectAccess: (...args: unknown[]) => checkProjectAccess(...args),
     checkWorkflowAccess: (...args: unknown[]) => checkWorkflowAccess(...args),
     ensureDocAccess: vi.fn(async () => ({ ok: true, isCreator: true })),
@@ -447,14 +450,47 @@ describe("workflows.routes", () => {
       const res = await create({ org_id: "org-1" });
 
       expect(res.status).toBe(201);
+      // It belongs to the organization, but is private until shared.
       expect(res.body).toMatchObject({
         org_id: "org-1",
-        access_scope: "organization",
+        access_scope: "private",
         organization_name: null,
       });
       expect(
         supabaseState.inserts.find((i) => i.table === "workflows")?.payload,
-      ).toMatchObject({ org_id: "org-1", user_id: "u1" });
+      ).toMatchObject({
+        org_id: "org-1",
+        user_id: "u1",
+        visibility: "private",
+      });
+    });
+
+    it("opens a new organization workflow to everyone when asked", async () => {
+      getOrgRole.mockResolvedValue("member");
+      supabaseState.tables.workflows = {
+        data: {
+          id: "w-org",
+          user_id: "u1",
+          org_id: "org-1",
+          visibility: "organization",
+        },
+        error: null,
+      };
+
+      const res = await create({ org_id: "org-1", visibility: "organization" });
+
+      expect(res.status).toBe(201);
+      expect(res.body).toMatchObject({ access_scope: "organization" });
+      expect(
+        supabaseState.inserts.find((i) => i.table === "workflows")?.payload,
+      ).toMatchObject({ visibility: "organization" });
+    });
+
+    it("400s an attempt to open a personal workflow to an organization", async () => {
+      const res = await create({ visibility: "organization" });
+
+      expect(res.status).toBe(400);
+      expect(supabaseState.inserts).toEqual([]);
     });
 
     it("400s an org the caller does not belong to, and writes nothing", async () => {

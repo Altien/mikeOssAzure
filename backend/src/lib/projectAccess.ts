@@ -36,7 +36,12 @@ export type ProjectGrant = {
 
 export async function listProjectPeople(
     db: Db,
-    project: { id: string; user_id: string | null; org_id?: string | null },
+    project: {
+        id: string;
+        user_id: string | null;
+        org_id?: string | null;
+        visibility?: string | null;
+    },
 ): Promise<
     | {
           ok: true;
@@ -62,6 +67,7 @@ export async function listProjectPeople(
             resourceId: project.id,
             orgId: project.org_id,
             creatorId: project.user_id,
+            visibility: project.visibility,
         });
         if (!listed.ok) return listed;
         const creator = listed.people.find(
@@ -289,7 +295,12 @@ export type ProjectContact = {
  */
 export async function listProjectAdminContacts(
     db: Db,
-    project: { id: string; user_id: string | null; org_id?: string | null },
+    project: {
+        id: string;
+        user_id: string | null;
+        org_id?: string | null;
+        visibility?: string | null;
+    },
 ): Promise<ProjectContact[]> {
     const contacts: ProjectContact[] = [];
     const seenEmails = new Set<string>();
@@ -306,6 +317,7 @@ export async function listProjectAdminContacts(
             resourceId: project.id,
             orgId: project.org_id,
             creatorId: project.user_id,
+            visibility: project.visibility,
         });
         if (!listed.ok) {
             console.error("[project-access] organization roster unreadable", {

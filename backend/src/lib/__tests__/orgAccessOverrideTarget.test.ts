@@ -36,16 +36,7 @@ describe("organization override target shared by projects and workflows", () => 
     ["creator", "member", "The creator is always an owner"],
     ["creator", "admin", "The creator is always an owner"],
     ["creator", "owner", "The creator is always an owner"],
-    [
-      "someone",
-      "admin",
-      "Organization owners and admins always have owner access",
-    ],
-    [
-      "someone",
-      "owner",
-      "Organization owners and admins always have owner access",
-    ],
+    ["someone", "owner", "Organization owners always have owner access"],
   ])("protects %s with org role %s", async (user_id, role, detail) => {
     const fake = scriptedDb([
       { table: "user_profiles", data: { user_id } },
@@ -59,6 +50,26 @@ describe("organization override target shared by projects and workflows", () => 
         "creator",
       ),
     ).toEqual({ ok: false, kind: "validation", detail });
+    fake.done();
+  });
+  it("lets an admin be shared with, or walled off, like any other member", async () => {
+    // Administering the organization gives no standing on its content, so
+    // there is nothing implicit here to protect.
+    const fake = scriptedDb([
+      { table: "user_profiles", data: { user_id: "manager" } },
+      { table: "org_members", data: { role: "admin" } },
+    ]);
+    expect(
+      await findAssignableOrgMember(
+        fake.db,
+        "org",
+        "manager@example.com",
+        "creator",
+      ),
+    ).toEqual({
+      ok: true,
+      member: { userId: "manager", email: "manager@example.com", orgRole: "admin" },
+    });
     fake.done();
   });
   it("allows a member when the resource's creator has been deleted", async () => {

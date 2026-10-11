@@ -384,8 +384,8 @@ describe("queryEvents visibility scoping", () => {
         const { db } = makeDb([], [], [], [], {
             memberships: [{ org_id: "o1", role: "member" }],
             projects: [
-                { id: "p-colleague", user_id: "u2", org_id: "o1" },
-                { id: "p-detached", user_id: null, org_id: "o1" },
+                { id: "p-colleague", user_id: "u2", org_id: "o1", visibility: "organization" },
+                { id: "p-detached", user_id: null, org_id: "o1", visibility: "organization" },
             ],
         });
 
@@ -402,8 +402,8 @@ describe("queryEvents visibility scoping", () => {
         const { db } = makeDb([], [], [], [], {
             memberships: [{ org_id: "o1", role: "member" }],
             projects: [
-                { id: "p-open", user_id: "u2", org_id: "o1" },
-                { id: "p-walled", user_id: "u2", org_id: "o1" },
+                { id: "p-open", user_id: "u2", org_id: "o1", visibility: "organization" },
+                { id: "p-walled", user_id: "u2", org_id: "o1", visibility: "organization" },
             ],
             denies: ["p-walled"],
         });

@@ -314,7 +314,7 @@ describe("project Owner contacts", () => {
             ],
             org_members: [
                 { org_id: "o1", user_id: "creator", role: "admin" },
-                { org_id: "o1", user_id: "boss", role: "admin" },
+                { org_id: "o1", user_id: "boss", role: "owner" },
                 { org_id: "o1", user_id: "staffer", role: "member" },
             ],
             user_profiles: [
@@ -356,13 +356,13 @@ describe("project Owner contacts", () => {
         );
     });
 
-    it("still names the org's admins when the creator's account is gone", async () => {
+    it("still names the org's owners when the creator's account is gone", async () => {
         // This is the case an org project is designed to survive: user_id is
         // NULL, and the firm's admins are who you ask.
         const db = makeDb({
             projects: [{ id: "p1", user_id: null, org_id: "o1" }],
             project_access_grants: [],
-            org_members: [{ org_id: "o1", user_id: "boss", role: "admin" }],
+            org_members: [{ org_id: "o1", user_id: "boss", role: "owner" }],
             user_profiles: [
                 { user_id: "boss", email: "boss@firm.example", display_name: "Bee" },
             ],

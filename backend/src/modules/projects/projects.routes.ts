@@ -158,13 +158,15 @@ projectsRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
       detail:
         "shared_with is no longer supported; use the project access endpoints.",
     });
-  const { name, cm_number, practice, org_id, memory_enabled } = req.body as {
-    name: string;
-    cm_number?: string;
-    practice?: string;
-    org_id?: string | null;
-    memory_enabled?: boolean;
-  };
+  const { name, cm_number, practice, org_id, visibility, memory_enabled } =
+    req.body as {
+      name: string;
+      cm_number?: string;
+      practice?: string;
+      org_id?: string | null;
+      visibility?: unknown;
+      memory_enabled?: boolean;
+    };
   const db = createServerSupabase();
 
   const result = await createProject(db, {
@@ -173,6 +175,7 @@ projectsRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
     cm_number,
     practice,
     org_id,
+    visibility,
     memory_enabled,
   });
   if (!result.ok) {
@@ -392,6 +395,8 @@ projectsRouter.patch("/:projectId", requireAuth, asyncRoute(async (req, res) => 
   if (!result.ok) {
     if (result.kind === "forbidden")
       return void res.status(403).json({ detail: result.detail });
+    if (result.kind === "validation")
+      return void res.status(400).json({ detail: result.detail });
     if (result.kind === "db_error")
       return void sendInternalError(res, result.error);
     return void res.status(404).json({ detail: "Project not found" });

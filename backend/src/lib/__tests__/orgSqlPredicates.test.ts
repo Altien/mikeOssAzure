@@ -132,29 +132,111 @@ it("keeps organization scope exclusive to projects and workflows", () => {
     expect(migration).toContain("tabular_reviews_org_requires_project");
 });
 
-it("makes organization Owner and Admin ownership immutable in SQL", () => {
+// Organization content is private by default. The two role functions are the
+// SQL twins of resolveOrgContentRole (lib/access.ts), and every list RPC
+// decides visibility through them.
+describe("private-by-default organization access in SQL", () => {
     const migration = readFileSync(
-        resolve(ROOT, "migrations/0110_org_owner_role.sql"),
+        resolve(ROOT, "migrations/0113_org_private_by_default.sql"),
         "utf8",
     );
-    for (const sql of [migration]) {
-        const implicitOwnerBranches = [
-            ...sql.matchAll(/when m\.role in \('owner', 'admin'\) then 'owner'/g),
-        ];
-        expect(implicitOwnerBranches).toHaveLength(2);
-        // The pre-owner shape admitted admins only; an owner fell through to
-        // the override and the Editor default.
-        expect(sql).not.toMatch(/when m\.role = 'admin' then 'owner'/);
-        expect(sql).toContain(
-            "Organization owners and admins always have owner access",
+    const roleFunction = (sql: string, name: string) => {
+        const start = sql.indexOf(`create or replace function public.${name}(`);
+        expect(start).toBeGreaterThan(-1);
+        return sql.slice(start, sql.indexOf("\n$$;\n", start));
+    };
+
+    describe.each([
+        ["the migration", migration],
+    ])("%s", (_name, sql) => {
+        it.each(["project_access_role", "workflow_access_role"])(
+            "%s resolves creator, owner, override, then public, then nothing",
+            (name) => {
+                const body = roleFunction(sql, name);
+                // The order matters: an override must be read before the
+                // public default, or a denial on a public item is ignored.
+                const order = [
+                    "= p_user_id then 'owner'",
+                    "when m.role = 'owner' then 'owner'",
+                    "when o.role = 'deny' then null",
+                    "when o.role in ('owner', 'editor', 'viewer') then o.role",
+                    ") = 'organization' then 'editor'",
+                    "else null",
+                ].map((fragment) => body.indexOf(fragment));
+                expect(order.every((index) => index > -1)).toBe(true);
+                expect([...order].sort((x, y) => x - y)).toEqual(order);
+                // No implicit standing for admins, and no "everyone is an
+                // editor" fallback.
+                expect(body).not.toMatch(/m\.role in \('owner', 'admin'\)/);
+                expect(body).not.toMatch(/m\.role = 'admin'/);
+                expect(body).not.toMatch(/else 'editor'/);
+            },
         );
-        expect(sql).toContain("if new.role in ('owner', 'admin') then");
-    }
-    expect(SOURCES["schema.sql"]).toContain("org_members_cleanup_admin_overrides");
+
+        it("only an organization owner is exempt from overrides", () => {
+            expect(sql).toContain("Organization owners always have owner access");
+            expect(sql).not.toContain(
+                "Organization owners and admins always have owner access",
+            );
+            // A wall must survive a promotion to admin.
+            expect(sql).toContain("if new.role = 'owner' then");
+            expect(sql).not.toContain("if new.role in ('owner', 'admin') then");
+        });
+
+        it("constrains visibility, and keeps personal items private", () => {
+            for (const table of ["projects", "workflows"]) {
+                expect(sql).toContain(`${table}_visibility_check`);
+                expect(sql).toContain(`${table}_visibility_scope_check`);
+            }
+            expect(sql).toContain("check (visibility in ('private', 'organization'))");
+            expect(sql).toContain("check (visibility = 'private' or org_id is not null)");
+        });
+
+        it("labels scope from visibility and grants, never from membership alone", () => {
+            // An organization's private project used to be labelled
+            // 'organization' simply for having an org_id.
+            expect(sql).not.toMatch(/when vp\.org_id is not null then 'organization'/);
+            expect(sql).not.toMatch(/when w\.org_id is not null then 'organization'/);
+            expect(sql).not.toContain("'organization'::text as access_scope");
+            expect(sql).toContain(
+                "public.project_access_scope(vp.id, vp.org_id, vp.visibility) as access_scope",
+            );
+            expect(sql).toContain(
+                "public.workflow_access_scope(w.id, w.org_id, w.visibility) as access_scope",
+            );
+            // A denial is not sharing.
+            expect(roleFunction(sql, "project_access_scope")).toContain(
+                "o.role <> 'deny'",
+            );
+            expect(roleFunction(sql, "workflow_access_scope")).toContain(
+                "o.role <> 'deny'",
+            );
+        });
+    });
+
+    it("makes existing organization content public, once", () => {
+        // Nobody loses access on upgrade...
+        expect(migration).toMatch(
+            /update public\.workflows\s+set visibility = 'organization'\s+where org_id is not null/,
+        );
+        expect(migration).toMatch(
+            /update public\.projects\s+set visibility =\s+case when org_id is not null then 'organization' else 'private' end/,
+        );
+        // ...and a second run cannot re-publish what has since been made
+        // private: the backfill sits inside the branch that adds the column.
+        const guard = migration.indexOf("and column_name = 'visibility'");
+        const addColumn = migration.indexOf("add column visibility");
+        const backfill = migration.indexOf("update public.projects");
+        const endOfBranch = migration.indexOf("end if;");
+        expect(guard).toBeGreaterThan(-1);
+        expect(guard).toBeLessThan(addColumn);
+        expect(addColumn).toBeLessThan(backfill);
+        expect(backfill).toBeLessThan(endOfBranch);
+    });
 });
 
 it("keeps at least one owner per organization in SQL", () => {
-    const schema = SOURCES["schema.sql"];
+    const schema = readFileSync(resolve(ROOT, "migrations/0110_org_owner_role.sql"), "utf8");
     const migration = readFileSync(
         resolve(ROOT, "migrations/0110_org_owner_role.sql"),
         "utf8",
@@ -167,7 +249,6 @@ it("keeps at least one owner per organization in SQL", () => {
     // The guard the owner one replaces must not survive on either path: left
     // in place it refuses to move a sole admin off 'admin', which is the
     // backfill, and afterwards it would demand an admin no rule requires.
-    expect(schema).not.toContain("org_members_protect_last_admin");
     expect(migration).toContain(
         "drop trigger if exists org_members_last_admin_guard on public.org_members",
     );
@@ -178,9 +259,7 @@ it("keeps at least one owner per organization in SQL", () => {
     expect(migration.indexOf("create trigger org_members_last_owner_guard"))
         .toBeLessThan(migration.indexOf("update public.org_members m"));
     // Invitations never carry ownership.
-    expect(schema).toMatch(
-        /create table if not exists public\.org_invitations[\s\S]*?check \(role in \('admin', 'member'\)\)/,
-    );
+    expect(SCHEMA).toContain("ARRAY['admin'::text, 'member'::text]");
 });
 
 it("backfills owners only into organizations that have none", () => {

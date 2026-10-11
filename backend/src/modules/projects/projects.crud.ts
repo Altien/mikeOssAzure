@@ -12,8 +12,9 @@ import {
 import {
   checkProjectAccess,
   getOrgRole,
-  isOrgAdmin,
   isOrgRole,
+  parseContentVisibility,
+  resolveOrgContentRole,
 } from "../../lib/access";
 import { can } from "../../lib/permissions";
 import { workspaceRpcArg, type WorkspaceFilter } from "../../lib/workspace";
@@ -21,7 +22,10 @@ import {
   listProjectAdminContacts,
   listProjectGrants,
 } from "../../lib/projectAccess";
-import { listOrgAccessPeople } from "../../lib/orgAccessOverrides";
+import {
+  isOrgAccessOverrideRole,
+  listOrgAccessPeople,
+} from "../../lib/orgAccessOverrides";
 import { deleteProjectsByIds } from "../user/user.service";
 import { loadProfileUsersByEmail } from "../../lib/userLookup";
 import { ensureResourceAccessSummaries } from "../../lib/resourceAccessSummary";
@@ -284,37 +288,52 @@ export async function searchProjectDirectory(
   if (orgProjects.length > 0) {
     // One batched read for the whole page, not a verdict per row: this is a
     // filter over a result set and must not become an N+1. Mirrors
-    // listOrgResources, including its exemptions — the creator and org
-    // owners and admins keep Owner and cannot be denied.
+    // listOrgResources and listAccessibleProjectIds, through the same
+    // resolveOrgContentRole they use.
+    //
+    // Every override the caller holds, not only the denials: an organization
+    // project is private until shared, so a grant is what admits a member as
+    // often as a denial is what excludes one.
+    //
     // Scoped by ORG, not by an .in() over every candidate project id: that
     // list grows with the firm's matters and is spliced verbatim into the
     // PostgREST query string, so a large tenant sent a URL past the server's
     // request-line limit and the read failed (fail-closed, so the picker went
     // blank). org_id is bounded by the caller's memberships, which is the
     // same shape listOrgResources uses.
-    const { data: denialRows, error: denialError } = await db
+    const { data: overrideRows, error: overrideError } = await db
       .from("project_org_access_overrides")
-      .select("project_id")
+      .select("project_id, role")
       .in("org_id", orgIds)
-      .eq("user_id", userId)
-      .eq("role", "deny");
+      .eq("user_id", userId);
     // Fail closed: an unreadable override table must hide rows, never reveal
     // them.
-    if (denialError) return { ok: false, error: denialError };
-    const deniedProjectIds = new Set(
-      ((denialRows ?? []) as { project_id?: string | null }[])
-        .map((row) => row.project_id)
-        .filter((id): id is string => !!id),
+    if (overrideError) return { ok: false, error: overrideError };
+    const overrideByProjectId = new Map(
+      ((overrideRows ?? []) as { project_id?: string | null; role?: unknown }[])
+        .filter(
+          (row): row is { project_id: string; role: unknown } =>
+            !!row.project_id,
+        )
+        .map((row) => [row.project_id, row.role]),
     );
     for (const project of orgProjects) {
       const projectId = project.id as string;
       const orgId = project.org_id as string | null;
-      const isCreator = project.user_id === userId;
       const orgRole = orgId ? orgRoleByOrgId.get(orgId) : undefined;
-      const administersOrg = isOrgRole(orgRole) && isOrgAdmin(orgRole);
-      if (!isCreator && !administersOrg && deniedProjectIds.has(projectId))
-        continue;
-      projectsById.set(projectId, project);
+      if (!isOrgRole(orgRole)) continue;
+      const override = overrideByProjectId.get(projectId);
+      const role = resolveOrgContentRole({
+        isCreator: project.user_id === userId,
+        orgRole,
+        override: isOrgAccessOverrideRole(override) ? override : null,
+        visibility: project.visibility,
+      });
+      // An org project the caller CREATED was admitted above; it leaves
+      // again here if the verdict says no (it cannot, while they are a
+      // member, but the two branches must not be able to disagree).
+      if (role) projectsById.set(projectId, project);
+      else projectsById.delete(projectId);
     }
   }
   const accessibleProjectIds = [...projectsById.keys()];
@@ -495,6 +514,7 @@ export async function createProject(
     cm_number?: string;
     practice?: string;
     org_id?: string | null;
+    visibility?: unknown;
     memory_enabled?: boolean;
   },
 ): Promise<CreateProjectResult> {
@@ -523,6 +543,19 @@ export async function createProject(
       };
     resolvedOrgId = org_id;
   }
+  // An organization's project is private unless its creator opens it to the
+  // whole organization here; a personal project never can be.
+  const requestedVisibility = parseContentVisibility(
+    args.visibility,
+    resolvedOrgId,
+  );
+  if (!requestedVisibility.ok)
+    return {
+      ok: false,
+      kind: "validation",
+      detail: requestedVisibility.detail,
+    };
+  const visibility = requestedVisibility.visibility ?? "private";
 
   const resolvedMemoryEnabled =
     memory_enabled ?? (await projectMemoryDefaultFor(db, userId));
@@ -538,15 +571,27 @@ export async function createProject(
   });
   const data = Array.isArray(created) ? created[0] : created;
   if (error || !data) return { ok: false, kind: "db_error", error };
+  // The row is created private and opened afterwards. If this second write
+  // fails the project exists but nobody else can see it, which is the safe
+  // way round; the caller is told, and can open it from the Access panel.
+  if (visibility === "organization") {
+    const { error: visibilityError } = await db
+      .from("projects")
+      .update({ visibility })
+      .eq("id", (data as { id: string }).id);
+    if (visibilityError)
+      return { ok: false, kind: "db_error", error: visibilityError };
+  }
   return {
     ok: true,
     project: {
       ...data,
+      visibility,
       memory_enabled: resolvedMemoryEnabled,
       documents: [],
       is_owner: true,
       access_role: "owner",
-      access_scope: resolvedOrgId ? "organization" : "private",
+      access_scope: visibility === "organization" ? "organization" : "private",
       organization_name: null,
     },
   };
@@ -642,6 +687,7 @@ export async function getProjectPeople(
       resourceId: projectId,
       orgId: project.org_id,
       creatorId: project.user_id,
+      visibility: project.visibility,
     });
     if (!listed.ok) return { ok: false, kind: "db_error", error: listed.detail };
     const creator = listed.people.find(
@@ -707,6 +753,7 @@ export type UpdateProjectResult =
   | { ok: true; body: Record<string, unknown> }
   | { ok: false; kind: "not_found" }
   | { ok: false; kind: "forbidden"; detail: string }
+  | { ok: false; kind: "validation"; detail: string }
   | { ok: false; kind: "db_error"; error: unknown };
 
 export async function updateProject(
@@ -737,6 +784,20 @@ export async function updateProject(
       kind: "forbidden",
       detail: "Only a project owner can change project settings.",
     };
+  // Opening a project to the whole organization, or closing it again, is an
+  // access decision like any other: the same Owner gate, checked above.
+  const requestedVisibility = parseContentVisibility(
+    body.visibility,
+    access.project.org_id,
+  );
+  if (!requestedVisibility.ok)
+    return {
+      ok: false,
+      kind: "validation",
+      detail: requestedVisibility.detail,
+    };
+  if (requestedVisibility.visibility)
+    updates.visibility = requestedVisibility.visibility;
 
   const { data, error } = await db
     .from("projects")

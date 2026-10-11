@@ -10,11 +10,16 @@ import type { Db } from "./supabase";
  * logic instead of re-implementing the join.
  *
  * The creator is Owner. For personal content, access otherwise comes from one
- * role-aware direct grant. Projects and workflows may instead be organization
- * scoped: organization Owners and Admins inherit Owner, Members inherit
- * Editor, and a per-resource override can assign a Member Owner, Editor,
- * Viewer, or Deny. Chats and reviews only inherit organization access through
- * a parent project.
+ * role-aware direct grant. Projects and workflows may instead belong to an
+ * organization, where they are PRIVATE BY DEFAULT: reachable by the creator,
+ * by the organization's Owners, and by the members they have been shared with
+ * (a per-resource override of Owner, Editor, Viewer — or Deny, which walls a
+ * member off). Making one public gives every member Editor. Sharing never
+ * reaches outside the organization. Chats and reviews only inherit
+ * organization access through a parent project.
+ *
+ * `resolveOrgContentRole` below is that rule; public.project_access_role and
+ * public.workflow_access_role in schema.sql are its SQL twins.
  *
  * Personal content is simply `org_id IS NULL` — there is no hidden personal
  * organization. Content without an org is reachable through branches 1 and 2
@@ -32,6 +37,8 @@ import {
 } from "./permissions";
 import {
     getOrgAccessOverrideRole,
+    isOrgAccessOverrideRole,
+    type OrgAccessOverrideRole,
     type OrgResourceKind,
 } from "./orgAccessOverrides";
 
@@ -45,8 +52,9 @@ export {
  * Organizations have three roles, strongest first. Owners are accountable for
  * the organization: they alone delete it and appoint or remove admins and
  * other owners. Admins run it day to day (members, invitations, settings).
- * Members collaborate. Owners and admins inherit Owner on organization
- * content; members inherit Editor.
+ * Members collaborate. Only Owners have standing on content they did not
+ * create and were not given: they can open every project and workflow, so no
+ * matter is ever orphaned. An Admin is a Member as far as content goes.
  */
 export type OrgRole = "owner" | "admin" | "member";
 
@@ -97,11 +105,65 @@ export function canManageOrgRole(
     return ORG_ROLE_RANK[actor] > ORG_ROLE_RANK[role];
 }
 
+/** Who may open an organization's project or workflow without being named. */
+export type ContentVisibility = "private" | "organization";
+
+export function isContentVisibility(value: unknown): value is ContentVisibility {
+    return value === "private" || value === "organization";
+}
+
 /**
- * Map each organization role to its default content role.
+ * Read a `visibility` an API caller sent for a project or workflow.
+ *
+ * Absent means "leave it as it is" (private, for a new item). Public is only
+ * meaningful inside an organization: a personal item is shared by naming
+ * people, and has no "everyone" to be opened to.
  */
-export function orgRoleToProjectRole(role: OrgRole): ProjectRole {
-    return isOrgAdmin(role) ? "owner" : "editor";
+export function parseContentVisibility(
+    value: unknown,
+    orgId: string | null | undefined,
+):
+    | { ok: true; visibility: ContentVisibility | undefined }
+    | { ok: false; detail: string } {
+    if (value === undefined || value === null)
+        return { ok: true, visibility: undefined };
+    if (!isContentVisibility(value))
+        return {
+            ok: false,
+            detail: "visibility must be 'private' or 'organization'",
+        };
+    if (value === "organization" && !orgId)
+        return {
+            ok: false,
+            detail: "Only an organization's item can be shared with the whole organization.",
+        };
+    return { ok: true, visibility: value };
+}
+
+/**
+ * The caller's role on an organization's project or workflow, or null for no
+ * access. The caller is already known to be a CURRENT member of that
+ * organization; a non-member never reaches this.
+ *
+ *   1. the creator, and the organization's owners   -> owner
+ *   2. a member it was shared with                   -> the role they were given
+ *      (`deny` walls a member off, a public item included)
+ *   3. everyone, when it is public                   -> editor
+ *
+ * One function, because five read paths apply this rule (the single-item
+ * checks, the accessible-project list, the document picker and the
+ * organization's own resource list) and they must never disagree.
+ */
+export function resolveOrgContentRole(input: {
+    isCreator: boolean;
+    orgRole: OrgRole;
+    override: OrgAccessOverrideRole | null | undefined;
+    visibility: unknown;
+}): ProjectRole | null {
+    if (input.isCreator || isOrgOwner(input.orgRole)) return "owner";
+    if (input.override === "deny") return null;
+    if (input.override) return input.override;
+    return input.visibility === "organization" ? "editor" : null;
 }
 
 /** Normalize an email the way every grant/invitation row stores it. */
@@ -198,6 +260,7 @@ type ProjectRow = {
     id: string;
     user_id: string | null;
     org_id?: string | null;
+    visibility?: string | null;
 };
 
 export type ProjectAccess =
@@ -221,7 +284,7 @@ export async function checkProjectAccess(
 ): Promise<ProjectAccess> {
     const { data: project } = await db
         .from("projects")
-        .select("id, user_id, org_id")
+        .select("id, user_id, org_id, visibility")
         .eq("id", projectId)
         .maybeSingle();
     if (!project) return { ok: false };
@@ -229,15 +292,14 @@ export async function checkProjectAccess(
 
     const isCreator = !!proj.user_id && proj.user_id === userId;
 
-    // Organization scope is exclusive. Owners and Admins always inherit Owner
-    // and cannot be downgraded or denied by a resource override. Members
-    // inherit Editor;
-    // the creator remains Owner and an explicit override may promote, reduce,
-    // or deny another Member's inherited access.
+    // Organization scope is exclusive, and only a current member is in it:
+    // somebody who has left the organization has no access, the creator
+    // included. Inside it the project is private until shared or made public
+    // (resolveOrgContentRole).
     if (proj.org_id) {
         const orgRole = await getOrgRole(userId, proj.org_id, db);
         if (!orgRole) return { ok: false };
-        if (isCreator || isOrgAdmin(orgRole))
+        if (isCreator || isOrgOwner(orgRole))
             return {
                 ok: true,
                 isCreator,
@@ -252,12 +314,21 @@ export async function checkProjectAccess(
             proj.org_id,
             userId,
         );
-        if (!override.ok || override.role === "deny") return { ok: false };
+        // Fail closed: an unreadable override table must not admit a member
+        // who may have been walled off.
+        if (!override.ok) return { ok: false };
+        const projectRole = resolveOrgContentRole({
+            isCreator: false,
+            orgRole,
+            override: override.role,
+            visibility: proj.visibility,
+        });
+        if (!projectRole) return { ok: false };
         return {
             ok: true,
             isCreator: false,
             orgRole,
-            projectRole: override.role ?? orgRoleToProjectRole(orgRole),
+            projectRole,
             project: proj,
         };
     }
@@ -326,7 +397,12 @@ function resourceAccessFor(
 
 async function organizationResourceAccess(
     kind: OrgResourceKind,
-    row: { id: string; user_id: string | null; org_id?: string | null },
+    row: {
+        id: string;
+        user_id: string | null;
+        org_id?: string | null;
+        visibility?: string | null;
+    },
     userId: string,
     db: Db,
 ): Promise<ResourceAccess> {
@@ -334,7 +410,7 @@ async function organizationResourceAccess(
     const orgRole = await getOrgRole(userId, row.org_id, db);
     if (!orgRole) return { ok: false };
     const isCreator = !!row.user_id && row.user_id === userId;
-    if (isCreator || isOrgAdmin(orgRole))
+    if (isCreator || isOrgOwner(orgRole))
         return resourceAccessFor("owner", orgRole, isCreator);
     const override = await getOrgAccessOverrideRole(
         db,
@@ -343,18 +419,21 @@ async function organizationResourceAccess(
         row.org_id,
         userId,
     );
-    if (!override.ok || override.role === "deny") return { ok: false };
-    return resourceAccessFor(
-        override.role ?? orgRoleToProjectRole(orgRole),
+    if (!override.ok) return { ok: false };
+    const role = resolveOrgContentRole({
+        isCreator: false,
         orgRole,
-        false,
-    );
+        override: override.role,
+        visibility: row.visibility,
+    });
+    return role ? resourceAccessFor(role, orgRole, false) : { ok: false };
 }
 
 type WorkflowRow = {
     id: string;
     user_id: string | null;
     org_id?: string | null;
+    visibility?: string | null;
 };
 
 export type WorkflowAccess =
@@ -376,7 +455,7 @@ export async function checkWorkflowAccess(
 ): Promise<WorkflowAccess> {
     const { data } = await db
         .from("workflows")
-        .select("id, user_id, org_id")
+        .select("id, user_id, org_id, visibility")
         .eq("id", workflowId)
         .maybeSingle();
     if (!data) return { ok: false };
@@ -480,14 +559,15 @@ export async function ensureDocAccess(
             : { ok: false };
     }
     if (doc.org_id) {
+        // An organization's document that sits in no project or workflow has
+        // nothing to be shared through, so it is its creator's and the
+        // organization's owners' alone.
         const orgRole = await getOrgRole(userId, doc.org_id, db);
         if (!orgRole) return { ok: false };
         const isCreator = !!doc.user_id && doc.user_id === userId;
-        return resourceAccessFor(
-            isCreator ? "owner" : orgRoleToProjectRole(orgRole),
-            orgRole,
-            isCreator,
-        );
+        return isCreator || isOrgOwner(orgRole)
+            ? resourceAccessFor("owner", orgRole, isCreator)
+            : { ok: false };
     }
     const isCreator = !!doc.user_id && doc.user_id === userId;
     return isCreator
@@ -697,9 +777,8 @@ export async function listAccessibleProjectIds(
 ): Promise<string[]> {
     const normalizedEmail = normalizeEmail(userEmail);
 
-    // Roles, not just ids: an org OWNER or ADMIN cannot be denied a project,
-    // which is one of the two exemptions the override filter below has to
-    // honour.
+    // Roles, not just ids: an organization's OWNER can open every project in
+    // it, which the per-project verdict below has to honour.
     const { data: membershipRows, error: membershipError } = await db
         .from("org_members")
         .select("org_id, role")
@@ -730,7 +809,7 @@ export async function listAccessibleProjectIds(
         ),
     ];
 
-    const [personalOwned, personalGranted, orgProjects, denials] =
+    const [personalOwned, personalGranted, orgProjects, overrides] =
         await Promise.all([
             // Personal projects the caller created. Their ORG projects are
             // resolved by the org branch instead, because a creator who has
@@ -761,10 +840,11 @@ export async function listAccessibleProjectIds(
                       id: string;
                       user_id: string | null;
                       org_id: string;
+                      visibility: string | null;
                   }>((from, to) =>
                       db
                           .from("projects")
-                          .select("id, user_id, org_id")
+                          .select("id, user_id, org_id, visibility")
                           .in("org_id", orgIds)
                           .order("id", { ascending: true })
                           .range(from, to),
@@ -774,40 +854,48 @@ export async function listAccessibleProjectIds(
                           id: string;
                           user_id: string | null;
                           org_id: string;
+                          visibility: string | null;
                       }[],
                   ),
-            // Page the denials as well as the projects. A capped deny response
-            // otherwise admits walled matters beyond the first 1,000 rows.
+            // Every override the caller holds, not only the denials: in an
+            // organization a project is private until shared, so a grant is
+            // what ADMITS them as often as a denial is what excludes them.
+            // Paged like the projects — a capped response would both drop
+            // grants and admit walled matters beyond the first 1,000 rows.
             orgIds.length
-                ? pageProjectRows<{ project_id: string }>(
+                ? pageProjectRows<{ project_id: string; role: string }>(
                       (from, to) =>
                           db
                               .from("project_org_access_overrides")
-                              .select("project_id")
+                              .select("project_id, role")
                               .in("org_id", orgIds)
                               .eq("user_id", userId)
-                              .eq("role", "deny")
                               .order("project_id", { ascending: true })
                               .range(from, to),
-                      "deny override read",
+                      "access override read",
                   )
-                : Promise.resolve([] as { project_id: string }[]),
+                : Promise.resolve([] as { project_id: string; role: string }[]),
         ]);
 
-    const deniedProjectIds = new Set(denials.map((row) => row.project_id));
+    const overrideByProjectId = new Map(
+        overrides.map((row) => [row.project_id, row.role]),
+    );
 
     const ids = new Set<string>();
     for (const project of personalOwned) ids.add(project.id);
     for (const project of personalGranted) ids.add(project.id);
     for (const project of orgProjects) {
-        // The two exemptions checkProjectAccess applies: the creator and an
-        // org owner or admin always keep Owner and cannot be denied.
-        const isCreator = !!project.user_id && project.user_id === userId;
+        // The same verdict checkProjectAccess reaches, re-derived inline.
         const orgRole = orgRoleByOrgId.get(project.org_id);
-        const administersOrg = isOrgRole(orgRole) && isOrgAdmin(orgRole);
-        if (!isCreator && !administersOrg && deniedProjectIds.has(project.id))
-            continue;
-        ids.add(project.id);
+        if (!isOrgRole(orgRole)) continue;
+        const override = overrideByProjectId.get(project.id);
+        const role = resolveOrgContentRole({
+            isCreator: !!project.user_id && project.user_id === userId,
+            orgRole,
+            override: isOrgAccessOverrideRole(override) ? override : null,
+            visibility: project.visibility,
+        });
+        if (role) ids.add(project.id);
     }
     return [...ids];
 }

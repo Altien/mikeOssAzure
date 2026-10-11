@@ -70,6 +70,7 @@ export async function listProjectAccess(
       resourceId: projectId,
       orgId: access.project.org_id,
       creatorId: access.project.user_id,
+      visibility: access.project.visibility,
     });
     if (!listed.ok) return { ok: false, kind: "db_error", error: listed.detail };
     return {

@@ -229,11 +229,13 @@ workflowsRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
     skill_md,
     columns_config,
     org_id,
+    visibility,
   } = req.body as {
     metadata?: Partial<WorkflowMetadata>;
     skill_md?: string;
     columns_config?: unknown;
     org_id?: unknown;
+    visibility?: unknown;
   };
   const title = metadata?.title;
   const type = metadata?.type;
@@ -253,6 +255,7 @@ workflowsRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
     columns_config,
     metadata,
     org_id,
+    visibility,
   });
   if (!result.ok) {
     if (result.kind === "validation")
@@ -278,6 +281,10 @@ async function handleWorkflowUpdate(
     body: req.body,
   });
   if (!result.ok) {
+    if (result.kind === "validation")
+      return void res.status(400).json({ detail: result.detail });
+    if (result.kind === "forbidden")
+      return void res.status(403).json({ detail: result.detail });
     return void res
       .status(404)
       .json({ detail: "Workflow not found or not editable" });
