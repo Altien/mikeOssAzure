@@ -9,6 +9,10 @@ import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import { parsePaginationQuery } from "../../lib/pagination";
 import { normalizeSearchTerm } from "../../lib/search";
+import {
+  resolveWorkspaceFilter,
+  sendWorkspaceFailure,
+} from "../../lib/workspace";
 import { parseWorkflowSort } from "../../lib/sort";
 import { parseWorkflowScope } from "./workflows.overview";
 import { sendInternalError } from "../../lib/httpError";
@@ -97,6 +101,7 @@ const WORKFLOW_PAGINATION_QUERY_KEYS = [
   "practice",
   "language",
   "jurisdiction",
+  "workspace",
 ];
 
 // GET /workflows
@@ -112,6 +117,12 @@ workflowsRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
   const hasPaginationParams = WORKFLOW_PAGINATION_QUERY_KEYS.some(
     (key) => req.query[key] !== undefined,
   );
+  const workspace = await resolveWorkspaceFilter(
+    db,
+    userId,
+    req.query.workspace,
+  );
+  if (!workspace.ok) return void sendWorkspaceFailure(res, workspace);
   const result = hasPaginationParams
     ? await listWorkflowsPage(db, {
         userId,
@@ -124,6 +135,7 @@ workflowsRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
         practice: normalizeSearchTerm(req.query.practice),
         language: normalizeSearchTerm(req.query.language),
         jurisdiction: normalizeSearchTerm(req.query.jurisdiction),
+        workspace: workspace.workspace,
       })
     : await listWorkflows(db, { userId, userEmail, type: workflowType });
   if (!result.ok) {
@@ -158,11 +170,19 @@ workflowsRouter.get("/filter-options", requireAuth, asyncRoute(async (req, res) 
   const db = createServerSupabase();
   if (!(await ensureDefaultsForRequest(db, userId, res))) return;
 
+  const workspace = await resolveWorkspaceFilter(
+    db,
+    userId,
+    req.query.workspace,
+  );
+  if (!workspace.ok) return void sendWorkspaceFailure(res, workspace);
+
   const result = await getWorkflowFilterOptions(db, {
     userId,
     userEmail,
     type,
     scope,
+    workspace: workspace.workspace,
   });
   if (!result.ok) return void sendInternalError(res, result.error);
   res.json(result.options);
@@ -179,6 +199,13 @@ workflowsRouter.get("/ids", requireAuth, asyncRoute(async (req, res) => {
     typeof req.query.type === "string" && req.query.type
       ? req.query.type
       : null;
+  const workspace = await resolveWorkspaceFilter(
+    db,
+    userId,
+    req.query.workspace,
+  );
+  if (!workspace.ok) return void sendWorkspaceFailure(res, workspace);
+
   const result = await listWorkflowIds(db, {
     userId,
     userEmail,
@@ -188,6 +215,7 @@ workflowsRouter.get("/ids", requireAuth, asyncRoute(async (req, res) => {
     practice: normalizeSearchTerm(req.query.practice),
     language: normalizeSearchTerm(req.query.language),
     jurisdiction: normalizeSearchTerm(req.query.jurisdiction),
+    workspace: workspace.workspace,
   });
   if (!result.ok) return void sendInternalError(res, result.error);
   res.json(result.ids);

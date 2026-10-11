@@ -16,6 +16,7 @@ import {
   isOrgRole,
 } from "../../lib/access";
 import { can } from "../../lib/permissions";
+import { workspaceRpcArg, type WorkspaceFilter } from "../../lib/workspace";
 import {
   listProjectAdminContacts,
   listProjectGrants,
@@ -60,6 +61,7 @@ export type ProjectListFilters = {
   sort: { key: string; direction: string };
   practice: string | null;
   ownerUserId: string | null;
+  workspace?: WorkspaceFilter;
 };
 
 export async function getProjectsOverview(
@@ -84,6 +86,7 @@ export async function getProjectsOverview(
         sort: filters.sort,
         practice: filters.practice,
         ownerUserId: filters.ownerUserId,
+        workspace: filters.workspace,
       })
     : { p_user_id: userId, p_user_email: normalizedUserEmail ?? null };
 
@@ -379,7 +382,7 @@ export async function searchProjectDirectory(
 // GET /projects/filter-options
 export async function getProjectFilterOptions(
   db: Db,
-  args: { userId: string; userEmail?: string },
+  args: { userId: string; userEmail?: string; workspace?: WorkspaceFilter },
 ): Promise<
   | {
       ok: true;
@@ -390,11 +393,12 @@ export async function getProjectFilterOptions(
     }
   | ProjectsDbFailure
 > {
-  const { userId, userEmail } = args;
+  const { userId, userEmail, workspace } = args;
   const normalizedUserEmail = userEmail?.trim().toLowerCase();
   const { data, error } = await db.rpc("get_project_filter_options", {
     p_user_id: userId,
     p_user_email: normalizedUserEmail ?? null,
+    ...workspaceRpcArg(workspace),
   });
   if (error) return { ok: false, error };
 
@@ -442,12 +446,14 @@ export async function listProjectIds(
     searchTerm: string | null;
     practice: string | null;
     ownerUserId: string | null;
+    workspace?: WorkspaceFilter;
   },
 ): Promise<
   | { ok: true; ids: { id: string; user_id: string }[] }
   | ProjectsDbFailure
 > {
-  const { userId, userEmail, scope, searchTerm, practice, ownerUserId } = args;
+  const { userId, userEmail, scope, searchTerm, practice, ownerUserId, workspace } =
+    args;
 
   const ids: { id: string; user_id: string }[] = [];
   let offset = 0;
@@ -459,6 +465,7 @@ export async function listProjectIds(
       searchTerm,
       practice,
       ownerUserId,
+      workspace,
       pagination: { limit: PROJECT_IDS_PAGE_SIZE, offset },
     });
     const { data, error } = await db.rpc("get_project_ids_overview", rpcArgs);

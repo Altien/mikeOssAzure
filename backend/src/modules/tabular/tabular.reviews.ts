@@ -15,6 +15,7 @@ import {
 } from "../../lib/access";
 import { can, type ProjectRole } from "../../lib/permissions";
 import { loadProfileUsersByEmail } from "../../lib/userLookup";
+import { type WorkspaceFilter } from "../../lib/workspace";
 import {
     deleteContentGrant,
     listContentGrants,
@@ -342,6 +343,7 @@ export type ListReviewsFilters = {
     pagination: { limit: number; offset: number };
     searchTerm: string | null;
     sort: { key: string; direction: string };
+    workspace?: WorkspaceFilter;
 };
 
 export async function listTabularReviews(
@@ -375,6 +377,7 @@ export async function listTabularReviewIds(
         projectIdFilter: string | null;
         scope: TabularReviewScope;
         searchTerm: string | null;
+        workspace?: WorkspaceFilter;
     },
 ): Promise<TabularResult<ReviewIdRow[]>> {
     const ids: ReviewIdRow[] = [];

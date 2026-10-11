@@ -105,6 +105,10 @@ import {
 } from "../../lib/memory/schedule";
 import { parsePaginationQuery } from "../../lib/pagination";
 import { normalizeSearchTerm } from "../../lib/search";
+import {
+    resolveWorkspaceFilter,
+    sendWorkspaceFailure,
+} from "../../lib/workspace";
 import { parseTabularReviewSort } from "../../lib/sort";
 import { parseTabularReviewScope } from "./tabular.overview";
 
@@ -145,14 +149,19 @@ function projectIdFilterOf(query: Record<string, unknown>): string | null {
 // GET /tabular-review
 tabularRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
     const query = req.query as Record<string, unknown>;
-    const result = await listTabularReviews(createServerSupabase(), {
-        userId: res.locals.userId as string,
+    const db = createServerSupabase();
+    const userId = res.locals.userId as string;
+    const workspace = await resolveWorkspaceFilter(db, userId, query.workspace);
+    if (!workspace.ok) return void sendWorkspaceFailure(res, workspace);
+    const result = await listTabularReviews(db, {
+        userId,
         userEmail: res.locals.userEmail as string | undefined,
         projectIdFilter: projectIdFilterOf(query),
         scope: parseTabularReviewScope(query.scope),
         pagination: parsePaginationQuery(query),
         searchTerm: normalizeSearchTerm(query.search),
         sort: parseTabularReviewSort(query),
+        workspace: workspace.workspace,
     });
     if (!result.ok) return void sendTabularFailure(res, result);
     res.json(result.data);
@@ -164,12 +173,17 @@ tabularRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
 // have to page through full review payloads just to collect checkboxes.
 tabularRouter.get("/ids", requireAuth, asyncRoute(async (req, res) => {
     const query = req.query as Record<string, unknown>;
-    const result = await listTabularReviewIds(createServerSupabase(), {
-        userId: res.locals.userId as string,
+    const db = createServerSupabase();
+    const userId = res.locals.userId as string;
+    const workspace = await resolveWorkspaceFilter(db, userId, query.workspace);
+    if (!workspace.ok) return void sendWorkspaceFailure(res, workspace);
+    const result = await listTabularReviewIds(db, {
+        userId,
         userEmail: res.locals.userEmail as string | undefined,
         projectIdFilter: projectIdFilterOf(query),
         scope: parseTabularReviewScope(query.scope),
         searchTerm: normalizeSearchTerm(query.search),
+        workspace: workspace.workspace,
     });
     if (!result.ok) return void sendTabularFailure(res, result);
     res.json(result.data);

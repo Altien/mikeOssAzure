@@ -11,6 +11,10 @@ import { createServerSupabase } from "../../lib/supabase";
 import { sendInternalError } from "../../lib/httpError";
 import { parsePaginationQuery } from "../../lib/pagination";
 import { normalizeSearchTerm } from "../../lib/search";
+import {
+  resolveWorkspaceFilter,
+  sendWorkspaceFailure,
+} from "../../lib/workspace";
 import { parseProjectSort } from "../../lib/sort";
 import { parseProjectScope } from "./projects.overview";
 import {
@@ -68,6 +72,7 @@ const PROJECT_PAGINATION_QUERY_KEYS = [
   "scope",
   "practice",
   "owner_user_id",
+  "workspace",
 ];
 
 projectsRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
@@ -105,6 +110,12 @@ projectsRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
   const hasPaginationParams = PROJECT_PAGINATION_QUERY_KEYS.some(
     (key) => req.query[key] !== undefined,
   );
+  const workspace = await resolveWorkspaceFilter(
+    db,
+    userId,
+    req.query.workspace,
+  );
+  if (!workspace.ok) return void sendWorkspaceFailure(res, workspace);
 
   const result = await getProjectsOverview(db, {
     userId,
@@ -120,6 +131,7 @@ projectsRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
           sort: parseProjectSort(req.query as Record<string, unknown>),
           practice: normalizeSearchTerm(req.query.practice),
           ownerUserId: normalizeSearchTerm(req.query.owner_user_id),
+          workspace: workspace.workspace,
         }
       : undefined,
   });
@@ -193,8 +205,18 @@ projectsRouter.get("/filter-options", requireAuth, asyncRoute(async (req, res) =
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const db = createServerSupabase();
+  const workspace = await resolveWorkspaceFilter(
+    db,
+    userId,
+    req.query.workspace,
+  );
+  if (!workspace.ok) return void sendWorkspaceFailure(res, workspace);
 
-  const result = await getProjectFilterOptions(db, { userId, userEmail });
+  const result = await getProjectFilterOptions(db, {
+    userId,
+    userEmail,
+    workspace: workspace.workspace,
+  });
   if (!result.ok) return void sendInternalError(res, result.error);
   res.json(result.body);
 }));
@@ -207,6 +229,12 @@ projectsRouter.get("/ids", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const db = createServerSupabase();
+  const workspace = await resolveWorkspaceFilter(
+    db,
+    userId,
+    req.query.workspace,
+  );
+  if (!workspace.ok) return void sendWorkspaceFailure(res, workspace);
 
   const result = await listProjectIds(db, {
     userId,
@@ -215,6 +243,7 @@ projectsRouter.get("/ids", requireAuth, asyncRoute(async (req, res) => {
     searchTerm: normalizeSearchTerm(req.query.search),
     practice: normalizeSearchTerm(req.query.practice),
     ownerUserId: normalizeSearchTerm(req.query.owner_user_id),
+    workspace: workspace.workspace,
   });
   if (!result.ok) return void sendInternalError(res, result.error);
   res.json(result.ids);

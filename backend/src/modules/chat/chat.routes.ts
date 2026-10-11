@@ -66,6 +66,10 @@ import {
     updateChatSettings,
     updateChatTitle,
 } from "./chat.service";
+import {
+    resolveWorkspaceFilter,
+    sendWorkspaceFailure,
+} from "../../lib/workspace";
 
 export const chatRouter = Router();
 
@@ -109,6 +113,13 @@ chatRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
         return void res.status(400).json({ detail: "Invalid chat cursor" });
     }
 
+    const workspace = await resolveWorkspaceFilter(
+        db,
+        userId,
+        req.query.workspace,
+    );
+    if (!workspace.ok) return void sendWorkspaceFailure(res, workspace);
+
     const result = await listChats(db, {
         userId,
         userEmail,
@@ -116,6 +127,7 @@ chatRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
         offset,
         beforeUpdatedAt,
         beforeId,
+        workspace: workspace.workspace,
     });
     if (!result.ok) return void sendInternalError(res, result.error);
     res.json(result.data);

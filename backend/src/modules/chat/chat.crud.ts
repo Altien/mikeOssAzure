@@ -14,6 +14,7 @@
 // route needs to run the stream; it does not stream.
 import { type Db } from "../../lib/supabase";
 import { resolveContentOrgId } from "../../lib/access";
+import { workspaceRpcArg, type WorkspaceFilter } from "../../lib/workspace";
 import { validateAccessibleProjectId } from "./chat.access";
 
 // ---------------------------------------------------------------------------
@@ -35,6 +36,7 @@ export async function listChats(
         offset: number;
         beforeUpdatedAt: string | null;
         beforeId: string | null;
+        workspace?: WorkspaceFilter;
     },
 ): Promise<{ ok: true; data: unknown[] } | { ok: false; error: unknown }> {
     const { data, error } = await db.rpc("get_chats_overview", {
@@ -44,6 +46,7 @@ export async function listChats(
         p_offset: args.offset,
         p_before_updated_at: args.beforeUpdatedAt,
         p_before_id: args.beforeId,
+        ...workspaceRpcArg(args.workspace),
     });
     if (error) return { ok: false, error };
     return { ok: true, data: data ?? [] };

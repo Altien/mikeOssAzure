@@ -1,3 +1,5 @@
+import { workspaceRpcArg, type WorkspaceFilter } from "../../lib/workspace";
+
 // "owned" and "shared" retain the list's original source semantics, while
 // "private" and "collaborative" power the Access-column filter. The latter
 // groups direct grants and organisation access together as collaborative.
@@ -32,6 +34,7 @@ export interface WorkflowsOverviewRpcArgs {
     p_practice: string | null;
     p_language: string | null;
     p_jurisdiction: string | null;
+    p_workspace?: string;
 }
 
 export function buildWorkflowsOverviewRpcArgs(params: {
@@ -45,6 +48,7 @@ export function buildWorkflowsOverviewRpcArgs(params: {
     practice?: string | null;
     language?: string | null;
     jurisdiction?: string | null;
+    workspace?: WorkspaceFilter;
 }): WorkflowsOverviewRpcArgs {
     return {
         p_user_id: params.userId,
@@ -59,6 +63,7 @@ export function buildWorkflowsOverviewRpcArgs(params: {
         p_practice: params.practice ?? null,
         p_language: params.language ?? null,
         p_jurisdiction: params.jurisdiction ?? null,
+        ...workspaceRpcArg(params.workspace),
     };
 }
 
@@ -73,6 +78,7 @@ export interface WorkflowIdsOverviewRpcArgs {
     p_jurisdiction: string | null;
     p_limit: number;
     p_offset: number;
+    p_workspace?: string;
 }
 
 // Lightweight sibling of buildWorkflowsOverviewRpcArgs for "select all
@@ -89,6 +95,7 @@ export function buildWorkflowIdsOverviewRpcArgs(params: {
     practice?: string | null;
     language?: string | null;
     jurisdiction?: string | null;
+    workspace?: WorkspaceFilter;
     pagination: { limit: number; offset: number };
 }): WorkflowIdsOverviewRpcArgs {
     return {
@@ -102,5 +109,6 @@ export function buildWorkflowIdsOverviewRpcArgs(params: {
         p_jurisdiction: params.jurisdiction ?? null,
         p_limit: params.pagination.limit,
         p_offset: params.pagination.offset,
+        ...workspaceRpcArg(params.workspace),
     };
 }

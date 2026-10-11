@@ -594,6 +594,102 @@ describe("projects.routes", () => {
         });
     });
 
+  // ── Active workspace ────────────────────────────────────────────────
+  // The list is narrowed in SQL (workspace_matches), so what these pin is
+  // the route's half: the value is validated, membership is re-checked on
+  // every request, and the RPC receives exactly what was asked for.
+  describe("workspace filter", () => {
+    const ORG = "7b1d9d0e-3c5a-4f6e-9a51-0c2f7d3e8a11";
+
+    it.each([
+      ["/projects?limit=20", "get_projects_overview"],
+      ["/projects/ids", "get_project_ids_overview"],
+      ["/projects/filter-options", "get_project_filter_options"],
+    ])("calls %s without a workspace exactly as before", async (path, rpc) => {
+      const captured = captureRpcArgs();
+      const res = await request(app)
+        .get(path)
+        .set(...AUTH);
+      expect(res.status).toBe(200);
+      expect(captured.name).toBe(rpc);
+      expect(captured.args).not.toHaveProperty("p_workspace");
+    });
+
+    it.each([
+      ["/projects?limit=20&workspace=personal", "get_projects_overview"],
+      ["/projects/ids?workspace=personal", "get_project_ids_overview"],
+      [
+        "/projects/filter-options?workspace=personal",
+        "get_project_filter_options",
+      ],
+    ])("narrows %s to personal content", async (path, rpc) => {
+      const captured = captureRpcArgs();
+      const res = await request(app)
+        .get(path)
+        .set(...AUTH);
+      expect(res.status).toBe(200);
+      expect(captured.name).toBe(rpc);
+      expect(captured.args).toMatchObject({ p_workspace: "personal" });
+    });
+
+    it("narrows to an organization the caller belongs to", async () => {
+      supabaseState.tables.org_members = {
+        data: { org_id: ORG },
+        error: null,
+      };
+      const captured = captureRpcArgs();
+      const res = await request(app)
+        .get(`/projects?limit=20&workspace=${ORG}`)
+        .set(...AUTH);
+      expect(res.status).toBe(200);
+      expect(captured.args).toMatchObject({ p_workspace: ORG });
+    });
+
+    it("treats a workspace on its own as a request for the paginated list", async () => {
+      // Without this the request falls through to the unpaginated legacy
+      // overload, which has no workspace parameter and would return
+      // every workspace's projects.
+      const captured = captureRpcArgs();
+      const res = await request(app)
+        .get("/projects?workspace=personal")
+        .set(...AUTH);
+      expect(res.status).toBe(200);
+      expect(captured.args).toMatchObject({
+        p_workspace: "personal",
+        p_limit: expect.any(Number),
+      });
+    });
+
+    it.each(["/projects?limit=20", "/projects/ids", "/projects/filter-options"])(
+      "404s %s for an organization the caller is not in, without listing anything",
+      async (path) => {
+        supabaseState.tables.org_members = { data: null, error: null };
+        const captured = captureRpcArgs();
+        const res = await request(app)
+          .get(`${path}${path.includes("?") ? "&" : "?"}workspace=${ORG}`)
+          .set(...AUTH);
+        expect(res.status).toBe(404);
+        expect(res.body).toEqual({
+          detail: "Workspace not found",
+          code: "workspace_not_found",
+        });
+        expect(captured.name).toBeUndefined();
+      },
+    );
+
+    it("400s a workspace that is neither 'personal' nor an id", async () => {
+      const captured = captureRpcArgs();
+      const res = await request(app)
+        .get("/projects?limit=20&workspace=everything")
+        .set(...AUTH);
+      expect(res.status).toBe(400);
+      expect(res.body.detail).toBe(
+        "workspace must be 'personal' or an organization id",
+      );
+      expect(captured.name).toBeUndefined();
+    });
+  });
+
   describe("GET /projects/filter-options", () => {
     it("returns lightweight practice and owner facets", async () => {
       const captured = captureRpcArgs();

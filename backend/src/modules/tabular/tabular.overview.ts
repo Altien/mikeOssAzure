@@ -1,3 +1,5 @@
+import { workspaceRpcArg, type WorkspaceFilter } from "../../lib/workspace";
+
 export type TabularReviewScope = "all" | "in-project" | "standalone";
 
 export function parseTabularReviewScope(value: unknown): TabularReviewScope {
@@ -15,6 +17,7 @@ export interface TabularReviewsOverviewRpcArgs {
     p_search_term: string | null;
     p_sort_key: string;
     p_sort_direction: string;
+    p_workspace?: string;
 }
 
 export function buildTabularReviewsOverviewRpcArgs(params: {
@@ -25,6 +28,7 @@ export function buildTabularReviewsOverviewRpcArgs(params: {
     pagination?: { limit: number; offset: number };
     searchTerm?: string | null;
     sort?: { key: string; direction: string };
+    workspace?: WorkspaceFilter;
 }): TabularReviewsOverviewRpcArgs {
     return {
         p_user_id: params.userId,
@@ -36,6 +40,7 @@ export function buildTabularReviewsOverviewRpcArgs(params: {
         p_search_term: params.searchTerm ?? null,
         p_sort_key: params.sort?.key ?? "created",
         p_sort_direction: params.sort?.direction ?? "desc",
+        ...workspaceRpcArg(params.workspace),
     };
 }
 
@@ -47,6 +52,7 @@ export interface TabularReviewIdsOverviewRpcArgs {
     p_search_term: string | null;
     p_limit: number;
     p_offset: number;
+    p_workspace?: string;
 }
 
 // Lightweight sibling of buildTabularReviewsOverviewRpcArgs for "select all
@@ -60,6 +66,7 @@ export function buildTabularReviewIdsOverviewRpcArgs(params: {
     projectIdFilter: string | null;
     scope?: TabularReviewScope;
     searchTerm?: string | null;
+    workspace?: WorkspaceFilter;
     pagination: { limit: number; offset: number };
 }): TabularReviewIdsOverviewRpcArgs {
     return {
@@ -70,5 +77,6 @@ export function buildTabularReviewIdsOverviewRpcArgs(params: {
         p_search_term: params.searchTerm ?? null,
         p_limit: params.pagination.limit,
         p_offset: params.pagination.offset,
+        ...workspaceRpcArg(params.workspace),
     };
 }
