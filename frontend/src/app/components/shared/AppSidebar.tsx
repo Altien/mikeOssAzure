@@ -796,8 +796,10 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                   <>
                                       {/* Same inset as the items below,
                                           so the heading sits over their
-                                          text, and in normal case. */}
-                                      <DropdownLabel className="px-2 normal-case tracking-normal">
+                                          text; normal case and the weight
+                                          of the sidebar's own section
+                                          headings. */}
+                                      <DropdownLabel className="px-2 font-semibold normal-case tracking-normal">
                                           Workspace
                                       </DropdownLabel>
                                       <DropdownRadioGroup

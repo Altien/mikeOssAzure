@@ -194,7 +194,7 @@ describe("AppSidebar workspace switcher", () => {
     expect(screen.getByRole("menuitem", { name: "Sign out" })).toBeVisible();
   });
 
-  it("sets the Workspace heading over the option text, in normal case", async () => {
+  it("sets the Workspace heading over the option text, bold and in normal case", async () => {
     state.organizations = [ACME];
     const user = userEvent.setup();
     render(<AppSidebar isOpen onToggle={vi.fn()} />);
@@ -206,6 +206,13 @@ describe("AppSidebar workspace switcher", () => {
       [...element.classList].filter((name) => /^px-/.test(name));
     expect(horizontalPadding(label)).toEqual(horizontalPadding(option));
     expect(label).toHaveClass("normal-case", "tracking-normal");
+    // The weight the sidebar's own section headings use.
+    expect(label).toHaveClass("font-semibold");
+    // `hidden`: the open menu takes the rest of the page out of the
+    // accessibility tree.
+    expect(
+      screen.getByRole("button", { name: "Recent Projects", hidden: true }),
+    ).toHaveClass("font-semibold");
     expect(label).not.toHaveClass("uppercase");
     expect(label).not.toHaveClass("tracking-wider");
   });
