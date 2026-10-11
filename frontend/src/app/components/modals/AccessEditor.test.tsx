@@ -487,6 +487,72 @@ describe("OrganizationAccessEditor — public and private", () => {
         );
     });
 
+    it("shows an owner on a public item as a name, an email and a Remove menu, with no role pill", async () => {
+        const user = userEvent.setup();
+        const { onRemove } = renderEditor({
+            visibility: "organization",
+            assignments: [
+                {
+                    key: "creator",
+                    user_id: "user-me",
+                    email: "me@firm.example",
+                    display_name: "Me",
+                    role: "owner",
+                    isCreator: true,
+                },
+                {
+                    key: "jane",
+                    user_id: "user-jane",
+                    email: "jane@firm.example",
+                    display_name: "Jane Lee",
+                    role: "owner",
+                },
+            ],
+        });
+        const list = screen.getByRole("list", { name: "Project owners list" });
+        // The heading already says these are owners.
+        expect(within(list).queryByText("Owner")).not.toBeInTheDocument();
+        expect(
+            within(list).queryByRole("button", { name: /^Role for/ }),
+        ).not.toBeInTheDocument();
+
+        const row = within(list)
+            .getByText("Jane Lee")
+            .closest("li") as HTMLElement;
+        // Email at the right end, then the menu.
+        expect(within(row).getByText("jane@firm.example")).toHaveClass(
+            "justify-self-end",
+        );
+        expect(row.lastElementChild).toHaveAccessibleName(
+            "Actions for jane@firm.example",
+        );
+        expect(row.children).toHaveLength(3);
+
+        await user.click(
+            within(row).getByRole("button", {
+                name: "Actions for jane@firm.example",
+            }),
+        );
+        expect(
+            screen.getAllByRole("menuitem").map((item) => item.textContent),
+        ).toEqual(["Remove"]);
+        await user.click(screen.getByRole("menuitem", { name: "Remove" }));
+        expect(onRemove).toHaveBeenCalledWith(
+            expect.objectContaining({ user_id: "user-jane" }),
+        );
+    });
+
+    it("still shows the role of somebody on a public item's list who is not an owner", () => {
+        // Without it a Viewer would pass for an owner under that heading.
+        renderEditor({ visibility: "organization" });
+        const list = screen.getByRole("list", { name: "Project owners list" });
+        expect(
+            within(list).getByRole("button", {
+                name: "Role for sam@firm.example",
+            }),
+        ).toHaveTextContent("Viewer");
+    });
+
     it("still lists the creator, as Owner, on a private item", () => {
         renderEditor({
             assignments: [

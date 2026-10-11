@@ -336,6 +336,7 @@ function OrganizationAssignmentList({
     disabled,
     onRemove,
     onRoleChange,
+    ownerRoleImplied = false,
 }: {
     label: string;
     assignments: OrganizationAccessAssignment[];
@@ -353,10 +354,16 @@ function OrganizationAssignmentList({
         assignment: OrganizationAccessAssignment,
         role: AccessAssignmentRole,
     ) => Promise<unknown> | unknown;
+    /**
+     * For a list that is headed as a list of owners: an Owner row then says
+     * nothing its heading has not, so it carries no role and reads as a
+     * name, an email and its actions. Anyone on the list at another role
+     * still shows it, or they would pass for an owner.
+     */
+    ownerRoleImplied?: boolean;
 }) {
-    const columns = onRoleChange
-        ? "grid-cols-[minmax(0,1fr)_minmax(8rem,14rem)_5rem_1.5rem]"
-        : "grid-cols-[minmax(0,1fr)_minmax(10rem,16rem)_1.5rem]";
+    const WITH_ROLE = "grid-cols-[minmax(0,1fr)_minmax(8rem,14rem)_5rem_1.5rem]";
+    const WITHOUT_ROLE = "grid-cols-[minmax(0,1fr)_minmax(10rem,16rem)_1.5rem]";
     return (
         <div className="h-28 overflow-y-auto rounded-xl bg-white/20 p-1">
             {loading ? (
@@ -378,10 +385,13 @@ function OrganizationAssignmentList({
                             assignment.key ??
                             assignment.user_id ??
                             assignment.email;
+                        const showRole =
+                            !!onRoleChange &&
+                            !(ownerRoleImplied && assignment.role === "owner");
                         return (
                             <li
                                 key={key}
-                                className={`${LIQUID_GLASS_MODAL_ROW_HOVER_CLASS} grid ${columns} items-center gap-3 rounded-lg px-2 py-2 transition-colors`}
+                                className={`${LIQUID_GLASS_MODAL_ROW_HOVER_CLASS} grid ${showRole ? WITH_ROLE : WITHOUT_ROLE} items-center gap-3 rounded-lg px-2 py-2 transition-colors`}
                             >
                                 <span className="truncate text-xs text-gray-800">
                                     {assignment.display_name?.trim() || "—"}
@@ -389,7 +399,7 @@ function OrganizationAssignmentList({
                                 <span className="max-w-full justify-self-end truncate text-xs text-gray-500">
                                     {assignment.email || "—"}
                                 </span>
-                                {onRoleChange ? (
+                                {showRole && onRoleChange ? (
                                     <AccessRolePill
                                         role={assignment.role}
                                         label={
@@ -647,6 +657,8 @@ export function OrganizationAccessEditor({
                     onRoleChange={(assignment, role) =>
                         onAssign(assignment, role)
                     }
+                    // A public item's list is its owners.
+                    ownerRoleImplied={isPublic}
                 />
             </section>
 
