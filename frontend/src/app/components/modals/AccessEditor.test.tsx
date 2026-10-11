@@ -418,6 +418,63 @@ describe("OrganizationAccessEditor — public and private", () => {
         );
     });
 
+    it("does not present the creator as somebody given a different role on a public item", () => {
+        // They are an Owner because they made it. Alone under "People with
+        // a different role" they read as a grant that does not exist.
+        const CREATOR = {
+            key: "creator",
+            user_id: "user-me",
+            email: "me@firm.example",
+            display_name: "Me",
+            role: "owner" as const,
+            isCreator: true,
+        };
+        const { unmount } = render(
+            <OrganizationAccessEditor
+                members={MEMBERS}
+                assignments={[CREATOR]}
+                organizationName="Elite Law LLP"
+                visibility="organization"
+                onAssign={vi.fn()}
+                onRemove={vi.fn()}
+            />,
+        );
+        expect(
+            screen.queryByText("People with a different role"),
+        ).not.toBeInTheDocument();
+        expect(screen.queryByText("me@firm.example")).not.toBeInTheDocument();
+        unmount();
+
+        // With a real grant beside them, the grant is listed and they are not.
+        renderEditor({
+            visibility: "organization",
+            assignments: [CREATOR, SHARED],
+        });
+        const list = screen.getByRole("list", { name: "People with access" });
+        expect(within(list).getByText("sam@firm.example")).toBeInTheDocument();
+        expect(
+            within(list).queryByText("me@firm.example"),
+        ).not.toBeInTheDocument();
+    });
+
+    it("still lists the creator, as Owner, on a private item", () => {
+        renderEditor({
+            assignments: [
+                {
+                    key: "creator",
+                    user_id: "user-me",
+                    email: "me@firm.example",
+                    display_name: "Me",
+                    role: "owner",
+                    isCreator: true,
+                },
+            ],
+        });
+        const list = screen.getByRole("list", { name: "People with access" });
+        expect(within(list).getByText("me@firm.example")).toBeInTheDocument();
+        expect(within(list).getByText("Owner")).toBeInTheDocument();
+    });
+
     it("keeps showing an existing deny list on a private item", () => {
         // Making it public again must not be a surprise.
         renderEditor({

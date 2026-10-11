@@ -569,7 +569,15 @@ export function OrganizationAccessEditor({
     // On a public item everybody already has access, so nobody is added by
     // name. Anyone it was shared with while private keeps the role they were
     // given, and is still shown so that role can be changed or removed.
-    const showPeopleList = !isPublic || sharedAssignments.length > 0;
+    //
+    // The creator is not one of those people: they are an Owner because they
+    // made the item, not because somebody gave them a role. Listing them
+    // alone under "People with a different role" read as a grant that did
+    // not exist, so on a public item the list is of grants only.
+    const listedAssignments = isPublic
+        ? sharedAssignments.filter((assignment) => !assignment.isCreator)
+        : sharedAssignments;
+    const showPeopleList = !isPublic || listedAssignments.length > 0;
     const denyDescription = `Deny ${organizationLabel} members from accessing this ${resourceNoun}, although it is open to everyone else.`;
     // A wall only means something on a public item; on a private one, not
     // being added is the wall. An existing list is still shown, so that
@@ -643,7 +651,7 @@ export function OrganizationAccessEditor({
                     )}
                     <OrganizationAssignmentList
                         label="People with access"
-                        assignments={sharedAssignments}
+                        assignments={listedAssignments}
                         emptyMessage="Not shared with anyone yet."
                         loading={loading}
                         disabled={disabled}
