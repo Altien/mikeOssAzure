@@ -194,6 +194,22 @@ describe("AppSidebar workspace switcher", () => {
     expect(screen.getByRole("menuitem", { name: "Sign out" })).toBeVisible();
   });
 
+  it("sets the Workspace heading over the option text, in normal case", async () => {
+    state.organizations = [ACME];
+    const user = userEvent.setup();
+    render(<AppSidebar isOpen onToggle={vi.fn()} />);
+
+    await openAccountMenu(user);
+    const label = screen.getByText("Workspace");
+    const option = screen.getByRole("menuitemradio", { name: "Personal" });
+    const horizontalPadding = (element: HTMLElement) =>
+      [...element.classList].filter((name) => /^px-/.test(name));
+    expect(horizontalPadding(label)).toEqual(horizontalPadding(option));
+    expect(label).toHaveClass("normal-case", "tracking-normal");
+    expect(label).not.toHaveClass("uppercase");
+    expect(label).not.toHaveClass("tracking-wider");
+  });
+
   it("switches workspace when another one is chosen", async () => {
     state.organizations = [ACME, BETA];
     const user = userEvent.setup();

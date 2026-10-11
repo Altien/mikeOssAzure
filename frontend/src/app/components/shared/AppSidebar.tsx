@@ -794,7 +794,12 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                           >
                               {workspaceOptions ? (
                                   <>
-                                      <DropdownLabel>Workspace</DropdownLabel>
+                                      {/* Same inset as the items below,
+                                          so the heading sits over their
+                                          text, and in normal case. */}
+                                      <DropdownLabel className="px-2 normal-case tracking-normal">
+                                          Workspace
+                                      </DropdownLabel>
                                       <DropdownRadioGroup
                                           aria-label="Workspace"
                                           value={
