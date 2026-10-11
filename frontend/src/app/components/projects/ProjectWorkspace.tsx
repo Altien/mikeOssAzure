@@ -28,6 +28,7 @@ import {
 import type {
     Chat,
     ColumnConfig,
+    ContentVisibility,
     Folder as ProjectFolder,
     Project,
 } from "@/app/components/shared/types";
@@ -431,6 +432,7 @@ export function ProjectWorkspaceProvider({
         name: string;
         cmNumber: string;
         practice: string;
+        visibility?: ContentVisibility;
     }) {
         if (!canDo("access.manage")) {
             denyUnlessLoading({
@@ -447,6 +449,7 @@ export function ProjectWorkspaceProvider({
             name,
             cm_number: cmNumber,
             practice: practice || null,
+            ...(values.visibility ? { visibility: values.visibility } : {}),
         });
         setProject((prev) =>
             prev
@@ -455,6 +458,7 @@ export function ProjectWorkspaceProvider({
                       name: updated.name,
                       cm_number: updated.cm_number,
                       practice: updated.practice,
+                      visibility: updated.visibility ?? prev.visibility,
                   }
                 : updated,
         );
@@ -656,6 +660,7 @@ export function ProjectWorkspaceProvider({
                             orgId: project.org_id ?? null,
                             ownerLabel: "Project owners",
                             canManage: canDo("access.manage"),
+                            visibility: project.visibility ?? "private",
                             onGrant: async (email, role) => {
                                 await grantProjectAccess(
                                     projectId,

@@ -40,6 +40,13 @@ export interface LibraryFolder {
 
 export type ResourceAccessScope = "private" | "shared" | "organization";
 
+/**
+ * Who may open an organization's project or workflow without being named:
+ * nobody ("private", the default) or every member of its organization.
+ * A personal item is always "private"; it is shared by naming people.
+ */
+export type ContentVisibility = "private" | "organization";
+
 export interface Project {
   id: string;
   /** The creator. Null once an org project outlives the account that made it. */
@@ -55,6 +62,8 @@ export interface Project {
   /** The caller's role in the owning organization, if the project has one. */
   org_role?: "owner" | "admin" | "member" | null;
   org_id?: string | null;
+  /** Present on the detail payload; the lists carry `access_scope` instead. */
+  visibility?: ContentVisibility;
   access_scope?: ResourceAccessScope;
   organization_name?: string | null;
   direct_grant_count?: number;
@@ -790,6 +799,8 @@ export interface Workflow {
   id: string;
   user_id: string | null;
   org_id?: string | null;
+  /** Present on the detail payload; the lists carry `access_scope` instead. */
+  visibility?: ContentVisibility;
   access_scope?: ResourceAccessScope;
   organization_name?: string | null;
   direct_grant_count?: number;

@@ -5,13 +5,15 @@ import { Upload } from "lucide-react";
 import {
     copyDocumentsToWorkflowAssets,
     createWorkflow,
-    listOrgs,
     shareWorkflow,
     updateWorkflow,
-    type Org,
 } from "@/app/lib/mikeApi";
 import { userFacingApiError } from "@/app/lib/userFacingError";
-import type { Document, Workflow } from "../shared/types";
+import type {
+    ContentVisibility,
+    Document,
+    Workflow,
+} from "../shared/types";
 import { FileDirectory } from "../shared/FileDirectory";
 import { PRACTICE_OPTIONS } from "./practices";
 import { Modal } from "../modals/Modal";
@@ -29,6 +31,7 @@ import {
 } from "@/app/onboarding/options";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
+import { PublicAccessToggle } from "../modals/PublicAccessToggle";
 import {
     PERSONAL_WORKSPACE as ACTIVE_PERSONAL_WORKSPACE,
     useWorkspace,
@@ -196,19 +199,30 @@ export function NewWorkflowModal({
         "language" | "practice" | "jurisdiction" | "jurisdictionRegion" | null
     >(null);
     const [loading, setLoading] = useState(false);
-    const [orgs, setOrgs] = useState<Org[]>([]);
-    const [orgsError, setOrgsError] = useState("");
-    // A new workflow starts in the workspace the person is working in.
-    // `null` means "they have not chosen otherwise", so the default follows a
-    // workspace switch made while this modal is closed. Editing sets the
-    // workflow's own organization explicitly.
-    const { workspaceId: activeWorkspaceId } = useWorkspace();
-    const defaultOrgId =
+    // A new workflow is created in the workspace the person is working in:
+    // an organization's, or their own. An existing one stays where it is.
+    // Neither can be chosen here: work is not shared across organizations.
+    const { workspaceId: activeWorkspaceId, activeOrganization } =
+        useWorkspace();
+    const workspaceOrgId =
         activeWorkspaceId && activeWorkspaceId !== ACTIVE_PERSONAL_WORKSPACE
             ? activeWorkspaceId
             : PERSONAL_WORKSPACE;
-    const [orgChoice, setOrgId] = useState<string | null>(null);
-    const orgId = orgChoice ?? defaultOrgId;
+    const orgId = editWorkflow
+        ? (editWorkflow.org_id ?? PERSONAL_WORKSPACE)
+        : workspaceOrgId;
+    const organizationName =
+        orgId === PERSONAL_WORKSPACE
+            ? null
+            : ((editWorkflow
+                  ? editWorkflow.organization_name
+                  : activeOrganization?.name) ??
+              (activeOrganization?.id === orgId
+                  ? activeOrganization.name
+                  : null));
+    // Inside an organization a workflow is private — shared with individuals
+    // — unless it is made public on the details step.
+    const [visibility, setVisibility] = useState<ContentVisibility>("private");
     const [directGrants, setDirectGrants] = useState<PendingDirectGrant[]>([]);
     const [orgOverrides, setOrgOverrides] = useState<PendingOrgOverride[]>([]);
     const [selectedAssets, setSelectedAssets] = useState<Document[]>([]);
@@ -277,6 +291,8 @@ export function NewWorkflowModal({
                 .filter(Boolean) ?? [];
 
         return (
+            (orgId !== PERSONAL_WORKSPACE &&
+                visibility !== (editWorkflow.visibility ?? "private")) ||
             title.trim() !== editWorkflow.metadata.title.trim() ||
             (effectiveLanguage.trim() || null) !==
                 (initialLanguage.trim() || null) ||
@@ -286,6 +302,8 @@ export function NewWorkflowModal({
         );
     }, [
         editWorkflow,
+        orgId,
+        visibility,
         effectiveJurisdictions,
         effectiveLanguage,
         effectivePractice,
@@ -309,7 +327,7 @@ export function NewWorkflowModal({
         setImportedSkillMd("");
         setImportedSkillName(null);
         setMarkdownImportError("");
-        setOrgId(null);
+        setVisibility("private");
         setStep("details");
         setDirectGrants([]);
         setOrgOverrides([]);
@@ -380,7 +398,7 @@ export function NewWorkflowModal({
                 setPractice(saved);
                 setCustomPractice("");
             }
-            setOrgId(editWorkflow.org_id ?? PERSONAL_WORKSPACE);
+            setVisibility(editWorkflow.visibility ?? "private");
             setError("");
         } else if (open) {
             resetForm();
@@ -404,32 +422,6 @@ export function NewWorkflowModal({
             setCustomPractice(preferredPractice);
         }
     }, [editWorkflow, open, preferredPractice]);
-
-    useEffect(() => {
-        if (!open) return;
-        let cancelled = false;
-        setOrgsError("");
-        listOrgs()
-            .then((rows) => {
-                if (!cancelled) setOrgs(rows);
-            })
-            .catch((err: unknown) => {
-                if (cancelled) return;
-                setOrgs([]);
-                // Without this the selector silently offers only "No
-                // organization" and the workflow lands in the personal
-                // workspace by accident.
-                setOrgsError(
-                    userFacingApiError(
-                        err,
-                        "Could not load your organizations.",
-                    ),
-                );
-            });
-        return () => {
-            cancelled = true;
-        };
-    }, [open]);
 
     useEffect(() => {
         if (isOtherLanguage) {
@@ -466,6 +458,13 @@ export function NewWorkflowModal({
                             ? effectiveJurisdictions
                             : null,
                     },
+                    // Only when it changed: who can open a workflow is its
+                    // owner's decision, and an editor saving other details
+                    // must not be refused for a setting they did not touch.
+                    ...(orgId !== PERSONAL_WORKSPACE &&
+                    visibility !== (editWorkflow.visibility ?? "private")
+                        ? { visibility }
+                        : {}),
                 });
                 onUpdated?.(updated);
             } else {
@@ -485,6 +484,7 @@ export function NewWorkflowModal({
                 }
                 if (orgId !== PERSONAL_WORKSPACE) {
                     createPayload.org_id = orgId;
+                    createPayload.visibility = visibility;
                 }
                 const workflow =
                     createdWorkflowRef.current ??
@@ -577,14 +577,18 @@ export function NewWorkflowModal({
                 }
                 onCreated({
                     ...workflow,
+                    // Belonging to an organization is not being shared with
+                    // it: the label follows what was actually chosen.
                     access_scope:
-                        orgId !== PERSONAL_WORKSPACE
+                        orgId !== PERSONAL_WORKSPACE &&
+                        visibility === "organization"
                             ? "organization"
-                            : recipients.length > 0
+                            : recipients.some(
+                                    (entry) => entry.role !== "deny",
+                                )
                               ? "shared"
                               : "private",
-                    organization_name:
-                        orgs.find((org) => org.id === orgId)?.name ?? null,
+                    organization_name: organizationName,
                     ...(orgId === PERSONAL_WORKSPACE && recipients.length > 0
                         ? { direct_grant_count: recipients.length }
                         : {}),
@@ -842,9 +846,7 @@ export function NewWorkflowModal({
                 {!isEditing && step === "access" ? (
                     <CreateAccessStep
                         orgId={orgId === PERSONAL_WORKSPACE ? null : orgId}
-                        organizationName={
-                            orgs.find((org) => org.id === orgId)?.name ?? null
-                        }
+                        organizationName={organizationName}
                         currentUserEmail={user?.email ?? null}
                         currentUserId={user?.id ?? null}
                         directGrants={directGrants}
@@ -852,6 +854,7 @@ export function NewWorkflowModal({
                         orgOverrides={orgOverrides}
                         onOrgOverridesChange={setOrgOverrides}
                         ownerLabel="Workflow owners"
+                        visibility={visibility}
                     />
                 ) : !isEditing && step === "assets" ? (
                     <div className="flex min-h-0 flex-1 flex-col">
@@ -998,38 +1001,39 @@ export function NewWorkflowModal({
 
                         {isEditing && jurisdictionField}
 
-                        <div>
-                            <FieldLabel htmlFor="workflow-org">
-                                {isEditing
-                                    ? "Organisation"
-                                    : "Share across Organisation"}
-                            </FieldLabel>
-                            <ModalSelect
-                                id="workflow-org"
-                                value={orgId}
-                                onChange={(value) => {
-                                    setOrgId(value);
-                                    setDirectGrants([]);
+                        {orgId !== PERSONAL_WORKSPACE && isEditing ? (
+                            <div>
+                                <FieldLabel as="p">Organisation</FieldLabel>
+                                <p
+                                    data-slot="workflow-workspace"
+                                    className="break-words text-sm text-gray-700"
+                                >
+                                    {organizationName ?? "Organisation"}
+                                </p>
+                            </div>
+                        ) : null}
+                        {orgId !== PERSONAL_WORKSPACE ? (
+                            <PublicAccessToggle
+                                visibility={visibility}
+                                onChange={(next) => {
+                                    setVisibility(next);
+                                    // What was lined up for the other
+                                    // setting does not carry over: named
+                                    // people belong to a private workflow,
+                                    // and denials to a public one.
                                     setOrgOverrides([]);
                                 }}
-                                disabled={isEditing || loading}
-                                options={[
-                                    {
-                                        value: PERSONAL_WORKSPACE,
-                                        label: "No organization",
-                                    },
-                                    ...orgs.map((org) => ({
-                                        value: org.id,
-                                        label: org.name,
-                                    })),
-                                ]}
+                                organizationName={organizationName}
+                                resourceNoun="workflow"
+                                // Who can open a workflow is its owner's
+                                // decision; an editor sees the setting.
+                                disabled={
+                                    loading ||
+                                    (isEditing &&
+                                        editWorkflow?.is_owner === false)
+                                }
                             />
-                            {orgsError && (
-                                <p className="mt-2 text-sm text-red-500">
-                                    {orgsError}
-                                </p>
-                            )}
-                        </div>
+                        ) : null}
                     </div>
                 )}
                 {(error || markdownImportError) && (

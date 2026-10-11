@@ -3,11 +3,13 @@
 import { useEffect, useMemo, useState } from "react";
 import type {
     AccessAssignmentRole,
+    OrgMember,
     ProjectPeople,
     UserLookupResult,
 } from "@/app/lib/mikeApi";
-import { getOrg } from "@/app/lib/mikeApi";
-import type { ProjectRole } from "@/app/lib/permissions";
+import { getOrg, listOrgMembers } from "@/app/lib/mikeApi";
+import type { ContentVisibility } from "@/app/components/shared/types";
+import { isOrgOwner, type ProjectRole } from "@/app/lib/permissions";
 import { userFacingApiError } from "@/app/lib/userFacingError";
 import { Modal } from "./Modal";
 import {
@@ -29,6 +31,12 @@ export interface AccessControls {
     inheritedFromProjectId?: string | null;
     canManage: boolean;
     ownerLabel?: string;
+    /**
+     * For an organization's project or workflow: whether it is public (open
+     * to every member) or private (shared with individuals). It is set on
+     * the item's details, and decides what this modal offers.
+     */
+    visibility?: ContentVisibility;
     /**
      * A failure the owner of this modal wants shown beside the roster rather
      * than in place of it — a refused grants fetch, say, which leaves the
@@ -76,6 +84,13 @@ export function AccessModal({
         orgId: string;
         name: string | null;
     } | null>(null);
+    // The organization's members: the only people its items can be shared
+    // with. Kept with the id it was loaded for, so a modal reused for another
+    // organization never offers the previous one's people.
+    const [organizationRoster, setOrganizationRoster] = useState<{
+        orgId: string;
+        members: OrgMember[];
+    } | null>(null);
 
     const scope = access.inheritedFromProjectId
         ? "project"
@@ -86,7 +101,9 @@ export function AccessModal({
     const orgId = access.orgId ?? null;
     const resourceId = resource?.id ?? null;
     const grants = useMemo(() => access.grants, [access.grants]);
-    const rosterKey = `${resourceId ?? ""}:${grants
+    // The roster changes with the grants AND with the visibility: opening an
+    // item to the organization puts every member on it without a grant.
+    const rosterKey = `${resourceId ?? ""}:${access.visibility ?? ""}:${grants
         .map((grant) => `${grant.email}:${grant.role}`)
         .map((entry) => entry.toLowerCase())
         .sort()
@@ -153,6 +170,23 @@ export function AccessModal({
             cancelled = true;
         };
     }, [open, orgId]);
+
+    useEffect(() => {
+        if (!open || !orgId || !canManage) return;
+        let cancelled = false;
+        listOrgMembers(orgId)
+            .then((members) => {
+                if (!cancelled) setOrganizationRoster({ orgId, members });
+            })
+            .catch(() => {
+                // The people already shared with still load from the item's
+                // own roster; only adding somebody new needs this list.
+                if (!cancelled) setOrganizationRoster({ orgId, members: [] });
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [canManage, open, orgId]);
 
     if (!open || !resource) return null;
 
@@ -268,20 +302,38 @@ export function AccessModal({
     }
 
     if (scope === "organization") {
-        const organizationMembers: AccessRow[] = (
-            accessRoster?.members ?? []
-        ).map((member) => ({
-            key: member.user_id ?? member.email,
-            user_id: member.user_id ?? null,
-            email: member.email,
-            display_name: member.display_name,
-            role: member.role ?? "editor",
-        }));
-        const overrideAssignments: OrganizationAccessAssignment[] = grants
-            .filter(
-                (grant) => grant.role === "owner" || grant.role === "deny",
-            )
-            .map((grant) => {
+        const creatorUserId = accessRoster?.owner?.user_id ?? null;
+        const rosterMembers =
+            organizationRoster?.orgId === orgId
+                ? organizationRoster.members
+                : [];
+        // Candidates for sharing: every member of the organization. Its
+        // owners are marked "owner" so the editor leaves them out — they can
+        // already open everything in it.
+        const organizationMembers: AccessRow[] = rosterMembers
+            .filter((member) => !!member.email)
+            .map((member) => ({
+                key: member.user_id,
+                user_id: member.user_id,
+                email: member.email,
+                display_name: member.display_name,
+                role: isOrgOwner(member.role) ? "owner" : "editor",
+                isCreator: member.user_id === creatorUserId,
+            }));
+        // Somebody who can change access sees the grants themselves. Anyone
+        // else is not served them, and sees who has access from the roster
+        // instead — without the denials, which are not theirs to read.
+        const sharedWith: { email: string; role: AccessAssignmentRole }[] =
+            canManage
+                ? grants
+                : (accessRoster?.members ?? [])
+                      .filter((member) => member.role !== "deny")
+                      .map((member) => ({
+                          email: member.email,
+                          role: member.role ?? ("editor" as const),
+                      }));
+        const overrideAssignments: OrganizationAccessAssignment[] =
+            sharedWith.map((grant) => {
                 const member = memberByEmail.get(grant.email.toLowerCase());
                 return {
                     key: member?.user_id ?? grant.email,
@@ -350,6 +402,7 @@ export function AccessModal({
                         }
                         disabled={!canManage || busy}
                         error={error ?? access.error ?? null}
+                        visibility={access.visibility ?? "private"}
                         onAssign={(member, role) =>
                             changeRole(member, role)
                         }

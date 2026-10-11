@@ -8,7 +8,8 @@ import {
     type OrgMember,
     type UserLookupResult,
 } from "@/app/lib/mikeApi";
-import { isOrgAdmin, type ProjectRole } from "@/app/lib/permissions";
+import type { ContentVisibility } from "@/app/components/shared/types";
+import { isOrgOwner, type ProjectRole } from "@/app/lib/permissions";
 import {
     OrganizationAccessEditor,
     AccessEditor,
@@ -40,6 +41,7 @@ export function CreateAccessStep({
     inheritedFromProject = false,
     inheritedProjectId = null,
     ownerLabel = "Project owners",
+    visibility = "private",
 }: {
     orgId: string | null;
     organizationName?: string | null;
@@ -53,6 +55,11 @@ export function CreateAccessStep({
     /** The project whose people are shown, read-only, when access is inherited. */
     inheritedProjectId?: string | null;
     ownerLabel?: string;
+    /**
+     * For an organization's item: public or private, as chosen on the
+     * details step. Decides whether individuals can be added here.
+     */
+    visibility?: ContentVisibility;
 }) {
     const [memberState, setMemberState] = useState<{
         orgId: string;
@@ -185,7 +192,9 @@ export function CreateAccessStep({
             user_id: member.user_id,
             email: member.email,
             display_name: member.display_name,
-            role: isOrgAdmin(member.role) ? "owner" : "editor",
+            // The organization's owners can open everything in it, so the
+            // editor leaves them out of its pickers.
+            role: isOrgOwner(member.role) ? "owner" : "editor",
             isCreator,
         };
     });
@@ -244,7 +253,7 @@ export function CreateAccessStep({
 
     function assignOrganizationMember(
         member: AccessRow,
-        role: "owner" | "deny",
+        role: AccessAssignmentRole,
     ) {
         if (!member.user_id || !member.email) return;
         onOrgOverridesChange?.([
@@ -268,6 +277,9 @@ export function CreateAccessStep({
                 ownerLabel={ownerLabel}
                 loading={loading}
                 error={loadError}
+                currentUserId={currentUserId}
+                currentUserEmail={currentUserEmail}
+                visibility={visibility}
                 onAssign={assignOrganizationMember}
                 onRemove={(assignment) =>
                     onOrgOverridesChange?.(

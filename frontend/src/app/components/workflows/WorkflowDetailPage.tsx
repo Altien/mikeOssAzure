@@ -626,6 +626,7 @@ export function WorkflowDetailPage({ id, workflowType }: Props) {
             orgId: workflow.org_id ?? null,
             ownerLabel: "Workflow owners",
             canManage: canShare,
+            visibility: workflow.visibility ?? "private",
             error: shareRefreshError,
             // The refresh is deliberately not part of the mutation's result:
             // AccessModal reports a rejection as "Could not change that role"
