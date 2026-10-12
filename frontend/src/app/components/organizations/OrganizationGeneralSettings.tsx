@@ -266,8 +266,7 @@ export function OrganizationGeneralSettings() {
                 <div className="min-w-0 space-y-1">
                   <SettingsLabel>Logo</SettingsLabel>
                   <SettingsDescription>
-                    Shown at the top of the sidebar, in place of the Mike
-                    logo, while this workspace is active. PNG, JPEG or WebP.
+                    Shown at the top of the sidebar. PNG, JPEG or WebP.
                   </SettingsDescription>
                 </div>
               </div>
