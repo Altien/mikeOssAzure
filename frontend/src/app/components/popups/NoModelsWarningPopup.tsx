@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { AlertTriangle } from "lucide-react";
 import { useWorkspace } from "@/app/contexts/WorkspaceContext";
+import { isOrgAdmin } from "@/app/lib/permissions";
 import {
     NO_MODELS_MESSAGES,
     isOrganizationNoModelsReason,
@@ -31,12 +32,15 @@ function VisibleNoModelsWarning({
 }) {
     const router = useRouter();
     const { activeOrganization } = useWorkspace();
-    // When the fix is the organization's to make, the button goes to where
-    // its providers are set up — an admin can act there, and a member sees
-    // what is and is not in place. Otherwise it is the caller's own keys.
-    const organizationId =
-        isOrganizationNoModelsReason(reason) && activeOrganization
-            ? activeOrganization.id
+    // When the fix is the organization's to make, an owner or admin is sent
+    // to its settings, where they can make it. A member cannot open that
+    // page, so the warning tells them whom to ask and offers no button that
+    // would lead nowhere. Otherwise it is the caller's own keys.
+    const organizationFix =
+        isOrganizationNoModelsReason(reason) && activeOrganization !== null;
+    const settingsHref =
+        organizationFix && isOrgAdmin(activeOrganization.role)
+            ? `/organizations/${activeOrganization.id}/settings`
             : null;
 
     return (
@@ -49,23 +53,23 @@ function VisibleNoModelsWarning({
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-600" />
             }
             primaryAction={
-                organizationId
+                settingsHref
                     ? {
-                          label: "Open Model Providers",
+                          label: "Open Organization Settings",
                           onClick: () => {
                               onClose();
-                              router.push(
-                                  `/organizations/${organizationId}?tab=providers`,
-                              );
+                              router.push(settingsHref);
                           },
                       }
-                    : {
-                          label: "Open Bring Your Own Keys",
-                          onClick: () => {
-                              onClose();
-                              router.push("/settings/byok");
-                          },
-                      }
+                    : organizationFix
+                      ? undefined
+                      : {
+                            label: "Open Bring Your Own Keys",
+                            onClick: () => {
+                                onClose();
+                                router.push("/settings/byok");
+                            },
+                        }
             }
         />
     );

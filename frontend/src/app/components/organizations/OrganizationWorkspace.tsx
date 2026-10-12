@@ -10,8 +10,8 @@ import {
   type ReactNode,
   type SetStateAction,
 } from "react";
-import { Check, ChevronDown, Loader2, Pencil, Trash2 } from "lucide-react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { Check, ChevronDown, Loader2, Settings, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import { HeaderActionsMenu } from "@/app/components/shared/HeaderActionsMenu";
@@ -67,23 +67,17 @@ import {
   ORG_ROLES,
   canManageOrgRole,
   isOrgAdmin,
-  isOrgOwner,
   type OrgRole,
 } from "@/app/lib/permissions";
 import { userFacingApiError } from "@/app/lib/userFacingError";
-import {
-  InviteOrganizationMemberModal,
-  OrganizationSettingsModal,
-} from "./OrganizationModals";
-import { OrganizationProviderKeys } from "./OrganizationProviderKeys";
+import { InviteOrganizationMemberModal } from "./OrganizationModals";
 
-type OrganizationTab = "people" | "projects" | "workflows" | "providers";
+type OrganizationTab = "people" | "projects" | "workflows";
 
 const TABS: { id: OrganizationTab; label: string }[] = [
   { id: "people", label: "People" },
   { id: "projects", label: "Projects" },
   { id: "workflows", label: "Workflows" },
-  { id: "providers", label: "Model Providers" },
 ];
 
 const EMPTY_RESOURCES: OrgResources = { projects: [], workflows: [] };
@@ -120,18 +114,11 @@ export function OrganizationWorkspace({ orgId }: { orgId: string }) {
   const [members, setMembers] = useState<OrgMember[]>([]);
   const [invitations, setInvitations] = useState<OrgInvitation[]>([]);
   const [resources, setResources] = useState<OrgResources>(EMPTY_RESOURCES);
-  // `?tab=` opens a given tab, so a link elsewhere (the empty model picker's
-  // "Open Model Providers") can land on it. Read once: switching tabs here
-  // stays local.
-  const requestedTab = useSearchParams().get("tab");
-  const [activeTab, setActiveTab] = useState<OrganizationTab>(
-    () => TABS.find((tab) => tab.id === requestedTab)?.id ?? "people",
-  );
+  const [activeTab, setActiveTab] = useState<OrganizationTab>("people");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [busyMemberId, setBusyMemberId] = useState<string | null>(null);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [removeSelectedOpen, setRemoveSelectedOpen] = useState(false);
@@ -250,7 +237,6 @@ export function OrganizationWorkspace({ orgId }: { orgId: string }) {
 
   const viewerRole = org?.role ?? null;
   const isAdmin = isOrgAdmin(viewerRole);
-  const isOwner = isOrgOwner(viewerRole);
 
   /**
    * Mirrors the server: the viewer must outrank both the role the member
@@ -469,8 +455,11 @@ export function OrganizationWorkspace({ orgId }: { orgId: string }) {
                       items={[
                         {
                           label: "Organization settings",
-                          icon: Pencil,
-                          onSelect: () => setSettingsOpen(true),
+                          icon: Settings,
+                          // Its own page: the name, the model providers
+                          // and, for owners, deleting the organization.
+                          onSelect: () =>
+                            router.push(`/organizations/${orgId}/settings`),
                         },
                       ]}
                     />
@@ -521,11 +510,6 @@ export function OrganizationWorkspace({ orgId }: { orgId: string }) {
           }))}
           onRetry={load}
         />
-      ) : activeTab === "providers" ? (
-        <OrganizationProviderKeys
-          orgId={orgId}
-          orgName={org?.name ?? "Organization"}
-        />
       ) : (
         <ResourceTable
           key="workflows"
@@ -560,20 +544,6 @@ export function OrganizationWorkspace({ orgId }: { orgId: string }) {
               void refreshPeople();
             }}
             onChanged={refreshPeople}
-          />
-          <OrganizationSettingsModal
-            open={settingsOpen}
-            org={org}
-            canDelete={isOwner}
-            onClose={() => setSettingsOpen(false)}
-            onUpdated={(updated) => {
-              setOrg((current) => ({
-                ...updated,
-                member_count: current?.member_count,
-              }));
-              setSettingsOpen(false);
-            }}
-            onDeleted={() => router.push("/organizations")}
           />
         </>
       ) : null}

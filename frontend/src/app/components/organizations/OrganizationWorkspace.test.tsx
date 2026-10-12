@@ -6,7 +6,6 @@ import { OrganizationWorkspace } from "./OrganizationWorkspace";
 
 const mocks = vi.hoisted(() => ({
   push: vi.fn(),
-  search: "",
   role: "owner" as "owner" | "admin" | "member",
   getOrg: vi.fn(),
   listOrgMembers: vi.fn(),
@@ -23,24 +22,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mocks.push }),
-  useSearchParams: () => new URLSearchParams(mocks.search),
 }));
 vi.mock("@/app/contexts/AuthContext", () => ({
   useAuth: () => ({ user: { id: "me", email: "me@firm.example" } }),
-}));
-// The Model Providers tab has its own tests; here it only has to be reached.
-vi.mock("./OrganizationProviderKeys", () => ({
-  OrganizationProviderKeys: ({
-    orgId,
-    orgName,
-  }: {
-    orgId: string;
-    orgName: string;
-  }) => (
-    <div data-testid="provider-keys">
-      {orgId}|{orgName}
-    </div>
-  ),
 }));
 vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/app/lib/mikeApi")>()),
@@ -70,7 +54,6 @@ beforeEach(() => {
     dispatchEvent: vi.fn(),
   }));
   mocks.role = "owner";
-  mocks.search = "";
   mocks.getOrg.mockImplementation(async () => ({
     id: "org-1",
     name: "Elite Law LLP",
@@ -152,31 +135,6 @@ describe("OrganizationWorkspace", () => {
     ).toHaveClass("liquid-glass-hover");
     expect(screen.queryByRole("button", { name: "Chats" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reviews" })).not.toBeInTheDocument();
-  });
-
-  it("opens the organization's model providers from their own tab", async () => {
-    const user = userEvent.setup();
-    render(<OrganizationWorkspace orgId="org-1" />);
-    await screen.findByText("Jane Lee");
-
-    await user.click(screen.getByRole("button", { name: "Model Providers" }));
-
-    expect(screen.getByTestId("provider-keys")).toHaveTextContent(
-      "org-1|Elite Law LLP",
-    );
-    expect(screen.queryByText("Jane Lee")).not.toBeInTheDocument();
-  });
-
-  it("opens on the tab a link names, and on People for one it does not know", async () => {
-    mocks.search = "tab=providers";
-    const { unmount } = render(<OrganizationWorkspace orgId="org-1" />);
-    expect(await screen.findByTestId("provider-keys")).toBeInTheDocument();
-    unmount();
-
-    mocks.search = "tab=nonsense";
-    render(<OrganizationWorkspace orgId="org-1" />);
-    expect(await screen.findByText("Jane Lee")).toBeInTheDocument();
-    expect(screen.queryByTestId("provider-keys")).not.toBeInTheDocument();
   });
 
   it("lets owners change a member's role from the colored role tab", async () => {
@@ -303,14 +261,15 @@ describe("OrganizationWorkspace", () => {
     expect(screen.getByText("Email address")).toBeInTheDocument();
     expect(mocks.listOrgInvitations).toHaveBeenCalledWith("org-1");
 
+    // Settings are a page of their own, reached from the header menu.
     await user.keyboard("{Escape}");
     await user.click(
       screen.getByRole("button", { name: "Organization settings" }),
     );
-    await user.click(screen.getByText("Organization settings"));
-    expect(screen.getByLabelText("Organization name")).toHaveValue(
-      "Elite Law LLP",
+    await user.click(
+      screen.getByRole("menuitem", { name: "Organization settings" }),
     );
+    expect(mocks.push).toHaveBeenCalledWith("/organizations/org-1/settings");
   });
 
   it("drops owner and admin controls as soon as an owner demotes themselves", async () => {
@@ -385,73 +344,6 @@ describe("OrganizationWorkspace", () => {
     await waitFor(() =>
       expect(screen.queryByText("Give up owner access?")).not.toBeInTheDocument(),
     );
-  });
-
-  it("spends Escape on the delete confirmation before the settings modal", async () => {
-    const user = userEvent.setup();
-    render(<OrganizationWorkspace orgId="org-1" />);
-    await screen.findByText("William Chen");
-
-    await user.click(
-      screen.getByRole("button", { name: "Organization settings" }),
-    );
-    await user.click(
-      screen.getByRole("menuitem", { name: "Organization settings" }),
-    );
-    const nameInput = screen.getByLabelText("Organization name");
-    await user.clear(nameInput);
-    await user.type(nameInput, "Elite Law Group");
-    await user.click(
-      screen.getByRole("button", { name: "Delete organization" }),
-    );
-    expect(screen.getByText("Delete Elite Law LLP?")).toBeInTheDocument();
-
-    // Both layers answered Escape, so declining the delete also closed the
-    // settings modal and threw away the rename typed above it. The
-    // confirmation is on top, so it alone takes the first press.
-    await user.keyboard("{Escape}");
-
-    expect(screen.queryByText("Delete Elite Law LLP?")).not.toBeInTheDocument();
-    expect(mocks.deleteOrg).not.toHaveBeenCalled();
-    expect(screen.getByLabelText("Organization name")).toHaveValue(
-      "Elite Law Group",
-    );
-
-    // With the confirmation gone the next press belongs to the modal.
-    await user.keyboard("{Escape}");
-
-    await waitFor(() =>
-      expect(screen.queryByLabelText("Organization name")).not.toBeInTheDocument(),
-    );
-  });
-
-  it("retires the delete confirmation when its settings modal closes", async () => {
-    // The confirmation renders in its own portal, so closing the modal by
-    // other means must take it down too: otherwise it keeps floating over
-    // the page with a live Delete button still wired to this org.
-    const user = userEvent.setup();
-    render(<OrganizationWorkspace orgId="org-1" />);
-    await screen.findByText("William Chen");
-
-    await user.click(
-      screen.getByRole("button", { name: "Organization settings" }),
-    );
-    await user.click(
-      screen.getByRole("menuitem", { name: "Organization settings" }),
-    );
-    await user.click(
-      screen.getByRole("button", { name: "Delete organization" }),
-    );
-    expect(screen.getByText("Delete Elite Law LLP?")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Close" }));
-
-    await waitFor(() =>
-      expect(
-        screen.queryByText("Delete Elite Law LLP?"),
-      ).not.toBeInTheDocument(),
-    );
-    expect(mocks.deleteOrg).not.toHaveBeenCalled();
   });
 
   it("does not report a sent invitation as failed when the refresh rejects", async () => {
@@ -787,23 +679,6 @@ describe("OrganizationWorkspace", () => {
         screen.queryByText("Remove selected people?"),
       ).not.toBeInTheDocument();
       expect(mocks.removeOrgMember).not.toHaveBeenCalled();
-    });
-
-    it("lets them rename the organization but not delete it", async () => {
-      const user = userEvent.setup();
-      render(<OrganizationWorkspace orgId="org-1" />);
-      await screen.findByText("Olive Owner");
-
-      await user.click(
-        screen.getByRole("button", { name: "Organization settings" }),
-      );
-      await user.click(screen.getByText("Organization settings"));
-      expect(screen.getByLabelText("Organization name")).toHaveValue(
-        "Elite Law LLP",
-      );
-      expect(
-        screen.queryByRole("button", { name: "Delete organization" }),
-      ).not.toBeInTheDocument();
     });
 
     it("invites members only, and leaves an owner's admin invitation alone", async () => {

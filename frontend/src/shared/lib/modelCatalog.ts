@@ -633,9 +633,9 @@ export const NO_MODELS_MESSAGES: Record<NoModelsReason, string> = {
   "api-keys":
     "No organisation model credential is available. Ask the deployment administrator to check provider configuration.",
   "org-router-models":
-    "Your organization has not added any models for its provider yet. Ask an organization admin to add them under Model Providers.",
+    "Your organization has not added any models for its provider yet. Ask an organization admin to add them in Organization Settings.",
   "org-providers-disabled":
-    "Your organization has turned its model providers off. Ask an organization admin to turn one back on under Model Providers.",
+    "Your organization has turned its model providers off. Ask an organization admin to turn one back on in Organization Settings.",
   "org-api-keys":
     "No managed model provider is available. Ask the deployment administrator to check provider configuration.",
   "org-api-keys-or-own":

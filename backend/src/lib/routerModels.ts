@@ -109,7 +109,7 @@ export async function resolveRequestedModel(
     if (onOutsideSelection === "throw") {
         throw new UserFacingError(
             fromOrganization
-                ? `Model ${resolved} is not in your organization's saved ${ROUTER_LABELS[router]} models — an organization admin can add it under Model Providers.`
+                ? `Model ${resolved} is not in your organization's saved ${ROUTER_LABELS[router]} models — an organization admin can add it in Organization Settings.`
                 : `Model ${resolved} is not in your saved ${ROUTER_LABELS[router]} models — open ${ROUTER_LABELS[router]} in Settings → Bring Your Own Keys and add it under Model Selections.`,
         );
     }

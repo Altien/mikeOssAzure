@@ -5,7 +5,11 @@ import { NoModelsWarningPopup } from "./NoModelsWarningPopup";
 
 const mocks = vi.hoisted(() => ({
     push: vi.fn(),
-    activeOrganization: null as { id: string; name: string } | null,
+    activeOrganization: null as {
+        id: string;
+        name: string;
+        role: "owner" | "admin" | "member";
+    } | null,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -54,24 +58,28 @@ describe("NoModelsWarningPopup", () => {
 
     describe("in an organization workspace", () => {
         beforeEach(() => {
-            mocks.activeOrganization = { id: "org-1", name: "Acme LLP" };
+            mocks.activeOrganization = {
+                id: "org-1",
+                name: "Acme LLP",
+                role: "admin",
+            };
         });
 
         it.each([
             [
                 "org-router-models",
-                "Your organization has not added any models for its provider yet. Ask an organization admin to add them under Model Providers.",
+                "Your organization has not added any models for its provider yet. Ask an organization admin to add them in Organization Settings.",
             ],
             [
                 "org-providers-disabled",
-                "Your organization has turned its model providers off. Ask an organization admin to turn one back on under Model Providers.",
+                "Your organization has turned its model providers off. Ask an organization admin to turn one back on in Organization Settings.",
             ],
             [
                 "org-api-keys",
-                "Your organization has not set up a model provider yet. Ask an organization admin to add one under Model Providers.",
+                "Your organization has not set up a model provider yet. Ask an organization admin to add one in Organization Settings.",
             ],
         ] as const)(
-            "says who can fix %s and opens the organization's providers",
+            "says who can fix %s and takes an admin to the organization's settings",
             async (reason, message) => {
                 const user = userEvent.setup();
                 const onClose = vi.fn();
@@ -86,15 +94,61 @@ describe("NoModelsWarningPopup", () => {
                 ).not.toBeInTheDocument();
 
                 await user.click(
-                    screen.getByRole("button", { name: "Open Model Providers" }),
+                    screen.getByRole("button", {
+                        name: "Open Organization Settings",
+                    }),
                 );
 
                 expect(onClose).toHaveBeenCalledTimes(1);
                 expect(mocks.push).toHaveBeenCalledExactlyOnceWith(
-                    "/organizations/org-1?tab=providers",
+                    "/organizations/org-1/settings",
                 );
             },
         );
+
+        it("gives a member the message and no button to a page they cannot open", () => {
+            mocks.activeOrganization = {
+                id: "org-1",
+                name: "Acme LLP",
+                role: "member",
+            };
+            render(
+                <NoModelsWarningPopup
+                    reason="org-router-models"
+                    onClose={vi.fn()}
+                />,
+            );
+
+            expect(
+                screen.getByText(/Ask an organization admin to add them/),
+            ).toBeInTheDocument();
+            expect(
+                screen.queryByRole("button", {
+                    name: "Open Organization Settings",
+                }),
+            ).not.toBeInTheDocument();
+            expect(
+                screen.queryByRole("button", {
+                    name: "Open Bring Your Own Keys",
+                }),
+            ).not.toBeInTheDocument();
+        });
+
+        it("takes an owner to the organization's settings too", () => {
+            mocks.activeOrganization = {
+                id: "org-1",
+                name: "Acme LLP",
+                role: "owner",
+            };
+            render(
+                <NoModelsWarningPopup reason="org-api-keys" onClose={vi.fn()} />,
+            );
+            expect(
+                screen.getByRole("button", {
+                    name: "Open Organization Settings",
+                }),
+            ).toBeInTheDocument();
+        });
 
         it("offers the member's own keys when the organization allows them in its place", async () => {
             const user = userEvent.setup();
@@ -107,7 +161,7 @@ describe("NoModelsWarningPopup", () => {
 
             expect(
                 screen.getByText(
-                    "Your organization has not set up a model provider yet. Ask an organization admin to add one under Model Providers, or add your own API key in Bring Your Own Keys.",
+                    "Your organization has not set up a model provider yet. Ask an organization admin to add one in Organization Settings, or add your own API key in Bring Your Own Keys.",
                 ),
             ).toBeInTheDocument();
             // The step the member can take themselves.

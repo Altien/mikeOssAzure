@@ -35,13 +35,14 @@ import { GlassCardUI } from "@/shared/ui/GlassCardUI";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { ToggleSwitchUI } from "@/shared/ui/ToggleSwitchUI";
 
-// An organization's model providers: the keys its work runs on, and whether a
-// member's own key may stand in where it has none.
+// An organization's model providers: the keys its work runs on, the models
+// each may run, and whether a member's own key may stand in where it has
+// none. These are the sections of the Organization Settings page, which is
+// its owners' and admins' alone; they manage it with the same cards and the
+// same key dialog as a person's Bring Your Own Keys page.
 //
-// Owners and admins manage it with the same cards and the same key dialog as
-// a person's Bring Your Own Keys page. Every other member sees what is set
-// up, because that is what explains which models they are offered here, and
-// can change nothing.
+// `can_manage` is the server's word on the caller. Somebody demoted while
+// the page was open is shown what is set up and offered nothing to change.
 
 type PendingMfa =
   | { kind: "toggle"; provider: ApiKeyProvider; enabled: boolean }
@@ -219,7 +220,7 @@ export function OrganizationProviderKeys({
 
   if (loadError)
     return (
-      <div className="mx-3 space-y-3 md:mx-6.5" role="alert">
+      <div className="space-y-3" role="alert">
         <SettingsDescription>{loadError}</SettingsDescription>
         <PillButtonUI tone="white" size="sm" onClick={() => void load()}>
           Try again
@@ -236,8 +237,8 @@ export function OrganizationProviderKeys({
   const allowPersonal = settings?.allow_personal_api_keys !== false;
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="@container mx-3 space-y-8 pb-8 md:mx-6.5">
+    <>
+      <div className="@container space-y-8">
         <section
           aria-labelledby="org-providers-saved"
           className="space-y-3"
@@ -383,6 +384,6 @@ export function OrganizationProviderKeys({
         message={actionError}
         onClose={() => setActionError(null)}
       />
-    </div>
+    </>
   );
 }
