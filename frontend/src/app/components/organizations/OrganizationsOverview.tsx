@@ -34,8 +34,8 @@ const CARD_GRID_CLASS = "grid grid-cols-1 gap-3 @min-[32rem]:grid-cols-2";
  * one. Set as settings cards, like Connectors and Bring Your Own Keys.
  *
  * An organization's settings belong to its workspace, so only the card of the
- * workspace the person is in opens them. Every other organization offers a
- * switch to its workspace instead, from where its settings can be opened.
+ * workspace the person is in has a Manage button. Every other organization
+ * offers a switch to its workspace instead, from where its settings open.
  */
 export function OrganizationsOverview() {
   const router = useRouter();
@@ -199,19 +199,23 @@ export function OrganizationsOverview() {
                     members === 1 ? "member" : "members"
                   }`}
                   icon={<OrganizationSkeuoIcon className="h-6 w-6" />}
-                  // Only the workspace the person is in opens its settings.
-                  onOpen={
-                    current
-                      ? () => router.push(organizationSettingsHref(org.id))
-                      : undefined
-                  }
+                  // Only the workspace the person is in opens its settings;
+                  // every other organization is switched to first.
                   action={
                     current ? (
-                      // Plain text: a status, not a control.
-                      <span className="text-sm text-gray-500">Current</span>
+                      <PillButtonUI
+                        tone="blue"
+                        size="sm"
+                        aria-label={`Manage ${org.name}`}
+                        onClick={() =>
+                          router.push(organizationSettingsHref(org.id))
+                        }
+                      >
+                        Manage
+                      </PillButtonUI>
                     ) : (
                       <PillButtonUI
-                        tone="white"
+                        tone="black"
                         size="sm"
                         aria-label={`Switch to ${org.name}`}
                         onClick={() => setWorkspace(org.id)}

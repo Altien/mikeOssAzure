@@ -153,14 +153,22 @@ describe("OrganizationsOverview", () => {
     ]);
   });
 
-  it("opens the settings of the workspace the person is in from its card", async () => {
+  it("opens the settings of the workspace the person is in from its blue Manage button", async () => {
     const user = userEvent.setup();
     render(<OrganizationsOverview />);
     await screen.findByText("Elite Law LLP");
 
-    expect(within(card("Elite Law LLP")).getByText("Current")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Manage Elite Law LLP" }));
+    const manage = within(card("Elite Law LLP")).getByRole("button", {
+      name: "Manage Elite Law LLP",
+    });
+    expect(manage).toHaveTextContent("Manage");
+    expect(manage.className).toMatch(/bg-blue-/);
+    // The card itself is not a second way in.
+    expect(
+      screen.getAllByRole("button", { name: "Manage Elite Law LLP" }),
+    ).toHaveLength(1);
 
+    await user.click(manage);
     expect(mocks.push).toHaveBeenCalledWith("/organizations/org-1/settings");
   });
 
@@ -184,14 +192,16 @@ describe("OrganizationsOverview", () => {
       expect(mocks.push).not.toHaveBeenCalled();
     });
 
-    it("offers a switch to its workspace instead", async () => {
+    it("offers a black Switch button to its workspace instead", async () => {
       const user = userEvent.setup();
       render(<OrganizationsOverview />);
       await screen.findByText("Beta Chambers");
 
-      await user.click(
-        screen.getByRole("button", { name: "Switch to Beta Chambers" }),
-      );
+      const switchButton = screen.getByRole("button", {
+        name: "Switch to Beta Chambers",
+      });
+      expect(switchButton.className).toMatch(/bg-gray-950/);
+      await user.click(switchButton);
 
       expect(mocks.setWorkspace).toHaveBeenCalledExactlyOnceWith("org-2");
       // Switching is not opening: the person stays on their list.
@@ -210,7 +220,6 @@ describe("OrganizationsOverview", () => {
       expect(
         screen.queryByRole("button", { name: /^Manage / }),
       ).not.toBeInTheDocument();
-      expect(screen.queryByText("Current")).not.toBeInTheDocument();
       expect(
         screen.getByRole("button", { name: "Switch to Elite Law LLP" }),
       ).toBeInTheDocument();
