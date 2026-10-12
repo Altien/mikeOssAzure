@@ -201,8 +201,29 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             const known =
                 next === PERSONAL_WORKSPACE ||
                 (organizations ?? []).some((org) => org.id === next);
-            if (!known) return;
-            setSelection({ userId, workspaceId: next });
+            if (known) {
+                setSelection({ userId, workspaceId: next });
+                return;
+            }
+            // Not one this provider has heard of — yet. An organization the
+            // person has just created or joined is offered to switch to
+            // before the list here has been read again, and ignoring that
+            // click made the button look dead. Ask once, then switch if it
+            // really is theirs; a stranger's id still goes nowhere.
+            if (!userId) return;
+            void listOrgs()
+                .then((orgs) => {
+                    setOrganizations(orgs);
+                    if (orgs.some((org) => org.id === next))
+                        setSelection((current) =>
+                            current.userId === userId
+                                ? { userId, workspaceId: next }
+                                : current,
+                        );
+                })
+                .catch(() => {
+                    // Unknown stays unknown: nothing is switched.
+                });
         },
         [organizations, userId],
     );
