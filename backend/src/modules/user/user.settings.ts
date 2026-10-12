@@ -8,7 +8,7 @@ import {
     type ResponseStyle,
 } from "./user.responseStyle";
 import { safeError } from "../../lib/safeError";
-import { getAllUserRouterModels, ROUTER_SLUGS, type RouterModelSelections } from "../../lib/routerModels";
+import { getEffectiveRouterModels, ROUTER_SLUGS, type RouterModelSelections } from "../../lib/routerModels";
 import { normalizeOptionalModelPreference, normalizeReasoningLevel } from "../../lib/modelSelection";
 
 export type UserModelSettings = {
@@ -62,7 +62,7 @@ export async function getUserModelSettings(
             .select("fast_model, tabular_model, memory_curator_model, last_selected_chat_model, last_selected_reasoning_level, legal_research_us, display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas")
             .eq("user_id", userId).single(),
         getEffectiveApiKeys(userId, options.orgId, client),
-        getAllUserRouterModels(userId, client),
+        getEffectiveRouterModels(userId, options.orgId, client),
         // Instructions are an enhancement: a failed read must not block chat.
         loadCustomInstructions(client, userId).catch((error: unknown) => {
             console.error(

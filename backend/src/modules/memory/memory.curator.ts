@@ -1344,6 +1344,7 @@ export async function handleMemoryConsolidation(
     apiKeys: settings.api_keys,
     userId: state.actor_user_id,
     db,
+    orgId: conversation.orgId,
   });
   if (!resolved.ok) throw new Error("Memory curator has no available model");
   const model = await memoryCuratorModelForChat({

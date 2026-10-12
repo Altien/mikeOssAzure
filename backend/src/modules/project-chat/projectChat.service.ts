@@ -123,6 +123,8 @@ export type PreparedProjectChatStream = {
     workflowStore: Awaited<ReturnType<typeof buildWorkflowStore>>;
     legalResearchUs: boolean;
     apiKeys: Awaited<ReturnType<typeof getUserModelSettings>>["api_keys"];
+    /** The organization the chat belongs to, whose keys and model lists apply. */
+    orgId: string | null;
     titleModel: Awaited<ReturnType<typeof getUserModelSettings>>["title_model"];
     selectedModel: string;
     selectedReasoningLevel: ReturnType<
@@ -551,6 +553,7 @@ export async function prepareProjectChatStream(
                 workflowStore,
                 legalResearchUs,
                 apiKeys,
+                orgId: projectAccess.project.org_id ?? null,
                 titleModel,
                 selectedModel,
                 selectedReasoningLevel,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { MfaVerificationPopup } from "@/app/components/popups/MfaVerificationPopup";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { ByokProviderModal } from "@/app/components/settings/ByokProviderModal";
@@ -16,11 +16,13 @@ import {
   type ModelApiKeyField,
 } from "@/app/components/settings/modelProviders";
 import { useWorkspace } from "@/app/contexts/WorkspaceContext";
+import { routerSelectionsFromLists } from "@/app/hooks/useModelRouterSelections";
 import {
   MikeApiError,
   getOrgApiKeys,
   isMfaRequiredError,
   saveOrgApiKey,
+  saveOrgRouterModels,
   setOrgApiKeyEnabled,
   setOrgPersonalApiKeysAllowed,
   type ApiKeyProvider,
@@ -28,6 +30,7 @@ import {
   type OrgApiKeySettings,
 } from "@/app/lib/mikeApi";
 import { userFacingApiError } from "@/app/lib/userFacingError";
+import type { RouterSlug } from "@/shared/lib/modelCatalog";
 import { GlassCardUI } from "@/shared/ui/GlassCardUI";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { ToggleSwitchUI } from "@/shared/ui/ToggleSwitchUI";
@@ -42,7 +45,8 @@ import { ToggleSwitchUI } from "@/shared/ui/ToggleSwitchUI";
 
 type PendingMfa =
   | { kind: "toggle"; provider: ApiKeyProvider; enabled: boolean }
-  | { kind: "policy"; allowed: boolean };
+  | { kind: "policy"; allowed: boolean }
+  | { kind: "models"; provider: RouterSlug; models: string[] };
 
 const LOAD_ERROR = "The organization's model providers could not be loaded.";
 const UPDATE_ERROR = "The provider could not be updated. Please try again.";
@@ -89,6 +93,7 @@ export function OrganizationProviderKeys({
 
   const loading = settings === null && loadError === null;
   const canManage = settings?.can_manage === true;
+  const canManageModels = settings?.can_manage_models === true;
   const hasOrgKey = (provider: ApiKeyProvider) =>
     settings?.keys.sources?.[provider] != null;
   const isEnabled = (provider: ApiKeyProvider) =>
@@ -141,6 +146,25 @@ export function OrganizationProviderKeys({
     }
   }
 
+  // The model list field reports a save as done or not done. When the server
+  // asks for MFA first, its answer waits here for the retry (or the cancel).
+  const modelsAfterMfa = useRef<((saved: boolean) => void) | null>(null);
+  async function saveModels(
+    provider: RouterSlug,
+    models: string[],
+  ): Promise<boolean> {
+    try {
+      applied(await saveOrgRouterModels(orgId, provider, models));
+      return true;
+    } catch (error) {
+      if (!isMfaRequiredError(error)) return false;
+      return new Promise<boolean>((resolve) => {
+        modelsAfterMfa.current = resolve;
+        setPendingMfa({ kind: "models", provider, models });
+      });
+    }
+  }
+
   const renderToggle = (field: ModelApiKeyField, label: string) => (
     <ToggleSwitchUI
       checked={isEnabled(field.provider)}
@@ -163,7 +187,7 @@ export function OrganizationProviderKeys({
         kind="provider"
         name={field.name}
         icon={<ModelProviderIcon field={field} loading={loading} />}
-        onOpen={canManage && saved ? open : undefined}
+        onOpen={canManageModels && saved ? open : undefined}
         action={
           loading ? (
             // Whether this is a switch, an Add button or plain text depends
@@ -303,7 +327,7 @@ export function OrganizationProviderKeys({
         </section>
       </div>
 
-      {canManage ? (
+      {canManageModels ? (
         <ByokProviderModal
           provider={selected}
           store={{
@@ -311,9 +335,18 @@ export function OrganizationProviderKeys({
             settings: settings?.keys.settings,
             save: saveKey,
             breadcrumb: orgName,
+            routerModels: {
+              configured: hasOrgKey,
+              selections: routerSelectionsFromLists(settings?.router_models),
+              settings: settings?.keys.settings,
+              save: saveModels,
+              workspace: orgId,
+              description:
+                "Add the models this organization's key may run. Members see them in model selectors.",
+            },
           }}
           enabledToggle={
-            selected && hasOrgKey(selected.provider)
+            canManage && selected && hasOrgKey(selected.provider)
               ? renderToggle(selected, `Use ${selected.name}`)
               : undefined
           }
@@ -322,14 +355,26 @@ export function OrganizationProviderKeys({
       ) : null}
       <MfaVerificationPopup
         open={pendingMfa !== null}
-        onCancel={() => setPendingMfa(null)}
+        onCancel={() => {
+          setPendingMfa(null);
+          modelsAfterMfa.current?.(false);
+          modelsAfterMfa.current = null;
+        }}
         onVerified={() => {
           if (!pendingMfa) return;
           const action = pendingMfa;
           setPendingMfa(null);
           if (action.kind === "toggle")
             void toggleProvider(action.provider, action.enabled);
-          else void setPersonalKeysAllowed(action.allowed);
+          else if (action.kind === "policy")
+            void setPersonalKeysAllowed(action.allowed);
+          else {
+            const answer = modelsAfterMfa.current;
+            modelsAfterMfa.current = null;
+            void saveModels(action.provider, action.models).then((saved) =>
+              answer?.(saved),
+            );
+          }
         }}
       />
       <WarningPopup

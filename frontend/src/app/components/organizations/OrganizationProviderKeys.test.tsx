@@ -9,8 +9,10 @@ const mocks = vi.hoisted(() => ({
   saveOrgApiKey: vi.fn(),
   setOrgApiKeyEnabled: vi.fn(),
   setOrgPersonalApiKeysAllowed: vi.fn(),
+  saveOrgRouterModels: vi.fn(),
   refreshOrgApiKeys: vi.fn(async () => {}),
   updateApiKey: vi.fn(async () => true),
+  modelsSaved: vi.fn(),
 }));
 
 vi.mock("@/app/components/popups/MfaVerificationPopup", () => ({
@@ -28,8 +30,37 @@ vi.mock("@/app/components/popups/MfaVerificationPopup", () => ({
     ) : null,
   needsMfaVerification: vi.fn().mockResolvedValue(false),
 }));
+// The Model Selections field has its own tests. This stand-in shows what it
+// was handed and lets a test save a list through it.
 vi.mock("@/app/components/settings/RouterSettingsSection", () => ({
-  RouterSettingsSection: () => <div data-testid="model-selections" />,
+  RouterSettingsSection: ({
+    provider,
+    store,
+  }: {
+    provider: string;
+    store?: {
+      workspace: string;
+      selections: Record<string, string[]>;
+      save: (provider: string, models: string[]) => Promise<boolean>;
+    };
+  }) => (
+    <div data-testid="model-selections">
+      <p>
+        {provider}|{store?.workspace ?? "personal"}|
+        {store?.selections[provider]?.join(",")}
+      </p>
+      <button
+        type="button"
+        onClick={() =>
+          void store
+            ?.save(provider, ["vendor/new"])
+            .then((saved) => mocks.modelsSaved(saved))
+        }
+      >
+        Save models
+      </button>
+    </div>
+  ),
 }));
 vi.mock("@/app/contexts/WorkspaceContext", () => ({
   useWorkspace: () => ({ refreshOrgApiKeys: mocks.refreshOrgApiKeys }),
@@ -56,11 +87,15 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
   saveOrgApiKey: mocks.saveOrgApiKey,
   setOrgApiKeyEnabled: mocks.setOrgApiKeyEnabled,
   setOrgPersonalApiKeysAllowed: mocks.setOrgPersonalApiKeysAllowed,
+  saveOrgRouterModels: mocks.saveOrgRouterModels,
 }));
 
 import { OrganizationProviderKeys } from "./OrganizationProviderKeys";
 
-type Saved = Record<string, { enabled?: boolean; settings?: object }>;
+type Saved = Record<
+  string,
+  { enabled?: boolean; settings?: object; models?: string[] }
+>;
 
 /** The server's answer for an organization with these saved providers. */
 function orgSettings(
@@ -73,7 +108,9 @@ function orgSettings(
   const sources: Record<string, string | null> = {};
   const enabled: Record<string, boolean> = {};
   const settings: Record<string, object> = {};
+  const routerModels: Record<string, string[]> = {};
   for (const [provider, row] of Object.entries(saved)) {
+    if (row.models) routerModels[provider] = row.models;
     keys[provider] = row.enabled !== false;
     sources[provider] = "org";
     enabled[provider] = row.enabled !== false;
@@ -83,6 +120,8 @@ function orgSettings(
   return {
     keys: status,
     effective: status,
+    router_models: routerModels,
+    effective_router_models: routerModels,
     allow_personal_api_keys: true,
     can_manage: true,
     ...overrides,
@@ -176,9 +215,11 @@ describe("an owner or admin", () => {
     );
   });
 
-  it("names the organization in the dialog and offers no model selections", async () => {
+  it("names the organization in the dialog and manages its model list there", async () => {
     const user = userEvent.setup();
-    mocks.getOrgApiKeys.mockResolvedValue(orgSettings({ openrouter: {} }));
+    mocks.getOrgApiKeys.mockResolvedValue(
+      orgSettings({ openrouter: { models: ["firm/approved"] } }),
+    );
     renderTab();
 
     await user.click(
@@ -187,8 +228,103 @@ describe("an owner or admin", () => {
 
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByText("Acme LLP")).toBeInTheDocument();
-    // Model Selections are each person's own.
+    // The organization's list, with catalogs listed on its key — not the
+    // caller's own Model Selections.
+    expect(
+      within(dialog).getByText("openrouter|org-1|firm/approved"),
+    ).toBeInTheDocument();
+  });
+
+  it("offers no model list until the organization has a key for the provider", async () => {
+    const user = userEvent.setup();
+    renderTab();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Add OpenRouter" }),
+    );
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(screen.queryByTestId("model-selections")).not.toBeInTheDocument();
+  });
+
+  it("offers no model list for a provider that does not keep one", async () => {
+    const user = userEvent.setup();
+    mocks.getOrgApiKeys.mockResolvedValue(orgSettings({ openai: {} }));
+    renderTab();
+
+    await user.click(await screen.findByRole("button", { name: "Manage OpenAI" }));
+
+    expect(screen.queryByTestId("model-selections")).not.toBeInTheDocument();
+  });
+
+  it("saves the organization's model list and tells the pickers", async () => {
+    const user = userEvent.setup();
+    mocks.getOrgApiKeys.mockResolvedValue(orgSettings({ openrouter: {} }));
+    mocks.saveOrgRouterModels.mockResolvedValue(
+      orgSettings({ openrouter: { models: ["vendor/new"] } }),
+    );
+    renderTab();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Manage OpenRouter" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Save models" }));
+
+    await waitFor(() => expect(mocks.modelsSaved).toHaveBeenCalledWith(true));
+    expect(mocks.saveOrgRouterModels).toHaveBeenCalledExactlyOnceWith(
+      "org-1",
+      "openrouter",
+      ["vendor/new"],
+    );
+    expect(
+      await screen.findByText("openrouter|org-1|vendor/new"),
+    ).toBeInTheDocument();
+    expect(mocks.refreshOrgApiKeys).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a failed model list save to the field", async () => {
+    const user = userEvent.setup();
+    mocks.getOrgApiKeys.mockResolvedValue(orgSettings({ openrouter: {} }));
+    mocks.saveOrgRouterModels.mockRejectedValue(new Error("boom"));
+    renderTab();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Manage OpenRouter" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Save models" }));
+
+    await waitFor(() => expect(mocks.modelsSaved).toHaveBeenCalledWith(false));
+    expect(mocks.refreshOrgApiKeys).not.toHaveBeenCalled();
+  });
+
+  it("holds a model list save for MFA, then completes it", async () => {
+    const user = userEvent.setup();
+    mocks.getOrgApiKeys.mockResolvedValue(orgSettings({ openrouter: {} }));
+    mocks.saveOrgRouterModels
+      .mockRejectedValueOnce(
+        new MikeApiError({
+          message: "MFA required",
+          status: 403,
+          code: "mfa_verification_required",
+        }),
+      )
+      .mockResolvedValueOnce(
+        orgSettings({ openrouter: { models: ["vendor/new"] } }),
+      );
+    renderTab();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Manage OpenRouter" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Save models" }));
+    // Neither saved nor failed while the prompt is up.
+    const verify = await screen.findByRole("button", { name: "Verify MFA" });
+    expect(mocks.modelsSaved).not.toHaveBeenCalled();
+
+    await user.click(verify);
+
+    await waitFor(() => expect(mocks.modelsSaved).toHaveBeenCalledWith(true));
+    expect(mocks.saveOrgRouterModels).toHaveBeenCalledTimes(2);
   });
 
   it("clears a saved key", async () => {

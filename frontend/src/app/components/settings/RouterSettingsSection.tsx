@@ -21,6 +21,7 @@ import {
 } from "@/app/lib/mikeApi";
 import {
   routerSelections,
+  type RouterSelections,
   type RouterSlug,
 } from "@/shared/lib/modelCatalog";
 import {
@@ -172,7 +173,7 @@ function catalogModelMatches(model: RouterCatalogModel, query: string) {
 const ROUTER_SETTINGS: readonly {
   provider: RouterSlug;
   label: string;
-  loadCatalog?: () => Promise<RouterCatalogModel[]>;
+  loadCatalog?: (workspace?: string) => Promise<RouterCatalogModel[]>;
   catalogScope?: (settings: ApiKeySettings | undefined) => string | undefined;
 }[] = [
   { provider: "openrouter", label: "OpenRouter", loadCatalog: getOpenRouterModels },
@@ -196,31 +197,66 @@ const ROUTER_SETTINGS: readonly {
   },
 ];
 
-export function RouterSettingsSection({ provider }: { provider?: RouterSlug } = {}) {
+/**
+ * Whose Model Selections the section edits when that is not the caller's
+ * own: an organization's, which decide what its key may run for every
+ * member. Same field, same rules; only the owner differs.
+ */
+export type RouterModelsStore = {
+  /** Whether this owner has a key saved for the provider. */
+  configured: (provider: RouterSlug) => boolean;
+  selections: RouterSelections;
+  /** The settings saved with the owner's keys (a region, a base URL). */
+  settings: ApiKeySettings | undefined;
+  save: (provider: RouterSlug, models: string[]) => Promise<boolean>;
+  /** The organization whose key lists the catalogs. */
+  workspace: string;
+  description: string;
+};
+
+export function RouterSettingsSection({
+  provider,
+  store,
+}: {
+  provider?: RouterSlug;
+  /** Omitted for the caller's own Model Selections. */
+  store?: RouterModelsStore;
+} = {}) {
   const { profile, updateRouterModels } = useUserProfile();
+  const source: Omit<RouterModelsStore, "workspace"> & { workspace?: string } | null =
+    store ??
+    (profile
+      ? {
+          configured: (slug) => profile.apiKeys[slug]?.configured === true,
+          selections: routerSelections(profile),
+          settings: profile.apiKeySettings,
+          save: updateRouterModels,
+          description:
+            "Add the models you want to use. Saved models appear in model selectors.",
+        }
+      : null);
+  if (!source) return null;
   const visible = ROUTER_SETTINGS.filter(
     (router) =>
       (!provider || provider === router.provider) &&
-      profile?.apiKeys[router.provider]?.configured === true,
+      source.configured(router.provider),
   );
-  if (!profile || visible.length === 0) return null;
-  const selections = routerSelections(profile);
+  if (visible.length === 0) return null;
 
   return (
     <section id="routers" className="scroll-mt-6 space-y-3">
       <FieldLabel as="p">Model Selections</FieldLabel>
-      <SettingsDescription>
-        Add the models you want to use. Saved models appear in model selectors.
-      </SettingsDescription>
+      <SettingsDescription>{source.description}</SettingsDescription>
       <div className="space-y-4">
         {visible.map((router) => (
           <RouterModelsSetting
-            key={`${router.provider}:${router.catalogScope?.(profile.apiKeySettings) ?? ""}`}
+            key={`${router.provider}:${router.catalogScope?.(source.settings) ?? ""}`}
             provider={router.provider}
             label={router.label}
-            selection={selections[router.provider]}
+            selection={source.selections[router.provider]}
             loadCatalog={router.loadCatalog}
-            onSave={(models) => updateRouterModels(router.provider, models)}
+            catalogWorkspace={source.workspace}
+            onSave={(models) => source.save(router.provider, models)}
           />
         ))}
       </div>
@@ -233,13 +269,16 @@ function RouterModelsSetting({
   label,
   selection,
   loadCatalog,
+  catalogWorkspace,
   onSave,
 }: {
   provider: RouterSlug;
   label: string;
   selection: string[];
   /** Omitted for providers with no listable catalog: IDs are typed only. */
-  loadCatalog?: () => Promise<RouterCatalogModel[]>;
+  loadCatalog?: (workspace?: string) => Promise<RouterCatalogModel[]>;
+  /** The organization whose key lists the catalog; the caller's when unset. */
+  catalogWorkspace?: string;
   onSave: (models: string[]) => Promise<boolean>;
 }) {
   const [catalog, setCatalog] = useState<RouterCatalogModel[]>([]);
@@ -255,7 +294,7 @@ function RouterModelsSetting({
   useEffect(() => {
     if (!loadCatalog) return;
     let cancelled = false;
-    loadCatalog()
+    loadCatalog(catalogWorkspace)
       .then((models) => {
         if (!cancelled) {
           setCatalog(models);
@@ -276,7 +315,7 @@ function RouterModelsSetting({
     return () => {
       cancelled = true;
     };
-  }, [label, loadCatalog]);
+  }, [catalogWorkspace, label, loadCatalog]);
 
   useEffect(() => {
     if (!catalogOpen) return;

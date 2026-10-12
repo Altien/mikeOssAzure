@@ -401,6 +401,7 @@ export async function updateTabularReviewChat(
             apiKeys: settings.api_keys,
             userId,
             db,
+            orgId: gate.orgId,
         });
         if (!resolution.ok)
             return statusFailure(resolution.status, {
@@ -493,6 +494,8 @@ export type PreparedTabularChat = {
     /** The model that names a new chat, already resolved for this chat model. */
     titleModel: string;
     apiKeys: UserApiKeys;
+    /** The review's organization, whose keys and model lists apply. */
+    orgId: string | null;
     apiMessages: unknown[];
     /** The id of the user turn just persisted — the assistant row links back
      *  to it through `memory_input_message_id`. */
@@ -774,6 +777,7 @@ export async function prepareTabularChat(
                 modelSettings.title_model,
             ),
             apiKeys: modelSettings.api_keys,
+            orgId: review.org_id ?? null,
             apiMessages,
             inputMessageId,
             readableMemoryProjectId,

@@ -7,7 +7,7 @@ import {
     customEndpointCredentials,
 } from "../../lib/llm/cloudProviders";
 import { guardedFetch } from "../../lib/mcp/client";
-import { getUserExecutionApiKeys as getUserApiKeys } from "../user/user.service";
+import { getEffectiveApiKeys } from "../user/user.service";
 import type { CatalogModel, CatalogResult } from "./models.service";
 
 const XAI_BASE_URL = "https://api.x.ai/v1";
@@ -74,12 +74,13 @@ async function readModels(
 export async function listXaiModels(
     db: Db,
     userId: string,
+    orgId?: string | null,
 ): Promise<CatalogResult> {
     // Reading the user's keys is Mike's own work: a failure there is an
     // internal error to log, not a provider outage.
     let key: string | undefined;
     try {
-        key = (await getUserApiKeys(userId, db)).xai?.trim();
+        key = (await getEffectiveApiKeys(userId, orgId, db)).xai?.trim();
     } catch (error) {
         return { ok: false, kind: "error", error };
     }
@@ -117,11 +118,12 @@ export async function listXaiModels(
 export async function listCustomEndpointModels(
     db: Db,
     userId: string,
+    orgId?: string | null,
 ): Promise<CatalogResult> {
     let credentials: Awaited<ReturnType<typeof customEndpointCredentials>>;
     try {
         credentials = await customEndpointCredentials(
-            await getUserApiKeys(userId, db),
+            await getEffectiveApiKeys(userId, orgId, db),
         );
     } catch (error) {
         return { ok: false, kind: "error", error };

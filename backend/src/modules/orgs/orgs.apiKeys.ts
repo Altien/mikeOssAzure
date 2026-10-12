@@ -10,10 +10,19 @@
 import { recordAudit } from "../../lib/audit";
 import { getOrgRole, isOrgAdmin } from "../../lib/access";
 import type { OrgResult } from "../../lib/orgs";
+import {
+    ROUTER_SLUGS,
+    getAllOrgRouterModels,
+    getEffectiveRouterModels,
+    replaceOrgRouterModels,
+    type RouterModelSelections,
+    type RouterSlug,
+} from "../../lib/routerModels";
 import type { Db } from "../../lib/supabase";
 import {
     getApiKeyStatusFor,
     getEffectiveApiKeyStatus,
+    normalizeRouterModels,
     orgKeyOwner,
     saveApiKeyForOwner,
     setApiKeyEnabledFor,
@@ -31,6 +40,16 @@ export type OrgApiKeySettings = {
      */
     effective: ApiKeyStatus;
     /**
+     * The models the organization's key may run, per "model list" provider
+     * (OpenRouter, Bedrock, Azure and the like). Its admins choose them.
+     */
+    router_models: RouterModelSelections;
+    /**
+     * The lists that govern the caller's work here: the organization's for
+     * each provider whose key it holds, their own for the rest.
+     */
+    effective_router_models: RouterModelSelections;
+    /**
      * Whether a member's own key is used for a provider the organization has
      * no key for. When false, work in the organization never runs on a
      * personal key.
@@ -38,6 +57,7 @@ export type OrgApiKeySettings = {
     allow_personal_api_keys: boolean;
     /** Whether the caller may change any of this. */
     can_manage: boolean;
+    can_manage_models?: boolean;
     managed?: boolean;
 };
 
@@ -55,13 +75,23 @@ async function readSettings(
     if (error) return { ok: false, kind: "db_error", detail: error.message };
     if (!data) return { ok: false, kind: "not_found" };
     try {
+        const [keys, effective, routerModels, effectiveRouterModels] =
+            await Promise.all([
+                getApiKeyStatusFor(orgKeyOwner(orgId), db),
+                getEffectiveApiKeyStatus(userId, orgId, db),
+                getAllOrgRouterModels(orgId, db),
+                getEffectiveRouterModels(userId, orgId, db),
+            ]);
         return {
             ok: true,
             settings: {
-                keys: await getApiKeyStatusFor(orgKeyOwner(orgId), db),
-                effective: await getEffectiveApiKeyStatus(userId, orgId, db),
+                keys,
+                effective,
+                router_models: routerModels,
+                effective_router_models: effectiveRouterModels,
                 allow_personal_api_keys: false,
                 can_manage: false,
+                can_manage_models: canManage,
                 managed: true,
             },
         };
@@ -131,6 +161,74 @@ export async function setOrgApiKeyEnabled(
     if (!isOrgAdmin(role)) return { ok: false, kind: "forbidden" };
     return { ok: false, kind: "validation", detail: "Provider credentials are managed by the deployment administrator. Personal keys cannot override them." };
 
+}
+
+export function normalizeOrgRouterSlug(value: string): RouterSlug | null {
+    return ROUTER_SLUGS.find((slug) => slug === value) ?? null;
+}
+
+/**
+ * Replace the models the organization's key for one provider may run.
+ * Owners and admins only: the list is what the firm's key can be spent on.
+ * Held to the same rules as a person's own list (shape, length, no
+ * duplicates, at most 50), and refused as a whole rather than trimmed, so
+ * what was saved is what was sent.
+ */
+export async function saveOrgRouterModels(
+    db: Db,
+    params: {
+        actorId: string;
+        actorEmail?: string | null;
+        orgId: string;
+        provider: RouterSlug;
+        modelIds: unknown;
+    },
+): Promise<OrgResult<{ settings: OrgApiKeySettings }>> {
+    const role = await getOrgRole(params.actorId, params.orgId, db);
+    if (!role) return { ok: false, kind: "not_found" };
+    if (!isOrgAdmin(role)) return { ok: false, kind: "forbidden" };
+
+    if (!Array.isArray(params.modelIds))
+        return {
+            ok: false,
+            kind: "validation",
+            detail: "model_ids must be an array of model IDs",
+        };
+    if (params.modelIds.length > 50)
+        return {
+            ok: false,
+            kind: "validation",
+            detail: "A provider can include at most 50 models",
+        };
+    const models = normalizeRouterModels(params.modelIds, params.provider);
+    if (models.length !== params.modelIds.length)
+        return {
+            ok: false,
+            kind: "validation",
+            detail: "model_ids contains an invalid or duplicate model ID",
+        };
+
+    try {
+        await replaceOrgRouterModels(params.orgId, params.provider, models, db);
+    } catch (error) {
+        return {
+            ok: false,
+            kind: "db_error",
+            detail: error instanceof Error ? error.message : String(error),
+        };
+    }
+    await recordAudit(db, {
+        userId: params.actorId,
+        userEmail: params.actorEmail ?? null,
+        action: "org.router_models.updated",
+        title: params.provider,
+        detail: {
+            org_id: params.orgId,
+            provider: params.provider,
+            model_count: models.length,
+        },
+    });
+    return readSettings(db, params.orgId, params.actorId, true);
 }
 
 /**

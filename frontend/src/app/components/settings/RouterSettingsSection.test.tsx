@@ -340,6 +340,111 @@ describe("RouterSettingsSection", () => {
     });
 });
 
+describe("RouterSettingsSection for an organization", () => {
+    const saveOrgModels = vi.fn();
+    const store = (overrides: Record<string, unknown> = {}) => ({
+        // The organization holds a Bedrock key; the caller's own OpenRouter
+        // key (in the profile above) is none of its business.
+        configured: (slug: string) => slug === "bedrock",
+        selections: {
+            openrouter: [],
+            vercel: [],
+            "opencode-go": [],
+            bedrock: ["us.anthropic.claude-opus-5-5"],
+            azure: [],
+            "azure-foundry": [],
+            vertex: [],
+            xai: [],
+            custom: [],
+        },
+        settings: { bedrock: { region: "eu-west-2" } },
+        save: saveOrgModels,
+        workspace: "org-1",
+        description: "Add the models this organization's key may run.",
+        ...overrides,
+    });
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        getBedrockModels.mockResolvedValue([
+            { id: "us.anthropic.claude-sonnet-5-5", label: "Claude Sonnet 5.5" },
+        ]);
+        saveOrgModels.mockResolvedValue(true);
+    });
+
+    it("shows the organization's providers and lists, not the caller's own", async () => {
+        render(<RouterSettingsSection store={store() as never} />);
+
+        expect(
+            screen.getByText("Add the models this organization's key may run."),
+        ).toBeInTheDocument();
+        expect(
+            screen.getByRole("combobox", { name: "Amazon Bedrock models" }),
+        ).toBeInTheDocument();
+        expect(
+            screen.getByText("us.anthropic.claude-opus-5-5"),
+        ).toBeInTheDocument();
+        // The caller's own OpenRouter key and saved model do not appear.
+        expect(
+            screen.queryByRole("combobox", { name: "OpenRouter models" }),
+        ).not.toBeInTheDocument();
+        expect(
+            screen.queryByText("anthropic/claude-sonnet-4.5"),
+        ).not.toBeInTheDocument();
+        await waitFor(() => expect(getBedrockModels).toHaveBeenCalled());
+    });
+
+    it("lists the catalog with the organization's key", async () => {
+        render(<RouterSettingsSection store={store() as never} />);
+        await waitFor(() =>
+            expect(getBedrockModels).toHaveBeenCalledWith("org-1"),
+        );
+        expect(getOpenRouterModels).not.toHaveBeenCalled();
+    });
+
+    it("saves to the organization and leaves the caller's own lists alone", async () => {
+        render(<RouterSettingsSection store={store() as never} />);
+        const input = screen.getByRole("combobox", {
+            name: "Amazon Bedrock models",
+        });
+        await waitFor(() => expect(getBedrockModels).toHaveBeenCalled());
+
+        fireEvent.change(input, {
+            target: { value: "us.anthropic.claude-sonnet-5-5" },
+        });
+        fireEvent.keyDown(input, { key: "Enter" });
+
+        await waitFor(() =>
+            expect(saveOrgModels).toHaveBeenCalledWith("bedrock", [
+                "us.anthropic.claude-opus-5-5",
+                "us.anthropic.claude-sonnet-5-5",
+            ]),
+        );
+        expect(updateRouterModels).not.toHaveBeenCalled();
+    });
+
+    it("renders nothing when the organization has no key for the provider", () => {
+        const { container } = render(
+            <RouterSettingsSection
+                provider="openrouter"
+                store={store() as never}
+            />,
+        );
+        expect(container).toBeEmptyDOMElement();
+    });
+});
+
+describe("RouterSettingsSection catalogs for personal keys", () => {
+    it("lists with the caller's own key", async () => {
+        vi.clearAllMocks();
+        getOpenRouterModels.mockResolvedValue([]);
+        render(<RouterSettingsSection />);
+        await waitFor(() =>
+            expect(getOpenRouterModels).toHaveBeenCalledWith(undefined),
+        );
+    });
+});
+
 describe("normalizeTypedModelId", () => {
     it("keeps router-slug catalog ids verbatim", () => {
         expect(normalizeTypedModelId("openrouter/auto", "openrouter")).toBe(

@@ -45,6 +45,7 @@ import {
 } from "@/app/hooks/useSelectedModel";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { useModelApiKeys } from "@/app/hooks/useModelApiKeys";
+import { useModelRouterSelections } from "@/app/hooks/useModelRouterSelections";
 import {
     getModelProvider,
     isModelAvailable,
@@ -77,7 +78,6 @@ import {
 } from "@/shared/lib/messageExcerpts";
 import { useConfiguredModels } from "@/app/hooks/useConfiguredModels";
 import {
-    routerSelections,
     type NoModelsReason,
 } from "@/shared/lib/modelCatalog";
 
@@ -219,10 +219,8 @@ function ChatInputForChatImpl(
     // /user/profile request rewrite the saved composer selection to the
     // default — permanently. null means "not loaded", which the hook leaves
     // the stored selection alone for.
-    const savedRouterSelections = useMemo(
-        () => (profile ? routerSelections(profile) : undefined),
-        [profile],
-    );
+    // In an organization workspace these are the lists that govern its keys.
+    const savedRouterSelections = useModelRouterSelections();
     const [model, setModel] = useSelectedModel({
         selectionKey: chatKey,
         chatModel,

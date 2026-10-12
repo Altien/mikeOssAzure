@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import { Modal } from "@/app/components/modals/Modal";
-import { RouterSettingsSection } from "./RouterSettingsSection";
+import { RouterSettingsSection, type RouterModelsStore } from "./RouterSettingsSection";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import type { ApiKeyProvider, ApiKeySettings } from "@/app/lib/mikeApi";
 import { ROUTER_SLUGS, type RouterSlug } from "@/app/components/assistant/ModelToggle";
@@ -14,7 +14,7 @@ export type ByokProvider = {
   keyLabel?: string;
 };
 
-export type ProviderKeyStore = { hasSavedKey: boolean; settings: ApiKeySettings | undefined; save: (provider: ApiKeyProvider, value: string | null, settings?: ApiKeySettings[keyof ApiKeySettings]) => Promise<boolean>; breadcrumb: string };
+export type ProviderKeyStore = { hasSavedKey: boolean; settings: ApiKeySettings | undefined; save: (provider: ApiKeyProvider, value: string | null, settings?: ApiKeySettings[keyof ApiKeySettings]) => Promise<boolean>; breadcrumb: string; routerModels?: RouterModelsStore };
 
 // Upstream divergence (sync-log: db8d42c3): owner-aware dialogs retain the
 // centrally managed credential boundary; no secret input is exposed.
@@ -29,8 +29,8 @@ export function ByokProviderModal({ provider, enabledToggle, store, onClose }: {
 }) {
   const { profile } = useUserProfile();
   if (!provider) return null;
-  const hasModelSelections = !store && (ROUTER_SLUGS as readonly string[]).includes(provider.provider);
-  const configured = profile?.apiKeys[provider.provider]?.source != null;
+  const hasModelSelections = (ROUTER_SLUGS as readonly string[]).includes(provider.provider) && (!store || !!store.routerModels);
+  const configured = store ? store.hasSavedKey : profile?.apiKeys[provider.provider]?.source != null;
   const installUrl = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") + "/install";
   return (
     <Modal open onClose={onClose} breadcrumbs={[store?.breadcrumb ?? "Model Providers", provider.name]}
@@ -50,7 +50,7 @@ export function ByokProviderModal({ provider, enabledToggle, store, onClose }: {
           Open organisation setup
         </a>
         {hasModelSelections && configured && (
-          <RouterSettingsSection provider={provider.provider as RouterSlug} />
+          <RouterSettingsSection provider={provider.provider as RouterSlug} store={store?.routerModels} />
         )}
       </div>
     </Modal>

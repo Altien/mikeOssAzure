@@ -27,11 +27,11 @@ import { ToggleSwitchUI } from "@/shared/ui/ToggleSwitchUI";
 import { ModelToggle } from "../assistant/ModelToggle";
 import {
     isRouterModelSelected,
-    routerSelections,
     type NoModelsReason,
 } from "@/shared/lib/modelCatalog";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { useModelApiKeys } from "@/app/hooks/useModelApiKeys";
+import { useModelRouterSelections } from "@/app/hooks/useModelRouterSelections";
 import { isModelAvailable } from "@/app/lib/modelAvailability";
 import { NoModelsWarningPopup } from "../popups/NoModelsWarningPopup";
 import { useAuth } from "@/app/contexts/AuthContext";
@@ -99,6 +99,7 @@ export function NewTRModal({
     const { profile, loading: profileLoading } = useUserProfile();
     const { user } = useAuth();
     const apiKeys = useModelApiKeys();
+    const modelRouterSelections = useModelRouterSelections();
     const configuredModels = useConfiguredModels();
     const configuredModelIds = useMemo(
         () => configuredModels.map((model) => model.id),
@@ -187,17 +188,17 @@ export function NewTRModal({
     useEffect(() => {
         if (!open || !profile?.tabularModel) return;
         const defaultModel = profile.tabularModel;
-        const routerSelectionValid = isRouterModelSelected(
-            defaultModel,
-            routerSelections(profile),
-        );
+        // Unknown lists (an organization's, still loading) preselect nothing.
+        const routerSelectionValid =
+            !!modelRouterSelections &&
+            isRouterModelSelected(defaultModel, modelRouterSelections);
         const providerAvailable =
             !apiKeys ||
             isModelAvailable(defaultModel, apiKeys, configuredModelIds);
         if (routerSelectionValid && providerAvailable) {
             setSelectedModel((current) => current || defaultModel);
         }
-    }, [apiKeys, configuredModelIds, open, profile]);
+    }, [apiKeys, configuredModelIds, modelRouterSelections, open, profile]);
 
     // Preselect every project document once, as soon as they're available —
     // which may be after the modal opened, since the parent's list is empty
@@ -586,9 +587,7 @@ export function NewTRModal({
                                 onChange={setSelectedModel}
                                 apiKeys={apiKeys}
                                 apiKeysLoading={profileLoading && !profile}
-                                routerSelections={
-                                    profile ? routerSelections(profile) : undefined
-                                }
+                                routerSelections={modelRouterSelections}
                                 onNoModelsClick={setNoModelsWarning}
                                 modalInput
                             />

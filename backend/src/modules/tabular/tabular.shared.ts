@@ -232,6 +232,7 @@ export async function validateSelectedModel(
             userId,
             db,
             "throw",
+            orgId,
         );
     } catch (error) {
         if (error instanceof UserFacingError) {

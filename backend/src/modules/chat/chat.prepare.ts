@@ -64,6 +64,8 @@ export type PreparedChatStream = {
     workflowStore: Awaited<ReturnType<typeof buildWorkflowStore>>;
     legalResearchUs: boolean;
     apiKeys: Awaited<ReturnType<typeof getUserModelSettings>>["api_keys"];
+    /** The organization the chat belongs to, whose keys and model lists apply. */
+    orgId: string | null;
     titleModel: Awaited<
         ReturnType<typeof getUserModelSettings>
     >["title_model"];
@@ -456,6 +458,7 @@ export async function prepareChatStream(
                 workflowStore,
                 legalResearchUs,
                 apiKeys,
+                orgId: contentOrgId,
                 titleModel,
                 selectedModel,
                 selectedReasoningLevel,

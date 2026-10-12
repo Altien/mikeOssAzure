@@ -1124,45 +1124,59 @@ export async function getConfiguredModels(): Promise<ConfiguredModelOption[]> {
     return models;
 }
 
-export async function getOpenRouterModels(): Promise<RouterCatalogModel[]> {
+/**
+ * A provider's model catalog. With `workspace` set to an organization id it
+ * is listed with the key that organization's work runs on — how its admins
+ * choose the models its key may run — and otherwise with the caller's own.
+ */
+async function getProviderCatalog(
+    provider: string,
+    workspace?: string,
+): Promise<RouterCatalogModel[]> {
+    const query = workspace
+        ? `?workspace=${encodeURIComponent(workspace)}`
+        : "";
     const { models } = await apiRequest<{ models: RouterCatalogModel[] }>(
-        "/models/openrouter",
+        `/models/${provider}${query}`,
     );
     return models;
 }
 
-export async function getVercelModels(): Promise<RouterCatalogModel[]> {
-    const { models } = await apiRequest<{ models: RouterCatalogModel[] }>(
-        "/models/vercel",
-    );
-    return models;
+export function getOpenRouterModels(
+    workspace?: string,
+): Promise<RouterCatalogModel[]> {
+    return getProviderCatalog("openrouter", workspace);
 }
 
-export async function getBedrockModels(): Promise<RouterCatalogModel[]> {
-    const { models } = await apiRequest<{ models: RouterCatalogModel[] }>("/models/bedrock");
-    return models;
+export function getVercelModels(
+    workspace?: string,
+): Promise<RouterCatalogModel[]> {
+    return getProviderCatalog("vercel", workspace);
 }
 
-export async function getXaiModels(): Promise<RouterCatalogModel[]> {
-    const { models } = await apiRequest<{ models: RouterCatalogModel[] }>(
-        "/models/xai",
-    );
-    return models;
+export function getBedrockModels(
+    workspace?: string,
+): Promise<RouterCatalogModel[]> {
+    return getProviderCatalog("bedrock", workspace);
+}
+
+export function getXaiModels(
+    workspace?: string,
+): Promise<RouterCatalogModel[]> {
+    return getProviderCatalog("xai", workspace);
 }
 
 /** Models reported by the user's own OpenAI-compatible endpoint. */
-export async function getCustomEndpointModels(): Promise<RouterCatalogModel[]> {
-    const { models } = await apiRequest<{ models: RouterCatalogModel[] }>(
-        "/models/custom",
-    );
-    return models;
+export function getCustomEndpointModels(
+    workspace?: string,
+): Promise<RouterCatalogModel[]> {
+    return getProviderCatalog("custom", workspace);
 }
 
-export async function getOpenCodeGoModels(): Promise<RouterCatalogModel[]> {
-    const { models } = await apiRequest<{ models: RouterCatalogModel[] }>(
-        "/models/opencode-go",
-    );
-    return models;
+export function getOpenCodeGoModels(
+    workspace?: string,
+): Promise<RouterCatalogModel[]> {
+    return getProviderCatalog("opencode-go", workspace);
 }
 
 /**
@@ -1663,6 +1677,16 @@ export interface OrgApiKeySettings {
      * beneath where that is allowed. The model picker reads this.
      */
     effective: ApiKeyStatus;
+    /**
+     * The models the organization's key may run, per "model list" provider.
+     * Keyed by router slug; chosen by its owners and admins.
+     */
+    router_models: Record<string, string[]>;
+    /**
+     * The lists that govern the caller's work here: the organization's for
+     * each provider whose key it holds, their own for the rest.
+     */
+    effective_router_models: Record<string, string[]>;
     /** Whether a member's own key is used where the organization has none. */
     allow_personal_api_keys: boolean;
     /** Whether the caller may change any of this (owners and admins). */
@@ -1687,6 +1711,22 @@ export async function saveOrgApiKey(
             body: JSON.stringify(
                 settings ? { api_key: apiKey, settings } : { api_key: apiKey },
             ),
+        },
+    );
+}
+
+/** Replace the models the organization's key for one provider may run. */
+export async function saveOrgRouterModels(
+    orgId: string,
+    provider: ApiKeyProvider,
+    modelIds: string[],
+): Promise<OrgApiKeySettings> {
+    return apiRequest<OrgApiKeySettings>(
+        `/orgs/${orgId}/api-keys/${provider}/models`,
+        {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model_ids: modelIds }),
         },
     );
 }

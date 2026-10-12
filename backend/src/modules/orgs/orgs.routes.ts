@@ -33,6 +33,8 @@ import {
     saveOrgApiKey,
     setOrgApiKeyEnabled,
     setOrgPersonalApiKeysAllowed,
+    saveOrgRouterModels,
+    normalizeOrgRouterSlug,
 } from "./orgs.service";
 import { normalizeApiKeyProvider } from "../user/user.service";
 
@@ -255,6 +257,32 @@ orgsRouter.put(
             actorEmail: res.locals.userEmail as string | undefined,
             orgId: req.params.orgId,
             allowed: req.body?.allow_personal_api_keys,
+        });
+        if (!result.ok) return sendOrgFailure(res, result);
+        res.json(result.settings);
+    }),
+);
+
+// PUT /orgs/:orgId/api-keys/:provider/models — the models the organization's
+// key for a "model list" provider may run (owner or admin). The whole list
+// is replaced; an empty one removes them all.
+orgsRouter.put(
+    "/:orgId/api-keys/:provider/models",
+    requireAuth,
+    requireMfaIfEnrolled,
+    asyncRoute(async (req, res) => {
+        const provider = normalizeOrgRouterSlug(req.params.provider);
+        if (!provider)
+            return void res.status(400).json({
+                detail: "This provider does not keep a model list.",
+            });
+        const db = createServerSupabase();
+        const result = await saveOrgRouterModels(db, {
+            actorId: res.locals.userId as string,
+            actorEmail: res.locals.userEmail as string | undefined,
+            orgId: req.params.orgId,
+            provider,
+            modelIds: req.body?.model_ids,
         });
         if (!result.ok) return sendOrgFailure(res, result);
         res.json(result.settings);

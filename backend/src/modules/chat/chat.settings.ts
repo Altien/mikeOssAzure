@@ -64,6 +64,7 @@ export async function updateChatSettings(
             apiKeys: settings.api_keys,
             userId: args.userId,
             db,
+            orgId: args.orgId,
         });
         if (!resolution.ok) {
             return {

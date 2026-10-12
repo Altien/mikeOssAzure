@@ -2,11 +2,16 @@ import express from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getOrganisationApiKeys, getUserApiKeys, guardedFetch } = vi.hoisted(() => ({
-    getOrganisationApiKeys: vi.fn(),
-    getUserApiKeys: vi.fn(),
-    guardedFetch: vi.fn(),
-}));
+const { getUserApiKeys, getOrgWorkKeys, memberOf, guardedFetch } = vi.hoisted(
+    () => ({
+        getUserApiKeys: vi.fn(),
+        // The keys an organization's work runs on, by organization id.
+        getOrgWorkKeys: vi.fn(),
+        // The organizations user-1 belongs to.
+        memberOf: { ids: [] as string[] },
+        guardedFetch: vi.fn(),
+    }),
+);
 
 vi.mock("../../../lib/mcp/client", () => ({ guardedFetch }));
 
@@ -21,13 +26,35 @@ vi.mock("../../../middleware/auth", () => ({
     },
 }));
 
+// Only the workspace check reads the database here: org_members, by id.
 vi.mock("../../../lib/supabase", () => ({
-    createServerSupabase: vi.fn(() => ({ from: vi.fn() })),
+    createServerSupabase: vi.fn(() => ({
+        from: vi.fn(() => {
+            let orgId = "";
+            const query = {
+                select: () => query,
+                eq: (column: string, value: string) => {
+                    if (column === "org_id") orgId = value;
+                    return query;
+                },
+                maybeSingle: async () => ({
+                    data: memberOf.ids.includes(orgId)
+                        ? { org_id: orgId }
+                        : null,
+                    error: null,
+                }),
+            };
+            return query;
+        }),
+    })),
 }));
 
 vi.mock("../../user/user.service", () => ({
-    getOrganisationApiKeys: (...args: unknown[]) => getOrganisationApiKeys(...args),
-    getUserExecutionApiKeys: (...args: unknown[]) => getUserApiKeys(...args),
+    getOrganisationApiKeys: (...args: unknown[]) => getUserApiKeys(...args),
+    getUserApiKeys: (...args: unknown[]) => getUserApiKeys(...args),
+    // Personal work runs on the caller's own keys; an organization's on its.
+    getEffectiveApiKeys: (userId: string, orgId: unknown, db: unknown) =>
+        orgId ? getOrgWorkKeys(orgId) : getUserApiKeys(userId, db),
 }));
 
 import { modelsRouter } from "../models.routes";
@@ -41,7 +68,154 @@ app.use("/api/models", modelsRouter);
 
 describe("GET /api/models/openrouter", () => {
     beforeEach(() => {
-        getOrganisationApiKeys.mockResolvedValue({ openrouter: "or-organisation-key" });
+        getUserApiKeys.mockResolvedValue({ openai: "user-openai-key" });
+        process.env.MIKE_MODEL_CONFIG_JSON = JSON.stringify({
+            models: [
+                {
+                    id: "local-qwen",
+                    label: "Local Qwen",
+                    provider: "openai-compatible",
+                    location: "local",
+                    baseUrl: "http://localhost:8000/v1",
+                },
+                {
+                    id: "cloud-user-key",
+                    provider: "openai-compatible",
+                    location: "cloud",
+                    baseUrl: "https://models.example.test/v1",
+                    apiKeyProvider: "openai",
+                },
+                {
+                    id: "cloud-missing-env",
+                    provider: "openai-compatible",
+                    location: "cloud",
+                    baseUrl: "https://missing.example.test/v1",
+                    apiKeyEnv: "MISSING_CONFIGURED_MODEL_KEY",
+                },
+            ],
+        });
+        delete process.env.MISSING_CONFIGURED_MODEL_KEY;
+        resetModelRegistryCache();
+    });
+
+    afterEach(() => {
+        if (originalConfig === undefined) {
+            delete process.env.MIKE_MODEL_CONFIG_JSON;
+        } else {
+            process.env.MIKE_MODEL_CONFIG_JSON = originalConfig;
+        }
+        resetModelRegistryCache();
+        vi.clearAllMocks();
+    });
+
+    it("returns only usable models without exposing endpoint credentials", async () => {
+        const response = await request(app).get("/models/configured");
+
+        expect(response.status).toBe(200);
+        expect(response.body.models).toEqual([
+            {
+                id: "local-qwen",
+                label: "Local Qwen",
+                group: "Configured",
+                location: "local",
+                source: "Configured",
+            },
+            {
+                id: "cloud-user-key",
+                label: "cloud-user-key",
+                group: "Configured",
+                location: "cloud",
+                source: "Configured",
+            },
+        ]);
+        expect(response.text).not.toContain("baseUrl");
+        expect(response.text).not.toContain("user-openai-key");
+    });
+});
+
+describe("catalogs for an organization workspace", () => {
+    const ORG = "0b1c2d3e-0000-4000-8000-000000000001";
+
+    beforeEach(() => {
+        memberOf.ids = [ORG];
+        getUserApiKeys.mockResolvedValue({ openrouter: "or-user-key" });
+        getOrgWorkKeys.mockResolvedValue({ openrouter: "or-org-key" });
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        vi.clearAllMocks();
+        memberOf.ids = [];
+    });
+
+    const stubCatalog = () => {
+        // A fresh body per request: a Response can be read once.
+        const fetchMock = vi.fn(
+            async (..._args: unknown[]) =>
+                new Response(JSON.stringify({ data: [] }), { status: 200 }),
+        );
+        vi.stubGlobal("fetch", fetchMock);
+        return fetchMock;
+    };
+    const sentKey = (fetchMock: ReturnType<typeof stubCatalog>) =>
+        JSON.stringify(fetchMock.mock.calls[0]?.[1] ?? {});
+
+    it("lists with the organization's key, not the caller's own", async () => {
+        const fetchMock = stubCatalog();
+
+        const response = await request(app).get(
+            `/models/openrouter?workspace=${ORG}`,
+        );
+
+        expect(response.status).toBe(200);
+        expect(getOrgWorkKeys).toHaveBeenCalledWith(ORG);
+        expect(sentKey(fetchMock)).toContain("or-org-key");
+        expect(sentKey(fetchMock)).not.toContain("or-user-key");
+    });
+
+    it("lists with the caller's own key for personal work", async () => {
+        const fetchMock = stubCatalog();
+
+        for (const query of ["", "?workspace=personal"]) {
+            fetchMock.mockClear();
+            const response = await request(app).get(
+                `/models/openrouter${query}`,
+            );
+            expect(response.status).toBe(200);
+            expect(sentKey(fetchMock)).toContain("or-user-key");
+        }
+        expect(getOrgWorkKeys).not.toHaveBeenCalled();
+    });
+
+    it("hides an organization the caller does not belong to", async () => {
+        const fetchMock = stubCatalog();
+        memberOf.ids = [];
+
+        const response = await request(app).get(
+            `/models/openrouter?workspace=${ORG}`,
+        );
+
+        expect(response.status).toBe(404);
+        expect(response.body.code).toBe("workspace_not_found");
+        expect(getOrgWorkKeys).not.toHaveBeenCalled();
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects a workspace that is not an organization id", async () => {
+        const fetchMock = stubCatalog();
+
+        const response = await request(app).get(
+            "/models/openrouter?workspace=not-an-id",
+        );
+
+        expect(response.status).toBe(400);
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+});
+
+describe("GET /models/openrouter", () => {
+    beforeEach(() => {
+        getUserApiKeys.mockResolvedValue({ openrouter: "or-user-key" });
     });
 
     afterEach(() => {
@@ -68,7 +242,7 @@ describe("GET /api/models/openrouter", () => {
     });
 
     it("requires a configured OpenRouter key", async () => {
-        getOrganisationApiKeys.mockResolvedValue({});
+        getUserApiKeys.mockResolvedValue({});
         const fetchMock = vi.fn();
         vi.stubGlobal("fetch", fetchMock);
 
@@ -144,7 +318,7 @@ describe("GET /api/models/openrouter", () => {
 
 describe("GET /api/models/vercel", () => {
     beforeEach(() => {
-        getOrganisationApiKeys.mockResolvedValue({ vercel: "vercel-user-key" });
+        getUserApiKeys.mockResolvedValue({ vercel: "vercel-user-key" });
     });
 
     afterEach(() => {
@@ -153,7 +327,7 @@ describe("GET /api/models/vercel", () => {
     });
 
     it("requires a configured Vercel AI Gateway key", async () => {
-        getOrganisationApiKeys.mockResolvedValue({});
+        getUserApiKeys.mockResolvedValue({});
         const fetchMock = vi.fn();
         vi.stubGlobal("fetch", fetchMock);
 
@@ -246,7 +420,7 @@ describe("GET /api/models/vercel", () => {
 
 describe("GET /models/opencode-go", () => {
     beforeEach(() => {
-        getOrganisationApiKeys.mockResolvedValue({ "opencode-go": "oc-user-key" });
+        getUserApiKeys.mockResolvedValue({ "opencode-go": "oc-user-key" });
     });
 
     afterEach(() => {
@@ -256,7 +430,7 @@ describe("GET /models/opencode-go", () => {
     });
 
     it("requires a configured OpenCode Go key", async () => {
-        getOrganisationApiKeys.mockResolvedValue({});
+        getUserApiKeys.mockResolvedValue({});
         const fetchMock = vi.fn();
         vi.stubGlobal("fetch", fetchMock);
 

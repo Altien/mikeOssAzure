@@ -31,6 +31,7 @@ export async function resolveUserChatSelection(
     apiKeys: modelSettings.api_keys,
     userId: args.userId,
     db,
+    orgId: args.orgId,
   });
   if (!resolution.ok) return resolution;
   const selectedReasoningLevel = resolveEffectiveReasoningLevel({

@@ -71,6 +71,7 @@ import {
 } from "@/app/components/projects/ProjectWorkspace";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { useModelApiKeys } from "@/app/hooks/useModelApiKeys";
+import { useModelRouterSelections } from "@/app/hooks/useModelRouterSelections";
 import {
     getModelProvider,
     isModelAvailable,
@@ -90,7 +91,6 @@ import { TableToolbar } from "../shared/TableToolbar";
 import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
 import { ModelToggle } from "../assistant/ModelToggle";
 import {
-    routerSelections,
     type NoModelsReason,
 } from "@/shared/lib/modelCatalog";
 import { SUPPORTED_DOCUMENT_ACCEPT } from "@/app/lib/documentUploadValidation";
@@ -210,6 +210,7 @@ export function TRView({ reviewId, projectId }: Props) {
     // Unknown key state fails open; the submit gates below already skip when
     // apiKeys is undefined.
     const apiKeys = useModelApiKeys();
+    const modelRouterSelections = useModelRouterSelections();
     const tabularModel = review?.model ?? "";
     const cellMutationsBlocked =
         generating || stoppingGeneration || review?.is_running === true;
@@ -1510,9 +1511,7 @@ export function TRView({ reviewId, projectId }: Props) {
                                                 profileLoading && !profile
                                             }
                                             routerSelections={
-                                                profile
-                                                    ? routerSelections(profile)
-                                                    : undefined
+                                                modelRouterSelections
                                             }
                                             onNoModelsClick={setNoModelsWarning}
                                         />
