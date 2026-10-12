@@ -8,8 +8,13 @@ import type {
     ConfiguredModelOption,
 } from "@/app/lib/mikeApi";
 
-const { configuredModels } = vi.hoisted(() => ({
+const { configuredModels, workspace } = vi.hoisted(() => ({
     configuredModels: [] as ConfiguredModelOption[],
+    // Personal unless a test says otherwise.
+    workspace: {
+        workspaceId: "personal" as string | null,
+        orgApiKeys: null as { allow_personal_api_keys: boolean } | null,
+    },
 }));
 
 vi.mock("@/app/hooks/useOllamaModels", () => ({
@@ -19,7 +24,16 @@ vi.mock("@/app/hooks/useConfiguredModels", () => ({
     useConfiguredModels: () => configuredModels,
 }));
 
-beforeEach(() => configuredModels.splice(0));
+vi.mock("@/app/contexts/WorkspaceContext", () => ({
+    PERSONAL_WORKSPACE: "personal",
+    useWorkspace: () => workspace,
+}));
+
+beforeEach(() => {
+    configuredModels.splice(0);
+    workspace.workspaceId = "personal";
+    workspace.orgApiKeys = null;
+});
 
 it("lets deployment configuration override a duplicate catalog id", () => {
     expect(
@@ -329,6 +343,49 @@ describe("ModelToggle availability states", () => {
             screen.getByRole("button", { name: "No models available" }),
         );
         expect(onNoModelsClick).toHaveBeenCalledWith("router-models");
+    });
+
+    it("says the organization has no models added when its router key has none", async () => {
+        const user = userEvent.setup();
+        const onNoModelsClick = vi.fn();
+        workspace.workspaceId = "org-1";
+        workspace.orgApiKeys = { allow_personal_api_keys: false };
+        const orgKeys = keys({ openrouter: true });
+        orgKeys.openrouter = { configured: true, enabled: true, source: "org" };
+        render(
+            <ModelToggle
+                value=""
+                onChange={vi.fn()}
+                apiKeys={orgKeys}
+                routerSelections={{ openrouter: [] }}
+                onNoModelsClick={onNoModelsClick}
+            />,
+        );
+
+        await user.click(
+            screen.getByRole("button", { name: "No models available" }),
+        );
+        expect(onNoModelsClick).toHaveBeenCalledWith("org-router-models");
+    });
+
+    it("says the organization has set nothing up when it has no providers", async () => {
+        const user = userEvent.setup();
+        const onNoModelsClick = vi.fn();
+        workspace.workspaceId = "org-1";
+        workspace.orgApiKeys = { allow_personal_api_keys: false };
+        render(
+            <ModelToggle
+                value=""
+                onChange={vi.fn()}
+                apiKeys={keys({})}
+                onNoModelsClick={onNoModelsClick}
+            />,
+        );
+
+        await user.click(
+            screen.getByRole("button", { name: "No models available" }),
+        );
+        expect(onNoModelsClick).toHaveBeenCalledWith("org-api-keys");
     });
 
     it("filters to configured providers when keys are loaded", () => {

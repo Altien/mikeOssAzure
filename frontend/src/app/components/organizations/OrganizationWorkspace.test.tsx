@@ -6,6 +6,7 @@ import { OrganizationWorkspace } from "./OrganizationWorkspace";
 
 const mocks = vi.hoisted(() => ({
   push: vi.fn(),
+  search: "",
   role: "owner" as "owner" | "admin" | "member",
   getOrg: vi.fn(),
   listOrgMembers: vi.fn(),
@@ -22,6 +23,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mocks.push }),
+  useSearchParams: () => new URLSearchParams(mocks.search),
 }));
 vi.mock("@/app/contexts/AuthContext", () => ({
   useAuth: () => ({ user: { id: "me", email: "me@firm.example" } }),
@@ -68,6 +70,7 @@ beforeEach(() => {
     dispatchEvent: vi.fn(),
   }));
   mocks.role = "owner";
+  mocks.search = "";
   mocks.getOrg.mockImplementation(async () => ({
     id: "org-1",
     name: "Elite Law LLP",
@@ -162,6 +165,18 @@ describe("OrganizationWorkspace", () => {
       "org-1|Elite Law LLP",
     );
     expect(screen.queryByText("Jane Lee")).not.toBeInTheDocument();
+  });
+
+  it("opens on the tab a link names, and on People for one it does not know", async () => {
+    mocks.search = "tab=providers";
+    const { unmount } = render(<OrganizationWorkspace orgId="org-1" />);
+    expect(await screen.findByTestId("provider-keys")).toBeInTheDocument();
+    unmount();
+
+    mocks.search = "tab=nonsense";
+    render(<OrganizationWorkspace orgId="org-1" />);
+    expect(await screen.findByText("Jane Lee")).toBeInTheDocument();
+    expect(screen.queryByTestId("provider-keys")).not.toBeInTheDocument();
   });
 
   it("lets owners change a member's role from the colored role tab", async () => {

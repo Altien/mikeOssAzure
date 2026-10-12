@@ -429,6 +429,11 @@ const MODEL_KEY_PROVIDERS = [
 export interface ProviderKeyState {
   configured: boolean;
   enabled?: boolean;
+  /**
+   * Whose key it is, where the client knows: "org" for one an organization
+   * holds for its members. Only the empty-picker message reads it.
+   */
+  source?: string | null;
 }
 export type ProviderKeyStates = Partial<
   Record<string, ProviderKeyState | undefined>
@@ -555,7 +560,21 @@ export function unavailableModelMessage(
 export type NoModelsReason =
   | "api-keys"
   | "router-models"
-  | "providers-disabled";
+  | "providers-disabled"
+  | "org-api-keys"
+  | "org-api-keys-or-own"
+  | "org-router-models"
+  | "org-providers-disabled";
+
+/**
+ * The organization the caller is working in, when they are in one. Its keys
+ * and model lists are set by its admins, so the fix for an empty picker is
+ * usually theirs to make, not the member's.
+ */
+export interface NoModelsOrganization {
+  /** Whether a member's own key is used where the organization has none. */
+  allowPersonalKeys: boolean;
+}
 
 /**
  * Why the model list is empty, so the warning can point at the fix:
@@ -564,21 +583,46 @@ export type NoModelsReason =
  * - "providers-disabled": keys are saved but every one is switched off
  *   (GET /user/api-keys reports those as not configured, enabled: false);
  * - "api-keys": nothing usable is saved, or key state is unknown.
+ *
+ * Inside an `organization`, the same three causes name who can fix them:
+ * - "org-router-models": the organization's key for a provider has no
+ *   models added yet;
+ * - "org-providers-disabled": the organization has switched its providers
+ *   off;
+ * - "org-api-keys" / "org-api-keys-or-own": the organization has set up no
+ *   provider, and members' own keys are not / are allowed in its place.
+ * A cause that sits with the member's own key (theirs to fix in Bring Your
+ * Own Keys) keeps its personal reason.
  */
 export function noModelsReason(
   keys: ProviderKeyStates | null | undefined,
   selections: Partial<RouterSelections>,
+  organization?: NoModelsOrganization | null,
 ): NoModelsReason {
   if (!keys) return "api-keys";
-  const configuredRouterWithoutModels = ROUTER_SLUGS.some(
+  const fromOrganization = (provider: string) =>
+    !!organization && keys[provider]?.source === "org";
+  const routersWithoutModels = ROUTER_SLUGS.filter(
     (slug) =>
       isProviderAvailable(slug, keys) && (selections[slug]?.length ?? 0) === 0,
   );
-  if (configuredRouterWithoutModels) return "router-models";
-  const switchedOffKey = MODEL_KEY_PROVIDERS.some(
+  if (routersWithoutModels.length > 0) {
+    return !!organization || routersWithoutModels.some(fromOrganization)
+      ? "org-router-models"
+      : "router-models";
+  }
+  const switchedOff = MODEL_KEY_PROVIDERS.filter(
     (provider) => keys[provider]?.enabled === false,
   );
-  return switchedOffKey ? "providers-disabled" : "api-keys";
+  if (switchedOff.length > 0) {
+    return switchedOff.some(fromOrganization)
+      ? "org-providers-disabled"
+      : "providers-disabled";
+  }
+  if (!organization) return "api-keys";
+  return organization.allowPersonalKeys
+    ? "org-api-keys-or-own"
+    : "org-api-keys";
 }
 
 export const NO_MODELS_MESSAGES: Record<NoModelsReason, string> = {
@@ -587,8 +631,25 @@ export const NO_MODELS_MESSAGES: Record<NoModelsReason, string> = {
   "providers-disabled":
     "Your saved API keys are all turned off. Turn a provider back on in Bring Your Own Keys to select a model.",
   "api-keys":
-    "No organisation model credential is available. Ask an administrator to check model provider configuration.",
+    "No organisation model credential is available. Ask the deployment administrator to check provider configuration.",
+  "org-router-models":
+    "Your organization has not added any models for its provider yet. Ask an organization admin to add them under Model Providers.",
+  "org-providers-disabled":
+    "Your organization has turned its model providers off. Ask an organization admin to turn one back on under Model Providers.",
+  "org-api-keys":
+    "No managed model provider is available. Ask the deployment administrator to check provider configuration.",
+  "org-api-keys-or-own":
+    "No managed model provider is available. Ask the deployment administrator to check provider configuration.",
 };
+
+/** Whether the fix for an empty picker sits with the organization's admins. */
+export function isOrganizationNoModelsReason(reason: NoModelsReason): boolean {
+  return (
+    reason === "org-api-keys" ||
+    reason === "org-router-models" ||
+    reason === "org-providers-disabled"
+  );
+}
 
 // Thin compatibility names for Dev callers; all data/rules stay in this module.
 export type RouterModelSelections = Partial<RouterSelections>;

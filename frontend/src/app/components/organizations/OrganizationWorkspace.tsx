@@ -11,7 +11,7 @@ import {
   type SetStateAction,
 } from "react";
 import { Check, ChevronDown, Loader2, Pencil, Trash2 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import { HeaderActionsMenu } from "@/app/components/shared/HeaderActionsMenu";
@@ -120,7 +120,13 @@ export function OrganizationWorkspace({ orgId }: { orgId: string }) {
   const [members, setMembers] = useState<OrgMember[]>([]);
   const [invitations, setInvitations] = useState<OrgInvitation[]>([]);
   const [resources, setResources] = useState<OrgResources>(EMPTY_RESOURCES);
-  const [activeTab, setActiveTab] = useState<OrganizationTab>("people");
+  // `?tab=` opens a given tab, so a link elsewhere (the empty model picker's
+  // "Open Model Providers") can land on it. Read once: switching tabs here
+  // stays local.
+  const requestedTab = useSearchParams().get("tab");
+  const [activeTab, setActiveTab] = useState<OrganizationTab>(
+    () => TABS.find((tab) => tab.id === requestedTab)?.id ?? "people",
+  );
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);

@@ -20,6 +20,10 @@ import {
 import type { ApiKeyState } from "@/app/lib/mikeApi";
 import { useAoaiDeployments } from "@/altien/models/aoaiDeployments";
 export * from "@/shared/lib/modelCatalog";
+import {
+  PERSONAL_WORKSPACE,
+  useWorkspace,
+} from "@/app/contexts/WorkspaceContext";
 import { useConfiguredModels } from "@/app/hooks/useConfiguredModels";
 
 export type { ReasoningLevel };
@@ -103,7 +107,14 @@ export function ModelToggle({
     ? (models.find((model) => model.id === value)?.label ?? "Select model")
     : (selected?.label ??
       (availableModels.length > 0 ? "Select model" : "No Models"));
-  const emptyReason = noModelsReason(apiKeys, selections);
+  // In an organization workspace the keys and model lists are its admins'
+  // to set, so an empty picker says who can fix it.
+  const { workspaceId, orgApiKeys } = useWorkspace();
+  const organization =
+    workspaceId !== null && workspaceId !== PERSONAL_WORKSPACE && orgApiKeys
+      ? { allowPersonalKeys: orgApiKeys.allow_personal_api_keys }
+      : null;
+  const emptyReason = noModelsReason(apiKeys, selections, organization);
   return (
     <ModelToggleUI
       value={value}
