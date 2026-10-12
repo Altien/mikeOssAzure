@@ -224,7 +224,7 @@ describe("NewWorkflowModal editing", () => {
     it("offers no Public toggle for a personal workflow", () => {
         render(<NewWorkflowModal open onClose={vi.fn()} onCreated={vi.fn()} />);
         expect(
-            screen.queryByRole("group", { name: "Access" }),
+            screen.queryByRole("group", { name: "Organisational Access" }),
         ).not.toBeInTheDocument();
     });
 

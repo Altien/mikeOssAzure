@@ -194,7 +194,7 @@ describe("NewProjectModal sharing", () => {
       screen.queryByLabelText("Share across Organisation"),
     ).not.toBeInTheDocument();
     // Access: Private by default, Public as the other pill.
-    const access = screen.getByRole("group", { name: "Access" });
+    const access = screen.getByRole("group", { name: "Organisational Access" });
     expect(
       within(access).getByRole("button", { name: "Private" }),
     ).toHaveAttribute("aria-pressed", "true");
@@ -231,7 +231,7 @@ describe("NewProjectModal sharing", () => {
     activeWorkspace.id = "personal";
     renderModal();
     expect(
-      screen.queryByRole("group", { name: "Access" }),
+      screen.queryByRole("group", { name: "Organisational Access" }),
     ).not.toBeInTheDocument();
   });
 
@@ -732,7 +732,7 @@ describe("NewProjectModal sharing", () => {
         ).toBeVisible();
         // The setting was made on the details step, not here.
         expect(
-            screen.queryByRole("group", { name: "Access" }),
+            screen.queryByRole("group", { name: "Organisational Access" }),
         ).not.toBeInTheDocument();
         expect(
             screen.queryByRole("button", { name: "Deny list" }),

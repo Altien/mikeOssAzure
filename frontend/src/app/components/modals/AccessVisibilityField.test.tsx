@@ -2,12 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { AccessVisibilityField } from "./AccessVisibilityField";
 
-const field = () => screen.getByRole("group", { name: "Access" });
+const field = () => screen.getByRole("group", { name: "Organisational Access" });
 const option = (name: "Private" | "Public") =>
     within(field()).getByRole("button", { name });
 
 describe("AccessVisibilityField", () => {
-    it("is titled Access and offers Private then Public as pill options", () => {
+    it("is titled Organisational Access and offers Private then Public as pill options", () => {
         render(
             <AccessVisibilityField
                 visibility="private"

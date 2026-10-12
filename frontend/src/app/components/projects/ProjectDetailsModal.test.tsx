@@ -234,7 +234,7 @@ describe("ProjectDetailsModal", () => {
                 />,
             );
             expect(
-                screen.queryByRole("group", { name: "Access" }),
+                screen.queryByRole("group", { name: "Organisational Access" }),
             ).not.toBeInTheDocument();
         });
     });

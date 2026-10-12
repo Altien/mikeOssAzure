@@ -11,8 +11,10 @@ const OPTIONS: { value: ContentVisibility; label: string }[] = [
 ];
 
 /**
- * The "Access" choice for an organization's project or workflow, as it
- * appears among the item's details.
+ * The "Organisational Access" choice for an organization's project or
+ * workflow, as it appears among the item's details. The label names what
+ * Private and Public are relative to: "Public" is public to the
+ * organization, not to the world.
  *
  *   Private  only the individuals it is shared with can open it (the default)
  *   Public   every member of the organization can open and edit it
@@ -45,7 +47,7 @@ export function AccessVisibilityField({
             aria-describedby={descriptionId}
         >
             <FieldLabel as="p" id={labelId}>
-                Access
+                Organisational Access
             </FieldLabel>
             {/* The choice, and beside it what the choice means. The text takes
                 the room the toggle leaves and wraps within it; where there is
