@@ -615,12 +615,36 @@ describe("OrganizationAccessEditor — public and private", () => {
     it("offers only members who can still be added", () => {
         renderEditor();
         const matches = searchPeople("firm.example");
-        // Not the caller, not the organization's owner (who can always open
-        // it), and not somebody it is already shared with.
+        // Not the caller, and not somebody it is already shared with.
         expect(within(matches).getByText("Jane Lee")).toBeInTheDocument();
         expect(within(matches).queryByText("Me")).not.toBeInTheDocument();
-        expect(within(matches).queryByText("Org Owner")).not.toBeInTheDocument();
         expect(within(matches).queryByText("Sam Shared")).not.toBeInTheDocument();
+    });
+
+    it("offers the organization's owner on a private item, like any other member", () => {
+        // A private item is not theirs by office: unless it is shared with
+        // them they cannot open it, so they have to be nameable here.
+        const { onAssign } = renderEditor();
+        const matches = searchPeople("boss");
+        fireEvent.click(within(matches).getByText("Org Owner"));
+        expect(onAssign).toHaveBeenCalledWith(
+            expect.objectContaining({ user_id: "user-boss" }),
+            "editor",
+        );
+    });
+
+    it("does not offer the organization's owner on a public item, which they own already", () => {
+        renderEditor({ visibility: "organization", assignments: [] });
+        const owners = screen.getByRole("searchbox", {
+            name: "Project owners",
+        });
+        fireEvent.focus(owners);
+        fireEvent.change(owners, { target: { value: "firm.example" } });
+        const matches = screen.getByRole("listbox", {
+            name: "Project owners matches",
+        });
+        expect(within(matches).getByText("Jane Lee")).toBeInTheDocument();
+        expect(within(matches).queryByText("Org Owner")).not.toBeInTheDocument();
     });
 
     it("lists the people it is shared with, each at their role, and changes or removes them", async () => {

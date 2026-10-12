@@ -149,40 +149,6 @@ describe("private-by-default organization access in SQL", () => {
     describe.each([
         ["the migration", migration],
     ])("%s", (_name, sql) => {
-        it.each(["project_access_role", "workflow_access_role"])(
-            "%s resolves creator, owner, override, then public, then nothing",
-            (name) => {
-                const body = roleFunction(sql, name);
-                // The order matters: an override must be read before the
-                // public default, or a denial on a public item is ignored.
-                const order = [
-                    "= p_user_id then 'owner'",
-                    "when m.role = 'owner' then 'owner'",
-                    "when o.role = 'deny' then null",
-                    "when o.role in ('owner', 'editor', 'viewer') then o.role",
-                    ") = 'organization' then 'editor'",
-                    "else null",
-                ].map((fragment) => body.indexOf(fragment));
-                expect(order.every((index) => index > -1)).toBe(true);
-                expect([...order].sort((x, y) => x - y)).toEqual(order);
-                // No implicit standing for admins, and no "everyone is an
-                // editor" fallback.
-                expect(body).not.toMatch(/m\.role in \('owner', 'admin'\)/);
-                expect(body).not.toMatch(/m\.role = 'admin'/);
-                expect(body).not.toMatch(/else 'editor'/);
-            },
-        );
-
-        it("only an organization owner is exempt from overrides", () => {
-            expect(sql).toContain("Organization owners always have owner access");
-            expect(sql).not.toContain(
-                "Organization owners and admins always have owner access",
-            );
-            // A wall must survive a promotion to admin.
-            expect(sql).toContain("if new.role = 'owner' then");
-            expect(sql).not.toContain("if new.role in ('owner', 'admin') then");
-        });
-
         it("constrains visibility, and keeps personal items private", () => {
             for (const table of ["projects", "workflows"]) {
                 expect(sql).toContain(`${table}_visibility_check`);
@@ -232,6 +198,140 @@ describe("private-by-default organization access in SQL", () => {
         expect(guard).toBeLessThan(addColumn);
         expect(addColumn).toBeLessThan(backfill);
         expect(backfill).toBeLessThan(endOfBranch);
+    });
+});
+
+// An organization's owners do not own its members' private work (20261012_04).
+// The role functions first shipped with "an owner owns everything"; the
+// schema and the later migration carry the rule that replaced it.
+describe("an organization owner's standing on content in SQL", () => {
+    const first = readFileSync(
+        resolve(ROOT, "migrations/0113_org_private_by_default.sql"),
+        "utf8",
+    );
+    const current = readFileSync(
+        resolve(ROOT, "migrations/0117_org_owner_private_access.sql"),
+        "utf8",
+    );
+    const body = (sql: string, name: string) => {
+        const start = sql.indexOf(`create or replace function public.${name}(`);
+        expect(start).toBeGreaterThan(-1);
+        return sql.slice(start, sql.indexOf("\n$$;\n", start));
+    };
+    const inOrder = (text: string, fragments: string[]) => {
+        const order = fragments.map((fragment) => text.indexOf(fragment));
+        expect(order.every((index) => index > -1)).toBe(true);
+        expect([...order].sort((x, y) => x - y)).toEqual(order);
+    };
+
+    it.each(["project_access_role", "workflow_access_role"])(
+        "%s, as first shipped, gave an owner everything",
+        (name) => {
+            // History: a migration that has run is not edited.
+            expect(body(first, name)).toContain(
+                "when m.role = 'owner' then 'owner'",
+            );
+        },
+    );
+
+    describe.each([
+        ["the migration", current],
+    ])("%s", (_name, sql) => {
+        it.each([
+            ["project_access_role", "public.project_is_ownerless("],
+            ["workflow_access_role", "public.workflow_is_ownerless("],
+        ])(
+            "%s resolves creator, owner of a public or ownerless item, override, then public, then nothing",
+            (name, ownerless) => {
+                const text = body(sql, name);
+                // The order matters: an override must be read before the
+                // public default, or a denial on a public item is ignored;
+                // and the owner's branch must be conditional, or private
+                // stops being private.
+                inOrder(text, [
+                    "= p_user_id then 'owner'",
+                    "when m.role = 'owner' and (",
+                    ") = 'organization'",
+                    ownerless,
+                    ") then 'owner'",
+                    "when o.role = 'deny' then null",
+                    "when o.role in ('owner', 'editor', 'viewer') then o.role",
+                    ") = 'organization' then 'editor'",
+                    "else null",
+                ]);
+                // No unconditional standing for owners, none at all for
+                // admins, and no "everyone is an editor" fallback.
+                expect(text).not.toContain("when m.role = 'owner' then 'owner'");
+                expect(text).not.toMatch(/m\.role in \('owner', 'admin'\)/);
+                expect(text).not.toMatch(/m\.role = 'admin'/);
+                expect(text).not.toMatch(/else 'editor'/);
+            },
+        );
+
+        it.each(["project_is_ownerless", "workflow_is_ownerless"])(
+            "%s means the creator is gone and no member is an Owner",
+            (name) => {
+                const text = body(sql, name);
+                inOrder(text, [
+                    "p_org_id is not null",
+                    "from public.org_members creator",
+                    "o.role = 'owner'",
+                ]);
+                // Both are absences: neither a member creator nor a member
+                // Owner may exist.
+                expect(text.split("not exists (").length - 1).toBe(2);
+            },
+        );
+
+        it("exempts an organization owner from overrides on a public item only", () => {
+            const guard = body(sql, "validate_org_access_override");
+            expect(guard).toContain(
+                "if member_role = 'owner' and resource_visibility = 'organization' then",
+            );
+            expect(guard).toContain("Organization owners always own a public item");
+            expect(guard).not.toContain(
+                "Organization owners always have owner access",
+            );
+            expect(guard).not.toMatch(/member_role in \('owner', 'admin'\)/);
+        });
+
+        it("keeps a promoted owner's roles on private items", () => {
+            const cleanup = body(sql, "cleanup_org_admin_access_overrides");
+            // A wall must survive a promotion to admin...
+            expect(cleanup).toContain("if new.role = 'owner' then");
+            expect(cleanup).not.toContain("if new.role in ('owner', 'admin') then");
+            // ...and a promotion to owner clears only what the office now
+            // covers anyway.
+            expect(cleanup).toContain("p.visibility = 'organization'");
+            expect(cleanup).toContain("w.visibility = 'organization'");
+        });
+
+        it("closes the ownerless functions to client roles", () => {
+            for (const signature of [
+                "project_is_ownerless(uuid, text, uuid)",
+                "workflow_is_ownerless(uuid, text, uuid)",
+                "org_item_is_ownerless(text, uuid)",
+                "ownerless_org_item_ids(uuid[])",
+            ]) {
+                expect(sql).toContain(
+                    `revoke all on function public.${signature}\n  from public, web_anon, authenticated;`,
+                );
+                expect(sql).toContain(
+                    `grant execute on function public.${signature}\n  to service_role;`,
+                );
+            }
+        });
+    });
+
+    it("never makes a departure wait on a hand-over", () => {
+        // The guard that refused to remove a member who alone owned
+        // something only worked while owners owned everything.
+        expect(current).toContain(
+            "drop trigger if exists org_members_resource_owner_guard on public.org_members;",
+        );
+        expect(current).toContain(
+            "drop function if exists public.org_member_protect_resource_ownership();",
+        );
     });
 });
 

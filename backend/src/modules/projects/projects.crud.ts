@@ -13,6 +13,7 @@ import {
   checkProjectAccess,
   getOrgRole,
   isOrgRole,
+  loadOwnerlessOrgItemIds,
   parseContentVisibility,
   resolveOrgContentRole,
 } from "../../lib/access";
@@ -317,6 +318,10 @@ export async function searchProjectDirectory(
         )
         .map((row) => [row.project_id, row.role]),
     );
+    const ownerless = await loadOwnerlessOrgItemIds(
+      db,
+      orgIds.filter((orgId) => orgRoleByOrgId.get(orgId) === "owner"),
+    );
     for (const project of orgProjects) {
       const projectId = project.id as string;
       const orgId = project.org_id as string | null;
@@ -328,6 +333,7 @@ export async function searchProjectDirectory(
         orgRole,
         override: isOrgAccessOverrideRole(override) ? override : null,
         visibility: project.visibility,
+        ownerless: ownerless.projects.has(projectId),
       });
       // An org project the caller CREATED was admitted above; it leaves
       // again here if the verdict says no (it cannot, while they are a

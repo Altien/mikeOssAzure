@@ -308,8 +308,9 @@ export function AccessModal({
                 ? organizationRoster.members
                 : [];
         // Candidates for sharing: every member of the organization. Its
-        // owners are marked "owner" so the editor leaves them out — they can
-        // already open everything in it.
+        // owners are marked "owner" so the editor can leave them out of a
+        // public item's pickers — they own those already. A private item is
+        // shared with them like with anyone.
         const organizationMembers: AccessRow[] = rosterMembers
             .filter((member) => !!member.email)
             .map((member) => ({

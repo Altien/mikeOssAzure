@@ -499,15 +499,15 @@ describe("AccessModal — per-recipient roles", () => {
                 Node.DOCUMENT_POSITION_FOLLOWING,
         ).toBeTruthy();
 
-        // Only the organization's members are offered; its owner, who can
-        // already open everything, is not.
+        // Only the organization's members are offered — its owner among
+        // them: a private item is not theirs unless it is shared with them.
         await user.click(peoplePicker);
         await user.type(peoplePicker, "firm.example");
         const matches = await screen.findByRole("listbox", {
             name: "People matches",
         });
         expect(within(matches).getByText("Jane Lee")).toBeInTheDocument();
-        expect(within(matches).queryByText("Org Owner")).not.toBeInTheDocument();
+        expect(within(matches).getByText("Org Owner")).toBeInTheDocument();
 
         // No wall to build on an item nobody was let into.
         expect(

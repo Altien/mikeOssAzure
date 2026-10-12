@@ -269,7 +269,13 @@ export async function shareWorkflow(
     // silently changed for two people.
     const targets: { userId: string }[] = [];
     for (const email of normalizedEmails) {
-      const target = await findAssignableOrgMember(db, orgId, email, wf.user_id);
+      const target = await findAssignableOrgMember(
+        db,
+        orgId,
+        email,
+        wf.user_id,
+        wf.visibility,
+      );
       if (!target.ok) return target;
       targets.push({ userId: target.member.userId });
     }

@@ -741,15 +741,15 @@ describe("NewProjectModal sharing", () => {
         const peoplePicker = await screen.findByRole("searchbox", {
             name: "People",
         });
-        // The organization's owner can always open it, so is not offered.
-        // An admin has no such standing and is.
+        // Neither the organization's owner nor an admin can open a private
+        // project unless it is shared with them, so both are offered.
         await user.type(peoplePicker, "Organization");
         expect(
             await screen.findByRole("option", { name: /Organization Admin/ }),
         ).toBeInTheDocument();
         expect(
-            screen.queryByRole("option", { name: /Organization Owner/ }),
-        ).not.toBeInTheDocument();
+            screen.getByRole("option", { name: /Organization Owner/ }),
+        ).toBeInTheDocument();
         await user.clear(peoplePicker);
 
         await user.type(peoplePicker, "lead");

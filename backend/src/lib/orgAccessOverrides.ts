@@ -9,11 +9,20 @@ function isOrgRole(value: unknown): value is OrgRole {
 }
 
 /**
- * An organization's owners hold Owner on its content implicitly, so that no
- * matter is ever orphaned. Nobody else has standing they were not given.
+ * An organization's owners hold Owner implicitly on what is public, and on a
+ * private item only once it has no Owner left among the organization's
+ * members — so that no matter is ever orphaned. On a member's private item
+ * they have no standing they were not given, like everybody else.
+ * (resolveOrgContentRole in ./access is the same rule for one caller.)
  */
-function hasImplicitOwnerAccess(role: OrgRole): boolean {
-    return role === "owner";
+function hasImplicitOwnerAccess(
+    role: OrgRole,
+    item: { visibility: unknown; ownerless: boolean },
+): boolean {
+    return (
+        role === "owner" &&
+        (item.visibility === "organization" || item.ownerless)
+    );
 }
 
 export type OrgResourceKind =
@@ -125,10 +134,12 @@ export async function findOrgMemberByEmail(
     return { ok: true, member: { userId, email, orgRole } };
 }
 
-/** A resource creator and an organization owner retain owner access, so
- * neither can be given a role or denied. Everyone else in the organization,
- * admins included, can. Keep the target lookup and this rule identical for
- * project and workflow assignments.
+/** The creator is always an Owner, and an organization owner always owns a
+ * public item, so neither can be given a role or denied there. Everyone else
+ * in the organization can — and so can an organization owner on a PRIVATE
+ * item, which is not theirs unless it is shared with them. Keep the target
+ * lookup and this rule identical for project and workflow assignments (the
+ * database's validate_org_access_override enforces the same).
  * Callers still authorize the actor's access.manage permission first.
  */
 export async function findAssignableOrgMember(
@@ -136,6 +147,8 @@ export async function findAssignableOrgMember(
     orgId: string,
     email: string,
     creatorId: string | null,
+    /** The item's visibility; anything but "organization" is private. */
+    visibility: unknown,
 ): Promise<
     | {
           ok: true;
@@ -160,11 +173,11 @@ export async function findAssignableOrgMember(
             kind: "validation",
             detail: "The creator is always an owner",
         };
-    if (hasImplicitOwnerAccess(target.member.orgRole))
+    if (target.member.orgRole === "owner" && visibility === "organization")
         return {
             ok: false,
             kind: "validation",
-            detail: "Organization owners always have owner access",
+            detail: "Organization owners always own a public item",
         };
     return target;
 }
@@ -229,6 +242,13 @@ export async function listOrgAccessPeople(
             display_name: string | null;
         }[]).map((profile) => [profile.user_id, profile]),
     );
+    // No Owner left among the members: the creator is not one of them and
+    // nobody else was made an Owner. Both lists are complete here, so this is
+    // the same answer the database's *_is_ownerless functions give.
+    const ownerless =
+        !memberRows.some(
+            (membership) => membership.user_id === params.creatorId,
+        ) && !listed.overrides.some((override) => override.role === "owner");
     const people: OrgAccessPerson[] = [];
     for (const membership of memberRows) {
         const userId = membership.user_id;
@@ -236,7 +256,10 @@ export async function listOrgAccessPeople(
         if (!profile?.email) continue;
         const implicitOwner =
             userId === params.creatorId ||
-            hasImplicitOwnerAccess(membership.role);
+            hasImplicitOwnerAccess(membership.role, {
+                visibility: params.visibility,
+                ownerless,
+            });
         const override = implicitOwner
             ? undefined
             : overrideByUserId.get(userId);

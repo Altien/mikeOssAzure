@@ -142,7 +142,11 @@ export async function grantProjectAccess(
         detail: "role must be owner, editor, viewer or deny",
       };
     const target = await findAssignableOrgMember(
-      db, access.project.org_id, email, access.project.user_id,
+      db,
+      access.project.org_id,
+      email,
+      access.project.user_id,
+      access.project.visibility,
     );
     if (!target.ok) return target;
     const result = await setOrgAccessOverride(db, {

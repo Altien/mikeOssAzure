@@ -60,9 +60,9 @@ export async function deleteUserAccount(
         // organization which still has members or content cannot be deleted:
         // promoting an arbitrary successor hands a firm's matters to whoever
         // joined first (and silently clears their `deny` overrides), while
-        // removing the member outright is refused by
-        // org_member_protect_resource_ownership and leaves the organization
-        // memberless, invisible and undeletable. Answer 409 and let the user
+        // removing the member outright is refused by the last-owner guard
+        // (org_members_protect_last_owner), and would otherwise leave the
+        // organization memberless, invisible and undeletable. Answer 409 and let the user
         // choose a successor. This check runs BEFORE the enqueue so nothing
         // is scheduled, revoked, or destroyed.
         const blockers = await listOrgsBlockingAccountDeletion(db, userId);

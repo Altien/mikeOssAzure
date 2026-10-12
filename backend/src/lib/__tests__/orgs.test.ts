@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ownerlessRpcResult } from "../../__tests__/helpers/ownerlessRpc";
 import {
     acceptInvitation,
     cancelInvitation,
@@ -132,6 +133,12 @@ function makeDb(initial: Record<string, Row[]>) {
 
     return {
         from: (t: string) => query(t),
+        // Whether an item has an Owner left is the database's to say.
+        rpc: async (name: string, args?: Record<string, unknown>) =>
+            ownerlessRpcResult(tables, name, args) ?? {
+                data: null,
+                error: { message: `unexpected rpc ${name}` },
+            },
         _tables: tables,
         _selects: selects,
     } as any;
@@ -471,7 +478,7 @@ describe("organization resources", () => {
     // Private by default: being in the organization is not, on its own, a
     // reason to see a matter. The name and matter number of a private project
     // are what privacy withholds, so the row must not travel at all.
-    it("lists a private project or workflow only for its creator, the owners and members it was shared with", async () => {
+    it("lists a private project or workflow only for its creator and the members it was shared with", async () => {
         const db = makeDb({
             org_members: [
                 { org_id: "o1", user_id: "owner1", role: "owner" },
@@ -494,7 +501,7 @@ describe("organization resources", () => {
             ],
         });
 
-        for (const userId of ["owner1", "creator1", "shared1"]) {
+        for (const userId of ["creator1", "shared1"]) {
             const result = await listOrgResources(db, { userId, orgId: "o1" });
             expect(result).toMatchObject({
                 ok: true,
@@ -502,11 +509,49 @@ describe("organization resources", () => {
                 workflows: [expect.objectContaining({ id: "secret-wf" })],
             });
         }
-        for (const userId of ["orgadmin1", "member1"]) {
+        // Owning or running the organization is not a reason to see it.
+        for (const userId of ["owner1", "orgadmin1", "member1"]) {
             const result = await listOrgResources(db, { userId, orgId: "o1" });
             expect(result).toEqual({ ok: true, projects: [], workflows: [] });
             expect(JSON.stringify(result)).not.toContain("Nimbus");
         }
+    });
+
+    it("hands the organization's owners a private item whose creator has left", async () => {
+        const db = makeDb({
+            org_members: [
+                { org_id: "o1", user_id: "owner1", role: "owner" },
+                { org_id: "o1", user_id: "orgadmin1", role: "admin" },
+                { org_id: "o1", user_id: "shared1", role: "member" },
+            ],
+            projects: [
+                // Nobody else was made an Owner: a Viewer is not one.
+                { id: "orphan", user_id: "departed", org_id: "o1", visibility: "private", name: "Left behind" },
+                // Still has an Owner among the members.
+                { id: "kept", user_id: "departed", org_id: "o1", visibility: "private", name: "Handed over" },
+            ],
+            workflows: [
+                { id: "orphan-wf", user_id: "departed", org_id: "o1", visibility: "private", title: "Left behind" },
+            ],
+            project_org_access_overrides: [
+                { project_id: "orphan", org_id: "o1", user_id: "shared1", role: "viewer" },
+                { project_id: "kept", org_id: "o1", user_id: "shared1", role: "owner" },
+            ],
+            workflow_org_access_overrides: [],
+        });
+
+        const owner = await listOrgResources(db, { userId: "owner1", orgId: "o1" });
+        expect(owner).toMatchObject({
+            ok: true,
+            projects: [expect.objectContaining({ id: "orphan" })],
+            workflows: [expect.objectContaining({ id: "orphan-wf" })],
+        });
+        if (owner.ok) expect(owner.projects).toHaveLength(1);
+
+        // An admin gains nothing from the departure.
+        await expect(
+            listOrgResources(db, { userId: "orgadmin1", orgId: "o1" }),
+        ).resolves.toEqual({ ok: true, projects: [], workflows: [] });
     });
 
     it("treats a row with no visibility as private", async () => {

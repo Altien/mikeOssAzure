@@ -192,8 +192,9 @@ export function CreateAccessStep({
             user_id: member.user_id,
             email: member.email,
             display_name: member.display_name,
-            // The organization's owners can open everything in it, so the
-            // editor leaves them out of its pickers.
+            // Marked so the editor can leave the organization's owners out
+            // of a public item's pickers: they own those already. A private
+            // item is shared with them like with anyone.
             role: isOrgOwner(member.role) ? "owner" : "editor",
             isCreator,
         };

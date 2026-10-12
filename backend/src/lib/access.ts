@@ -145,25 +145,84 @@ export function parseContentVisibility(
  * access. The caller is already known to be a CURRENT member of that
  * organization; a non-member never reaches this.
  *
- *   1. the creator, and the organization's owners   -> owner
- *   2. a member it was shared with                   -> the role they were given
+ *   1. the creator                                   -> owner
+ *   2. an organization owner, when the item is
+ *      public or has no Owner left                    -> owner
+ *   3. a member it was shared with                   -> the role they were given
  *      (`deny` walls a member off, a public item included)
- *   3. everyone, when it is public                   -> editor
+ *   4. everyone, when it is public                   -> editor
+ *
+ * An organization owner has no standing on a member's private item: private
+ * is private. They take one over only when it is `ownerless` — its creator
+ * has left the organization and nobody else was made an Owner — so the firm
+ * never loses a matter and a departure never waits on a hand-over. The
+ * database decides what is ownerless (isOrgItemOwnerless,
+ * loadOwnerlessOrgItemIds); it is false for everything else.
  *
  * One function, because five read paths apply this rule (the single-item
  * checks, the accessible-project list, the document picker and the
- * organization's own resource list) and they must never disagree.
+ * organization's own resource list) and they must never disagree. It mirrors
+ * the SQL project_access_role / workflow_access_role.
  */
 export function resolveOrgContentRole(input: {
     isCreator: boolean;
     orgRole: OrgRole;
     override: OrgAccessOverrideRole | null | undefined;
     visibility: unknown;
+    ownerless: boolean;
 }): ProjectRole | null {
-    if (input.isCreator || isOrgOwner(input.orgRole)) return "owner";
+    if (input.isCreator) return "owner";
+    if (
+        isOrgOwner(input.orgRole) &&
+        (input.visibility === "organization" || input.ownerless)
+    )
+        return "owner";
     if (input.override === "deny") return null;
     if (input.override) return input.override;
     return input.visibility === "organization" ? "editor" : null;
+}
+
+/**
+ * Whether an organization's private project or workflow has no Owner left
+ * among its current members, which is when its organization's owners take
+ * it over. Asked of the database so the list RPCs and these checks reach
+ * the same answer. Fails closed: an unanswered question is "no", and an
+ * organization owner then has no more access than any other member.
+ */
+export async function isOrgItemOwnerless(
+    db: Db,
+    kind: "project" | "workflow",
+    itemId: string,
+): Promise<boolean> {
+    const { data, error } = await db.rpc("org_item_is_ownerless", {
+        p_kind: kind,
+        p_item_id: itemId,
+    });
+    return !error && data === true;
+}
+
+/**
+ * The private projects and workflows without an Owner in the given
+ * organizations, for filters over many rows. Pass only the organizations
+ * the caller OWNS: nobody else's verdict depends on it, and with none there
+ * is nothing to ask. Fails closed, like isOrgItemOwnerless.
+ */
+export async function loadOwnerlessOrgItemIds(
+    db: Db,
+    ownedOrgIds: string[],
+): Promise<{ projects: Set<string>; workflows: Set<string> }> {
+    const ownerless = { projects: new Set<string>(), workflows: new Set<string>() };
+    if (ownedOrgIds.length === 0) return ownerless;
+    const { data, error } = await db.rpc("ownerless_org_item_ids", {
+        p_org_ids: ownedOrgIds,
+    });
+    if (error || !Array.isArray(data)) return ownerless;
+    for (const row of data as { kind?: unknown; item_id?: unknown }[]) {
+        if (typeof row.item_id !== "string") continue;
+        if (row.kind === "project") ownerless.projects.add(row.item_id);
+        else if (row.kind === "workflow") ownerless.workflows.add(row.item_id);
+    }
+    return ownerless;
 }
 
 /** Normalize an email the way every grant/invitation row stores it. */
@@ -299,7 +358,12 @@ export async function checkProjectAccess(
     if (proj.org_id) {
         const orgRole = await getOrgRole(userId, proj.org_id, db);
         if (!orgRole) return { ok: false };
-        if (isCreator || isOrgOwner(orgRole))
+        // The two verdicts that need nothing else read: the creator, and an
+        // organization owner on a public project.
+        if (
+            isCreator ||
+            (isOrgOwner(orgRole) && proj.visibility === "organization")
+        )
             return {
                 ok: true,
                 isCreator,
@@ -322,6 +386,12 @@ export async function checkProjectAccess(
             orgRole,
             override: override.role,
             visibility: proj.visibility,
+            // Only an organization owner's verdict on a private project
+            // turns on this, so only then is it asked.
+            ownerless:
+                isOrgOwner(orgRole) && proj.visibility !== "organization"
+                    ? await isOrgItemOwnerless(db, "project", proj.id)
+                    : false,
         });
         if (!projectRole) return { ok: false };
         return {
@@ -410,7 +480,10 @@ async function organizationResourceAccess(
     const orgRole = await getOrgRole(userId, row.org_id, db);
     if (!orgRole) return { ok: false };
     const isCreator = !!row.user_id && row.user_id === userId;
-    if (isCreator || isOrgOwner(orgRole))
+    if (
+        isCreator ||
+        (isOrgOwner(orgRole) && row.visibility === "organization")
+    )
         return resourceAccessFor("owner", orgRole, isCreator);
     const override = await getOrgAccessOverrideRole(
         db,
@@ -425,6 +498,10 @@ async function organizationResourceAccess(
         orgRole,
         override: override.role,
         visibility: row.visibility,
+        ownerless:
+            isOrgOwner(orgRole) && row.visibility !== "organization"
+                ? await isOrgItemOwnerless(db, kind, row.id)
+                : false,
     });
     return role ? resourceAccessFor(role, orgRole, false) : { ok: false };
 }
@@ -880,6 +957,10 @@ export async function listAccessibleProjectIds(
     const overrideByProjectId = new Map(
         overrides.map((row) => [row.project_id, row.role]),
     );
+    const ownerless = await loadOwnerlessOrgItemIds(
+        db,
+        orgIds.filter((orgId) => orgRoleByOrgId.get(orgId) === "owner"),
+    );
 
     const ids = new Set<string>();
     for (const project of personalOwned) ids.add(project.id);
@@ -894,6 +975,7 @@ export async function listAccessibleProjectIds(
             orgRole,
             override: isOrgAccessOverrideRole(override) ? override : null,
             visibility: project.visibility,
+            ownerless: ownerless.projects.has(project.id),
         });
         if (role) ids.add(project.id);
     }

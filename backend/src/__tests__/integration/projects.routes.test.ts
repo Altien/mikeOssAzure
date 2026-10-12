@@ -428,6 +428,8 @@ describe("projects.routes", () => {
       denies?: string[];
       /** Per-project grants the caller holds: project id -> role. */
       grants?: Record<string, string>;
+      /** Private projects the database reports as having no Owner left. */
+      ownerless?: string[];
     }) {
       const personal = options.personal ?? [];
       const orgProjects = options.orgProjects ?? [];
@@ -491,7 +493,17 @@ describe("projects.routes", () => {
           if (table === "org_members") return build(() => memberships);
           return build(() => []);
         },
-        rpc: () => Promise.resolve({ data: [], error: null }),
+        rpc: (name?: string) =>
+          Promise.resolve({
+            data:
+              name === "ownerless_org_item_ids"
+                ? (options.ownerless ?? []).map((item_id) => ({
+                    kind: "project",
+                    item_id,
+                  }))
+                : [],
+            error: null,
+          }),
         auth: {
           getUser: () =>
             Promise.resolve({ data: { user: { id: "u1" } }, error: null }),
@@ -610,10 +622,48 @@ describe("projects.routes", () => {
       },
     );
 
-    it("offers a private org project to a member it was shared with, and to an owner", async () => {
+    it("does not offer an organization owner a member's private project", async () => {
+      // Owning the organization is not a reason to see a colleague's
+      // private matter in a picker, any more than to open it.
+      vi.mocked(createServerSupabase).mockImplementationOnce(
+        () =>
+          directorySearchDb({
+            memberships: [{ org_id: "o1", role: "owner" }],
+            orgProjects: [PRIVATE],
+          }) as unknown as ReturnType<typeof createServerSupabase>,
+      );
+
+      const res = await request(app)
+        .get("/projects?view=directory-search&search=Matter")
+        .set(...AUTH);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([]);
+    });
+
+    it("does not offer an admin a private project that has no Owner left", async () => {
+      // Only the organization's owners take such a project over.
+      vi.mocked(createServerSupabase).mockImplementationOnce(
+        () =>
+          directorySearchDb({
+            memberships: [{ org_id: "o1", role: "admin" }],
+            orgProjects: [PRIVATE],
+            ownerless: ["p-private"],
+          }) as unknown as ReturnType<typeof createServerSupabase>,
+      );
+
+      const res = await request(app)
+        .get("/projects?view=directory-search&search=Matter")
+        .set(...AUTH);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([]);
+    });
+
+    it("offers a private org project to a member it was shared with, and to an owner once it has no Owner left", async () => {
       for (const options of [
         { memberships: [{ org_id: "o1", role: "member" }], grants: { "p-private": "viewer" } },
-        { memberships: [{ org_id: "o1", role: "owner" }] },
+        { memberships: [{ org_id: "o1", role: "owner" }], ownerless: ["p-private"] },
       ]) {
         vi.mocked(createServerSupabase).mockImplementationOnce(
           () =>

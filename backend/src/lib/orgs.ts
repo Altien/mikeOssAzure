@@ -36,6 +36,7 @@ import {
     isOrgAdmin,
     isOrgOwner,
     isOrgRole,
+    loadOwnerlessOrgItemIds,
     normalizeEmail,
     resolveOrgContentRole,
     strongerOrgRole,
@@ -97,13 +98,6 @@ function isLastOwnerViolation(error: DbError): boolean {
     return (
         error?.code === "23514" &&
         (error?.message ?? "").includes("at least one owner")
-    );
-}
-
-function isResourceOwnerViolation(error: DbError): boolean {
-    return (
-        error?.code === "23514" &&
-        (error?.message ?? "").includes("Transfer ownership")
     );
 }
 
@@ -312,8 +306,8 @@ export async function deleteOrg(
  * Listing a row whose link then 404s leaks the thing it was meant to hide.
  *
  * The verdict per row is resolveOrgContentRole, the same one the single-item
- * checks and the SQL role functions reach. An organization owner sees
- * everything; that is what stops a matter being orphaned.
+ * checks and the SQL role functions reach. An organization owner is listed
+ * what is public and what has no Owner left — not a member's private work.
  */
 export async function listOrgResources(
     db: Db,
@@ -379,11 +373,17 @@ export async function listOrgResources(
         "workflow_id",
     );
 
+    const ownerless = await loadOwnerlessOrgItemIds(
+        db,
+        isOrgOwner(role) ? [params.orgId] : [],
+    );
+
     const visible = <
         T extends { id?: unknown; user_id?: unknown; visibility?: unknown },
     >(
         rows: T[],
         overrideById: Map<string, unknown>,
+        ownerlessIds: Set<string>,
     ) =>
         rows.filter((row) => {
             const override =
@@ -396,6 +396,8 @@ export async function listOrgResources(
                         ? override
                         : null,
                     visibility: row.visibility,
+                    ownerless:
+                        typeof row.id === "string" && ownerlessIds.has(row.id),
                 }) !== null
             );
         });
@@ -406,10 +408,12 @@ export async function listOrgResources(
         projects: visible(
             (projectsResult.data ?? []) as Row[],
             projectOverrideById,
+            ownerless.projects,
         ),
         workflows: visible(
             (workflowsResult.data ?? []) as Row[],
             workflowOverrideById,
+            ownerless.workflows,
         ),
     };
 }
@@ -604,13 +608,6 @@ export async function removeMember(
     if (error) {
         if (isLastOwnerViolation(error))
             return { ok: false, kind: "last_owner" };
-        if (isResourceOwnerViolation(error))
-            return {
-                ok: false,
-                kind: "conflict",
-                detail:
-                    "Transfer ownership of this member's organization resources before removing them.",
-            };
         return { ok: false, kind: "db_error", detail: error.message };
     }
     const profiles = await attachProfiles(db, [

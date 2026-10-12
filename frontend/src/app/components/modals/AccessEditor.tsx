@@ -454,8 +454,10 @@ function OrganizationAssignmentList({
  *     off from it
  *
  * Only members of the organization can be named: sharing does not reach
- * outside it. The organization's owners are not listed and cannot be added
- * or denied, because they can always open everything in it.
+ * outside it. On a PUBLIC item the organization's owners are not offered:
+ * they own every public item already and cannot be denied one. A PRIVATE
+ * item is not theirs unless it is shared with them, so there they are
+ * offered like any other member.
  */
 export function OrganizationAccessEditor({
     members,
@@ -473,8 +475,8 @@ export function OrganizationAccessEditor({
 }: {
     /**
      * Every member of the organization, as candidates. A row whose `role` is
-     * "owner" is one of the organization's owners (or the creator) and is
-     * left out of the pickers.
+     * "owner" is one of the organization's owners, who are left out of the
+     * pickers on a public item; the creator is left out always.
      */
     members: AccessRow[];
     /** The creator, and everyone the item is shared with or denied from. */
@@ -518,9 +520,10 @@ export function OrganizationAccessEditor({
         (!!selfEmail && member.email?.trim().toLowerCase() === selfEmail);
     const availableMembers = members.filter((member) => {
         if (member.isCreator || !member.email) return false;
-        // The organization's owners always have Owner access; the server
-        // refuses to give them a role or deny them.
-        if (member.role === "owner") return false;
+        // The organization's owners own every public item; the server
+        // refuses to give them a role on one or deny them it. A private
+        // item is shared with them like with anybody else.
+        if (isPublic && member.role === "owner") return false;
         // Nothing can be aimed at the caller: the server answers "You cannot
         // share a project with yourself", so their own row in these pickers
         // was an action that could only fail.
