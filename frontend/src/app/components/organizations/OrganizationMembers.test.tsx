@@ -91,7 +91,7 @@ describe("OrganizationMembers", () => {
     expect(await screen.findByText("William Chen")).toBeInTheDocument();
     expect(screen.getAllByText("Members")).not.toHaveLength(0);
     // The count sits beside the column's name.
-    expect(screen.getByText("Username (2)")).toBeInTheDocument();
+    expect(screen.getByText("User (2)")).toBeInTheDocument();
     await user.click(
       screen.getByRole("button", { name: "Back to Organization Settings" }),
     );
@@ -161,7 +161,7 @@ describe("OrganizationMembers", () => {
       await screen.findByText("Olive");
 
       await user.click(
-        screen.getByRole("button", { name: "Sort by username" }),
+        screen.getByRole("button", { name: "Sort by user" }),
       );
       await user.click(screen.getByRole("menuitem", { name: "Descending" }));
 
@@ -185,7 +185,7 @@ describe("OrganizationMembers", () => {
 
       expect(listed()).toHaveLength(30);
       // The count is of the list, not of what is drawn.
-      expect(screen.getByText("Username (65)")).toBeInTheDocument();
+      expect(screen.getByText("User (65)")).toBeInTheDocument();
 
       await user.click(screen.getByRole("button", { name: "Load more" }));
       expect(listed()).toHaveLength(60);
@@ -288,7 +288,7 @@ describe("OrganizationMembers", () => {
       for (const name of ["All", "Owners", "Admins", "Members"])
         expect(tab(name)).toBeInTheDocument();
       expect(listed()).toEqual(["Abe", "Olive", "Ada", "Amy", "Max", "Zed"]);
-      expect(screen.getByText("Username (6)")).toBeInTheDocument();
+      expect(screen.getByText("User (6)")).toBeInTheDocument();
       expect(screen.queryByText(/\d+ members?$/)).not.toBeInTheDocument();
     });
 
@@ -305,7 +305,7 @@ describe("OrganizationMembers", () => {
 
       expect(listed()).toEqual(people);
       expect(
-        screen.getByText(`Username (${people.length})`),
+        screen.getByText(`User (${people.length})`),
       ).toBeInTheDocument();
     });
 
@@ -319,7 +319,7 @@ describe("OrganizationMembers", () => {
       await user.type(screen.getByPlaceholderText("Search members…"), "ma");
 
       expect(listed()).toEqual(["Max"]);
-      expect(screen.getByText("Username (1)")).toBeInTheDocument();
+      expect(screen.getByText("User (1)")).toBeInTheDocument();
 
       // The search stays as the tab changes, and no owner matches it.
       await user.click(tab("Owners"));
@@ -342,7 +342,7 @@ describe("OrganizationMembers", () => {
       expect(
         screen.getByText("This organization has no admins."),
       ).toBeInTheDocument();
-      expect(screen.getByText("Username (0)")).toBeInTheDocument();
+      expect(screen.getByText("User (0)")).toBeInTheDocument();
     });
 
     it("drops a selection when the tab changes", async () => {
@@ -362,8 +362,8 @@ describe("OrganizationMembers", () => {
     it("shows no count while the roster loads", () => {
       mocks.getOrg.mockReturnValue(new Promise(() => {}));
       render(<OrganizationMembers orgId="org-1" />);
-      expect(screen.getByText("Username")).toBeInTheDocument();
-      expect(screen.queryByText(/Username \(/)).not.toBeInTheDocument();
+      expect(screen.getByText("User")).toBeInTheDocument();
+      expect(screen.queryByText(/User \(/)).not.toBeInTheDocument();
     });
   });
 
@@ -379,7 +379,7 @@ describe("OrganizationMembers", () => {
     expect(screen.getByText("Jane Lee")).toBeInTheDocument();
     expect(screen.queryByText("William Chen")).not.toBeInTheDocument();
     // The count follows the search.
-    expect(screen.getByText("Username (1)")).toBeInTheDocument();
+    expect(screen.getByText("User (1)")).toBeInTheDocument();
 
     await user.clear(search);
     await user.type(search, "WILLIAM");

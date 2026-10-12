@@ -741,12 +741,12 @@ function PeopleTable({
             {/* How many people the open tab and the search come to, drawn
                 or not. Plain text beside the column's name. */}
             <span className="mr-1">
-              Username
+              User
               {!loading && !error ? ` (${visibleMembers.length})` : ""}
             </span>
             {!loading ? (
               <TableSortFilter
-                label="Sort by username"
+                label="Sort by user"
                 value={sort?.key === "name" ? sort.direction : null}
                 allLabel="Default order"
                 align="right"
