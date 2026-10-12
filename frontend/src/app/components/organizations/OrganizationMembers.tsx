@@ -26,7 +26,6 @@ import {
   TableBody,
   TableCell,
   TableEmptyState,
-  TableFilters,
   TableSortFilter,
   TableHeaderCell,
   TableHeaderRow,
@@ -87,6 +86,16 @@ const ROLE_FILTER_OPTIONS: TableFilterOption<OrgRole>[] = [
   },
 ];
 
+/** The roster's tabs: everyone, or the people holding one role. */
+type RosterTab = "all" | OrgRole;
+
+const ROSTER_TABS: { id: RosterTab; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "owner", label: "Owners" },
+  { id: "admin", label: "Admins" },
+  { id: "member", label: "Members" },
+];
+
 function formatDate(value?: string | null) {
   if (!value) return "—";
   const date = new Date(value);
@@ -133,6 +142,7 @@ export function OrganizationMembers({
   const [busyMemberId, setBusyMemberId] = useState<string | null>(null);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [search, setSearch] = useState("");
+  const [rosterTab, setRosterTab] = useState<RosterTab>("all");
   const [removeSelectedOpen, setRemoveSelectedOpen] = useState(false);
   const [removingSelected, setRemovingSelected] = useState(false);
   const [removeMember, setRemoveMember] = useState<OrgMember | null>(null);
@@ -473,17 +483,14 @@ export function OrganizationMembers({
       />
 
       <TableToolbar
-        leading={
-          // Plain text, and always present, so the row does not appear and
-          // push the table down the moment somebody is selected. Inset so it
-          // starts where the page header's text does: the toolbar's gutter
-          // is the narrower of the two, by the width of a tab's padding.
-          <span className="pl-1 text-xs text-gray-500 md:pl-1.5">
-            {loading
-              ? ""
-              : `${members.length} ${members.length === 1 ? "member" : "members"}`}
-          </span>
-        }
+        items={ROSTER_TABS}
+        active={rosterTab}
+        onChange={(tab) => {
+          setRosterTab(tab);
+          // A selection made under one tab does not carry into another,
+          // where some of it would be out of sight.
+          setSelectedMemberIds([]);
+        }}
         actions={selectionActions ?? undefined}
       />
 
@@ -492,6 +499,7 @@ export function OrganizationMembers({
         error={loadError}
         members={members}
         search={search}
+        roleFilter={rosterTab === "all" ? null : rosterTab}
         selectedMemberIds={selectedMemberIds}
         onSelectedMemberIdsChange={setSelectedMemberIds}
         currentUserId={user?.id ?? null}
@@ -596,6 +604,7 @@ function PeopleTable({
   error,
   members,
   search,
+  roleFilter,
   selectedMemberIds,
   onSelectedMemberIdsChange,
   currentUserId,
@@ -611,6 +620,8 @@ function PeopleTable({
   members: OrgMember[];
   /** Narrows the roster to people whose name or email contains it. */
   search: string;
+  /** The role the open tab shows, or null for everyone. */
+  roleFilter: OrgRole | null;
   selectedMemberIds: string[];
   onSelectedMemberIdsChange: Dispatch<SetStateAction<string[]>>;
   currentUserId: string | null;
@@ -622,7 +633,6 @@ function PeopleTable({
   onRemove: (member: OrgMember) => void;
   renderActions: (member: OrgMember, close?: () => void) => ReactNode;
 }) {
-  const [roleFilter, setRoleFilter] = useState<OrgRole | null>(null);
   const [sort, setSort] = useState<{
     key: "name" | "email" | "added";
     direction: TableSortDirection;
@@ -728,7 +738,12 @@ function PeopleTable({
                 aria-label="Select all people"
               />
             )}
-            <span className="mr-1">Username</span>
+            {/* How many people the open tab and the search come to, drawn
+                or not. Plain text beside the column's name. */}
+            <span className="mr-1">
+              Username
+              {!loading && !error ? ` (${visibleMembers.length})` : ""}
+            </span>
             {!loading ? (
               <TableSortFilter
                 label="Sort by username"
@@ -752,19 +767,6 @@ function PeopleTable({
           </TableHeaderCell>
           <TableHeaderCell className="w-32">
             <span className="mr-1">Role</span>
-            {!loading ? (
-              <TableFilters
-                label="Filter by role"
-                value={roleFilter}
-                allLabel="All roles"
-                options={ROLE_FILTER_OPTIONS}
-                widthClassName="w-36"
-                onChange={(role) => {
-                  setRoleFilter(role);
-                  onSelectedMemberIdsChange([]);
-                }}
-              />
-            ) : null}
           </TableHeaderCell>
           <TableHeaderCell className="w-36">
             <span className="mr-1">Added</span>
@@ -798,7 +800,13 @@ function PeopleTable({
           <p className="text-sm text-gray-400">
             {search.trim()
               ? "No people match this search."
-              : "No people match this filter."}
+              : `This organization has no ${
+                  roleFilter === "owner"
+                    ? "owners"
+                    : roleFilter === "admin"
+                      ? "admins"
+                      : "ordinary members"
+                }.`}
           </p>
         </TableEmptyState>
       ) : (

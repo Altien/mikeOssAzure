@@ -90,7 +90,8 @@ describe("OrganizationMembers", () => {
 
     expect(await screen.findByText("William Chen")).toBeInTheDocument();
     expect(screen.getAllByText("Members")).not.toHaveLength(0);
-    expect(screen.getByText("2 members")).toBeInTheDocument();
+    // The count sits beside the column's name.
+    expect(screen.getByText("Username (2)")).toBeInTheDocument();
     await user.click(
       screen.getByRole("button", { name: "Back to Organization Settings" }),
     );
@@ -100,9 +101,10 @@ describe("OrganizationMembers", () => {
     expect(
       screen.getByRole("checkbox", { name: "Select all people" }),
     ).toBeInTheDocument();
+    // Roles are chosen from the tabs, not from a filter in the column.
     expect(
-      screen.getByRole("button", { name: "Filter by role" }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: "Filter by role" }),
+    ).not.toBeInTheDocument();
     const peopleRow = screen
       .getByRole("checkbox", { name: "Select Jane Lee" })
       .closest(".group");
@@ -182,8 +184,8 @@ describe("OrganizationMembers", () => {
       await screen.findByText("Person00");
 
       expect(listed()).toHaveLength(30);
-      // The count is of the organization, not of what is drawn.
-      expect(screen.getByText("65 members")).toBeInTheDocument();
+      // The count is of the list, not of what is drawn.
+      expect(screen.getByText("Username (65)")).toBeInTheDocument();
 
       await user.click(screen.getByRole("button", { name: "Load more" }));
       expect(listed()).toHaveLength(60);
@@ -253,14 +255,116 @@ describe("OrganizationMembers", () => {
     });
   });
 
-  it("starts the member count where the page header's text starts", async () => {
-    render(<OrganizationMembers orgId="org-1" />);
-    // The toolbar's gutter is narrower than the header's by a tab's padding,
-    // so plain text in it is inset by the difference.
-    expect(await screen.findByText("2 members")).toHaveClass(
-      "pl-1",
-      "md:pl-1.5",
-    );
+  describe("the role tabs", () => {
+    const roster = [
+      ["Olive", "owner"],
+      ["Abe", "owner"],
+      ["Ada", "admin"],
+      ["Amy", "member"],
+      ["Zed", "member"],
+      ["Max", "member"],
+    ].map(([name, role]) => ({
+      id: `m-${name}`,
+      user_id: `u-${name}`,
+      display_name: name,
+      email: `${name.toLowerCase()}@firm.example`,
+      role,
+      created_at: "2026-01-01T00:00:00Z",
+    }));
+    const listed = () =>
+      screen
+        .queryAllByRole("checkbox", { name: /^Select (?!all)/ })
+        .map((box) => box.getAttribute("aria-label")!.replace("Select ", ""));
+    const tab = (name: string) => screen.getByRole("button", { name });
+
+    beforeEach(() => {
+      mocks.listOrgMembers.mockResolvedValue(roster);
+    });
+
+    it("opens on everyone, with a tab for each role and no separate counter", async () => {
+      render(<OrganizationMembers orgId="org-1" />);
+      await screen.findByText("Olive");
+
+      for (const name of ["All", "Owners", "Admins", "Members"])
+        expect(tab(name)).toBeInTheDocument();
+      expect(listed()).toEqual(["Abe", "Olive", "Ada", "Amy", "Max", "Zed"]);
+      expect(screen.getByText("Username (6)")).toBeInTheDocument();
+      expect(screen.queryByText(/\d+ members?$/)).not.toBeInTheDocument();
+    });
+
+    it.each([
+      ["Owners", ["Abe", "Olive"]],
+      ["Admins", ["Ada"]],
+      ["Members", ["Amy", "Max", "Zed"]],
+    ])("shows only that role under %s, and counts it", async (name, people) => {
+      const user = userEvent.setup();
+      render(<OrganizationMembers orgId="org-1" />);
+      await screen.findByText("Olive");
+
+      await user.click(tab(name));
+
+      expect(listed()).toEqual(people);
+      expect(
+        screen.getByText(`Username (${people.length})`),
+      ).toBeInTheDocument();
+    });
+
+    it("searches within the open tab, and counts the matches", async () => {
+      const user = userEvent.setup();
+      render(<OrganizationMembers orgId="org-1" />);
+      await screen.findByText("Olive");
+
+      await user.click(tab("Members"));
+      await user.click(screen.getByRole("button", { name: "Search members…" }));
+      await user.type(screen.getByPlaceholderText("Search members…"), "ma");
+
+      expect(listed()).toEqual(["Max"]);
+      expect(screen.getByText("Username (1)")).toBeInTheDocument();
+
+      // The search stays as the tab changes, and no owner matches it.
+      await user.click(tab("Owners"));
+      expect(listed()).toEqual([]);
+      expect(
+        screen.getByText("No people match this search."),
+      ).toBeInTheDocument();
+    });
+
+    it("says so when nobody holds the role", async () => {
+      const user = userEvent.setup();
+      mocks.listOrgMembers.mockResolvedValue(
+        roster.filter((person) => person.role !== "admin"),
+      );
+      render(<OrganizationMembers orgId="org-1" />);
+      await screen.findByText("Olive");
+
+      await user.click(tab("Admins"));
+
+      expect(
+        screen.getByText("This organization has no admins."),
+      ).toBeInTheDocument();
+      expect(screen.getByText("Username (0)")).toBeInTheDocument();
+    });
+
+    it("drops a selection when the tab changes", async () => {
+      const user = userEvent.setup();
+      render(<OrganizationMembers orgId="org-1" />);
+      await screen.findByText("Olive");
+
+      await user.click(screen.getByRole("checkbox", { name: "Select Amy" }));
+      await user.click(tab("Owners"));
+      await user.click(tab("All"));
+
+      expect(
+        screen.getByRole("checkbox", { name: "Select Amy" }),
+      ).not.toBeChecked();
+    });
+
+    it("shows no count while the roster loads", () => {
+      mocks.getOrg.mockReturnValue(new Promise(() => {}));
+      render(<OrganizationMembers orgId="org-1" />);
+      expect(screen.getByText("Username")).toBeInTheDocument();
+      expect(screen.queryByText(/Username \(/)).not.toBeInTheDocument();
+    });
   });
 
   it("narrows the roster from the header's search, by name or email", async () => {
@@ -274,8 +378,8 @@ describe("OrganizationMembers", () => {
 
     expect(screen.getByText("Jane Lee")).toBeInTheDocument();
     expect(screen.queryByText("William Chen")).not.toBeInTheDocument();
-    // The count is of the organization, not of the matches.
-    expect(screen.getByText("2 members")).toBeInTheDocument();
+    // The count follows the search.
+    expect(screen.getByText("Username (1)")).toBeInTheDocument();
 
     await user.clear(search);
     await user.type(search, "WILLIAM");
