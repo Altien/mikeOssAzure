@@ -199,6 +199,14 @@ describe("renaming", () => {
 });
 
 describe("leaving", () => {
+  it("is a black button, the one action the section offers everyone", () => {
+    mocks.org = orgAs("member");
+    render(<OrganizationGeneralSettings />);
+    const leave = screen.getByRole("button", { name: "Leave" });
+    // Same pill as Delete beside it for an owner, set apart by tone.
+    expect(leave.className).toMatch(/bg-(black|gray-9\d\d)/);
+  });
+
   it("asks first, then removes the caller and takes them to their organizations", async () => {
     const user = userEvent.setup();
     mocks.org = orgAs("member");

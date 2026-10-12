@@ -215,7 +215,7 @@ export function OrganizationGeneralSettings() {
               </SettingsDescription>
             </div>
             <PillButtonUI
-              tone="white"
+              tone="black"
               size="sm"
               disabled={!org || working !== null}
               loading={working === "leave"}
