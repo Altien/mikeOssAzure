@@ -15,6 +15,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useWorkspace } from "@/app/contexts/WorkspaceContext";
 import { PageHeader } from "@/app/components/shared/PageHeader";
+import { TableLoadMoreRow } from "@/app/components/shared/TableLoadMoreRow";
 import { TableToolbar } from "@/app/components/shared/TableToolbar";
 import { HeaderActionsMenu } from "@/app/components/shared/HeaderActionsMenu";
 import { SelectionActionsMenu } from "@/app/components/shared/SelectionActionsMenu";
@@ -66,6 +67,12 @@ import {
 } from "@/app/lib/permissions";
 import { userFacingApiError } from "@/app/lib/userFacingError";
 import { InviteOrganizationMemberModal } from "./OrganizationModals";
+
+/** The roster's fixed order: who decides, who runs it, everybody else. */
+const ROLE_ORDER: Record<OrgRole, number> = { owner: 0, admin: 1, member: 2 };
+
+/** Rows drawn per page, as in the app's other paginated tables. */
+const MEMBERS_PAGE_SIZE = 30;
 
 /** Where somebody lands once they have left the organization. */
 const AFTER_DEPARTURE = "/settings/organizations";
@@ -468,8 +475,10 @@ export function OrganizationMembers({
       <TableToolbar
         leading={
           // Plain text, and always present, so the row does not appear and
-          // push the table down the moment somebody is selected.
-          <span className="text-xs text-gray-500">
+          // push the table down the moment somebody is selected. Inset so it
+          // starts where the page header's text does: the toolbar's gutter
+          // is the narrower of the two, by the width of a tab's padding.
+          <span className="pl-1 text-xs text-gray-500 md:pl-1.5">
             {loading
               ? ""
               : `${members.length} ${members.length === 1 ? "member" : "members"}`}
@@ -627,10 +636,14 @@ function PeopleTable({
           (member.display_name ?? "").toLowerCase().includes(query) ||
           (member.email ?? "").toLowerCase().includes(query)),
     );
-    if (!sort) return filtered;
-    const multiplier = sort.direction === "asc" ? 1 : -1;
+    // Owners, then admins, then members — always. A column sort orders the
+    // people within each of those; with none chosen they are listed by name.
+    const key = sort?.key ?? "name";
+    const multiplier = sort?.direction === "desc" ? -1 : 1;
     return [...filtered].sort((a, b) => {
-      if (sort.key === "added") {
+      const byRole = ROLE_ORDER[a.role] - ROLE_ORDER[b.role];
+      if (byRole !== 0) return byRole;
+      if (key === "added") {
         return (
           (new Date(a.created_at ?? 0).getTime() -
             new Date(b.created_at ?? 0).getTime()) *
@@ -638,16 +651,32 @@ function PeopleTable({
         );
       }
       const aValue =
-        sort.key === "email"
+        key === "email"
           ? (a.email ?? "")
           : a.display_name || a.email || a.user_id;
       const bValue =
-        sort.key === "email"
+        key === "email"
           ? (b.email ?? "")
           : b.display_name || b.email || b.user_id;
       return aValue.localeCompare(bValue) * multiplier;
     });
   }, [members, roleFilter, search, sort]);
+
+  // Rows are drawn a page at a time, and more as the list is scrolled, like
+  // the app's other tables. The roster is already in hand, so "loading" the
+  // next page is only a matter of drawing it. A different search, filter or
+  // sort is a different list and starts again from its first page.
+  const listKey = `${search}|${roleFilter ?? ""}|${sort?.key ?? ""}|${sort?.direction ?? ""}`;
+  const [page, setPage] = useState({ listKey, count: MEMBERS_PAGE_SIZE });
+  if (page.listKey !== listKey)
+    setPage({ listKey, count: MEMBERS_PAGE_SIZE });
+  const shownMembers = visibleMembers.slice(0, page.count);
+  const hasMoreMembers = shownMembers.length < visibleMembers.length;
+  const showMoreMembers = () =>
+    setPage((current) => ({
+      ...current,
+      count: current.count + MEMBERS_PAGE_SIZE,
+    }));
   const allSelected =
     visibleMembers.length > 0 &&
     visibleMembers.every((member) => selectedMemberIds.includes(member.id));
@@ -774,7 +803,7 @@ function PeopleTable({
         </TableEmptyState>
       ) : (
         <TableBody>
-          {visibleMembers.map((member) => {
+          {shownMembers.map((member) => {
             const label = member.display_name || member.email || member.user_id;
             const canRemove =
               member.user_id === currentUserId ||
@@ -846,6 +875,15 @@ function PeopleTable({
           })}
         </TableBody>
       )}
+      <TableLoadMoreRow
+        loading={loading}
+        hasMore={hasMoreMembers}
+        itemCount={shownMembers.length}
+        loadingMore={false}
+        hasError={false}
+        onLoadMore={showMoreMembers}
+        autoLoadOnVisible
+      />
     </TableScrollArea>
   );
 }

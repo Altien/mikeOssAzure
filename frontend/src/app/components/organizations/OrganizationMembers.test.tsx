@@ -115,6 +115,154 @@ describe("OrganizationMembers", () => {
       expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
   });
 
+  describe("the roster's order and pages", () => {
+    type Role = "owner" | "admin" | "member";
+    const person = (name: string, role: Role, joined: string) => ({
+      id: `m-${name}`,
+      user_id: `u-${name}`,
+      display_name: name,
+      email: `${name.toLowerCase()}@firm.example`,
+      role,
+      created_at: joined,
+    });
+    // The names as the table lists them, top to bottom.
+    const listed = () =>
+      screen
+        .getAllByRole("checkbox", { name: /^Select (?!all)/ })
+        .map((box) => box.getAttribute("aria-label")!.replace("Select ", ""));
+
+    it("lists owners, then admins, then members, each by name", async () => {
+      // Handed over in no useful order, as the server returns them.
+      mocks.listOrgMembers.mockResolvedValue([
+        person("Zed", "member", "2026-01-01T00:00:00Z"),
+        person("Olive", "owner", "2026-03-01T00:00:00Z"),
+        person("Amy", "member", "2026-02-01T00:00:00Z"),
+        person("Bob", "admin", "2026-04-01T00:00:00Z"),
+        person("Abe", "owner", "2026-05-01T00:00:00Z"),
+        person("Ada", "admin", "2026-06-01T00:00:00Z"),
+      ]);
+      render(<OrganizationMembers orgId="org-1" />);
+      await screen.findByText("Olive");
+
+      expect(listed()).toEqual(["Abe", "Olive", "Ada", "Bob", "Amy", "Zed"]);
+    });
+
+    it("keeps that order under a column sort, which orders people within each role", async () => {
+      const user = userEvent.setup();
+      mocks.listOrgMembers.mockResolvedValue([
+        person("Zed", "member", "2026-01-01T00:00:00Z"),
+        person("Olive", "owner", "2026-03-01T00:00:00Z"),
+        person("Amy", "member", "2026-02-01T00:00:00Z"),
+        person("Abe", "owner", "2026-05-01T00:00:00Z"),
+      ]);
+      render(<OrganizationMembers orgId="org-1" />);
+      await screen.findByText("Olive");
+
+      await user.click(
+        screen.getByRole("button", { name: "Sort by username" }),
+      );
+      await user.click(screen.getByRole("menuitem", { name: "Descending" }));
+
+      // Descending by name, but owners still come before members.
+      expect(listed()).toEqual(["Olive", "Abe", "Zed", "Amy"]);
+    });
+
+    it("draws thirty people at a time, and more on request", async () => {
+      const user = userEvent.setup();
+      mocks.listOrgMembers.mockResolvedValue(
+        Array.from({ length: 65 }, (_, index) =>
+          person(
+            `Person${String(index).padStart(2, "0")}`,
+            "member",
+            "2026-01-01T00:00:00Z",
+          ),
+        ),
+      );
+      render(<OrganizationMembers orgId="org-1" />);
+      await screen.findByText("Person00");
+
+      expect(listed()).toHaveLength(30);
+      // The count is of the organization, not of what is drawn.
+      expect(screen.getByText("65 members")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Load more" }));
+      expect(listed()).toHaveLength(60);
+      await user.click(screen.getByRole("button", { name: "Load more" }));
+      expect(listed()).toHaveLength(65);
+      // Nothing left to draw.
+      expect(
+        screen.queryByRole("button", { name: "Load more" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("searches the whole roster, not only the page on screen, and starts the result from its first page", async () => {
+      const user = userEvent.setup();
+      mocks.listOrgMembers.mockResolvedValue(
+        Array.from({ length: 65 }, (_, index) =>
+          person(
+            `Person${String(index).padStart(2, "0")}`,
+            "member",
+            "2026-01-01T00:00:00Z",
+          ),
+        ),
+      );
+      render(<OrganizationMembers orgId="org-1" />);
+      await screen.findByText("Person00");
+      await user.click(screen.getByRole("button", { name: "Load more" }));
+      expect(listed()).toHaveLength(60);
+
+      await user.click(screen.getByRole("button", { name: "Search members…" }));
+      // Person64 is on the third page, which has not been drawn.
+      await user.type(screen.getByPlaceholderText("Search members…"), "person6");
+
+      expect(listed()).toEqual([
+        "Person60",
+        "Person61",
+        "Person62",
+        "Person63",
+        "Person64",
+      ]);
+
+      await user.clear(screen.getByPlaceholderText("Search members…"));
+      expect(listed()).toHaveLength(30);
+    });
+
+    it("selects everyone who matches, drawn or not", async () => {
+      const user = userEvent.setup();
+      mocks.listOrgMembers.mockResolvedValue(
+        Array.from({ length: 40 }, (_, index) =>
+          person(
+            `Person${String(index).padStart(2, "0")}`,
+            "member",
+            "2026-01-01T00:00:00Z",
+          ),
+        ),
+      );
+      render(<OrganizationMembers orgId="org-1" />);
+      await screen.findByText("Person00");
+
+      await user.click(
+        screen.getByRole("checkbox", { name: "Select all people" }),
+      );
+      await user.click(screen.getByRole("button", { name: "Load more" }));
+
+      // The ten drawn afterwards were part of the selection all along.
+      expect(
+        screen.getByRole("checkbox", { name: "Select Person39" }),
+      ).toBeChecked();
+    });
+  });
+
+  it("starts the member count where the page header's text starts", async () => {
+    render(<OrganizationMembers orgId="org-1" />);
+    // The toolbar's gutter is narrower than the header's by a tab's padding,
+    // so plain text in it is inset by the difference.
+    expect(await screen.findByText("2 members")).toHaveClass(
+      "pl-1",
+      "md:pl-1.5",
+    );
+  });
+
   it("narrows the roster from the header's search, by name or email", async () => {
     const user = userEvent.setup();
     render(<OrganizationMembers orgId="org-1" />);
