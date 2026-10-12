@@ -120,7 +120,11 @@ export function PageHeader({
             className={cn(
                 "flex items-center justify-between",
                 "mx-4 md:mx-8",
-                "min-h-[76px] pb-5 pt-3",
+                // Beside the sidebar (md and up) the title has to sit on the
+                // same line as the sidebar's logo text. That row is 44px tall
+                // and starts 12px down plus the sidebar's 1px border, so the
+                // header's own 44px of content starts 13px down, not 12.
+                "min-h-[76px] pb-5 pt-3 md:pb-[19px] md:pt-[13px]",
                 shrink && "shrink-0",
             )}
         >

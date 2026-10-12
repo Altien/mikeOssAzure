@@ -42,6 +42,24 @@ describe("PageHeader title size", () => {
         expect(skeleton).toHaveClass("h-5", "w-40");
     });
 
+    it("sits its title on the same line as the sidebar's logo text", () => {
+        // The sidebar's logo row is 44px tall and starts 12px down plus the
+        // sidebar's 1px border. The header's 44px of content has to start
+        // 13px down too, or the title rides a pixel above the logo.
+        // (Measured in a browser; the classes are what hold it there.)
+        const { container } = render(
+            <PageHeader>
+                <h1>Projects</h1>
+            </PageHeader>,
+        );
+        const header = container.firstElementChild;
+        expect(header).toHaveClass(
+            "min-h-[76px]",
+            "md:pt-[13px]",
+            "md:pb-[19px]",
+        );
+    });
+
     it("lets a page pass its own title at the same size", () => {
         render(
             <PageHeader>
