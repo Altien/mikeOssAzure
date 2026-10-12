@@ -12,6 +12,7 @@ import { SettingsLabel } from "./SettingsText";
  */
 export function ConnectorCard({
   name,
+  detail,
   icon,
   placeholderClassName,
   onOpen,
@@ -19,6 +20,8 @@ export function ConnectorCard({
   kind = "connector",
 }: {
   name: string;
+  /** A second line under the name, for a tile with more to say about itself. */
+  detail?: ReactNode;
   /** What the tile holds, for its accessible name ("Slack connector"). */
   kind?: string;
   /** Brand icon; without one a small coloured shape is shown. */
@@ -41,6 +44,9 @@ export function ConnectorCard({
         </div>
         <div className="min-w-0 flex-1 text-left">
           <SettingsLabel>{name}</SettingsLabel>
+          {detail ? (
+            <p className="text-xs break-words text-gray-500">{detail}</p>
+          ) : null}
         </div>
       </div>
       {/* The control is its own target; it never opens the Manage dialog.
