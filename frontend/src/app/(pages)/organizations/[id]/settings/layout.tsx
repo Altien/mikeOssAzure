@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { OrganizationSettingsShell } from "@/app/components/organizations/OrganizationSettingsShell";
+import { OrganizationSettingsProvider } from "@/app/components/organizations/OrganizationSettingsShell";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { usePathParams } from "@/app/lib/usePathParams";
 
@@ -12,8 +12,8 @@ export default function OrganizationSettingsLayout({ children }: { children: Rea
   const { id } = usePathParams<"id">("/organizations/:id/settings");
   const { user } = useAuth();
   return (
-    <OrganizationSettingsShell key={`${user?.id ?? "signed-out"}:${id}`} orgId={id}>
+    <OrganizationSettingsProvider key={`${user?.id ?? "signed-out"}:${id}`} orgId={id}>
       {children}
-    </OrganizationSettingsShell>
+    </OrganizationSettingsProvider>
   );
 }

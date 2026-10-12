@@ -21,15 +21,18 @@ import { userFacingApiError } from "@/app/lib/userFacingError";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 
 // An organization's settings area: the same frame as a person's settings,
-// headed by the organization's name, with its sections down the side.
+// with its sections down the side.
 //
 //   General          everyone in the organization
-//   Members          everyone in the organization
+//   Members          everyone in the organization; a full table page of its
+//                    own rather than a section inside the frame
 //   Model Providers  its owners and admins
 //
-// The area loads the organization once and hands it to its sections, so
-// they agree about the name and about what the caller may do. The server
-// still decides every change; a section a member cannot use is not offered.
+// OrganizationSettingsProvider loads the organization once and hands it to
+// every page under settings, so they agree about the name and about what the
+// caller may do. OrganizationSettingsFrame is the sectioned frame around the
+// pages that sit inside it. The server still decides every change; a section
+// a member cannot use is not offered.
 
 interface OrganizationSettingsContextValue {
   orgId: string;
@@ -61,7 +64,7 @@ export function organizationSettingsHref(
   return section === "general" ? root : `${root}/${section}`;
 }
 
-export function OrganizationSettingsShell({
+export function OrganizationSettingsProvider({
   orgId,
   children,
 }: {
@@ -87,40 +90,14 @@ export function OrganizationSettingsShell({
     void reload();
   }, [reload]);
 
-  const canManage = org !== null && isOrgAdmin(org.role);
-  const tabs = useMemo<SettingsShellTab[]>(
-    () => [
-      {
-        id: "general",
-        label: "General",
-        href: organizationSettingsHref(orgId),
-      },
-      {
-        id: "members",
-        label: "Members",
-        href: organizationSettingsHref(orgId, "members"),
-      },
-      // Not offered to a member, nor before the caller's role is known.
-      ...(canManage
-        ? [
-            {
-              id: "providers",
-              label: "Model Providers",
-              href: organizationSettingsHref(orgId, "providers"),
-            },
-          ]
-        : []),
-    ],
-    [canManage, orgId],
-  );
   const value = useMemo(
     () => ({ orgId, org, setOrg, reload }),
     [orgId, org, reload],
   );
 
   // Somebody who is not in the organization is told nothing about it, and a
-  // failed read has no sections to show: either way there is no area to
-  // frame, only the message and a retry.
+  // failed read has no pages to show: either way there is no area to frame,
+  // only the message and a retry.
   if (loadError && !org)
     return (
       <div className="mx-auto w-full max-w-5xl px-6 pt-16 md:pt-24">
@@ -147,24 +124,54 @@ export function OrganizationSettingsShell({
 
   return (
     <OrganizationSettingsContext.Provider value={value}>
-      <SettingsShell
-        eyebrow="Organization settings"
-        title={
-          org ? (
-            org.name
-          ) : (
-            <span
-              aria-hidden="true"
-              className="block h-9 w-64 max-w-full animate-pulse rounded bg-gray-200"
-            />
-          )
-        }
-        navLabel="Organization settings"
-        tabs={tabs}
-        rootHref={organizationSettingsHref(orgId)}
-      >
-        {children}
-      </SettingsShell>
+      {children}
     </OrganizationSettingsContext.Provider>
+  );
+}
+
+/** The sectioned frame around the settings pages that sit inside it. */
+export function OrganizationSettingsFrame({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  const { orgId, org } = useOrganizationSettings();
+  const canManage = org !== null && isOrgAdmin(org.role);
+  const tabs = useMemo<SettingsShellTab[]>(
+    () => [
+      {
+        id: "general",
+        label: "General",
+        href: organizationSettingsHref(orgId),
+      },
+      // A table page of its own; its header leads back here.
+      {
+        id: "members",
+        label: "Members",
+        href: organizationSettingsHref(orgId, "members"),
+      },
+      // Not offered to a member, nor before the caller's role is known.
+      ...(canManage
+        ? [
+            {
+              id: "providers",
+              label: "Model Providers",
+              href: organizationSettingsHref(orgId, "providers"),
+            },
+          ]
+        : []),
+    ],
+    [canManage, orgId],
+  );
+
+  return (
+    <SettingsShell
+      title="Organization Settings"
+      navLabel="Organization settings"
+      tabs={tabs}
+      rootHref={organizationSettingsHref(orgId)}
+    >
+      {children}
+    </SettingsShell>
   );
 }

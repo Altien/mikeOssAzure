@@ -84,13 +84,17 @@ beforeEach(() => {
 });
 
 describe("OrganizationMembers", () => {
-  it("is the Members section: the roster with its identity columns, and nothing else", async () => {
+  it("is a table page: the roster with its identity columns, under a header that leads back to settings", async () => {
+    const user = userEvent.setup();
     render(<OrganizationMembers orgId="org-1" />);
 
     expect(await screen.findByText("William Chen")).toBeInTheDocument();
-    expect(
-      screen.getByRole("region", { name: "Members" }),
-    ).toBeInTheDocument();
+    expect(screen.getAllByText("Members")).not.toHaveLength(0);
+    expect(screen.getByText("2 members")).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Back to Organization Settings" }),
+    );
+    expect(mocks.push).toHaveBeenCalledWith("/organizations/org-1/settings");
     expect(screen.getByText("me@firm.example")).toBeInTheDocument();
     expect(screen.getByText("Added")).toBeInTheDocument();
     expect(
@@ -109,10 +113,50 @@ describe("OrganizationMembers", () => {
     // its workspace is active; they are not repeated here.
     for (const name of ["People", "Projects", "Workflows"])
       expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
-    // Nor is there a way into settings: this is already inside them.
+  });
+
+  it("narrows the roster from the header's search, by name or email", async () => {
+    const user = userEvent.setup();
+    render(<OrganizationMembers orgId="org-1" />);
+    await screen.findByText("William Chen");
+
+    await user.click(screen.getByRole("button", { name: "Search members…" }));
+    const search = screen.getByPlaceholderText("Search members…");
+    await user.type(search, "jane@");
+
+    expect(screen.getByText("Jane Lee")).toBeInTheDocument();
+    expect(screen.queryByText("William Chen")).not.toBeInTheDocument();
+    // The count is of the organization, not of the matches.
+    expect(screen.getByText("2 members")).toBeInTheDocument();
+
+    await user.clear(search);
+    await user.type(search, "WILLIAM");
+    expect(screen.getByText("William Chen")).toBeInTheDocument();
+    expect(screen.queryByText("Jane Lee")).not.toBeInTheDocument();
+
+    await user.clear(search);
+    await user.type(search, "nobody");
     expect(
-      screen.queryByRole("button", { name: "Organization settings" }),
-    ).not.toBeInTheDocument();
+      screen.getByText("No people match this search."),
+    ).toBeInTheDocument();
+  });
+
+  it("drops a selection when the search changes what is on screen", async () => {
+    const user = userEvent.setup();
+    render(<OrganizationMembers orgId="org-1" />);
+    await screen.findByText("William Chen");
+
+    await user.click(screen.getByRole("checkbox", { name: "Select Jane Lee" }));
+    expect(
+      screen.getByRole("checkbox", { name: "Select Jane Lee" }),
+    ).toBeChecked();
+
+    await user.click(screen.getByRole("button", { name: "Search members…" }));
+    await user.type(screen.getByPlaceholderText("Search members…"), "jane");
+
+    expect(
+      screen.getByRole("checkbox", { name: "Select Jane Lee" }),
+    ).not.toBeChecked();
   });
 
   it("lets owners change a member's role from the colored role tab", async () => {
@@ -230,7 +274,7 @@ describe("OrganizationMembers", () => {
     expect(mocks.removeOrgMember).not.toHaveBeenCalled();
   });
 
-  it("lets an owner or admin add a member from the section's heading", async () => {
+  it("lets an owner or admin add a member from the header's + button", async () => {
     const user = userEvent.setup();
     render(<OrganizationMembers orgId="org-1" />);
     await screen.findByText("William Chen");
@@ -273,8 +317,10 @@ describe("OrganizationMembers", () => {
     // admin actions that now 403 until a reload.
     await waitFor(() =>
       expect(
-        screen.queryByRole("button", { name: "Add member" }),
-      ).not.toBeInTheDocument(),
+        screen.getByRole("button", {
+          name: "Only organization admins can add members",
+        }),
+      ).toBeDisabled(),
     );
     expect(
       screen.queryByRole("button", { name: "Change role for Jane Lee" }),
@@ -527,8 +573,10 @@ describe("OrganizationMembers", () => {
     expect(screen.getByText("Jane Lee")).toBeInTheDocument();
     expect(mocks.listOrgInvitations).not.toHaveBeenCalled();
     expect(
-      screen.queryByRole("button", { name: "Add member" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", {
+        name: "Only organization admins can add members",
+      }),
+    ).toBeDisabled();
   });
 
   // -------------------------------------------------------------------------

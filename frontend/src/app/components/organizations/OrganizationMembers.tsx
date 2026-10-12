@@ -10,12 +10,12 @@ import {
   type ReactNode,
   type SetStateAction,
 } from "react";
-import { Check, ChevronDown, Loader2, Plus, Trash2 } from "lucide-react";
+import { Check, ChevronDown, Loader2, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useWorkspace } from "@/app/contexts/WorkspaceContext";
-import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
-import { PillButtonUI } from "@/shared/ui/PillButtonUI";
+import { PageHeader } from "@/app/components/shared/PageHeader";
+import { TableToolbar } from "@/app/components/shared/TableToolbar";
 import { HeaderActionsMenu } from "@/app/components/shared/HeaderActionsMenu";
 import { SelectionActionsMenu } from "@/app/components/shared/SelectionActionsMenu";
 import {
@@ -92,9 +92,14 @@ function formatDate(value?: string | null) {
 }
 
 /**
- * The Members section of an organization's settings: its roster, each
+ * The Members page of an organization's settings: its roster, each
  * person's role, and — for its owners and admins — adding, removing and
  * inviting people. Everyone in the organization can read it.
+ *
+ * A table page like the app's others, with search and the add button in the
+ * page header, rather than a section inside the settings frame: a roster
+ * needs the width, and it is where an organization's admins spend their
+ * time. The header's first crumb leads back to the other sections.
  *
  * It loads the organization itself, so the roster and the caller's role on
  * it always come from the same read. `onViewerRoleChanged` tells the
@@ -120,6 +125,7 @@ export function OrganizationMembers({
   const [inviteOpen, setInviteOpen] = useState(false);
   const [busyMemberId, setBusyMemberId] = useState<string | null>(null);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
+  const [search, setSearch] = useState("");
   const [removeSelectedOpen, setRemoveSelectedOpen] = useState(false);
   const [removingSelected, setRemovingSelected] = useState(false);
   const [removeMember, setRemoveMember] = useState<OrgMember | null>(null);
@@ -420,36 +426,63 @@ export function OrganizationMembers({
     ) : null;
 
   return (
-    <section aria-labelledby="org-members-heading" className="space-y-3">
-      {/* The heading row carries what the old page header did: adding a
-          member, and the actions for a selection. */}
-      <div className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-2">
-        <SettingsHeading id="org-members-heading">Members</SettingsHeading>
-        <div className="ml-auto flex items-center gap-2">
-          {selectionActions}
-          {isAdmin ? (
-            <PillButtonUI
-              tone="black"
-              size="sm"
-              aria-haspopup="dialog"
-              onClick={() => {
-                setInviteOpen(true);
-                // The modal shows the invitation list this page loaded, which
-                // by now may name people who have already accepted.
-                void refreshPeople();
-              }}
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Add member
-            </PillButtonUI>
-          ) : null}
-        </div>
-      </div>
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+      <PageHeader
+        loading={loading}
+        breadcrumbs={[
+          {
+            label: "Organization Settings",
+            onClick: () => router.push(`/organizations/${orgId}/settings`),
+            title: "Back to Organization Settings",
+          },
+          { label: "Members", cursor: "text" },
+        ]}
+        actions={[
+          {
+            type: "search",
+            value: search,
+            onChange: (value) => {
+              setSearch(value);
+              // A selection made in one result set does not carry into
+              // another, where some of it would be out of sight.
+              setSelectedMemberIds([]);
+            },
+            placeholder: "Search members…",
+          },
+          {
+            type: "new",
+            title: isAdmin
+              ? "Add member"
+              : "Only organization admins can add members",
+            disabled: !isAdmin,
+            onClick: () => {
+              setInviteOpen(true);
+              // The modal shows the invitation list this page loaded, which
+              // by now may name people who have already accepted.
+              void refreshPeople();
+            },
+          },
+        ]}
+      />
+
+      <TableToolbar
+        leading={
+          // Plain text, and always present, so the row does not appear and
+          // push the table down the moment somebody is selected.
+          <span className="text-xs text-gray-500">
+            {loading
+              ? ""
+              : `${members.length} ${members.length === 1 ? "member" : "members"}`}
+          </span>
+        }
+        actions={selectionActions ?? undefined}
+      />
 
       <PeopleTable
         loading={loading}
         error={loadError}
         members={members}
+        search={search}
         selectedMemberIds={selectedMemberIds}
         onSelectedMemberIdsChange={setSelectedMemberIds}
         currentUserId={user?.id ?? null}
@@ -545,7 +578,7 @@ export function OrganizationMembers({
         message={actionError}
         onClose={() => setActionError(null)}
       />
-    </section>
+    </div>
   );
 }
 
@@ -553,6 +586,7 @@ function PeopleTable({
   loading,
   error,
   members,
+  search,
   selectedMemberIds,
   onSelectedMemberIdsChange,
   currentUserId,
@@ -566,6 +600,8 @@ function PeopleTable({
   loading: boolean;
   error: string | null;
   members: OrgMember[];
+  /** Narrows the roster to people whose name or email contains it. */
+  search: string;
   selectedMemberIds: string[];
   onSelectedMemberIdsChange: Dispatch<SetStateAction<string[]>>;
   currentUserId: string | null;
@@ -583,9 +619,14 @@ function PeopleTable({
     direction: TableSortDirection;
   } | null>(null);
   const visibleMembers = useMemo(() => {
-    const filtered = roleFilter
-      ? members.filter((member) => member.role === roleFilter)
-      : members;
+    const query = search.trim().toLowerCase();
+    const filtered = members.filter(
+      (member) =>
+        (!roleFilter || member.role === roleFilter) &&
+        (!query ||
+          (member.display_name ?? "").toLowerCase().includes(query) ||
+          (member.email ?? "").toLowerCase().includes(query)),
+    );
     if (!sort) return filtered;
     const multiplier = sort.direction === "asc" ? 1 : -1;
     return [...filtered].sort((a, b) => {
@@ -606,7 +647,7 @@ function PeopleTable({
           : b.display_name || b.email || b.user_id;
       return aValue.localeCompare(bValue) * multiplier;
     });
-  }, [members, roleFilter, sort]);
+  }, [members, roleFilter, search, sort]);
   const allSelected =
     visibleMembers.length > 0 &&
     visibleMembers.every((member) => selectedMemberIds.includes(member.id));
@@ -641,8 +682,6 @@ function PeopleTable({
 
   return (
     <TableScrollArea
-      // Inside a settings section, which has its own gutters.
-      className="mx-0 mb-0 flex-none md:mx-0 md:mb-0"
       header={
         <TableHeaderRow>
           <TableStickyCell header>
@@ -727,7 +766,11 @@ function PeopleTable({
         </TableEmptyState>
       ) : visibleMembers.length === 0 ? (
         <TableEmptyState>
-          <p className="text-sm text-gray-400">No people match this filter.</p>
+          <p className="text-sm text-gray-400">
+            {search.trim()
+              ? "No people match this search."
+              : "No people match this filter."}
+          </p>
         </TableEmptyState>
       ) : (
         <TableBody>

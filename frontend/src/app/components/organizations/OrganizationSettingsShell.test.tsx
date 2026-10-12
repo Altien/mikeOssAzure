@@ -5,7 +5,8 @@ import { useEffect } from "react";
 import { MikeApiError } from "@/app/lib/mikeApi";
 import { OrganizationProvidersSettings } from "./OrganizationProvidersSettings";
 import {
-  OrganizationSettingsShell,
+  OrganizationSettingsFrame,
+  OrganizationSettingsProvider,
   organizationSettingsHref,
   useOrganizationSettings,
 } from "./OrganizationSettingsShell";
@@ -46,8 +47,14 @@ function Section() {
   return <p>section for {value.org?.name ?? "…"}</p>;
 }
 
+// As the routes compose them: the provider around everything under
+// settings, the frame around the pages that sit inside it.
 const renderShell = (children = <Section />) =>
-  render(<OrganizationSettingsShell orgId="org-1">{children}</OrganizationSettingsShell>);
+  render(
+    <OrganizationSettingsProvider orgId="org-1">
+      <OrganizationSettingsFrame>{children}</OrganizationSettingsFrame>
+    </OrganizationSettingsProvider>,
+  );
 const sections = () =>
   within(screen.getByRole("navigation", { name: "Organization settings" }))
     .getAllByRole("button")
@@ -102,12 +109,19 @@ describe("the sections each role is offered", () => {
 });
 
 describe("the frame", () => {
-  it("is headed by the organization's name and says what kind of settings these are", async () => {
+  it("is headed Organization Settings, whichever organization it is", async () => {
     renderShell();
+    // Before the organization has loaded, and after.
     expect(
-      await screen.findByRole("heading", { level: 1, name: "Elite Law LLP" }),
+      screen.getByRole("heading", { level: 1, name: "Organization Settings" }),
     ).toBeInTheDocument();
-    expect(screen.getAllByText("Organization settings")).not.toHaveLength(0);
+    await screen.findByText("section for Elite Law LLP");
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Organization Settings" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Elite Law LLP" }),
+    ).not.toBeInTheDocument();
   });
 
   it("marks the open section, and General only on its own page", async () => {
@@ -149,10 +163,21 @@ describe("the frame", () => {
 
     act(() => latest.setOrg({ ...latest.org!, name: "Elite Law Group" }));
 
-    expect(
-      screen.getByRole("heading", { level: 1, name: "Elite Law Group" }),
-    ).toBeInTheDocument();
     expect(screen.getByText("section for Elite Law Group")).toBeInTheDocument();
+  });
+
+  it("shares the organization with a page outside the frame, such as Members", async () => {
+    // Members is a full table page: inside the provider, not the frame.
+    render(
+      <OrganizationSettingsProvider orgId="org-1">
+        <Section />
+      </OrganizationSettingsProvider>,
+    );
+    expect(
+      await screen.findByText("section for Elite Law LLP"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
+    expect(mocks.getOrg).toHaveBeenCalledExactlyOnceWith("org-1");
   });
 
   it("tells somebody outside the organization nothing about it, and offers a retry", async () => {

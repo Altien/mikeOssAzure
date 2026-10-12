@@ -21,15 +21,12 @@ export interface SettingsShellTab {
  */
 export function SettingsShell({
     title,
-    eyebrow,
     navLabel,
     tabs,
     rootHref,
     children,
 }: {
     title: ReactNode;
-    /** A line above the title, naming what kind of settings these are. */
-    eyebrow?: ReactNode;
     /** The navigation's accessible name. */
     navLabel: string;
     tabs: SettingsShellTab[];
@@ -41,11 +38,8 @@ export function SettingsShell({
 
     return (
         <div className="flex h-full flex-col overflow-y-auto">
-            <header className="mx-auto flex h-16 w-full max-w-5xl shrink-0 flex-col justify-end px-6 pb-2 md:h-24 md:pb-4">
-                {eyebrow ? (
-                    <p className="text-sm text-gray-500">{eyebrow}</p>
-                ) : null}
-                <h1 className="min-w-0 text-4xl font-medium font-eb-garamond break-words">
+            <header className="mx-auto flex h-16 w-full max-w-5xl shrink-0 items-end px-6 pb-2 md:h-24 md:pb-4">
+                <h1 className="text-4xl font-medium font-eb-garamond">
                     {title}
                 </h1>
             </header>
