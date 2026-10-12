@@ -368,7 +368,10 @@ describe("the organization's logo", () => {
 
     mocks.org = orgAs("admin");
     render(<OrganizationGeneralSettings />);
-    expect(screen.getByRole("button", { name: "Upload logo" })).toBeEnabled();
+    const upload = screen.getByRole("button", { name: "Upload logo" });
+    expect(upload).toBeEnabled();
+    // The row's one action to take: blue, like the cards' Add and Manage.
+    expect(upload.className).toMatch(/bg-blue-/);
     // Nothing to remove until one is set.
     expect(
       screen.queryByRole("button", { name: "Remove logo" }),

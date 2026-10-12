@@ -285,7 +285,7 @@ export function OrganizationGeneralSettings() {
                   </PillButtonUI>
                 ) : null}
                 <PillButtonUI
-                  tone="white"
+                  tone="blue"
                   size="sm"
                   disabled={logoBusy !== null}
                   loading={logoBusy === "upload"}
