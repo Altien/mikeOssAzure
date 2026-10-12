@@ -140,9 +140,12 @@ The Word add-in supplies the same two variables from
 De facto type scale in the app chrome, most to least common: `text-xs` (dense
 table and control text — the default for most chrome), `text-sm` (body copy,
 normal-size buttons), `text-[10px]` (badges, superscript citations),
-`text-2xl font-serif` (display headings and empty states). There is no separate
-heading component; use `EmptyState` for empty-state headings and `PageHeader`
-for page titles so the display style stays in one place.
+`text-2xl font-serif` (display headings and empty states), `text-xl font-serif`
+(page titles and breadcrumbs). There is no separate heading component; use
+`EmptyState` for empty-state headings and `PageHeader` for page titles so the
+display style stays in one place. A plain page title is an `<h1>` passed as
+`PageHeader`'s children with `PAGE_HEADER_TITLE_CLASS` (from
+`shared/pageHeaderStyles.ts`), which is also what its breadcrumbs use.
 
 ## Spacing and radius
 
