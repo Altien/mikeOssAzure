@@ -57,6 +57,29 @@ describe("AccessVisibilityField", () => {
         );
     });
 
+    it("sets what the choice means beside the toggle, not under it", () => {
+        const { container } = render(
+            <AccessVisibilityField
+                visibility="private"
+                onChange={vi.fn()}
+                organizationName="Elite Law LLP"
+                resourceNoun="project"
+            />,
+        );
+        const description = container.querySelector(
+            '[data-slot="access-visibility-description"]',
+        )!;
+        const row = description.parentElement!;
+        // One row holding the toggle and then the text...
+        expect(row).toHaveClass("flex", "items-center");
+        expect(row.firstElementChild).toContainElement(option("Private"));
+        expect(row.lastElementChild).toBe(description);
+        // ...which wraps onto its own line only when there is no room.
+        expect(row).toHaveClass("flex-wrap");
+        expect(description).toHaveClass("min-w-0");
+        expect(description).not.toHaveClass("mt-1.5");
+    });
+
     it("reports the option that was chosen", () => {
         const onChange = vi.fn();
         render(

@@ -47,20 +47,27 @@ export function AccessVisibilityField({
             <FieldLabel as="p" id={labelId}>
                 Access
             </FieldLabel>
-            <ModalSegmentedToggle
-                value={visibility}
-                onChange={onChange}
-                options={OPTIONS}
-                disabled={disabled}
-            />
-            <p
-                id={descriptionId}
-                className="mt-1.5 text-xs leading-4 text-gray-500"
-            >
-                {visibility === "organization"
-                    ? `Everyone in ${organizationLabel} can open and edit this ${resourceNoun}.`
-                    : `Only the people you share this ${resourceNoun} with can open it.`}
-            </p>
+            {/* The choice, and beside it what the choice means. The text takes
+                the room the toggle leaves and wraps within it; where there is
+                too little for a few words it drops onto its own line. */}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                <ModalSegmentedToggle
+                    value={visibility}
+                    onChange={onChange}
+                    options={OPTIONS}
+                    disabled={disabled}
+                    className="shrink-0"
+                />
+                <p
+                    id={descriptionId}
+                    data-slot="access-visibility-description"
+                    className="min-w-0 flex-[1_1_8rem] text-xs leading-4 text-gray-500"
+                >
+                    {visibility === "organization"
+                        ? `Everyone in ${organizationLabel} can open and edit this ${resourceNoun}.`
+                        : `Only the people you share this ${resourceNoun} with can open it.`}
+                </p>
+            </div>
         </div>
     );
 }
