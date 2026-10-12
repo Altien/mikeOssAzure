@@ -312,6 +312,33 @@ describe("deleteUserOrganizations", () => {
         expect(db._tables.organizations).toHaveLength(0);
     });
 
+    it("leaves the account's personal organization for the account's own deletion to remove", async () => {
+        // It goes when the auth user does (personal_user_id cascades). Deleting
+        // it here would leave an account whose deletion was interrupted, and
+        // which signs back in, without one.
+        const db = makeDb(
+            {
+                organizations: [
+                    {
+                        id: "mine",
+                        name: "Personal",
+                        kind: "personal",
+                        personal_user_id: "u1",
+                    },
+                ],
+                org_members: [
+                    { id: "m1", org_id: "mine", user_id: "u1", role: "owner", created_at: 1 },
+                ],
+                projects: [{ id: "p1", org_id: "mine", user_id: "u1" }],
+                auth_users: [{ id: "u1" }],
+            },
+            { lastOwnerTrigger: true },
+        );
+        await deleteUserOrganizations(db, "u1");
+        expect(db._tables.organizations).toHaveLength(1);
+        expect(db._tables.org_members).toHaveLength(1);
+    });
+
     it("keeps a projectless org that still owns workflows", async () => {
         // Workflows (and documents, and tabular reviews) are filed under an
         // org independently of any project, and the cleanup detaches them —
@@ -521,6 +548,27 @@ describe("listOrgsBlockingAccountDeletion", () => {
         ).resolves.toEqual([
             { org_id: "o1", name: "Solo LLP", reason: "content" },
         ]);
+    });
+
+    it("never blocks on the account's personal organization, whatever it holds", async () => {
+        // What it holds is the account's own work, deleted with the rest.
+        const db = makeDb({
+            organizations: [
+                {
+                    id: "mine",
+                    name: "Personal",
+                    kind: "personal",
+                    personal_user_id: "u1",
+                },
+            ],
+            org_members: [
+                { id: "m1", org_id: "mine", user_id: "u1", role: "owner", created_at: 1 },
+            ],
+            projects: [{ id: "p1", org_id: "mine", user_id: "u1" }],
+        });
+        await expect(listOrgsBlockingAccountDeletion(db, "u1")).resolves.toEqual(
+            [],
+        );
     });
 
     it("does not block an empty org with no other members", async () => {

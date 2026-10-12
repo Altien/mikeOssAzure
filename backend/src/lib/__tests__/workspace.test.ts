@@ -56,6 +56,7 @@ describe("resolveWorkspaceFilter", () => {
     it("accepts an organization the caller belongs to, scoped to that caller", async () => {
         const fake = scriptedDb([
             { table: "org_members", data: { org_id: ORG } },
+            { table: "organizations", data: { kind: "team" } },
         ]);
         await expect(
             resolveWorkspaceFilter(fake.db, "u1", ORG.toUpperCase()),
@@ -70,10 +71,36 @@ describe("resolveWorkspaceFilter", () => {
     });
 
     it("reports an organization the caller is not in as missing", async () => {
-        const fake = scriptedDb([{ table: "org_members", data: null }]);
+        const fake = scriptedDb([
+            { table: "org_members", data: null },
+            { table: "organizations", data: { kind: "team" } },
+        ]);
         await expect(
             resolveWorkspaceFilter(fake.db, "u1", ORG),
         ).resolves.toEqual({ ok: false, kind: "not_found" });
+        fake.done();
+    });
+
+    it("reports the caller's own personal organization as missing: it is reached as 'personal'", async () => {
+        const fake = scriptedDb([
+            { table: "org_members", data: { org_id: ORG } },
+            { table: "organizations", data: { kind: "personal" } },
+        ]);
+        await expect(
+            resolveWorkspaceFilter(fake.db, "u1", ORG),
+        ).resolves.toEqual({ ok: false, kind: "not_found" });
+        expect(fake.calls[1].filters).toEqual([["eq", "id", ORG]]);
+        fake.done();
+    });
+
+    it("throws when the organization's kind cannot be read, instead of letting it through", async () => {
+        const fake = scriptedDb([
+            { table: "org_members", data: { org_id: ORG } },
+            { table: "organizations", error: { message: "connection reset" } },
+        ]);
+        await expect(
+            resolveWorkspaceFilter(fake.db, "u1", ORG),
+        ).rejects.toThrow("Failed to read the organization's kind");
         fake.done();
     });
 
@@ -100,6 +127,7 @@ describe("resolveWorkspaceFilter", () => {
         // must not move somebody out of their firm's workspace.
         const fake = scriptedDb([
             { table: "org_members", error: { message: "connection reset" } },
+            { table: "organizations", data: { kind: "team" } },
         ]);
         await expect(
             resolveWorkspaceFilter(fake.db, "u1", ORG),

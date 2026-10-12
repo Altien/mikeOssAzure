@@ -21,9 +21,9 @@ import type { Db } from "./supabase";
  * `resolveOrgContentRole` below is that rule; public.project_access_role and
  * public.workflow_access_role in schema.sql are its SQL twins.
  *
- * Personal content is simply `org_id IS NULL` — there is no hidden personal
- * organization. Content without an org is reachable through branches 1 and 2
- * only.
+ * Personal content is still `org_id IS NULL`: each account has a personal
+ * organization of its own (lib/personalOrgs.ts), but no work has moved into
+ * it. Content without an org is reachable through branches 1 and 2 only.
  */
 
 import {
@@ -277,8 +277,8 @@ export async function getProjectGrantRole(
 /**
  * Choose the org_id a newly created resource should carry. Content created
  * inside a project inherits that project's org; everything else is personal
- * (org_id null). There is no personal organization to fall back to — an
- * absent org IS the personal case.
+ * (org_id null). An absent org is still the personal case: the account's
+ * personal organization exists, but nothing is filed under it yet.
  *
  * Result-shaped because "the lookup failed" and "this is personal" must
  * never share a value. `null` is not a safe default here: it is the very

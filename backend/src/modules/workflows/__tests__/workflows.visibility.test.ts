@@ -20,6 +20,7 @@ describe("createWorkflow visibility", () => {
     it("creates an organization's workflow private by default", async () => {
         const fake = scriptedDb([
             { table: "org_members", data: { role: "member" } },
+            { table: "organizations", data: { kind: "team" } },
             {
                 table: "workflows",
                 op: "insert",
@@ -28,7 +29,7 @@ describe("createWorkflow visibility", () => {
         ]);
         const result = await createWorkflow(fake.db, { ...base, org_id: ORG });
 
-        expect(fake.calls[1].payload).toMatchObject({
+        expect(fake.calls[2].payload).toMatchObject({
             org_id: ORG,
             visibility: "private",
         });
@@ -43,6 +44,7 @@ describe("createWorkflow visibility", () => {
     it("opens it to the organization when its creator asks", async () => {
         const fake = scriptedDb([
             { table: "org_members", data: { role: "member" } },
+            { table: "organizations", data: { kind: "team" } },
             {
                 table: "workflows",
                 op: "insert",
@@ -55,7 +57,7 @@ describe("createWorkflow visibility", () => {
             visibility: "organization",
         });
 
-        expect(fake.calls[1].payload).toMatchObject({
+        expect(fake.calls[2].payload).toMatchObject({
             visibility: "organization",
         });
         expect(result).toMatchObject({
@@ -73,9 +75,27 @@ describe("createWorkflow visibility", () => {
         fake.done();
     });
 
+    it("refuses the caller's own personal organization named by id, before writing anything", async () => {
+        // Personal work is made by naming no organization. The organization
+        // behind it answers as one the caller is not in.
+        const fake = scriptedDb([
+            { table: "org_members", data: { role: "owner" } },
+            { table: "organizations", data: { kind: "personal" } },
+        ]);
+        await expect(
+            createWorkflow(fake.db, { ...base, org_id: ORG }),
+        ).resolves.toEqual({
+            ok: false,
+            kind: "validation",
+            detail: "You are not a member of that organization.",
+        });
+        fake.done();
+    });
+
     it("refuses a visibility that is not one of the two", async () => {
         const fake = scriptedDb([
             { table: "org_members", data: { role: "member" } },
+            { table: "organizations", data: { kind: "team" } },
         ]);
         await expect(
             createWorkflow(fake.db, {

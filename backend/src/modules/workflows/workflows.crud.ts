@@ -2,6 +2,7 @@ import { captureInlineDocumentCleanup, completeInlineDocumentCleanup } from "../
 // workflows crud — implementation behind the module facade.
 import { type Db } from "../../lib/supabase";
 import { getOrgRole, parseContentVisibility } from "../../lib/access";
+import { isPersonalOrg } from "../../lib/personalOrgs";
 // devLog comes from lib/chat/types (a leaf file — importing the whole chat
 // barrel here just for a logger would be a heavy dependency edge).
 import { devLog } from "../../lib/log";
@@ -42,9 +43,10 @@ export async function createWorkflow(
   } = params;
   // Tenant assignment, exactly as POST /projects does it: an explicit
   // org_id must be one the caller belongs to, and its absence means
-  // personal (org_id stays NULL, which IS the representation of personal
-  // now that hidden personal orgs are gone). Workflows have no project to
-  // inherit from, so an explicit id is the only context available.
+  // personal (org_id stays NULL, which is still the representation of
+  // personal). A person's own organization is not named here: it answers as
+  // one they do not belong to. Workflows have no project to inherit from, so
+  // an explicit id is the only context available.
   let orgId: string | null = null;
   if (org_id != null) {
     if (typeof org_id !== "string" || !org_id.trim())
@@ -54,7 +56,7 @@ export async function createWorkflow(
         detail: "org_id must be a non-empty string",
       };
     const role = await getOrgRole(userId, org_id, db);
-    if (!role)
+    if (!role || (await isPersonalOrg(db, org_id)))
       return {
         ok: false,
         kind: "validation",

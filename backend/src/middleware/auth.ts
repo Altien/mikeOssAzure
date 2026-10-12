@@ -156,5 +156,17 @@ export async function requireAuth(
     return;
   }
 
+  // Upstream divergence (sync-log: 3ca82155): Dev owns profile creation
+  // after validated Entra/local identity and session/tombstone checks. A
+  // personal-org failure must not undo profile initialization or sign-in.
+  try {
+    const { error } = await createServerSupabase().rpc("ensure_personal_organization", {
+      p_user_id: result.principal.userId,
+    });
+    if (error) console.warn("[auth/personal-org] initialization failed", { code: error.code });
+  } catch {
+    console.warn("[auth/personal-org] initialization unavailable");
+  }
+
   await tenantAccess(req, res, next);
 }

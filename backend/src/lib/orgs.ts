@@ -43,6 +43,7 @@ import {
     type OrgRole,
 } from "./access";
 import { isOrgAccessOverrideRole } from "./orgAccessOverrides";
+import { isPersonalOrgRow } from "./personalOrgs";
 
 type DbError = { code?: string; message: string } | null;
 
@@ -134,12 +135,16 @@ export async function listMyOrgs(
     const orgIds = [...roleByOrg.keys()];
     if (orgIds.length === 0) return { ok: true, orgs: [] };
 
-    const { data: orgs, error: orgsError } = await db
+    const { data: allOrgs, error: orgsError } = await db
         .from("organizations")
         .select("*")
         .in("id", orgIds);
     if (orgsError)
         return { ok: false, kind: "db_error", detail: orgsError.message };
+    // A person's own organization is not one of "their organizations".
+    const orgs = ((allOrgs ?? []) as { id: string }[]).filter(
+        (org) => !isPersonalOrgRow(org),
+    );
 
     // Roster sizes let the UI render "N members" without a second round-trip
     // per org.
@@ -153,7 +158,7 @@ export async function listMyOrgs(
         memberCounts.set(row.org_id, (memberCounts.get(row.org_id) ?? 0) + 1);
     }
 
-    const enriched = ((orgs ?? []) as { id: string }[]).map((o) => ({
+    const enriched = orgs.map((o) => ({
         ...o,
         role: roleByOrg.get(o.id) ?? null,
         member_count: memberCounts.get(o.id) ?? 0,

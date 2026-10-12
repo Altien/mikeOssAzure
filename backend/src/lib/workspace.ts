@@ -17,6 +17,7 @@
 
 import { type Response } from "express";
 import type { Db } from "./supabase";
+import { isPersonalOrg } from "./personalOrgs";
 
 export const PERSONAL_WORKSPACE = "personal";
 
@@ -50,16 +51,21 @@ export async function resolveWorkspaceFilter(
     if (!UUID_PATTERN.test(raw)) return { ok: false, kind: "validation" };
 
     const orgId = raw.toLowerCase();
-    const { data, error } = await db
-        .from("org_members")
-        .select("org_id")
-        .eq("org_id", orgId)
-        .eq("user_id", userId)
-        .maybeSingle();
+    const [{ data, error }, personal] = await Promise.all([
+        db
+            .from("org_members")
+            .select("org_id")
+            .eq("org_id", orgId)
+            .eq("user_id", userId)
+            .maybeSingle(),
+        isPersonalOrg(db, orgId),
+    ]);
     if (error) throw new Error("Failed to resolve the active workspace");
     // Not a member reads as missing, never forbidden: a 403 would confirm
     // that an organization with this id exists.
     if (!data) return { ok: false, kind: "not_found" };
+    // A person's own organization is reached as "personal", never by id.
+    if (personal) return { ok: false, kind: "not_found" };
     return { ok: true, workspace: orgId };
 }
 

@@ -6,6 +6,7 @@ import { removeGrantsForEmail } from "../../lib/projectAccess";
 import { removeContentGrantsForEmail } from "../../lib/contentAccess";
 import { chunkArray } from "../../lib/arrays";
 import { ORG_CONTENT_TABLES } from "../../lib/orgs";
+import { listPersonalOrgIds } from "../../lib/personalOrgs";
 import { throwIfError, uniqueStrings } from "./user.shared";
 
 const DELETE_BATCH_SIZE = 500;
@@ -588,6 +589,9 @@ export async function listOrgsBlockingAccountDeletion(
         .select("id, org_id, role")
         .eq("user_id", userId);
     await throwIfError(membershipError, "Failed to load org memberships");
+    // The account's own organization is the account's: what it holds is
+    // deleted with everything else of theirs, so it never stands in the way.
+    const personalOrgIds = await listPersonalOrgIds(db, userId);
 
     const blockers: AccountDeletionOrgBlocker[] = [];
     for (const m of (memberships ?? []) as {
@@ -596,6 +600,7 @@ export async function listOrgsBlockingAccountDeletion(
         role: string;
     }[]) {
         if (m.role !== "owner") continue;
+        if (personalOrgIds.has(m.org_id)) continue;
 
         const { data: otherOwners, error: otherOwnersError } = await db
             .from("org_members")
@@ -674,12 +679,17 @@ export async function deleteUserOrganizations(
         .select("id, org_id, role")
         .eq("user_id", userId);
     await throwIfError(membershipError, "Failed to load org memberships");
+    // Left alone: the account's own organization is removed with the account
+    // itself (organizations.personal_user_id cascades), so a deletion that is
+    // interrupted and resumed never leaves an account without one.
+    const personalOrgIds = await listPersonalOrgIds(db, userId);
 
     for (const m of (memberships ?? []) as {
         id: string;
         org_id: string;
         role: string;
     }[]) {
+        if (personalOrgIds.has(m.org_id)) continue;
         if (m.role === "owner") {
             const { data: otherOwners, error: otherOwnersError } = await db
                 .from("org_members")

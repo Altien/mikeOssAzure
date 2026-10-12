@@ -5,6 +5,7 @@ import {
   attachActiveVersionPaths,
   attachLatestVersionNumbers,
 } from "../../lib/documentVersions";
+import { isPersonalOrg } from "../../lib/personalOrgs";
 import {
   buildProjectExportManifest,
   projectManifestFilename,
@@ -536,12 +537,13 @@ export async function createProject(
   }
 
   // Tenant assignment: an explicit org_id must be one the caller belongs to.
-  // No org_id means a personal project — org_id stays NULL, which is the
-  // whole representation of "personal" now that hidden personal orgs are gone.
+  // No org_id means a personal project — org_id stays NULL, which is still
+  // the representation of "personal". A person's own organization is not
+  // named here: it answers as one they do not belong to.
   let resolvedOrgId: string | null = null;
   if (org_id) {
     const role = await getOrgRole(userId, org_id, db);
-    if (!role)
+    if (!role || (await isPersonalOrg(db, org_id)))
       return {
         ok: false,
         kind: "validation",

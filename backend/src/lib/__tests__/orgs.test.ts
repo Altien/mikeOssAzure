@@ -352,6 +352,30 @@ describe("orgs.service roles", () => {
             member_count: 2,
         });
     });
+
+    it("leaves out a person's own personal organization", async () => {
+        const db = makeDb({
+            organizations: [
+                { id: "o1", name: "Acme", kind: "team" },
+                {
+                    id: "mine",
+                    name: "Personal",
+                    kind: "personal",
+                    personal_user_id: "member1",
+                },
+            ],
+            org_members: [
+                { id: "m1", org_id: "o1", user_id: "member1", role: "member" },
+                { id: "m2", org_id: "mine", user_id: "member1", role: "owner" },
+            ],
+        });
+        const result = await listMyOrgs(db, "member1");
+        expect(result).toMatchObject({ ok: true });
+        if (!result.ok) return;
+        expect(result.orgs.map((org) => (org as { id: string }).id)).toEqual([
+            "o1",
+        ]);
+    });
 });
 
 describe("organization resources", () => {
