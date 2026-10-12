@@ -145,7 +145,10 @@ normal-size buttons), `text-[10px]` (badges, superscript citations),
 `EmptyState` for empty-state headings and `PageHeader` for page titles so the
 display style stays in one place. A plain page title is an `<h1>` passed as
 `PageHeader`'s children with `PAGE_HEADER_TITLE_CLASS` (from
-`shared/pageHeaderStyles.ts`), which is also what its breadcrumbs use.
+`shared/pageHeaderStyles.ts`), which is also what its breadcrumbs use. The settings
+areas' own header (`SettingsShell`) uses the same title class and the same
+`PAGE_HEADER_ROW_CLASS`, which is what keeps every page's title on the line of
+the sidebar's logo text.
 
 ## Spacing and radius
 

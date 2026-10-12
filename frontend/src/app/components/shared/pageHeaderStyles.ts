@@ -9,3 +9,13 @@
  * size it crowded them.
  */
 export const PAGE_HEADER_TITLE_CLASS = "font-serif text-xl font-medium";
+
+/**
+ * The height and padding of the row a page's title sits in, which is what
+ * puts the title on the same line as the sidebar's logo text. Beside the
+ * sidebar (md and up) that row is 44px tall and starts 12px down plus the
+ * sidebar's 1px border, so the 44px of content here starts 13px down, not
+ * 12. Shared by PageHeader and the settings areas' own header.
+ */
+export const PAGE_HEADER_ROW_CLASS =
+    "min-h-[76px] pb-5 pt-3 md:pb-[19px] md:pt-[13px]";

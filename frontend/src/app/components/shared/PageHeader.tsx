@@ -20,7 +20,10 @@ import {
 import {
     LIQUID_GLASS_SELECTED_CLASS,
 } from "@/app/components/ui/liquid-surface";
-import { PAGE_HEADER_TITLE_CLASS } from "./pageHeaderStyles";
+import {
+    PAGE_HEADER_ROW_CLASS,
+    PAGE_HEADER_TITLE_CLASS,
+} from "./pageHeaderStyles";
 import {
     HeaderButtonUI,
     HeaderButtonsUI,
@@ -120,11 +123,7 @@ export function PageHeader({
             className={cn(
                 "flex items-center justify-between",
                 "mx-4 md:mx-8",
-                // Beside the sidebar (md and up) the title has to sit on the
-                // same line as the sidebar's logo text. That row is 44px tall
-                // and starts 12px down plus the sidebar's 1px border, so the
-                // header's own 44px of content starts 13px down, not 12.
-                "min-h-[76px] pb-5 pt-3 md:pb-[19px] md:pt-[13px]",
+                PAGE_HEADER_ROW_CLASS,
                 shrink && "shrink-0",
             )}
         >

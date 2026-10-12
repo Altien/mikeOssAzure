@@ -237,3 +237,23 @@ describe("the Model Providers section", () => {
     expect(mocks.push).toHaveBeenCalledWith("/organizations/org-1/settings");
   });
 });
+
+describe("the settings title", () => {
+  it("is set like every other page's title, on the same row", async () => {
+    // Not the larger display heading it used to be: a settings area is a
+    // page like the rest, and its title lines up with the sidebar's logo.
+    renderShell();
+    const title = screen.getByRole("heading", {
+      level: 1,
+      name: "Organization Settings",
+    });
+    expect(title).toHaveClass("font-serif", "text-xl", "font-medium");
+    expect(title).not.toHaveClass("text-4xl");
+    expect(title.closest("header")).toHaveClass(
+      "min-h-[76px]",
+      "md:pt-[13px]",
+      "md:pb-[19px]",
+    );
+    await screen.findByText("section for Elite Law LLP");
+  });
+});

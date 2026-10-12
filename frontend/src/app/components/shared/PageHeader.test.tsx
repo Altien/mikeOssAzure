@@ -1,7 +1,10 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { PageHeader } from "./PageHeader";
-import { PAGE_HEADER_TITLE_CLASS } from "./pageHeaderStyles";
+import {
+    PAGE_HEADER_ROW_CLASS,
+    PAGE_HEADER_TITLE_CLASS,
+} from "./pageHeaderStyles";
 
 // A page's title is one size wherever it appears: as a plain title, as
 // breadcrumbs, and as the placeholder shown while a name loads.
@@ -57,6 +60,13 @@ describe("PageHeader title size", () => {
             "min-h-[76px]",
             "md:pt-[13px]",
             "md:pb-[19px]",
+        );
+        expect(PAGE_HEADER_ROW_CLASS.split(" ")).toEqual(
+            expect.arrayContaining([
+                "min-h-[76px]",
+                "md:pt-[13px]",
+                "md:pb-[19px]",
+            ]),
         );
     });
 
