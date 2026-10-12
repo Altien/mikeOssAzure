@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ownerlessRpcResult } from "../../__tests__/helpers/ownerlessRpc";
 import {
     acceptInvitation,
@@ -1248,18 +1248,36 @@ const roleOf = (db: any, userId: string) =>
 describe("owner and admin tiers", () => {
     it("lets only an owner delete the organization", async () => {
         const db = seedTiers();
+        const purgeContent = vi.fn(async () => {});
         await expect(
-            deleteOrg(db, { userId: "member1", orgId: "o1" }),
+            deleteOrg(db, { userId: "member1", orgId: "o1", purgeContent }),
         ).resolves.toMatchObject({ ok: false, kind: "forbidden" });
         await expect(
-            deleteOrg(db, { userId: "orgadmin1", orgId: "o1" }),
+            deleteOrg(db, { userId: "orgadmin1", orgId: "o1", purgeContent }),
         ).resolves.toMatchObject({ ok: false, kind: "owner_required" });
         expect(db._tables.organizations).toHaveLength(1);
+        // Nobody's content is touched on behalf of someone who may not delete.
+        expect(purgeContent).not.toHaveBeenCalled();
 
         await expect(
-            deleteOrg(db, { userId: "owner1", orgId: "o1" }),
+            deleteOrg(db, { userId: "owner1", orgId: "o1", purgeContent }),
         ).resolves.toMatchObject({ ok: true });
+        expect(purgeContent).toHaveBeenCalledWith(db, "o1");
         expect(db._tables.organizations).toHaveLength(0);
+    });
+
+    it("keeps the organization when its content could not be deleted", async () => {
+        const db = seedTiers();
+        await expect(
+            deleteOrg(db, {
+                userId: "owner1",
+                orgId: "o1",
+                purgeContent: async () => {
+                    throw new Error("Failed to delete organization documents");
+                },
+            }),
+        ).resolves.toMatchObject({ ok: false, kind: "db_error" });
+        expect(db._tables.organizations).toHaveLength(1);
     });
 
     it.each(["admin", "owner"])(

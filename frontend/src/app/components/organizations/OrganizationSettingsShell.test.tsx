@@ -89,15 +89,24 @@ beforeEach(() => {
 });
 
 describe("the sections each role is offered", () => {
-  it.each(["owner", "admin"] as const)(
-    "offers an %s General, Members and Model Providers",
-    async (role) => {
-      mocks.role = role;
-      renderShell();
-      await screen.findByText("section for Elite Law LLP");
-      expect(sections()).toEqual(["General", "Members", "Model Providers"]);
-    },
-  );
+  it("offers an owner General, Members, Model Providers and Privacy & Data", async () => {
+    mocks.role = "owner";
+    renderShell();
+    await screen.findByText("section for Elite Law LLP");
+    expect(sections()).toEqual([
+      "General",
+      "Members",
+      "Model Providers",
+      "Privacy & Data",
+    ]);
+  });
+
+  it("offers an admin General, Members and Model Providers, not Privacy & Data", async () => {
+    mocks.role = "admin";
+    renderShell();
+    await screen.findByText("section for Elite Law LLP");
+    expect(sections()).toEqual(["General", "Members", "Model Providers"]);
+  });
 
   it("offers a member General and Members only", async () => {
     mocks.role = "member";

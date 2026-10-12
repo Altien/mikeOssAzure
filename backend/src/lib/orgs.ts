@@ -243,9 +243,23 @@ export async function updateOrg(
     return { ok: true, org: { ...org, role } };
 }
 
+/**
+ * Delete an organization and everything it owns. Owner only.
+ *
+ * Deleting the content is the caller's to supply: it needs the documents and
+ * projects modules, which lib/ may not import, so modules/orgs passes
+ * `purgeContent` in. It runs after the owner check and before the row goes,
+ * because every `org_id` foreign key on a content table is ON DELETE
+ * RESTRICT.
+ */
 export async function deleteOrg(
     db: Db,
-    params: { userId: string; userEmail?: string | null; orgId: string },
+    params: {
+        userId: string;
+        userEmail?: string | null;
+        orgId: string;
+        purgeContent: (db: Db, orgId: string) => Promise<void>;
+    },
 ): Promise<OrgResult<Record<never, never>>> {
     const role = await getOrgRole(params.userId, params.orgId, db);
     if (!role) return { ok: false, kind: "not_found" };
@@ -259,29 +273,18 @@ export async function deleteOrg(
         .maybeSingle();
     if (!org) return { ok: false, kind: "not_found" };
 
-    const inventories = await Promise.all(
-        ORG_CONTENT_TABLES.map(async (table) => ({
-            table,
-            result: await db.from(table).select("id").eq("org_id", params.orgId),
-        })),
-    );
-    const failedInventory = inventories.find((entry) => entry.result.error);
-    if (failedInventory?.result.error)
+    try {
+        await params.purgeContent(db, params.orgId);
+    } catch (error) {
         return {
             ok: false,
             kind: "db_error",
-            detail: failedInventory.result.error.message,
+            detail:
+                error instanceof Error
+                    ? error.message
+                    : "Failed to delete organization content",
         };
-    const resourceCount = inventories.reduce(
-        (count, entry) => count + (entry.result.data?.length ?? 0),
-        0,
-    );
-    if (resourceCount > 0)
-        return {
-            ok: false,
-            kind: "conflict",
-            detail: `This organization still contains ${resourceCount} resource${resourceCount === 1 ? "" : "s"}. Move or delete them before deleting the organization.`,
-        };
+    }
 
     const { error } = await db
         .from("organizations")

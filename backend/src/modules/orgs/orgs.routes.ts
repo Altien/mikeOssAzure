@@ -22,6 +22,8 @@ import {
     getOrg,
     updateOrg,
     deleteOrg,
+    deleteOrgData,
+    isOrgDataKind,
     listOrgResources,
     listMembers,
     updateMember,
@@ -138,9 +140,33 @@ orgsRouter.delete("/:orgId/logo", requireOrgAuth, asyncRoute(async (req, res) =>
     res.json({ logo_updated_at: result.logo_updated_at });
 }));
 
-// DELETE /orgs/:orgId — delete an empty org (admin only). Organization-owned
-// resources never become personal data as a side effect of deletion.
-orgsRouter.delete("/:orgId", requireOrgAuth, asyncRoute(async (req, res) => {
+// DELETE /orgs/:orgId/data/:kind — permanently delete one kind of content
+// across the organization (owner only): chats, tabular-reviews, projects or
+// memories. The organization-level twin of the DELETE /user/* routes.
+orgsRouter.delete(
+    "/:orgId/data/:kind",
+    requireOrgAuth,
+    requireMfaIfEnrolled,
+    asyncRoute(async (req, res) => {
+        const kind = req.params.kind;
+        if (!isOrgDataKind(kind))
+            return void res.status(404).json({ detail: "Not found" });
+        const db = createServerSupabase();
+        const result = await deleteOrgData(db, {
+            userId: res.locals.userId as string,
+            userEmail: res.locals.userEmail as string | undefined,
+            orgId: req.params.orgId,
+            kind,
+        });
+        if (!result.ok) return sendOrgFailure(res, result);
+        res.status(204).send();
+    }),
+);
+
+// DELETE /orgs/:orgId — delete an org and everything it owns (owner only).
+// Organization-owned resources are destroyed with it; they never become
+// anyone's personal data as a side effect.
+orgsRouter.delete("/:orgId", requireOrgAuth, requireMfaIfEnrolled, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const result = await deleteOrg(db, {

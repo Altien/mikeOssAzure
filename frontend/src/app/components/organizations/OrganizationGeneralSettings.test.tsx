@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   getOrgLogo: vi.fn(),
   saveOrgLogo: vi.fn(),
   deleteOrgLogo: vi.fn(),
+  needsMfaVerification: vi.fn(async () => false),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -58,6 +59,21 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
   getOrgLogo: mocks.getOrgLogo,
   saveOrgLogo: mocks.saveOrgLogo,
   deleteOrgLogo: mocks.deleteOrgLogo,
+}));
+vi.mock("@/app/components/popups/MfaVerificationPopup", () => ({
+  MfaVerificationPopup: ({
+    open,
+    onVerified,
+  }: {
+    open: boolean;
+    onVerified: () => void;
+  }) =>
+    open ? (
+      <button type="button" onClick={onVerified}>
+        Verify MFA
+      </button>
+    ) : null,
+  needsMfaVerification: mocks.needsMfaVerification,
 }));
 // The framing dialog has its own tests. This stand-in shows what it was
 // handed and lets a test save or cancel through it.
@@ -339,12 +355,47 @@ describe("deleting", () => {
     expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
   });
 
+  it("warns that all content goes with it, and suggests exporting first", async () => {
+    const user = userEvent.setup();
+    render(<OrganizationGeneralSettings />);
+
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent(
+      "permanently deletes the organization and all of its content for every member",
+    );
+    expect(dialog).toHaveTextContent(
+      "Consider exporting anything you need to keep first.",
+    );
+    expect(dialog).toHaveTextContent("This action cannot be undone.");
+    // Nothing is deleted until it is confirmed.
+    expect(mocks.deleteOrg).not.toHaveBeenCalled();
+  });
+
+  it("asks for a second factor before deleting, then deletes", async () => {
+    const user = userEvent.setup();
+    mocks.needsMfaVerification.mockResolvedValueOnce(true);
+    mocks.deleteOrg.mockResolvedValue(undefined);
+    render(<OrganizationGeneralSettings />);
+
+    await confirmDelete(user);
+
+    await user.click(await screen.findByRole("button", { name: "Verify MFA" }));
+    await waitFor(() =>
+      expect(mocks.deleteOrg).toHaveBeenCalledExactlyOnceWith("org-1"),
+    );
+    await waitFor(() =>
+      expect(mocks.push).toHaveBeenCalledWith("/settings/organizations"),
+    );
+  });
+
   it("names the failure a failed delete, with the server's reason", async () => {
     const user = userEvent.setup();
     mocks.deleteOrg.mockRejectedValue(
       new MikeApiError({
-        message: "Move or delete this organization's projects first.",
-        status: 409,
+        message: "Only an organization owner can do that.",
+        status: 403,
       }),
     );
     render(<OrganizationGeneralSettings />);
@@ -355,11 +406,11 @@ describe("deleting", () => {
       await screen.findByText("Organization not deleted"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Move or delete this organization's projects first."),
+      screen.getByText("Only an organization owner can do that."),
     ).toBeInTheDocument();
     expect(screen.queryByText("Delete Elite Law LLP?")).not.toBeInTheDocument();
     expect(mocks.push).not.toHaveBeenCalled();
-    // Still theirs to try again once it is empty.
+    // Still theirs to try again.
     expect(screen.getByRole("button", { name: "Delete" })).toBeEnabled();
   });
 

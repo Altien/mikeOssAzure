@@ -1649,8 +1649,19 @@ export async function updateOrg(orgId: string, name: string): Promise<Org> {
     });
 }
 
+/** Deletes the organization together with everything it owns. Owner only. */
 export async function deleteOrg(orgId: string): Promise<void> {
     await apiRequest(`/orgs/${orgId}`, { method: "DELETE" });
+}
+
+export type OrgDataKind = "chats" | "tabular-reviews" | "projects" | "memories";
+
+/** Permanently deletes one kind of content across an organization. Owner only. */
+export async function deleteOrgData(
+    orgId: string,
+    kind: OrgDataKind,
+): Promise<void> {
+    await apiRequest(`/orgs/${orgId}/data/${kind}`, { method: "DELETE" });
 }
 
 /**

@@ -87,10 +87,11 @@ const PROJECT_CONTENT_TABLES = [
 /**
  * Does this organization still directly own anything?
  *
- * The inventory lives in lib/orgs.ts so this and the `deleteOrg` API path
- * answer the identical question. Every org_id foreign key is ON DELETE
- * RESTRICT, so an org that owns content cannot be deleted at all â€” the probe
- * is how we say so deliberately instead of surfacing a constraint violation.
+ * Every org_id foreign key is ON DELETE RESTRICT, so an org that owns content
+ * cannot be removed as a side effect of an account going — the probe is how
+ * we say so deliberately instead of surfacing a constraint violation. (An
+ * owner deleting the organization itself is a different path: `deleteOrg` in
+ * modules/orgs destroys the content first, on purpose.)
  */
 async function orgOwnsContent(db: Db, orgId: string): Promise<boolean> {
     for (const table of ORG_CONTENT_TABLES) {

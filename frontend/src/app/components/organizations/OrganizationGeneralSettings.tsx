@@ -4,6 +4,10 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { LogOut, Trash2, Upload } from "lucide-react";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
+import {
+  MfaVerificationPopup,
+  needsMfaVerification,
+} from "@/app/components/popups/MfaVerificationPopup";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
 import { SettingsRow } from "@/app/components/settings/SettingsRow";
@@ -19,6 +23,7 @@ import { useOrganizationLogo } from "@/app/hooks/useOrganizationLogo";
 import {
   deleteOrg,
   deleteOrgLogo,
+  isMfaRequiredError,
   removeOrgMember,
   saveOrgLogo,
   updateOrg,
@@ -60,6 +65,7 @@ export function OrganizationGeneralSettings() {
   >("idle");
   const [pending, setPending] = useState<Pending | null>(null);
   const [working, setWorking] = useState<Pending | null>(null);
+  const [mfaPending, setMfaPending] = useState(false);
   const [failure, setFailure] = useState<{
     title: string;
     message: string;
@@ -165,20 +171,31 @@ export function OrganizationGeneralSettings() {
     }
   }
 
-  async function confirm() {
-    if (!org || !pending || working) return;
-    const action = pending;
+  async function confirm(action: Pending | null = pending) {
+    if (!org || !action || working) return;
     setWorking(action);
     try {
       if (action === "leave") {
         if (!user?.id) throw new Error("Not signed in");
         await removeOrgMember(org.id, user.id);
       } else {
+        // Deleting an organization destroys everything in it, so it asks
+        // for a second factor like the other destructive data actions.
+        if (await needsMfaVerification()) {
+          setPending(null);
+          setWorking(null);
+          setMfaPending(true);
+          return;
+        }
         await deleteOrg(org.id);
       }
     } catch (error) {
       setPending(null);
       setWorking(null);
+      if (action === "delete" && isMfaRequiredError(error)) {
+        setMfaPending(true);
+        return;
+      }
       setFailure(
         action === "leave"
           ? {
@@ -384,9 +401,9 @@ export function OrganizationGeneralSettings() {
               <div className="space-y-1">
                 <SettingsLabel>Delete this organization</SettingsLabel>
                 <SettingsDescription>
-                  Only an empty organization can be deleted. Move or delete
-                  its projects, chats, reviews, documents and workflows
-                  first.
+                  Permanently delete this organization and everything in it:
+                  its projects, documents, chats, tabular reviews and
+                  workflows.
                 </SettingsDescription>
               </div>
               <PillButtonUI
@@ -423,7 +440,7 @@ export function OrganizationGeneralSettings() {
         }
         message={
           pending === "delete"
-            ? "This removes the empty organization, its memberships and invitations."
+            ? "This permanently deletes the organization and all of its content for every member: projects, documents, chats, tabular reviews, workflows and memory, along with its memberships and invitations. Consider exporting anything you need to keep first. This action cannot be undone."
             : "You will lose access to this organization's shared resources."
         }
         confirmLabel={pending === "delete" ? "Delete" : "Leave"}
@@ -434,6 +451,16 @@ export function OrganizationGeneralSettings() {
           setPending(null);
         }}
         onConfirm={() => void confirm()}
+      />
+      <MfaVerificationPopup
+        open={mfaPending}
+        onCancel={() => setMfaPending(false)}
+        onVerified={() => {
+          setMfaPending(false);
+          void confirm("delete");
+        }}
+        title="Two-factor verification required"
+        message="This action is sensitive. Enter a code from your authenticator app to continue."
       />
       <WarningPopup
         open={failure !== null}

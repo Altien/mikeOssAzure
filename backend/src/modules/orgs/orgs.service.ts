@@ -18,7 +18,6 @@ export {
   createOrg,
   getOrg,
   updateOrg,
-  deleteOrg,
   listOrgResources,
   listMembers,
   updateMember,
@@ -46,3 +45,12 @@ export {
     saveOrgLogo,
     removeOrgLogo,
 } from "./orgs.logo";
+
+// Deleting an organization, or one kind of its content, needs the documents
+// and projects modules, so it lives here rather than in lib/orgs.ts.
+export {
+    deleteOrg,
+    deleteOrgData,
+    isOrgDataKind,
+    type OrgDataKind,
+} from "./orgs.deletion";

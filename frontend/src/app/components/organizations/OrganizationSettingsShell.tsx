@@ -18,7 +18,7 @@ import {
 import { EmptyState } from "@/app/components/ui/empty-state";
 import { useWorkspace } from "@/app/contexts/WorkspaceContext";
 import { getOrg, type Org } from "@/app/lib/mikeApi";
-import { isOrgAdmin } from "@/app/lib/permissions";
+import { isOrgAdmin, isOrgOwner } from "@/app/lib/permissions";
 import { userFacingApiError } from "@/app/lib/userFacingError";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 
@@ -66,7 +66,7 @@ export function useOrganizationSettings(): OrganizationSettingsContextValue {
 
 export function organizationSettingsHref(
   orgId: string,
-  section: "general" | "members" | "providers" = "general",
+  section: "general" | "members" | "providers" | "privacy-data" = "general",
 ): string {
   const root = `/organizations/${orgId}/settings`;
   return section === "general" ? root : `${root}/${section}`;
@@ -195,6 +195,7 @@ export function OrganizationSettingsFrame({
 }) {
   const { orgId, org } = useOrganizationSettings();
   const canManage = org !== null && isOrgAdmin(org.role);
+  const isOwner = org !== null && isOrgOwner(org.role);
   const tabs = useMemo<SettingsShellTab[]>(
     () => [
       {
@@ -218,8 +219,19 @@ export function OrganizationSettingsFrame({
             },
           ]
         : []),
+      // Its actions reach every member's work, so it is its owners' alone.
+      ...(isOwner
+        ? [
+            {
+              id: "privacy-data",
+              // Named as the same page is in a person's own settings.
+              label: "Privacy & Data",
+              href: organizationSettingsHref(orgId, "privacy-data"),
+            },
+          ]
+        : []),
     ],
-    [canManage, orgId],
+    [canManage, isOwner, orgId],
   );
 
   return (
