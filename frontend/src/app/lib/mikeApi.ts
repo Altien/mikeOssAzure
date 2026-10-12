@@ -1648,23 +1648,6 @@ export async function deleteOrg(orgId: string): Promise<void> {
     await apiRequest(`/orgs/${orgId}`, { method: "DELETE" });
 }
 
-export interface OrgResources {
-    projects: Project[];
-    workflows: {
-        id: string;
-        user_id: string | null;
-        org_id: string;
-        title: string | null;
-        type: "assistant" | "tabular";
-        practice: string | null;
-        created_at: string;
-    }[];
-}
-
-export async function listOrgResources(orgId: string): Promise<OrgResources> {
-    return apiRequest<OrgResources>(`/orgs/${orgId}/resources`);
-}
-
 /**
  * An organization's model provider keys, as its members see them. Never a
  * key itself: only which providers are set up.

@@ -2,14 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MikeApiError } from "@/app/lib/mikeApi";
-import { OrganizationWorkspace } from "./OrganizationWorkspace";
+import { OrganizationMembers } from "./OrganizationMembers";
 
 const mocks = vi.hoisted(() => ({
   push: vi.fn(),
+  refreshOrganizations: vi.fn(async () => {}),
   role: "owner" as "owner" | "admin" | "member",
   getOrg: vi.fn(),
   listOrgMembers: vi.fn(),
-  listOrgResources: vi.fn(),
   listOrgInvitations: vi.fn(),
   updateOrgMember: vi.fn(),
   removeOrgMember: vi.fn(),
@@ -23,6 +23,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mocks.push }),
 }));
+vi.mock("@/app/contexts/WorkspaceContext", () => ({
+  useWorkspace: () => ({ refreshOrganizations: mocks.refreshOrganizations }),
+}));
 vi.mock("@/app/contexts/AuthContext", () => ({
   useAuth: () => ({ user: { id: "me", email: "me@firm.example" } }),
 }));
@@ -30,7 +33,6 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/app/lib/mikeApi")>()),
   getOrg: mocks.getOrg,
   listOrgMembers: mocks.listOrgMembers,
-  listOrgResources: mocks.listOrgResources,
   listOrgInvitations: mocks.listOrgInvitations,
   updateOrgMember: mocks.updateOrgMember,
   removeOrgMember: mocks.removeOrgMember,
@@ -78,40 +80,18 @@ beforeEach(() => {
       created_at: "2026-09-01T00:00:00Z",
     },
   ]);
-  mocks.listOrgResources.mockResolvedValue({
-    projects: [
-      {
-        id: "project-1",
-        user_id: "me",
-        org_id: "org-1",
-        name: "Apollo",
-        practice: "Corporate",
-        created_at: "2026-09-01T00:00:00Z",
-      },
-    ],
-    workflows: [
-      {
-        id: "workflow-1",
-        user_id: "u2",
-        org_id: "org-1",
-        title: "Disclosure workflow",
-        type: "tabular",
-        practice: "Corporate",
-        created_at: "2026-09-01T00:00:00Z",
-      },
-    ],
-  });
   mocks.listOrgInvitations.mockResolvedValue([]);
 });
 
-describe("OrganizationWorkspace", () => {
-  it("shows the breadcrumb, member identity columns, and every resource tab", async () => {
-    const user = userEvent.setup();
-    render(<OrganizationWorkspace orgId="org-1" />);
+describe("OrganizationMembers", () => {
+  it("is the Members section: the roster with its identity columns, and nothing else", async () => {
+    render(<OrganizationMembers orgId="org-1" />);
 
     expect(await screen.findByText("William Chen")).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Members" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("me@firm.example")).toBeInTheDocument();
-    expect(screen.getAllByText("Elite Law LLP")).not.toHaveLength(0);
     expect(screen.getByText("Added")).toBeInTheDocument();
     expect(
       screen.getByRole("checkbox", { name: "Select all people" }),
@@ -125,22 +105,20 @@ describe("OrganizationWorkspace", () => {
     expect(peopleRow).toHaveClass("liquid-glass-hover");
     expect(peopleRow).not.toHaveClass("cursor-pointer");
 
-    await user.click(screen.getByRole("button", { name: "Projects" }));
-    expect(screen.getByRole("link", { name: "Open Apollo" })).toHaveClass(
-      "liquid-glass-hover",
-    );
-    await user.click(screen.getByRole("button", { name: "Workflows" }));
+    // An organization's projects and workflows are in the main lists once
+    // its workspace is active; they are not repeated here.
+    for (const name of ["People", "Projects", "Workflows"])
+      expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+    // Nor is there a way into settings: this is already inside them.
     expect(
-      screen.getByRole("link", { name: "Open Disclosure workflow" }),
-    ).toHaveClass("liquid-glass-hover");
-    expect(screen.queryByRole("button", { name: "Chats" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Reviews" })).not.toBeInTheDocument();
+      screen.queryByRole("button", { name: "Organization settings" }),
+    ).not.toBeInTheDocument();
   });
 
   it("lets owners change a member's role from the colored role tab", async () => {
     const user = userEvent.setup();
     mocks.updateOrgMember.mockResolvedValue({});
-    render(<OrganizationWorkspace orgId="org-1" />);
+    render(<OrganizationMembers orgId="org-1" />);
     await screen.findByText("Jane Lee");
 
     const roleTab = screen.getByRole("button", {
@@ -170,7 +148,7 @@ describe("OrganizationWorkspace", () => {
         message: "An organization must keep at least one owner.",
       }),
     );
-    render(<OrganizationWorkspace orgId="org-1" />);
+    render(<OrganizationMembers orgId="org-1" />);
     await screen.findByText("William Chen");
 
     await user.click(
@@ -190,7 +168,7 @@ describe("OrganizationWorkspace", () => {
 
   it.each([["Jane Lee"], ["William Chen"], ["Jane Lee", "William Chen"]])("matches the toolbar and right-click people menu for %j", async (...names) => {
     const user = userEvent.setup();
-    render(<OrganizationWorkspace orgId="org-1" />);
+    render(<OrganizationMembers orgId="org-1" />);
     await screen.findByText("Jane Lee");
     for (const name of names) await user.click(screen.getByRole("checkbox", { name: `Select ${name}` }));
     await user.click(screen.getByRole("button", { name: "Actions" }));
@@ -204,7 +182,7 @@ describe("OrganizationWorkspace", () => {
   it("reveals a toolbar action and removes selected people", async () => {
     const user = userEvent.setup();
     mocks.removeOrgMember.mockResolvedValue(undefined);
-    render(<OrganizationWorkspace orgId="org-1" />);
+    render(<OrganizationMembers orgId="org-1" />);
     await screen.findByText("Jane Lee");
 
     expect(
@@ -228,7 +206,7 @@ describe("OrganizationWorkspace", () => {
 
   it("warns an owner who includes themselves in bulk removal", async () => {
     const user = userEvent.setup();
-    render(<OrganizationWorkspace orgId="org-1" />);
+    render(<OrganizationMembers orgId="org-1" />);
     await screen.findByText("William Chen");
 
     await user.click(
@@ -252,30 +230,26 @@ describe("OrganizationWorkspace", () => {
     expect(mocks.removeOrgMember).not.toHaveBeenCalled();
   });
 
-  it("offers add-member and settings actions only to admins", async () => {
+  it("lets an owner or admin add a member from the section's heading", async () => {
     const user = userEvent.setup();
-    render(<OrganizationWorkspace orgId="org-1" />);
+    render(<OrganizationMembers orgId="org-1" />);
     await screen.findByText("William Chen");
 
     await user.click(screen.getByRole("button", { name: "Add member" }));
     expect(screen.getByText("Email address")).toBeInTheDocument();
     expect(mocks.listOrgInvitations).toHaveBeenCalledWith("org-1");
-
-    // Settings are a page of their own, reached from the header menu.
-    await user.keyboard("{Escape}");
-    await user.click(
-      screen.getByRole("button", { name: "Organization settings" }),
-    );
-    await user.click(
-      screen.getByRole("menuitem", { name: "Organization settings" }),
-    );
-    expect(mocks.push).toHaveBeenCalledWith("/organizations/org-1/settings");
   });
 
   it("drops owner and admin controls as soon as an owner demotes themselves", async () => {
     const user = userEvent.setup();
+    const onViewerRoleChanged = vi.fn();
     mocks.updateOrgMember.mockResolvedValue({});
-    render(<OrganizationWorkspace orgId="org-1" />);
+    render(
+      <OrganizationMembers
+        orgId="org-1"
+        onViewerRoleChanged={onViewerRoleChanged}
+      />,
+    );
     await screen.findByText("William Chen");
 
     await user.click(
@@ -299,18 +273,17 @@ describe("OrganizationWorkspace", () => {
     // admin actions that now 403 until a reload.
     await waitFor(() =>
       expect(
-        screen.queryByRole("button", { name: "Organization settings" }),
+        screen.queryByRole("button", { name: "Add member" }),
       ).not.toBeInTheDocument(),
     );
     expect(
       screen.queryByRole("button", { name: "Change role for Jane Lee" }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", {
-        name: "Only organization admins can add members",
-      }),
-    ).toBeDisabled();
     expect(mocks.getOrg).toHaveBeenCalledTimes(1);
+    // The settings area and the workspace switcher both show the role, and
+    // offer a member fewer sections.
+    expect(onViewerRoleChanged).toHaveBeenCalledTimes(1);
+    expect(mocks.refreshOrganizations).toHaveBeenCalled();
   });
 
   it("keeps the self-demotion confirmation up while the change is in flight", async () => {
@@ -324,7 +297,7 @@ describe("OrganizationWorkspace", () => {
           settle = () => resolve({});
         }),
     );
-    render(<OrganizationWorkspace orgId="org-1" />);
+    render(<OrganizationMembers orgId="org-1" />);
     await screen.findByText("William Chen");
 
     await user.click(
@@ -352,7 +325,7 @@ describe("OrganizationWorkspace", () => {
     mocks.listOrgInvitations
       .mockResolvedValueOnce([])
       .mockRejectedValue(new Error("refresh failed"));
-    render(<OrganizationWorkspace orgId="org-1" />);
+    render(<OrganizationMembers orgId="org-1" />);
     await screen.findByText("William Chen");
 
     await user.click(screen.getByRole("button", { name: "Add member" }));
@@ -437,7 +410,7 @@ describe("OrganizationWorkspace", () => {
       .mockResolvedValueOnce(initialMembers)
       .mockResolvedValue([...initialMembers, joiner]);
 
-    render(<OrganizationWorkspace orgId="org-1" />);
+    render(<OrganizationMembers orgId="org-1" />);
     await screen.findByText("William Chen");
     expect(screen.queryByText("New Joiner")).not.toBeInTheDocument();
 
@@ -505,7 +478,7 @@ describe("OrganizationWorkspace", () => {
       // Closing it: the newest answer, and the one the table must keep.
       .mockResolvedValue([chen, lee, joiner]);
 
-    render(<OrganizationWorkspace orgId="org-1" />);
+    render(<OrganizationMembers orgId="org-1" />);
     await screen.findByText("William Chen");
 
     await user.click(screen.getByRole("button", { name: "Add member" }));
@@ -529,7 +502,7 @@ describe("OrganizationWorkspace", () => {
     // A console line is not a user interface. The admin was left reading a
     // roster that had quietly stopped tracking the server.
     const user = userEvent.setup();
-    render(<OrganizationWorkspace orgId="org-1" />);
+    render(<OrganizationMembers orgId="org-1" />);
     await screen.findByText("William Chen");
     // The page loaded; it is the refresh behind the modal that fails.
     mocks.listOrgMembers.mockRejectedValue(new Error("network"));
@@ -546,24 +519,16 @@ describe("OrganizationWorkspace", () => {
     ).toBeInTheDocument();
   });
 
-  it("lets members browse resources but does not load administrative invitations", async () => {
+  it("shows a member the roster, without the means to add people or the invitations", async () => {
     mocks.role = "member";
-    const user = userEvent.setup();
-    render(<OrganizationWorkspace orgId="org-1" />);
-    await screen.findByText("William Chen");
+    render(<OrganizationMembers orgId="org-1" />);
 
+    expect(await screen.findByText("William Chen")).toBeInTheDocument();
+    expect(screen.getByText("Jane Lee")).toBeInTheDocument();
     expect(mocks.listOrgInvitations).not.toHaveBeenCalled();
     expect(
-      screen.getByRole("button", {
-        name: "Only organization admins can add members",
-      }),
-    ).toBeDisabled();
-    expect(
-      screen.queryByRole("button", { name: "Organization settings" }),
+      screen.queryByRole("button", { name: "Add member" }),
     ).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Workflows" }));
-    expect(screen.getByText("Disclosure workflow")).toBeInTheDocument();
   });
 
   // -------------------------------------------------------------------------
@@ -610,7 +575,7 @@ describe("OrganizationWorkspace", () => {
     });
 
     it("shows every role as plain text, because none of them is theirs to change", async () => {
-      render(<OrganizationWorkspace orgId="org-1" />);
+      render(<OrganizationMembers orgId="org-1" />);
       await screen.findByText("Olive Owner");
 
       for (const name of [
@@ -630,7 +595,7 @@ describe("OrganizationWorkspace", () => {
     });
 
     it("offers removal for members and for themselves only", async () => {
-      render(<OrganizationWorkspace orgId="org-1" />);
+      render(<OrganizationMembers orgId="org-1" />);
       await screen.findByText("Olive Owner");
 
       expect(
@@ -656,7 +621,7 @@ describe("OrganizationWorkspace", () => {
 
     it("refuses a bulk removal that includes an owner or another admin", async () => {
       const user = userEvent.setup();
-      render(<OrganizationWorkspace orgId="org-1" />);
+      render(<OrganizationMembers orgId="org-1" />);
       await screen.findByText("Olive Owner");
 
       await user.click(
@@ -707,7 +672,7 @@ describe("OrganizationWorkspace", () => {
           accepted_at: null,
         },
       ]);
-      render(<OrganizationWorkspace orgId="org-1" />);
+      render(<OrganizationMembers orgId="org-1" />);
       await screen.findByText("Olive Owner");
 
       await user.click(screen.getByRole("button", { name: "Add member" }));
@@ -738,7 +703,7 @@ describe("OrganizationWorkspace", () => {
   it("lets an owner hand out every role, ownership included", async () => {
     const user = userEvent.setup();
     mocks.updateOrgMember.mockResolvedValue({});
-    render(<OrganizationWorkspace orgId="org-1" />);
+    render(<OrganizationMembers orgId="org-1" />);
     await screen.findByText("Jane Lee");
 
     await user.click(
@@ -761,7 +726,7 @@ describe("OrganizationWorkspace", () => {
   it("words an owner stepping down to admin as losing ownership, not administration", async () => {
     const user = userEvent.setup();
     mocks.updateOrgMember.mockResolvedValue({});
-    render(<OrganizationWorkspace orgId="org-1" />);
+    render(<OrganizationMembers orgId="org-1" />);
     await screen.findByText("William Chen");
 
     await user.click(
@@ -784,9 +749,6 @@ describe("OrganizationWorkspace", () => {
         screen.queryByRole("button", { name: "Change role for Jane Lee" }),
       ).not.toBeInTheDocument(),
     );
-    expect(
-      screen.getByRole("button", { name: "Organization settings" }),
-    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add member" })).toBeEnabled();
   });
 });

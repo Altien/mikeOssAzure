@@ -10,13 +10,14 @@ import {
   type ReactNode,
   type SetStateAction,
 } from "react";
-import { Check, ChevronDown, Loader2, Settings, Trash2 } from "lucide-react";
+import { Check, ChevronDown, Loader2, Plus, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/contexts/AuthContext";
-import { PageHeader } from "@/app/components/shared/PageHeader";
+import { useWorkspace } from "@/app/contexts/WorkspaceContext";
+import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
+import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { HeaderActionsMenu } from "@/app/components/shared/HeaderActionsMenu";
 import { SelectionActionsMenu } from "@/app/components/shared/SelectionActionsMenu";
-import { TableToolbar } from "@/app/components/shared/TableToolbar";
 import {
   SkeletonCheckbox,
   SkeletonLine,
@@ -35,11 +36,7 @@ import {
   type TableFilterOption,
   type TableSortDirection,
 } from "@/app/components/shared/TablePrimitive";
-import {
-  OrganizationSkeuoIcon,
-  WorkflowSkeuoIcon,
-} from "@/app/components/shared/AppSidebarSkeuoIcons";
-import { ClosedProjectSvgIcon } from "@/app/components/shared/FolderSvgIcon";
+import { OrganizationSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { EmptyState } from "@/app/components/ui/empty-state";
@@ -54,13 +51,11 @@ import {
   getOrg,
   listOrgInvitations,
   listOrgMembers,
-  listOrgResources,
   removeOrgMember,
   updateOrgMember,
   type Org,
   type OrgInvitation,
   type OrgMember,
-  type OrgResources,
 } from "@/app/lib/mikeApi";
 import {
   ORG_ROLE_LABELS,
@@ -72,15 +67,8 @@ import {
 import { userFacingApiError } from "@/app/lib/userFacingError";
 import { InviteOrganizationMemberModal } from "./OrganizationModals";
 
-type OrganizationTab = "people" | "projects" | "workflows";
-
-const TABS: { id: OrganizationTab; label: string }[] = [
-  { id: "people", label: "People" },
-  { id: "projects", label: "Projects" },
-  { id: "workflows", label: "Workflows" },
-];
-
-const EMPTY_RESOURCES: OrgResources = { projects: [], workflows: [] };
+/** Where somebody lands once they have left the organization. */
+const AFTER_DEPARTURE = "/settings/organizations";
 
 const ROLE_FILTER_OPTIONS: TableFilterOption<OrgRole>[] = [
   { value: "owner", label: ORG_ROLE_LABELS.owner, className: "text-amber-700" },
@@ -103,18 +91,29 @@ function formatDate(value?: string | null) {
   });
 }
 
-function resourceName(value: string | null | undefined, fallback: string) {
-  return value?.trim() || fallback;
-}
-
-export function OrganizationWorkspace({ orgId }: { orgId: string }) {
+/**
+ * The Members section of an organization's settings: its roster, each
+ * person's role, and — for its owners and admins — adding, removing and
+ * inviting people. Everyone in the organization can read it.
+ *
+ * It loads the organization itself, so the roster and the caller's role on
+ * it always come from the same read. `onViewerRoleChanged` tells the
+ * surrounding settings area when the caller has changed their own role,
+ * which decides the sections it offers.
+ */
+export function OrganizationMembers({
+  orgId,
+  onViewerRoleChanged,
+}: {
+  orgId: string;
+  onViewerRoleChanged?: () => void;
+}) {
   const router = useRouter();
   const { user } = useAuth();
+  const { refreshOrganizations } = useWorkspace();
   const [org, setOrg] = useState<Org | null>(null);
   const [members, setMembers] = useState<OrgMember[]>([]);
   const [invitations, setInvitations] = useState<OrgInvitation[]>([]);
-  const [resources, setResources] = useState<OrgResources>(EMPTY_RESOURCES);
-  const [activeTab, setActiveTab] = useState<OrganizationTab>("people");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -164,16 +163,14 @@ export function OrganizationWorkspace({ orgId }: { orgId: string }) {
     const invitationsTicket = ++invitationsRequestRef.current;
     try {
       const nextOrg = await getOrg(orgId);
-      const [nextMembers, nextResources, nextInvitations] = await Promise.all([
+      const [nextMembers, nextInvitations] = await Promise.all([
         listOrgMembers(orgId),
-        listOrgResources(orgId),
         isOrgAdmin(nextOrg.role)
           ? listOrgInvitations(orgId)
           : Promise.resolve([] as OrgInvitation[]),
       ]);
       setOrg(nextOrg);
       applyMembers(membersTicket, nextMembers);
-      setResources(nextResources);
       if (invitationsTicket === invitationsRequestRef.current)
         setInvitations(nextInvitations);
     } catch (error) {
@@ -291,6 +288,10 @@ export function OrganizationWorkspace({ orgId }: { orgId: string }) {
       if (member.user_id === user?.id) {
         setOrg((current) => (current ? { ...current, role } : current));
         if (!isOrgAdmin(role)) setInvitations([]);
+        // The settings area offers different sections to a different role,
+        // and the workspace switcher shows it too.
+        onViewerRoleChanged?.();
+        void refreshOrganizations();
       }
     } catch (error) {
       setActionError(userFacingApiError(error, "Could not change that role."));
@@ -307,7 +308,8 @@ export function OrganizationWorkspace({ orgId }: { orgId: string }) {
     try {
       await removeOrgMember(orgId, member.user_id);
       if (member.user_id === user?.id) {
-        router.push("/organizations");
+        void refreshOrganizations();
+        router.push(AFTER_DEPARTURE);
         return;
       }
       setMembers((current) =>
@@ -412,121 +414,52 @@ export function OrganizationWorkspace({ orgId }: { orgId: string }) {
     );
   }
 
-  const peopleToolbarActions =
-    activeTab === "people" && isAdmin && selectedMemberIds.length > 0 ? (
+  const selectionActions =
+    isAdmin && selectedMemberIds.length > 0 ? (
       <SelectionActionsMenu renderItems={(close) => renderMemberActions(members.find((member) => member.id === selectedMemberIds[0]), close)} />
-    ) : undefined;
+    ) : null;
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-      <PageHeader
-        loading={loading}
-        breadcrumbs={[
-          {
-            label: "Organizations",
-            onClick: () => router.push("/organizations"),
-            title: "Back to Organizations",
-          },
-          org
-            ? { label: org.name, cursor: "text" }
-            : { loading: true, skeletonClassName: "w-40" },
-        ]}
-        actionGroups={[
-          [
-            {
-              type: "new",
-              title: isAdmin
-                ? "Add member"
-                : "Only organization admins can add members",
-              disabled: !isAdmin,
-              onClick: () => {
+    <section aria-labelledby="org-members-heading" className="space-y-3">
+      {/* The heading row carries what the old page header did: adding a
+          member, and the actions for a selection. */}
+      <div className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-2">
+        <SettingsHeading id="org-members-heading">Members</SettingsHeading>
+        <div className="ml-auto flex items-center gap-2">
+          {selectionActions}
+          {isAdmin ? (
+            <PillButtonUI
+              tone="black"
+              size="sm"
+              aria-haspopup="dialog"
+              onClick={() => {
                 setInviteOpen(true);
                 // The modal shows the invitation list this page loaded, which
                 // by now may name people who have already accepted.
                 void refreshPeople();
-              },
-            },
-            isAdmin
-              ? {
-                  type: "custom",
-                  render: (
-                    <HeaderActionsMenu
-                      title="Organization settings"
-                      items={[
-                        {
-                          label: "Organization settings",
-                          icon: Settings,
-                          // Its own page: the name, the model providers
-                          // and, for owners, deleting the organization.
-                          onSelect: () =>
-                            router.push(`/organizations/${orgId}/settings`),
-                        },
-                      ]}
-                    />
-                  ),
-                }
-              : null,
-          ],
-        ]}
-      />
+              }}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add member
+            </PillButtonUI>
+          ) : null}
+        </div>
+      </div>
 
-      <TableToolbar
-        items={TABS}
-        active={activeTab}
-        onChange={(tab) => {
-          setActiveTab(tab);
-          setSelectedMemberIds([]);
-        }}
-        actions={peopleToolbarActions}
+      <PeopleTable
+        loading={loading}
+        error={loadError}
+        members={members}
+        selectedMemberIds={selectedMemberIds}
+        onSelectedMemberIdsChange={setSelectedMemberIds}
+        currentUserId={user?.id ?? null}
+        viewerRole={viewerRole}
+        busyMemberId={busyMemberId}
+        onRetry={load}
+        onRoleChange={requestRoleChange}
+        onRemove={setRemoveMember}
+        renderActions={renderMemberActions}
       />
-
-      {activeTab === "people" ? (
-        <PeopleTable
-          loading={loading}
-          error={loadError}
-          members={members}
-          selectedMemberIds={selectedMemberIds}
-          onSelectedMemberIdsChange={setSelectedMemberIds}
-          currentUserId={user?.id ?? null}
-          viewerRole={viewerRole}
-          busyMemberId={busyMemberId}
-          onRetry={load}
-          onRoleChange={requestRoleChange}
-          onRemove={setRemoveMember}
-          renderActions={renderMemberActions}
-        />
-      ) : activeTab === "projects" ? (
-        <ResourceTable
-          key="projects"
-          loading={loading}
-          error={loadError}
-          kind="projects"
-          rows={resources.projects.map((project) => ({
-            id: project.id,
-            name: resourceName(project.name, "Untitled project"),
-            context: project.practice || "—",
-            createdAt: project.created_at,
-            href: `/projects/${project.id}`,
-          }))}
-          onRetry={load}
-        />
-      ) : (
-        <ResourceTable
-          key="workflows"
-          loading={loading}
-          error={loadError}
-          kind="workflows"
-          rows={resources.workflows.map((workflow) => ({
-            id: workflow.id,
-            name: resourceName(workflow.title, "Untitled workflow"),
-            context:
-              workflow.type === "tabular" ? "Tabular review" : "Assistant",
-            createdAt: workflow.created_at,
-            href: `/workflows/${workflow.id}`,
-          }))}
-          onRetry={load}
-        />
-      )}
 
       {org ? (
         <>
@@ -612,7 +545,7 @@ export function OrganizationWorkspace({ orgId }: { orgId: string }) {
         message={actionError}
         onClose={() => setActionError(null)}
       />
-    </div>
+    </section>
   );
 }
 
@@ -708,6 +641,8 @@ function PeopleTable({
 
   return (
     <TableScrollArea
+      // Inside a settings section, which has its own gutters.
+      className="mx-0 mb-0 flex-none md:mx-0 md:mb-0"
       header={
         <TableHeaderRow>
           <TableStickyCell header>
@@ -933,218 +868,6 @@ function OrganizationRoleTab({
         ))}
       </DropdownContent>
     </Dropdown>
-  );
-}
-
-type ResourceKind = "projects" | "workflows";
-type ResourceRow = {
-  id: string;
-  name: string;
-  context: string;
-  createdAt: string | null;
-  href: string;
-};
-
-function ResourceTable({
-  loading,
-  error,
-  kind,
-  rows,
-  onRetry,
-}: {
-  loading: boolean;
-  error: string | null;
-  kind: ResourceKind;
-  rows: ResourceRow[];
-  onRetry: () => Promise<void>;
-}) {
-  const router = useRouter();
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [contextFilter, setContextFilter] = useState<string | null>(null);
-  const [sort, setSort] = useState<{
-    key: "name" | "created";
-    direction: TableSortDirection;
-  } | null>(null);
-  const copy = {
-    projects: {
-      title: "Projects",
-      context: "Practice",
-      empty: "No projects belong to this organization.",
-      icon: <ClosedProjectSvgIcon />,
-    },
-    workflows: {
-      title: "Workflows",
-      context: "Type",
-      empty: "No workflows belong to this organization.",
-      icon: <WorkflowSkeuoIcon />,
-    },
-  }[kind];
-  const contextOptions = useMemo<TableFilterOption<string>[]>(
-    () =>
-      [...new Set(rows.map((row) => row.context))]
-        .sort((a, b) => a.localeCompare(b))
-        .map((context) => ({ value: context, label: context })),
-    [rows],
-  );
-  const visibleRows = useMemo(() => {
-    const filtered = contextFilter
-      ? rows.filter((row) => row.context === contextFilter)
-      : rows;
-    if (!sort) return filtered;
-    const multiplier = sort.direction === "asc" ? 1 : -1;
-    return [...filtered].sort((a, b) => {
-      if (sort.key === "name") return a.name.localeCompare(b.name) * multiplier;
-      return (
-        (new Date(a.createdAt ?? 0).getTime() -
-          new Date(b.createdAt ?? 0).getTime()) *
-        multiplier
-      );
-    });
-  }, [contextFilter, rows, sort]);
-  const allSelected =
-    visibleRows.length > 0 &&
-    visibleRows.every((row) => selectedIds.includes(row.id));
-  const someSelected =
-    !allSelected && visibleRows.some((row) => selectedIds.includes(row.id));
-
-  function setSortFor(
-    key: "name" | "created",
-    direction: TableSortDirection | null,
-  ) {
-    setSort(direction ? { key, direction } : null);
-    setSelectedIds([]);
-  }
-
-  function toggleAllVisible() {
-    const visibleIds = visibleRows.map((row) => row.id);
-    setSelectedIds((current) =>
-      allSelected
-        ? current.filter((id) => !visibleIds.includes(id))
-        : [...new Set([...current, ...visibleIds])],
-    );
-  }
-
-  function toggleRow(rowId: string) {
-    setSelectedIds((current) =>
-      current.includes(rowId)
-        ? current.filter((id) => id !== rowId)
-        : [...current, rowId],
-    );
-  }
-
-  return (
-    <TableScrollArea
-      header={
-        <TableHeaderRow>
-          <TableStickyCell header>
-            {loading ? (
-              <SkeletonCheckbox />
-            ) : (
-              <input
-                type="checkbox"
-                checked={allSelected}
-                ref={(element) => {
-                  if (element) element.indeterminate = someSelected;
-                }}
-                onChange={toggleAllVisible}
-                className={TABLE_CHECKBOX_CLASS}
-                aria-label={`Select all ${kind}`}
-              />
-            )}
-            <span className="mr-1">Name</span>
-            {!loading ? (
-              <TableSortFilter
-                label={`Sort ${kind} by name`}
-                value={sort?.key === "name" ? sort.direction : null}
-                allLabel="Default order"
-                align="right"
-                onChange={(direction) => setSortFor("name", direction)}
-              />
-            ) : null}
-          </TableStickyCell>
-          <TableHeaderCell className="ml-auto w-48">
-            <span className="mr-1">{copy.context}</span>
-            {!loading ? (
-              <TableFilters
-                label={`Filter ${kind} by ${copy.context.toLowerCase()}`}
-                value={contextFilter}
-                allLabel={`All ${copy.context.toLowerCase()}s`}
-                options={contextOptions}
-                widthClassName="w-44"
-                onChange={(context) => {
-                  setContextFilter(context);
-                  setSelectedIds([]);
-                }}
-              />
-            ) : null}
-          </TableHeaderCell>
-          <TableHeaderCell className="w-36">
-            <span className="mr-1">Created</span>
-            {!loading ? (
-              <TableSortFilter
-                label={`Sort ${kind} by creation date`}
-                value={sort?.key === "created" ? sort.direction : null}
-                allLabel="Default order"
-                onChange={(direction) => setSortFor("created", direction)}
-              />
-            ) : null}
-          </TableHeaderCell>
-        </TableHeaderRow>
-      }
-    >
-      {loading ? (
-        <LoadingRows columns={["w-48", "w-36"]} />
-      ) : error ? (
-        <ErrorState error={error} onRetry={onRetry} />
-      ) : rows.length === 0 ? (
-        <TableEmptyState>
-          <EmptyState
-            icon={copy.icon}
-            title={copy.title}
-            description={copy.empty}
-          />
-        </TableEmptyState>
-      ) : visibleRows.length === 0 ? (
-        <TableEmptyState>
-          <p className="text-sm text-gray-400">No {kind} match this filter.</p>
-        </TableEmptyState>
-      ) : (
-        <TableBody>
-          {visibleRows.map((row) => (
-            <TableRow
-              key={row.id}
-              selected={selectedIds.includes(row.id)}
-              role="link"
-              tabIndex={0}
-              aria-label={`Open ${row.name}`}
-              onClick={() => router.push(row.href)}
-              onKeyDown={(event) => {
-                if (event.target !== event.currentTarget) return;
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  router.push(row.href);
-                }
-              }}
-              className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/40"
-            >
-              <TablePrimaryCell
-                selected={selectedIds.includes(row.id)}
-                onSelectionChange={() => toggleRow(row.id)}
-                checkboxTitle={`Select ${row.name}`}
-              >
-                <span className="min-w-0 flex-1 truncate text-xs text-gray-800">
-                  {row.name}
-                </span>
-              </TablePrimaryCell>
-              <TableCell className="ml-auto w-48">{row.context}</TableCell>
-              <TableCell className="w-36">
-                {formatDate(row.createdAt)}
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      )}
-    </TableScrollArea>
   );
 }
 

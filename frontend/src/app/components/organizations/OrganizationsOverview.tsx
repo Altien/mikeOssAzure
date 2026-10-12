@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check } from "lucide-react";
+import { Check, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { PageHeader } from "@/app/components/shared/PageHeader";
+import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
+import { useWorkspace } from "@/app/contexts/WorkspaceContext";
 import { TableToolbar } from "@/app/components/shared/TableToolbar";
 import {
   SkeletonLine,
@@ -34,6 +35,7 @@ import { ORG_ROLE_LABELS, isOrgAdmin } from "@/app/lib/permissions";
 import { userFacingApiError } from "@/app/lib/userFacingError";
 import { LIQUID_SUBTLE_PANEL_SURFACE_CLASS } from "@/app/components/ui/liquid-surface";
 import { CreateOrganizationModal } from "./OrganizationModals";
+import { organizationSettingsHref } from "./OrganizationSettingsShell";
 
 type OrganizationFilter = "managed" | "joined" | "invites";
 type OrganizationSortKey = "name" | "members" | "created";
@@ -49,8 +51,14 @@ function formatDate(value?: string) {
   });
 }
 
+/**
+ * The Organizations section of a person's settings: the organizations they
+ * belong to, the invitations waiting for them, and a way to start a new
+ * one. Opening an organization goes to that organization's own settings.
+ */
 export function OrganizationsOverview() {
   const router = useRouter();
+  const { refreshOrganizations } = useWorkspace();
   const [orgs, setOrgs] = useState<Org[] | null>(null);
   const [invitations, setInvitations] = useState<OrgInvitation[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -128,6 +136,8 @@ export function OrganizationsOverview() {
     // to the organizations list, and a refusal is often a refusal because
     // somebody answered it somewhere else already.
     await load();
+    // An accepted invitation is a new workspace to switch to.
+    void refreshOrganizations();
   }
 
   const loading = orgs === null;
@@ -177,23 +187,26 @@ export function OrganizationsOverview() {
     setSort(direction ? { key, direction } : null);
   }
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-      <PageHeader
-        loading={loading}
-        actions={[
-          {
-            type: "new",
-            title: "New organization",
-            onClick: () => setCreateOpen(true),
-          },
-        ]}
-      >
-        <h1 className="font-serif text-2xl font-medium text-gray-900">
+    <section aria-labelledby="my-organizations-heading" className="space-y-3">
+      <div className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-2">
+        <SettingsHeading id="my-organizations-heading">
           Organizations
-        </h1>
-      </PageHeader>
+        </SettingsHeading>
+        <PillButtonUI
+          tone="black"
+          size="sm"
+          aria-haspopup="dialog"
+          className="ml-auto"
+          onClick={() => setCreateOpen(true)}
+        >
+          <Plus className="h-3.5 w-3.5" />
+          New organization
+        </PillButtonUI>
+      </div>
 
       <TableToolbar
+        // Inside a settings section, which has its own gutters.
+        className="mx-0 md:mx-0"
         items={organizationFilters}
         active={activeFilter}
         onChange={setActiveFilter}
@@ -202,14 +215,14 @@ export function OrganizationsOverview() {
       {activeFilter === "invites" ? (
         loading ? (
           <div
-            className={`mx-4 mb-3 space-y-4 rounded-2xl px-4 py-4 md:mx-8 ${LIQUID_SUBTLE_PANEL_SURFACE_CLASS}`}
+            className={`space-y-4 rounded-2xl px-4 py-4 ${LIQUID_SUBTLE_PANEL_SURFACE_CLASS}`}
           >
             {[1, 2, 3].map((row) => (
               <SkeletonLine key={row} className="h-7 w-full" />
             ))}
           </div>
         ) : invitationsError ? (
-          <div className="mx-4 mb-3 flex min-h-0 flex-1 items-center justify-center md:mx-8">
+          <div className="py-6">
             <EmptyState
               icon={<OrganizationSkeuoIcon />}
               title="Invitations"
@@ -223,7 +236,7 @@ export function OrganizationsOverview() {
             />
           </div>
         ) : invitations.length === 0 ? (
-          <div className="mx-4 mb-3 flex min-h-0 flex-1 items-center justify-center md:mx-8">
+          <div className="py-6">
             <EmptyState
               title="Invitations"
               description="You have no active organization invitations."
@@ -231,7 +244,7 @@ export function OrganizationsOverview() {
           </div>
         ) : (
           <div
-            className={`mx-4 mb-3 rounded-2xl px-4 py-3 md:mx-8 ${LIQUID_SUBTLE_PANEL_SURFACE_CLASS}`}
+            className={`rounded-2xl px-4 py-3 ${LIQUID_SUBTLE_PANEL_SURFACE_CLASS}`}
           >
             <div className="min-w-0 space-y-3">
               {invitations.map((invitation) => (
@@ -272,6 +285,7 @@ export function OrganizationsOverview() {
         )
       ) : (
         <TableScrollArea
+          className="mx-0 mb-0 flex-none md:mx-0 md:mb-0"
           header={
             <TableHeaderRow>
               <TableStickyCell header>
@@ -382,12 +396,12 @@ export function OrganizationsOverview() {
                   role="link"
                   tabIndex={0}
                   aria-label={`Open ${org.name}`}
-                  onClick={() => router.push(`/organizations/${org.id}`)}
+                  onClick={() => router.push(organizationSettingsHref(org.id))}
                   onKeyDown={(event) => {
                     if (event.target !== event.currentTarget) return;
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
-                      router.push(`/organizations/${org.id}`);
+                      router.push(organizationSettingsHref(org.id));
                     }
                   }}
                   className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/40"
@@ -423,7 +437,9 @@ export function OrganizationsOverview() {
         }}
         onCreated={(org) => {
           setCreateOpen(false);
-          router.push(`/organizations/${org.id}`);
+          // A new workspace to switch to, and its settings to finish.
+          void refreshOrganizations();
+          router.push(organizationSettingsHref(org.id));
         }}
       />
       <WarningPopup
@@ -432,6 +448,6 @@ export function OrganizationsOverview() {
         message={invitationError}
         onClose={() => setInvitationError(null)}
       />
-    </div>
+    </section>
   );
 }

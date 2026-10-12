@@ -40,7 +40,7 @@ function VisibleNoModelsWarning({
         isOrganizationNoModelsReason(reason) && activeOrganization !== null;
     const settingsHref =
         organizationFix && isOrgAdmin(activeOrganization.role)
-            ? `/organizations/${activeOrganization.id}/settings`
+            ? `/organizations/${activeOrganization.id}/settings/providers`
             : null;
 
     return (

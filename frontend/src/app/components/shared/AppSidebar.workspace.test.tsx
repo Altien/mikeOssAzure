@@ -13,10 +13,11 @@ const state = vi.hoisted(() => ({
   workspaceId: "personal" as string | null,
   organizations: [] as Org[] | null,
   setWorkspace: vi.fn(),
+  push: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: state.push }),
   usePathname: () => "/assistant",
 }));
 
@@ -217,6 +218,51 @@ describe("AppSidebar workspace switcher", () => {
     ).toHaveClass("text-xs", "font-semibold");
     expect(label).not.toHaveClass("uppercase");
     expect(label).not.toHaveClass("tracking-wider");
+  });
+
+  it("opens the active organization's settings from the account menu", async () => {
+    const user = userEvent.setup();
+    state.organizations = [ACME, BETA];
+    state.workspaceId = BETA.id;
+    render(<AppSidebar isOpen onToggle={vi.fn()} />);
+
+    await openAccountMenu(user);
+    await user.click(
+      screen.getByRole("menuitem", { name: "Organization settings" }),
+    );
+
+    expect(state.push).toHaveBeenCalledWith(
+      "/organizations/org-beta/settings",
+    );
+  });
+
+  it("offers the settings to a plain member too: they hold General and Members", async () => {
+    const user = userEvent.setup();
+    state.organizations = [ACME, BETA];
+    state.workspaceId = ACME.id;
+    render(<AppSidebar isOpen onToggle={vi.fn()} />);
+
+    await openAccountMenu(user);
+    expect(
+      screen.getByRole("menuitem", { name: "Organization settings" }),
+    ).toBeVisible();
+  });
+
+  it("offers no organization settings in the personal workspace, and no separate organizations page", async () => {
+    // The organizations a person belongs to are under Settings.
+    const user = userEvent.setup();
+    state.organizations = [ACME, BETA];
+    state.workspaceId = "personal";
+    render(<AppSidebar isOpen onToggle={vi.fn()} />);
+
+    await openAccountMenu(user);
+    expect(screen.getByRole("menuitem", { name: "Settings" })).toBeVisible();
+    expect(
+      screen.queryByRole("menuitem", { name: "Organization settings" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: "Organizations" }),
+    ).not.toBeInTheDocument();
   });
 
   it("switches workspace when another one is chosen", async () => {

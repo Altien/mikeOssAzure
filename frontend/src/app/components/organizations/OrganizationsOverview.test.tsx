@@ -6,6 +6,7 @@ import { OrganizationsOverview } from "./OrganizationsOverview";
 
 const mocks = vi.hoisted(() => ({
   push: vi.fn(),
+  refreshOrganizations: vi.fn(async () => {}),
   listOrgs: vi.fn(),
   listMyOrgInvitations: vi.fn(),
   createOrg: vi.fn(),
@@ -16,6 +17,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mocks.push }),
+}));
+vi.mock("@/app/contexts/WorkspaceContext", () => ({
+  useWorkspace: () => ({ refreshOrganizations: mocks.refreshOrganizations }),
 }));
 // Spread the real module: userFacingApiError resolves MikeApiError from this
 // same module, so a bare object mock leaves its `instanceof` check with an
@@ -110,10 +114,11 @@ describe("OrganizationsOverview", () => {
     });
 
     await user.click(organizationRow);
-    expect(mocks.push).toHaveBeenCalledWith("/organizations/org-1");
+    // Opening an organization goes to its own settings.
+    expect(mocks.push).toHaveBeenCalledWith("/organizations/org-1/settings");
   });
 
-  it("creates an organization from the page-header plus action", async () => {
+  it("creates an organization from the section's New organization button", async () => {
     const user = userEvent.setup();
     mocks.createOrg.mockResolvedValue({
       ...ORG,
@@ -144,7 +149,9 @@ describe("OrganizationsOverview", () => {
       "jane@firm.example",
       "member",
     );
-    expect(mocks.push).toHaveBeenCalledWith("/organizations/org-2");
+    expect(mocks.push).toHaveBeenCalledWith("/organizations/org-2/settings");
+    // A new organization is a new workspace to switch to.
+    expect(mocks.refreshOrganizations).toHaveBeenCalled();
   });
 
   it("separates organizations into Managing and Joined tabs", async () => {

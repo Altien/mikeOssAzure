@@ -101,7 +101,7 @@ describe("NoModelsWarningPopup", () => {
 
                 expect(onClose).toHaveBeenCalledTimes(1);
                 expect(mocks.push).toHaveBeenCalledExactlyOnceWith(
-                    "/organizations/org-1/settings",
+                    "/organizations/org-1/settings/providers",
                 );
             },
         );

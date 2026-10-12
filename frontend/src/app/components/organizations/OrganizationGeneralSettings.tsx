@@ -1,0 +1,292 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { LogOut, Trash2 } from "lucide-react";
+import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
+import { WarningPopup } from "@/app/components/popups/WarningPopup";
+import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
+import { SettingsRow } from "@/app/components/settings/SettingsRow";
+import {
+  SettingsDescription,
+  SettingsLabel,
+} from "@/app/components/settings/SettingsText";
+import { SettingsTextInput } from "@/app/components/settings/SettingsTextInput";
+import { FieldLabel } from "@/app/components/ui/form-field";
+import { useAuth } from "@/app/contexts/AuthContext";
+import { useWorkspace } from "@/app/contexts/WorkspaceContext";
+import { deleteOrg, removeOrgMember, updateOrg } from "@/app/lib/mikeApi";
+import {
+  ORG_ROLE_LABELS,
+  isOrgAdmin,
+  isOrgOwner,
+} from "@/app/lib/permissions";
+import { userFacingApiError } from "@/app/lib/userFacingError";
+import { GlassCardUI } from "@/shared/ui/GlassCardUI";
+import { PillButtonUI } from "@/shared/ui/PillButtonUI";
+import { useOrganizationSettings } from "./OrganizationSettingsShell";
+
+// The General section of an organization's settings. Everyone in the
+// organization sees it: its name, their own role and the way out. Renaming
+// is its owners' and admins', deleting it its owners' alone; the server
+// refuses both for anyone else, so those controls are simply not drawn.
+
+/** Where somebody lands once the organization is no longer theirs to see. */
+const AFTER_DEPARTURE = "/settings/organizations";
+
+type Pending = "leave" | "delete";
+
+export function OrganizationGeneralSettings() {
+  const router = useRouter();
+  const { user } = useAuth();
+  const { refreshOrganizations } = useWorkspace();
+  const { org, setOrg } = useOrganizationSettings();
+  const [nameStatus, setNameStatus] = useState<
+    "idle" | "saving" | "saved" | { error: string }
+  >("idle");
+  const [pending, setPending] = useState<Pending | null>(null);
+  const [working, setWorking] = useState<Pending | null>(null);
+  const [failure, setFailure] = useState<{
+    title: string;
+    message: string;
+  } | null>(null);
+
+  // The saved name arrives with the organization, after mount, and changes
+  // when a save lands; the field follows it whenever it does.
+  const savedName = org?.name ?? "";
+  const [draft, setDraft] = useState({ saved: savedName, value: savedName });
+  if (draft.saved !== savedName)
+    setDraft({ saved: savedName, value: savedName });
+  const name = draft.value;
+  const setName = (value: string) =>
+    setDraft((current) => ({ ...current, value }));
+
+  const canRename = !!org && isOrgAdmin(org.role);
+  const canDelete = !!org && isOrgOwner(org.role);
+  const trimmedName = name.trim();
+
+  async function saveName() {
+    if (!org || !canRename || nameStatus === "saving") return;
+    if (!trimmedName) {
+      // An empty name is not a rename; put the saved one back.
+      setName(org.name);
+      setNameStatus("idle");
+      return;
+    }
+    if (trimmedName === org.name) return;
+    setNameStatus("saving");
+    try {
+      const updated = await updateOrg(org.id, trimmedName);
+      setOrg({ ...updated, member_count: org.member_count });
+      setNameStatus("saved");
+      // The sidebar and the workspace switcher show the name too.
+      void refreshOrganizations();
+    } catch (error) {
+      setNameStatus({
+        error: userFacingApiError(error, "Could not rename the organization."),
+      });
+    }
+  }
+
+  async function confirm() {
+    if (!org || !pending || working) return;
+    const action = pending;
+    setWorking(action);
+    try {
+      if (action === "leave") {
+        if (!user?.id) throw new Error("Not signed in");
+        await removeOrgMember(org.id, user.id);
+      } else {
+        await deleteOrg(org.id);
+      }
+    } catch (error) {
+      setPending(null);
+      setWorking(null);
+      setFailure(
+        action === "leave"
+          ? {
+              title: "Could not leave the organization",
+              message: userFacingApiError(
+                error,
+                "You could not be removed from the organization.",
+              ),
+            }
+          : {
+              title: "Organization not deleted",
+              message: userFacingApiError(
+                error,
+                "Could not delete the organization.",
+              ),
+            },
+      );
+      return;
+    }
+    // `working` stays set: the button must not fire a second time while the
+    // page navigates away from an organization that is gone.
+    setPending(null);
+    void refreshOrganizations();
+    router.push(AFTER_DEPARTURE);
+  }
+
+  const statusText =
+    nameStatus === "saving"
+      ? "Saving..."
+      : nameStatus === "saved"
+        ? "Saved"
+        : typeof nameStatus === "object"
+          ? nameStatus.error
+          : "";
+
+  return (
+    <div className="space-y-8">
+      <section aria-labelledby="org-general-details" className="space-y-3">
+        <SettingsHeading id="org-general-details">General</SettingsHeading>
+        <GlassCardUI>
+          <SettingsRow layout="stacked">
+            {!org ? (
+              <div className="space-y-2">
+                <span className="block h-4 w-36 animate-pulse rounded bg-gray-200" />
+                <span className="block h-10 w-full animate-pulse rounded-lg bg-gray-200" />
+              </div>
+            ) : canRename ? (
+              <div>
+                <div className="flex items-start justify-between gap-3">
+                  <FieldLabel htmlFor="organization-name">
+                    Organization name
+                  </FieldLabel>
+                  <span
+                    className={`text-xs ${typeof nameStatus === "object" ? "text-red-600" : "text-gray-400"}`}
+                    aria-live="polite"
+                  >
+                    {statusText}
+                  </span>
+                </div>
+                <SettingsTextInput
+                  id="organization-name"
+                  type="text"
+                  value={name}
+                  disabled={nameStatus === "saving"}
+                  onChange={(event) => {
+                    setName(event.target.value);
+                    setNameStatus("idle");
+                  }}
+                  onBlur={() => void saveName()}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      void saveName();
+                    }
+                  }}
+                />
+              </div>
+            ) : (
+              <div className="space-y-1">
+                <SettingsLabel>Organization name</SettingsLabel>
+                <p className="text-sm break-words text-gray-500">{org.name}</p>
+              </div>
+            )}
+          </SettingsRow>
+        </GlassCardUI>
+      </section>
+
+      <section aria-labelledby="org-general-membership" className="space-y-3">
+        <SettingsHeading id="org-general-membership">
+          Your Membership
+        </SettingsHeading>
+        <GlassCardUI>
+          <SettingsRow layout="stacked">
+            <div className="space-y-1">
+              <SettingsLabel>Your role</SettingsLabel>
+              {org ? (
+                <p className="text-sm text-gray-500">
+                  {ORG_ROLE_LABELS[org.role]}
+                </p>
+              ) : (
+                <span className="block h-5 w-20 animate-pulse rounded bg-gray-200" />
+              )}
+            </div>
+          </SettingsRow>
+          <SettingsRow>
+            <div className="space-y-1">
+              <SettingsLabel>Leave organization</SettingsLabel>
+              <SettingsDescription>
+                You will lose access to everything shared with you in this
+                organization.
+              </SettingsDescription>
+            </div>
+            <PillButtonUI
+              tone="white"
+              size="sm"
+              disabled={!org || working !== null}
+              loading={working === "leave"}
+              onClick={() => setPending("leave")}
+              className="w-full shrink-0 sm:w-auto"
+            >
+              <LogOut className="h-4 w-4 shrink-0" />
+              Leave
+            </PillButtonUI>
+          </SettingsRow>
+        </GlassCardUI>
+      </section>
+
+      {canDelete ? (
+        <section aria-labelledby="org-general-delete" className="space-y-3">
+          <SettingsHeading id="org-general-delete" tone="danger">
+            Delete Organization
+          </SettingsHeading>
+          <GlassCardUI>
+            <SettingsRow>
+              <div className="space-y-1">
+                <SettingsLabel>Delete this organization</SettingsLabel>
+                <SettingsDescription>
+                  Only an empty organization can be deleted. Move or delete
+                  its projects, chats, reviews, documents and workflows
+                  first.
+                </SettingsDescription>
+              </div>
+              <PillButtonUI
+                tone="danger"
+                size="sm"
+                disabled={working !== null}
+                loading={working === "delete"}
+                onClick={() => setPending("delete")}
+                className="w-full shrink-0 sm:w-auto"
+              >
+                <Trash2 className="h-4 w-4 shrink-0" />
+                Delete
+              </PillButtonUI>
+            </SettingsRow>
+          </GlassCardUI>
+        </section>
+      ) : null}
+
+      <ConfirmPopup
+        open={pending !== null}
+        title={
+          pending === "delete"
+            ? `Delete ${org?.name ?? "this organization"}?`
+            : "Leave organization?"
+        }
+        message={
+          pending === "delete"
+            ? "This removes the empty organization, its memberships and invitations."
+            : "You will lose access to this organization's shared resources."
+        }
+        confirmLabel={pending === "delete" ? "Delete" : "Leave"}
+        confirmVariant="danger"
+        confirmStatus={working ? "loading" : "idle"}
+        onCancel={() => {
+          if (working) return;
+          setPending(null);
+        }}
+        onConfirm={() => void confirm()}
+      />
+      <WarningPopup
+        open={failure !== null}
+        title={failure?.title ?? "Organization not updated"}
+        message={failure?.message ?? null}
+        onClose={() => setFailure(null)}
+      />
+    </div>
+  );
+}

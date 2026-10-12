@@ -125,7 +125,6 @@ import {
     listMyOrgInvitations,
     listOrgInvitations,
     listOrgMembers,
-    listOrgResources,
     listOrgs,
     removeOrgMember,
     resendOrgInvitation,
@@ -3101,11 +3100,6 @@ describe("thin endpoint wrappers", () => {
             call: () => deleteOrg("org-1"),
             url: "/orgs/org-1",
             method: "DELETE",
-        },
-        {
-            name: "listOrgResources",
-            call: () => listOrgResources("org-1"),
-            url: "/orgs/org-1/resources",
         },
         {
             name: "listOrgMembers",

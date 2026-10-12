@@ -846,13 +846,23 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                   <SettingsSkeuoIcon className="h-4 w-4 text-black" />
                                   Settings
                               </DropdownItem>
-                              <DropdownItem
-                                  onSelect={() => router.push("/organizations")}
-                                  className="h-8 gap-2 rounded-md px-2 py-2 text-sm font-medium text-gray-700 hover:text-gray-700 focus:text-gray-700 data-[selected=true]:text-gray-900 data-[selected=true]:hover:text-gray-900 data-[selected=true]:focus:text-gray-900"
-                              >
-                                  <OrganizationSkeuoIcon className="h-4 w-4 text-black" />
-                                  Organizations
-                              </DropdownItem>
+                              {/* The active organization's own settings.
+                                  In the personal workspace there is none:
+                                  the organizations a person belongs to are
+                                  listed under Settings. */}
+                              {activeOrganization ? (
+                                  <DropdownItem
+                                      onSelect={() =>
+                                          router.push(
+                                              `/organizations/${activeOrganization.id}/settings`,
+                                          )
+                                      }
+                                      className="h-8 gap-2 rounded-md px-2 py-2 text-sm font-medium text-gray-700 hover:text-gray-700 focus:text-gray-700 data-[selected=true]:text-gray-900 data-[selected=true]:hover:text-gray-900 data-[selected=true]:focus:text-gray-900"
+                                  >
+                                      <OrganizationSkeuoIcon className="h-4 w-4 text-black" />
+                                      Organization settings
+                                  </DropdownItem>
+                              ) : null}
                               <DropdownItem
                                   onSelect={() => {
                                       void signOut()
