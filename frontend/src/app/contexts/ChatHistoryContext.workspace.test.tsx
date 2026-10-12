@@ -5,15 +5,17 @@
  */
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useEffect } from "react";
 
 const listChats = vi.fn();
+const createChat = vi.fn();
 const workspace = vi.hoisted(() => ({
     current: "personal" as string | undefined,
 }));
 const STABLE_USER = vi.hoisted(() => ({ id: "u1", email: "u1@example.com" }));
 
 vi.mock("@/app/lib/mikeApi", () => ({
-    createChat: vi.fn(),
+    createChat: (...args: unknown[]) => createChat(...args),
     listChats: (...args: unknown[]) => listChats(...args),
     renameChat: vi.fn(),
     deleteChat: vi.fn(async () => undefined),
@@ -23,6 +25,10 @@ vi.mock("@/app/contexts/AuthContext", () => ({
 }));
 vi.mock("@/app/contexts/WorkspaceContext", () => ({
     useWorkspaceParam: () => workspace.current,
+    useWorkspaceOrgId: () =>
+        workspace.current && workspace.current !== "personal"
+            ? workspace.current
+            : undefined,
 }));
 
 import {
@@ -39,8 +45,13 @@ const chat = (id: string, title: string) => ({
     is_owner: true,
 });
 
+let saveChat: ReturnType<typeof useChatHistoryContext>["saveChat"];
 function Probe() {
-    const { chats } = useChatHistoryContext();
+    const context = useChatHistoryContext();
+    useEffect(() => {
+        saveChat = context.saveChat;
+    });
+    const { chats } = context;
     return (
         <p>
             {chats === null
@@ -59,6 +70,46 @@ const tree = () => (
 beforeEach(() => {
     vi.clearAllMocks();
     workspace.current = "personal";
+});
+
+// A chat started on its own belongs to the workspace it is started in.
+describe("starting a chat", () => {
+    beforeEach(() => {
+        listChats.mockResolvedValue([]);
+        createChat.mockResolvedValue({ id: "new-chat" });
+    });
+
+    it("files it under the organization whose workspace is active", async () => {
+        workspace.current = "org-1";
+        render(tree());
+        await screen.findByText("empty");
+
+        await act(async () => {
+            await saveChat();
+        });
+        expect(createChat).toHaveBeenCalledWith({ org_id: "org-1" });
+    });
+
+    it("names no organization in Personal", async () => {
+        render(tree());
+        await screen.findByText("empty");
+
+        await act(async () => {
+            await saveChat();
+        });
+        expect(createChat).toHaveBeenCalledWith(undefined);
+    });
+
+    it("lets the project decide for a chat started inside one", async () => {
+        workspace.current = "org-1";
+        render(tree());
+        await screen.findByText("empty");
+
+        await act(async () => {
+            await saveChat("proj-1");
+        });
+        expect(createChat).toHaveBeenCalledWith({ project_id: "proj-1" });
+    });
 });
 
 describe("ChatHistoryProvider and the active workspace", () => {

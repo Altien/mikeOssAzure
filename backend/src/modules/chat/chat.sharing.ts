@@ -16,6 +16,7 @@ import { type Db } from "../../lib/supabase";
 import { deleteContentGrant, listContentGrants, upsertContentGrant, type ContentAccessGrant } from "../../lib/contentAccess";
 import { listContentPeople, type ResourcePeopleResult } from "../../lib/resourcePeople";
 import { AccessibleChat } from "./chat.access";
+import { teamOrgIdOf } from "../../lib/personalOrgs";
 
 // GET /chat/:chatId/people
 export async function listChatPeople(
@@ -70,12 +71,26 @@ export async function grantChatAccess(
             kind: "db_error",
             detail: creatorProfile.error.message,
         };
+    let orgId: string | null;
+    try {
+        orgId = await teamOrgIdOf(db, args.chat.org_id);
+    } catch (error) {
+        return {
+            ok: false,
+            kind: "db_error",
+            detail:
+                error instanceof Error
+                    ? error.message
+                    : "Failed to read the chat's organization",
+        };
+    }
     return upsertContentGrant(db, {
         kind: "chat",
         resourceId: args.chatId,
         email: args.email,
         role: args.role,
         createdBy: args.userId,
+        orgId,
         creatorEmail:
             (creatorProfile?.data as { email?: string | null } | null)?.email ??
             null,

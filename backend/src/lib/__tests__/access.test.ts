@@ -14,6 +14,7 @@ import {
     parseContentVisibility,
     resolveContentOrgId,
     resolveOrgContentRole,
+    resolveStandaloneOrgId,
     strongerOrgRole,
 } from "../access";
 import { ownerlessRpcResult } from "../../__tests__/helpers/ownerlessRpc";
@@ -1092,6 +1093,195 @@ describe("creator-scoped operations", () => {
 // Chats and reviews share the same role-aware direct-grant model. These cases
 // pin each exclusive scope and project inheritance.
 // ---------------------------------------------------------------------------
+// A chat or review started on its own in an organization's workspace belongs
+// to that organization and is private to its author. The SQL twin is
+// public.standalone_org_access_role.
+describe("a standalone chat or review in an organization", () => {
+    // org-a is a firm: dave owns it, alice and carol are members, ivan an
+    // admin. frank wrote things there and has since left. erin was never in
+    // it. `mine` is alice's own personal organization.
+    const db = makeDb({
+        organizations: [
+            { id: "org-a", kind: "team" },
+            { id: "mine", kind: "personal", personal_user_id: "alice" },
+        ],
+        org_members: [
+            { org_id: "org-a", user_id: "alice", role: "member" },
+            { org_id: "org-a", user_id: "carol", role: "member" },
+            { org_id: "org-a", user_id: "ivan", role: "admin" },
+            { org_id: "org-a", user_id: "dave", role: "owner" },
+            { org_id: "mine", user_id: "alice", role: "owner" },
+        ],
+        user_profiles: [
+            { user_id: "carol", email: "carol@example.com" },
+            { user_id: "erin", email: "erin@example.com" },
+        ],
+        chat_access_grants: [
+            { chat_id: "shared", email: "carol@example.com", role: "editor" },
+            { chat_id: "shared", email: "erin@example.com", role: "owner" },
+            { chat_id: "left-owned", email: "carol@example.com", role: "owner" },
+            { chat_id: "left-outside", email: "erin@example.com", role: "owner" },
+            { chat_id: "personal", email: "erin@example.com", role: "viewer" },
+        ],
+        tabular_review_access_grants: [
+            { tabular_review_id: "review", email: "carol@example.com", role: "viewer" },
+        ],
+    });
+    const chat = (id: string, author: string, orgId: string | null = "org-a") => ({
+        id,
+        user_id: author,
+        project_id: null,
+        org_id: orgId,
+    });
+    const open = (
+        row: ReturnType<typeof chat>,
+        user: string,
+        check = ensureChatAccess,
+    ) => check(row, user, `${user}@example.com`, db);
+
+    it("is its author's, as Owner", async () => {
+        await expect(open(chat("private", "alice"), "alice")).resolves.toEqual({
+            ok: true,
+            isCreator: true,
+            orgRole: "member",
+            projectRole: "owner",
+        });
+    });
+
+    it.each(["carol", "ivan", "dave"])(
+        "is closed to %s, a colleague it was not shared with — whatever their role in the organization",
+        async (user) => {
+            await expect(
+                open(chat("private", "alice"), user),
+            ).resolves.toEqual({ ok: false });
+        },
+    );
+
+    it("opens to a member it was shared with, at the role they were given", async () => {
+        await expect(open(chat("shared", "alice"), "carol")).resolves.toEqual({
+            ok: true,
+            isCreator: false,
+            orgRole: "member",
+            projectRole: "editor",
+        });
+    });
+
+    it("counts a grant held outside the organization for nothing", async () => {
+        await expect(open(chat("shared", "alice"), "erin")).resolves.toEqual({
+            ok: false,
+        });
+    });
+
+    it("stays with the organization when its author leaves: they lose it, and the owners take it over", async () => {
+        const left = chat("left", "frank");
+        await expect(open(left, "frank")).resolves.toEqual({ ok: false });
+        await expect(open(left, "dave")).resolves.toEqual({
+            ok: true,
+            isCreator: false,
+            orgRole: "owner",
+            projectRole: "owner",
+        });
+        // Owners only: administering the organization is not owning its work.
+        await expect(open(left, "ivan")).resolves.toEqual({ ok: false });
+        await expect(open(left, "carol")).resolves.toEqual({ ok: false });
+    });
+
+    it("is not taken over while a member still holds an Owner grant on it", async () => {
+        const left = chat("left-owned", "frank");
+        await expect(open(left, "dave")).resolves.toEqual({ ok: false });
+        await expect(open(left, "carol")).resolves.toMatchObject({
+            ok: true,
+            projectRole: "owner",
+        });
+    });
+
+    it("is taken over when the only Owner grant is held outside the organization", async () => {
+        await expect(
+            open(chat("left-outside", "frank"), "dave"),
+        ).resolves.toMatchObject({ ok: true, projectRole: "owner" });
+    });
+
+    it("is taken over when its author's account is gone", async () => {
+        await expect(
+            open({ ...chat("orphan", "x"), user_id: null as unknown as string }, "dave"),
+        ).resolves.toMatchObject({ ok: true, projectRole: "owner" });
+    });
+
+    it("applies to tabular reviews in the same way", async () => {
+        const review = chat("review", "alice");
+        await expect(
+            open(review, "alice", ensureReviewAccess),
+        ).resolves.toMatchObject({ ok: true, projectRole: "owner" });
+        await expect(
+            open(review, "carol", ensureReviewAccess),
+        ).resolves.toMatchObject({ ok: true, projectRole: "viewer" });
+        await expect(open(review, "dave", ensureReviewAccess)).resolves.toEqual({
+            ok: false,
+        });
+    });
+
+    it("leaves a chat in a personal organization on the personal rule: its author, and anyone it is shared with", async () => {
+        const personal = chat("personal", "alice", "mine");
+        await expect(open(personal, "alice")).resolves.toEqual({
+            ok: true,
+            isCreator: true,
+            orgRole: null,
+            projectRole: "owner",
+        });
+        await expect(open(personal, "erin")).resolves.toEqual({
+            ok: true,
+            isCreator: false,
+            orgRole: null,
+            projectRole: "viewer",
+        });
+        await expect(open(personal, "dave")).resolves.toEqual({ ok: false });
+    });
+});
+
+describe("resolveStandaloneOrgId", () => {
+    const db = makeDb({
+        organizations: [
+            { id: "org-a", kind: "team" },
+            { id: "mine", kind: "personal", personal_user_id: "alice" },
+        ],
+        org_members: [
+            { org_id: "org-a", user_id: "alice", role: "member" },
+            { org_id: "mine", user_id: "alice", role: "owner" },
+        ],
+    });
+
+    it.each([undefined, null, ""])("is Personal for %j", async (orgId) => {
+        await expect(
+            resolveStandaloneOrgId(db, { userId: "alice", orgId }),
+        ).resolves.toEqual({ ok: true, orgId: null });
+    });
+
+    it("is the organization the caller is working in", async () => {
+        await expect(
+            resolveStandaloneOrgId(db, { userId: "alice", orgId: "org-a" }),
+        ).resolves.toEqual({ ok: true, orgId: "org-a" });
+    });
+
+    it.each([
+        ["an organization the caller is not in", "bob", "org-a"],
+        ["an organization that does not exist", "alice", "org-nowhere"],
+        ["the caller's own personal organization, named by id", "alice", "mine"],
+    ])("refuses %s", async (_label, userId, orgId) => {
+        await expect(
+            resolveStandaloneOrgId(db, { userId, orgId }),
+        ).resolves.toEqual({
+            ok: false,
+            detail: "You are not a member of that organization.",
+        });
+    });
+
+    it("refuses an org_id that is not a string", async () => {
+        await expect(
+            resolveStandaloneOrgId(db, { userId: "alice", orgId: ["org-a"] }),
+        ).resolves.toEqual({ ok: false, detail: "org_id must be a string" });
+    });
+});
+
 describe("ensureChatAccess", () => {
     // alice created proj-a inside org-a, open to the whole organization, and
     // is an org admin there; dave owns the organization, carol is a plain

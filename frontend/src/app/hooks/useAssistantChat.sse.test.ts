@@ -36,6 +36,11 @@ vi.mock("@/app/contexts/ChatHistoryContext", () => ({
         updateChatTitle: updateChatTitleMock,
     }),
 }));
+const workspaceOrg = vi.hoisted(() => ({ id: undefined as string | undefined }));
+vi.mock("@/app/contexts/WorkspaceContext", () => ({
+    useWorkspaceOrgId: () => workspaceOrg.id,
+}));
+
 import { useAssistantChat } from "./useAssistantChat";
 
 const fetchMock = vi.fn();
@@ -76,6 +81,7 @@ const sendAndGetAssistant = async (chunks: string[]) => {
 };
 
 beforeEach(() => {
+    workspaceOrg.id = undefined;
     vi.stubGlobal("fetch", fetchMock);
 });
 
@@ -85,6 +91,23 @@ afterEach(() => {
 });
 
 describe("useAssistantChat SSE parsing", () => {
+    // The first message of a chat started on its own is what creates it, so
+    // it carries the workspace the chat is started in.
+    it("names the active organization when a chat is started in its workspace", async () => {
+        workspaceOrg.id = "org-1";
+        await sendAndGetAssistant(["data: [DONE]\n\n"]);
+        const request = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
+        expect(JSON.parse(request.body as string)).toMatchObject({
+            org_id: "org-1",
+        });
+    });
+
+    it("names no organization for a chat started in Personal", async () => {
+        await sendAndGetAssistant(["data: [DONE]\n\n"]);
+        const request = fetchMock.mock.calls.at(-1)?.[1] as RequestInit;
+        expect(JSON.parse(request.body as string)).not.toHaveProperty("org_id");
+    });
+
     it("continues a project input request with its parent id, attachments and displayed document", async () => {
         fetchMock.mockResolvedValue(sseResponse(["data: [DONE]\n\n"]));
         const response = {

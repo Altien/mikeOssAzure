@@ -115,7 +115,11 @@ it("the final schema and access-grant migration contain no jsonb share predicate
     }
 });
 
-it("keeps organization scope exclusive to projects and workflows", () => {
+it("keeps organization-wide scope exclusive to projects and workflows", () => {
+    // A chat or review can belong to an organization on its own (see the
+    // standalone tests below), but it is never opened to the whole
+    // organization: it has no visibility and no per-member overrides, only
+    // its author and direct grants.
     const schema = SCHEMA;
     const migration = SOURCES[ORG_ACCESS_MIGRATION];
 
@@ -123,13 +127,86 @@ it("keeps organization scope exclusive to projects and workflows", () => {
     expect(schema).not.toContain(
         "create table if not exists public.tabular_review_org_access_overrides",
     );
-    // Dev drift: numbered migration adds these via ALTER TABLE ... ADD CONSTRAINT.
-    expect(schema).toMatch(/constraint chats_org_requires_project/i);
-    expect(schema).toMatch(/constraint tabular_reviews_org_requires_project/i);
     expect(migration).not.toContain("public.chat_org_access_overrides");
     expect(migration).not.toContain("public.tabular_review_org_access_overrides");
-    expect(migration).toContain("chats_org_requires_project");
-    expect(migration).toContain("tabular_reviews_org_requires_project");
+});
+
+// A chat or review started on its own in an organization's workspace belongs
+// to that organization and is private to its author. Both role functions
+// decide that through one helper; ensureSharedRowAccess (lib/access.ts) is
+// its TypeScript twin.
+describe("standalone chats and reviews in an organization", () => {
+    const schema = readFileSync(resolve(ROOT, "migrations/0120_standalone_org_content.sql"), "utf8");
+    const migration = readFileSync(
+        resolve(ROOT, "migrations/0120_standalone_org_content.sql"),
+        "utf8",
+    );
+    const functionSource = (sql: string, name: string) => {
+        const start = sql.indexOf(`create or replace function public.${name}(`);
+        expect(start, `${name} is defined`).toBeGreaterThanOrEqual(0);
+        const end = sql.indexOf("\n$$;", start);
+        return sql.slice(start, end);
+    };
+
+    it("no longer requires a project for a chat or review to carry an organization", () => {
+        expect(migration).toContain(
+            "drop constraint if exists chats_org_requires_project",
+        );
+        expect(migration).toContain(
+            "drop constraint if exists tabular_reviews_org_requires_project",
+        );
+    });
+
+    it.each([
+        "org_is_team",
+        "standalone_org_access_role",
+        "chat_access_role",
+        "review_access_role",
+        "cleanup_removed_org_member_overrides",
+    ])("a fresh install defines %s exactly as the migration does", (name) => {
+        expect(functionSource(schema, name)).toBe(
+            functionSource(migration, name),
+        );
+    });
+
+    it("asks membership first: nobody outside the organization reaches it, its author included", () => {
+        const body = functionSource(schema, "standalone_org_access_role");
+        const arms = [
+            "when caller.role is null then null",
+            "when p_creator_id::text = p_user_id then 'owner'",
+            "when p_grant_role is not null then p_grant_role",
+            // The organization's owners come last, and only for something
+            // nobody in the organization owns any more.
+            "when caller.role = 'owner'",
+        ].map((arm) => body.indexOf(arm));
+        expect(arms.every((at) => at > 0)).toBe(true);
+        expect(arms).toEqual([...arms].sort((a, b) => a - b));
+        expect(body).toContain("and not coalesce(p_has_member_owner, false)");
+        expect(body).toMatch(
+            /and not exists \(\s+select 1 from public\.org_members creator\s+where creator\.org_id = p_org_id and creator\.user_id::text = p_creator_id/,
+        );
+    });
+
+    it.each(["chat_access_role", "review_access_role"])(
+        "%s tries the project, then a team organization, then the personal rule",
+        (name) => {
+            const body = functionSource(schema, name);
+            const project = body.indexOf("when p_project_id is not null then");
+            const team = body.indexOf(
+                "when public.org_is_team(p_org_id) then public.standalone_org_access_role(",
+            );
+            const creator = body.search(/when p_\w+_user_id::text = p_user_id then 'owner'/);
+            expect(project).toBeGreaterThan(0);
+            expect(team).toBeGreaterThan(project);
+            expect(creator).toBeGreaterThan(team);
+        },
+    );
+
+    it("treats a personal organization as personal, not as a team", () => {
+        expect(functionSource(schema, "org_is_team")).toContain(
+            "where o.id = p_org_id and o.kind = 'team'",
+        );
+    });
 });
 
 // Organization content is private by default. The two role functions are the

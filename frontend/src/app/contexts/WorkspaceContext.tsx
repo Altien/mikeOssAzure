@@ -267,3 +267,20 @@ export function useWorkspace(): WorkspaceContextValue {
 export function useWorkspaceParam(): string | undefined {
     return useContext(WorkspaceContext).workspaceId ?? undefined;
 }
+
+/**
+ * The `org_id` for something started on its own, outside any project — a
+ * chat, a tabular review: the organization whose workspace is active, or
+ * `undefined` in Personal. What is started in an organization's workspace
+ * belongs to that organization.
+ *
+ * Read from the workspace id rather than the loaded organization, so that
+ * something started while the list of organizations is still loading is not
+ * filed under Personal by accident. The server checks membership.
+ */
+export function useWorkspaceOrgId(): string | undefined {
+    const { workspaceId } = useContext(WorkspaceContext);
+    return workspaceId && workspaceId !== PERSONAL_WORKSPACE
+        ? workspaceId
+        : undefined;
+}

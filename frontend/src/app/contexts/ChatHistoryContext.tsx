@@ -11,7 +11,10 @@ import {
     type ReactNode,
 } from "react";
 import { useAuth } from "@/app/contexts/AuthContext";
-import { useWorkspaceParam } from "@/app/contexts/WorkspaceContext";
+import {
+    useWorkspaceOrgId,
+    useWorkspaceParam,
+} from "@/app/contexts/WorkspaceContext";
 import {
     createChat,
     deleteChat,
@@ -75,6 +78,7 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
     // The sidebar history follows the active workspace: switching re-reads
     // the first page, through loadChats's identity changing below.
     const workspace = useWorkspaceParam();
+    const workspaceOrgId = useWorkspaceOrgId();
     const [chats, setChats] = useState<Chat[] | null>(null);
     const [hasMoreChats, setHasMoreChats] = useState(false);
     const [loadingMoreChats, setLoadingMoreChats] = useState(false);
@@ -230,8 +234,14 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
             projectRole?: ProjectRole | null,
         ): Promise<string | null> => {
             try {
+                // A chat started on its own belongs to the workspace it is
+                // started in; inside a project, the project decides.
                 const { id } = await createChat(
-                    projectId ? { project_id: projectId } : undefined,
+                    projectId
+                        ? { project_id: projectId }
+                        : workspaceOrgId
+                          ? { org_id: workspaceOrgId }
+                          : undefined,
                 );
                 const now = new Date().toISOString();
                 // The optimistic row must say what the server would say.
@@ -273,7 +283,7 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
                 return null;
             }
         },
-        [user],
+        [user, workspaceOrgId],
     );
 
     const renameChatFn = useCallback(

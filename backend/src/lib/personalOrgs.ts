@@ -53,6 +53,20 @@ export async function isPersonalOrg(
 }
 
 /**
+ * `orgId` when it names a team organization, otherwise null: no
+ * organization, or a person's own. Content filed under a team organization
+ * follows the organization's rules; everything else follows the personal
+ * ones.
+ */
+export async function teamOrgIdOf(
+    db: Db,
+    orgId: string | null | undefined,
+): Promise<string | null> {
+    if (!orgId) return null;
+    return (await isPersonalOrg(db, orgId)) ? null : orgId;
+}
+
+/**
  * The ids of the personal organization(s) belonging to `userId` — one, once
  * the account has it.
  */

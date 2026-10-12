@@ -15,8 +15,10 @@ import type { Db } from "./supabase";
  * by the organization's Owners, and by the members they have been shared with
  * (a per-resource override of Owner, Editor, Viewer — or Deny, which walls a
  * member off). Making one public gives every member Editor. Sharing never
- * reaches outside the organization. Chats and reviews only inherit
- * organization access through a parent project.
+ * reaches outside the organization. A chat or review in a project inherits
+ * the project's access. One started on its own in an organization's
+ * workspace belongs to that organization and is private to its author
+ * (`ensureSharedRowAccess`).
  *
  * `resolveOrgContentRole` below is that rule; public.project_access_role and
  * public.workflow_access_role in schema.sql are its SQL twins.
@@ -28,8 +30,10 @@ import type { Db } from "./supabase";
 
 import {
     getContentGrantRole,
+    listContentGrants,
     type ContentGrantKind,
 } from "./contentAccess";
+import { isPersonalOrg, teamOrgIdOf } from "./personalOrgs";
 import {
     can,
     isProjectRole,
@@ -313,6 +317,32 @@ export async function resolveContentOrgId(
         ok: true,
         orgId: (data as { org_id?: string | null }).org_id ?? null,
     };
+}
+
+/**
+ * The org_id for a chat or review started on its own, outside any project:
+ * the organization whose workspace its author is working in, named by the
+ * client as `org_id`, or null for Personal.
+ *
+ * The caller must belong to it. A person's own organization is not named
+ * here: Personal is the absence of one.
+ */
+export async function resolveStandaloneOrgId(
+    db: Db,
+    params: { userId: string; orgId: unknown },
+): Promise<{ ok: true; orgId: string | null } | { ok: false; detail: string }> {
+    const { orgId } = params;
+    if (orgId === undefined || orgId === null || orgId === "")
+        return { ok: true, orgId: null };
+    if (typeof orgId !== "string")
+        return { ok: false, detail: "org_id must be a string" };
+    const role = await getOrgRole(params.userId, orgId, db);
+    if (!role || (await isPersonalOrg(db, orgId)))
+        return {
+            ok: false,
+            detail: "You are not a member of that organization.",
+        };
+    return { ok: true, orgId };
 }
 
 type ProjectRow = {
@@ -653,9 +683,46 @@ export async function ensureDocAccess(
 }
 
 /**
+ * Whether a standalone chat or review in a team organization has no Owner
+ * left in it: its author is no longer a member, and no member holds an Owner
+ * grant on it. A failed read answers "it has one": taking something over is
+ * never the fallback.
+ */
+async function isStandaloneOrgRowOwnerless(
+    db: Db,
+    kind: ContentGrantKind,
+    row: { id: string; user_id: string | null },
+    orgId: string,
+): Promise<boolean> {
+    if (row.user_id && (await getOrgRole(row.user_id, orgId, db))) return false;
+    const listed = await listContentGrants(db, kind, row.id);
+    if (!listed.ok) return false;
+    for (const grant of listed.grants) {
+        if (grant.role !== "owner") continue;
+        const { data, error } = await db
+            .from("user_profiles")
+            .select("user_id")
+            .eq("email", grant.email)
+            .maybeSingle();
+        if (error) return false;
+        const holderId = (data as { user_id?: string | null } | null)?.user_id;
+        if (holderId && (await getOrgRole(holderId, orgId, db))) return false;
+    }
+    return true;
+}
+
+/**
  * Shared derivation for tabular reviews and assistant chats. Project children
- * inherit the project role exactly. Standalone rows use creator/direct grants;
- * they never establish an organization scope of their own.
+ * inherit the project role exactly.
+ *
+ * A standalone row in a team organization belongs to that organization and
+ * is private to its author: only current members reach it at all (its author
+ * included), its author is its Owner, a direct grant gives a member its
+ * role, and the organization's owners take it over once nobody in the
+ * organization owns it. public.standalone_org_access_role is the SQL twin.
+ *
+ * Any other standalone row is personal: its creator, and whoever it is
+ * shared with by email.
  */
 async function ensureSharedRowAccess(
     kind: ContentGrantKind,
@@ -685,6 +752,23 @@ async function ensureSharedRowAccess(
             : { ok: false };
     }
     const isCreator = !!row.user_id && row.user_id === userId;
+    const orgId = await teamOrgIdOf(db, row.org_id);
+    if (orgId) {
+        const orgRole = await getOrgRole(userId, orgId, db);
+        if (!orgRole) return { ok: false };
+        if (isCreator) return resourceAccessFor("owner", orgRole, true);
+        const granted = await getContentGrantRole(
+            db,
+            kind,
+            row.id,
+            userEmail,
+        );
+        if (granted) return resourceAccessFor(granted, orgRole, false);
+        return isOrgOwner(orgRole) &&
+            (await isStandaloneOrgRowOwnerless(db, kind, row, orgId))
+            ? resourceAccessFor("owner", orgRole, false)
+            : { ok: false };
+    }
     if (isCreator) return resourceAccessFor("owner", null, true);
     const role = await getContentGrantRole(
         db,
@@ -715,8 +799,9 @@ export async function ensureReviewAccess(
 
 /**
  * Same shape as `ensureReviewAccess`, for assistant chats. A project chat
- * inherits the project verdict; a standalone chat can be shared through a
- * direct grant, and is personal (org_id null) until it is.
+ * inherits the project verdict; a standalone chat is its author's, shared
+ * through direct grants, in Personal or in the organization it was started
+ * in.
  *
  * `get_chats_overview` mirrors this predicate branch for branch — keep the
  * two in lockstep, or a chat becomes openable by URL while staying invisible

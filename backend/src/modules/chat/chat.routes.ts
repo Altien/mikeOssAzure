@@ -42,6 +42,7 @@ import {
     reserveAssistantMessage,
 } from "./engine/index";
 import { normalizeEmail } from "../../lib/access";
+import { teamOrgIdOf } from "../../lib/personalOrgs";
 import { can } from "../../lib/permissions";
 import { generateAssistantChatTitle, logChatTitleFailure } from "./chat.title";
 import { sendInternalError } from "../../lib/httpError";
@@ -144,7 +145,12 @@ chatRouter.post("/create", requireAuth, asyncRoute(async (req, res) => {
     const projectId = parsedProjectId.value.projectId;
     const db = createServerSupabase();
 
-    const result = await createChat(db, { userId, userEmail, projectId });
+    const result = await createChat(db, {
+        userId,
+        userEmail,
+        projectId,
+        orgId: req.body?.org_id,
+    });
     if (!result.ok) {
         if (result.kind === "error")
             return void sendInternalError(res, result.error);
@@ -283,7 +289,9 @@ chatRouter.get("/:chatId/access", requireAuth, asyncRoute(async (req, res) => {
     if (!listed.ok) return void sendInternalError(res, listed.detail);
     res.json({
         scope: "direct",
-        org_id: null,
+        // The organization whose members it can be shared with, or null for
+        // a personal chat, which can be shared with anyone.
+        org_id: await teamOrgIdOf(db, access.chat.org_id),
         access_role: access.projectRole,
         grants: listed.grants,
     });
@@ -542,6 +550,7 @@ chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
         requestedModel: model,
         requestedReasoning: parsedReasoning.value,
         requestedTimeZone: req.body?.time_zone,
+        requestedOrgId: req.body?.org_id,
     });
     if (!prep.ok) {
         if ("internal" in prep) return void sendInternalError(res, prep.error);

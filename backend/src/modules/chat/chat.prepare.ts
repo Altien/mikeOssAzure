@@ -17,7 +17,12 @@ import { resolveRequestTimeZone } from "../../lib/userTime";
 import { attachPriorReasoning, buildDocContext, buildMessages, buildUserPersonalisationPrompt, devLog, enrichWithPriorEvents, loadUserMessageSentTimes, buildWorkflowStore, appendAskInputsResponseToAssistantMessage, runApprovedConnectorActions, generateSpotlightNonce, type AskInputsResponseRequest, type ChatMessage } from "./engine/index";
 import type { McpToolEvent } from "@mike/contracts";
 import { getUserModelSettings, resolveUserChatSelection } from "../user/user.service";
-import { checkProjectAccess, projectHasSharedAudience, resolveContentOrgId } from "../../lib/access";
+import {
+    checkProjectAccess,
+    projectHasSharedAudience,
+    resolveContentOrgId,
+    resolveStandaloneOrgId,
+} from "../../lib/access";
 import { hasDirectContentGrants } from "../../lib/contentAccess";
 import { can } from "../../lib/permissions";
 import { resolveEffectiveReasoningLevel } from "../../lib/modelSelection";
@@ -99,6 +104,12 @@ export async function prepareChatStream(
             | undefined;
         /** The browser's IANA time zone; unvalidated request input. */
         requestedTimeZone?: unknown;
+        /**
+         * The organization whose workspace a NEW standalone chat is started
+         * in; unvalidated request input. Not consulted for an existing chat,
+         * or for one in a project.
+         */
+        requestedOrgId?: unknown;
     },
 ): Promise<
     | { ok: true; prepared: PreparedChatStream }
@@ -220,12 +231,25 @@ export async function prepareChatStream(
                 status: projectAccess.status,
                 detail: projectAccess.detail,
             };
-        const resolvedOrg = await resolveContentOrgId(db, {
-            projectId: resolvedProjectId,
-        });
-        if (!resolvedOrg.ok)
-            return { ok: false, internal: true, error: resolvedOrg.detail };
-        contentOrgId = resolvedOrg.orgId;
+        if (resolvedProjectId) {
+            const resolvedOrg = await resolveContentOrgId(db, {
+                projectId: resolvedProjectId,
+            });
+            if (!resolvedOrg.ok)
+                return { ok: false, internal: true, error: resolvedOrg.detail };
+            contentOrgId = resolvedOrg.orgId;
+        } else {
+            // Started on its own, the chat belongs to the workspace its
+            // author is in: that organization's keys and models apply from
+            // this first turn.
+            const standalone = await resolveStandaloneOrgId(db, {
+                userId,
+                orgId: args.requestedOrgId,
+            });
+            if (!standalone.ok)
+                return { ok: false, status: 400, detail: standalone.detail };
+            contentOrgId = standalone.orgId;
+        }
     }
 
     const selection = await resolveUserChatSelection(db, {

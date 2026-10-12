@@ -31,6 +31,12 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
     listWorkflows: vi.fn(async () => []),
 }));
 
+const workspaceOrg = vi.hoisted(() => ({ id: undefined as string | undefined }));
+vi.mock("@/app/contexts/WorkspaceContext", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("@/app/contexts/WorkspaceContext")>()),
+    useWorkspaceOrgId: () => workspaceOrg.id,
+}));
+
 vi.mock("next/navigation", () => ({
     usePathname: () => "/tabular-reviews",
     useRouter: () => ({ push, replace: vi.fn() }),
@@ -196,6 +202,7 @@ async function openDialogAndReachCreate() {
 describe("Tabular reviews page creation", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        workspaceOrg.id = undefined;
         window.matchMedia = vi.fn().mockImplementation((query: string) => ({
             matches: true,
             media: query,
@@ -206,6 +213,35 @@ describe("Tabular reviews page creation", () => {
             removeEventListener: vi.fn(),
             dispatchEvent: vi.fn(),
         }));
+    });
+
+    // A review started on its own belongs to the workspace it is started in.
+    it("files the review under the organization whose workspace is active", async () => {
+        workspaceOrg.id = "org-1";
+        createTabularReview.mockResolvedValue(createdReview);
+        grantTabularReviewAccess.mockResolvedValue({});
+
+        fireEvent.click(await openDialogAndReachCreate());
+
+        await waitFor(() => expect(createTabularReview).toHaveBeenCalled());
+        expect(createTabularReview.mock.calls[0][0]).toMatchObject({
+            org_id: "org-1",
+        });
+        expect(createTabularReview.mock.calls[0][0]).not.toHaveProperty(
+            "project_id",
+        );
+    });
+
+    it("names no organization for a review started in Personal", async () => {
+        createTabularReview.mockResolvedValue(createdReview);
+        grantTabularReviewAccess.mockResolvedValue({});
+
+        fireEvent.click(await openDialogAndReachCreate());
+
+        await waitFor(() => expect(createTabularReview).toHaveBeenCalled());
+        expect(createTabularReview.mock.calls[0][0]).not.toHaveProperty(
+            "org_id",
+        );
     });
 
     it("keeps the created review and reports the refused grant instead of creating a second review", async () => {

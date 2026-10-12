@@ -2558,6 +2558,11 @@ export async function downloadDocumentsZip(
 
 export async function createChat(payload?: {
     project_id?: string;
+    /**
+     * The organization whose workspace a standalone chat is started in.
+     * Omitted in Personal; not consulted when the chat is in a project.
+     */
+    org_id?: string;
 }): Promise<{ id: string }> {
     return apiRequest<{ id: string }>("/chat/create", {
         method: "POST",
@@ -2791,6 +2796,11 @@ export async function streamChat(payload: {
     }[];
     chat_id?: string;
     project_id?: string;
+    /**
+     * The organization whose workspace the chat is in. It decides where a
+     * NEW chat is filed; an existing chat keeps the organization it has.
+     */
+    org_id?: string;
     model?: string;
     reasoning?: Message["reasoning"];
     ask_inputs_response?: AskInputsResponsePayload;
@@ -2910,6 +2920,11 @@ export async function createTabularReview(payload: {
     columns_config: { index: number; name: string; prompt: string }[];
     workflow_id?: string;
     project_id?: string;
+    /**
+     * The organization whose workspace a standalone review is started in.
+     * Omitted in Personal; not consulted when the review is in a project.
+     */
+    org_id?: string;
     document_grouping?: "document" | "folder";
     model: string;
 }): Promise<TabularReview> {

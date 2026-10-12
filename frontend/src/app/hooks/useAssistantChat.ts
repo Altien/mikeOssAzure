@@ -32,6 +32,7 @@ import {
 import { assistantHistoryContent } from "@/app/lib/assistantHistoryContent";
 import { reportError } from "@/app/lib/errorReporting";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
+import { useWorkspaceOrgId } from "@/app/contexts/WorkspaceContext";
 import {
   UserVisibleError,
   describeError,
@@ -73,6 +74,7 @@ export function useAssistantChat({
   const setCurrentChatId = (id: string | null) => {
     if (tracksCurrentChat) setHistoryCurrentChatId(id);
   };
+  const workspaceOrgId = useWorkspaceOrgId();
 
   const [messages, setRawMessages] = useState<Message[]>(initialMessages);
   // Mirrors `messages` for the async send path: a turn started from a toast
@@ -562,6 +564,8 @@ export function useAssistantChat({
             : streamChat({
                 messages: apiMessages,
                 chat_id: sendChatId,
+                // Where a new chat is filed: the workspace it is started in.
+                org_id: workspaceOrgId,
                 model,
                 reasoning,
                 ask_inputs_response: opts?.askInputsResponse,

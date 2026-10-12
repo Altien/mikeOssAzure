@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { useDirectoryData } from "../shared/useDirectoryData";
 import { FileDirectory } from "../shared/FileDirectory";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
+import { useWorkspaceOrgId } from "@/app/contexts/WorkspaceContext";
 import { Modal } from "../modals/Modal";
 import { FieldLabel } from "../ui/form-field";
 import { ModalSegmentedToggle } from "../modals/ModalSegmentedToggle";
@@ -107,6 +108,7 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
 
     const router = useRouter();
     const { saveChat, setNewChatMessages } = useChatHistoryContext();
+    const workspaceOrgId = useWorkspaceOrgId();
     const {
         loading: dirLoading,
         projects,
@@ -253,6 +255,9 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
                 columns_config: wf.columns_config || [],
                 workflow_id: wf.is_system ? undefined : wf.id,
                 project_id: projectId,
+                // On its own, the review belongs to the workspace it is
+                // started in; in a project, the project decides.
+                org_id: projectId ? undefined : workspaceOrgId,
                 model: selectedModel,
             });
             handleClose();

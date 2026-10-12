@@ -14,6 +14,7 @@ const {
     filterAccessibleDocumentIds,
     getUserModelSettings,
     resolveContentOrgId,
+    resolveStandaloneOrgId,
     runLLMStream,
     extractRowColumns,
     beginMemoryConversationTurn,
@@ -25,6 +26,7 @@ const {
     filterAccessibleDocumentIds: vi.fn(),
     getUserModelSettings: vi.fn(),
     resolveContentOrgId: vi.fn(),
+    resolveStandaloneOrgId: vi.fn(),
     runLLMStream: vi.fn(),
     // The synchronous generate loop's one slow call. Mocked so the route's
     // run lifecycle (detach, resume, stop) can be driven frame by frame
@@ -203,6 +205,15 @@ vi.mock("../../lib/access", async (importOriginal) => ({
     listAccessibleProjectIds: vi.fn(async () => []),
     getOrgRole: vi.fn(async () => null),
     resolveContentOrgId: (...args: unknown[]) => resolveContentOrgId(...args),
+    resolveStandaloneOrgId: (...args: unknown[]) =>
+        resolveStandaloneOrgId(...args),
+}));
+// Which organizations are team ones is the database's to say; here every
+// org_id a fixture carries names a team organization.
+vi.mock("../../lib/personalOrgs", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../../lib/personalOrgs")>()),
+    teamOrgIdOf: async (_db: unknown, orgId: string | null | undefined) =>
+        orgId ?? null,
 }));
 
 vi.mock("../../modules/user/user.settings", () => ({
@@ -246,6 +257,7 @@ describe("tabular.routes", () => {
         });
         // Default: personal content — no tenant to inherit.
         resolveContentOrgId.mockResolvedValue({ ok: true, orgId: null });
+        resolveStandaloneOrgId.mockResolvedValue({ ok: true, orgId: null });
         // Default: every requested doc is accessible (identity passthrough).
         filterAccessibleDocumentIds.mockImplementation(
             async (ids: string[]) => ids,
@@ -318,7 +330,11 @@ describe("tabular.routes", () => {
             ).toBe(false);
         });
 
-        it("rejects standalone organization scope", async () => {
+        it("400s an organization the caller does not belong to, and writes nothing", async () => {
+            resolveStandaloneOrgId.mockResolvedValue({
+                ok: false,
+                detail: "You are not a member of that organization.",
+            });
             const res = await request(app)
                 .post("/api/tabular-review")
                 .set(...AUTH)
@@ -332,13 +348,40 @@ describe("tabular.routes", () => {
 
             expect(res.status).toBe(400);
             expect(res.body.detail).toBe(
-                "Tabular reviews cannot be organization-scoped. Create the review inside an organization project instead.",
+                "You are not a member of that organization.",
             );
             expect(
                 supabaseState.inserts.some(
                     (insert) => insert.table === "tabular_reviews",
                 ),
             ).toBe(false);
+        });
+
+        it("passes the workspace's organization through from the request body", async () => {
+            resolveStandaloneOrgId.mockResolvedValue({
+                ok: true,
+                orgId: "org-1",
+            });
+            await request(app)
+                .post("/tabular-review")
+                .set(...AUTH)
+                .send({
+                    title: "Firm review",
+                    document_ids: [],
+                    columns_config: [],
+                    model: "claude-sonnet-5-5",
+                    org_id: "org-1",
+                });
+
+            expect(resolveStandaloneOrgId).toHaveBeenCalledWith(
+                expect.anything(),
+                { userId: "u1", orgId: "org-1" },
+            );
+            expect(
+                supabaseState.inserts.find(
+                    (insert) => insert.table === "tabular_reviews",
+                )?.payload,
+            ).toMatchObject({ org_id: "org-1", project_id: null });
         });
 
         it("creates a review (201) and only persists accessible documents", async () => {
@@ -971,10 +1014,10 @@ describe("tabular.routes", () => {
             supabaseState.updates.find((u) => u.table === "tabular_reviews")
                 ?.payload as Record<string, unknown> | undefined;
 
-        it("clears org_id when a review moves into a personal project", async () => {
-            // The leak: without restamping, a review carried out of an org
-            // project into somebody's personal project must not keep the old
-            // organization's lifecycle stamp.
+        it("400s moving an organization's review into a personal project", async () => {
+            // What belongs to an organization stays in it: carried into
+            // somebody's personal project, the firm's review would become
+            // that person's property.
             seedMove("org-1");
             resolveContentOrgId.mockResolvedValue({ ok: true, orgId: null });
 
@@ -983,11 +1026,11 @@ describe("tabular.routes", () => {
                 .set(...AUTH)
                 .send({ project_id: "p-to" });
 
-            expect(res.status).toBe(200);
-            expect(movePayload()).toMatchObject({
-                project_id: "p-to",
-                org_id: null,
-            });
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toBe(
+                "This review belongs to an organization and can only be moved to a project in the same organization.",
+            );
+            expect(movePayload()).toBeUndefined();
         });
 
         it("refuses the move when the tenant lookup fails, instead of guessing", async () => {

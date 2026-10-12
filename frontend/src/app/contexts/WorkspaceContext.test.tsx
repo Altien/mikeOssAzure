@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import {
     PERSONAL_WORKSPACE,
     WorkspaceProvider,
     useWorkspace,
+    useWorkspaceOrgId,
     useWorkspaceParam,
 } from "./WorkspaceContext";
 
@@ -44,6 +45,10 @@ function Probe() {
     );
 }
 
+function OrgIdProbe() {
+    return <p>org:{useWorkspaceOrgId() ?? "none"}</p>;
+}
+
 // What the server says an organization's work can run on, tagged with the
 // organization so a test can tell whose answer is on screen.
 const keysFor = (orgId: string) => ({
@@ -56,12 +61,8 @@ const shownKeys = () =>
     (latest.orgApiKeys?.effective as { marker?: string } | undefined)?.marker ??
     null;
 
-function renderProvider() {
-    return render(
-        <WorkspaceProvider>
-            <Probe />
-        </WorkspaceProvider>,
-    );
+function renderProvider(child: ReactNode = <Probe />) {
+    return render(<WorkspaceProvider>{child}</WorkspaceProvider>);
 }
 
 beforeEach(() => {
@@ -79,6 +80,25 @@ describe("WorkspaceProvider", () => {
         renderProvider();
         expect(screen.getByText(/^personal\|personal\|loading/)).toBeInTheDocument();
         await screen.findByText("personal|personal|loaded|none");
+    });
+
+    it("names no organization for work started in Personal", async () => {
+        renderProvider(<OrgIdProbe />);
+        expect(await screen.findByText("org:none")).toBeInTheDocument();
+    });
+
+    it("names the active organization for work started in its workspace, before the organizations load", async () => {
+        // Waiting for the list would file something started in that moment
+        // under Personal. The server checks membership.
+        window.localStorage.setItem(STORAGE_KEY, ACME.id);
+        renderProvider(<OrgIdProbe />);
+        expect(screen.getByText(`org:${ACME.id}`)).toBeInTheDocument();
+    });
+
+    it("stops naming an organization the caller turns out to have left", async () => {
+        window.localStorage.setItem(STORAGE_KEY, "org-gone");
+        renderProvider(<OrgIdProbe />);
+        expect(await screen.findByText("org:none")).toBeInTheDocument();
     });
 
     it("restores the workspace this account last used, before the organizations load", async () => {
