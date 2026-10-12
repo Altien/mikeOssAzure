@@ -785,6 +785,9 @@ describe("upload processing", () => {
           expected_content_sha256: startedFrom,
           pdf_path: null,
           sha256: sealedHash,
+          // The replaced version's textless count belongs to the old file;
+          // the publish RPC writes this fresh value (eac4b32a).
+          textless_page_count: null,
         } });
         return { data: { status: "completed" }, error: null };
       });
