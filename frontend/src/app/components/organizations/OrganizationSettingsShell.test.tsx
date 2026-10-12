@@ -21,11 +21,22 @@ const mocks = vi.hoisted(() => ({
   pathname: "/organizations/org-1/settings",
   role: "owner" as "owner" | "admin" | "member",
   getOrg: vi.fn(),
+  // The workspace the caller is in, and the organizations they belong to.
+  workspaceId: "org-1" as string | null,
+  organizations: [] as { id: string; name: string; role: string }[] | null,
+  setWorkspace: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mocks.push }),
   usePathname: () => mocks.pathname,
+}));
+vi.mock("@/app/contexts/WorkspaceContext", () => ({
+  useWorkspace: () => ({
+    workspaceId: mocks.workspaceId,
+    organizations: mocks.organizations,
+    setWorkspace: mocks.setWorkspace,
+  }),
 }));
 vi.mock("./OrganizationProviderKeys", () => ({
   OrganizationProviderKeys: ({ orgName }: { orgName: string }) => (
@@ -64,6 +75,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.pathname = "/organizations/org-1/settings";
   mocks.role = "owner";
+  mocks.workspaceId = "org-1";
+  mocks.organizations = [
+    { id: "org-1", name: "Elite Law LLP", role: "owner" },
+    { id: "org-2", name: "Beta Chambers", role: "member" },
+  ];
   mocks.getOrg.mockImplementation(async () => ({
     id: "org-1",
     name: "Elite Law LLP",
@@ -248,5 +264,118 @@ describe("the settings title", () => {
     expect(title).toHaveClass("text-3xl", "font-medium");
     expect(title).not.toHaveClass("text-4xl");
     await screen.findByText("section for Elite Law LLP");
+  });
+});
+
+describe("an organization's settings belong to its workspace", () => {
+  it.each([
+    ["another organization's workspace", "org-2"],
+    ["the personal workspace", "personal"],
+  ])("do not open from %s, and nothing about the organization is read", async (_name, workspaceId) => {
+    mocks.workspaceId = workspaceId;
+    renderShell();
+
+    expect(
+      screen.getByText(
+        "Elite Law LLP's settings can only be opened from its own workspace.",
+      ),
+    ).toBeInTheDocument();
+    // No frame, no sections, and no request for the organization.
+    expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
+    expect(screen.queryByText(/section for/)).not.toBeInTheDocument();
+    expect(mocks.getOrg).not.toHaveBeenCalled();
+  });
+
+  it("keeps a page outside the frame, such as Members, closed too", () => {
+    mocks.workspaceId = "org-2";
+    render(
+      <OrganizationSettingsProvider orgId="org-1">
+        <Section />
+      </OrganizationSettingsProvider>,
+    );
+    expect(screen.queryByText(/section for/)).not.toBeInTheDocument();
+    expect(mocks.getOrg).not.toHaveBeenCalled();
+  });
+
+  it("offers the switch to its workspace, and opens once the switch is made", async () => {
+    const user = userEvent.setup();
+    mocks.workspaceId = "personal";
+    const view = renderShell();
+
+    await user.click(
+      screen.getByRole("button", { name: "Switch to Elite Law LLP" }),
+    );
+    expect(mocks.setWorkspace).toHaveBeenCalledExactlyOnceWith("org-1");
+
+    // The workspace context makes the switch; the settings follow it.
+    mocks.workspaceId = "org-1";
+    view.rerender(
+      <OrganizationSettingsProvider orgId="org-1">
+        <OrganizationSettingsFrame>
+          <Section />
+        </OrganizationSettingsFrame>
+      </OrganizationSettingsProvider>,
+    );
+    expect(
+      await screen.findByText("section for Elite Law LLP"),
+    ).toBeInTheDocument();
+    expect(mocks.getOrg).toHaveBeenCalledExactlyOnceWith("org-1");
+  });
+
+  it("closes again when the caller switches to another workspace", async () => {
+    const view = renderShell();
+    await screen.findByText("section for Elite Law LLP");
+
+    mocks.workspaceId = "org-2";
+    view.rerender(
+      <OrganizationSettingsProvider orgId="org-1">
+        <OrganizationSettingsFrame>
+          <Section />
+        </OrganizationSettingsFrame>
+      </OrganizationSettingsProvider>,
+    );
+
+    expect(screen.queryByText(/section for/)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Switch to Elite Law LLP" }),
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing about an organization the caller does not belong to", async () => {
+    const user = userEvent.setup();
+    mocks.workspaceId = "org-2";
+    mocks.organizations = [
+      { id: "org-2", name: "Beta Chambers", role: "member" },
+    ];
+    renderShell();
+
+    expect(
+      screen.getByText("These settings are not available."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Elite Law/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^Switch to/ }),
+    ).not.toBeInTheDocument();
+    expect(mocks.getOrg).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Your organizations" }));
+    expect(mocks.push).toHaveBeenCalledWith("/settings/organizations");
+  });
+
+  it("waits for the caller's organizations before saying which one this is", () => {
+    mocks.workspaceId = "personal";
+    mocks.organizations = null;
+    const { container } = renderShell();
+    expect(container).toBeEmptyDOMElement();
+    expect(mocks.getOrg).not.toHaveBeenCalled();
+  });
+
+  it("is not narrowed where there is no workspace to compare with", async () => {
+    // Outside a WorkspaceProvider nothing is narrowed, as for the lists.
+    mocks.workspaceId = null;
+    renderShell();
+    expect(
+      await screen.findByText("section for Elite Law LLP"),
+    ).toBeInTheDocument();
   });
 });

@@ -6,6 +6,9 @@ import { OrganizationsOverview } from "./OrganizationsOverview";
 
 const mocks = vi.hoisted(() => ({
   push: vi.fn(),
+  // The workspace the person is in: "personal" or an organization's id.
+  workspaceId: "org-1" as string | null,
+  setWorkspace: vi.fn(),
   refreshOrganizations: vi.fn(async () => {}),
   listOrgs: vi.fn(),
   listMyOrgInvitations: vi.fn(),
@@ -19,7 +22,11 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mocks.push }),
 }));
 vi.mock("@/app/contexts/WorkspaceContext", () => ({
-  useWorkspace: () => ({ refreshOrganizations: mocks.refreshOrganizations }),
+  useWorkspace: () => ({
+    workspaceId: mocks.workspaceId,
+    setWorkspace: mocks.setWorkspace,
+    refreshOrganizations: mocks.refreshOrganizations,
+  }),
 }));
 // Spread the real module: userFacingApiError resolves MikeApiError from this
 // same module, so a bare object mock leaves its `instanceof` check with an
@@ -68,6 +75,7 @@ const INVITATION = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.workspaceId = "org-1";
   window.matchMedia = vi.fn().mockImplementation((query: string) => ({
     matches: true,
     media: query,
@@ -109,13 +117,70 @@ describe("OrganizationsOverview", () => {
       screen.getByRole("button", { name: "Sort by organization name" }),
     ).toBeInTheDocument();
 
+    // The workspace the person is in: its row opens its settings.
     const organizationRow = screen.getByRole("link", {
-      name: "Open Elite Law LLP",
+      name: "Open Elite Law LLP settings",
     });
+    expect(screen.getByText("Current")).toBeInTheDocument();
 
     await user.click(organizationRow);
-    // Opening an organization goes to its own settings.
     expect(mocks.push).toHaveBeenCalledWith("/organizations/org-1/settings");
+  });
+
+  describe("an organization that is not the workspace the person is in", () => {
+    const SECOND = { ...ORG, id: "org-2", name: "Beta Chambers" };
+
+    beforeEach(() => {
+      mocks.listOrgs.mockResolvedValue([ORG, SECOND]);
+    });
+
+    it("does not open its settings from here, by click or by keyboard", async () => {
+      const user = userEvent.setup();
+      render(<OrganizationsOverview />);
+      await screen.findByText("Beta Chambers");
+
+      // Only the current workspace's row is a link at all.
+      expect(screen.getAllByRole("link")).toHaveLength(1);
+      expect(
+        screen.queryByRole("link", { name: /Beta Chambers/ }),
+      ).not.toBeInTheDocument();
+
+      await user.click(screen.getByText("Beta Chambers"));
+      expect(mocks.push).not.toHaveBeenCalled();
+    });
+
+    it("offers a switch to its workspace instead", async () => {
+      const user = userEvent.setup();
+      render(<OrganizationsOverview />);
+      await screen.findByText("Beta Chambers");
+
+      await user.click(
+        screen.getByRole("button", { name: "Switch to Beta Chambers" }),
+      );
+
+      expect(mocks.setWorkspace).toHaveBeenCalledExactlyOnceWith("org-2");
+      // Switching is not opening: the person stays on their list.
+      expect(mocks.push).not.toHaveBeenCalled();
+      // The current workspace has nothing to switch to.
+      expect(
+        screen.queryByRole("button", { name: "Switch to Elite Law LLP" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("links to no organization's settings from the personal workspace", async () => {
+      mocks.workspaceId = "personal";
+      render(<OrganizationsOverview />);
+      await screen.findByText("Beta Chambers");
+
+      expect(screen.queryByRole("link")).not.toBeInTheDocument();
+      expect(screen.queryByText("Current")).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Switch to Elite Law LLP" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Switch to Beta Chambers" }),
+      ).toBeInTheDocument();
+    });
   });
 
   it("creates an organization from the section's New organization button", async () => {
@@ -149,9 +214,15 @@ describe("OrganizationsOverview", () => {
       "jane@firm.example",
       "member",
     );
-    expect(mocks.push).toHaveBeenCalledWith("/organizations/org-2/settings");
-    // A new organization is a new workspace to switch to.
+    // A new organization is a new workspace to switch to. Its settings
+    // open from there, so creating one does not navigate into them.
     expect(mocks.refreshOrganizations).toHaveBeenCalled();
+    expect(mocks.push).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    // The list is re-read so the new organization appears in it.
+    expect(mocks.listOrgs.mock.calls.length).toBeGreaterThan(1);
   });
 
   it("separates organizations into Managing and Joined tabs", async () => {

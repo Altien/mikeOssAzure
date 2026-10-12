@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import { Check, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
@@ -54,11 +60,19 @@ function formatDate(value?: string) {
 /**
  * The Organizations section of a person's settings: the organizations they
  * belong to, the invitations waiting for them, and a way to start a new
- * one. Opening an organization goes to that organization's own settings.
+ * one.
+ *
+ * An organization's settings belong to its workspace, so only the row of the
+ * workspace the person is in opens them. Every other organization offers a
+ * switch to its workspace instead, from where its settings can be opened.
  */
 export function OrganizationsOverview() {
   const router = useRouter();
-  const { refreshOrganizations } = useWorkspace();
+  const { workspaceId, setWorkspace, refreshOrganizations } = useWorkspace();
+  // `null` is "no workspace to compare with" (outside a WorkspaceProvider),
+  // where nothing is narrowed.
+  const isCurrentWorkspace = (org: Org) =>
+    workspaceId === null || workspaceId === org.id;
   const [orgs, setOrgs] = useState<Org[] | null>(null);
   const [invitations, setInvitations] = useState<OrgInvitation[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -322,6 +336,7 @@ export function OrganizationsOverview() {
                   />
                 ) : null}
               </TableHeaderCell>
+              <TableHeaderCell className="w-28">Workspace</TableHeaderCell>
             </TableHeaderRow>
           }
         >
@@ -341,6 +356,9 @@ export function OrganizationsOverview() {
                   </TableCell>
                   <TableCell className="w-36">
                     <SkeletonLine className="w-20" />
+                  </TableCell>
+                  <TableCell className="w-28">
+                    <SkeletonLine className="w-14" />
                   </TableCell>
                 </TableRow>
               ))}
@@ -390,36 +408,69 @@ export function OrganizationsOverview() {
             </TableEmptyState>
           ) : (
             <TableBody>
-              {visibleOrgs.map((org) => (
-                <TableRow
-                  key={org.id}
-                  role="link"
-                  tabIndex={0}
-                  aria-label={`Open ${org.name}`}
-                  onClick={() => router.push(organizationSettingsHref(org.id))}
-                  onKeyDown={(event) => {
-                    if (event.target !== event.currentTarget) return;
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      router.push(organizationSettingsHref(org.id));
-                    }
-                  }}
-                  className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/40"
-                >
-                  <TableStickyCell className="items-center">
-                    <span className="min-w-0 flex-1 truncate text-xs text-gray-800">
-                      {org.name}
-                    </span>
-                  </TableStickyCell>
-                  <TableCell className="ml-auto w-32">
-                    {org.member_count ?? 0}{" "}
-                    {org.member_count === 1 ? "member" : "members"}
-                  </TableCell>
-                  <TableCell className="w-36">
-                    {formatDate(org.created_at)}
-                  </TableCell>
-                </TableRow>
-              ))}
+              {visibleOrgs.map((org) => {
+                const current = isCurrentWorkspace(org);
+                const openSettings = () =>
+                  router.push(organizationSettingsHref(org.id));
+                return (
+                  <TableRow
+                    key={org.id}
+                    // Only the workspace the person is in opens its settings.
+                    interactive={current}
+                    {...(current
+                      ? {
+                          role: "link",
+                          tabIndex: 0,
+                          "aria-label": `Open ${org.name} settings`,
+                          onClick: openSettings,
+                          onKeyDown: (
+                            event: KeyboardEvent<HTMLDivElement>,
+                          ) => {
+                            if (event.target !== event.currentTarget) return;
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              openSettings();
+                            }
+                          },
+                        }
+                      : {})}
+                    className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/40"
+                  >
+                    <TableStickyCell
+                      className="items-center"
+                      {...(current
+                        ? {}
+                        : { hover: false, bgClassName: "bg-transparent" })}
+                    >
+                      <span className="min-w-0 flex-1 truncate text-xs text-gray-800">
+                        {org.name}
+                      </span>
+                    </TableStickyCell>
+                    <TableCell className="ml-auto w-32">
+                      {org.member_count ?? 0}{" "}
+                      {org.member_count === 1 ? "member" : "members"}
+                    </TableCell>
+                    <TableCell className="w-36">
+                      {formatDate(org.created_at)}
+                    </TableCell>
+                    <TableCell className="w-28">
+                      {current ? (
+                        // Plain text: a status, not a control.
+                        "Current"
+                      ) : (
+                        <PillButtonUI
+                          tone="white"
+                          size="sm"
+                          aria-label={`Switch to ${org.name}`}
+                          onClick={() => setWorkspace(org.id)}
+                        >
+                          Switch
+                        </PillButtonUI>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           )}
         </TableScrollArea>
@@ -435,11 +486,12 @@ export function OrganizationsOverview() {
           setCreateOpen(false);
           void load();
         }}
-        onCreated={(org) => {
+        onCreated={() => {
           setCreateOpen(false);
-          // A new workspace to switch to, and its settings to finish.
+          // A new workspace to switch to; its settings open from there. It
+          // appears in this list, and in the account menu's switcher.
+          void load();
           void refreshOrganizations();
-          router.push(organizationSettingsHref(org.id));
         }}
       />
       <WarningPopup
