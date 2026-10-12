@@ -4,8 +4,7 @@ import {
     LIQUID_GLASS_SUBTLE_CLASS,
 } from "@/shared/ui/LiquidGlassUI";
 
-export const TABLE_SURFACE_CLASS =
-    "table-surface rounded-2xl";
+export const TABLE_SURFACE_CLASS = "table-surface";
 
 /**
  * The container for a text editor. It deliberately does NOT use

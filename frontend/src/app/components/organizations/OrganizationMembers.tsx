@@ -76,13 +76,20 @@ const MEMBERS_PAGE_SIZE = 30;
 /** Where somebody lands once they have left the organization. */
 const AFTER_DEPARTURE = "/settings/organizations";
 
+// Role colours follow the project access editor: blue for the top role,
+// violet for the middle one, grey for the base one. Amber is the app's
+// caution colour, so no role uses it.
 const ROLE_FILTER_OPTIONS: TableFilterOption<OrgRole>[] = [
-  { value: "owner", label: ORG_ROLE_LABELS.owner, className: "text-amber-700" },
-  { value: "admin", label: ORG_ROLE_LABELS.admin, className: "text-blue-700" },
+  { value: "owner", label: ORG_ROLE_LABELS.owner, className: "text-blue-700" },
+  {
+    value: "admin",
+    label: ORG_ROLE_LABELS.admin,
+    className: "text-violet-700",
+  },
   {
     value: "member",
     label: ORG_ROLE_LABELS.member,
-    className: "text-violet-700",
+    className: "text-gray-600",
   },
 ];
 
@@ -742,7 +749,14 @@ function PeopleTable({
                 or not. Plain text beside the column's name. */}
             <span className="mr-1">
               User
-              {!loading && !error ? ` (${visibleMembers.length})` : ""}
+              {!loading && !error ? (
+                <>
+                  {" "}
+                  <span className="font-normal text-gray-400">
+                    ({visibleMembers.length})
+                  </span>
+                </>
+              ) : null}
             </span>
             {!loading ? (
               <TableSortFilter
@@ -912,10 +926,10 @@ function OrganizationRoleTab({
   const editable = assignableRoles.length > 1;
   const tone =
     role === "owner"
-      ? "bg-amber-100 text-amber-700"
+      ? "bg-blue-100 text-blue-700"
       : role === "admin"
-        ? "bg-blue-100 text-blue-700"
-        : "bg-violet-100 text-violet-700";
+        ? "bg-violet-100 text-violet-700"
+        : "bg-gray-100 text-gray-600";
   const className = `inline-flex h-6 min-w-20 items-center justify-center gap-1 rounded-full px-2 text-[11px] font-medium ${tone}`;
 
   if (!editable) {
