@@ -438,9 +438,9 @@ export async function createTabularReview(
         });
     }
 
-    const selectedModel = await validateSelectedModel(model, userId, db);
-    if (!selectedModel.ok) return modelFailure(selectedModel);
-
+    // The project is checked before the model: it decides whose keys the
+    // review runs on (its organization's, when it has one).
+    let projectOrgId: string | null = null;
     if (project_id) {
         // Creating a review inside a project contributes content to it.
         const access = await checkProjectAccess(
@@ -457,7 +457,16 @@ export async function createTabularReview(
                 "forbidden",
                 "You do not have permission to write in this project.",
             );
+        projectOrgId = access.project.org_id ?? null;
     }
+
+    const selectedModel = await validateSelectedModel(
+        model,
+        userId,
+        db,
+        projectOrgId,
+    );
+    if (!selectedModel.ok) return modelFailure(selectedModel);
     const allowedDocumentIds = Array.isArray(document_ids)
         ? await filterAccessibleDocumentIds(document_ids, userId, userEmail, db)
         : [];
@@ -878,6 +887,7 @@ export async function updateTabularReview(
             body.model,
             userId,
             db,
+            existingReview.org_id ?? null,
         );
         if (!selectedModel.ok) return modelFailure(selectedModel);
         updates.model = selectedModel.model;

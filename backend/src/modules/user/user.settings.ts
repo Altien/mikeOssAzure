@@ -1,6 +1,6 @@
 import { createServerSupabase, type Db } from "../../lib/supabase";
 import { DEFAULT_TITLE_MODEL, OPENAI_LOW_MODELS, type UserApiKeys, type ReasoningLevel } from "../../lib/llm";
-import { getUserExecutionApiKeys } from "./user.apiKeyStore";
+import { getEffectiveApiKeys } from "./user.apiKeyStore";
 import { loadCustomInstructions } from "./user.customInstructions";
 import {
     DEFAULT_RESPONSE_STYLE,
@@ -54,13 +54,14 @@ function fallbackTitleModel(apiKeys: UserApiKeys, routerModels: RouterModelSelec
 export async function getUserModelSettings(
     userId: string,
     db?: Db,
+    options: { orgId?: string | null } = {},
 ): Promise<UserModelSettings> {
     const client = db ?? createServerSupabase();
     const [profileResult, api_keys, routerModels, customInstructions, responseStyle] = await Promise.all([
         client.from("user_profiles")
             .select("fast_model, tabular_model, memory_curator_model, last_selected_chat_model, last_selected_reasoning_level, legal_research_us, display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas")
             .eq("user_id", userId).single(),
-        getUserExecutionApiKeys(userId, client),
+        getEffectiveApiKeys(userId, options.orgId, client),
         getAllUserRouterModels(userId, client),
         // Instructions are an enhancement: a failed read must not block chat.
         loadCustomInstructions(client, userId).catch((error: unknown) => {

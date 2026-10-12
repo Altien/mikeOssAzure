@@ -44,6 +44,7 @@ import {
     useSelectedReasoning,
 } from "@/app/hooks/useSelectedModel";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
+import { useModelApiKeys } from "@/app/hooks/useModelApiKeys";
 import {
     getModelProvider,
     isModelAvailable,
@@ -203,6 +204,11 @@ function ChatInputForChatImpl(
         persistChatModelSelection,
         persistChatReasoningSelection,
     } = useUserProfile();
+    // Unknown key state → availability is UNKNOWN; undefined makes every key
+    // gate (submit check + model toggle) fail open instead of treating "we
+    // couldn't ask" as "no keys configured". In an organization workspace
+    // these are the organization's keys, not the profile's.
+    const apiKeys = useModelApiKeys();
     const configuredModels = useConfiguredModels();
     const configuredModelIds = useMemo(
         () => configuredModels.map((model) => model.id),
@@ -225,13 +231,9 @@ function ChatInputForChatImpl(
             savedRouterSelections && !apiKeysDegraded
                 ? savedRouterSelections
                 : null,
-        apiKeys: apiKeysDegraded ? undefined : profile?.apiKeys,
+        apiKeys,
         configuredModelIds,
     });
-    // Degraded profile → key availability is UNKNOWN; undefined here makes
-    // every key gate (submit check + model toggle) fail open instead of
-    // treating "we couldn't ask" as "no keys configured".
-    const apiKeys = apiKeysDegraded ? undefined : profile?.apiKeys;
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const controlsRef = useRef<HTMLDivElement>(null);
     const [compactControls, setCompactControls] = useState(false);

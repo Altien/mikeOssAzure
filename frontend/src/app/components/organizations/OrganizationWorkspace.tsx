@@ -75,13 +75,15 @@ import {
   InviteOrganizationMemberModal,
   OrganizationSettingsModal,
 } from "./OrganizationModals";
+import { OrganizationProviderKeys } from "./OrganizationProviderKeys";
 
-type OrganizationTab = "people" | "projects" | "workflows";
+type OrganizationTab = "people" | "projects" | "workflows" | "providers";
 
 const TABS: { id: OrganizationTab; label: string }[] = [
   { id: "people", label: "People" },
   { id: "projects", label: "Projects" },
   { id: "workflows", label: "Workflows" },
+  { id: "providers", label: "Model Providers" },
 ];
 
 const EMPTY_RESOURCES: OrgResources = { projects: [], workflows: [] };
@@ -512,6 +514,11 @@ export function OrganizationWorkspace({ orgId }: { orgId: string }) {
             href: `/projects/${project.id}`,
           }))}
           onRetry={load}
+        />
+      ) : activeTab === "providers" ? (
+        <OrganizationProviderKeys
+          orgId={orgId}
+          orgName={org?.name ?? "Organization"}
         />
       ) : (
         <ResourceTable

@@ -51,7 +51,7 @@ export {
 } from "./user.profile";
 
 export { setMfaOnLogin } from "./user.mfa";
-export { setApiKeyEnabled } from "./user.apiKeyEnabled";
+export { setApiKeyEnabled, setApiKeyEnabledFor } from "./user.apiKeyEnabled";
 
 export {
     getCustomInstructions,
@@ -68,6 +68,7 @@ export {
 export {
     getApiKeyStatus,
     saveApiKey,
+    saveApiKeyForOwner,
 } from "./user.apiKeys";
 
 export {
@@ -107,6 +108,13 @@ export {
 } from "./user.settings";
 export {
     getUserApiKeys,
+    getEffectiveApiKeys,
+    getApiKeyStatusFor,
+    getEffectiveApiKeyStatus,
+    normalizeApiKeyProvider,
+    orgKeyOwner,
+    type ApiKeyProvider,
+    type ApiKeyStatus,
 } from "./user.apiKeyStore";
 export { setUserApiKey } from "./user.apiKeyStore";
 

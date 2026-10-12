@@ -5,6 +5,7 @@
 // saveUserApiKey (the crypto is never reimplemented here).
 
 import {
+    type ApiKeyOwner,
     type ApiKeyProvider,
     type ApiKeyStatus,
     getUserApiKeyStatus,
@@ -30,5 +31,14 @@ export async function saveApiKey(
     // remain an organisation operation; personal keys cannot shadow Key Vault.
     // The organisation owns provider credentials. Older clients receive an
     // explicit refusal rather than creating a shadow per-user key.
+    return { ok: false, kind: "env_configured" };
+}
+
+// Upstream divergence (sync-log: db8d42c3): managed credentials are edited
+// through deployment Key Vault administration, never organization DB rows.
+export async function saveApiKeyForOwner(
+    _db: Db,
+    _params: { owner: ApiKeyOwner; provider: ApiKeyProvider; apiKey: string | null; settings?: unknown; savedBy?: string },
+): Promise<SaveApiKeyResult> {
     return { ok: false, kind: "env_configured" };
 }

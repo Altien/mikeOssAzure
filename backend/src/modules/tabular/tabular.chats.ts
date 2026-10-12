@@ -249,7 +249,7 @@ export async function ensureReviewChatWriteAccess(
     chatId: string,
     userId: string,
     userEmail: string | null | undefined,
-): Promise<{ ok: true } | ServiceFailure> {
+): Promise<{ ok: true; orgId: string | null } | ServiceFailure> {
     const { data: review } = await db
         .from("tabular_reviews")
         .select("id, user_id, project_id, org_id")
@@ -293,7 +293,12 @@ export async function ensureReviewChatWriteAccess(
         )
     )
         return failure("forbidden", "Only the chat's creator can modify it");
-    return { ok: true };
+    // The review's organization rides along: a model change is judged
+    // against the keys the review runs on.
+    return {
+        ok: true,
+        orgId: (review as { org_id?: string | null }).org_id ?? null,
+    };
 }
 
 export async function deleteTabularReviewChat(
@@ -386,7 +391,9 @@ export async function updateTabularReviewChat(
 
     let selectedModel: string | undefined;
     if (hasModel) {
-        const settings = await getUserModelSettings(userId, db);
+        const settings = await getUserModelSettings(userId, db, {
+            orgId: gate.orgId,
+        });
         const resolution = await resolveEffectiveChatModel({
             requested: parsedModel.ok ? parsedModel.value : undefined,
             chatModel: chat.model,
@@ -661,6 +668,7 @@ export async function prepareTabularChat(
         chatReasoningLevel,
         requestedModel,
         requestedReasoning,
+        orgId: review.org_id ?? null,
     });
     if (!selection.ok)
         return statusFailure(selection.status, {

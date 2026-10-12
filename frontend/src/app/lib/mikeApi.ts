@@ -1069,7 +1069,7 @@ export type ApiKeyProvider =
     | "xai"
     | "custom"
     | "azure_openai";
-export type ApiKeySource = "user" | "env" | null;
+export type ApiKeySource = "user" | "org" | "env" | null;
 /**
  * The non-secret setting saved with a user's own key: the AWS region of a
  * Bedrock key, the Azure resource of an Azure OpenAI or Azure AI Foundry key,
@@ -1649,6 +1649,72 @@ export interface OrgResources {
 
 export async function listOrgResources(orgId: string): Promise<OrgResources> {
     return apiRequest<OrgResources>(`/orgs/${orgId}/resources`);
+}
+
+/**
+ * An organization's model provider keys, as its members see them. Never a
+ * key itself: only which providers are set up.
+ */
+export interface OrgApiKeySettings {
+    /** The organization's own keys. */
+    keys: ApiKeyStatus;
+    /**
+     * What the caller can run in the organization: its keys, with their own
+     * beneath where that is allowed. The model picker reads this.
+     */
+    effective: ApiKeyStatus;
+    /** Whether a member's own key is used where the organization has none. */
+    allow_personal_api_keys: boolean;
+    /** Whether the caller may change any of this (owners and admins). */
+    can_manage: boolean;
+}
+
+export async function getOrgApiKeys(orgId: string): Promise<OrgApiKeySettings> {
+    return apiRequest<OrgApiKeySettings>(`/orgs/${orgId}/api-keys`);
+}
+
+export async function saveOrgApiKey(
+    orgId: string,
+    provider: ApiKeyProvider,
+    apiKey: string | null,
+    settings?: ApiKeySettings[keyof ApiKeySettings],
+): Promise<OrgApiKeySettings> {
+    return apiRequest<OrgApiKeySettings>(
+        `/orgs/${orgId}/api-keys/${provider}`,
+        {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(
+                settings ? { api_key: apiKey, settings } : { api_key: apiKey },
+            ),
+        },
+    );
+}
+
+export async function setOrgApiKeyEnabled(
+    orgId: string,
+    provider: ApiKeyProvider,
+    enabled: boolean,
+): Promise<OrgApiKeySettings> {
+    return apiRequest<OrgApiKeySettings>(
+        `/orgs/${orgId}/api-keys/${provider}`,
+        {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled }),
+        },
+    );
+}
+
+export async function setOrgPersonalApiKeysAllowed(
+    orgId: string,
+    allowed: boolean,
+): Promise<OrgApiKeySettings> {
+    return apiRequest<OrgApiKeySettings>(`/orgs/${orgId}/api-keys/policy`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allow_personal_api_keys: allowed }),
+    });
 }
 
 export async function listOrgMembers(orgId: string): Promise<OrgMember[]> {

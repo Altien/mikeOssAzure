@@ -29,9 +29,22 @@ describe("cross-surface chat selection", () => {
       expect(
         await resolveUserChatSelection(db, { userId: "actor", ...args }),
       ).toMatchObject({ ok: true, selectedModel, modelSettings: profile });
-      expect(settings).toHaveBeenCalledExactlyOnceWith("actor", db);
+      expect(settings).toHaveBeenCalledExactlyOnceWith("actor", db, {
+        orgId: undefined,
+      });
     },
   );
+
+  it("resolves against the keys of the chat's organization", async () => {
+    await resolveUserChatSelection(db, {
+      userId: "actor",
+      chatModel: "claude-fable-5-1",
+      orgId: "org-1",
+    });
+    expect(settings).toHaveBeenCalledExactlyOnceWith("actor", db, {
+      orgId: "org-1",
+    });
+  });
 
   it.each([
     [{ requestedReasoning: "high", chatReasoningLevel: "medium" }, "high"],

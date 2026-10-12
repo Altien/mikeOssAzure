@@ -22,6 +22,7 @@ import {
 } from "@/shared/lib/modelCatalog";
 import { NoModelsWarningPopup } from "../popups/NoModelsWarningPopup";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
+import { useModelApiKeys } from "@/app/hooks/useModelApiKeys";
 import { isModelAvailable } from "@/app/lib/modelAvailability";
 import { useConfiguredModels } from "@/app/hooks/useConfiguredModels";
 import { roleFrom } from "@/app/lib/permissions";
@@ -95,9 +96,8 @@ export function UseWorkflowModal({ workflow, onClose, skipSelect = false }: Prop
     const [selectedModel, setSelectedModel] = useState("");
     const [noModelsWarning, setNoModelsWarning] =
         useState<NoModelsReason | null>(null);
-    const { profile, loading: profileLoading, apiKeysDegraded } =
-        useUserProfile();
-    const apiKeys = apiKeysDegraded ? undefined : profile?.apiKeys;
+    const { profile, loading: profileLoading } = useUserProfile();
+    const apiKeys = useModelApiKeys();
     const configuredModels = useConfiguredModels();
     const configuredModelIds = useMemo(
         () => configuredModels.map((model) => model.id),

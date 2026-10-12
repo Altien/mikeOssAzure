@@ -19,7 +19,12 @@ import {
     type ReactNode,
 } from "react";
 import { useAuth } from "@/app/contexts/AuthContext";
-import { listOrgs, type Org } from "@/app/lib/mikeApi";
+import {
+    getOrgApiKeys,
+    listOrgs,
+    type Org,
+    type OrgApiKeySettings,
+} from "@/app/lib/mikeApi";
 
 export const PERSONAL_WORKSPACE = "personal";
 export const PERSONAL_WORKSPACE_LABEL = "Personal";
@@ -37,16 +42,27 @@ interface WorkspaceContextValue {
     organizations: Org[] | null;
     /** The active organization, or `null` in the personal workspace. */
     activeOrganization: Org | null;
+    /**
+     * The active organization's model provider keys as the caller may use
+     * them, or `null` — in the personal workspace, until first loaded, and
+     * when the read failed. Work in an organization runs on these rather
+     * than on the caller's own keys.
+     */
+    orgApiKeys: OrgApiKeySettings | null;
     setWorkspace: (workspaceId: string) => void;
     refreshOrganizations: () => Promise<void>;
+    /** Re-read `orgApiKeys`, after they were changed in settings. */
+    refreshOrgApiKeys: () => Promise<void>;
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue>({
     workspaceId: null,
     organizations: null,
     activeOrganization: null,
+    orgApiKeys: null,
     setWorkspace: () => {},
     refreshOrganizations: async () => {},
+    refreshOrgApiKeys: async () => {},
 });
 
 // A convenience remembered per account and per browser: it can come back
@@ -150,6 +166,36 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         storeWorkspace(userId, workspaceId);
     }, [userId, workspaceId]);
 
+    // Which providers the active organization can run. Held with the id it
+    // was read for, so switching workspace never shows one organization's
+    // answer under another's name while the new read is in flight.
+    const [orgKeys, setOrgKeys] = useState<{
+        orgId: string;
+        settings: OrgApiKeySettings;
+    } | null>(null);
+    const activeOrgId = activeOrganization?.id ?? null;
+    const refreshOrgApiKeys = useCallback(async () => {
+        if (!activeOrgId) return;
+        try {
+            const settings = await getOrgApiKeys(activeOrgId);
+            setOrgKeys({ orgId: activeOrgId, settings });
+        } catch {
+            // Unknown, not "nothing is set up": the pickers fail open and the
+            // server still decides what a request may run on.
+            setOrgKeys((current) =>
+                current?.orgId === activeOrgId ? current : null,
+            );
+        }
+    }, [activeOrgId]);
+
+    useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- start the keys request once the active organization is known
+        void refreshOrgApiKeys();
+    }, [refreshOrgApiKeys]);
+
+    const orgApiKeys =
+        orgKeys && orgKeys.orgId === activeOrgId ? orgKeys.settings : null;
+
     const setWorkspace = useCallback(
         (next: string) => {
             const known =
@@ -166,15 +212,19 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             workspaceId,
             organizations,
             activeOrganization,
+            orgApiKeys,
             setWorkspace,
             refreshOrganizations,
+            refreshOrgApiKeys,
         }),
         [
             workspaceId,
             organizations,
             activeOrganization,
+            orgApiKeys,
             setWorkspace,
             refreshOrganizations,
+            refreshOrgApiKeys,
         ],
     );
 

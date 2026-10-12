@@ -26,6 +26,20 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/app/contexts/AuthContext", () => ({
   useAuth: () => ({ user: { id: "me", email: "me@firm.example" } }),
 }));
+// The Model Providers tab has its own tests; here it only has to be reached.
+vi.mock("./OrganizationProviderKeys", () => ({
+  OrganizationProviderKeys: ({
+    orgId,
+    orgName,
+  }: {
+    orgId: string;
+    orgName: string;
+  }) => (
+    <div data-testid="provider-keys">
+      {orgId}|{orgName}
+    </div>
+  ),
+}));
 vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/app/lib/mikeApi")>()),
   getOrg: mocks.getOrg,
@@ -135,6 +149,19 @@ describe("OrganizationWorkspace", () => {
     ).toHaveClass("liquid-glass-hover");
     expect(screen.queryByRole("button", { name: "Chats" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reviews" })).not.toBeInTheDocument();
+  });
+
+  it("opens the organization's model providers from their own tab", async () => {
+    const user = userEvent.setup();
+    render(<OrganizationWorkspace orgId="org-1" />);
+    await screen.findByText("Jane Lee");
+
+    await user.click(screen.getByRole("button", { name: "Model Providers" }));
+
+    expect(screen.getByTestId("provider-keys")).toHaveTextContent(
+      "org-1|Elite Law LLP",
+    );
+    expect(screen.queryByText("Jane Lee")).not.toBeInTheDocument();
   });
 
   it("lets owners change a member's role from the colored role tab", async () => {

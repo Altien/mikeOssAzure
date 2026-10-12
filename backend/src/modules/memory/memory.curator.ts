@@ -46,6 +46,8 @@ export type MemoryCuratorStoredMessage = {
 type CuratorConversation = {
   model: string | null;
   projectId: string | null;
+  /** The conversation's organization, whose keys the curator then runs on. */
+  orgId: string | null;
   projectWritable: boolean;
   appMemoryEligible: boolean;
   actorEmail: string | null;
@@ -448,6 +450,7 @@ async function loadConversation(
   const email = await actorEmail(db, state.actor_user_id);
   let model: string | null = null;
   let projectId: string | null = null;
+  let orgId: string | null = null;
   let projectWritable = false;
   let appMemoryEligible = state.surface !== "tabular";
   let messages: MemoryCuratorStoredMessage[] = [];
@@ -473,6 +476,7 @@ async function loadConversation(
     );
     if (!access.ok) return null;
     projectId = (data.project_id as string | null) ?? null;
+    orgId = (data.org_id as string | null) ?? null;
     // App memory may only learn from a conversation nobody else can read:
     // the chat must be the actor's own, outside any organization, with no
     // direct grants. This mirrors memory_source_allows_app_memory and the
@@ -553,6 +557,7 @@ async function loadConversation(
     );
     if (!access.ok) return null;
     projectId = (review.project_id as string | null) ?? null;
+    orgId = (review.org_id as string | null) ?? null;
     // Same boundary as chat: a tabular review learns app memory only when it
     // is the actor's own private review inside a private project.
     appMemoryEligible =
@@ -594,6 +599,7 @@ async function loadConversation(
   return {
     model,
     projectId,
+    orgId,
     projectWritable,
     appMemoryEligible,
     actorEmail: email,
@@ -1329,7 +1335,9 @@ export async function handleMemoryConsolidation(
     return { skipped: conversation ? "no_enabled_scope" : "inaccessible" };
   }
 
-  const settings = await getUserModelSettings(state.actor_user_id, db);
+  const settings = await getUserModelSettings(state.actor_user_id, db, {
+    orgId: conversation.orgId,
+  });
   const resolved = await resolveEffectiveChatModel({
     chatModel: conversation.model,
     lastSelectedModel: settings.last_selected_chat_model,

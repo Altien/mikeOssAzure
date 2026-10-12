@@ -51,7 +51,7 @@ export type ApiKeyProvider =
     | "custom"
     | "azure_openai";
 
-export type ApiKeySource = "env" | "user" | null;
+export type ApiKeySource = "env" | "user" | "org" | null;
 export type ApiKeyStatus = Record<ApiKeyProvider, boolean> & {
     sources: Record<ApiKeyProvider, ApiKeySource>;
     enabled: Partial<Record<ApiKeyProvider, boolean>>;
@@ -597,4 +597,42 @@ export async function _readLegacyRowForMigration(
         .eq("user_id", userId)
         .maybeSingle();
     return (data as LegacyRow | null) ?? null;
+}
+
+// Upstream divergence (sync-log: db8d42c3): owner-aware interfaces share the
+// deployment Key Vault credentials. Personal/org DB secret writes are NOT
+// SUPPORTED by this managed deployment. Preferences still mask the caller.
+export type ApiKeyOwner = { kind: "user" | "org"; id: string };
+export const userKeyOwner = (id: string): ApiKeyOwner => ({ kind: "user", id });
+export const orgKeyOwner = (id: string): ApiKeyOwner => ({ kind: "org", id });
+
+async function requireOrgKeyMembership(userId: string, orgId: string, db: Db): Promise<void> {
+    const { data, error } = await db.from("org_members").select("role")
+        .eq("org_id", orgId).eq("user_id", userId).maybeSingle();
+    if (error) throw error;
+    if (!data || !["owner", "admin", "member"].includes(data.role))
+        throw new Error("workspace_not_found");
+}
+
+export async function getApiKeyStatusFor(owner: ApiKeyOwner, db: Db = createServerSupabase()): Promise<ApiKeyStatus> {
+    if (owner.kind === "user") return getUserApiKeyStatus(owner.id, db);
+    const keys = await getOrganisationApiKeys();
+    const status = { sources: {}, enabled: {}, settings: keys.providerSettings ?? {} } as ApiKeyStatus;
+    for (const provider of ORG_PROVIDERS) {
+        const configured = provider === "azure_openai"
+            ? !!(keys.azureOpenai?.apiKey && keys.azureOpenai?.endpoint) : !!keys[provider];
+        status[provider] = configured;
+        status.sources[provider] = configured ? "env" : null;
+    }
+    return status;
+}
+
+export async function getEffectiveApiKeyStatus(userId: string, orgId: string, db: Db = createServerSupabase()): Promise<ApiKeyStatus> {
+    await requireOrgKeyMembership(userId, orgId, db);
+    return getUserApiKeyStatus(userId, db);
+}
+
+export async function getEffectiveApiKeys(userId: string, orgId?: string | null, db: Db = createServerSupabase()): Promise<UserApiKeys> {
+    if (orgId) await requireOrgKeyMembership(userId, orgId, db);
+    return getUserExecutionApiKeys(userId, db);
 }

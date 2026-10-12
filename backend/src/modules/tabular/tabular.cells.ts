@@ -221,7 +221,12 @@ export async function regenerateTabularCell(
     if (allowedSourceIds.length !== sourceIds.length)
         return failure("not_found", "Review row not found");
 
-    const selectedModel = await validateSelectedModel(review.model, userId, db);
+    const selectedModel = await validateSelectedModel(
+        review.model,
+        userId,
+        db,
+        review.org_id ?? null,
+    );
     if (!selectedModel.ok) return modelFailure(selectedModel);
     const tabular_model = selectedModel.model;
     const api_keys = selectedModel.apiKeys;

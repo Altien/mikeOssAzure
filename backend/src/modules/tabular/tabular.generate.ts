@@ -85,7 +85,12 @@ export async function prepareTabularGenerate(
     // of the user's global defaults, and it must still resolve + be keyed for
     // this user. Failures are carried out verbatim so both the sync and the
     // async endpoint answer with the same status/body.
-    const selected = await validateSelectedModel(review.model, userId, db);
+    const selected = await validateSelectedModel(
+        review.model,
+        userId,
+        db,
+        review.org_id ?? null,
+    );
     if (!selected.ok)
         return {
             ok: false,

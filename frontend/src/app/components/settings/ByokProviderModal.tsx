@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { Modal } from "@/app/components/modals/Modal";
 import { RouterSettingsSection } from "./RouterSettingsSection";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
-import type { ApiKeyProvider } from "@/app/lib/mikeApi";
+import type { ApiKeyProvider, ApiKeySettings } from "@/app/lib/mikeApi";
 import { ROUTER_SLUGS, type RouterSlug } from "@/app/components/assistant/ModelToggle";
 
 export type ByokProvider = {
@@ -14,21 +14,26 @@ export type ByokProvider = {
   keyLabel?: string;
 };
 
+export type ProviderKeyStore = { hasSavedKey: boolean; settings: ApiKeySettings | undefined; save: (provider: ApiKeyProvider, value: string | null, settings?: ApiKeySettings[keyof ApiKeySettings]) => Promise<boolean>; breadcrumb: string };
+
+// Upstream divergence (sync-log: db8d42c3): owner-aware dialogs retain the
+// centrally managed credential boundary; no secret input is exposed.
 // Upstream divergence (sync-log: 25779536): retain the provider modal and
 // model selections, but shared credentials are managed only by an administrator.
 // The switch changes this user's preference and never edits Key Vault secrets.
-export function ByokProviderModal({ provider, enabledToggle, onClose }: {
+export function ByokProviderModal({ provider, enabledToggle, store, onClose }: {
   provider: ByokProvider | null;
   enabledToggle?: ReactNode;
+  store?: ProviderKeyStore;
   onClose: () => void;
 }) {
   const { profile } = useUserProfile();
   if (!provider) return null;
-  const hasModelSelections = (ROUTER_SLUGS as readonly string[]).includes(provider.provider);
+  const hasModelSelections = !store && (ROUTER_SLUGS as readonly string[]).includes(provider.provider);
   const configured = profile?.apiKeys[provider.provider]?.source != null;
   const installUrl = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") + "/install";
   return (
-    <Modal open onClose={onClose} breadcrumbs={["Model Providers", provider.name]}
+    <Modal open onClose={onClose} breadcrumbs={[store?.breadcrumb ?? "Model Providers", provider.name]}
       size={hasModelSelections ? "md" : "sm"} className="h-auto max-h-[calc(100vh-2rem)]">
       <div data-modal-scroll="vertical" className="min-h-0 min-w-0 space-y-6 overflow-y-auto pb-4">
         {enabledToggle && (

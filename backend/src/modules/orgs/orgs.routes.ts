@@ -11,7 +11,7 @@
 // material without them agreeing to it.
 
 import { Router } from "express";
-import { requireAuth } from "../../middleware/auth";
+import { requireAuth, requireMfaIfEnrolled } from "../../middleware/auth";
 import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import { sendOrgFailure } from "../../lib/orgFailure";
@@ -29,7 +29,12 @@ import {
     listInvitations,
     cancelInvitation,
     resendInvitation,
+    getOrgApiKeySettings,
+    saveOrgApiKey,
+    setOrgApiKeyEnabled,
+    setOrgPersonalApiKeysAllowed,
 } from "./orgs.service";
+import { normalizeApiKeyProvider } from "../user/user.service";
 
 export const orgsRouter = Router();
 
@@ -214,6 +219,98 @@ orgsRouter.post(
         });
         if (!result.ok) return sendOrgFailure(res, result);
         res.json(result.invitation);
+    }),
+);
+
+// ---------------------------------------------------------------------------
+// Provider keys and the personal-key setting
+// ---------------------------------------------------------------------------
+//
+// Writes carry requireMfaIfEnrolled, as the personal key routes do: saving a
+// key decides where the organization's work is sent.
+
+// GET /orgs/:orgId/api-keys — which providers are set up (any member).
+// Reports configuration only; a saved key is never sent back.
+orgsRouter.get("/:orgId/api-keys", requireAuth, asyncRoute(async (req, res) => {
+    const db = createServerSupabase();
+    const result = await getOrgApiKeySettings(db, {
+        userId: res.locals.userId as string,
+        orgId: req.params.orgId,
+    });
+    if (!result.ok) return sendOrgFailure(res, result);
+    res.json(result.settings);
+}));
+
+// PUT /orgs/:orgId/api-keys/policy — whether members' own keys may be used
+// for a provider the organization has no key for (owner or admin).
+// Declared before /:provider so "policy" is never read as a provider name.
+orgsRouter.put(
+    "/:orgId/api-keys/policy",
+    requireAuth,
+    requireMfaIfEnrolled,
+    asyncRoute(async (req, res) => {
+        const db = createServerSupabase();
+        const result = await setOrgPersonalApiKeysAllowed(db, {
+            actorId: res.locals.userId as string,
+            actorEmail: res.locals.userEmail as string | undefined,
+            orgId: req.params.orgId,
+            allowed: req.body?.allow_personal_api_keys,
+        });
+        if (!result.ok) return sendOrgFailure(res, result);
+        res.json(result.settings);
+    }),
+);
+
+// PUT /orgs/:orgId/api-keys/:provider — save, replace or (with no key and
+// no settings) remove the organization's key (owner or admin).
+orgsRouter.put(
+    "/:orgId/api-keys/:provider",
+    requireAuth,
+    requireMfaIfEnrolled,
+    asyncRoute(async (req, res) => {
+        const provider = normalizeApiKeyProvider(req.params.provider);
+        if (!provider)
+            return void res.status(400).json({ detail: "Unsupported provider" });
+        const db = createServerSupabase();
+        const result = await saveOrgApiKey(db, {
+            actorId: res.locals.userId as string,
+            actorEmail: res.locals.userEmail as string | undefined,
+            orgId: req.params.orgId,
+            provider,
+            apiKey:
+                typeof req.body?.api_key === "string" ? req.body.api_key : null,
+            settings:
+                req.body && typeof req.body === "object"
+                    ? (req.body as { settings?: unknown }).settings
+                    : undefined,
+        });
+        if (!result.ok) return sendOrgFailure(res, result);
+        res.json(result.settings);
+    }),
+);
+
+// PATCH /orgs/:orgId/api-keys/:provider — keep the key, turn the provider
+// off or on for the organization (owner or admin).
+orgsRouter.patch(
+    "/:orgId/api-keys/:provider",
+    requireAuth,
+    requireMfaIfEnrolled,
+    asyncRoute(async (req, res) => {
+        const provider = normalizeApiKeyProvider(req.params.provider);
+        if (!provider || typeof req.body?.enabled !== "boolean")
+            return void res.status(400).json({
+                detail: "A supported provider and boolean enabled value are required.",
+            });
+        const db = createServerSupabase();
+        const result = await setOrgApiKeyEnabled(db, {
+            actorId: res.locals.userId as string,
+            actorEmail: res.locals.userEmail as string | undefined,
+            orgId: req.params.orgId,
+            provider,
+            enabled: req.body.enabled,
+        });
+        if (!result.ok) return sendOrgFailure(res, result);
+        res.json(result.settings);
     }),
 );
 

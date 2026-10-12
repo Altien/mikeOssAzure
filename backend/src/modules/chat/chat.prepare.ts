@@ -122,6 +122,9 @@ export async function prepareChatStream(
     // note in modules/project-chat/projectChat.service.ts — this is the same
     // partition on the route that serves standalone and project chats alike.
     let allowDocumentMutation = true;
+    // The organization this chat belongs to: its keys are the ones the turn
+    // runs on (see getEffectiveApiKeys).
+    let contentOrgId: string | null = null;
 
     if (chatId) {
         const access = await getAccessibleChat(db, {
@@ -169,6 +172,7 @@ export async function prepareChatStream(
         chatTitle = existing.title;
         chatModel = existing.model;
         chatReasoningLevel = existing.reasoning_level;
+        contentOrgId = existing.org_id ?? null;
         if (existingProjectId) {
             // The role above may have come from the chat's own share list;
             // creating documents in the project needs the project's verdict.
@@ -199,12 +203,36 @@ export async function prepareChatStream(
         }
     }
 
+    if (!chatId) {
+        // If creating a chat tied to a project, the user must have access
+        // to the project (own or shared). This runs ahead of the model
+        // selection because the project decides whose keys the chat runs on.
+        const projectAccess = await validateAccessibleProjectId(db, {
+            projectId: resolvedProjectId,
+            userId,
+            userEmail,
+        });
+        if (!projectAccess.ok)
+            return {
+                ok: false,
+                status: projectAccess.status,
+                detail: projectAccess.detail,
+            };
+        const resolvedOrg = await resolveContentOrgId(db, {
+            projectId: resolvedProjectId,
+        });
+        if (!resolvedOrg.ok)
+            return { ok: false, internal: true, error: resolvedOrg.detail };
+        contentOrgId = resolvedOrg.orgId;
+    }
+
     const selection = await resolveUserChatSelection(db, {
         userId,
         chatModel,
         chatReasoningLevel,
         requestedModel: args.requestedModel,
         requestedReasoning: args.requestedReasoning,
+        orgId: contentOrgId,
     });
     if (!selection.ok) return selection;
     const { modelSettings, selectedModel, selectedReasoningLevel } = selection;
@@ -225,33 +253,15 @@ export async function prepareChatStream(
     }
 
     if (!chatId) {
-        // If creating a chat tied to a project, the user must have access
-        // to the project (own or shared).
-        const projectAccess = await validateAccessibleProjectId(db, {
-            projectId: resolvedProjectId,
-            userId,
-            userEmail,
-        });
-        if (!projectAccess.ok)
-            return {
-                ok: false,
-                status: projectAccess.status,
-                detail: projectAccess.detail,
-            };
         canReadProjectMemory = resolvedProjectId !== null;
         canCurateProjectMemory = resolvedProjectId !== null;
 
-        const resolvedOrg = await resolveContentOrgId(db, {
-            projectId: resolvedProjectId,
-        });
-        if (!resolvedOrg.ok)
-            return { ok: false, internal: true, error: resolvedOrg.detail };
         try {
             memorySharedAudience = resolvedProjectId
                 ? await projectHasSharedAudience(
                       db,
                       resolvedProjectId,
-                      resolvedOrg.orgId,
+                      contentOrgId,
                   )
                 : false;
         } catch (error) {
@@ -264,7 +274,7 @@ export async function prepareChatStream(
                 project_id: resolvedProjectId,
                 model: selectedModel,
                 reasoning_level: selectedReasoningLevel,
-                org_id: resolvedOrg.orgId,
+                org_id: contentOrgId,
             })
             .select("id, title")
             .single();

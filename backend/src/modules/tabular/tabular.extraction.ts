@@ -84,7 +84,7 @@ export async function runExtractionJob(
         //    by the enqueuing route, so the shared core will re-extract it.
         const { data: review } = await db
             .from("tabular_reviews")
-            .select("columns_config, model")
+            .select("columns_config, model, org_id")
             .eq("id", reviewId)
             .single();
         let columns: Column[] = (review?.columns_config as Column[]) ?? [];
@@ -124,6 +124,7 @@ export async function runExtractionJob(
             (review as { model?: unknown }).model,
             userId,
             db,
+            (review as { org_id?: string | null } | null)?.org_id ?? null,
         );
         if (!selected.ok) {
             throw new Error(

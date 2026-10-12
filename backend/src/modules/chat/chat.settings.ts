@@ -29,6 +29,8 @@ export async function updateChatSettings(
         userId: string;
         /** The chat's currently stored model, for model resolution. */
         chatModel: string | null;
+        /** The chat's organization, whose keys decide which models it has. */
+        orgId?: string | null;
         title?: string;
         requestedModel?: string | null;
         reasoningLevel?: ReturnType<typeof resolveEffectiveReasoningLevel>;
@@ -52,7 +54,9 @@ export async function updateChatSettings(
     if (hasTitle) updates.title = args.title;
 
     if (hasModel) {
-        const settings = await getUserModelSettings(args.userId, db);
+        const settings = await getUserModelSettings(args.userId, db, {
+            orgId: args.orgId,
+        });
         const resolution = await resolveEffectiveChatModel({
             requested: args.requestedModel,
             chatModel: args.chatModel,

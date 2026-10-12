@@ -293,6 +293,8 @@ export async function prepareProjectChatStream(
         chatReasoningLevel,
         requestedModel: args.requestedModel,
         requestedReasoning: args.requestedReasoning,
+        // The project's organization pays for its chats.
+        orgId: projectAccess.project.org_id ?? null,
     });
     if (!selection.ok) return selection;
     const { modelSettings, selectedModel, selectedReasoningLevel } = selection;

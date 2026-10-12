@@ -70,6 +70,7 @@ import {
     type OwnerGate,
 } from "@/app/components/projects/ProjectWorkspace";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
+import { useModelApiKeys } from "@/app/hooks/useModelApiKeys";
 import {
     getModelProvider,
     isModelAvailable,
@@ -205,14 +206,10 @@ export function TRView({ reviewId, projectId }: Props) {
         [],
     );
     const router = useRouter();
-    const {
-        profile,
-        loading: profileLoading,
-        apiKeysDegraded,
-    } = useUserProfile();
+    const { profile, loading: profileLoading } = useUserProfile();
     // Unknown key state fails open; the submit gates below already skip when
     // apiKeys is undefined.
-    const apiKeys = apiKeysDegraded ? undefined : profile?.apiKeys;
+    const apiKeys = useModelApiKeys();
     const tabularModel = review?.model ?? "";
     const cellMutationsBlocked =
         generating || stoppingGeneration || review?.is_running === true;

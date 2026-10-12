@@ -28,3 +28,13 @@ export {
   cancelInvitation,
   resendInvitation,
 } from "../../lib/orgs";
+
+// The organization's provider keys live in this module: they need the user
+// module's key store, which lib/ may not import.
+export {
+  getOrgApiKeySettings,
+  saveOrgApiKey,
+  setOrgApiKeyEnabled,
+  setOrgPersonalApiKeysAllowed,
+  type OrgApiKeySettings,
+} from "./orgs.apiKeys";
