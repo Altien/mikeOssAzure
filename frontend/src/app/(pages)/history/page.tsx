@@ -14,7 +14,6 @@ import dayPickerStyles from "@daypicker/react/style.module.css";
 import { getAuditHistory, type AuditEvent } from "@/app/lib/mikeApi";
 import { runUserExport } from "@/app/lib/asyncExport";
 import { PageHeader } from "@/app/components/shared/PageHeader";
-import { PAGE_HEADER_TITLE_CLASS } from "@/app/components/shared/pageHeaderStyles";
 import {
   SkeletonLine,
   TableBody,
@@ -293,7 +292,7 @@ export default function HistoryPage() {
           },
         ]}
       >
-        <h1 className={`${PAGE_HEADER_TITLE_CLASS} text-gray-900`}>
+        <h1 className="font-serif text-2xl font-medium text-gray-900">
           History
         </h1>
       </PageHeader>

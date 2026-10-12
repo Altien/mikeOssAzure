@@ -30,7 +30,6 @@ import { NewWorkflowModal } from "./NewWorkflowModal";
 import { TableToolbar } from "../shared/TableToolbar";
 import { RowActionMenuItems, RowActions } from "../shared/RowActions";
 import { PageHeader } from "@/app/components/shared/PageHeader";
-import { PAGE_HEADER_TITLE_CLASS } from "@/app/components/shared/pageHeaderStyles";
 import { SubfolderSvgIcon } from "@/app/components/shared/FolderSvgIcon";
 import { EmptyState } from "@/app/components/ui/empty-state";
 import { LIQUID_GLASS_HOVER_CLASS } from "@/app/components/ui/liquid-surface";
@@ -521,7 +520,7 @@ export function WorkflowList({
           },
         ]}
       >
-        <h1 className={`${PAGE_HEADER_TITLE_CLASS} text-gray-900`}>
+        <h1 className="font-serif text-2xl font-medium text-gray-900">
           Workflows
         </h1>
       </PageHeader>

@@ -27,7 +27,6 @@ import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { PageHeader } from "@/app/components/shared/PageHeader";
-import { PAGE_HEADER_TITLE_CLASS } from "@/app/components/shared/pageHeaderStyles";
 import type { TableSortDirection } from "@/app/components/shared/TablePrimitive";
 import {
     type TabularReviewScope,
@@ -401,7 +400,7 @@ export default function TabularReviewsPage() {
                     },
                 ]}
             >
-                <h1 className={`${PAGE_HEADER_TITLE_CLASS} text-gray-900`}>
+                <h1 className="text-2xl font-medium font-serif text-gray-900">
                     Tabular Reviews
                 </h1>
             </PageHeader>

@@ -36,7 +36,6 @@ import {
     RowActions,
 } from "@/app/components/shared/RowActions";
 import { PageHeader } from "@/app/components/shared/PageHeader";
-import { PAGE_HEADER_TITLE_CLASS } from "@/app/components/shared/pageHeaderStyles";
 import { TableLoadMoreRow } from "@/app/components/shared/TableLoadMoreRow";
 import {
     ClosedProjectSvgIcon,
@@ -540,7 +539,7 @@ export function ProjectsOverview() {
                     },
                 ]}
             >
-                <h1 className={`${PAGE_HEADER_TITLE_CLASS} text-gray-900`}>
+                <h1 className="text-2xl font-medium font-serif text-gray-900">
                     Projects
                 </h1>
             </PageHeader>
