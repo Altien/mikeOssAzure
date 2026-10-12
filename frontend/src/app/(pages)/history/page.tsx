@@ -8,11 +8,19 @@ import {
   type CSSProperties,
 } from "react";
 import Link from "next/link";
-import { CalendarDays, Download, Loader2 } from "lucide-react";
+import {
+  CalendarDays,
+  Download,
+  ExternalLink,
+  Loader2,
+  MoreHorizontal,
+} from "lucide-react";
 import { DayPicker, type Matcher } from "@daypicker/react";
 import dayPickerStyles from "@daypicker/react/style.module.css";
 import { getAuditHistory, type AuditEvent } from "@/app/lib/mikeApi";
 import { runUserExport } from "@/app/lib/asyncExport";
+import { appendUniqueRows } from "@/app/lib/paginatedRows";
+import { Modal } from "@/app/components/modals/Modal";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import { PAGE_HEADER_TITLE_CLASS } from "@/app/components/shared/pageHeaderStyles";
 import {
@@ -30,16 +38,19 @@ import {
   TableStickyCell,
 } from "@/app/components/shared/TablePrimitive";
 import { TableToolbar } from "@/app/components/shared/TableToolbar";
+import { TableLoadMoreRow } from "@/app/components/shared/TableLoadMoreRow";
 import { HistorySkeuoIcon } from "@/app/components/shared/HistorySkeuoIcon";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
+import { HeaderButtonUI } from "@/shared/ui/HeaderButtonsUI";
+import { textButtonUIClassName } from "@/shared/ui/TextButtonUI.styles";
 import {
   Dropdown,
   DropdownContent,
+  DropdownItem,
   DropdownTrigger,
 } from "@/shared/ui/dropdown";
 import { cn } from "@/app/lib/utils";
-import { WarningPopup } from "@/app/components/popups/WarningPopup";
 
 const ACTION_LABELS: Record<string, string> = {
   "chat.message": "Chat",
@@ -150,12 +161,15 @@ function formatStatus(value: string): string {
 
 export default function HistoryPage() {
   const [events, setEvents] = useState<AuditEvent[]>([]);
-  const [total, setTotal] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [exportWarningOpen, setExportWarningOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportError, setExportError] = useState(false);
+  const [selectedEvent, setSelectedEvent] = useState<AuditEvent | null>(null);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [action, setAction] = useState<string | null>(null);
@@ -177,10 +191,19 @@ export default function HistoryPage() {
 
   const load = useCallback(
     async (nextPage: number, append: boolean) => {
+      // Observer callbacks and manual retries may arrive before React renders.
+      if (append && controllerRef.current) return;
       controllerRef.current?.abort();
       const controller = new AbortController();
       controllerRef.current = controller;
-      setLoading(true);
+      setError(false);
+      setLoadingMore(append);
+      setLoading(!append);
+      if (!append) {
+        setEvents([]);
+        setHasMore(false);
+        setPage(1);
+      }
       try {
         const out = await getAuditHistory(
           {
@@ -199,19 +222,25 @@ export default function HistoryPage() {
         if (controller.signal.aborted) return;
         setError(false);
         setEvents((current) =>
-          append ? [...current, ...out.events] : out.events,
+          append ? appendUniqueRows(current, out.events) : out.events,
         );
-        setTotal(out.total);
+        setHasMore(
+          out.events.length > 0 && nextPage * out.pageSize < out.total,
+        );
         setPage(nextPage);
       } catch {
         if (controller.signal.aborted) return;
         if (!append) {
           setEvents([]);
-          setTotal(0);
+          setHasMore(false);
         }
         setError(true);
       } finally {
-        if (controllerRef.current === controller) setLoading(false);
+        if (controllerRef.current === controller) {
+          controllerRef.current = null;
+          setLoading(false);
+          setLoadingMore(false);
+        }
       }
     },
     [action, debouncedSearch, from, sort, status, surface, to],
@@ -224,16 +253,18 @@ export default function HistoryPage() {
 
   // The CSV is built by a background job rather than in the request: a wide
   // filter can sweep thousands of events, and the artifact outlives the tab.
-  const handleExport = async () => {
+  const handleExport = async (range: { from: string; to: string }) => {
+    if (exporting) return;
     setExporting(true);
+    setExportError(false);
     try {
       const { blob, filename } = await runUserExport("audit-csv", {
         q: search.trim() || undefined,
         action: action || undefined,
         status: status || undefined,
         surface: surface || undefined,
-        from: from || undefined,
-        to: to || undefined,
+        from: range.from,
+        to: range.to,
         sort_by: sort?.key,
         sort_dir: sort?.direction,
       });
@@ -243,8 +274,9 @@ export default function HistoryPage() {
       anchor.download = filename ?? "history-export.csv";
       anchor.click();
       URL.revokeObjectURL(url);
+      setExportOpen(false);
     } catch {
-      setExportWarningOpen(true);
+      setExportError(true);
     } finally {
       setExporting(false);
     }
@@ -281,21 +313,35 @@ export default function HistoryPage() {
             placeholder: "Search history…",
           },
           {
-            icon: exporting ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Download className="h-4 w-4" />
+            type: "custom",
+            render: (
+              <Dropdown modal={false}>
+                <DropdownTrigger asChild>
+                  <HeaderButtonUI
+                    iconOnly
+                    aria-label="History actions"
+                    title="History actions"
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
+                  </HeaderButtonUI>
+                </DropdownTrigger>
+                <DropdownContent align="end" className="w-44">
+                  <DropdownItem
+                    onSelect={() => {
+                      setExportError(false);
+                      setExportOpen(true);
+                    }}
+                  >
+                    <Download className="h-4 w-4" />
+                    Export
+                  </DropdownItem>
+                </DropdownContent>
+              </Dropdown>
             ),
-            label: "Export",
-            title: "Export history",
-            disabled: exporting,
-            onClick: () => void handleExport(),
           },
         ]}
       >
-        <h1 className={`${PAGE_HEADER_TITLE_CLASS} text-gray-900`}>
-          History
-        </h1>
+        <h1 className={`${PAGE_HEADER_TITLE_CLASS} text-gray-900`}>History</h1>
       </PageHeader>
 
       <TableToolbar leading={dateSelector} />
@@ -431,31 +477,41 @@ export default function HistoryPage() {
         ) : (
           <TableBody>
             {events.map((event) => {
-              const href = eventHref(event);
               return (
-                <TableRow key={event.id} interactive={false}>
+                <TableRow
+                  key={event.id}
+                  role="button"
+                  tabIndex={0}
+                  aria-haspopup="dialog"
+                  aria-label={`View details for ${event.title ?? ACTION_LABELS[event.action] ?? event.action}`}
+                  className="h-auto min-h-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/40"
+                  onClick={(click) => {
+                    click.currentTarget.focus();
+                    setSelectedEvent(event);
+                  }}
+                  onKeyDown={(key) => {
+                    if (key.key === "Enter" || key.key === " ") {
+                      key.preventDefault();
+                      setSelectedEvent(event);
+                    }
+                  }}
+                >
                   <TableStickyCell
                     widthClassName="w-52 shrink-0"
                     className="items-center"
                   >
-                    <span className="min-w-0 truncate text-xs text-gray-700">
+                    <span className="min-w-0 text-xs text-gray-700 [overflow-wrap:anywhere]">
                       {event.user_display_name ?? "—"}
                     </span>
                   </TableStickyCell>
-                  <TableCell className="ml-auto w-52 text-xs">
+                  <TableCell className="ml-auto w-52 overflow-visible whitespace-normal py-2 pr-4 text-xs [overflow-wrap:anywhere]">
                     {event.user_email ?? "—"}
                   </TableCell>
                   <TableCell className="w-40 text-xs">
                     {formatCreatedAt(event.created_at)}
                   </TableCell>
                   <TableCell className="w-72 pr-6 text-xs text-gray-800">
-                    {href ? (
-                      <Link href={href} className="hover:underline">
-                        {event.title ?? "—"}
-                      </Link>
-                    ) : (
-                      (event.title ?? "—")
-                    )}
+                    {event.title ?? "—"}
                   </TableCell>
                   <TableCell className="w-28 text-xs">
                     <span
@@ -483,29 +539,215 @@ export default function HistoryPage() {
                 </TableRow>
               );
             })}
-            {loading && (
-              <div className="flex justify-center py-4">
-                <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
-              </div>
-            )}
-            {!loading && events.length < total && (
-              <div className="flex justify-center py-3">
-                <PillButtonUI
-                  tone="white"
-                  onClick={() => void load(page + 1, true)}
-                >
-                  Load more ({events.length} of {total})
-                </PillButtonUI>
-              </div>
-            )}
+            <TableLoadMoreRow
+              autoLoadOnVisible
+              loading={loading}
+              hasMore={hasMore}
+              itemCount={events.length}
+              loadingMore={loadingMore}
+              hasError={error}
+              onLoadMore={() => void load(page + 1, true)}
+            />
           </TableBody>
         )}
       </TableScrollArea>
-      <WarningPopup
-        open={exportWarningOpen}
-        title="Export failed"
-        message="Your history could not be exported. Please try again."
-        onClose={() => setExportWarningOpen(false)}
+      {selectedEvent && (
+        <HistoryEventModal
+          event={selectedEvent}
+          onClose={() => setSelectedEvent(null)}
+        />
+      )}
+      {exportOpen && (
+        <HistoryExportModal
+          from={from}
+          to={to}
+          exporting={exporting}
+          error={exportError}
+          onClose={() => setExportOpen(false)}
+          onExport={(range) => void handleExport(range)}
+        />
+      )}
+    </div>
+  );
+}
+
+function HistoryEventModal({
+  event,
+  onClose,
+}: {
+  event: AuditEvent;
+  onClose: () => void;
+}) {
+  const href = eventHref(event);
+  const fields = [
+    ["Username", event.user_display_name ?? "—"],
+    ["Email", event.user_email ?? "—"],
+    ["Created", formatCreatedAt(event.created_at)],
+    ["Status", formatStatus(event.status)],
+    ["Type", ACTION_LABELS[event.action] ?? event.action],
+    [
+      "Application",
+      event.surface ? (SURFACE_LABELS[event.surface] ?? event.surface) : "—",
+    ],
+    ["Model", event.model ?? "—"],
+  ];
+  const details = Object.entries(event.detail ?? {});
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      size="md"
+      className="h-auto max-h-[calc(100dvh-2rem)]"
+      breadcrumbs={["History", "Event details"]}
+    >
+      <div
+        data-modal-scroll="vertical"
+        className="min-h-0 overflow-y-auto pb-5"
+      >
+        <h2 className="mb-5 font-serif text-2xl text-gray-900 [overflow-wrap:anywhere]">
+          {event.title ?? ACTION_LABELS[event.action] ?? event.action}
+        </h2>
+        <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {fields.map(([label, value]) => (
+            <div key={label} className="min-w-0">
+              <dt className="mb-1 text-xs text-gray-500">{label}</dt>
+              <dd className="whitespace-pre-wrap text-sm text-gray-800 [overflow-wrap:anywhere]">
+                {value}
+              </dd>
+            </div>
+          ))}
+        </dl>
+        {details.length > 0 && (
+          <section className="mt-5" aria-label="Additional details">
+            <h3 className="mb-3 text-sm font-medium text-gray-800">
+              Additional details
+            </h3>
+            <dl className="space-y-3">
+              {details.map(([key, value]) => (
+                <div key={key} className="min-w-0">
+                  <dt className="mb-1 text-xs text-gray-500 [overflow-wrap:anywhere]">
+                    {formatStatus(key)}
+                  </dt>
+                  <dd className="whitespace-pre-wrap text-sm text-gray-800 [overflow-wrap:anywhere]">
+                    {value == null
+                      ? "—"
+                      : typeof value === "boolean"
+                        ? value
+                          ? "Yes"
+                          : "No"
+                        : typeof value === "object"
+                          ? JSON.stringify(value, null, 2)
+                          : String(value)}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        )}
+        {href && (
+          <Link
+            href={href}
+            className={textButtonUIClassName({ className: "mt-5 px-0" })}
+          >
+            Open{" "}
+            {event.chat_id ? "chat" : event.review_id ? "review" : "project"}
+            <ExternalLink className="h-3.5 w-3.5" />
+          </Link>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+function HistoryExportModal({
+  from,
+  to,
+  exporting,
+  error,
+  onClose,
+  onExport,
+}: {
+  from: string;
+  to: string;
+  exporting: boolean;
+  error: boolean;
+  onClose: () => void;
+  onExport: (range: { from: string; to: string }) => void;
+}) {
+  const [range, setRange] = useState({ from, to });
+  const validRange =
+    range.from <= range.to && range.to <= localDateValue(new Date());
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      size="md"
+      className="h-auto max-h-[calc(100dvh-2rem)]"
+      breadcrumbs={["History", "Export history"]}
+      cancelAction={{ label: "Cancel", onClick: onClose }}
+      primaryAction={{
+        label: exporting ? "Exporting…" : "Export CSV",
+        icon: exporting ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <Download className="h-4 w-4" />
+        ),
+        disabled: exporting || !validRange,
+        onClick: () => onExport(range),
+      }}
+    >
+      <div
+        data-modal-scroll="vertical"
+        className="min-h-0 overflow-y-auto pb-5"
+      >
+        <p className="mb-4 text-sm text-gray-500">
+          Choose the period to export. Your current search and filters will
+          apply.
+        </p>
+        <fieldset disabled={exporting}>
+          <HistoryDateRangeFields range={range} onChange={setRange} />
+        </fieldset>
+        <p className="mt-4 text-xs text-gray-500">
+          {formatRangeDate(range.from)} – {formatRangeDate(range.to)}{" "}
+          (inclusive)
+        </p>
+        {error && (
+          <p role="alert" className="mt-3 text-sm text-red-600">
+            Your history could not be exported. Please try again.
+          </p>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+function HistoryDateRangeFields({
+  range,
+  onChange,
+}: {
+  range: { from: string; to: string };
+  onChange: (range: { from: string; to: string }) => void;
+}) {
+  return (
+    <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-[14rem_14rem]">
+      <HistoryDatePicker
+        label="Start date"
+        testId="start-date-picker"
+        selected={dateFromLocalValue(range.from)}
+        disabled={{ after: dateFromLocalValue(range.to) }}
+        onSelect={(date) => onChange({ ...range, from: localDateValue(date) })}
+      />
+      <HistoryDatePicker
+        label="End date"
+        testId="end-date-picker"
+        selected={dateFromLocalValue(range.to)}
+        disabled={[
+          { before: dateFromLocalValue(range.from) },
+          { after: new Date() },
+        ]}
+        onSelect={(date) => onChange({ ...range, to: localDateValue(date) })}
       />
     </div>
   );
@@ -548,35 +790,7 @@ function DateRangeDropdown({
         className="w-auto p-3"
         onKeyDown={(event) => event.stopPropagation()}
       >
-        <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-[14rem_14rem]">
-          <HistoryDatePicker
-            label="Start date"
-            testId="start-date-picker"
-            selected={dateFromLocalValue(draftRange.from)}
-            disabled={{ after: dateFromLocalValue(draftRange.to) }}
-            onSelect={(date) =>
-              setDraftRange((current) => ({
-                ...current,
-                from: localDateValue(date),
-              }))
-            }
-          />
-          <HistoryDatePicker
-            label="End date"
-            testId="end-date-picker"
-            selected={dateFromLocalValue(draftRange.to)}
-            disabled={[
-              { before: dateFromLocalValue(draftRange.from) },
-              { after: new Date() },
-            ]}
-            onSelect={(date) =>
-              setDraftRange((current) => ({
-                ...current,
-                to: localDateValue(date),
-              }))
-            }
-          />
-        </div>
+        <HistoryDateRangeFields range={draftRange} onChange={setDraftRange} />
         <div className="flex justify-end pt-3">
           <PillButtonUI
             tone="black"
@@ -677,7 +891,7 @@ function HistoryLoadingRows() {
   return (
     <TableBody>
       {[1, 2, 3, 4, 5].map((row) => (
-        <TableRow key={row} interactive={false}>
+        <TableRow key={row} interactive={false} className="h-auto min-h-10">
           <TableStickyCell
             widthClassName="w-52 shrink-0"
             className="items-center"
