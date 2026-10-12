@@ -35,6 +35,9 @@ import {
     saveOrgApiKey,
     setOrgApiKeyEnabled,
     setOrgPersonalApiKeysAllowed,
+    getOrgLogo,
+    saveOrgLogo,
+    removeOrgLogo,
     saveOrgRouterModels,
     normalizeOrgRouterSlug,
 } from "./orgs.service";
@@ -80,6 +83,44 @@ orgsRouter.patch("/:orgId", requireAuth, asyncRoute(async (req, res) => {
     });
     if (!result.ok) return sendOrgFailure(res, result);
     res.json(result.org);
+}));
+
+// GET /orgs/:orgId/logo — the organization's logo, as a data URL (any
+// member). 404 when it has none.
+orgsRouter.get("/:orgId/logo", requireAuth, asyncRoute(async (req, res) => {
+    const db = createServerSupabase();
+    const result = await getOrgLogo(db, {
+        userId: res.locals.userId as string,
+        orgId: req.params.orgId,
+    });
+    if (!result.ok) return sendOrgFailure(res, result);
+    res.json(result.logo);
+}));
+
+// PUT /orgs/:orgId/logo — set or replace the logo (owner or admin). The body
+// carries the image as a PNG, JPEG or WebP data URL.
+orgsRouter.put("/:orgId/logo", requireAuth, asyncRoute(async (req, res) => {
+    const db = createServerSupabase();
+    const result = await saveOrgLogo(db, {
+        actorId: res.locals.userId as string,
+        actorEmail: res.locals.userEmail as string | undefined,
+        orgId: req.params.orgId,
+        dataUrl: req.body?.data_url,
+    });
+    if (!result.ok) return sendOrgFailure(res, result);
+    res.json({ logo_updated_at: result.logo_updated_at });
+}));
+
+// DELETE /orgs/:orgId/logo — remove the logo (owner or admin).
+orgsRouter.delete("/:orgId/logo", requireAuth, asyncRoute(async (req, res) => {
+    const db = createServerSupabase();
+    const result = await removeOrgLogo(db, {
+        actorId: res.locals.userId as string,
+        actorEmail: res.locals.userEmail as string | undefined,
+        orgId: req.params.orgId,
+    });
+    if (!result.ok) return sendOrgFailure(res, result);
+    res.json({ logo_updated_at: result.logo_updated_at });
 }));
 
 // DELETE /orgs/:orgId — delete an empty org (admin only). Organization-owned

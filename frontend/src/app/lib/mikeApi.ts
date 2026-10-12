@@ -1565,6 +1565,11 @@ export interface Org {
     updated_at?: string;
     /** The caller's role in this org. */
     role: OrgRole;
+    /**
+     * When the organization's logo was last set, or null/absent for none. It
+     * says whether there is a logo to fetch, and changes when the logo does.
+     */
+    logo_updated_at?: string | null;
     /** Accepted roster size, so a card can say "N members" without a fetch. */
     member_count?: number;
 }
@@ -1646,6 +1651,38 @@ export async function updateOrg(orgId: string, name: string): Promise<Org> {
 
 export async function deleteOrg(orgId: string): Promise<void> {
     await apiRequest(`/orgs/${orgId}`, { method: "DELETE" });
+}
+
+/**
+ * The organization's logo as a data URL, or null when it has none. Shown in
+ * the sidebar in place of the app's logo while its workspace is active.
+ */
+export async function getOrgLogo(orgId: string): Promise<string | null> {
+    try {
+        const logo = await apiRequest<{ data_url: string }>(
+            `/orgs/${orgId}/logo`,
+        );
+        return logo.data_url || null;
+    } catch (error) {
+        if (error instanceof MikeApiError && error.status === 404) return null;
+        throw error;
+    }
+}
+
+/** Set or replace the logo, sent as a PNG, JPEG or WebP data URL. */
+export async function saveOrgLogo(
+    orgId: string,
+    dataUrl: string,
+): Promise<{ logo_updated_at: string }> {
+    return apiRequest<{ logo_updated_at: string }>(`/orgs/${orgId}/logo`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data_url: dataUrl }),
+    });
+}
+
+export async function deleteOrgLogo(orgId: string): Promise<void> {
+    await apiRequest(`/orgs/${orgId}/logo`, { method: "DELETE" });
 }
 
 /**

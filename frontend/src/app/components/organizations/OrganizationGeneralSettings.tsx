@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { LogOut, Trash2 } from "lucide-react";
+import { LogOut, Trash2, Upload } from "lucide-react";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
@@ -15,7 +15,19 @@ import { SettingsTextInput } from "@/app/components/settings/SettingsTextInput";
 import { FieldLabel } from "@/app/components/ui/form-field";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useWorkspace } from "@/app/contexts/WorkspaceContext";
-import { deleteOrg, removeOrgMember, updateOrg } from "@/app/lib/mikeApi";
+import { useOrganizationLogo } from "@/app/hooks/useOrganizationLogo";
+import {
+  deleteOrg,
+  deleteOrgLogo,
+  removeOrgMember,
+  saveOrgLogo,
+  updateOrg,
+} from "@/app/lib/mikeApi";
+import {
+  ORG_LOGO_ACCEPT,
+  OrgLogoImageError,
+  prepareOrgLogo,
+} from "@/app/lib/orgLogoImage";
 import {
   ORG_ROLE_LABELS,
   isOrgAdmin,
@@ -23,6 +35,7 @@ import {
 } from "@/app/lib/permissions";
 import { userFacingApiError } from "@/app/lib/userFacingError";
 import { GlassCardUI } from "@/shared/ui/GlassCardUI";
+import { MikeIcon } from "@/shared/ui/MikeIconUI";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { useOrganizationSettings } from "./OrganizationSettingsShell";
 
@@ -60,6 +73,50 @@ export function OrganizationGeneralSettings() {
   const name = draft.value;
   const setName = (value: string) =>
     setDraft((current) => ({ ...current, value }));
+
+  // The logo row: what is shown now, and the two things that change it.
+  const logo = useOrganizationLogo(org);
+  const hasLogo = !!org?.logo_updated_at;
+  const logoInputRef = useRef<HTMLInputElement>(null);
+  const [logoBusy, setLogoBusy] = useState<"upload" | "remove" | null>(null);
+
+  async function uploadLogo(file: File) {
+    if (!org || logoBusy) return;
+    setLogoBusy("upload");
+    try {
+      const saved = await saveOrgLogo(org.id, await prepareOrgLogo(file));
+      setOrg({ ...org, logo_updated_at: saved.logo_updated_at });
+      // The sidebar shows it too.
+      void refreshOrganizations();
+    } catch (error) {
+      setFailure({
+        title: "Logo not updated",
+        message:
+          error instanceof OrgLogoImageError
+            ? error.message
+            : userFacingApiError(error, "The logo could not be saved."),
+      });
+    } finally {
+      setLogoBusy(null);
+    }
+  }
+
+  async function removeLogo() {
+    if (!org || logoBusy) return;
+    setLogoBusy("remove");
+    try {
+      await deleteOrgLogo(org.id);
+      setOrg({ ...org, logo_updated_at: null });
+      void refreshOrganizations();
+    } catch (error) {
+      setFailure({
+        title: "Logo not removed",
+        message: userFacingApiError(error, "The logo could not be removed."),
+      });
+    } finally {
+      setLogoBusy(null);
+    }
+  }
 
   const canRename = !!org && isOrgAdmin(org.role);
   const canDelete = !!org && isOrgOwner(org.role);
@@ -186,6 +243,75 @@ export function OrganizationGeneralSettings() {
               </div>
             )}
           </SettingsRow>
+          {/* The organization's own mark, for the people who run it to set.
+              A member has nothing to do here, so the row is theirs to not
+              see; they meet the logo in the sidebar. */}
+          {canRename ? (
+            <SettingsRow>
+              <div className="flex min-w-0 items-center gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gray-100">
+                  {logo ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- a small inline data URL, not an optimizable remote image
+                    <img
+                      src={logo}
+                      alt="Current logo"
+                      className="h-8 w-8 rounded-[5px] object-contain"
+                    />
+                  ) : logo === undefined ? (
+                    <span className="h-8 w-8 animate-pulse rounded bg-gray-200" />
+                  ) : (
+                    <MikeIcon size={20} />
+                  )}
+                </span>
+                <div className="min-w-0 space-y-1">
+                  <SettingsLabel>Logo</SettingsLabel>
+                  <SettingsDescription>
+                    Shown at the top of the sidebar, in place of the Mike
+                    logo, while this workspace is active. PNG, JPEG or WebP.
+                  </SettingsDescription>
+                </div>
+              </div>
+              <div className="flex w-full shrink-0 gap-2 sm:w-auto">
+                {hasLogo ? (
+                  <PillButtonUI
+                    tone="white"
+                    size="sm"
+                    disabled={logoBusy !== null}
+                    loading={logoBusy === "remove"}
+                    aria-label="Remove logo"
+                    onClick={() => void removeLogo()}
+                  >
+                    Remove
+                  </PillButtonUI>
+                ) : null}
+                <PillButtonUI
+                  tone="white"
+                  size="sm"
+                  disabled={logoBusy !== null}
+                  loading={logoBusy === "upload"}
+                  aria-label={hasLogo ? "Replace logo" : "Upload logo"}
+                  onClick={() => logoInputRef.current?.click()}
+                >
+                  <Upload className="h-4 w-4 shrink-0" />
+                  {hasLogo ? "Replace" : "Upload"}
+                </PillButtonUI>
+                <input
+                  ref={logoInputRef}
+                  type="file"
+                  accept={ORG_LOGO_ACCEPT}
+                  aria-label="Logo image"
+                  className="hidden"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    // Cleared so that picking the same file again, after a
+                    // failure, is still a change.
+                    event.target.value = "";
+                    if (file) void uploadLogo(file);
+                  }}
+                />
+              </div>
+            </SettingsRow>
+          ) : null}
         </GlassCardUI>
       </section>
 

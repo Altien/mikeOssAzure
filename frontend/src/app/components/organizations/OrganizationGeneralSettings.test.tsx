@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MikeApiError, type Org } from "@/app/lib/mikeApi";
+import { clearOrganizationLogoCache } from "@/app/hooks/useOrganizationLogo";
+import { OrgLogoImageError } from "@/app/lib/orgLogoImage";
 import { OrganizationGeneralSettings } from "./OrganizationGeneralSettings";
 
 // The General section of an organization's settings. What this pins:
@@ -21,6 +23,10 @@ const mocks = vi.hoisted(() => ({
   updateOrg: vi.fn(),
   deleteOrg: vi.fn(),
   removeOrgMember: vi.fn(),
+  getOrgLogo: vi.fn(),
+  saveOrgLogo: vi.fn(),
+  deleteOrgLogo: vi.fn(),
+  prepareOrgLogo: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -45,6 +51,15 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
   updateOrg: mocks.updateOrg,
   deleteOrg: mocks.deleteOrg,
   removeOrgMember: mocks.removeOrgMember,
+  getOrgLogo: mocks.getOrgLogo,
+  saveOrgLogo: mocks.saveOrgLogo,
+  deleteOrgLogo: mocks.deleteOrgLogo,
+}));
+// Decoding and resizing an image needs a real browser; what the section does
+// with the result does not.
+vi.mock("@/app/lib/orgLogoImage", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/app/lib/orgLogoImage")>()),
+  prepareOrgLogo: mocks.prepareOrgLogo,
 }));
 
 const orgAs = (role: Org["role"]): Org =>
@@ -58,6 +73,8 @@ const orgAs = (role: Org["role"]): Org =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  clearOrganizationLogoCache();
+  mocks.getOrgLogo.mockResolvedValue(null);
   mocks.org = orgAs("owner");
   // Renaming puts the new organization in place, as the settings area does.
   mocks.setOrg.mockImplementation((next: Org) => {
@@ -329,5 +346,129 @@ describe("deleting", () => {
 
     expect(mocks.deleteOrg).not.toHaveBeenCalled();
     expect(screen.queryByText("Delete Elite Law LLP?")).not.toBeInTheDocument();
+  });
+});
+
+describe("the organization's logo", () => {
+  const LOGO = "data:image/png;base64,AAAA";
+  const picked = new File([new Uint8Array(4)], "logo.png", {
+    type: "image/png",
+  });
+  const pick = (user: ReturnType<typeof userEvent.setup>) =>
+    user.upload(screen.getByLabelText("Logo image"), picked);
+
+  it("is the owners' and admins' to set, and not shown to a member", () => {
+    mocks.org = orgAs("member");
+    const { unmount } = render(<OrganizationGeneralSettings />);
+    expect(screen.queryByText("Logo")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Upload logo" }),
+    ).not.toBeInTheDocument();
+    unmount();
+
+    mocks.org = orgAs("admin");
+    render(<OrganizationGeneralSettings />);
+    expect(screen.getByRole("button", { name: "Upload logo" })).toBeEnabled();
+    // Nothing to remove until one is set.
+    expect(
+      screen.queryByRole("button", { name: "Remove logo" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("uploads a picked image and tells the sidebar", async () => {
+    const user = userEvent.setup();
+    mocks.prepareOrgLogo.mockResolvedValue(LOGO);
+    mocks.saveOrgLogo.mockResolvedValue({
+      logo_updated_at: "2026-10-12T10:00:00Z",
+    });
+    render(<OrganizationGeneralSettings />);
+
+    await pick(user);
+
+    await waitFor(() =>
+      expect(mocks.saveOrgLogo).toHaveBeenCalledExactlyOnceWith("org-1", LOGO),
+    );
+    // What was picked is prepared first; the file itself is never sent.
+    expect(mocks.prepareOrgLogo).toHaveBeenCalledExactlyOnceWith(picked);
+    expect(mocks.setOrg).toHaveBeenCalledWith(
+      expect.objectContaining({ logo_updated_at: "2026-10-12T10:00:00Z" }),
+    );
+    expect(mocks.refreshOrganizations).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the logo it has, and offers to replace or remove it", async () => {
+    mocks.org = { ...orgAs("owner"), logo_updated_at: "2026-10-12T10:00:00Z" };
+    mocks.getOrgLogo.mockResolvedValue(LOGO);
+    render(<OrganizationGeneralSettings />);
+
+    expect(await screen.findByAltText("Current logo")).toHaveAttribute(
+      "src",
+      LOGO,
+    );
+    expect(screen.getByRole("button", { name: "Replace logo" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Remove logo" })).toBeEnabled();
+  });
+
+  it("removes the logo and tells the sidebar", async () => {
+    const user = userEvent.setup();
+    mocks.org = { ...orgAs("owner"), logo_updated_at: "2026-10-12T10:00:00Z" };
+    mocks.getOrgLogo.mockResolvedValue(LOGO);
+    mocks.deleteOrgLogo.mockResolvedValue(undefined);
+    render(<OrganizationGeneralSettings />);
+
+    await user.click(screen.getByRole("button", { name: "Remove logo" }));
+
+    await waitFor(() =>
+      expect(mocks.deleteOrgLogo).toHaveBeenCalledExactlyOnceWith("org-1"),
+    );
+    expect(mocks.setOrg).toHaveBeenCalledWith(
+      expect.objectContaining({ logo_updated_at: null }),
+    );
+    expect(mocks.refreshOrganizations).toHaveBeenCalledTimes(1);
+  });
+
+  it("says why an image cannot be used, and sends nothing", async () => {
+    const user = userEvent.setup();
+    mocks.prepareOrgLogo.mockRejectedValue(
+      new OrgLogoImageError("That file could not be read as an image."),
+    );
+    render(<OrganizationGeneralSettings />);
+
+    await pick(user);
+
+    expect(await screen.findByText("Logo not updated")).toBeInTheDocument();
+    expect(
+      screen.getByText("That file could not be read as an image."),
+    ).toBeInTheDocument();
+    expect(mocks.saveOrgLogo).not.toHaveBeenCalled();
+    expect(mocks.setOrg).not.toHaveBeenCalled();
+  });
+
+  it("reports a refused upload in the server's words, and an unexpected one without them", async () => {
+    const user = userEvent.setup();
+    mocks.prepareOrgLogo.mockResolvedValue(LOGO);
+    mocks.saveOrgLogo.mockRejectedValueOnce(
+      new MikeApiError({
+        message: "The logo is too large. Use an image under 512 KB.",
+        status: 400,
+      }),
+    );
+    render(<OrganizationGeneralSettings />);
+
+    await pick(user);
+    expect(
+      await screen.findByText(
+        "The logo is too large. Use an image under 512 KB.",
+      ),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /close|dismiss|ok/i }));
+
+    mocks.saveOrgLogo.mockRejectedValueOnce(new Error("ECONNRESET 10.0.0.4"));
+    await pick(user);
+    expect(
+      await screen.findByText("The logo could not be saved."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/ECONNRESET/)).not.toBeInTheDocument();
+    expect(mocks.setOrg).not.toHaveBeenCalled();
   });
 });

@@ -26,7 +26,6 @@ import {
 } from "@/app/contexts/WorkspaceContext";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
-import { MikeIcon } from "@/shared/ui/MikeIconUI";
 import { SidebarChatItem } from "@/app/components/shared/SidebarChatItem";
 import {
     Dropdown,
@@ -39,6 +38,7 @@ import {
     DropdownTrigger,
 } from "@/shared/ui/dropdown";
 import { SidebarHeading } from "@/app/components/shared/SidebarHeading";
+import { SidebarLogo } from "@/app/components/shared/SidebarLogo";
 import { SidebarProjectItem } from "@/app/components/shared/SidebarProjectItem";
 import {
     ChatSkeuoIcon,
@@ -421,7 +421,9 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                 className="flex min-w-0 items-center gap-1.5 hover:opacity-80 transition-opacity"
                             >
                                 <span className="flex shrink-0 px-px">
-                                    <MikeIcon size={18} />
+                                    <SidebarLogo
+                                        organization={activeOrganization}
+                                    />
                                 </span>
                                 {sidebarHeading === null ? (
                                     <span
@@ -464,7 +466,9 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                         ) : (
                             <span aria-hidden="true" className="relative flex h-[18px] w-[18px] items-center justify-center">
                                 <span className="absolute inset-0 flex items-center justify-center group-hover:invisible group-focus-visible:invisible">
-                                    <MikeIcon size={18} />
+                                    <SidebarLogo
+                                        organization={activeOrganization}
+                                    />
                                 </span>
                                 <PanelLeft className="invisible h-4 w-4 shrink-0 group-hover:visible group-focus-visible:visible" />
                             </span>

@@ -40,3 +40,9 @@ export {
     normalizeOrgRouterSlug,
   type OrgApiKeySettings,
 } from "./orgs.apiKeys";
+
+export {
+    getOrgLogo,
+    saveOrgLogo,
+    removeOrgLogo,
+} from "./orgs.logo";
