@@ -25,7 +25,11 @@ import {
 } from "react";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { NoticeCardUI, noticeActionClassName } from "./NoticeCardUI";
+import {
+    NoticeCardUI,
+    noticeActionClassName,
+    noticeActionEmphasis,
+} from "./NoticeCardUI";
 
 import {
     dismissToast,
@@ -101,22 +105,31 @@ export function ToastActionsUI({ toast }: { toast: ToastRecord }): ReactElement 
         await action.onClick();
     };
 
+    // Contact support comes first, so it is never the primary action
+    // unless it is the only one.
+    const supportCount = toast.supportHref ? 1 : 0;
+    const count = supportCount + (toast.actions?.length ?? 0);
+
     return (
         <>
             {toast.supportHref && (
                 <a
                     href={toast.supportHref}
-                    className={noticeActionClassName()}
+                    className={noticeActionClassName(
+                        noticeActionEmphasis(0, count),
+                    )}
                 >
                     {toast.supportLabel ?? "Contact support"}
                 </a>
             )}
-            {toast.actions?.map((action) => (
+            {toast.actions?.map((action, index) => (
                 <button
                     key={action.label}
                     type="button"
                     onClick={() => void runAction(action)}
-                    className={noticeActionClassName()}
+                    className={noticeActionClassName(
+                        noticeActionEmphasis(supportCount + index, count),
+                    )}
                 >
                     {action.label}
                 </button>

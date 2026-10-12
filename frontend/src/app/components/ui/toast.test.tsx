@@ -83,10 +83,13 @@ describe("AppToasts", () => {
         expect(
             within(warning).getByRole("link", { name: "Contact support" }),
         ).toHaveAttribute("href", "mailto:support@example.com");
-        // Contact support is a black pill, like every other notice action.
+        // Retry is the primary action, so Contact support is the white pill.
         expect(
-            within(warning).getByRole("link", { name: "Contact support" }).className,
-        ).toBe(within(warning).getByRole("button", { name: "Retry" }).className);
+            within(warning).getByRole("link", { name: "Contact support" }),
+        ).toHaveClass("liquid-glass-flat");
+        expect(
+            within(warning).getByRole("button", { name: "Retry" }),
+        ).toHaveClass("bg-gray-950/88");
 
         // A warning stays until the user closes it.
         act(() => {

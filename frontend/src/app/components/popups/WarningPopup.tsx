@@ -38,7 +38,11 @@ interface WarningPopupProps {
     children?: ReactNode;
     icon?: ReactNode;
     primaryAction?: WarningPopupAction;
-    /** Extra buttons or links for the action row, before `primaryAction`. */
+    /**
+     * Extra buttons or links for the action row, before `primaryAction`.
+     * `primaryAction` is always the black pill, so nothing here may be one
+     * when it is set; style these with `noticeActionClassName`.
+     */
     actions?: ReactNode;
     /** Dev extension: second explicit action before the primary action. */
     secondaryAction?: WarningPopupAction;

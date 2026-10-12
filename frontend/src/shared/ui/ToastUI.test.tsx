@@ -253,4 +253,56 @@ describe("ToastUI", () => {
         });
         expect(focusToast(id)).toBe(false);
     });
+
+    it("never gives two actions on one toast the same look", () => {
+        render(<ToastViewportUI />);
+        const looks = (labels: string[]) =>
+            labels.map((name) => {
+                const node =
+                    screen.queryByRole("link", { name }) ??
+                    screen.getByRole("button", { name });
+                if (node.className.includes("bg-gray-950/88")) return "black";
+                if (node.className.includes("liquid-glass-flat")) return "white";
+                return "text";
+            });
+
+        act(() => {
+            showToast({
+                tone: "error",
+                message: "Failed",
+                supportHref: "mailto:support@example.com",
+                dedupeKey: "looks",
+            });
+        });
+        expect(looks(["Contact support"])).toEqual(["black"]);
+
+        act(() => {
+            showToast({
+                tone: "error",
+                message: "Failed",
+                supportHref: "mailto:support@example.com",
+                actions: [{ label: "Retry", onClick: () => {} }],
+                dedupeKey: "looks",
+            });
+        });
+        expect(looks(["Contact support", "Retry"])).toEqual(["white", "black"]);
+
+        act(() => {
+            showToast({
+                tone: "error",
+                message: "Failed",
+                supportHref: "mailto:support@example.com",
+                actions: [
+                    { label: "Retry", onClick: () => {} },
+                    { label: "Sign in", onClick: () => {} },
+                ],
+                dedupeKey: "looks",
+            });
+        });
+        expect(looks(["Contact support", "Retry", "Sign in"])).toEqual([
+            "text",
+            "white",
+            "black",
+        ]);
+    });
 });

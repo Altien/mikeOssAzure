@@ -429,9 +429,12 @@ its own (the API client, a stream callback, the offline listener) calls
 `notifyError`; `AppToasts` draws what it raises with `WarningPopup`,
 including any Retry and Contact support actions.
 
-Every button or link in a notice's action row is a small black pill:
-`WarningPopup`'s `primaryAction`, a toast's actions, and Contact support.
-Use `noticeActionClassName()` for a link that has to look like one.
+No two actions on one notice share a look. The last action in the row is the
+primary one and is a black pill (`WarningPopup`'s `primaryAction` always
+is); the one before it is a white pill; any further action is plain text.
+Contact support comes first in the row, so it is black only when it is the
+sole action. Style a custom action with
+`noticeActionClassName(noticeActionEmphasis(index, count))`.
 
 Use a **toast** only for a short confirmation ("Changes saved") or
 information.

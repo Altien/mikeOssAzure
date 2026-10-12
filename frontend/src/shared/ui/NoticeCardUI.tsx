@@ -22,6 +22,7 @@ import { twMerge } from "tailwind-merge";
 import { AlertCircle, CheckCircle2, Info } from "lucide-react";
 import { LIQUID_GLASS_FLOAT_CLASS } from "./LiquidGlassUI";
 import { pillButtonUIClassName } from "./PillButtonUI.styles";
+import { textButtonUIClassName } from "./TextButtonUI.styles";
 import { CloseButton } from "./CloseButton";
 import type { ToastTone } from "../lib/toastStore";
 
@@ -50,11 +51,37 @@ const toneTitleClass: Record<NoticeTone, string> = {
 };
 
 /**
- * Class for a button or link placed in the card's `actions` row. Every
- * notice action is a small black pill, so it takes no tone.
+ * How much weight an action in the card's `actions` row carries. No two
+ * actions on one card share a look: one black pill, at most one white pill,
+ * and anything further is plain text.
  */
-export function noticeActionClassName() {
-    return pillButtonUIClassName({ tone: "black", size: "sm" });
+export type NoticeActionEmphasis = "primary" | "secondary" | "tertiary";
+
+/**
+ * The emphasis of the action at `index` in a row of `count`. The last
+ * action is the primary one, the one before it secondary.
+ */
+export function noticeActionEmphasis(
+    index: number,
+    count: number,
+): NoticeActionEmphasis {
+    const fromEnd = count - 1 - index;
+    if (fromEnd <= 0) return "primary";
+    return fromEnd === 1 ? "secondary" : "tertiary";
+}
+
+/** Class for a button or link placed in the card's `actions` row. */
+export function noticeActionClassName(
+    emphasis: NoticeActionEmphasis = "primary",
+) {
+    if (emphasis === "tertiary") {
+        // `h-7` matches the small pills beside it.
+        return textButtonUIClassName({ size: "sm", className: "h-7" });
+    }
+    return pillButtonUIClassName({
+        tone: emphasis === "primary" ? "black" : "white",
+        size: "sm",
+    });
 }
 
 export interface NoticeCardUIProps
@@ -99,7 +126,7 @@ export function NoticeCardUI({
             {...rest}
             className={twMerge(
                 clsx(
-                    "pointer-events-auto relative flex rounded-2xl px-3 py-3 text-xs",
+                    "pointer-events-auto relative flex rounded-2xl px-3 pb-3 pt-2 text-xs",
                     LIQUID_GLASS_FLOAT_CLASS,
                     // Only visible when a toast is focused with the keyboard.
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2",
@@ -140,8 +167,8 @@ export function NoticeCardUI({
             <CloseButton
                 onClick={onDismiss}
                 label={dismissLabel}
-                size="sm"
-                className="absolute right-1.5 top-1.5"
+                size="md"
+                className="absolute right-2 top-2"
             />
         </div>
     );
