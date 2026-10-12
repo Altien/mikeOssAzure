@@ -1,9 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MikeApiError, type Org } from "@/app/lib/mikeApi";
 import { clearOrganizationLogoCache } from "@/app/hooks/useOrganizationLogo";
-import { OrgLogoImageError } from "@/app/lib/orgLogoImage";
 import { OrganizationGeneralSettings } from "./OrganizationGeneralSettings";
 
 // The General section of an organization's settings. What this pins:
@@ -26,7 +31,6 @@ const mocks = vi.hoisted(() => ({
   getOrgLogo: vi.fn(),
   saveOrgLogo: vi.fn(),
   deleteOrgLogo: vi.fn(),
-  prepareOrgLogo: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -55,12 +59,38 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
   saveOrgLogo: mocks.saveOrgLogo,
   deleteOrgLogo: mocks.deleteOrgLogo,
 }));
-// Decoding and resizing an image needs a real browser; what the section does
-// with the result does not.
-vi.mock("@/app/lib/orgLogoImage", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/app/lib/orgLogoImage")>()),
-  prepareOrgLogo: mocks.prepareOrgLogo,
+// The framing dialog has its own tests. This stand-in shows what it was
+// handed and lets a test save or cancel through it.
+vi.mock("./OrganizationLogoModal", () => ({
+  OrganizationLogoModal: ({
+    file,
+    organizationName,
+    saving,
+    onCancel,
+    onSave,
+  }: {
+    file: File;
+    organizationName: string;
+    saving?: boolean;
+    onCancel: () => void;
+    onSave: (dataUrl: string) => void;
+  }) => (
+    <div role="dialog" aria-label="Logo">
+      <p>
+        {organizationName}|{file.name}|{saving ? "saving" : "idle"}
+      </p>
+      <button type="button" onClick={() => onSave(FRAMED_LOGO)}>
+        Save framed logo
+      </button>
+      <button type="button" onClick={onCancel}>
+        Cancel framing
+      </button>
+    </div>
+  ),
 }));
+
+/** What the framing dialog hands back: the logo as it was framed. */
+const FRAMED_LOGO = "data:image/png;base64,AAAA";
 
 const orgAs = (role: Org["role"]): Org =>
   ({
@@ -378,25 +408,52 @@ describe("the organization's logo", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("uploads a picked image and tells the sidebar", async () => {
+  it("opens the framing dialog for a picked image, and saves nothing until it is framed", async () => {
     const user = userEvent.setup();
-    mocks.prepareOrgLogo.mockResolvedValue(LOGO);
+    render(<OrganizationGeneralSettings />);
+
+    await pick(user);
+
+    expect(
+      within(screen.getByRole("dialog", { name: "Logo" })).getByText(
+        "Elite Law LLP|logo.png|idle",
+      ),
+    ).toBeInTheDocument();
+    expect(mocks.saveOrgLogo).not.toHaveBeenCalled();
+  });
+
+  it("saves the framed logo, tells the sidebar and closes the dialog", async () => {
+    const user = userEvent.setup();
     mocks.saveOrgLogo.mockResolvedValue({
       logo_updated_at: "2026-10-12T10:00:00Z",
     });
     render(<OrganizationGeneralSettings />);
 
     await pick(user);
+    await user.click(screen.getByRole("button", { name: "Save framed logo" }));
 
     await waitFor(() =>
       expect(mocks.saveOrgLogo).toHaveBeenCalledExactlyOnceWith("org-1", LOGO),
     );
-    // What was picked is prepared first; the file itself is never sent.
-    expect(mocks.prepareOrgLogo).toHaveBeenCalledExactlyOnceWith(picked);
     expect(mocks.setOrg).toHaveBeenCalledWith(
       expect.objectContaining({ logo_updated_at: "2026-10-12T10:00:00Z" }),
     );
     expect(mocks.refreshOrganizations).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Logo" })).not.toBeInTheDocument(),
+    );
+  });
+
+  it("changes nothing when the framing is cancelled", async () => {
+    const user = userEvent.setup();
+    render(<OrganizationGeneralSettings />);
+
+    await pick(user);
+    await user.click(screen.getByRole("button", { name: "Cancel framing" }));
+
+    expect(screen.queryByRole("dialog", { name: "Logo" })).not.toBeInTheDocument();
+    expect(mocks.saveOrgLogo).not.toHaveBeenCalled();
+    expect(mocks.setOrg).not.toHaveBeenCalled();
   });
 
   it("shows the logo it has, and offers to replace or remove it", async () => {
@@ -430,26 +487,38 @@ describe("the organization's logo", () => {
     expect(mocks.refreshOrganizations).toHaveBeenCalledTimes(1);
   });
 
-  it("says why an image cannot be used, and sends nothing", async () => {
-    const user = userEvent.setup();
-    mocks.prepareOrgLogo.mockRejectedValue(
-      new OrgLogoImageError("That file could not be read as an image."),
-    );
+  it("refuses a file that cannot be a logo before opening the dialog", async () => {
     render(<OrganizationGeneralSettings />);
-
-    await pick(user);
+    // Not a type the picker offers, but a file can still be dropped on it.
+    const svg = new File(["<svg/>"], "logo.svg", { type: "image/svg+xml" });
+    fireEvent.change(screen.getByLabelText("Logo image"), {
+      target: { files: [svg] },
+    });
 
     expect(await screen.findByText("Logo not updated")).toBeInTheDocument();
     expect(
-      screen.getByText("That file could not be read as an image."),
+      screen.getByText("Choose a PNG, JPEG or WebP image."),
     ).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Logo" })).not.toBeInTheDocument();
     expect(mocks.saveOrgLogo).not.toHaveBeenCalled();
-    expect(mocks.setOrg).not.toHaveBeenCalled();
   });
 
-  it("reports a refused upload in the server's words, and an unexpected one without them", async () => {
+  it("refuses a file over the size limit before opening the dialog", async () => {
+    render(<OrganizationGeneralSettings />);
+    const huge = new File([new Uint8Array(4)], "logo.png", { type: "image/png" });
+    Object.defineProperty(huge, "size", { value: 10 * 1024 * 1024 + 1 });
+    fireEvent.change(screen.getByLabelText("Logo image"), {
+      target: { files: [huge] },
+    });
+
+    expect(
+      await screen.findByText("Choose an image under 10 MB."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Logo" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the dialog up when the save is refused, in the server's words, and without them when unexpected", async () => {
     const user = userEvent.setup();
-    mocks.prepareOrgLogo.mockResolvedValue(LOGO);
     mocks.saveOrgLogo.mockRejectedValueOnce(
       new MikeApiError({
         message: "The logo is too large. Use an image under 512 KB.",
@@ -459,15 +528,17 @@ describe("the organization's logo", () => {
     render(<OrganizationGeneralSettings />);
 
     await pick(user);
+    await user.click(screen.getByRole("button", { name: "Save framed logo" }));
     expect(
       await screen.findByText(
         "The logo is too large. Use an image under 512 KB.",
       ),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /close|dismiss|ok/i }));
+    // Still there, to try again without framing it over.
+    expect(screen.getByRole("dialog", { name: "Logo" })).toBeInTheDocument();
 
     mocks.saveOrgLogo.mockRejectedValueOnce(new Error("ECONNRESET 10.0.0.4"));
-    await pick(user);
+    await user.click(screen.getByRole("button", { name: "Save framed logo" }));
     expect(
       await screen.findByText("The logo could not be saved."),
     ).toBeInTheDocument();

@@ -26,7 +26,7 @@ import {
 import {
   ORG_LOGO_ACCEPT,
   OrgLogoImageError,
-  prepareOrgLogo,
+  validateOrgLogoFile,
 } from "@/app/lib/orgLogoImage";
 import {
   ORG_ROLE_LABELS,
@@ -37,6 +37,7 @@ import { userFacingApiError } from "@/app/lib/userFacingError";
 import { GlassCardUI } from "@/shared/ui/GlassCardUI";
 import { MikeIcon } from "@/shared/ui/MikeIconUI";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
+import { OrganizationLogoModal } from "./OrganizationLogoModal";
 import { useOrganizationSettings } from "./OrganizationSettingsShell";
 
 // The General section of an organization's settings. Everyone in the
@@ -80,21 +81,40 @@ export function OrganizationGeneralSettings() {
   const logoInputRef = useRef<HTMLInputElement>(null);
   const [logoBusy, setLogoBusy] = useState<"upload" | "remove" | null>(null);
 
-  async function uploadLogo(file: File) {
-    if (!org || logoBusy) return;
-    setLogoBusy("upload");
+  // A picked image waits here while it is framed in the logo dialog.
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+
+  function pickLogo(file: File) {
     try {
-      const saved = await saveOrgLogo(org.id, await prepareOrgLogo(file));
-      setOrg({ ...org, logo_updated_at: saved.logo_updated_at });
-      // The sidebar shows it too.
-      void refreshOrganizations();
+      // Type and size, before anything is opened.
+      validateOrgLogoFile(file);
     } catch (error) {
       setFailure({
         title: "Logo not updated",
         message:
           error instanceof OrgLogoImageError
             ? error.message
-            : userFacingApiError(error, "The logo could not be saved."),
+            : "That image cannot be used.",
+      });
+      return;
+    }
+    setLogoFile(file);
+  }
+
+  async function saveLogo(dataUrl: string) {
+    if (!org || logoBusy) return;
+    setLogoBusy("upload");
+    try {
+      const saved = await saveOrgLogo(org.id, dataUrl);
+      setOrg({ ...org, logo_updated_at: saved.logo_updated_at });
+      // The sidebar shows it too.
+      void refreshOrganizations();
+      setLogoFile(null);
+    } catch (error) {
+      // The dialog stays up, with the framing intact, to try again.
+      setFailure({
+        title: "Logo not updated",
+        message: userFacingApiError(error, "The logo could not be saved."),
       });
     } finally {
       setLogoBusy(null);
@@ -305,7 +325,7 @@ export function OrganizationGeneralSettings() {
                     // Cleared so that picking the same file again, after a
                     // failure, is still a change.
                     event.target.value = "";
-                    if (file) void uploadLogo(file);
+                    if (file) pickLogo(file);
                   }}
                 />
               </div>
@@ -385,6 +405,15 @@ export function OrganizationGeneralSettings() {
         </section>
       ) : null}
 
+      {logoFile && org ? (
+        <OrganizationLogoModal
+          file={logoFile}
+          organizationName={org.name}
+          saving={logoBusy === "upload"}
+          onCancel={() => setLogoFile(null)}
+          onSave={(dataUrl) => void saveLogo(dataUrl)}
+        />
+      ) : null}
       <ConfirmPopup
         open={pending !== null}
         title={
