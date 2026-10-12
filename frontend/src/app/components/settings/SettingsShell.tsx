@@ -3,11 +3,6 @@
 import type { ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { settingsTabButtonClassName } from "@/app/(pages)/settings/settingsStyles";
-import {
-    PAGE_HEADER_ROW_CLASS,
-    PAGE_HEADER_TITLE_CLASS,
-} from "@/app/components/shared/pageHeaderStyles";
-import { cn } from "@/app/lib/utils";
 
 export interface SettingsShellTab {
     id: string;
@@ -43,15 +38,8 @@ export function SettingsShell({
 
     return (
         <div className="flex h-full flex-col overflow-y-auto">
-            {/* The same title, on the same line, as every other page's
-                header: only the column it sits in is the settings one. */}
-            <header
-                className={cn(
-                    "mx-auto flex w-full max-w-5xl shrink-0 items-center px-6",
-                    PAGE_HEADER_ROW_CLASS,
-                )}
-            >
-                <h1 className={cn(PAGE_HEADER_TITLE_CLASS, "text-gray-900")}>
+            <header className="mx-auto flex h-16 w-full max-w-5xl shrink-0 items-end px-6 pb-2 md:h-24 md:pb-4">
+                <h1 className="text-3xl font-medium font-eb-garamond">
                     {title}
                 </h1>
             </header>
