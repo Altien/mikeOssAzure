@@ -18,6 +18,7 @@ import { BookOpenText } from "lucide-react";
 import { DocumentContent, type DocumentContentMode } from "@/app/components/shared/DocumentContent";
 import { DocumentTabBar } from "../shared/DocumentTabBar";
 import type { Citation, EditAnnotation, PanelDocument } from "../shared/types";
+import { isEmbeddedMcpDocument } from "../shared/types";
 import { cn } from "@/app/lib/utils";
 import { LIQUID_GLASS_FLOAT_CLASS } from "@/app/components/ui/liquid-surface";
 import { AuthorityTracePanel } from "@/altien/authorityTrace/AuthorityTracePanel";
@@ -266,7 +267,7 @@ export function AssistantSidePanel({
 }: Props) {
     const panelRef = useRef<HTMLDivElement>(null);
     // Dev (sync-log: 972cf22): Authority Trace tabs carry no document.
-    const permissions = useDocumentPermissions(tabs.flatMap((tab) => tab.kind !== "authority_trace" && !["case", "legislation"].includes(tab.document.type) ? [tab.document.document_id] : []), canEdit);
+    const permissions = useDocumentPermissions(tabs.flatMap((tab) => tab.kind !== "authority_trace" && !isEmbeddedMcpDocument(tab.document) && !["case", "legislation"].includes(tab.document.type) ? [tab.document.document_id] : []), canEdit);
     const viewers = useDocumentViewers();
     // One width beside a single chat and another beside two, so closing the
     // second chat gives the panel back the width it had before.
@@ -382,6 +383,7 @@ export function AssistantSidePanel({
                         return { id: tab.id, title: tabTitle(tab) };
                     }
                     const isLegalSource =
+                        isEmbeddedMcpDocument(tab.document) ||
                         tab.document.type === "case" ||
                         tab.document.type === "legislation";
                     const actions = isLegalSource
