@@ -16,6 +16,7 @@ import {
   orgLogoMinZoom,
   orgLogoPlacement,
   renderOrgLogo,
+  validateOrgLogoFile,
   type OrgLogoFrame,
 } from "@/app/lib/orgLogoImage";
 
@@ -36,36 +37,37 @@ const NUDGE = 8;
 
 /** The picture as the frame shows it, in a square of any size. */
 function FramedLogo({
-  src,
+  image,
   frame,
   side,
   className,
 }: {
-  src: string;
+  image: ImageBitmap;
   frame: OrgLogoFrame;
   side: number;
   className?: string;
 }) {
-  const placement = orgLogoPlacement(frame, side);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context) return;
+    const ratio = window.devicePixelRatio || 1;
+    canvas.width = Math.round(side * ratio);
+    canvas.height = Math.round(side * ratio);
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    context.clearRect(0, 0, side, side);
+    context.imageSmoothingQuality = "high";
+    const placement = orgLogoPlacement(frame, side);
+    context.drawImage(image, placement.left, placement.top, placement.width, placement.height);
+  }, [frame, image, side]);
   return (
-    <span
-      className={`relative block shrink-0 overflow-hidden ${className ?? ""}`}
+    <canvas
+      ref={canvasRef}
+      aria-hidden="true"
+      className={`pointer-events-none block shrink-0 ${className ?? ""}`}
       style={{ width: side, height: side }}
-    >
-      {/* eslint-disable-next-line @next/next/no-img-element -- a local preview of the picked file */}
-      <img
-        src={src}
-        alt=""
-        draggable={false}
-        className="pointer-events-none absolute max-w-none select-none"
-        style={{
-          left: placement.left,
-          top: placement.top,
-          width: placement.width,
-          height: placement.height,
-        }}
-      />
-    </span>
+    />
   );
 }
 
@@ -84,25 +86,53 @@ export function OrganizationLogoModal({
   /** Called with the framed logo as a PNG data URL. */
   onSave: (dataUrl: string) => void;
 }) {
-  // The picked file, as something an <img> can show. Made and released by
-  // the same effect: React mounts effects twice in development, and a URL
-  // made anywhere else would be released by the first unmount and then used
-  // by the second mount, where it no longer loads.
-  const [src, setSrc] = useState<string | null>(null);
+  // Decode the upload into pixels before displaying it. The raw file never
+  // becomes a DOM URL, so markup cannot be interpreted as preview content.
+  const [loaded, setLoaded] = useState<{
+    file: File;
+    image: ImageBitmap;
+    frame: OrgLogoFrame;
+  } | null>(null);
+  const [failedFile, setFailedFile] = useState<File | null>(null);
   useEffect(() => {
-    const url = URL.createObjectURL(file);
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- the URL is a resource this effect owns and releases
-    setSrc(url);
-    return () => URL.revokeObjectURL(url);
+    let cancelled = false;
+    let bitmap: ImageBitmap | undefined;
+    async function decode() {
+      try {
+        validateOrgLogoFile(file);
+        const image = await createImageBitmap(file);
+        if (cancelled) {
+          image.close();
+          return;
+        }
+        bitmap = image;
+        if (image.width <= 0 || image.height <= 0) {
+          image.close();
+          bitmap = undefined;
+          setFailedFile(file);
+          return;
+        }
+        setLoaded({ file, image, frame: initialOrgLogoFrame(image.width, image.height) });
+      } catch {
+        if (!cancelled) setFailedFile(file);
+      }
+    }
+    void decode();
+    return () => {
+      cancelled = true;
+      bitmap?.close();
+    };
   }, [file]);
 
-  const imageRef = useRef<HTMLImageElement>(null);
-  const [frame, setFrame] = useState<OrgLogoFrame | null>(null);
-  const [unreadable, setUnreadable] = useState(false);
+  const image = loaded?.file === file ? loaded.image : null;
+  const frame = loaded?.file === file ? loaded.frame : null;
+  const unreadable = failedFile === file;
   const drag = useRef<{ x: number; y: number } | null>(null);
 
   const change = (next: (current: OrgLogoFrame) => OrgLogoFrame) =>
-    setFrame((current) => (current ? clampOrgLogoFrame(next(current)) : null));
+    setLoaded((current) => current?.file === file
+      ? { ...current, frame: clampOrgLogoFrame(next(current.frame)) }
+      : current);
 
   /** Move the picture by a distance measured in the framing square. */
   const moveBy = (dx: number, dy: number) =>
@@ -160,8 +190,8 @@ export function OrganizationLogoModal({
         variant: "blue",
         disabled: !frame || saving,
         onClick: () => {
-          if (frame && imageRef.current)
-            onSave(renderOrgLogo(imageRef.current, frame));
+          if (frame && image)
+            onSave(renderOrgLogo(image, frame));
         },
       }}
     >
@@ -192,9 +222,9 @@ export function OrganizationLogoModal({
                   }`}
                   style={{ width: FRAME_SIDE, height: FRAME_SIDE }}
                 >
-                  {frame && src ? (
+                  {frame && image ? (
                     <FramedLogo
-                      src={src}
+                      image={image}
                       frame={frame}
                       side={FRAME_SIDE}
                       className="rounded-2xl"
@@ -204,27 +234,6 @@ export function OrganizationLogoModal({
                   )}
                 </div>
               </div>
-              {/* Never shown: it is what is measured, and what is drawn from
-                  when the logo is saved. */}
-              {src ? (
-                // eslint-disable-next-line @next/next/no-img-element -- the picked file, read for its size and drawn onto a canvas
-                <img
-                  ref={imageRef}
-                  src={src}
-                  alt=""
-                  className="hidden"
-                  onLoad={(event) => {
-                    const { naturalWidth, naturalHeight } =
-                      event.currentTarget;
-                    if (naturalWidth > 0 && naturalHeight > 0)
-                      setFrame(
-                        initialOrgLogoFrame(naturalWidth, naturalHeight),
-                      );
-                    else setUnreadable(true);
-                  }}
-                  onError={() => setUnreadable(true)}
-                />
-              ) : null}
             </div>
 
             <div className="space-y-2">
@@ -257,9 +266,9 @@ export function OrganizationLogoModal({
                 data-slot="organization-logo-preview"
                 className="flex min-w-0 items-center gap-1.5 rounded-xl bg-gray-100 px-3 py-2.5"
               >
-                {frame && src ? (
+                {frame && image ? (
                   <FramedLogo
-                    src={src}
+                    image={image}
                     frame={frame}
                     side={SIDEBAR_SIDE}
                     className="rounded-[3px]"

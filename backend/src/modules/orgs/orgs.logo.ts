@@ -9,11 +9,24 @@ import type { Db } from "../../lib/supabase";
 
 export const MAX_ORG_LOGO_BYTES = 512 * 1024;
 type LogoContentType = "image/png" | "image/jpeg" | "image/webp";
-const SIGNATURES: Record<LogoContentType, (bytes: Buffer) => boolean> = {
-  "image/png": b => b.subarray(0, 8).equals(Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a])),
-  "image/jpeg": b => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
-  "image/webp": b => b.subarray(0,4).toString("latin1") === "RIFF" && b.subarray(8,12).toString("latin1") === "WEBP",
-};
+
+// What each accepted format begins with. The declared type is the client's
+// word; these are the file's. SVG is deliberately absent: it is a document
+// that can carry script, not a picture.
+function hasLogoSignature(contentType: LogoContentType, bytes: Buffer): boolean {
+    switch (contentType) {
+        case "image/png":
+            return bytes.subarray(0, 8).equals(
+                Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+            );
+        case "image/jpeg":
+            return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+        case "image/webp":
+            return bytes.subarray(0, 4).toString("latin1") === "RIFF" &&
+                bytes.subarray(8, 12).toString("latin1") === "WEBP";
+    }
+}
+
 const DATA_URL = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/;
 const UNSUPPORTED = "The logo must be a PNG, JPEG or WebP image.";
 export function parseOrgLogoDataUrl(value: unknown): {ok:true; contentType:LogoContentType; bytes:Buffer}|{ok:false;detail:string} {
@@ -22,7 +35,7 @@ export function parseOrgLogoDataUrl(value: unknown): {ok:true; contentType:LogoC
   const m=DATA_URL.exec(value); if (!m) return {ok:false,detail:UNSUPPORTED};
   const contentType=m[1] as LogoContentType, bytes=Buffer.from(m[2],"base64");
   if (!bytes.length || bytes.length > MAX_ORG_LOGO_BYTES) return {ok:false,detail:bytes.length ? "The logo is too large. Use an image under 512 KB." : UNSUPPORTED};
-  if (!SIGNATURES[contentType](bytes)) return {ok:false,detail:UNSUPPORTED};
+  if (!hasLogoSignature(contentType,bytes)) return {ok:false,detail:UNSUPPORTED};
   return {ok:true,contentType,bytes};
 }
 function logoKey(orgId:string, objectId:string) { return `orgs/${orgId}/logos/${objectId}`; }

@@ -27,6 +27,25 @@ describe("parseOrgLogoDataUrl", () => {
         ).toMatchObject({ ok: false });
     });
 
+    it.each([
+        ["image/jpeg", [0xff, 0xd8, 0xff, 0xe0]],
+        ["image/webp", [...Buffer.from("RIFF\u0000\u0000\u0000\u0000WEBP")]],
+    ])("accepts the explicit %s signature", (type, bytes) => {
+        expect(parseOrgLogoDataUrl(dataUrl(type, bytes))).toEqual({
+            ok: true,
+            contentType: type,
+            bytes: Buffer.from(bytes),
+        });
+        expect(parseOrgLogoDataUrl(dataUrl(type, PNG_SIGNATURE))).toMatchObject({ ok: false });
+    });
+
+    it.each(["constructor", "__proto__", "toString", "image/constructor", "image/svg+xml", "text/html"])(
+        "rejects an unsupported type %s without dynamic dispatch",
+        (type) => {
+            expect(parseOrgLogoDataUrl(dataUrl(type, PNG_SIGNATURE))).toMatchObject({ ok: false });
+        },
+    );
+
     it("does not accept SVG, which is a document rather than a picture", () => {
         expect(
             parseOrgLogoDataUrl(
