@@ -38,6 +38,10 @@ import {
 } from "@/app/components/shared/TablePrimitive";
 import { OrganizationSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
+import {
+  MemberDepartureDialog,
+  type MemberDepartureResult,
+} from "./MemberDepartureDialog";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { EmptyState } from "@/app/components/ui/empty-state";
 import {
@@ -51,7 +55,6 @@ import {
   getOrg,
   listOrgInvitations,
   listOrgMembers,
-  removeOrgMember,
   updateOrgMember,
   type Org,
   type OrgInvitation,
@@ -151,7 +154,6 @@ export function OrganizationMembers({
   const [search, setSearch] = useState("");
   const [rosterTab, setRosterTab] = useState<RosterTab>("all");
   const [removeSelectedOpen, setRemoveSelectedOpen] = useState(false);
-  const [removingSelected, setRemovingSelected] = useState(false);
   const [removeMember, setRemoveMember] = useState<OrgMember | null>(null);
   const [pendingSelfRoleChange, setPendingSelfRoleChange] = useState<{
     member: OrgMember;
@@ -330,33 +332,29 @@ export function OrganizationMembers({
     }
   }
 
-  async function confirmRemoveMember() {
-    if (!removeMember || busyMemberId) return;
+  // The dialog has done the removing (and the handing over); this is what
+  // the page does about it.
+  function finishRemoveMember(result: MemberDepartureResult) {
     const member = removeMember;
-    setBusyMemberId(member.user_id);
-    setActionError(null);
-    try {
-      await removeOrgMember(orgId, member.user_id);
-      if (member.user_id === user?.id) {
-        void refreshOrganizations();
-        router.push(AFTER_DEPARTURE);
-        return;
-      }
-      setMembers((current) =>
-        current.filter((row) => row.user_id !== member.user_id),
-      );
-      setSelectedMemberIds((current) =>
-        current.filter((id) => id !== member.id),
-      );
-      setRemoveMember(null);
-    } catch (error) {
+    setRemoveMember(null);
+    if (!member) return;
+    if (!result.removedUserIds.includes(member.user_id)) {
       setActionError(
-        userFacingApiError(error, "Could not remove that member."),
+        userFacingApiError(result.error, "Could not remove that member."),
       );
-      setRemoveMember(null);
-    } finally {
-      setBusyMemberId(null);
+      return;
     }
+    if (member.user_id === user?.id) {
+      void refreshOrganizations();
+      router.push(AFTER_DEPARTURE);
+      return;
+    }
+    setMembers((current) =>
+      current.filter((row) => row.user_id !== member.user_id),
+    );
+    setSelectedMemberIds((current) =>
+      current.filter((id) => id !== member.id),
+    );
   }
 
   function requestRemoveSelected() {
@@ -381,38 +379,25 @@ export function OrganizationMembers({
     setRemoveSelectedOpen(true);
   }
 
-  async function confirmRemoveSelected() {
-    if (!isAdmin || removingSelected || selectedMemberIds.length === 0) return;
-    const selectedMembers = members.filter((member) =>
-      selectedMemberIds.includes(member.id),
-    );
-    setRemovingSelected(true);
-    setActionError(null);
-    const results = await Promise.allSettled(
-      selectedMembers.map((member) => removeOrgMember(orgId, member.user_id)),
-    );
-    const removedIds = selectedMembers
-      .filter((_, index) => results[index]?.status === "fulfilled")
+  function finishRemoveSelected(result: MemberDepartureResult) {
+    const removedIds = members
+      .filter((member) => result.removedUserIds.includes(member.user_id))
       .map((member) => member.id);
-    const firstFailure = results.find(
-      (result): result is PromiseRejectedResult => result.status === "rejected",
-    );
     setMembers((current) =>
       current.filter((member) => !removedIds.includes(member.id)),
     );
     setSelectedMemberIds((current) =>
       current.filter((id) => !removedIds.includes(id)),
     );
-    if (firstFailure) {
+    if (result.error) {
       setActionError(
         userFacingApiError(
-          firstFailure.reason,
+          result.error,
           "Could not remove all selected members.",
         ),
       );
     }
     setRemoveSelectedOpen(false);
-    setRemovingSelected(false);
   }
 
   function renderMemberActions(
@@ -538,24 +523,16 @@ export function OrganizationMembers({
         </>
       ) : null}
 
-      <ConfirmPopup
-        open={removeMember !== null}
-        title={
-          removeMember?.user_id === user?.id
-            ? "Leave organization?"
-            : "Remove member?"
-        }
-        message={
-          removeMember?.user_id === user?.id
-            ? "You will lose access to this organization's shared resources."
-            : `${removeMember?.display_name || removeMember?.email || "This member"} will lose organization access.`
-        }
-        confirmLabel={removeMember?.user_id === user?.id ? "Leave" : "Remove"}
-        confirmVariant="danger"
-        confirmStatus={busyMemberId ? "loading" : "idle"}
-        onCancel={() => setRemoveMember(null)}
-        onConfirm={() => void confirmRemoveMember()}
-      />
+      {removeMember ? (
+        <MemberDepartureDialog
+          orgId={orgId}
+          departing={[removeMember]}
+          leaving={removeMember.user_id === user?.id}
+          members={members}
+          onCancel={() => setRemoveMember(null)}
+          onDone={finishRemoveMember}
+        />
+      ) : null}
       <ConfirmPopup
         open={pendingSelfRoleChange !== null}
         title={
@@ -586,16 +563,17 @@ export function OrganizationMembers({
           );
         }}
       />
-      <ConfirmPopup
-        open={removeSelectedOpen}
-        title="Remove selected people?"
-        message={`${selectedMemberIds.length} selected ${selectedMemberIds.length === 1 ? "member" : "members"} will lose access to this organization.`}
-        confirmLabel="Remove"
-        confirmVariant="danger"
-        confirmStatus={removingSelected ? "loading" : "idle"}
-        onCancel={() => setRemoveSelectedOpen(false)}
-        onConfirm={() => void confirmRemoveSelected()}
-      />
+      {removeSelectedOpen ? (
+        <MemberDepartureDialog
+          orgId={orgId}
+          departing={members.filter((member) =>
+            selectedMemberIds.includes(member.id),
+          )}
+          members={members}
+          onCancel={() => setRemoveSelectedOpen(false)}
+          onDone={finishRemoveSelected}
+        />
+      ) : null}
       <WarningPopup
         open={actionError !== null}
         title="Organization action failed"

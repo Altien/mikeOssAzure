@@ -5,6 +5,10 @@ import { useRouter } from "next/navigation";
 import { LogOut, Trash2, Upload } from "lucide-react";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 import {
+  MemberDepartureDialog,
+  type MemberDepartureResult,
+} from "./MemberDepartureDialog";
+import {
   MfaVerificationPopup,
   needsMfaVerification,
 } from "@/app/components/popups/MfaVerificationPopup";
@@ -24,7 +28,6 @@ import {
   deleteOrg,
   deleteOrgLogo,
   isMfaRequiredError,
-  removeOrgMember,
   saveOrgLogo,
   updateOrg,
 } from "@/app/lib/mikeApi";
@@ -171,48 +174,54 @@ export function OrganizationGeneralSettings() {
     }
   }
 
+  // Leaving goes through its own dialog, which also settles who takes over
+  // what the member alone owns; this is what the page does once it is done.
+  function finishLeave(result: MemberDepartureResult) {
+    setPending(null);
+    if (!user?.id || !result.removedUserIds.includes(user.id)) {
+      setFailure({
+        title: "Could not leave the organization",
+        message: userFacingApiError(
+          result.error,
+          "You could not be removed from the organization.",
+        ),
+      });
+      return;
+    }
+    // `working` stays set: the button must not fire a second time while the
+    // page navigates away from an organization that is gone.
+    setWorking("leave");
+    void refreshOrganizations();
+    router.push(AFTER_DEPARTURE);
+  }
+
   async function confirm(action: Pending | null = pending) {
-    if (!org || !action || working) return;
+    if (!org || action !== "delete" || working) return;
     setWorking(action);
     try {
-      if (action === "leave") {
-        if (!user?.id) throw new Error("Not signed in");
-        await removeOrgMember(org.id, user.id);
-      } else {
-        // Deleting an organization destroys everything in it, so it asks
-        // for a second factor like the other destructive data actions.
-        if (await needsMfaVerification()) {
-          setPending(null);
-          setWorking(null);
-          setMfaPending(true);
-          return;
-        }
-        await deleteOrg(org.id);
-      }
-    } catch (error) {
-      setPending(null);
-      setWorking(null);
-      if (action === "delete" && isMfaRequiredError(error)) {
+      // Deleting an organization destroys everything in it, so it asks
+      // for a second factor like the other destructive data actions.
+      if (await needsMfaVerification()) {
+        setPending(null);
+        setWorking(null);
         setMfaPending(true);
         return;
       }
-      setFailure(
-        action === "leave"
-          ? {
-              title: "Could not leave the organization",
-              message: userFacingApiError(
-                error,
-                "You could not be removed from the organization.",
-              ),
-            }
-          : {
-              title: "Organization not deleted",
-              message: userFacingApiError(
-                error,
-                "Could not delete the organization.",
-              ),
-            },
-      );
+      await deleteOrg(org.id);
+    } catch (error) {
+      setPending(null);
+      setWorking(null);
+      if (isMfaRequiredError(error)) {
+        setMfaPending(true);
+        return;
+      }
+      setFailure({
+        title: "Organization not deleted",
+        message: userFacingApiError(
+          error,
+          "Could not delete the organization.",
+        ),
+      });
       return;
     }
     // `working` stays set: the button must not fire a second time while the
@@ -431,19 +440,20 @@ export function OrganizationGeneralSettings() {
           onSave={(dataUrl) => void saveLogo(dataUrl)}
         />
       ) : null}
+      {pending === "leave" && org && user?.id ? (
+        <MemberDepartureDialog
+          orgId={org.id}
+          departing={[{ user_id: user.id, email: user.email ?? null }]}
+          leaving
+          onCancel={() => setPending(null)}
+          onDone={finishLeave}
+        />
+      ) : null}
       <ConfirmPopup
-        open={pending !== null}
-        title={
-          pending === "delete"
-            ? `Delete ${org?.name ?? "this organization"}?`
-            : "Leave organization?"
-        }
-        message={
-          pending === "delete"
-            ? "This permanently deletes the organization and all of its content for every member: projects, documents, chats, tabular reviews, workflows and memory, along with its memberships and invitations. Consider exporting anything you need to keep first. This action cannot be undone."
-            : "You will lose access to this organization's shared resources."
-        }
-        confirmLabel={pending === "delete" ? "Delete" : "Leave"}
+        open={pending === "delete"}
+        title={`Delete ${org?.name ?? "this organization"}?`}
+        message="This permanently deletes the organization and all of its content for every member: projects, documents, chats, tabular reviews, workflows and memory, along with its memberships and invitations. Consider exporting anything you need to keep first. This action cannot be undone."
+        confirmLabel="Delete"
         confirmVariant="danger"
         confirmStatus={working ? "loading" : "idle"}
         onCancel={() => {

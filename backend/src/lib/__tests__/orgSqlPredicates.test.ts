@@ -136,7 +136,7 @@ it("keeps organization-wide scope exclusive to projects and workflows", () => {
 // decide that through one helper; ensureSharedRowAccess (lib/access.ts) is
 // its TypeScript twin.
 describe("standalone chats and reviews in an organization", () => {
-    const schema = readFileSync(resolve(ROOT, "migrations/0120_standalone_org_content.sql"), "utf8");
+    const schema = readFileSync(resolve(ROOT, "migrations/0121_member_handover.sql"), "utf8") + "\n" + readFileSync(resolve(ROOT, "migrations/0120_standalone_org_content.sql"), "utf8");
     const migration = readFileSync(
         resolve(ROOT, "migrations/0120_standalone_org_content.sql"),
         "utf8",
@@ -157,34 +157,85 @@ describe("standalone chats and reviews in an organization", () => {
         );
     });
 
+    // The later hand-over migration rewrote the access functions (nobody
+    // takes a standalone chat or review over any more), so a fresh install
+    // matches that one for them, and this one for what it alone defines.
+    const handover = readFileSync(
+        resolve(ROOT, "migrations/0121_member_handover.sql"),
+        "utf8",
+    );
+
+    it("a fresh install defines org_is_team exactly as the migration does", () => {
+        expect(functionSource(schema, "org_is_team")).toBe(
+            functionSource(migration, "org_is_team"),
+        );
+    });
+
     it.each([
-        "org_is_team",
         "standalone_org_access_role",
         "chat_access_role",
         "review_access_role",
         "cleanup_removed_org_member_overrides",
-    ])("a fresh install defines %s exactly as the migration does", (name) => {
-        expect(functionSource(schema, name)).toBe(
-            functionSource(migration, name),
-        );
-    });
+        "org_member_sole_owned_items",
+        "org_member_private_standalone",
+        "assign_org_member_items",
+    ])(
+        "a fresh install defines %s exactly as the hand-over migration does",
+        (name) => {
+            expect(functionSource(schema, name)).toBe(
+                functionSource(handover, name),
+            );
+        },
+    );
 
     it("asks membership first: nobody outside the organization reaches it, its author included", () => {
         const body = functionSource(schema, "standalone_org_access_role");
-        const arms = [
-            "when caller.role is null then null",
+        const membership = body.indexOf("when not exists (");
+        const author = body.indexOf(
             "when p_creator_id::text = p_user_id then 'owner'",
-            "when p_grant_role is not null then p_grant_role",
-            // The organization's owners come last, and only for something
-            // nobody in the organization owns any more.
-            "when caller.role = 'owner'",
-        ].map((arm) => body.indexOf(arm));
-        expect(arms.every((at) => at > 0)).toBe(true);
-        expect(arms).toEqual([...arms].sort((a, b) => a - b));
-        expect(body).toContain("and not coalesce(p_has_member_owner, false)");
-        expect(body).toMatch(
-            /and not exists \(\s+select 1 from public\.org_members creator\s+where creator\.org_id = p_org_id and creator\.user_id::text = p_creator_id/,
         );
+        const grant = body.indexOf("else p_grant_role");
+        expect(membership).toBeGreaterThan(0);
+        expect(author).toBeGreaterThan(membership);
+        expect(grant).toBeGreaterThan(author);
+    });
+
+    it("gives the organization's owners no arm of their own: nobody takes one over", () => {
+        const body = functionSource(schema, "standalone_org_access_role");
+        expect(body).not.toMatch(/role = 'owner'/);
+        expect(body).not.toContain("p_has_member_owner");
+        // The five-argument form that carried the take-over is dropped.
+        expect(handover).toContain(
+            "drop function if exists public.standalone_org_access_role(uuid, text, text, text, boolean);",
+        );
+    });
+
+    it("deletes a departing member's standalone chats and reviews with the membership, in team organizations only", () => {
+        const body = functionSource(schema, "cleanup_removed_org_member_overrides");
+        expect(body).toMatch(
+            /if public\.org_is_team\(old\.org_id\) then\s+delete from public\.chats c\s+using public\.org_member_private_standalone\(old\.org_id, old\.user_id\) gone/,
+        );
+        expect(body).toMatch(
+            /delete from public\.tabular_reviews r\s+using public\.org_member_private_standalone\(old\.org_id, old\.user_id\) gone/,
+        );
+    });
+
+    it("keeps what another member owns, and never touches a project's chats or reviews", () => {
+        const body = functionSource(schema, "org_member_private_standalone");
+        expect(body.match(/and \w\.project_id is null/g)).toHaveLength(2);
+        expect(body.match(/and g\.role = 'owner'\s+and holder\.user_id <> p_user_id/g)).toHaveLength(2);
+    });
+
+    it("hands over only private items nobody else owns", () => {
+        const body = functionSource(schema, "org_member_sole_owned_items");
+        // Public items are the organization owners' already.
+        expect(
+            body.match(/and \w\.visibility is distinct from 'organization'/g),
+        ).toHaveLength(2);
+        // Another Owner — the creator, still a member, or an Owner override —
+        // means there is nothing to hand over.
+        expect(body.match(/and creator\.user_id <> p_user_id/g)).toHaveLength(2);
+        expect(body.match(/and other\.user_id <> p_user_id/g)).toHaveLength(2);
     });
 
     it.each(["chat_access_role", "review_access_role"])(

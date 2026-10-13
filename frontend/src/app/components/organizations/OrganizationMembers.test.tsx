@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MikeApiError } from "@/app/lib/mikeApi";
 import { OrganizationMembers } from "./OrganizationMembers";
@@ -13,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   listOrgInvitations: vi.fn(),
   updateOrgMember: vi.fn(),
   removeOrgMember: vi.fn(),
+  getOrgMemberHandover: vi.fn(),
   updateOrg: vi.fn(),
   deleteOrg: vi.fn(),
   createOrgInvitation: vi.fn(),
@@ -36,6 +43,7 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
   listOrgInvitations: mocks.listOrgInvitations,
   updateOrgMember: mocks.updateOrgMember,
   removeOrgMember: mocks.removeOrgMember,
+  getOrgMemberHandover: mocks.getOrgMemberHandover,
   updateOrg: mocks.updateOrg,
   deleteOrg: mocks.deleteOrg,
   createOrgInvitation: mocks.createOrgInvitation,
@@ -45,6 +53,8 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Nothing of theirs to hand over or delete, unless a test says otherwise.
+  mocks.getOrgMemberHandover.mockResolvedValue({ projects: [], workflows: [], chats: 0, reviews: 0 });
   window.matchMedia = vi.fn().mockImplementation((query: string) => ({
     matches: true,
     media: query,
@@ -492,12 +502,25 @@ describe("OrganizationMembers", () => {
     expect(removeAction).toHaveClass("text-red-600");
     await user.click(removeAction);
 
-    expect(screen.getByText("Remove member?")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Remove" }));
+    // The dialog first asks what removing her would hand over and delete.
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText("Jane Lee will lose organization access."),
+    ).toBeInTheDocument();
+    expect(mocks.getOrgMemberHandover).toHaveBeenCalledWith("org-1", "u2");
+    const remove = within(dialog).getByRole("button", { name: "Remove" });
+    await waitFor(() => expect(remove).toBeEnabled());
+    await user.click(remove);
     await waitFor(() =>
-      expect(mocks.removeOrgMember).toHaveBeenCalledWith("org-1", "u2"),
+      expect(mocks.removeOrgMember).toHaveBeenCalledWith(
+        "org-1",
+        "u2",
+        undefined,
+      ),
     );
-    expect(screen.queryByText("Jane Lee")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByText("Jane Lee")).not.toBeInTheDocument(),
+    );
   });
 
   it("warns an owner who includes themselves in bulk removal", async () => {

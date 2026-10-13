@@ -44,6 +44,14 @@ export function sendOrgFailure(
             return void res.status(409).json({
                 detail: "An organization must keep at least one owner.",
             });
+        case "handover_required":
+            // The client asks who takes over, and sends the removal again.
+            return void res.status(409).json({
+                code: "handover_required",
+                detail: "Choose a member to take over their projects and workflows first.",
+                projects: result.projects,
+                workflows: result.workflows,
+            });
         case "expired":
             // 410 Gone: the invitation existed and is no longer actionable,
             // which is a different story from "never heard of it" (404).

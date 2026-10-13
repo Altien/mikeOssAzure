@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ownerlessRpcResult } from "../../__tests__/helpers/ownerlessRpc";
+import { handoverRpcResult } from "../../__tests__/helpers/handoverRpc";
 import {
     acceptInvitation,
     cancelInvitation,
@@ -7,6 +8,7 @@ import {
     createOrg,
     declineInvitation,
     deleteOrg,
+    getMemberHandover,
     getOrg,
     listInvitations,
     listMembers,
@@ -134,8 +136,10 @@ function makeDb(initial: Record<string, Row[]>) {
     return {
         from: (t: string) => query(t),
         // Whether an item has an Owner left is the database's to say.
+        // ... and so is what a departing member alone owns.
         rpc: async (name: string, args?: Record<string, unknown>) =>
-            ownerlessRpcResult(tables, name, args) ?? {
+            ownerlessRpcResult(tables, name, args) ??
+            handoverRpcResult(tables, name, args) ?? {
                 data: null,
                 error: { message: `unexpected rpc ${name}` },
             },
@@ -723,6 +727,233 @@ describe("last-owner protection", () => {
             }),
         ).resolves.toMatchObject({ ok: true });
         expect(db._tables.org_members).toHaveLength(1);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// What becomes of a member's work when they leave
+// ---------------------------------------------------------------------------
+//
+// Projects and workflows are the organization's lasting work: the private
+// ones a departing member alone owns are handed to a member named by whoever
+// is doing the removing — the admin, or the member themselves when leaving.
+// Standalone chats and reviews are private to their author and are deleted
+// with the membership (by the database; see the SQL tests).
+
+describe("handing over a departing member's work", () => {
+    // dana (owner), alex (admin), sam and robin (members). sam's work:
+    //   p-private   a private project, sam's alone
+    //   p-shared    a private project robin was made an Owner of
+    //   p-public    a public project: the organization's owners own those
+    //   w-private   a private workflow, sam's alone
+    //   two standalone chats (robin owns one of them too) and a review
+    const seed = () =>
+        makeDb({
+            organizations: [{ id: "o1", name: "Acme" }],
+            org_members: [
+                { id: "m1", org_id: "o1", user_id: "dana", role: "owner" },
+                { id: "m2", org_id: "o1", user_id: "alex", role: "admin" },
+                { id: "m3", org_id: "o1", user_id: "sam", role: "member" },
+                { id: "m4", org_id: "o1", user_id: "robin", role: "member" },
+            ],
+            user_profiles: [
+                { user_id: "sam", email: "sam@acme.example" },
+                { user_id: "robin", email: "robin@acme.example" },
+            ],
+            projects: [
+                { id: "p-private", org_id: "o1", user_id: "sam", name: "Private matter", visibility: "private" },
+                { id: "p-shared", org_id: "o1", user_id: "sam", name: "Shared matter", visibility: "private" },
+                { id: "p-public", org_id: "o1", user_id: "sam", name: "Public matter", visibility: "organization" },
+            ],
+            project_org_access_overrides: [
+                { project_id: "p-shared", org_id: "o1", user_id: "robin", role: "owner" },
+            ],
+            workflows: [
+                { id: "w-private", org_id: "o1", user_id: "sam", title: "Private workflow", visibility: "private" },
+            ],
+            workflow_org_access_overrides: [],
+            chats: [
+                { id: "c1", org_id: "o1", user_id: "sam", project_id: null },
+                { id: "c2", org_id: "o1", user_id: "sam", project_id: null },
+                { id: "c3", org_id: "o1", user_id: "sam", project_id: "p-public" },
+            ],
+            chat_access_grants: [
+                { chat_id: "c2", email: "robin@acme.example", role: "owner" },
+            ],
+            tabular_reviews: [
+                { id: "r1", org_id: "o1", user_id: "sam", project_id: null },
+            ],
+            tabular_review_access_grants: [],
+        });
+    const remove = (db: any, actorId: string, assignTo?: unknown) =>
+        removeMember(db, {
+            actorId,
+            actorEmail: `${actorId}@acme.example`,
+            orgId: "o1",
+            targetUserId: "sam",
+            assignTo,
+        });
+    const isMember = (db: any, userId: string) =>
+        (db._tables.org_members as Row[]).some((m) => m.user_id === userId);
+
+    it("says what a removal would hand over and delete", async () => {
+        const db = seed();
+        await expect(
+            getMemberHandover(db, {
+                actorId: "alex",
+                orgId: "o1",
+                targetUserId: "sam",
+            }),
+        ).resolves.toEqual({
+            ok: true,
+            handover: {
+                // Not the shared one (robin owns it too), nor the public one.
+                projects: [{ id: "p-private", title: "Private matter" }],
+                workflows: [{ id: "w-private", title: "Private workflow" }],
+                // Not the chat robin also owns, nor the one in a project.
+                chats: 1,
+                reviews: 1,
+            },
+        });
+    });
+
+    it("answers that question only to somebody who could remove them", async () => {
+        const db = seed();
+        const ask = (actorId: string) =>
+            getMemberHandover(db, { actorId, orgId: "o1", targetUserId: "sam" });
+        await expect(ask("sam")).resolves.toMatchObject({ ok: true });
+        await expect(ask("robin")).resolves.toEqual({
+            ok: false,
+            kind: "forbidden",
+        });
+        await expect(ask("stranger")).resolves.toEqual({
+            ok: false,
+            kind: "not_found",
+        });
+    });
+
+    it.each(["alex", "sam"])(
+        "refuses the removal by %s until a successor is named, and removes nothing",
+        async (actorId) => {
+            const db = seed();
+            await expect(remove(db, actorId)).resolves.toEqual({
+                ok: false,
+                kind: "handover_required",
+                projects: 1,
+                workflows: 1,
+            });
+            expect(isMember(db, "sam")).toBe(true);
+            expect(db._tables.workflow_org_access_overrides).toEqual([]);
+            expect(db._tables.audit_events ?? []).toEqual([]);
+        },
+    );
+
+    it.each([
+        ["the departing member themselves", "sam"],
+        ["somebody outside the organization", "stranger"],
+        ["something that is not an id", 42],
+    ])("refuses %s as the successor", async (_label, assignTo) => {
+        const db = seed();
+        await expect(remove(db, "alex", assignTo)).resolves.toMatchObject({
+            ok: false,
+            kind: "validation",
+        });
+        expect(isMember(db, "sam")).toBe(true);
+    });
+
+    it("hands the member's own projects and workflows to the named successor, then removes them", async () => {
+        const db = seed();
+        await expect(remove(db, "alex", "robin")).resolves.toEqual({ ok: true });
+
+        expect(isMember(db, "sam")).toBe(false);
+        expect(db._tables.project_org_access_overrides).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    project_id: "p-private",
+                    user_id: "robin",
+                    role: "owner",
+                    assigned_by: "alex",
+                }),
+            ]),
+        );
+        expect(db._tables.workflow_org_access_overrides).toEqual([
+            expect.objectContaining({
+                workflow_id: "w-private",
+                user_id: "robin",
+                role: "owner",
+            }),
+        ]);
+        // The public project needed nobody: no override was written for it.
+        expect(
+            (db._tables.project_org_access_overrides as Row[]).some(
+                (o) => o.project_id === "p-public",
+            ),
+        ).toBe(false);
+    });
+
+    it("records who took over what, and how much was deleted", async () => {
+        const db = seed();
+        await remove(db, "alex", "robin");
+        expect(db._tables.audit_events).toEqual([
+            expect.objectContaining({
+                action: "org.member.removed",
+                detail: expect.objectContaining({
+                    target_user_id: "sam",
+                    assigned_to: "robin",
+                    assigned_projects: 1,
+                    assigned_workflows: 1,
+                    deleted_chats: 1,
+                    deleted_reviews: 1,
+                }),
+            }),
+        ]);
+    });
+
+    it("lets a member who is leaving name their own successor", async () => {
+        const db = seed();
+        await expect(remove(db, "sam", "dana")).resolves.toEqual({ ok: true });
+        expect(isMember(db, "sam")).toBe(false);
+        expect(db._tables.audit_events).toEqual([
+            expect.objectContaining({
+                action: "org.member.left",
+                detail: expect.objectContaining({ assigned_to: "dana" }),
+            }),
+        ]);
+    });
+
+    it("asks for nobody when the member owns nothing alone", async () => {
+        const db = seed();
+        await expect(
+            removeMember(db, {
+                actorId: "alex",
+                orgId: "o1",
+                targetUserId: "robin",
+            }),
+        ).resolves.toEqual({ ok: true });
+        expect(isMember(db, "robin")).toBe(false);
+    });
+
+    it("removes nobody when the hand-over cannot be read", async () => {
+        const db = seed();
+        db.rpc = async () => ({
+            data: null,
+            error: { message: "connection reset" },
+        });
+        await expect(remove(db, "alex", "robin")).resolves.toMatchObject({
+            ok: false,
+            kind: "db_error",
+        });
+        expect(isMember(db, "sam")).toBe(true);
+    });
+
+    it("treats a database without the hand-over functions as having nothing to hand over", async () => {
+        const db = seed();
+        db.rpc = async () => ({
+            data: null,
+            error: { code: "PGRST202", message: "function not found" },
+        });
+        await expect(remove(db, "alex")).resolves.toEqual({ ok: true });
+        expect(isMember(db, "sam")).toBe(false);
     });
 });
 

@@ -28,6 +28,8 @@ const mocks = vi.hoisted(() => ({
   updateOrg: vi.fn(),
   deleteOrg: vi.fn(),
   removeOrgMember: vi.fn(),
+  getOrgMemberHandover: vi.fn(),
+  listOrgMembers: vi.fn(),
   getOrgLogo: vi.fn(),
   saveOrgLogo: vi.fn(),
   deleteOrgLogo: vi.fn(),
@@ -56,6 +58,8 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
   updateOrg: mocks.updateOrg,
   deleteOrg: mocks.deleteOrg,
   removeOrgMember: mocks.removeOrgMember,
+  getOrgMemberHandover: mocks.getOrgMemberHandover,
+  listOrgMembers: mocks.listOrgMembers,
   getOrgLogo: mocks.getOrgLogo,
   saveOrgLogo: mocks.saveOrgLogo,
   deleteOrgLogo: mocks.deleteOrgLogo,
@@ -120,6 +124,9 @@ const orgAs = (role: Org["role"]): Org =>
 beforeEach(() => {
   vi.clearAllMocks();
   clearOrganizationLogoCache();
+  // Nothing of the caller's to hand over or delete on leaving.
+  mocks.getOrgMemberHandover.mockResolvedValue({ projects: [], workflows: [], chats: 0, reviews: 0 });
+  mocks.listOrgMembers.mockResolvedValue([]);
   mocks.getOrgLogo.mockResolvedValue(null);
   mocks.org = orgAs("owner");
   // Renaming puts the new organization in place, as the settings area does.
@@ -277,14 +284,15 @@ describe("leaving", () => {
     render(<OrganizationGeneralSettings />);
 
     await user.click(screen.getByRole("button", { name: "Leave" }));
-    expect(screen.getByText("Leave organization?")).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Leave organization")).toBeInTheDocument();
     expect(mocks.removeOrgMember).not.toHaveBeenCalled();
+    // It asks what leaving would hand over and delete before it lets go.
+    expect(mocks.getOrgMemberHandover).toHaveBeenCalledWith("org-1", "me");
 
-    await user.click(
-      within(screen.getByRole("dialog")).getByRole("button", {
-        name: "Leave",
-      }),
-    );
+    const leave = within(dialog).getByRole("button", { name: "Leave" });
+    await waitFor(() => expect(leave).toBeEnabled());
+    await user.click(leave);
 
     await waitFor(() =>
       expect(mocks.push).toHaveBeenCalledWith("/settings/organizations"),
@@ -292,6 +300,7 @@ describe("leaving", () => {
     expect(mocks.removeOrgMember).toHaveBeenCalledExactlyOnceWith(
       "org-1",
       "me",
+      undefined,
     );
     expect(mocks.refreshOrganizations).toHaveBeenCalledTimes(1);
   });
@@ -307,11 +316,12 @@ describe("leaving", () => {
     render(<OrganizationGeneralSettings />);
 
     await user.click(screen.getByRole("button", { name: "Leave" }));
-    await user.click(
-      within(screen.getByRole("dialog")).getByRole("button", {
-        name: "Leave",
-      }),
+    const leave = within(await screen.findByRole("dialog")).getByRole(
+      "button",
+      { name: "Leave" },
     );
+    await waitFor(() => expect(leave).toBeEnabled());
+    await user.click(leave);
 
     expect(
       await screen.findByText("Could not leave the organization"),
@@ -319,7 +329,12 @@ describe("leaving", () => {
     expect(
       screen.getByText("An organization must keep at least one owner."),
     ).toBeInTheDocument();
-    expect(screen.queryByText("Leave organization?")).not.toBeInTheDocument();
+    // The dialog that asked is gone; only the refusal is left on screen.
+    expect(
+      screen.queryByText(
+        "You will lose access to this organization's shared resources.",
+      ),
+    ).not.toBeInTheDocument();
     expect(mocks.push).not.toHaveBeenCalled();
   });
 });

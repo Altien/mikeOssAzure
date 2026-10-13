@@ -22,6 +22,8 @@ export {
   listMembers,
   updateMember,
   removeMember,
+  getMemberHandover,
+  type MemberHandover,
   createInvitation,
   listInvitations,
   cancelInvitation,

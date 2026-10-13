@@ -1804,11 +1804,46 @@ export async function updateOrgMember(
     });
 }
 
+/**
+ * What a member's leaving does to their work in the organization.
+ *
+ * `projects` and `workflows` are the private ones they alone own: a member
+ * has to be named to take those over before they can go. `chats` and
+ * `reviews` count their standalone ones nobody else owns, which are deleted
+ * with the membership.
+ */
+export interface OrgMemberHandover {
+    projects: { id: string; title: string }[];
+    workflows: { id: string; title: string }[];
+    chats: number;
+    reviews: number;
+}
+
+/** Asked before removing a member, or before leaving (the caller's own id). */
+export async function getOrgMemberHandover(
+    orgId: string,
+    userId: string,
+): Promise<OrgMemberHandover> {
+    return apiRequest<OrgMemberHandover>(
+        `/orgs/${orgId}/members/${userId}/handover`,
+    );
+}
+
+/**
+ * Remove a member, or leave (the caller's own id). `assignTo` names the
+ * member who takes over the projects and workflows they alone own; the
+ * server refuses the removal with `handover_required` when there are some
+ * and nobody is named.
+ */
 export async function removeOrgMember(
     orgId: string,
     userId: string,
+    assignTo?: string,
 ): Promise<void> {
-    await apiRequest(`/orgs/${orgId}/members/${userId}`, {
+    const query = assignTo
+        ? `?${new URLSearchParams({ assign_to: assignTo }).toString()}`
+        : "";
+    await apiRequest(`/orgs/${orgId}/members/${userId}${query}`, {
         method: "DELETE",
     });
 }

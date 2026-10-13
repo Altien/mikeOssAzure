@@ -30,7 +30,6 @@ import type { Db } from "./supabase";
 
 import {
     getContentGrantRole,
-    listContentGrants,
     type ContentGrantKind,
 } from "./contentAccess";
 import { isPersonalOrg, teamOrgIdOf } from "./personalOrgs";
@@ -683,43 +682,15 @@ export async function ensureDocAccess(
 }
 
 /**
- * Whether a standalone chat or review in a team organization has no Owner
- * left in it: its author is no longer a member, and no member holds an Owner
- * grant on it. A failed read answers "it has one": taking something over is
- * never the fallback.
- */
-async function isStandaloneOrgRowOwnerless(
-    db: Db,
-    kind: ContentGrantKind,
-    row: { id: string; user_id: string | null },
-    orgId: string,
-): Promise<boolean> {
-    if (row.user_id && (await getOrgRole(row.user_id, orgId, db))) return false;
-    const listed = await listContentGrants(db, kind, row.id);
-    if (!listed.ok) return false;
-    for (const grant of listed.grants) {
-        if (grant.role !== "owner") continue;
-        const { data, error } = await db
-            .from("user_profiles")
-            .select("user_id")
-            .eq("email", grant.email)
-            .maybeSingle();
-        if (error) return false;
-        const holderId = (data as { user_id?: string | null } | null)?.user_id;
-        if (holderId && (await getOrgRole(holderId, orgId, db))) return false;
-    }
-    return true;
-}
-
-/**
  * Shared derivation for tabular reviews and assistant chats. Project children
  * inherit the project role exactly.
  *
  * A standalone row in a team organization belongs to that organization and
  * is private to its author: only current members reach it at all (its author
- * included), its author is its Owner, a direct grant gives a member its
- * role, and the organization's owners take it over once nobody in the
- * organization owns it. public.standalone_org_access_role is the SQL twin.
+ * included), its author is its Owner, and a direct grant gives a member its
+ * role. Nobody takes it over — not the organization's owners either: when
+ * its author leaves, it is deleted with their membership.
+ * public.standalone_org_access_role is the SQL twin.
  *
  * Any other standalone row is personal: its creator, and whoever it is
  * shared with by email.
@@ -763,10 +734,8 @@ async function ensureSharedRowAccess(
             row.id,
             userEmail,
         );
-        if (granted) return resourceAccessFor(granted, orgRole, false);
-        return isOrgOwner(orgRole) &&
-            (await isStandaloneOrgRowOwnerless(db, kind, row, orgId))
-            ? resourceAccessFor("owner", orgRole, false)
+        return granted
+            ? resourceAccessFor(granted, orgRole, false)
             : { ok: false };
     }
     if (isCreator) return resourceAccessFor("owner", null, true);

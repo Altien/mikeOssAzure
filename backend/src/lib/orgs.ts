@@ -112,6 +112,14 @@ export type OrgResult<T> =
     | { ok: false; kind: "not_found" }
     | { ok: false; kind: "conflict"; detail: string }
     | { ok: false; kind: "last_owner" }
+    // The member alone owns projects or workflows, and nobody was named to
+    // take them over. The counts let the client say what is waiting.
+    | {
+          ok: false;
+          kind: "handover_required";
+          projects: number;
+          workflows: number;
+      }
     | { ok: false; kind: "expired" }
     | { ok: false; kind: "db_error"; detail: string };
 
@@ -576,15 +584,73 @@ export async function updateMember(
     return { ok: true, member };
 }
 
-export async function removeMember(
+/**
+ * What a member's leaving does to their work in the organization.
+ *
+ * `projects` and `workflows` are the private ones they alone own: somebody
+ * has to be named to take those over before they can go. `chats` and
+ * `reviews` count the standalone ones nobody else owns, which are private to
+ * their author and are deleted with the membership.
+ */
+export type MemberHandover = {
+    projects: { id: string; title: string }[];
+    workflows: { id: string; title: string }[];
+    chats: number;
+    reviews: number;
+};
+
+/** A database that has not run the hand-over migration has nothing to hand over. */
+function isMissingHandoverSchema(error: DbError): boolean {
+    return error?.code === "PGRST202" || error?.code === "42883";
+}
+
+async function loadMemberHandover(
     db: Db,
-    params: {
-        actorId: string;
-        actorEmail?: string | null;
-        orgId: string;
-        targetUserId: string;
-    },
-): Promise<OrgResult<Record<never, never>>> {
+    orgId: string,
+    userId: string,
+): Promise<{ ok: true; handover: MemberHandover } | { ok: false; detail: string }> {
+    const args = { p_org_id: orgId, p_user_id: userId };
+    const [owned, standalone] = await Promise.all([
+        db.rpc("org_member_sole_owned_items", args),
+        db.rpc("org_member_private_standalone", args),
+    ]);
+    const handover: MemberHandover = {
+        projects: [],
+        workflows: [],
+        chats: 0,
+        reviews: 0,
+    };
+    for (const result of [owned, standalone]) {
+        if (!result.error) continue;
+        if (isMissingHandoverSchema(result.error)) return { ok: true, handover };
+        return { ok: false, detail: result.error.message };
+    }
+    for (const row of (owned.data ?? []) as {
+        kind?: string;
+        item_id?: string;
+        title?: string | null;
+    }[]) {
+        if (!row.item_id) continue;
+        const item = { id: row.item_id, title: row.title ?? "" };
+        if (row.kind === "project") handover.projects.push(item);
+        else if (row.kind === "workflow") handover.workflows.push(item);
+    }
+    for (const row of (standalone.data ?? []) as { kind?: string }[]) {
+        if (row.kind === "chat") handover.chats += 1;
+        else if (row.kind === "tabular_review") handover.reviews += 1;
+    }
+    return { ok: true, handover };
+}
+
+type RemovalGate =
+    | { ok: true; isSelf: boolean; targetRole: OrgRole }
+    | Extract<OrgResult<never>, { ok: false }>;
+
+/** Who may take `targetUserId` out of the organization: themselves, or an admin who outranks them. */
+async function authorizeRemoval(
+    db: Db,
+    params: { actorId: string; orgId: string; targetUserId: string },
+): Promise<RemovalGate> {
     const actorRole = await getOrgRole(params.actorId, params.orgId, db);
     if (!actorRole) return { ok: false, kind: "not_found" };
     // A member may remove themselves (leave); removing others needs admin.
@@ -600,6 +666,46 @@ export async function removeMember(
     // admin or another owner.
     if (!isSelf && !canManageOrgRole(actorRole, targetRole))
         return { ok: false, kind: "owner_required" };
+    return { ok: true, isSelf, targetRole };
+}
+
+/**
+ * What removing a member (or leaving) would hand over and delete, for the
+ * dialog that asks. Answered only to somebody who could go on to do it.
+ */
+export async function getMemberHandover(
+    db: Db,
+    params: { actorId: string; orgId: string; targetUserId: string },
+): Promise<OrgResult<{ handover: MemberHandover }>> {
+    const gate = await authorizeRemoval(db, params);
+    if (!gate.ok) return gate;
+    const loaded = await loadMemberHandover(
+        db,
+        params.orgId,
+        params.targetUserId,
+    );
+    if (!loaded.ok)
+        return { ok: false, kind: "db_error", detail: loaded.detail };
+    return { ok: true, handover: loaded.handover };
+}
+
+export async function removeMember(
+    db: Db,
+    params: {
+        actorId: string;
+        actorEmail?: string | null;
+        orgId: string;
+        targetUserId: string;
+        /**
+         * The member who takes over the projects and workflows the departing
+         * member alone owns. Required when there are any.
+         */
+        assignTo?: unknown;
+    },
+): Promise<OrgResult<Record<never, never>>> {
+    const gate = await authorizeRemoval(db, params);
+    if (!gate.ok) return gate;
+    const { isSelf, targetRole } = gate;
 
     // Last-owner protection: never remove the sole owner, not even by their
     // own hand — they must appoint a successor first.
@@ -608,6 +714,52 @@ export async function removeMember(
         if (owners <= 1) return { ok: false, kind: "last_owner" };
     }
 
+    // Projects and workflows are the organization's lasting work: the ones
+    // only this member owns are handed to a named successor before they go.
+    // Nothing is removed until that has been settled.
+    const loaded = await loadMemberHandover(
+        db,
+        params.orgId,
+        params.targetUserId,
+    );
+    if (!loaded.ok)
+        return { ok: false, kind: "db_error", detail: loaded.detail };
+    const { handover } = loaded;
+    const owed = handover.projects.length + handover.workflows.length;
+    let assignedTo: string | null = null;
+    if (owed > 0) {
+        const { assignTo } = params;
+        if (assignTo === undefined || assignTo === null || assignTo === "")
+            return {
+                ok: false,
+                kind: "handover_required",
+                projects: handover.projects.length,
+                workflows: handover.workflows.length,
+            };
+        if (
+            typeof assignTo !== "string" ||
+            assignTo === params.targetUserId ||
+            !(await getOrgRole(assignTo, params.orgId, db))
+        )
+            return {
+                ok: false,
+                kind: "validation",
+                detail: "Choose another member of this organization to take over their projects and workflows.",
+            };
+        const { error: assignError } = await db.rpc("assign_org_member_items", {
+            p_org_id: params.orgId,
+            p_from_user_id: params.targetUserId,
+            p_to_user_id: assignTo,
+            p_assigned_by: params.actorId,
+        });
+        if (assignError)
+            return { ok: false, kind: "db_error", detail: assignError.message };
+        assignedTo = assignTo;
+    }
+
+    // Deleting the membership also deletes the member's standalone chats and
+    // reviews that nobody else owns, in the same statement
+    // (cleanup_removed_org_member_overrides).
     const { error } = await db
         .from("org_members")
         .delete()
@@ -630,6 +782,13 @@ export async function removeMember(
             org_id: params.orgId,
             target_user_id: params.targetUserId,
             role: targetRole,
+            // What became of their work: who took over what they alone
+            // owned, and how much of what was private to them was deleted.
+            assigned_to: assignedTo,
+            assigned_projects: handover.projects.length,
+            assigned_workflows: handover.workflows.length,
+            deleted_chats: handover.chats,
+            deleted_reviews: handover.reviews,
         },
     });
     return { ok: true };

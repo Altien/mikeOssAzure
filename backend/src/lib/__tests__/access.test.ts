@@ -1094,7 +1094,8 @@ describe("creator-scoped operations", () => {
 // pin each exclusive scope and project inheritance.
 // ---------------------------------------------------------------------------
 // A chat or review started on its own in an organization's workspace belongs
-// to that organization and is private to its author. The SQL twin is
+// to that organization and is private to its author: nobody takes it over,
+// the organization's owners included. The SQL twin is
 // public.standalone_org_access_role.
 describe("a standalone chat or review in an organization", () => {
     // org-a is a firm: dave owns it, alice and carol are members, ivan an
@@ -1172,39 +1173,25 @@ describe("a standalone chat or review in an organization", () => {
         });
     });
 
-    it("stays with the organization when its author leaves: they lose it, and the owners take it over", async () => {
+    it("is taken over by nobody when its author is no longer in the organization", async () => {
+        // The database deletes it with the author's membership. Should one
+        // be left behind anyway, it opens for no one — not the author, who
+        // has left, and not the organization's owners, whose it never was.
         const left = chat("left", "frank");
-        await expect(open(left, "frank")).resolves.toEqual({ ok: false });
-        await expect(open(left, "dave")).resolves.toEqual({
-            ok: true,
-            isCreator: false,
-            orgRole: "owner",
-            projectRole: "owner",
-        });
-        // Owners only: administering the organization is not owning its work.
-        await expect(open(left, "ivan")).resolves.toEqual({ ok: false });
-        await expect(open(left, "carol")).resolves.toEqual({ ok: false });
+        for (const user of ["frank", "dave", "ivan", "carol"])
+            await expect(open(left, user)).resolves.toEqual({ ok: false });
+        await expect(
+            open({ ...chat("orphan", "x"), user_id: null as unknown as string }, "dave"),
+        ).resolves.toEqual({ ok: false });
     });
 
-    it("is not taken over while a member still holds an Owner grant on it", async () => {
+    it("stays with a member who was made its Owner, when its author leaves", async () => {
         const left = chat("left-owned", "frank");
-        await expect(open(left, "dave")).resolves.toEqual({ ok: false });
         await expect(open(left, "carol")).resolves.toMatchObject({
             ok: true,
             projectRole: "owner",
         });
-    });
-
-    it("is taken over when the only Owner grant is held outside the organization", async () => {
-        await expect(
-            open(chat("left-outside", "frank"), "dave"),
-        ).resolves.toMatchObject({ ok: true, projectRole: "owner" });
-    });
-
-    it("is taken over when its author's account is gone", async () => {
-        await expect(
-            open({ ...chat("orphan", "x"), user_id: null as unknown as string }, "dave"),
-        ).resolves.toMatchObject({ ok: true, projectRole: "owner" });
+        await expect(open(left, "dave")).resolves.toEqual({ ok: false });
     });
 
     it("applies to tabular reviews in the same way", async () => {

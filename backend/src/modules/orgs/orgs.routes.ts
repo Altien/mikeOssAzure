@@ -28,6 +28,7 @@ import {
     listMembers,
     updateMember,
     removeMember,
+    getMemberHandover,
     createInvitation,
     listInvitations,
     cancelInvitation,
@@ -228,9 +229,25 @@ orgsRouter.delete("/:orgId/members/:userId", requireOrgAuth, asyncRoute(async (r
         actorEmail: res.locals.userEmail as string | undefined,
         orgId: req.params.orgId,
         targetUserId: req.params.userId,
+        // In the query string: not every proxy forwards a DELETE's body.
+        assignTo: req.query.assign_to ?? req.body?.assign_to,
     });
     if (!result.ok) return sendOrgFailure(res, result);
     res.status(204).send();
+}));
+
+// GET /orgs/:orgId/members/:userId/handover — what removing this member (or
+// leaving, for the caller's own id) would hand over and delete. Asked before
+// the removal, by the dialog that names a successor.
+orgsRouter.get("/:orgId/members/:userId/handover", requireOrgAuth, asyncRoute(async (req, res) => {
+    const db = createServerSupabase();
+    const result = await getMemberHandover(db, {
+        actorId: res.locals.userId as string,
+        orgId: req.params.orgId,
+        targetUserId: req.params.userId,
+    });
+    if (!result.ok) return sendOrgFailure(res, result);
+    res.json(result.handover);
 }));
 
 // ---------------------------------------------------------------------------
