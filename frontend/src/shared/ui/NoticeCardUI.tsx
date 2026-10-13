@@ -140,7 +140,7 @@ export function NoticeCardUI({
             <CloseButton
                 onClick={onDismiss}
                 label={dismissLabel}
-                size="md"
+                size="sm"
                 className="absolute right-1.5 top-1.5"
             />
         </div>

@@ -321,7 +321,7 @@ keep their own spacing and should not receive this attribute.
 | `TextButtonUI` | `shared/ui` | Background-free actions, with optional icons and loading state. Use `textButtonUIClassName` from `TextButtonUI.styles` for links. No background, border, or shadow; hover changes text color. |
 | `TabPillButtonUI` | `shared/ui` | Segmented filter/tab pills. Pass `active` to get `aria-pressed`. |
 | `GlassIconButtonUI` | `shared/ui` | Circular glass icon button — modal close, panel dismiss. Requires `aria-label`. |
-| `CloseButton` | `shared/ui` | The small white ✕ that dismisses a modal, side panel, toast, or `WarningPopup`. `size`: `sm` for side panels, `md` for modals and notices. |
+| `CloseButton` | `shared/ui` | The small white ✕ that dismisses a modal, side panel, confirmation, toast, or `WarningPopup`. `size`: `sm` for side panels, confirmations, and notices; `md` for modals. |
 | `GlassCardUI` | `shared/ui` | Canonical liquid-glass card surface. |
 | `TextSlabUI` | `shared/ui` | Inset slab holding quoted or proposed text inside a card — citation quotes, tracked-change diffs, and their loading/empty states. Owns shape, padding, and fill; the caller owns typography. |
 | `ToggleSwitchUI` | `shared/ui` | `role="switch"` toggle with an optional text label. |
