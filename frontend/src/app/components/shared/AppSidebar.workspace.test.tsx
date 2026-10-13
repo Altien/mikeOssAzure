@@ -1,7 +1,7 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { listProjectSummaries } from "@/app/lib/mikeApi";
+import { listProjectsPage } from "@/app/lib/mikeApi";
 import { AppSidebar } from "./AppSidebar";
 
 type Org = { id: string; name: string; role: "owner" | "admin" | "member" };
@@ -28,7 +28,7 @@ vi.mock("next/image", () => ({
 }));
 
 vi.mock("@/app/lib/mikeApi", () => ({
-  listProjectSummaries: vi.fn(),
+  listProjectsPage: vi.fn(),
   listProjectChats: vi.fn(async () => []),
   listTabularReviews: vi.fn(async () => []),
 }));
@@ -92,7 +92,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   state.workspaceId = "personal";
   state.organizations = [];
-  vi.mocked(listProjectSummaries).mockResolvedValue([]);
+  vi.mocked(listProjectsPage).mockResolvedValue([]);
 });
 
 describe("AppSidebar workspace switcher", () => {
@@ -292,7 +292,7 @@ describe("AppSidebar workspace switcher", () => {
 
   it("loads the active workspace's recent projects, and reloads them on a switch", async () => {
     state.organizations = [ACME];
-    vi.mocked(listProjectSummaries).mockImplementation(async (options) =>
+    vi.mocked(listProjectsPage).mockImplementation(async (options) =>
       options?.workspace === ACME.id
         ? [project("p-org", "Firm matter")]
         : [project("p-mine", "My own matter")],
@@ -300,8 +300,8 @@ describe("AppSidebar workspace switcher", () => {
     const { rerender } = render(<AppSidebar isOpen onToggle={vi.fn()} />);
 
     expect(await screen.findByText("My own matter")).toBeInTheDocument();
-    expect(listProjectSummaries).toHaveBeenLastCalledWith(
-      expect.objectContaining({ workspace: "personal" }),
+    expect(listProjectsPage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ workspace: "personal", scope: "mine" }),
     );
 
     state.workspaceId = ACME.id;
@@ -309,8 +309,8 @@ describe("AppSidebar workspace switcher", () => {
 
     expect(await screen.findByText("Firm matter")).toBeInTheDocument();
     expect(screen.queryByText("My own matter")).not.toBeInTheDocument();
-    expect(listProjectSummaries).toHaveBeenLastCalledWith(
-      expect.objectContaining({ workspace: ACME.id }),
+    expect(listProjectsPage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ workspace: ACME.id, scope: "mine" }),
     );
 
     // Back again: Personal is painted from its own remembered list, never
@@ -321,6 +321,57 @@ describe("AppSidebar workspace switcher", () => {
       expect(screen.queryByText("Firm matter")).not.toBeInTheDocument(),
     );
     expect(await screen.findByText("My own matter")).toBeInTheDocument();
+  });
+
+  it.each(["personal", ACME.id])("paginates only projects the user created in %s", async (workspaceId) => {
+    state.workspaceId = workspaceId;
+    state.organizations = [ACME];
+    const ownProjects = Array.from({ length: 12 }, (_, index) =>
+      project(`created-${index}`, `Created matter ${index + 1}`),
+    );
+    const sharedProject = {
+      ...project("shared-owner", "Someone else's matter"),
+      user_id: "other-user",
+      access_role: "owner" as const,
+    };
+    vi.mocked(listProjectsPage).mockImplementation(async (options) => {
+      const rows = options?.scope === "mine"
+        ? ownProjects
+        : [sharedProject, ...ownProjects];
+      const offset = options?.offset ?? 0;
+      return rows.slice(offset, offset + (options?.limit ?? rows.length));
+    });
+    render(<AppSidebar isOpen onToggle={vi.fn()} />);
+
+    const first = await screen.findByText("Created matter 1");
+    expect(screen.getByText("Created matter 10")).toBeInTheDocument();
+    expect(screen.queryByText("Created matter 11")).not.toBeInTheDocument();
+    expect(screen.queryByText("Someone else's matter")).not.toBeInTheDocument();
+    expect(listProjectsPage).toHaveBeenLastCalledWith(expect.objectContaining({
+      workspace: workspaceId,
+      scope: "mine",
+      sortKey: "updated",
+      sortDirection: "desc",
+      limit: 11,
+    }));
+
+    const scrollArea = first.closest(".overflow-y-auto") as HTMLElement;
+    fireEvent.scroll(scrollArea);
+
+    expect(await screen.findByText("Created matter 12")).toBeInTheDocument();
+    expect(listProjectsPage).toHaveBeenLastCalledWith({
+      workspace: workspaceId,
+      scope: "mine",
+      sortKey: "updated",
+      sortDirection: "desc",
+      limit: 11,
+      offset: 10,
+    });
+    expect(screen.queryByText("Someone else's matter")).not.toBeInTheDocument();
+
+    const callCount = vi.mocked(listProjectsPage).mock.calls.length;
+    fireEvent.scroll(scrollArea);
+    expect(listProjectsPage).toHaveBeenCalledTimes(callCount);
   });
 
   it("lines the empty projects placeholder up with the Recent Projects button", async () => {
@@ -339,9 +390,9 @@ describe("AppSidebar workspace switcher", () => {
     state.organizations = null;
     render(<AppSidebar isOpen onToggle={vi.fn()} />);
 
-    await waitFor(() => expect(listProjectSummaries).toHaveBeenCalled());
+    await waitFor(() => expect(listProjectsPage).toHaveBeenCalled());
     expect(
-      vi.mocked(listProjectSummaries).mock.calls[0][0]?.workspace,
+      vi.mocked(listProjectsPage).mock.calls[0][0]?.workspace,
     ).toBeUndefined();
     expect(heading()).toHaveTextContent("Mike");
   });

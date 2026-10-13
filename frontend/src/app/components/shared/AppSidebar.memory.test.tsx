@@ -1,7 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { listProjectChats, listProjectSummaries } from "@/app/lib/mikeApi";
+import { listProjectChats, listProjectsPage } from "@/app/lib/mikeApi";
 import { beginAssistantTurn } from "@/app/lib/assistantTurns";
 import { AppSidebar } from "./AppSidebar";
 
@@ -29,7 +29,7 @@ vi.mock("next/image", () => ({
 }));
 
 vi.mock("@/app/lib/mikeApi", () => ({
-  listProjectSummaries: vi.fn(),
+  listProjectsPage: vi.fn(),
   listProjectChats: vi.fn(async () => []),
   listTabularReviews: vi.fn(async () => []),
 }));
@@ -63,7 +63,7 @@ vi.mock("@/shared/ui/MikeIconUI", () => ({
 describe("AppSidebar account dropdown", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(listProjectSummaries).mockResolvedValue([]);
+    vi.mocked(listProjectsPage).mockResolvedValue([]);
     state.signOut.mockResolvedValue(undefined);
     state.pathname = "/assistant";
     state.chats = [];
@@ -230,7 +230,7 @@ describe("AppSidebar account dropdown", () => {
   );
 
   it("expands the open project's recent items and leaves others collapsed", async () => {
-    vi.mocked(listProjectSummaries).mockResolvedValue([
+    vi.mocked(listProjectsPage).mockResolvedValue([
       { id: "open-project", name: "Open matter" },
       { id: "other-project", name: "Other matter" },
     ] as never);
@@ -253,7 +253,7 @@ describe("AppSidebar account dropdown", () => {
 
   it("gives the recent projects list more height while a project is expanded", async () => {
     const user = userEvent.setup();
-    vi.mocked(listProjectSummaries).mockResolvedValue([
+    vi.mocked(listProjectsPage).mockResolvedValue([
       { id: "open-project", name: "Open matter" },
     ] as never);
     state.pathname = "/projects/open-project";

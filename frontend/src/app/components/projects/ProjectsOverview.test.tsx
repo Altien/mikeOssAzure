@@ -10,12 +10,14 @@ const {
     retrySpy,
     setActiveTab,
     usePaginatedProjectsSpy,
+    workspace,
 } = vi.hoisted(() => ({
     activeTab: { current: "all" as string },
     projectRows: { current: [] as Record<string, unknown>[] },
     retrySpy: vi.fn(),
     setActiveTab: vi.fn(),
     usePaginatedProjectsSpy: vi.fn(),
+    workspace: { current: "org-1" },
 }));
 
 vi.mock("next/navigation", () => ({
@@ -60,6 +62,11 @@ vi.mock("@/app/contexts/AuthContext", () => ({
     }),
 }));
 
+vi.mock("@/app/contexts/WorkspaceContext", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("@/app/contexts/WorkspaceContext")>()),
+    useWorkspaceParam: () => workspace.current,
+}));
+
 vi.mock("@/app/lib/mikeApi", () => ({
     getProjectFilterOptions: vi.fn(() => new Promise(() => {})),
     setProjectMemoryEnabled: vi.fn(),
@@ -94,6 +101,7 @@ function lastScope() {
 describe("ProjectsOverview tabs", () => {
     beforeEach(() => {
         activeTab.current = "all";
+        workspace.current = "org-1";
         projectRows.current = [];
         setActiveTab.mockReset();
         retrySpy.mockReset();
@@ -129,7 +137,7 @@ describe("ProjectsOverview tabs", () => {
         activeTab.current = "unknown";
         render(<ProjectsOverview />);
 
-        const tabs = ["All", "Public", "Private"].map((label) =>
+        const tabs = ["All", "Private", "Public"].map((label) =>
             screen.getByRole("button", { name: label }),
         );
         expect(tabs[0].compareDocumentPosition(tabs[1])).toBe(
@@ -149,6 +157,66 @@ describe("ProjectsOverview tabs", () => {
         await user.click(screen.getByRole("button", { name: "All" }));
 
         expect(setActiveTab).toHaveBeenCalledWith("all");
+    });
+
+    it("shows All, My Projects, and Shared with Me in the personal workspace", async () => {
+        workspace.current = "personal";
+        const user = userEvent.setup();
+        render(<ProjectsOverview />);
+
+        const tabs = ["All", "My Projects", "Shared with Me"].map((label) =>
+            screen.getByRole("button", { name: label }),
+        );
+        expect(tabs[0].compareDocumentPosition(tabs[1])).toBe(
+            Node.DOCUMENT_POSITION_FOLLOWING,
+        );
+        expect(tabs[1].compareDocumentPosition(tabs[2])).toBe(
+            Node.DOCUMENT_POSITION_FOLLOWING,
+        );
+        expect(tabs[0]).toHaveAttribute("aria-pressed", "true");
+        expect(screen.queryByRole("button", { name: "Private" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Public" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Filter by access" })).not.toBeInTheDocument();
+
+        await user.click(tabs[1]);
+        expect(setActiveTab).toHaveBeenLastCalledWith("mine");
+        await user.click(tabs[2]);
+        expect(setActiveTab).toHaveBeenLastCalledWith("shared");
+    });
+
+    it.each(["all", "mine", "shared"])("requests the %s scope in the personal workspace", (tab) => {
+        workspace.current = "personal";
+        activeTab.current = tab;
+        render(<ProjectsOverview />);
+
+        expect(lastScope()).toBe(tab);
+    });
+
+    it.each([
+        ["org-1", "private", "personal"],
+        ["org-1", "public", "personal"],
+        ["personal", "mine", "org-1"],
+        ["personal", "shared", "org-1"],
+    ])("falls back to All when switching from %s with %s selected to %s", (from, tab, to) => {
+        workspace.current = from;
+        activeTab.current = tab;
+        const view = render(<ProjectsOverview />);
+        expect(lastScope()).not.toBe("all");
+
+        workspace.current = to;
+        view.rerender(<ProjectsOverview />);
+
+        expect(lastScope()).toBe("all");
+        expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
+    });
+
+    it("explains when no projects have been shared with the user", () => {
+        workspace.current = "personal";
+        activeTab.current = "shared";
+        render(<ProjectsOverview />);
+
+        expect(screen.getByText("No projects shared with you")).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Create" })).not.toBeInTheDocument();
     });
 
     it("filters Public and Private from the Access column header", async () => {

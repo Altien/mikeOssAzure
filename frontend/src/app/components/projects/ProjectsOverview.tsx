@@ -25,7 +25,10 @@ import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { userFacingApiError } from "@/app/lib/userFacingError";
 import { useAuth } from "@/app/contexts/AuthContext";
-import { useWorkspaceParam } from "@/app/contexts/WorkspaceContext";
+import {
+    PERSONAL_WORKSPACE,
+    useWorkspaceParam,
+} from "@/app/contexts/WorkspaceContext";
 import type { Project } from "@/app/components/shared/types";
 import { can, roleFrom } from "@/app/lib/permissions";
 import { NewProjectModal } from "./NewProjectModal";
@@ -94,19 +97,25 @@ function getProjectCreatorLabel(
 
 // Public: open to the whole organization. Private: everything else, whether
 // it is its creator's alone or shared with individuals.
-type ProjectFilter = "all" | "public" | "private";
+type ProjectFilter = "all" | "private" | "public" | "mine" | "shared";
 type ProjectSortKey = "name" | "cm" | "files" | "chats" | "reviews" | "created";
 
-const PROJECT_FILTERS: { id: ProjectFilter; label: string }[] = [
+const ORGANIZATION_PROJECT_FILTERS: { id: ProjectFilter; label: string }[] = [
     { id: "all", label: "All" },
-    { id: "public", label: "Public" },
     { id: "private", label: "Private" },
+    { id: "public", label: "Public" },
 ];
-const PROJECT_FILTER_IDS = PROJECT_FILTERS.map((filter) => filter.id);
+const PERSONAL_PROJECT_FILTERS: { id: ProjectFilter; label: string }[] = [
+    { id: "all", label: "All" },
+    { id: "mine", label: "My Projects" },
+    { id: "shared", label: "Shared with Me" },
+];
 const PROJECT_FILTER_SCOPES: Record<ProjectFilter, ProjectScope> = {
     all: "all",
     public: "public",
     private: "nonpublic",
+    mine: "mine",
+    shared: "shared",
 };
 const ACCESS_FILTER_OPTIONS: TableFilterOption<"public" | "private">[] = [
     { value: "public", label: "Public" },
@@ -118,8 +127,13 @@ export function ProjectsOverview() {
     const searchParams = useSearchParams();
     const [modalOpen, setModalOpen] = useState(false);
     const [detailsProject, setDetailsProject] = useState<Project | null>(null);
+    const workspace = useWorkspaceParam();
+    const isPersonalWorkspace = workspace === PERSONAL_WORKSPACE;
+    const projectFilters = isPersonalWorkspace
+        ? PERSONAL_PROJECT_FILTERS
+        : ORGANIZATION_PROJECT_FILTERS;
     const [activeFilter, setActiveFilter] = useQueryParamTab(
-        PROJECT_FILTER_IDS,
+        projectFilters.map((filter) => filter.id),
         "all",
     );
     const [practiceFilter, setPracticeFilter] = useState<string | null>(null);
@@ -150,7 +164,6 @@ export function ProjectsOverview() {
     });
     const rowSelectionAnchorIdRef = useRef<string | null>(null);
     const { user, isAuthenticated, authLoading } = useAuth();
-    const workspace = useWorkspaceParam();
     const previewEmptyStates = searchParams.get("emptyStates") === "1";
     const debouncedSearch = useDebouncedValue(search, 250);
 
@@ -269,10 +282,14 @@ export function ProjectsOverview() {
             onChange={(direction) => handleSortChange("name", direction)}
         />
     );
-    const accessFilterButton = (
+    const accessFilterButton = !isPersonalWorkspace && (
         <TableFilters
             label="Filter by access"
-            value={activeFilter === "all" ? null : activeFilter}
+            value={
+                activeFilter === "public" || activeFilter === "private"
+                    ? activeFilter
+                    : null
+            }
             allLabel="All Access"
             widthClassName="w-40"
             options={ACCESS_FILTER_OPTIONS}
@@ -546,7 +563,7 @@ export function ProjectsOverview() {
             </PageHeader>
 
             <TableToolbar
-                items={PROJECT_FILTERS}
+                items={projectFilters}
                 active={activeFilter}
                 onChange={(nextFilter) => {
                     setActiveFilter(nextFilter);
@@ -694,9 +711,11 @@ export function ProjectsOverview() {
                     </TableEmptyState>
                 ) : visibleProjects.length === 0 ? (
                     <TableEmptyState>
-                        {activeFilter === "public" ? (
+                        {activeFilter === "public" || activeFilter === "shared" ? (
                             <p className="text-sm text-gray-400">
-                                No public projects
+                                {activeFilter === "public"
+                                    ? "No public projects"
+                                    : "No projects shared with you"}
                             </p>
                         ) : (
                             <EmptyState
