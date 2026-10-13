@@ -9,7 +9,7 @@
 //   * the signup steps still typed into main's OLD signup form ("Your name" /
 //     "Your organisation" / "Create a password (min. 6 characters)"), which the
 //     auth rework replaced with Email + Password + Confirm Password followed by
-//     a two-step /onboarding wizard. Filling a placeholder that no longer
+//     an /onboarding wizard. Filling a placeholder that no longer
 //     exists is not a soft failure in Playwright: `getByPlaceholder(...).fill()`
 //     blocks until its timeout, so every suite would have died at step 2.
 //
@@ -98,8 +98,9 @@ export async function signUpThroughUi(page, { email, password }) {
  *
  * Step 1 (/onboarding/profile) collects Name + Organisation — the two fields
  * the old signup form used to ask for, which is why they are filled here — and
- * step 2 (/onboarding/practice) collects optional practice details behind a
- * "Skip" that completes onboarding and replaces the URL with /assistant.
+ * step 2 (/onboarding/practice) collects optional practice details. "Skip"
+ * advances to step 3 (/onboarding/invitations), where "Finish" completes
+ * onboarding and replaces the URL with /assistant.
  */
 export async function completeOnboardingIfRequired(
   page,
@@ -132,6 +133,8 @@ export async function completeOnboardingIfRequired(
       await continueButton.click();
       await page.waitForURL(/\/onboarding\/practice/, { timeout: 20_000 });
       await page.getByRole("button", { name: "Skip", exact: true }).click();
+      await page.waitForURL(/\/onboarding\/invitations/, { timeout: 20_000 });
+      await page.getByRole("button", { name: "Finish", exact: true }).click();
     }
   }
 
