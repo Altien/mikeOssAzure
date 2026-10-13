@@ -19,7 +19,11 @@ import {
   resolveOrgContentRole,
 } from "../../lib/access";
 import { can } from "../../lib/permissions";
-import { workspaceRpcArg, type WorkspaceFilter } from "../../lib/workspace";
+import {
+  workspaceMatches,
+  workspaceRpcArg,
+  type WorkspaceFilter,
+} from "../../lib/workspace";
 import {
   listProjectAdminContacts,
   listProjectGrants,
@@ -203,9 +207,10 @@ export async function searchProjectDirectory(
     userEmail?: string;
     searchTerm: string;
     pagination: { limit: number; offset: number };
+    workspace?: WorkspaceFilter;
   },
 ): Promise<{ ok: true; data: unknown[] } | ProjectsDbFailure> {
-  const { userId, userEmail, searchTerm, pagination } = args;
+  const { userId, userEmail, searchTerm, pagination, workspace } = args;
   const normalizedUserEmail = userEmail?.trim().toLowerCase();
 
   const createdQuery = db.from("projects").select("*").eq("user_id", userId);
@@ -342,6 +347,14 @@ export async function searchProjectDirectory(
       if (role) projectsById.set(projectId, project);
       else projectsById.delete(projectId);
     }
+  }
+  // Narrowed last, over projects the caller may already see: the workspace
+  // never admits anything, it only leaves out what is filed elsewhere.
+  for (const [projectId, project] of projectsById) {
+    if (
+      !workspaceMatches(workspace, project.org_id as string | null | undefined)
+    )
+      projectsById.delete(projectId);
   }
   const accessibleProjectIds = [...projectsById.keys()];
   if (accessibleProjectIds.length === 0) return { ok: true, data: [] };

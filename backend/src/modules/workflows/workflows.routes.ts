@@ -17,6 +17,10 @@ import { parseWorkflowSort } from "../../lib/sort";
 import { parseWorkflowScope } from "./workflows.overview";
 import { sendInternalError } from "../../lib/httpError";
 import {
+  DOCUMENT_WORKSPACE_MISMATCH_CODE,
+  DOCUMENT_WORKSPACE_MISMATCH_DETAIL,
+} from "../../lib/documentWorkspace";
+import {
   listWorkflows,
   listWorkflowsPage,
   listSystemWorkflows,
@@ -80,6 +84,11 @@ function sendWorkflowAssetFailure(res: Response, failure: WorkflowAssetFailure) 
       return void res
         .status(404)
         .json({ detail: "One or more files could not be found" });
+    case "documents_workspace_mismatch":
+      return void res.status(400).json({
+        code: DOCUMENT_WORKSPACE_MISMATCH_CODE,
+        detail: DOCUMENT_WORKSPACE_MISMATCH_DETAIL,
+      });
     case "documents_not_ready":
       return void res
         .status(409)

@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/app/contexts/AuthContext";
+import { useOrganizationInvitationCount } from "@/app/hooks/useOrganizationInvitationCount";
 import {
     SettingsShell,
     type SettingsShellTab,
@@ -51,7 +52,10 @@ export default function SettingsLayout({
     children: React.ReactNode;
 }) {
     const router = useRouter();
-    const { isAuthenticated, authLoading } = useAuth();
+    const { user, isAuthenticated, authLoading } = useAuth();
+    const invitationCount = useOrganizationInvitationCount(
+        isAuthenticated && !authLoading ? user?.id : undefined,
+    );
 
     useEffect(() => {
         if (!authLoading && !isAuthenticated) {
@@ -75,7 +79,23 @@ export default function SettingsLayout({
         <SettingsShell
             title="Settings"
             navLabel="Settings"
-            tabs={TABS}
+            tabs={TABS.map((tab) =>
+                tab.id === "organizations" && invitationCount > 0
+                    ? {
+                          ...tab,
+                          badge: (
+                              <span className="ml-2 inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 px-1.5 text-xs font-semibold tabular-nums text-white">
+                                  {invitationCount}{" "}
+                                  <span className="sr-only">
+                                      {invitationCount === 1
+                                          ? "pending invitation"
+                                          : "pending invitations"}
+                                  </span>
+                              </span>
+                          ),
+                      }
+                    : tab,
+            )}
             rootHref="/settings"
         >
             {children}

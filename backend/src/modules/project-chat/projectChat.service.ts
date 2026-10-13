@@ -36,6 +36,11 @@ import {
     resolveContentOrgId,
 } from "../../lib/access";
 import { hasDirectContentGrants } from "../../lib/contentAccess";
+import {
+    DOCUMENT_WORKSPACE_MISMATCH_CODE,
+    DOCUMENT_WORKSPACE_MISMATCH_DETAIL,
+    findNewAttachmentsOutsideWorkspace,
+} from "../../lib/documentWorkspace";
 import { can, type ProjectRole } from "../../lib/permissions";
 import {
     resolveEffectiveReasoningLevel,
@@ -288,6 +293,25 @@ export async function prepareProjectChatStream(
             status: 403,
             detail: "You do not have permission to write in this project.",
         };
+
+    // A project chat draws on its project, and on attachments from the
+    // project's own workspace. Checked before anything is written.
+    try {
+        const outside = await findNewAttachmentsOutsideWorkspace(db, {
+            messages,
+            chatId,
+            orgId: projectAccess.project.org_id ?? null,
+        });
+        if (outside.length > 0)
+            return {
+                ok: false,
+                status: 400,
+                code: DOCUMENT_WORKSPACE_MISMATCH_CODE,
+                detail: DOCUMENT_WORKSPACE_MISMATCH_DETAIL,
+            };
+    } catch (error) {
+        return { ok: false, internal: true, error };
+    }
 
     const selection = await resolveUserChatSelection(db, {
         userId,

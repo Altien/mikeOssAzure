@@ -24,6 +24,11 @@ import {
     resolveStandaloneOrgId,
 } from "../../lib/access";
 import { teamOrgIdOf } from "../../lib/personalOrgs";
+import {
+    DOCUMENT_WORKSPACE_MISMATCH_CODE,
+    DOCUMENT_WORKSPACE_MISMATCH_DETAIL,
+    findNewAttachmentsOutsideWorkspace,
+} from "../../lib/documentWorkspace";
 import { hasDirectContentGrants } from "../../lib/contentAccess";
 import { can } from "../../lib/permissions";
 import { resolveEffectiveReasoningLevel } from "../../lib/modelSelection";
@@ -257,6 +262,37 @@ export async function prepareChatStream(
                 return { ok: false, status: 400, detail: standalone.detail };
             contentOrgId = standalone.orgId;
         }
+    }
+
+    // A chat is built from documents in its own workspace. Checked before
+    // anything is written, so a refused first message leaves no empty chat
+    // behind.
+    try {
+        let workspaceOrgId = contentOrgId;
+        if (chatId && resolvedProjectId) {
+            // The project says where a project chat lives; a chat row from
+            // before chats carried an organization has none of its own.
+            const projectOrg = await resolveContentOrgId(db, {
+                projectId: resolvedProjectId,
+            });
+            if (!projectOrg.ok)
+                return { ok: false, internal: true, error: projectOrg.detail };
+            workspaceOrgId = projectOrg.orgId;
+        }
+        const outside = await findNewAttachmentsOutsideWorkspace(db, {
+            messages,
+            chatId,
+            orgId: workspaceOrgId,
+        });
+        if (outside.length > 0)
+            return {
+                ok: false,
+                status: 400,
+                code: DOCUMENT_WORKSPACE_MISMATCH_CODE,
+                detail: DOCUMENT_WORKSPACE_MISMATCH_DETAIL,
+            };
+    } catch (error) {
+        return { ok: false, internal: true, error };
     }
 
     const selection = await resolveUserChatSelection(db, {

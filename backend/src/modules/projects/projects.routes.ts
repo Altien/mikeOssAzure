@@ -9,6 +9,10 @@ import { requireAuth } from "../../middleware/auth";
 import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import { sendInternalError } from "../../lib/httpError";
+import {
+  DOCUMENT_WORKSPACE_MISMATCH_CODE,
+  DOCUMENT_WORKSPACE_MISMATCH_DETAIL,
+} from "../../lib/documentWorkspace";
 import { parsePaginationQuery } from "../../lib/pagination";
 import { normalizeSearchTerm } from "../../lib/search";
 import {
@@ -87,11 +91,18 @@ projectsRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
   if (req.query.view === "directory-search") {
     const searchTerm = normalizeSearchTerm(req.query.search);
     if (!searchTerm) return void res.json([]);
+    const workspace = await resolveWorkspaceFilter(
+      db,
+      userId,
+      req.query.workspace,
+    );
+    if (!workspace.ok) return void sendWorkspaceFailure(res, workspace);
     const result = await searchProjectDirectory(db, {
       userId,
       userEmail,
       searchTerm,
       pagination: parsePaginationQuery(req.query as Record<string, unknown>),
+      workspace: workspace.workspace,
     });
     if (!result.ok) return void sendInternalError(res, result.error);
     return void res.json(result.data);
@@ -501,6 +512,11 @@ projectsRouter.post(
           return void res.status(403).json({ detail: result.detail });
         case "doc_not_found":
           return void res.status(404).json({ detail: "Document not found" });
+        case "workspace_mismatch":
+          return void res.status(400).json({
+            code: DOCUMENT_WORKSPACE_MISMATCH_CODE,
+            detail: DOCUMENT_WORKSPACE_MISMATCH_DETAIL,
+          });
         case "no_active_version":
           return void res
             .status(404)

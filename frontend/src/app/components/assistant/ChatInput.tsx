@@ -66,7 +66,7 @@ import {
     uploadStandaloneDocuments,
     type UploadProgress,
 } from "@/app/lib/mikeApi";
-import { useWorkspaceParam } from "@/app/contexts/WorkspaceContext";
+import { useDocumentWorkspace } from "@/app/contexts/WorkspaceContext";
 import {
     SUPPORTED_DOCUMENT_ACCEPT,
     formatUnsupportedDocumentWarning,
@@ -187,7 +187,7 @@ function ChatInputForChatImpl(
 ) {
     // A document attached to a chat outside a project belongs to the
     // workspace it is uploaded in.
-    const workspace = useWorkspaceParam();
+    const workspace = useDocumentWorkspace();
     // Sending needs both a grant and a loaded thread; the placeholder below
     // names whichever one is missing.
     const composerOpen = canSend === true && !chatLoading;

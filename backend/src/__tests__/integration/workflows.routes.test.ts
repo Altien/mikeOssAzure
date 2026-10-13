@@ -1022,5 +1022,33 @@ describe("workflows.routes", () => {
       expect(selects.documents).toContain("org_id");
       expect(selects.documents).toContain("workflow_id");
     });
+
+    it("refuses a file from another workspace, however readable", async () => {
+      supabaseState.tables.workflows = {
+        data: { id: "w-org", user_id: "u1", org_id: "org-1", type: "assistant" },
+        error: null,
+      };
+      vi.mocked(ensureDocAccess).mockResolvedValue({
+        ok: true,
+      } as unknown as Awaited<ReturnType<typeof ensureDocAccess>>);
+      const { db } = projectingDb({
+        id: DOC_ID,
+        user_id: "u1",
+        project_id: null,
+        workflow_id: null,
+        // The caller's own, filed in Personal.
+        org_id: null,
+        current_version_id: "v1",
+      });
+      vi.mocked(createServerSupabase).mockImplementationOnce(() => db);
+
+      const res = await request(app)
+        .post("/workflows/w-org/assets/from-documents")
+        .set(...AUTH)
+        .send({ document_ids: [DOC_ID] });
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe("document_workspace_mismatch");
+    });
   });
 });

@@ -22,7 +22,7 @@ import {
   searchLibraryDocuments,
   searchProjectDirectory,
 } from "@/app/lib/mikeApi";
-import { useWorkspaceParam } from "@/app/contexts/WorkspaceContext";
+import { useDocumentWorkspace } from "@/app/contexts/WorkspaceContext";
 import {
     LIQUID_GLASS_MODAL_ROW_HOVER_CLASS,
     LIQUID_GLASS_MODAL_ROW_SELECTED_CLASS,
@@ -155,7 +155,18 @@ interface FileDirectoryProps {
   selectionDisabled?: boolean;
 }
 
-export function FileDirectory({
+/**
+ * One workspace's documents per mount. A parent that keeps this mounted
+ * across a change of workspace gets a fresh directory rather than the last
+ * workspace's rows under the new one's name; what is selected lives with the
+ * parent and is unaffected.
+ */
+export function FileDirectory(props: FileDirectoryProps) {
+  const workspace = useDocumentWorkspace();
+  return <WorkspaceFileDirectory key={workspace ?? "unscoped"} {...props} />;
+}
+
+function WorkspaceFileDirectory({
     documents = EMPTY_DOCUMENTS,
     loading: externalLoading = false,
     selectedDocuments,
@@ -231,8 +242,8 @@ export function FileDirectory({
     loadProjectLevel = async () => {},
     loadMoreProjectDocuments = async () => {},
     } = useDirectoryData(showTabs, initialDirectoryTab);
-  // Searching a library tab searches the active workspace's library.
-  const workspace = useWorkspaceParam();
+  // Searching looks in the same workspace the tabs list.
+  const workspace = useDocumentWorkspace();
 
   useEffect(() => {
     const term = debouncedSearch.trim();
@@ -252,6 +263,7 @@ export function FileDirectory({
         ? searchProjectDirectory({
             search: term,
             limit: DIRECTORY_SEARCH_PAGE_SIZE + 1,
+            workspace,
             signal: controller.signal,
           }).then((rows) => {
             setSearchProjects(rows.slice(0, DIRECTORY_SEARCH_PAGE_SIZE));
@@ -292,6 +304,7 @@ export function FileDirectory({
           search: term,
           limit: DIRECTORY_SEARCH_PAGE_SIZE + 1,
           offset,
+          workspace,
         });
         const page = rows.slice(0, DIRECTORY_SEARCH_PAGE_SIZE);
         setSearchProjects((current) =>

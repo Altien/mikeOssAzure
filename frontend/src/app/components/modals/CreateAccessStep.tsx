@@ -41,6 +41,7 @@ export function CreateAccessStep({
     inheritedFromProject = false,
     inheritedProjectId = null,
     ownerLabel = "Project owners",
+    resourceNoun,
     visibility = "private",
 }: {
     orgId: string | null;
@@ -55,6 +56,8 @@ export function CreateAccessStep({
     /** The project whose people are shown, read-only, when access is inherited. */
     inheritedProjectId?: string | null;
     ownerLabel?: string;
+    /** What the item is called where the step describes sharing it. */
+    resourceNoun?: string;
     /**
      * For an organization's item: public or private, as chosen on the
      * details step. Decides whether individuals can be added here.
@@ -276,6 +279,7 @@ export function CreateAccessStep({
                 assignments={organizationAssignments}
                 organizationName={organizationName}
                 ownerLabel={ownerLabel}
+                resourceNoun={resourceNoun}
                 loading={loading}
                 error={loadError}
                 currentUserId={currentUserId}

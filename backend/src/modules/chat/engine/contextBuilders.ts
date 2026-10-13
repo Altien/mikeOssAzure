@@ -1339,7 +1339,14 @@ export async function buildDocContext(
     // asked about, so ask once per container and reuse the answer; a
     // document with no container at all still resolves individually, which
     // costs nothing (it is a `user_id === caller` comparison in memory).
+    //
+    // A document filed on its own under an organization has no container
+    // either: it is its uploader's alone, while they are a member. That
+    // verdict turns on the uploader as well as the organization, so the two
+    // together are the key — one answer per organization would hand a
+    // colleague's files to whoever's own file happened to be asked first.
     const containerKey = (doc: {
+      user_id: string | null;
       project_id: string | null;
       workflow_id?: string | null;
       org_id?: string | null;
@@ -1349,16 +1356,18 @@ export async function buildDocContext(
         : doc.workflow_id
           ? `workflow:${doc.workflow_id}`
           : doc.org_id
-            ? `org:${doc.org_id}`
+            ? `org:${doc.org_id}:${doc.user_id ?? ""}`
             : null;
 
     const verdictByContainer = new Map<string, boolean>();
     for (const doc of candidates) {
       const key = containerKey(doc);
       if (!key || verdictByContainer.has(key)) continue;
-      // The representative carries the container this verdict is about; its
-      // `user_id` only ever decides the ROLE, never `ok`, so reusing one
-      // document's answer for its siblings cannot widen access.
+      // The representative carries the container this verdict is about. In
+      // a project or a workflow its `user_id` only ever decides the ROLE,
+      // never `ok`, so reusing one document's answer for its siblings cannot
+      // widen access; on its own in an organization the uploader is part of
+      // the key.
       const verdict = await ensureDocAccess(doc, userId, userEmail ?? null, db);
       verdictByContainer.set(key, verdict.ok);
     }

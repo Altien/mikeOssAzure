@@ -9,6 +9,7 @@ import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
 import { SettingsDescription } from "@/app/components/settings/SettingsText";
 import { OrganizationSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import { useWorkspace } from "@/app/contexts/WorkspaceContext";
+import { notifyOrganizationInvitationsChanged } from "@/app/hooks/useOrganizationInvitationCount";
 import {
   acceptOrgInvitation,
   declineOrgInvitation,
@@ -25,7 +26,7 @@ import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { CreateOrganizationModal } from "./OrganizationModals";
 import { organizationSettingsHref } from "./OrganizationSettingsShell";
 
-/** The two-column tile grid every settings card list uses. */
+/** Organizations follow the two-column settings card layout. */
 const CARD_GRID_CLASS = "grid grid-cols-1 gap-3 @min-[32rem]:grid-cols-2";
 
 /**
@@ -115,6 +116,7 @@ export function OrganizationsOverview() {
     // to the organizations list, and a refusal is often a refusal because
     // somebody answered it somewhere else already.
     await load();
+    notifyOrganizationInvitationsChanged();
     // An accepted invitation is a new workspace to switch to.
     void refreshOrganizations();
   }
@@ -259,7 +261,7 @@ export function OrganizationsOverview() {
               </div>
             </GlassCardUI>
           ) : (
-            <div className={CARD_GRID_CLASS}>
+            <div className="grid grid-cols-1 gap-3">
               {invitations.map((invitation) => {
                 const name = invitation.org_name ?? "An organization";
                 const answering = answeringId === invitation.id;

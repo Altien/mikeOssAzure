@@ -88,6 +88,19 @@ export function sendWorkspaceFailure(
 }
 
 /**
+ * Whether a row filed under `orgId` is in `workspace`, for the lists that are
+ * narrowed here rather than in SQL. public.workspace_matches is the SQL twin.
+ */
+export function workspaceMatches(
+    workspace: WorkspaceFilter | undefined,
+    orgId: string | null | undefined,
+): boolean {
+    if (!workspace) return true;
+    if (workspace === PERSONAL_WORKSPACE) return !orgId;
+    return orgId === workspace;
+}
+
+/**
  * The RPC argument for a resolved workspace. Omitted entirely when the list
  * is not narrowed, so a request that names no workspace calls the RPC exactly
  * as it did before the parameter existed.

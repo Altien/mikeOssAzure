@@ -32,8 +32,20 @@ const firmDoc = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.projectAccess.mockResolvedValue({ ok: true, projectRole: "owner" });
+  mocks.projectAccess.mockResolvedValue({
+    ok: true,
+    projectRole: "owner",
+    project: { org_id: "firm" },
+  });
 });
+
+// What the workspace check reads about the source: where it is filed, its
+// project's organization, and which of those organizations are personal.
+const placementReads = [
+  { table: "documents", data: [firmDoc] },
+  { table: "projects", data: [{ id: "firm-matter", org_id: "firm" }] },
+  { table: "organizations", data: [{ id: "firm", kind: "team" }] },
+];
 
 describe("adding a document to a project by id", () => {
   // Authorship is provenance, not access: a document the caller wrote inside
@@ -70,7 +82,36 @@ describe("adding a document to a project by id", () => {
     // the copy takes once access is established.
     const fake = scriptedDb([
       { table: "documents", data: firmDoc },
+      ...placementReads,
       { table: "document_versions", data: null },
+    ]);
+    expect(
+      await assignOrCopyDocument(fake.db, {
+        projectId: "other-firm-matter",
+        documentId: "doc",
+        userId: "actor",
+      }),
+    ).toEqual({ ok: false, kind: "no_active_version" });
+    fake.done();
+  });
+
+  // Access to the source is not enough to take it somewhere else: the firm's
+  // document stays in the firm's workspace.
+  it("refuses to copy an organization's document into a personal project", async () => {
+    mocks.projectAccess.mockResolvedValue({
+      ok: true,
+      projectRole: "owner",
+      project: { org_id: null },
+    });
+    mocks.docAccess.mockResolvedValue({
+      ok: true,
+      isCreator: true,
+      orgRole: "member",
+      projectRole: "editor",
+    });
+    const fake = scriptedDb([
+      { table: "documents", data: firmDoc },
+      ...placementReads,
     ]);
     expect(
       await assignOrCopyDocument(fake.db, {
@@ -78,7 +119,32 @@ describe("adding a document to a project by id", () => {
         documentId: "doc",
         userId: "actor",
       }),
-    ).toEqual({ ok: false, kind: "no_active_version" });
+    ).toEqual({ ok: false, kind: "workspace_mismatch" });
+    expect(mocks.downloadFile).not.toHaveBeenCalled();
+    fake.done();
+  });
+
+  it("refuses to move a personal document into an organization's project", async () => {
+    const personalDoc = { ...firmDoc, project_id: null, org_id: null };
+    mocks.docAccess.mockResolvedValue({
+      ok: true,
+      isCreator: true,
+      orgRole: null,
+      projectRole: "owner",
+    });
+    const fake = scriptedDb([
+      { table: "documents", data: personalDoc },
+      { table: "documents", data: [personalDoc] },
+      { table: "organizations", data: [{ id: "firm", kind: "team" }] },
+    ]);
+    expect(
+      await assignOrCopyDocument(fake.db, {
+        projectId: "firm-matter",
+        documentId: "doc",
+        userId: "actor",
+      }),
+    ).toEqual({ ok: false, kind: "workspace_mismatch" });
+    // Nothing was written: the script holds no update.
     fake.done();
   });
 });

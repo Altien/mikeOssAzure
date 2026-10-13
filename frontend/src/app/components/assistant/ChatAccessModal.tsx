@@ -107,6 +107,7 @@ export function ChatAccessModal({ open, chat, onClose }: Props) {
                     chat.project_id ??
                     null,
                 ownerLabel: "Owners",
+                resourceNoun: "chat",
                 // Role-derived, so the Share Access label and input are there
                 // the moment the modal opens: the roster below carries its own
                 // loading state, and waiting for the access payload blanked

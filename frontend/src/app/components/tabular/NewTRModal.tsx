@@ -12,7 +12,11 @@ import {
     uploadStandaloneDocuments,
 } from "@/app/lib/mikeApi";
 import type { AccessAssignmentRole } from "@/app/lib/mikeApi";
-import { useWorkspaceParam } from "@/app/contexts/WorkspaceContext";
+import {
+    useDocumentWorkspace,
+    useWorkspace,
+    useWorkspaceOrgId,
+} from "@/app/contexts/WorkspaceContext";
 import { userFacingApiError } from "@/app/lib/userFacingError";
 import {
     SUPPORTED_DOCUMENT_ACCEPT,
@@ -39,6 +43,7 @@ import { useAuth } from "@/app/contexts/AuthContext";
 import {
     CreateAccessStep,
     type PendingDirectGrant,
+    type PendingOrgOverride,
 } from "../modals/CreateAccessStep";
 import { useConfiguredModels } from "@/app/hooks/useConfiguredModels";
 
@@ -88,7 +93,7 @@ export function NewTRModal({
 }: Props) {
     // A document uploaded on its own belongs to the workspace it is
     // uploaded in.
-    const workspace = useWorkspaceParam();
+    const workspace = useDocumentWorkspace();
     const isProjectMode = projectId !== undefined;
     const [step, setStep] = useState<"details" | "access" | "documents">(
         "details",
@@ -97,6 +102,13 @@ export function NewTRModal({
     const [underProject, setUnderProject] = useState(false);
     const [selectedProjectId, setSelectedProjectId] = useState("");
     const [directGrants, setDirectGrants] = useState<PendingDirectGrant[]>([]);
+    // In an organization's workspace a review started on its own belongs to
+    // that organization and is shared with its members only: they are picked
+    // from the roster here, and given access by address once it exists. The
+    // id is the one the review is created under, so the two cannot disagree.
+    const { activeOrganization } = useWorkspace();
+    const workspaceOrgId = useWorkspaceOrgId() ?? null;
+    const [memberGrants, setMemberGrants] = useState<PendingOrgOverride[]>([]);
     const [selectedModel, setSelectedModel] = useState("");
     const [noModelsWarning, setNoModelsWarning] =
         useState<NoModelsReason | null>(null);
@@ -234,6 +246,7 @@ export function NewTRModal({
         setUnderProject(false);
         setSelectedProjectId("");
         setDirectGrants([]);
+        setMemberGrants([]);
         setSelectedModel("");
         setNoModelsWarning(null);
         setProjectDocs([]);
@@ -277,7 +290,21 @@ export function NewTRModal({
             : underProject
               ? selectedProjectId
               : undefined;
-        const assignments = effectiveProjectId ? [] : directGrants;
+        const assignments: PendingDirectGrant[] = effectiveProjectId
+            ? []
+            : workspaceOrgId
+              ? memberGrants.flatMap((grant) =>
+                    grant.role === "deny"
+                        ? []
+                        : [
+                              {
+                                  email: grant.email,
+                                  display_name: null,
+                                  role: grant.role,
+                              },
+                          ],
+                )
+              : directGrants;
         try {
             const partialFailure = await onAdd(
                 title.trim(),
@@ -318,6 +345,7 @@ export function NewTRModal({
         try {
             const proj = await getProject(projectId);
             setDirectGrants([]);
+            setMemberGrants([]);
             const docs = (proj.documents ?? []).filter(
                 (d) => d.status === "ready",
             );
@@ -511,6 +539,7 @@ export function NewTRModal({
                             type: "button",
                             onClick: () => {
                                 setDirectGrants([]);
+                                setMemberGrants([]);
                                 setStep("documents");
                             },
                             disabled: uploading,
@@ -662,11 +691,14 @@ export function NewTRModal({
                     </div>
                 ) : step === "access" ? (
                     <CreateAccessStep
-                        orgId={null}
+                        orgId={workspaceOrgId}
+                        organizationName={activeOrganization?.name ?? null}
                         currentUserEmail={user?.email ?? null}
                         currentUserId={user?.id ?? null}
                         directGrants={directGrants}
                         onDirectGrantsChange={setDirectGrants}
+                        orgOverrides={memberGrants}
+                        onOrgOverridesChange={setMemberGrants}
                         inheritedFromProject={isProjectMode || underProject}
                         inheritedProjectId={
                             isProjectMode
@@ -676,6 +708,7 @@ export function NewTRModal({
                                   : null
                         }
                         ownerLabel="Review owners"
+                        resourceNoun="review"
                     />
                 ) : (
                     <div className="flex min-h-0 flex-1 flex-col">

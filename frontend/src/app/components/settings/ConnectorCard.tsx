@@ -42,7 +42,7 @@ export function ConnectorCard({
             />
           )}
         </div>
-        <div className="min-w-0 flex-1 text-left">
+        <div className="min-w-0 flex-1 break-words text-left">
           <SettingsLabel>{name}</SettingsLabel>
           {detail ? (
             <p className="text-xs break-words text-gray-500">{detail}</p>

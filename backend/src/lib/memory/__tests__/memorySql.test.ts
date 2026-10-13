@@ -220,4 +220,37 @@ describe("per-workspace memory SQL", () => {
       }
     }
   });
+
+  // `migrate.sh baseline` records earlier files without running them. Named
+  // one file too far, it leaves a database that says it has the older memory
+  // migration and does not; this one then failed half-way down on a function
+  // that was never created. It checks first, before changing anything.
+  it("checks historical memory prerequisites without rewriting applied SQL", () => {
+    const prerequisite = readFileSync(resolve(root, "migrations/0125_memory_prerequisites.sql"), "utf8");
+    const guard = prerequisite.indexOf(
+      "to_regprocedure('public.memory_project_is_private(uuid)') is null",
+    );
+    const firstChange = prerequisite.search(
+      /^(alter|create|drop|insert|update|delete)\b/m,
+    );
+    expect(guard).toBeGreaterThan(0);
+    expect(firstChange).toBe(-1);
+    // It names the missing file and how to apply it.
+    expect(prerequisite).toContain(
+      "message = 'This database is missing objects from 0092_memory_followup.sql'",
+    );
+    expect(prerequisite).toContain(
+      "documented canonical migration process",
+    );
+    // The file it sends people to really does create what is checked for.
+    for (const name of [
+      "memory_project_is_private",
+      "delete_user_private_memories",
+      "memory_source_allows_app_memory",
+    ]) {
+      expect(followup).toContain(
+        `create or replace function public.${name}(`,
+      );
+    }
+  });
 });

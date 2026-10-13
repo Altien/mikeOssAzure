@@ -2,8 +2,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
     getProjectPeople,
+    listOrgMembers,
     uploadProjectDocuments,
     uploadStandaloneDocuments,
+    type OrgMember,
 } from "@/app/lib/mikeApi";
 import { UPLOAD_LIMIT_MESSAGES } from "@/shared/api/uploadSessionClient";
 import { UNSUPPORTED_DOCUMENT_WARNING_MESSAGE } from "@/app/lib/documentUploadValidation";
@@ -58,6 +60,30 @@ vi.mock("@/app/contexts/AuthContext", () => ({
     useAuth: () => ({ user: { id: "me", email: "me@firm.test" } }),
 }));
 
+// The active workspace, set per test: Personal unless a test says otherwise.
+const workspace = vi.hoisted(() => ({
+    current: null as { id: string; name: string } | null,
+}));
+vi.mock("@/app/contexts/WorkspaceContext", async () => ({
+    ...(await vi.importActual<
+        typeof import("@/app/contexts/WorkspaceContext")
+    >("@/app/contexts/WorkspaceContext")),
+    // Outside a provider, as the other tests here run, plus the one field
+    // under test. `workspaceId` stays null so the model picker keeps reading
+    // the personal keys stubbed above rather than an organization's.
+    useWorkspace: () => ({
+        workspaceId: null,
+        organizations: null,
+        activeOrganization: workspace.current,
+        orgApiKeys: null,
+        setWorkspace: () => {},
+        refreshOrganizations: async () => {},
+        refreshOrgApiKeys: async () => {},
+    }),
+    useWorkspaceOrgId: () => workspace.current?.id,
+    useDocumentWorkspace: () => workspace.current?.id,
+}));
+
 vi.mock("@/app/hooks/useOllamaModels", () => ({
     useOllamaModels: () => [],
 }));
@@ -81,6 +107,66 @@ vi.mock("../shared/FileDirectory", () => ({
 describe("NewTRModal", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        workspace.current = null;
+    });
+
+    it("shares a review started in an organization with its members only", async () => {
+        workspace.current = { id: "org-1", name: "Hughes LLP" };
+        vi.mocked(listOrgMembers).mockResolvedValue([
+            {
+                user_id: "u-daniel",
+                email: "daniel@firm.test",
+                display_name: "Daniel Hughes",
+                role: "member",
+            },
+        ] as OrgMember[]);
+        const onAdd = vi.fn();
+        render(<NewTRModal open onClose={vi.fn()} onAdd={onAdd} />);
+
+        fireEvent.change(screen.getByLabelText("Review name"), {
+            target: { value: "Closing review" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+        // The organization's members are picked from; there is nowhere to
+        // type the address of somebody outside it.
+        await waitFor(() =>
+            expect(listOrgMembers).toHaveBeenCalledWith("org-1"),
+        );
+        expect(
+            screen.queryByPlaceholderText("Add by email..."),
+        ).not.toBeInTheDocument();
+        expect(
+            document.getElementById("organization-people-picker-description"),
+        ).toHaveTextContent(
+            "Share this review with members of Hughes LLP.",
+        );
+
+        const picker = screen.getByRole("searchbox", { name: "People" });
+        await waitFor(() => expect(picker).toBeEnabled());
+        fireEvent.focus(picker);
+        fireEvent.change(picker, { target: { value: "daniel" } });
+        fireEvent.click(
+            await screen.findByRole("option", { name: /Daniel Hughes/ }),
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: "Next" }));
+        fireEvent.click(screen.getByRole("button", { name: "Create" }));
+        expect(onAdd).toHaveBeenCalledWith(
+            "Closing review",
+            undefined,
+            undefined,
+            undefined,
+            "document",
+            "gemini-3.8-flash",
+            [
+                {
+                    email: "daniel@firm.test",
+                    display_name: null,
+                    role: "editor",
+                },
+            ],
+        );
     });
 
     it("shows folder grouping on the first screen and excludes Templates", () => {

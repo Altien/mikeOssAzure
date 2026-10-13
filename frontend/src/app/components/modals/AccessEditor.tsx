@@ -464,6 +464,7 @@ export function OrganizationAccessEditor({
     assignments,
     organizationName,
     ownerLabel = "Project owners",
+    resourceNoun: resourceNounProp,
     loading = false,
     disabled = false,
     error,
@@ -483,6 +484,11 @@ export function OrganizationAccessEditor({
     assignments: OrganizationAccessAssignment[];
     organizationName?: string | null;
     ownerLabel?: string;
+    /**
+     * What the item is called in the descriptions. Read off `ownerLabel`
+     * when not given, which only tells a workflow from a project.
+     */
+    resourceNoun?: string;
     loading?: boolean;
     disabled?: boolean;
     error?: string | null;
@@ -570,9 +576,11 @@ export function OrganizationAccessEditor({
             ...current,
             expanded: !current.expanded,
         }));
-    const resourceNoun = ownerLabel.toLowerCase().startsWith("workflow")
-        ? "workflow"
-        : "project";
+    const resourceNoun =
+        resourceNounProp ??
+        (ownerLabel.toLowerCase().startsWith("workflow")
+            ? "workflow"
+            : "project");
     const organizationLabel = organizationName || "the organisation";
     const peopleDescription = `Share this ${resourceNoun} with members of ${organizationLabel}. They are added as Editors; change a person's role in the list below. It cannot be shared outside the organisation.`;
     // Everyone can already open and edit a public item, so the only standing

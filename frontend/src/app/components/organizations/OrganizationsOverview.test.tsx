@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MikeApiError } from "@/app/lib/mikeApi";
 import { OrganizationsOverview } from "./OrganizationsOverview";
+import SettingsLayout from "@/app/(pages)/settings/layout";
 
 const mocks = vi.hoisted(() => ({
   push: vi.fn(),
@@ -19,7 +20,15 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/settings/organizations",
   useRouter: () => ({ push: mocks.push }),
+}));
+vi.mock("@/app/contexts/AuthContext", () => ({
+  useAuth: () => ({
+    user: { id: "me" },
+    isAuthenticated: true,
+    authLoading: false,
+  }),
 }));
 vi.mock("@/app/contexts/WorkspaceContext", () => ({
   useWorkspace: () => ({
@@ -340,6 +349,25 @@ describe("OrganizationsOverview", () => {
       expect(mocks.declineOrgInvitation).toHaveBeenCalledWith("invite-1"),
     );
     expect(mocks.acceptOrgInvitation).not.toHaveBeenCalled();
+  });
+
+  it.each(["Accept", "Decline"])("clears the settings count after %s of the last invitation", async (action) => {
+    const user = userEvent.setup();
+    mocks.listMyOrgInvitations.mockResolvedValue([INVITATION]);
+    const answer = action === "Accept" ? mocks.acceptOrgInvitation : mocks.declineOrgInvitation;
+    answer.mockImplementation(async () => {
+      mocks.listMyOrgInvitations.mockResolvedValue([]);
+    });
+    render(<SettingsLayout><OrganizationsOverview /></SettingsLayout>);
+
+    expect(await screen.findByRole("button", {
+      name: "Organizations 1 pending invitation",
+    })).toBeVisible();
+    await user.click(await screen.findByRole("button", {
+      name: `${action} Inviting Chambers`,
+    }));
+    expect(await screen.findByRole("button", { name: "Organizations" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Invitations" })).not.toBeInTheDocument();
   });
 
   it("reports a failed invitations fetch instead of claiming there are none", async () => {

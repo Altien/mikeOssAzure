@@ -198,6 +198,16 @@ vi.mock("../../modules/user/user.settings", () => ({
     persistLastSelectedChatModel: vi.fn(async () => null),
 }));
 
+// The one-result fake above cannot answer the reads this makes; the rule has
+// its own tests in lib/__tests__/documentWorkspace.test.ts.
+const { findNewAttachmentsOutsideWorkspace } = vi.hoisted(() => ({
+    findNewAttachmentsOutsideWorkspace: vi.fn(async (): Promise<string[]> => []),
+}));
+vi.mock("../../lib/documentWorkspace", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../../lib/documentWorkspace")>()),
+    findNewAttachmentsOutsideWorkspace,
+}));
+
 vi.mock("../../lib/access", () => ({
     checkProjectAccess: (...args: unknown[]) => checkProjectAccess(...args),
     ensureDocAccess: vi.fn(async () => ({ ok: true, isCreator: true })),

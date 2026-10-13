@@ -31,6 +31,8 @@ export interface AccessControls {
     inheritedFromProjectId?: string | null;
     canManage: boolean;
     ownerLabel?: string;
+    /** What the item is called where the dialog describes sharing it. */
+    resourceNoun?: string;
     /**
      * For an organization's project or workflow: whether it is public (open
      * to every member) or private (shared with individuals). It is set on
@@ -396,6 +398,7 @@ export function AccessModal({
                                 : null
                         }
                         ownerLabel={access.ownerLabel}
+                        resourceNoun={access.resourceNoun}
                         currentUserId={currentUserId}
                         currentUserEmail={currentUserEmail}
                         loading={

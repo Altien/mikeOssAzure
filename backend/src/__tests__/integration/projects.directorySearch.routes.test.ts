@@ -293,4 +293,65 @@ describe("GET /projects?view=directory-search", () => {
         expect(overrideReads[0].filters).toEqual(["in:org_id", "eq:user_id"]);
         expect(overrideReads[0].filters).not.toContain("in:project_id");
     });
+
+    describe("narrowed to a workspace", () => {
+        // The picker offers documents to attach, and a chat or review takes
+        // documents from its own workspace only — so it searches that one.
+        const FIRM = "11111111-1111-4111-8111-111111111111";
+        const firmProject = { ...CREATED_ORG_PROJECT, org_id: FIRM };
+        const personalProject = {
+            id: "p-personal",
+            name: "Matter Personal",
+            org_id: null,
+            user_id: "u1",
+            updated_at: "2026-08-01T00:00:00Z",
+        };
+        const both = () =>
+            directorySearchDb({
+                created: [firmProject, personalProject],
+                orgProjects: [firmProject],
+                memberships: [{ org_id: FIRM, role: "member" }],
+            });
+        const searchIn = (workspace: string) =>
+            request(app)
+                .get(
+                    `/projects?view=directory-search&search=Matter&workspace=${workspace}`,
+                )
+                .set(...AUTH);
+        const ids = (res: { body: { id: string }[] }) =>
+            res.body.map((project) => project.id);
+
+        it("finds both when no workspace is named", async () => {
+            useDb(both());
+            const res = await search();
+            expect(res.status).toBe(200);
+            expect(ids(res)).toEqual(["p-firm", "p-personal"]);
+        });
+
+        it("leaves an organization's projects out of Personal", async () => {
+            useDb(both());
+            const res = await searchIn("personal");
+            expect(res.status).toBe(200);
+            expect(ids(res)).toEqual(["p-personal"]);
+        });
+
+        it("leaves personal projects out of an organization", async () => {
+            useDb(both());
+            const res = await searchIn(FIRM);
+            expect(res.status).toBe(200);
+            expect(ids(res)).toEqual(["p-firm"]);
+        });
+
+        it("404s a workspace the caller is not in", async () => {
+            useDb(
+                directorySearchDb({
+                    created: [personalProject],
+                    memberships: [],
+                }),
+            );
+            const res = await searchIn(FIRM);
+            expect(res.status).toBe(404);
+            expect(res.body.code).toBe("workspace_not_found");
+        });
+    });
 });

@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { useEffect, type ReactNode } from "react";
 import {
+    DocumentWorkspaceScope,
     PERSONAL_WORKSPACE,
     WorkspaceProvider,
+    useDocumentWorkspace,
     useWorkspace,
     useWorkspaceOrgId,
     useWorkspaceParam,
@@ -323,5 +325,66 @@ describe("outside a WorkspaceProvider", () => {
         // as they did before workspaces existed.
         render(<Probe />);
         expect(screen.getByText("|unscoped|loading|none")).toBeInTheDocument();
+    });
+});
+
+// Pickers and uploads inside a chat, review, project or workflow use that
+// item's workspace: it takes documents from nowhere else, whichever
+// workspace happens to be active.
+describe("the workspace documents are offered from", () => {
+    function DocumentProbe() {
+        return <p>documents:{useDocumentWorkspace() ?? "unscoped"}</p>;
+    }
+    const inAcme = (children: ReactNode) => {
+        window.localStorage.setItem(STORAGE_KEY, ACME.id);
+        return render(<WorkspaceProvider>{children}</WorkspaceProvider>);
+    };
+
+    it("is the active workspace where nothing says otherwise", async () => {
+        inAcme(<DocumentProbe />);
+        expect(
+            await screen.findByText(`documents:${ACME.id}`),
+        ).toBeInTheDocument();
+    });
+
+    it("is the organization of the item on screen, not the active one", async () => {
+        inAcme(
+            <DocumentWorkspaceScope orgId={BETA.id}>
+                <DocumentProbe />
+            </DocumentWorkspaceScope>,
+        );
+        expect(
+            await screen.findByText(`documents:${BETA.id}`),
+        ).toBeInTheDocument();
+    });
+
+    it("is Personal for a personal item opened while an organization is active", async () => {
+        inAcme(
+            <DocumentWorkspaceScope orgId={null}>
+                <DocumentProbe />
+            </DocumentWorkspaceScope>,
+        );
+        expect(
+            await screen.findByText(`documents:${PERSONAL_WORKSPACE}`),
+        ).toBeInTheDocument();
+    });
+
+    it("stays with what is already known while the item is still loading", async () => {
+        // A chat inside a project says nothing of its own; the project does.
+        inAcme(
+            <DocumentWorkspaceScope orgId={BETA.id}>
+                <DocumentWorkspaceScope orgId={undefined}>
+                    <DocumentProbe />
+                </DocumentWorkspaceScope>
+            </DocumentWorkspaceScope>,
+        );
+        expect(
+            await screen.findByText(`documents:${BETA.id}`),
+        ).toBeInTheDocument();
+    });
+
+    it("is not narrowed outside the app shell", () => {
+        render(<DocumentProbe />);
+        expect(screen.getByText("documents:unscoped")).toBeInTheDocument();
     });
 });

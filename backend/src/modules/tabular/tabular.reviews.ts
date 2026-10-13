@@ -15,6 +15,11 @@ import {
     resolveStandaloneOrgId,
 } from "../../lib/access";
 import { teamOrgIdOf } from "../../lib/personalOrgs";
+import {
+    DOCUMENT_WORKSPACE_MISMATCH_CODE,
+    DOCUMENT_WORKSPACE_MISMATCH_DETAIL,
+    findDocumentsOutsideWorkspace,
+} from "../../lib/documentWorkspace";
 import { can, type ProjectRole } from "../../lib/permissions";
 import { loadProfileUsersByEmail } from "../../lib/userLookup";
 import { type WorkspaceFilter } from "../../lib/workspace";
@@ -492,6 +497,24 @@ export async function createTabularReview(
         ? await resolveContentOrgId(db, { projectId: project_id })
         : ({ ok: true, orgId: standaloneOrgId } as const);
     if (!resolvedOrg.ok) return internalFailure(resolvedOrg.detail);
+    // A review is built from documents in its own workspace. Refused rather
+    // than dropped: a review that quietly came out with fewer rows than were
+    // chosen would look like a fault.
+    try {
+        const outside = await findDocumentsOutsideWorkspace(
+            db,
+            allowedDocumentIds,
+            resolvedOrg.orgId,
+        );
+        if (outside.length > 0)
+            return failure(
+                "validation",
+                DOCUMENT_WORKSPACE_MISMATCH_DETAIL,
+                DOCUMENT_WORKSPACE_MISMATCH_CODE,
+            );
+    } catch (error) {
+        return internalFailure(error);
+    }
     const { data: review, error } = await db
         .from("tabular_reviews")
         .insert({
@@ -997,6 +1020,48 @@ export async function updateTabularReview(
             updates.org_id = movedOrg.orgId;
         } else {
             updates.org_id = currentOrgId;
+        }
+    }
+
+    // A review is built from documents in its own workspace. Documents it
+    // already has are let through while it stays where it is — a review from
+    // before this rule keeps working — but a move into another workspace
+    // takes every document with it, so there all of them are looked at.
+    if (Array.isArray(body.document_ids) || projectIdUpdateProvided) {
+        try {
+            const existingDocumentIds = (existingReview.document_ids ??
+                []) as string[];
+            const nextDocumentIds =
+                (updates.document_ids as string[] | undefined) ??
+                existingDocumentIds;
+            const currentOrgId = await teamOrgIdOf(
+                db,
+                (existingReview.org_id as string | null | undefined) ?? null,
+            );
+            const nextOrgId = projectIdUpdateProvided
+                ? await teamOrgIdOf(db, updates.org_id as string | null)
+                : currentOrgId;
+            const moved = nextOrgId !== currentOrgId;
+            const toCheck = moved
+                ? nextDocumentIds
+                : nextDocumentIds.filter(
+                      (id) => !existingDocumentIds.includes(id),
+                  );
+            const outside = await findDocumentsOutsideWorkspace(
+                db,
+                toCheck,
+                nextOrgId,
+            );
+            if (outside.length > 0)
+                return failure(
+                    "validation",
+                    moved
+                        ? "This review uses documents from the workspace it is in, so it cannot be moved to a project in another one."
+                        : DOCUMENT_WORKSPACE_MISMATCH_DETAIL,
+                    DOCUMENT_WORKSPACE_MISMATCH_CODE,
+                );
+        } catch (error) {
+            return internalFailure(error);
         }
     }
 

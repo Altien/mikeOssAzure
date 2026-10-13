@@ -39,6 +39,14 @@ vi.mock("../../../lib/personalOrgs", async (importOriginal) => ({
     teamOrgIdOf,
 }));
 
+// Where each document is filed is the database's to say too; by default
+// every document named is in the review's own workspace.
+const findDocumentsOutsideWorkspace = vi.hoisted(() => vi.fn());
+vi.mock("../../../lib/documentWorkspace", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../../../lib/documentWorkspace")>()),
+    findDocumentsOutsideWorkspace,
+}));
+
 const loadProfileUsersByEmail = vi.hoisted(() => vi.fn());
 vi.mock("../../../lib/userLookup", async (importOriginal) => ({
     ...(await importOriginal<typeof import("../../../lib/userLookup")>()),
@@ -117,6 +125,7 @@ beforeEach(() => {
     teamOrgIdOf.mockImplementation(
         async (_db: unknown, orgId: string | null | undefined) => orgId ?? null,
     );
+    findDocumentsOutsideWorkspace.mockResolvedValue([]);
     loadProfileUsersByEmail.mockResolvedValue({
         userByEmail: new Map(),
         userById: new Map(),
@@ -207,6 +216,36 @@ describe("createTabularReview", () => {
             op: "delete",
             filters: { id: "rev-1" },
         });
+    });
+
+    it("refuses documents from another workspace, before writing anything", async () => {
+        resolveStandaloneOrgId.mockResolvedValue({ ok: true, orgId: "org-1" });
+        filterAccessibleDocumentIds.mockResolvedValue(["mine", "firm"]);
+        findDocumentsOutsideWorkspace.mockResolvedValue(["mine"]);
+        const { db, calls } = makeFakeDb({
+            tables: {
+                tabular_reviews: { data: { id: "rev-1" }, error: null },
+            },
+        });
+        const result = await createTabularReview(db, {
+            ...WHO,
+            document_ids: ["mine", "firm"],
+            columns_config: [],
+            model: "claude-sonnet-5",
+            org_id: "org-1",
+        });
+        expect(result).toMatchObject({
+            ok: false,
+            kind: "validation",
+            code: "document_workspace_mismatch",
+        });
+        // Judged against the organization the review is being started in.
+        expect(findDocumentsOutsideWorkspace).toHaveBeenCalledWith(
+            db,
+            ["mine", "firm"],
+            "org-1",
+        );
+        expect(calls.some((call) => call.op === "insert")).toBe(false);
     });
 
     it("files a review started on its own under the organization its author is working in", async () => {
@@ -966,6 +1005,78 @@ describe("updateTabularReview", () => {
         expect(calls.find((call) => call.op === "update")?.payload).toMatchObject(
             { project_id: "proj-9", org_id: "org-1" },
         );
+    });
+
+    it("checks only the documents being added while the review stays where it is", async () => {
+        // What the review already has is let through: one built across
+        // workspaces before the rule keeps working.
+        filterAccessibleDocumentIds.mockResolvedValue(["old", "new"]);
+        const { db, calls } = seeded({
+            user_id: "user-1",
+            org_id: "org-1",
+            document_ids: ["old"],
+        });
+        const result = await updateTabularReview(db, {
+            reviewId: "rev-1",
+            ...WHO,
+            body: { document_ids: ["old", "new"] },
+        });
+        expect(result.ok).toBe(true);
+        expect(findDocumentsOutsideWorkspace).toHaveBeenCalledWith(
+            db,
+            ["new"],
+            "org-1",
+        );
+        expect(calls.some((call) => call.op === "update")).toBe(true);
+    });
+
+    it("refuses to add a document from another workspace", async () => {
+        filterAccessibleDocumentIds.mockResolvedValue(["old", "new"]);
+        findDocumentsOutsideWorkspace.mockResolvedValue(["new"]);
+        const { db, calls } = seeded({
+            user_id: "user-1",
+            org_id: "org-1",
+            document_ids: ["old"],
+        });
+        const result = await updateTabularReview(db, {
+            reviewId: "rev-1",
+            ...WHO,
+            body: { document_ids: ["old", "new"] },
+        });
+        expect(result).toMatchObject({
+            ok: false,
+            kind: "validation",
+            code: "document_workspace_mismatch",
+        });
+        expect(calls.some((call) => call.op === "update")).toBe(false);
+    });
+
+    it("refuses to move a review into another workspace with its documents", async () => {
+        // A personal review built from personal files, sent to a project of
+        // an organization: every document would cross with it.
+        resolveContentOrgId.mockResolvedValue({ ok: true, orgId: "org-2" });
+        findDocumentsOutsideWorkspace.mockResolvedValue(["mine"]);
+        const { db, calls } = seeded({
+            user_id: "user-1",
+            org_id: null,
+            document_ids: ["mine"],
+        });
+        const result = await updateTabularReview(db, {
+            reviewId: "rev-1",
+            ...WHO,
+            body: { project_id: "proj-9" },
+        });
+        expect(result).toMatchObject({
+            ok: false,
+            kind: "validation",
+            code: "document_workspace_mismatch",
+        });
+        expect(findDocumentsOutsideWorkspace).toHaveBeenCalledWith(
+            db,
+            ["mine"],
+            "org-2",
+        );
+        expect(calls.some((call) => call.op === "update")).toBe(false);
     });
 
     it("restamps org_id from the destination project on a move", async () => {

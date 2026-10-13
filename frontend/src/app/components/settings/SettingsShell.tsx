@@ -8,6 +8,7 @@ export interface SettingsShellTab {
     id: string;
     label: string;
     href: string;
+    badge?: ReactNode;
 }
 
 /**
@@ -75,6 +76,7 @@ export function SettingsShell({
                                                     )}
                                                 >
                                                     {tab.label}
+                                                    {tab.badge ? <> {tab.badge}</> : null}
                                                 </button>
                                             </li>
                                         );

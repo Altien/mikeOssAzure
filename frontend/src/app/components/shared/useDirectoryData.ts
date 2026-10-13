@@ -9,7 +9,7 @@ import {
   type LibraryKind,
   type LibraryScope,
 } from "@/app/lib/mikeApi";
-import { useWorkspaceParam } from "@/app/contexts/WorkspaceContext";
+import { useDocumentWorkspace } from "@/app/contexts/WorkspaceContext";
 import type { Document, LibraryFolder, Project } from "./types";
 
 export type DirectoryTab = "files" | "templates" | "projects";
@@ -57,9 +57,10 @@ export function useDirectoryData(
     enabled: boolean,
     initialTab: DirectoryTab = "files",
 ) {
-  // The library tabs show the active workspace's library: what the caller
-  // filed in the workspace they are working in, and nothing from another.
-  const workspace = useWorkspaceParam();
+  // Every tab shows one workspace: that of the item the picker was opened
+  // from, or the active one. A chat or review takes documents from its own
+  // workspace only, so nothing from another is offered.
+  const workspace = useDocumentWorkspace();
   const scoped = useCallback(
     (tab: LibraryDirectoryTab): LibraryScope => ({
       kind: libraryKind(tab),
@@ -174,6 +175,7 @@ export function useDirectoryData(
         if (tab === "projects") {
           const rows = await listProjectSummaries({
             limit: DIRECTORY_PAGE_SIZE + 1,
+            workspace,
           });
           setProjects(
             rows.slice(0, DIRECTORY_PAGE_SIZE).map((project) => ({
@@ -219,7 +221,7 @@ export function useDirectoryData(
                 setLoadingTabs((prev) => ({ ...prev, [tab]: false }));
             }
         },
-    [enabled, scoped, setLibraryDocuments, setLibraryFolders],
+    [enabled, scoped, setLibraryDocuments, setLibraryFolders, workspace],
   );
 
   const loadFolderChildren = useCallback(
@@ -359,6 +361,7 @@ export function useDirectoryData(
       const rows = await listProjectSummaries({
         limit: DIRECTORY_PAGE_SIZE + 1,
         offset: projectsRef.current.length,
+        workspace,
       });
       setProjects((current) =>
         mergeById(
@@ -377,7 +380,7 @@ export function useDirectoryData(
       loadingMoreProjectsRef.current = false;
       setLoadingMoreProjects(false);
     }
-  }, [enabled, projectsHasMore]);
+  }, [enabled, projectsHasMore, workspace]);
 
   const loadProjectLevel = useCallback(
     async (projectId: string, parentFolderId: string | null = null) => {

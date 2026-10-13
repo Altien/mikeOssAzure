@@ -541,6 +541,8 @@ export async function searchProjectDirectory(options: {
     search: string;
     limit?: number;
     offset?: number;
+    /** Narrow to one workspace: "personal" or an organization's id. */
+    workspace?: string;
     signal?: AbortSignal;
 }): Promise<Project[]> {
     const params = new URLSearchParams({
@@ -549,6 +551,7 @@ export async function searchProjectDirectory(options: {
     });
     if (options.limit != null) params.set("limit", String(options.limit));
     if (options.offset != null) params.set("offset", String(options.offset));
+    if (options.workspace) params.set("workspace", options.workspace);
     return apiRequest<Project[]>(`/projects?${params}`, {
         signal: options.signal,
     });
@@ -3136,13 +3139,19 @@ export async function uploadReviewDocument(
     file: File,
     options?: {
         projectId?: string;
+        /**
+         * The review's workspace, for a review outside any project: the file
+         * is filed there, because a review takes documents from its own
+         * workspace only.
+         */
+        workspace?: string;
         documentIds?: string[];
         columnsConfig?: { index: number; name: string; prompt: string }[];
     },
 ): Promise<Document> {
     const uploaded = options?.projectId
         ? await uploadProjectDocument(options.projectId, file)
-        : await uploadStandaloneDocument(file);
+        : await uploadStandaloneDocument(file, undefined, options?.workspace);
 
     await updateTabularReview(reviewId, {
         columns_config: options?.columnsConfig,

@@ -103,6 +103,13 @@ catalogue usable; do not bypass the job during deployment.
 The frontend is statically exported and reads public identity/API configuration at runtime. Follow the deployment runbook for routing its assets and the backend /config endpoint; do not replace this with a Next.js production server or bake secrets into browser bundles.
 
 Store model credentials in Key Vault with local environment fallback. Azure OpenAI requires its deployment, endpoint, API version, and API key; managed identity access to Key Vault does not imply managed identity authentication to model inference. OpenRouter uses openrouter-api-key; Vercel AI Gateway accepts ai-gateway-api-key or the legacy vercel-ai-gateway-api-key alias.
+
+An explicitly confirmed baseline must match the objects actually present.
+Canonical history/checksum validation does not certify absent historical SQL
+objects: investigate any prerequisite failure before recording provenance.
+Recover through the documented numbered-migration process; never replay
+`schema.sql`, rewrite applied files, or edit `pgmigrations` by hand.
+
 ### After the organization-access upgrade: `tabular_review_legacy_shares`
 
 `0084_organization_legacy_sharing_backfill.sql` converts the old roleless

@@ -11,7 +11,7 @@ import {
     getProject,
     type UploadProgress,
 } from "@/app/lib/mikeApi";
-import { useWorkspaceParam } from "@/app/contexts/WorkspaceContext";
+import { useDocumentWorkspace } from "@/app/contexts/WorkspaceContext";
 import type { Document, Folder } from "../shared/types";
 import { FileDirectory } from "../shared/FileDirectory";
 import type { DirectoryTab } from "../shared/useDirectoryData";
@@ -72,7 +72,7 @@ export function AddDocumentsModal({
 }: Props) {
     // A document uploaded on its own belongs to the workspace it is
     // uploaded in.
-    const workspace = useWorkspaceParam();
+    const workspace = useDocumentWorkspace();
     const uploadSurfaceId =
         uploadStateId ??
         [

@@ -268,6 +268,47 @@ export function useWorkspaceParam(): string | undefined {
     return useContext(WorkspaceContext).workspaceId ?? undefined;
 }
 
+// The workspace of the chat, review, project or workflow on screen, for the
+// document pickers and uploads inside it. Undefined where nothing says.
+const DocumentWorkspaceContext = createContext<string | undefined>(undefined);
+
+/**
+ * Says which workspace the item rendered inside belongs to: `orgId` is its
+ * organization, null for a personal one, undefined while that is not known.
+ *
+ * Something is built from documents in its own workspace, and the server
+ * refuses any other. The active workspace is usually the same one, but an
+ * item can be opened from a link while another workspace is active, and its
+ * pickers must still offer documents it can take.
+ */
+export function DocumentWorkspaceScope({
+    orgId,
+    children,
+}: {
+    orgId: string | null | undefined;
+    children: ReactNode;
+}) {
+    const inherited = useContext(DocumentWorkspaceContext);
+    const workspace =
+        orgId === undefined ? inherited : (orgId ?? PERSONAL_WORKSPACE);
+    return (
+        <DocumentWorkspaceContext.Provider value={workspace}>
+            {children}
+        </DocumentWorkspaceContext.Provider>
+    );
+}
+
+/**
+ * The workspace whose documents are offered, and where an upload is filed:
+ * that of the item on screen when a `DocumentWorkspaceScope` names it,
+ * otherwise the active workspace.
+ */
+export function useDocumentWorkspace(): string | undefined {
+    const scoped = useContext(DocumentWorkspaceContext);
+    const active = useContext(WorkspaceContext).workspaceId ?? undefined;
+    return scoped ?? active;
+}
+
 /**
  * The `org_id` for something started on its own, outside any project — a
  * chat, a tabular review: the organization whose workspace is active, or

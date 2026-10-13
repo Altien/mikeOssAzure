@@ -19,6 +19,7 @@ import {
   ensureDocAccess,
   resolveContentOrgId,
 } from "../../lib/access";
+import { findDocumentsOutsideWorkspace } from "../../lib/documentWorkspace";
 import { can, DOCS_ORGANIZE_FORBIDDEN } from "../../lib/permissions";
 import {
   type Db,
@@ -131,6 +132,7 @@ export type AssignOrCopyResult =
   | { ok: false; kind: "forbidden" }
   | RoleForbidden
   | { ok: false; kind: "doc_not_found" }
+  | { ok: false; kind: "workspace_mismatch" }
   | { ok: false; kind: "update_failed" }
   | { ok: false; kind: "no_active_version" }
   | { ok: false; kind: "read_failed" }
@@ -187,6 +189,20 @@ export async function assignOrCopyDocument(
 
   // Already in this project — idempotent
   if (doc.project_id === projectId) return { ok: true, status: 200, doc };
+
+  // A project takes documents from its own workspace: a personal file does
+  // not go into an organization's project by id, nor an organization's into
+  // a personal one.
+  try {
+    const outside = await findDocumentsOutsideWorkspace(
+      db,
+      [documentId],
+      access.project.org_id ?? null,
+    );
+    if (outside.length > 0) return { ok: false, kind: "workspace_mismatch" };
+  } catch (error) {
+    return { ok: false, kind: "db_error", error };
+  }
 
   if (doc.project_id === null) {
     // Standalone → assign project_id (and inherit the project's org).

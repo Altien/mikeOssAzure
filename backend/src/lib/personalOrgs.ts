@@ -67,6 +67,34 @@ export async function teamOrgIdOf(
 }
 
 /**
+ * `teamOrgIdOf` for several organizations in one read: those of `orgIds`
+ * that name a team organization.
+ */
+export async function teamOrgIdsAmong(
+    db: Db,
+    orgIds: (string | null | undefined)[],
+): Promise<Set<string>> {
+    const ids = [
+        ...new Set(orgIds.filter((id): id is string => typeof id === "string")),
+    ];
+    if (ids.length === 0) return new Set();
+    const { data, error } = await db
+        .from("organizations")
+        .select("id, kind")
+        .in("id", ids);
+    if (error) {
+        if (isMissingPersonalOrgSchema(error)) return new Set(ids);
+        throw new Error("Failed to read the organizations' kinds");
+    }
+    const personal = new Set(
+        ((data ?? []) as { id?: string | null }[])
+            .filter(isPersonalOrgRow)
+            .map((row) => row.id),
+    );
+    return new Set(ids.filter((id) => !personal.has(id)));
+}
+
+/**
  * The ids of the personal organization(s) belonging to `userId` — one, once
  * the account has it.
  */
