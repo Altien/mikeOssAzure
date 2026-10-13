@@ -18,8 +18,6 @@ const preview = (members: number[] = [2]) => JSON.parse(sql(`
     select coalesce(json_agg(x order by kind, item_id), '[]')
     from public.org_members_departure_items(${q(10)}, array[${members.map(q)}]::uuid[]) x;
 `)) as { kind: string; item_id: string; title: string | null; disposition: string }[];
-const remove = (member: number) => sql(`delete from public.org_members
-    where org_id=${q(10)} and user_id=${q(member)};`);
 
 describe.skipIf(!container)("organization offboarding retention in PostgreSQL", () => {
     let created = false;

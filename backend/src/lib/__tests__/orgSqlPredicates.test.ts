@@ -136,7 +136,7 @@ it("keeps organization-wide scope exclusive to projects and workflows", () => {
 // decide that through one helper; ensureSharedRowAccess (lib/access.ts) is
 // its TypeScript twin.
 describe("standalone chats and reviews in an organization", () => {
-    const schema = readFileSync(resolve(ROOT, "migrations/0121_member_handover.sql"), "utf8") + "\n" + readFileSync(resolve(ROOT, "migrations/0120_standalone_org_content.sql"), "utf8");
+    const schema = ["0126_org_departure_retention.sql", "0124_public_member_handover.sql", "0121_member_handover.sql", "0120_standalone_org_content.sql"].map((name) => readFileSync(resolve(ROOT, "migrations", name), "utf8")).join("\n");
     const migration = readFileSync(
         resolve(ROOT, "migrations/0120_standalone_org_content.sql"),
         "utf8",
@@ -157,9 +157,8 @@ describe("standalone chats and reviews in an organization", () => {
         );
     });
 
-    // The later hand-over migration rewrote the access functions (nobody
-    // takes a standalone chat or review over any more), so a fresh install
-    // matches that one for them, and this one for what it alone defines.
+    // Match each function to the latest migration that defines it. The
+    // retention migration adds archive visibility checks to chat/review access.
     const handover = readFileSync(
         resolve(ROOT, "migrations/0121_member_handover.sql"),
         "utf8",
@@ -171,31 +170,32 @@ describe("standalone chats and reviews in an organization", () => {
         );
     });
 
+    const retention = readFileSync(
+        resolve(ROOT, "migrations/0126_org_departure_retention.sql"),
+        "utf8",
+    );
+
     it.each([
-        "standalone_org_access_role",
-        "chat_access_role",
-        "review_access_role",
+        ["standalone_org_access_role", handover],
+        ["chat_access_role", retention],
+        ["review_access_role", retention],
     ])(
-        "a fresh install defines %s exactly as the hand-over migration does",
-        (name) => {
+        "a fresh install defines %s exactly as its latest migration does",
+        (name, latest) => {
             expect(functionSource(schema, name)).toBe(
-                functionSource(handover, name),
+                functionSource(latest, name),
             );
         },
     );
 
-    const departure = readFileSync(
-        resolve(ROOT, "migrations/0124_public_member_handover.sql"),
-        "utf8",
-    );
     it.each([
         "org_members_departure_items",
         "org_member_sole_owned_items",
         "assign_org_member_items",
         "cleanup_removed_org_member_overrides",
         "org_member_private_standalone",
-    ])("a fresh install defines %s exactly as the public handover migration does", (name) => {
-        expect(functionSource(schema, name)).toBe(functionSource(departure, name));
+    ])("a fresh install defines %s exactly as the retention migration does", (name) => {
+        expect(functionSource(schema, name)).toBe(functionSource(retention, name));
     });
 
     it("asks membership first: nobody outside the organization reaches it, its author included", () => {
@@ -230,21 +230,25 @@ describe("standalone chats and reviews in an organization", () => {
         expect(body).toContain("for update");
     });
 
-    it("classifies public projects and workflows for transfer and hides private titles", () => {
+    it("transfers public or shared work, archives unshared work and hides private titles", () => {
         const body = functionSource(schema, "org_members_departure_items");
-        expect(body.match(/case when item.visibility = 'organization' then 'transfer' else 'delete' end/g)).toHaveLength(2);
-        expect(body.match(/case when item.visibility = 'organization' then item.\w+ else null end/g)).toHaveLength(2);
-        expect(functionSource(schema, "org_member_sole_owned_items")).toContain("where item.disposition = 'transfer'");
+        expect(body.match(/item.visibility='organization' or exists/g)).toHaveLength(2);
+        expect(body.match(/g.role in \('owner','editor','viewer'\)/g)).toHaveLength(4);
+        expect(body.match(/then 'transfer' else 'archive' end/g)).toHaveLength(5);
+        expect(body.match(/case when item.visibility='organization' then item.\w+ else null::text end/g)).toHaveLength(2);
+        expect(functionSource(schema, "org_member_sole_owned_items")).toContain("where disposition='transfer'");
     });
 
-    it("retains private work with a remaining member owner and handles standalone documents", () => {
+    it("keeps co-owned work and archives standalone documents instead of deleting them immediately", () => {
         const body = functionSource(schema, "org_members_departure_items");
-        expect(body.match(/not \(creator.user_id = any\(p_user_ids\)\)/g)).toHaveLength(4);
-        expect(body).toContain("and other.role = 'owner'");
-        expect(body).toContain("d.project_id is null and d.workflow_id is null");
-        expect(body).toContain("and d.user_id = any(p_user_ids)");
+        expect(body.match(/and not exists \(select 1 from public.org_members m/g)).toHaveLength(4);
+        expect(body.match(/g.role='owner' and not \(holder.user_id::text = any\(p_user_ids\)\)/g)).toHaveLength(4);
+        expect(body).toContain("d.project_id is null and d.workflow_id is null and d.archived_at is null");
+        const cleanup = functionSource(schema, "cleanup_removed_org_member_overrides");
+        expect(cleanup).toContain("insert into public.org_departure_archives");
+        expect(cleanup).toContain("archived_at=now(),user_id=null");
         for (const table of ["projects", "workflows", "chats", "tabular_reviews", "documents"])
-            expect(functionSource(schema, "cleanup_removed_org_member_overrides")).toContain(`delete from public.${table} where id = gone.item_id`);
+            expect(cleanup).not.toContain(`delete from public.${table} where`);
     });
 
     it.each(["chat_access_role", "review_access_role"])(

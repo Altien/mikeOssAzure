@@ -155,7 +155,7 @@ function makeDb(
     profiles: Record<string, unknown>[] = [],
     org: {
         memberships?: { org_id: string; role: string }[];
-        projects?: { id: string; user_id: string | null; org_id: string }[];
+        projects?: { id: string; user_id: string | null; org_id: string; visibility?: "private" | "organization" }[];
         denies?: string[];
     } = {},
 ) {

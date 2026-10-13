@@ -34,7 +34,7 @@ function makeDb(initial: Record<string, Row[]>) {
 
     function query(table: string) {
         const filters: (
-            | { type: "eq"; col: string; val: unknown }
+            | { type: "eq" | "is"; col: string; val: unknown }
             | { type: "in"; col: string; vals: unknown[] }
         )[] = [];
         let op: "select" | "insert" | "update" | "delete" = "select";
@@ -47,9 +47,11 @@ function makeDb(initial: Record<string, Row[]>) {
         const matches = (rows: Row[]) =>
             rows.filter((r) =>
                 filters.every((f) =>
-                    f.type === "eq"
-                        ? r[f.col] === f.val
-                        : f.vals.includes(r[f.col]),
+                    f.type === "in"
+                        ? f.vals.includes(r[f.col])
+                        : f.type === "is"
+                          ? (r[f.col] ?? null) === f.val
+                          : r[f.col] === f.val,
                 ),
             );
 
@@ -94,6 +96,10 @@ function makeDb(initial: Record<string, Row[]>) {
             },
             eq: (col: string, val: unknown) => {
                 filters.push({ type: "eq", col, val });
+                return builder;
+            },
+            is: (col: string, val: unknown) => {
+                filters.push({ type: "is", col, val });
                 return builder;
             },
             in: (col: string, vals: unknown[]) => {
@@ -807,7 +813,7 @@ describe("handing over a departing member's work", () => {
     const isMember = (db: any, userId: string) =>
         (db._tables.org_members as Row[]).some((m) => m.user_id === userId);
 
-    it("says what a removal would hand over and delete", async () => {
+    it("says what a removal would hand over and archive", async () => {
         const db = seed();
         await expect(
             getMemberHandover(db, {
@@ -827,6 +833,9 @@ describe("handing over a departing member's work", () => {
                 chats: 1,
                 reviews: 1,
                 documents: 2,
+                sharedChats: 0,
+                sharedReviews: 0,
+                sharedDocuments: 0,
             },
         });
     });
@@ -874,18 +883,18 @@ describe("handing over a departing member's work", () => {
     });
 
     it.each(["alex", "sam"])(
-        "refuses the removal by %s until a successor is named, and removes nothing",
+        "lets %s remove a member with the default organization-owner successor",
         async (actorId) => {
             const db = seed();
-            await expect(remove(db, actorId)).resolves.toEqual({
-                ok: false,
-                kind: "handover_required",
-                projects: 1,
-                workflows: 1,
+            const rpc = vi.spyOn(db, "rpc");
+            await expect(remove(db, actorId)).resolves.toEqual({ ok: true });
+            expect(rpc).toHaveBeenCalledWith("remove_org_member", {
+                p_org_id: "o1", p_user_id: "sam", p_actor_id: actorId, p_successor_id: null,
             });
-            expect(isMember(db, "sam")).toBe(true);
-            expect(db._tables.workflow_org_access_overrides).toEqual([]);
-            expect(db._tables.audit_events ?? []).toEqual([]);
+            expect(isMember(db, "sam")).toBe(false);
+            expect(db._tables.projects.find((row: Row) => row.id === "p-private")).toMatchObject({
+                archived_at: expect.any(String), user_id: null,
+            });
         },
     );
 
@@ -932,7 +941,7 @@ describe("handing over a departing member's work", () => {
         ).toBe(false);
     });
 
-    it("records who took over what, and how much was deleted", async () => {
+    it("records the successor and counts of transferred and archived work", async () => {
         const db = seed();
         await remove(db, "alex", "robin");
         expect(db._tables.audit_events).toEqual([
@@ -943,11 +952,11 @@ describe("handing over a departing member's work", () => {
                     assigned_to: "robin",
                     assigned_projects: 1,
                     assigned_workflows: 1,
-                    deleted_projects: 1,
-                    deleted_workflows: 1,
-                    deleted_chats: 1,
-                    deleted_reviews: 1,
-                    deleted_documents: 2,
+                    archived_projects: 1,
+                    archived_workflows: 1,
+                    archived_chats: 1,
+                    archived_reviews: 1,
+                    archived_documents: 2,
                 }),
             }),
         ]);
