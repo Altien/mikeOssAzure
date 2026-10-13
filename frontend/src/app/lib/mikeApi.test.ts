@@ -116,6 +116,16 @@ import {
     createOrg,
     createOrgInvitation,
     deleteOrg,
+    deleteOrgData,
+    getOrgLogo,
+    saveOrgLogo,
+    deleteOrgLogo,
+    getOrgApiKeys,
+    saveOrgApiKey,
+    saveOrgRouterModels,
+    setOrgApiKeyEnabled,
+    setOrgPersonalApiKeysAllowed,
+    getOrgMemberHandover,
     declineOrgInvitation,
     getOrg,
     getProjectAccess,
@@ -3200,6 +3210,69 @@ describe("thin endpoint wrappers", () => {
             url: "/user/invitations/inv-1/decline",
             method: "POST",
         },
+        {
+            name: "deleteOrgData", call: () => deleteOrgData("org-1", "projects"),
+            url: "/orgs/org-1/data/projects", method: "DELETE",
+        },
+        {
+            name: "saveOrgLogo", call: () => saveOrgLogo("org-1", "data:image/png;base64,test"),
+            url: "/orgs/org-1/logo", method: "PUT", body: { data_url: "data:image/png;base64,test" },
+        },
+        {
+            name: "deleteOrgLogo", call: () => deleteOrgLogo("org-1"),
+            url: "/orgs/org-1/logo", method: "DELETE",
+        },
+        {
+            name: "getOrgApiKeys", call: () => getOrgApiKeys("org-1"), url: "/orgs/org-1/api-keys",
+        },
+        {
+            name: "saveOrgApiKey (clear)", call: () => saveOrgApiKey("org-1", "openai", null),
+            url: "/orgs/org-1/api-keys/openai", method: "PUT", body: { api_key: null },
+        },
+        {
+            name: "saveOrgApiKey (provider settings)", call: () => saveOrgApiKey("org-1", "bedrock", "synthetic-key", { region: "us-east-1" }),
+            url: "/orgs/org-1/api-keys/bedrock", method: "PUT", body: { api_key: "synthetic-key", settings: { region: "us-east-1" } },
+        },
+        {
+            name: "saveOrgRouterModels", call: () => saveOrgRouterModels("org-1", "openrouter", ["provider/model"]),
+            url: "/orgs/org-1/api-keys/openrouter/models", method: "PUT", body: { model_ids: ["provider/model"] },
+        },
+        {
+            name: "setOrgApiKeyEnabled", call: () => setOrgApiKeyEnabled("org-1", "openai", false),
+            url: "/orgs/org-1/api-keys/openai", method: "PATCH", body: { enabled: false },
+        },
+        {
+            name: "setOrgPersonalApiKeysAllowed", call: () => setOrgPersonalApiKeysAllowed("org-1", false),
+            url: "/orgs/org-1/api-keys/policy", method: "PUT", body: { allow_personal_api_keys: false },
+        },
+        {
+            name: "getOrgMemberHandover", call: () => getOrgMemberHandover("org-1", "user-2"),
+            url: "/orgs/org-1/members/user-2/handover",
+        },
+        {
+            name: "getOrgMemberHandover (bulk)", call: () => getOrgMemberHandover("org-1", "user-2", ["user-2", "user-3"]),
+            url: "/orgs/org-1/members/user-2/handover?departing_user_ids=user-2%2Cuser-3",
+        },
+        {
+            name: "removeOrgMember (successor)", call: () => removeOrgMember("org-1", "user-2", "user-3"),
+            url: "/orgs/org-1/members/user-2?assign_to=user-3", method: "DELETE",
+        },
+        {
+            name: "getUserMemory (workspace)", call: () => getUserMemory(undefined, "org-1"),
+            url: "/user/memory?workspace=org-1",
+        },
+        {
+            name: "updateUserMemory (workspace)", call: () => updateUserMemory("# Preferences", 3, "org-1"),
+            url: "/user/memory?workspace=org-1", method: "PUT", body: { content: "# Preferences", expected_revision: 3 },
+        },
+        {
+            name: "setUserMemoryEnabled (workspace)", call: () => setUserMemoryEnabled(false, "org-1"),
+            url: "/user/memory/settings?workspace=org-1", method: "PATCH", body: { enabled: false },
+        },
+        {
+            name: "getOpenRouterModels (workspace)", call: () => getOpenRouterModels("org-1"),
+            url: "/models/openrouter?workspace=org-1",
+        },
         // Per-recipient project access grants.
         {
             name: "getProjectAccess",
@@ -3528,6 +3601,7 @@ describe("dev divergences", () => {
 describe("workspace parameter on list requests", () => {
     const ORG = "7b1d9d0e-3c5a-4f6e-9a51-0c2f7d3e8a11";
     const requests: [string, (workspace?: string) => Promise<unknown>, string][] = [
+        ["searchProjectDirectory", (workspace) => searchProjectDirectory({ search: "matter", workspace }), "/api/projects"],
         ["listProjectsPage", (workspace) => listProjectsPage({ workspace }), "/api/projects"],
         [
             "listProjectSummaries",
@@ -3599,5 +3673,24 @@ describe("organization archives", () => {
         expect(lastFetchCall()).toMatchObject({ url: "/api/orgs/org/archives/recover", init: { method: "POST", body: JSON.stringify({ archive_ids: ["a", "b"], assign_to: "member" }) } });
         await deleteOrgDepartureArchives("org", ["a", "b"]);
         expect(lastFetchCall()).toMatchObject({ url: "/api/orgs/org/archives/delete", init: { method: "POST", body: JSON.stringify({ archive_ids: ["a", "b"] }) } });
+    });
+});
+
+
+describe("organization logos", () => {
+    it.each(["data:image/png;base64,test", ""])("reads the saved logo or an empty logo (%s)", async (dataUrl) => {
+        fetchMock.mockResolvedValue(jsonResponse({ data_url: dataUrl }));
+        expect(await getOrgLogo("org-1")).toBe(dataUrl || null);
+        expect(lastFetchCall().url).toBe("/api/orgs/org-1/logo");
+    });
+
+    it("treats a missing logo as empty without hiding server or network errors", async () => {
+        fetchMock.mockResolvedValueOnce(jsonResponse({ detail: "Not found" }, { status: 404 }));
+        expect(await getOrgLogo("org-1")).toBeNull();
+        fetchMock.mockResolvedValueOnce(jsonResponse({ detail: "Unavailable" }, { status: 503 }));
+        await expect(getOrgLogo("org-1")).rejects.toMatchObject({ status: 503 });
+        const error = new TypeError("Network unavailable");
+        fetchMock.mockRejectedValueOnce(error);
+        await expect(getOrgLogo("org-1")).rejects.toBe(error);
     });
 });
