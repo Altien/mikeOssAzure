@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import {
+    getProject,
     getTabularReview,
     getTabularReviewAccess,
     grantTabularReviewAccess,
@@ -9,6 +10,9 @@ import {
 } from "@/app/lib/mikeApi";
 import type { TabularReview } from "@/app/components/shared/types";
 import { TRView } from "./TabularReviewView";
+
+const useItemWorkspace = vi.hoisted(() => vi.fn());
+vi.mock("@/app/hooks/useItemWorkspace", () => ({ useItemWorkspace }));
 
 // What this file pins: an access change the server accepted is never reported
 // as a failure. Reloading the roster afterwards is bookkeeping, and its failure
@@ -252,5 +256,54 @@ describe("TabularReviewView access mutations", () => {
         expect(await screen.findByRole("alert")).toHaveTextContent(
             "Could not change that role.",
         );
+    });
+});
+
+describe("the workspace a review opens", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+            matches: true,
+            media: query,
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+        }));
+    });
+    const loaded = (over: Partial<TabularReview>) =>
+        vi.mocked(getTabularReview).mockResolvedValue({
+            review: review({ access_role: "owner", ...over }),
+            cells: [],
+            rows: [],
+            documents: [],
+        });
+
+    it.each([
+        ["an organization's review", "org-1", "org-1"],
+        ["a personal review", null, null],
+    ])("is its own for %s", async (_name, orgId, expected) => {
+        loaded({ org_id: orgId });
+        render(<TRView reviewId="r1" />);
+
+        await waitFor(() =>
+            expect(useItemWorkspace).toHaveBeenLastCalledWith("r1", expected),
+        );
+    });
+
+    it("is left to the project for a review inside one", async () => {
+        loaded({ org_id: "org-1", project_id: "p1" });
+        vi.mocked(getProject).mockResolvedValue({
+            id: "p1",
+            name: "Matter",
+            org_id: "org-1",
+        } as Awaited<ReturnType<typeof getProject>>);
+        render(<TRView reviewId="r1" projectId="p1" />);
+
+        await waitFor(() => expect(getTabularReview).toHaveBeenCalled());
+        await waitFor(() =>
+            expect(useItemWorkspace).toHaveBeenLastCalledWith(null, "org-1"),
+        );
+        expect(
+            useItemWorkspace.mock.calls.every(([itemId]) => itemId == null),
+        ).toBe(true);
     });
 });

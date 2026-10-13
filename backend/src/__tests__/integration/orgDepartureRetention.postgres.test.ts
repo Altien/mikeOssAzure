@@ -2,6 +2,8 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { buildUserAccountExport, buildUserChatsExport } from "../../modules/user/user.dataExport";
+import { makeExportDb, type Row } from "../../modules/user/__tests__/user.dataExport.fixture";
 
 // Opt in with MIKE_TEST_POSTGRES_CONTAINER=supabase_db_backend. All writes
 // target a disposable database; the container's application DB is untouched.
@@ -90,6 +92,38 @@ describe.skipIf(!container)("organization offboarding retention in PostgreSQL", 
         expect(sql(`select public.chat_access_role(${q(40)},null,null,${q(10)},${q(1)},'owner@example.test')`)).toBe("owner");
         expect(sql(`select public.review_access_role(${q(50)},null,null,${q(10)},${q(1)},'owner@example.test')`)).toBe("owner");
         expect(sql(`select user_id from public.documents where id=${q(60)}`)).toBe(uid(1));
+    });
+
+    it("does not export a retained review transcript after its creator leaves", async () => {
+        sql(`insert into public.projects(id,org_id,user_id,name,visibility)
+                values (${q(20)},${q(10)},${q(2)},'Shared project','organization');
+            insert into public.tabular_reviews(id,project_id,user_id,title)
+                values (${q(50)},${q(20)},${q(2)},'Team review'),(${q(51)},null,${q(2)},'Personal review');
+            insert into public.tabular_review_chats(id,review_id,user_id,title)
+                values (${q(40)},${q(50)},${q(2)},'Team transcript'),(${q(41)},${q(51)},${q(2)},'Personal transcript');`);
+        depart();
+        sql(`insert into public.tabular_review_chat_messages(id,chat_id,author_user_id,role,content)
+                values (${q(70)},${q(40)},${q(1)},'user','"Written after removal"'),
+                    (${q(71)},${q(41)},${q(2)},'user','"Personal message"');`);
+        expect(sql(`select count(*) from public.org_members where org_id=${q(10)} and user_id=${q(2)}`)).toBe("0");
+        expect(sql(`select public.review_access_role(${q(50)},${q(20)},null,${q(10)},${q(2)},'departing@example.test') is null`)).toBe("t");
+        // Creator provenance remains on the transcript, despite loss of access.
+        expect(sql(`select user_id from public.tabular_review_chats where id=${q(40)}`)).toBe(uid(2));
+
+        // Run the real export and read-permission helpers against the rows
+        // produced by PostgreSQL's removal transaction, without a REST server.
+        const tables: Record<string, Row[]> = {};
+        for (const table of ["organizations", "org_members", "projects", "tabular_reviews", "tabular_review_chats", "tabular_review_chat_messages"]) {
+            tables[table] = JSON.parse(sql(`select coalesce(json_agg(t),'[]') from public.${table} t`));
+        }
+        const { db } = makeExportDb(tables);
+        const account = await buildUserAccountExport(db, uid(2), "departing@example.test");
+        const chats = await buildUserChatsExport(db, uid(2), "departing@example.test");
+        for (const exported of [account, chats]) {
+            expect(exported.tabular_review_chats.chats.map((row) => row.id)).toEqual([uid(41)]);
+            expect(exported.tabular_review_chats.messages.map((row) => row.id)).toEqual([uid(71)]);
+            expect(JSON.stringify(exported)).not.toContain("Written after removal");
+        }
     });
 
     it("archives containers with their files and allows only owners to recover them", () => {

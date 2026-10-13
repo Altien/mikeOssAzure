@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   workspaceId: "org-1" as string | null,
   organizations: [] as { id: string; name: string; role: string }[] | null,
   setWorkspace: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -34,11 +35,16 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("@/app/contexts/WorkspaceContext", () => ({
   PERSONAL_WORKSPACE: "personal",
+  PERSONAL_WORKSPACE_LABEL: "Personal",
   useWorkspace: () => ({
     workspaceId: mocks.workspaceId,
     organizations: mocks.organizations,
     setWorkspace: mocks.setWorkspace,
   }),
+}));
+vi.mock("@/shared/lib/toastStore", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/shared/lib/toastStore")>()),
+  showToast: mocks.showToast,
 }));
 vi.mock("./OrganizationProviderKeys", () => ({
   OrganizationProviderKeys: ({ orgName }: { orgName: string }) => (
@@ -279,144 +285,69 @@ describe("the settings title", () => {
 });
 
 describe("an organization's settings belong to its workspace", () => {
+  const shell = (
+    <OrganizationSettingsProvider orgId="org-1">
+      <OrganizationSettingsFrame>
+        <Section />
+      </OrganizationSettingsFrame>
+    </OrganizationSettingsProvider>
+  );
+
   it.each([
     ["another organization's workspace", "org-2"],
     ["the personal workspace", "personal"],
-  ])("do not open from %s, and nothing about the organization is read", async (_name, workspaceId) => {
+  ])("opened from %s, they switch to their own, and read nothing until then", async (_name, workspaceId) => {
     mocks.workspaceId = workspaceId;
-    renderShell();
+    const view = renderShell();
 
-    expect(
-      screen.getByText(
-        "Elite Law LLP's settings can only be opened from its own workspace.",
-      ),
-    ).toBeInTheDocument();
-    // No frame, no sections, and no request for the organization.
+    // The switch is asked for, with a notice, and nothing is shown or read.
+    expect(mocks.setWorkspace).toHaveBeenCalledExactlyOnceWith("org-1");
+    expect(mocks.showToast).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ title: "Switched to Elite Law LLP" }),
+    );
     expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
     expect(screen.queryByText(/section for/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^Switch to/ }),
+    ).not.toBeInTheDocument();
     expect(mocks.getOrg).not.toHaveBeenCalled();
+
+    // The workspace context makes the switch; the settings open.
+    mocks.workspaceId = "org-1";
+    view.rerender(shell);
+    expect(
+      await screen.findByText("section for Elite Law LLP"),
+    ).toBeInTheDocument();
+    expect(mocks.getOrg).toHaveBeenCalledExactlyOnceWith("org-1");
+    expect(mocks.setWorkspace).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps a page outside the frame, such as Members, closed too", () => {
-    mocks.workspaceId = "org-2";
+  it("switches for a page outside the frame, such as Members, too", () => {
+    mocks.workspaceId = "personal";
     render(
       <OrganizationSettingsProvider orgId="org-1">
         <Section />
       </OrganizationSettingsProvider>,
     );
+    expect(mocks.setWorkspace).toHaveBeenCalledExactlyOnceWith("org-1");
     expect(screen.queryByText(/section for/)).not.toBeInTheDocument();
     expect(mocks.getOrg).not.toHaveBeenCalled();
   });
 
-  it("offers the switch to its workspace, and opens once the switch is made", async () => {
-    const user = userEvent.setup();
-    mocks.workspaceId = "personal";
-    const view = renderShell();
-
-    await user.click(
-      screen.getByRole("button", { name: "Switch to Elite Law LLP" }),
-    );
-    expect(mocks.setWorkspace).toHaveBeenCalledExactlyOnceWith("org-1");
-
-    // The workspace context makes the switch; the settings follow it.
-    mocks.workspaceId = "org-1";
-    view.rerender(
-      <OrganizationSettingsProvider orgId="org-1">
-        <OrganizationSettingsFrame>
-          <Section />
-        </OrganizationSettingsFrame>
-      </OrganizationSettingsProvider>,
-    );
-    expect(
-      await screen.findByText("section for Elite Law LLP"),
-    ).toBeInTheDocument();
-    expect(mocks.getOrg).toHaveBeenCalledExactlyOnceWith("org-1");
-  });
-
-  // The caller switches workspace with the settings open.
-  const switchWorkspace = async (workspaceId: string) => {
+  it("lets go when the caller switches away: the switcher takes them home", async () => {
     const view = renderShell();
     await screen.findByText("section for Elite Law LLP");
-    mocks.workspaceId = workspaceId;
-    view.rerender(
-      <OrganizationSettingsProvider orgId="org-1">
-        <OrganizationSettingsFrame>
-          <Section />
-        </OrganizationSettingsFrame>
-      </OrganizationSettingsProvider>,
-    );
-  };
 
-  it("follows a switch to another organization, to the same section of its settings", async () => {
-    mocks.pathname = "/organizations/org-1/settings/members";
-    await switchWorkspace("org-2");
-
-    expect(mocks.replace).toHaveBeenCalledExactlyOnceWith(
-      "/organizations/org-2/settings/members",
-    );
-    // Nothing of the organization left behind, and no offer to switch back.
-    expect(screen.queryByText(/section for/)).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /^Switch to/ }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("opens General where the caller's role is not offered the section", async () => {
-    // An owner's page here; a member there.
-    mocks.pathname = "/organizations/org-1/settings/privacy-data";
-    await switchWorkspace("org-2");
-
-    expect(mocks.replace).toHaveBeenCalledExactlyOnceWith(
-      "/organizations/org-2/settings",
-    );
-  });
-
-  it("keeps an admin's section in an organization the caller administers", async () => {
-    mocks.organizations = [
-      { id: "org-1", name: "Elite Law LLP", role: "owner" },
-      { id: "org-2", name: "Beta Chambers", role: "admin" },
-    ];
-    mocks.pathname = "/organizations/org-1/settings/providers";
-    await switchWorkspace("org-2");
-
-    expect(mocks.replace).toHaveBeenCalledExactlyOnceWith(
-      "/organizations/org-2/settings/providers",
-    );
-  });
-
-  it("follows a switch to Personal, to the caller's own settings", async () => {
-    await switchWorkspace("personal");
-
-    expect(mocks.replace).toHaveBeenCalledExactlyOnceWith("/settings");
-  });
-
-  it("does not follow the fall back to Personal when the organization is gone", async () => {
-    // Leaving, removal and deletion navigate for themselves.
-    const view = renderShell();
-    await screen.findByText("section for Elite Law LLP");
-    mocks.workspaceId = "personal";
-    mocks.organizations = [
-      { id: "org-2", name: "Beta Chambers", role: "member" },
-    ];
-    view.rerender(
-      <OrganizationSettingsProvider orgId="org-1">
-        <OrganizationSettingsFrame>
-          <Section />
-        </OrganizationSettingsFrame>
-      </OrganizationSettingsProvider>,
-    );
-
-    expect(mocks.replace).not.toHaveBeenCalled();
-  });
-
-  it("does not move somebody who arrived from another workspace", () => {
     mocks.workspaceId = "org-2";
-    renderShell();
+    view.rerender(shell);
 
+    // Nothing of the organization left behind, no pull back to it, and no
+    // navigation of its own.
+    expect(screen.queryByText(/section for/)).not.toBeInTheDocument();
+    expect(mocks.setWorkspace).not.toHaveBeenCalled();
+    expect(mocks.showToast).not.toHaveBeenCalled();
+    expect(mocks.push).not.toHaveBeenCalled();
     expect(mocks.replace).not.toHaveBeenCalled();
-    expect(
-      screen.getByRole("button", { name: "Switch to Elite Law LLP" }),
-    ).toBeInTheDocument();
   });
 
   it("says nothing about an organization the caller does not belong to", async () => {
@@ -431,9 +362,8 @@ describe("an organization's settings belong to its workspace", () => {
       screen.getByText("These settings are not available."),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Elite Law/)).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /^Switch to/ }),
-    ).not.toBeInTheDocument();
+    expect(mocks.setWorkspace).not.toHaveBeenCalled();
+    expect(mocks.showToast).not.toHaveBeenCalled();
     expect(mocks.getOrg).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "Your organizations" }));

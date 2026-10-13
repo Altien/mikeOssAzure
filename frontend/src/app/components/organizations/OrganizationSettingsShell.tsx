@@ -9,7 +9,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { OrganizationSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import { TableEmptyState } from "@/app/components/shared/TablePrimitive";
 import {
@@ -17,10 +17,8 @@ import {
   type SettingsShellTab,
 } from "@/app/components/settings/SettingsShell";
 import { EmptyState } from "@/app/components/ui/empty-state";
-import {
-  PERSONAL_WORKSPACE,
-  useWorkspace,
-} from "@/app/contexts/WorkspaceContext";
+import { useWorkspace } from "@/app/contexts/WorkspaceContext";
+import { useItemWorkspace } from "@/app/hooks/useItemWorkspace";
 import { getOrg, type Org } from "@/app/lib/mikeApi";
 import { isOrgAdmin, isOrgOwner } from "@/app/lib/permissions";
 import { userFacingApiError } from "@/app/lib/userFacingError";
@@ -36,11 +34,10 @@ import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 //
 // An organization's settings are part of its workspace: they open only while
 // that organization is the caller's active workspace, never from another
-// organization's or from personal work. Somebody who follows a link from
-// elsewhere is told so and offered the switch; nothing about the
-// organization is read until they make it. Somebody who switches workspace
-// while the settings are open is taken to the settings of the workspace they
-// switched to, at the same section where they may open it.
+// organization's or from personal work. Opening them from elsewhere — a
+// link, the browser's history — switches to that workspace, with a notice
+// (useItemWorkspace); nothing about the organization is read until it has.
+// Switching workspace with them open leaves for the new workspace's home.
 //
 // OrganizationSettingsProvider loads the organization once and hands it to
 // every page under settings, so they agree about the name and about what the
@@ -84,42 +81,6 @@ type OrganizationSettingsSection =
   | "providers"
   | "privacy-data";
 
-/** The section of `orgId`'s settings a path is in. */
-function sectionOf(
-  pathname: string | null,
-  orgId: string,
-): OrganizationSettingsSection {
-  const root = organizationSettingsHref(orgId);
-  const segment = pathname?.startsWith(`${root}/`)
-    ? pathname.slice(root.length + 1).split("/")[0]
-    : "";
-  return segment === "members" ||
-    segment === "providers" ||
-    segment === "privacy-data"
-    ? segment
-    : "general";
-}
-
-/**
- * Where the settings go when the caller switches workspace with them open:
- * the same section of the new organization's settings if their role there
- * is offered it, otherwise General; and their own settings for Personal.
- */
-function settingsHrefAfterSwitch(
-  workspaceId: string,
-  organizations: Org[] | null,
-  section: OrganizationSettingsSection,
-): string {
-  if (workspaceId === PERSONAL_WORKSPACE) return "/settings";
-  const role = organizations?.find((org) => org.id === workspaceId)?.role;
-  const offered =
-    section === "general" ||
-    section === "members" ||
-    (section === "providers" && !!role && isOrgAdmin(role)) ||
-    (section === "privacy-data" && !!role && isOrgOwner(role));
-  return organizationSettingsHref(workspaceId, offered ? section : "general");
-}
-
 export function OrganizationSettingsProvider({
   orgId,
   children,
@@ -128,34 +89,14 @@ export function OrganizationSettingsProvider({
   children: ReactNode;
 }) {
   const router = useRouter();
-  const pathname = usePathname();
-  const { workspaceId, organizations, setWorkspace } = useWorkspace();
+  const { workspaceId, organizations } = useWorkspace();
   const [org, setOrg] = useState<Org | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   // `null` is "no workspace to compare with" (outside a WorkspaceProvider),
   // where nothing is narrowed.
   const inWorkspace = workspaceId === null || workspaceId === orgId;
-  // Whether these settings have been open in their own workspace. Leaving it
-  // from here is a switch made on this page, which the settings follow;
-  // arriving from elsewhere is not, and is offered the switch instead.
-  const [opened, setOpened] = useState({ orgId, was: workspaceId === orgId });
-  if (opened.orgId !== orgId)
-    setOpened({ orgId, was: workspaceId === orgId });
-  else if (!opened.was && workspaceId === orgId)
-    setOpened({ orgId, was: true });
-  // Losing the organization (leaving it, its deletion, being removed) also
-  // ends up in Personal, but is not a switch: those flows say where to go.
-  const stillTheirs = !!organizations?.some((known) => known.id === orgId);
-  const switchedTo =
-    opened.orgId === orgId && opened.was && !inWorkspace && stillTheirs
-      ? workspaceId
-      : null;
-  const section = sectionOf(pathname, orgId);
-
-  useEffect(() => {
-    if (!switchedTo) return;
-    router.replace(settingsHrefAfterSwitch(switchedTo, organizations, section));
-  }, [organizations, router, section, switchedTo]);
+  // Opening an organization's settings opens its workspace.
+  useItemWorkspace(orgId, orgId);
 
   const reload = useCallback(async () => {
     // Another workspace's settings are not read at all.
@@ -180,48 +121,30 @@ export function OrganizationSettingsProvider({
     [orgId, org, reload],
   );
 
-  // On the way to the other workspace's settings: nothing of this one's.
-  if (switchedTo) return null;
-
   if (!inWorkspace) {
-    // Which organization this is can only be said once the caller's own
-    // organizations are known, and only if it is one of them.
+    // Whether it is one of theirs can only be said once the caller's own
+    // organizations are known.
     if (organizations === null) return null;
-    const theirs = organizations.find((candidate) => candidate.id === orgId);
+    // Theirs: its workspace is on the way in, or they have just switched
+    // out of it and are on the way to the other one's home.
+    if (organizations.some((candidate) => candidate.id === orgId)) return null;
+    // Not one of theirs: say nothing about it, as a 404 would.
     return (
       <TableEmptyState>
-        {theirs ? (
-          <EmptyState
-            icon={<OrganizationSkeuoIcon />}
-            title="Organization settings"
-            description={`${theirs.name}'s settings can only be opened from its own workspace.`}
-            action={
-              <PillButtonUI
-                tone="black"
-                size="sm"
-                onClick={() => setWorkspace(orgId)}
-              >
-                Switch to {theirs.name}
-              </PillButtonUI>
-            }
-          />
-        ) : (
-          // Not one of theirs: say nothing about it, as a 404 would.
-          <EmptyState
-            icon={<OrganizationSkeuoIcon />}
-            title="Organization settings"
-            description="These settings are not available."
-            action={
-              <PillButtonUI
-                tone="white"
-                size="sm"
-                onClick={() => router.push("/settings/organizations")}
-              >
-                Your organizations
-              </PillButtonUI>
-            }
-          />
-        )}
+        <EmptyState
+          icon={<OrganizationSkeuoIcon />}
+          title="Organization settings"
+          description="These settings are not available."
+          action={
+            <PillButtonUI
+              tone="white"
+              size="sm"
+              onClick={() => router.push("/settings/organizations")}
+            >
+              Your organizations
+            </PillButtonUI>
+          }
+        />
       </TableEmptyState>
     );
   }

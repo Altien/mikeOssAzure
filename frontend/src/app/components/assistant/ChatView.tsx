@@ -59,6 +59,7 @@ import {
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { usePageChrome } from "@/app/contexts/PageChromeContext";
 import { DocumentWorkspaceScope } from "@/app/contexts/WorkspaceContext";
+import { useItemWorkspace } from "@/app/hooks/useItemWorkspace";
 import { resolvePanelDocumentVersionResult } from "./panelDocumentVersion";
 import { LIQUID_GLASS_TRANSLUCENT_ACTION_CLASS } from "@/app/components/ui/liquid-surface";
 import {
@@ -300,6 +301,12 @@ export function AssistantChatColumn({
         activeChat && !activeChat.project_id
             ? (activeChat.org_id ?? null)
             : undefined;
+    // Opening a chat opens its workspace. The chat beside it follows along:
+    // two chats on one page cannot each decide where the page is.
+    useItemWorkspace(
+        paneId === "primary" ? activeChat?.id : null,
+        attachmentOrgId,
+    );
     const activeTab = tabs.find((tab) => tab.id === activeTabId);
     const activeCitation =
         activeTab?.kind === "citation" ? activeTab.citation : null;

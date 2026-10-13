@@ -99,6 +99,7 @@ import {
 } from "@/shared/lib/modelCatalog";
 import { SUPPORTED_DOCUMENT_ACCEPT } from "@/app/lib/documentUploadValidation";
 import { useConfiguredModels } from "@/app/hooks/useConfiguredModels";
+import { useItemWorkspace } from "@/app/hooks/useItemWorkspace";
 
 interface Props {
     reviewId: string;
@@ -113,6 +114,12 @@ export function TRView({ reviewId, projectId }: Props) {
     );
     const { setSidebarOpen } = useSidebar();
     const [review, setReview] = useState<TabularReview | null>(null);
+    // Opening a review opens its workspace. One in a project follows its
+    // project, which says so itself.
+    useItemWorkspace(
+        projectId ? null : review?.id,
+        review ? (review.org_id ?? null) : undefined,
+    );
     const [project, setProject] = useState<Project | null>(null);
     const [cells, setCells] = useState<TabularCell[]>([]);
     const [documents, setDocuments] = useState<Document[]>([]);

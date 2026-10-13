@@ -14,11 +14,18 @@ const state = vi.hoisted(() => ({
   organizations: [] as Org[] | null,
   setWorkspace: vi.fn(),
   push: vi.fn(),
+  pathname: "/assistant",
+  showToast: vi.fn(),
+}));
+
+vi.mock("@/shared/lib/toastStore", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/shared/lib/toastStore")>()),
+  showToast: state.showToast,
 }));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: state.push }),
-  usePathname: () => "/assistant",
+  usePathname: () => state.pathname,
 }));
 
 vi.mock("next/image", () => ({
@@ -92,6 +99,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   state.workspaceId = "personal";
   state.organizations = [];
+  state.pathname = "/assistant";
   vi.mocked(listProjectsPage).mockResolvedValue([]);
 });
 
@@ -265,7 +273,7 @@ describe("AppSidebar workspace switcher", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("switches workspace when another one is chosen", async () => {
+  it("switches workspace at once when chosen from the home page", async () => {
     state.organizations = [ACME, BETA];
     const user = userEvent.setup();
     render(<AppSidebar isOpen onToggle={vi.fn()} />);
@@ -274,7 +282,89 @@ describe("AppSidebar workspace switcher", () => {
     await user.click(
       screen.getByRole("menuitemradio", { name: "Beta Chambers" }),
     );
-    expect(state.setWorkspace).toHaveBeenCalledWith(BETA.id);
+    expect(state.setWorkspace).toHaveBeenCalledExactlyOnceWith(BETA.id);
+    expect(state.push).not.toHaveBeenCalled();
+    // Said in a notice that goes sooner than an ordinary one.
+    expect(state.showToast).toHaveBeenCalledExactlyOnceWith({
+      tone: "info",
+      title: "Switched to Beta Chambers",
+      message: undefined,
+      durationMs: 2500,
+      dedupeKey: "workspace-switch",
+    });
+  });
+
+  it("says so when the switch is to Personal", async () => {
+    state.organizations = [ACME, BETA];
+    state.workspaceId = BETA.id;
+    const user = userEvent.setup();
+    render(<AppSidebar isOpen onToggle={vi.fn()} />);
+
+    await openAccountMenu(user);
+    await user.click(screen.getByRole("menuitemradio", { name: "Personal" }));
+    expect(state.showToast).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ title: "Switched to Personal" }),
+    );
+  });
+
+  it("leaves for the home page first, and switches once the page has gone", async () => {
+    state.organizations = [ACME, BETA];
+    state.pathname = "/projects";
+    const user = userEvent.setup();
+    const view = render(<AppSidebar isOpen onToggle={vi.fn()} />);
+
+    await openAccountMenu(user);
+    await user.click(
+      screen.getByRole("menuitemradio", { name: "Beta Chambers" }),
+    );
+    // The switcher is navigation. The list being left is not reloaded for
+    // the new workspace first: the workspace has not changed yet.
+    expect(state.push).toHaveBeenCalledExactlyOnceWith("/assistant");
+    expect(state.setWorkspace).not.toHaveBeenCalled();
+    expect(state.showToast).not.toHaveBeenCalled();
+
+    state.pathname = "/assistant";
+    view.rerender(<AppSidebar isOpen onToggle={vi.fn()} />);
+    expect(state.setWorkspace).toHaveBeenCalledExactlyOnceWith(BETA.id);
+    // The notice comes with the switch, not before it.
+    expect(state.showToast).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ title: "Switched to Beta Chambers" }),
+    );
+
+    // Once only: moving on from home does not switch again.
+    state.pathname = "/projects";
+    view.rerender(<AppSidebar isOpen onToggle={vi.fn()} />);
+    expect(state.setWorkspace).toHaveBeenCalledTimes(1);
+  });
+
+  it("still switches if they went somewhere else before home arrived", async () => {
+    state.organizations = [ACME, BETA];
+    state.pathname = "/projects";
+    const user = userEvent.setup();
+    const view = render(<AppSidebar isOpen onToggle={vi.fn()} />);
+
+    await openAccountMenu(user);
+    await user.click(
+      screen.getByRole("menuitemradio", { name: "Beta Chambers" }),
+    );
+    state.pathname = "/workflows";
+    view.rerender(<AppSidebar isOpen onToggle={vi.fn()} />);
+    expect(state.setWorkspace).toHaveBeenCalledExactlyOnceWith(BETA.id);
+  });
+
+  it("stays put when the workspace already active is chosen again", async () => {
+    state.organizations = [ACME, BETA];
+    state.workspaceId = BETA.id;
+    const user = userEvent.setup();
+    render(<AppSidebar isOpen onToggle={vi.fn()} />);
+
+    await openAccountMenu(user);
+    await user.click(
+      screen.getByRole("menuitemradio", { name: "Beta Chambers" }),
+    );
+    expect(state.setWorkspace).not.toHaveBeenCalled();
+    expect(state.push).not.toHaveBeenCalled();
+    expect(state.showToast).not.toHaveBeenCalled();
   });
 
   it("keeps the switcher reachable from the collapsed sidebar", async () => {

@@ -57,11 +57,15 @@ import type { Project } from "@/app/components/shared/types";
 import { cn } from "@/app/lib/utils";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { useAssistantHistoryStatuses } from "@/app/hooks/useAssistantHistoryStatuses";
+import { notifyWorkspaceSwitched } from "@/app/hooks/useItemWorkspace";
 import {
     LIQUID_GLASS_FLOAT_CLASS,
     LIQUID_GLASS_SELECTED_CLASS,
     LIQUID_GLASS_HOVER_CLASS,
 } from "@/app/components/ui/liquid-surface";
+
+/** Where a workspace opens: the page the logo leads to. */
+const WORKSPACE_HOME = "/assistant";
 
 const NAV_ITEMS = [
     { href: "/assistant", label: "Assistant", icon: ChatSkeuoIcon },
@@ -195,6 +199,41 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
         setWorkspace,
     } = useWorkspace();
     const workspaceParam = workspaceId ?? undefined;
+    // The switcher is navigation: what was on screen belonged to the
+    // workspace just left, so the new one opens at its home.
+    //
+    // The page leaves first and the workspace follows. Changing it straight
+    // away made the page being left reload itself for the new workspace — a
+    // list flashing its loading state — only to be replaced a moment later.
+    const pendingWorkspaceRef = useRef<{
+        id: string;
+        name: string;
+        from: string;
+    } | null>(null);
+    const switchWorkspace = (next: string) => {
+        if (next === workspaceId) return;
+        const name =
+            next === PERSONAL_WORKSPACE
+                ? PERSONAL_WORKSPACE_LABEL
+                : (organizations?.find((org) => org.id === next)?.name ?? "");
+        if (pathname === WORKSPACE_HOME) {
+            pendingWorkspaceRef.current = null;
+            setWorkspace(next);
+            if (name) notifyWorkspaceSwitched(name);
+            return;
+        }
+        pendingWorkspaceRef.current = { id: next, name, from: pathname };
+        router.push(WORKSPACE_HOME);
+    };
+    useEffect(() => {
+        const pending = pendingWorkspaceRef.current;
+        // Any page other than the one being left: home, or wherever else
+        // they went in the meantime.
+        if (!pending || pathname === pending.from) return;
+        pendingWorkspaceRef.current = null;
+        setWorkspace(pending.id);
+        if (pending.name) notifyWorkspaceSwitched(pending.name);
+    }, [pathname, setWorkspace]);
     // Recent projects are remembered per account AND per workspace, so a
     // switch never paints the previous workspace's matters from cache.
     const projectsCacheKey = userId ? `${userId}:${workspaceId ?? ""}` : null;
@@ -817,7 +856,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                           value={
                                               workspaceId ?? PERSONAL_WORKSPACE
                                           }
-                                          onValueChange={setWorkspace}
+                                          onValueChange={switchWorkspace}
                                           className="max-h-44 overflow-y-auto"
                                       >
                                           {workspaceOptions.map((option) => (

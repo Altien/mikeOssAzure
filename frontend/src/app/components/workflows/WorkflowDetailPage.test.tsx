@@ -13,6 +13,9 @@ import {
 import type { Workflow } from "../shared/types";
 import { WorkflowDetailPage } from "./WorkflowDetailPage";
 
+const useItemWorkspace = vi.hoisted(() => vi.fn());
+vi.mock("@/app/hooks/useItemWorkspace", () => ({ useItemWorkspace }));
+
 // `importOriginal` keeps the real `MikeApiError`: `userFacingApiError`
 // decides with `instanceof`, so a stand-in class would make every 4xx look
 // like an unexpected failure.
@@ -226,5 +229,38 @@ describe("WorkflowDetailPage access mutations", () => {
         expect(
             await screen.findByText("Only owners can share this workflow."),
         ).toBeVisible();
+    });
+});
+
+describe("the workspace a workflow opens", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(getWorkflowPeople).mockImplementation(people);
+        vi.mocked(listWorkflowShares).mockResolvedValue([]);
+        vi.stubGlobal(
+            "matchMedia",
+            vi.fn().mockReturnValue({
+                matches: true,
+                addEventListener: vi.fn(),
+                removeEventListener: vi.fn(),
+            }),
+        );
+    });
+
+    it.each([
+        ["an organization's workflow", { org_id: "org-1" }, "org-1"],
+        ["a personal workflow", { org_id: null }, null],
+        // Built in: it belongs to no workspace, so it moves nobody.
+        ["a built-in workflow", { org_id: null, is_system: true }, undefined],
+    ])("is its own for %s", async (_name, over, expected) => {
+        vi.mocked(getWorkflow).mockResolvedValue({ ...workflow, ...over });
+        render(<WorkflowDetailPage id="workflow-1" workflowType="assistant" />);
+
+        await waitFor(() =>
+            expect(useItemWorkspace).toHaveBeenLastCalledWith(
+                "workflow-1",
+                expected,
+            ),
+        );
     });
 });

@@ -43,6 +43,7 @@ import {
 import { AccessModal } from "@/app/components/modals/AccessModal";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { DocumentWorkspaceScope } from "@/app/contexts/WorkspaceContext";
+import { useItemWorkspace } from "@/app/hooks/useItemWorkspace";
 import {
     type Capability,
     type ProjectRole,
@@ -536,6 +537,8 @@ export function ProjectWorkspaceProvider({
     // Pickers and uploads anywhere in the project use the project's own
     // workspace; unknown until the project has loaded.
     const projectOrgId = project ? (project.org_id ?? null) : undefined;
+    // Opening a project opens its workspace.
+    useItemWorkspace(project?.id, projectOrgId);
 
     if (!showShell) {
         return (

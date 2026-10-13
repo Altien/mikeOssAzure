@@ -5,6 +5,9 @@ import type { Message } from "@/app/components/shared/types";
 import { AssistantChatColumn } from "./ChatView";
 import { useAssistantDocumentPanel } from "./useAssistantDocumentPanel";
 
+const useItemWorkspace = vi.hoisted(() => vi.fn());
+vi.mock("@/app/hooks/useItemWorkspace", () => ({ useItemWorkspace }));
+
 vi.mock("next/navigation", () => ({
     useRouter: () => ({ push: vi.fn() }),
 }));
@@ -15,7 +18,7 @@ vi.mock("@/app/contexts/SidebarContext", () => ({
 vi.mock("@/app/contexts/ChatHistoryContext", () => ({
     useChatHistoryContext: () => ({
         chats: [
-            { id: "chat-1", title: "Quarterly filing" },
+            { id: "chat-1", title: "Quarterly filing", org_id: "org-1" },
             { id: "chat-2", title: "Lease review" },
             { id: "chat-3", title: "Board minutes" },
         ],
@@ -64,7 +67,9 @@ function Column({
     incomingExcerpt,
     onIncomingExcerptAdded,
     chatLoading,
+    paneId,
 }: {
+    paneId?: string;
     incomingExcerpt?: { id: number; excerpt: { text: string } } | null;
     onIncomingExcerptAdded?: () => void;
     chatLoading?: boolean;
@@ -92,6 +97,7 @@ function Column({
             incomingExcerpt={incomingExcerpt}
             onIncomingExcerptAdded={onIncomingExcerptAdded}
             chatLoading={chatLoading}
+            paneId={paneId}
         />
     );
 }
@@ -107,6 +113,35 @@ function press(element: HTMLElement) {
 function openActions() {
     press(screen.getByRole("button", { name: "Chat actions" }));
 }
+
+describe("the workspace a chat opens", () => {
+    beforeEach(() => {
+        useItemWorkspace.mockClear();
+        vi.stubGlobal(
+            "ResizeObserver",
+            class {
+                observe() {}
+                unobserve() {}
+                disconnect() {}
+            },
+        );
+    });
+
+    it("is the chat's own", () => {
+        render(<Column />);
+        expect(useItemWorkspace).toHaveBeenLastCalledWith("chat-1", "org-1");
+    });
+
+    it("is not decided by a chat that has not begun", () => {
+        render(<Column newChat />);
+        expect(useItemWorkspace).toHaveBeenLastCalledWith(undefined, undefined);
+    });
+
+    it("is not decided by the chat beside the primary one", () => {
+        render(<Column paneId="side" />);
+        expect(useItemWorkspace).toHaveBeenLastCalledWith(null, "org-1");
+    });
+});
 
 describe("AssistantChatColumn header", () => {
     beforeEach(() => {
