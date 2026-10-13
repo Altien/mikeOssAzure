@@ -487,3 +487,14 @@ export interface NativeConnectorTool {
     write: boolean;
     enabled: boolean;
 }
+
+/** Organization departure preview: only public transfer items expose titles. */
+export interface OrgMemberHandover {
+    projects: { id: string; title: string }[];
+    workflows: { id: string; title: string }[];
+    privateProjects: number;
+    privateWorkflows: number;
+    chats: number;
+    reviews: number;
+    documents: number;
+}

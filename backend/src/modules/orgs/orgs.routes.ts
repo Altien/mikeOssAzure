@@ -244,6 +244,11 @@ orgsRouter.get("/:orgId/members/:userId/handover", requireOrgAuth, asyncRoute(as
         actorId: res.locals.userId as string,
         orgId: req.params.orgId,
         targetUserId: req.params.userId,
+        departingUserIds: req.query.departing_user_ids === undefined
+            ? undefined
+            : typeof req.query.departing_user_ids === "string"
+              ? req.query.departing_user_ids.split(",")
+              : req.query.departing_user_ids,
     });
     if (!result.ok) return sendOrgFailure(res, result);
     res.json(result.handover);

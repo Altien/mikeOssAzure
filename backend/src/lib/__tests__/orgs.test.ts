@@ -734,8 +734,8 @@ describe("last-owner protection", () => {
 // What becomes of a member's work when they leave
 // ---------------------------------------------------------------------------
 //
-// Projects and workflows are the organization's lasting work: the private
-// ones a departing member alone owns are handed to a member named by whoever
+// Projects and workflows are the organization's lasting work: the
+// public ones a departing member alone owns are handed to a member named by whoever
 // is doing the removing — the admin, or the member themselves when leaving.
 // Standalone chats and reviews are private to their author and are deleted
 // with the membership (by the database; see the SQL tests).
@@ -770,6 +770,7 @@ describe("handing over a departing member's work", () => {
             ],
             workflows: [
                 { id: "w-private", org_id: "o1", user_id: "sam", title: "Private workflow", visibility: "private" },
+                { id: "w-public", org_id: "o1", user_id: "sam", title: "Public workflow", visibility: "organization" },
             ],
             workflow_org_access_overrides: [],
             chats: [
@@ -817,15 +818,44 @@ describe("handing over a departing member's work", () => {
         ).resolves.toEqual({
             ok: true,
             handover: {
-                // Not the shared one (robin owns it too), nor the public one.
-                projects: [{ id: "p-private", title: "Private matter" }],
-                workflows: [{ id: "w-private", title: "Private workflow" }],
+                // Only public titles are disclosed; private work is counted.
+                projects: [{ id: "p-public", title: "Public matter" }],
+                workflows: [{ id: "w-public", title: "Public workflow" }],
+                privateProjects: 1,
+                privateWorkflows: 1,
                 // Not the chat robin also owns, nor the one in a project.
                 chats: 1,
                 reviews: 1,
                 documents: 2,
             },
         });
+    });
+
+    it("needs no successor when only private work remains", async () => {
+        const db = seed();
+        db._tables.projects = db._tables.projects.filter((row: Row) => row.visibility !== "organization");
+        db._tables.workflows = db._tables.workflows.filter((row: Row) => row.visibility !== "organization");
+        await expect(remove(db, "alex", "alex")).resolves.toEqual({ ok: true });
+        expect(db._tables.project_org_access_overrides).not.toEqual(
+            expect.arrayContaining([expect.objectContaining({ user_id: "alex" })]),
+        );
+        expect(db._tables.workflow_org_access_overrides).toEqual([]);
+    });
+
+    it("counts a shared private item once when all its owners are selected", async () => {
+        const db = seed();
+        await expect(getMemberHandover(db, {
+            actorId: "alex", orgId: "o1", targetUserId: "sam", departingUserIds: ["sam", "robin"],
+        })).resolves.toMatchObject({ ok: true, handover: {
+            privateProjects: 2, privateWorkflows: 1, chats: 2,
+        } });
+    });
+
+    it("authorizes every person in a bulk preview", async () => {
+        const db = seed();
+        await expect(getMemberHandover(db, {
+            actorId: "alex", orgId: "o1", targetUserId: "sam", departingUserIds: ["dana"],
+        })).resolves.toMatchObject({ ok: false, kind: "owner_required" });
     });
 
     it("answers that question only to somebody who could remove them", async () => {
@@ -880,7 +910,7 @@ describe("handing over a departing member's work", () => {
         expect(db._tables.project_org_access_overrides).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({
-                    project_id: "p-private",
+                    project_id: "p-public",
                     user_id: "robin",
                     role: "owner",
                     assigned_by: "alex",
@@ -889,15 +919,15 @@ describe("handing over a departing member's work", () => {
         );
         expect(db._tables.workflow_org_access_overrides).toEqual([
             expect.objectContaining({
-                workflow_id: "w-private",
+                workflow_id: "w-public",
                 user_id: "robin",
                 role: "owner",
             }),
         ]);
-        // The public project needed nobody: no override was written for it.
+        // Private work is never handed to the successor.
         expect(
             (db._tables.project_org_access_overrides as Row[]).some(
-                (o) => o.project_id === "p-public",
+                (o) => o.project_id === "p-private",
             ),
         ).toBe(false);
     });
@@ -913,6 +943,8 @@ describe("handing over a departing member's work", () => {
                     assigned_to: "robin",
                     assigned_projects: 1,
                     assigned_workflows: 1,
+                    deleted_projects: 1,
+                    deleted_workflows: 1,
                     deleted_chats: 1,
                     deleted_reviews: 1,
                     deleted_documents: 2,
@@ -958,14 +990,14 @@ describe("handing over a departing member's work", () => {
         expect(isMember(db, "sam")).toBe(true);
     });
 
-    it("treats a database without the hand-over functions as having nothing to hand over", async () => {
+    it("refuses removal until the departure migration is installed", async () => {
         const db = seed();
         db.rpc = async () => ({
             data: null,
             error: { code: "PGRST202", message: "function not found" },
         });
-        await expect(remove(db, "alex")).resolves.toEqual({ ok: true });
-        expect(isMember(db, "sam")).toBe(false);
+        await expect(remove(db, "alex")).resolves.toMatchObject({ ok: false, kind: "db_error" });
+        expect(isMember(db, "sam")).toBe(true);
     });
 });
 

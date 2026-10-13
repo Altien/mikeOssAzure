@@ -5,7 +5,7 @@ import type { OrgMember } from "@/app/lib/mikeApi";
 import { MemberDepartureDialog } from "./MemberDepartureDialog";
 
 // What becomes of a member's work when they leave an organization: the
-// private projects and workflows they alone own go to a member named here,
+// public projects and workflows they alone own go to a member named here,
 // and their own standalone chats and reviews are deleted. The dialog says
 // so before anything happens, and will not go on without a successor when
 // one is needed.
@@ -39,8 +39,9 @@ const ROSTER = [
   member("robin", "Robin Heir"),
   member("pat", null),
 ];
-const NOTHING = { projects: [], workflows: [], chats: 0, reviews: 0 };
+const NOTHING = { projects: [], workflows: [], privateProjects: 0, privateWorkflows: 0, documents: 0, chats: 0, reviews: 0 };
 const SAMS_WORK = {
+  ...NOTHING,
   projects: [
     { id: "p1", title: "Project Atlas" },
     { id: "p2", title: "" },
@@ -121,17 +122,25 @@ describe("a member who alone owns projects and workflows", () => {
     renderDialog();
 
     expect(
-      await screen.findByText(
-        "Sam Leaver is the only owner of 2 projects and 1 workflow. Choose who takes them over.",
-      ),
+      await screen.findByText("2 public projects and 1 public workflow need a new owner."),
     ).toBeInTheDocument();
-    expect(screen.getByText("Project Atlas")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Transfer ownership" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Private items to delete" }),
+    ).toBeVisible();
+    const dialog = screen.getByRole("dialog", { name: "Remove" });
+    expect(dialog.querySelector("header")).toHaveTextContent(
+      "Organization›Members›Remove",
+    );
+    expect(screen.getByText("Project Atlas")).not.toBeVisible();
     expect(screen.getByText("Disclosure checklist")).toBeInTheDocument();
     // A project with no name is still listed.
     expect(screen.getByText("Untitled")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Sam Leaver's 2 private chats and 1 tabular review in this organization will be permanently deleted.",
+        "2 private chats and 1 tabular review will be permanently deleted.",
       ),
     ).toBeInTheDocument();
   });
@@ -155,7 +164,11 @@ describe("a member who alone owns projects and workflows", () => {
       (option) => option.textContent,
     );
     // A member with no name is offered by their address.
-    expect(options).toEqual(["Dana Owner", "Robin Heir", "pat@firm.example"]);
+    expect(options).toEqual([
+      "Dana Owner (dana@firm.example)",
+      "Robin Heir (robin@firm.example)",
+      "pat@firm.example",
+    ]);
   });
 
   it("hands the work to the chosen member as it removes them", async () => {
@@ -163,9 +176,11 @@ describe("a member who alone owns projects and workflows", () => {
     renderDialog();
     await screen.findByLabelText("Hand over to");
 
-    await chooseSuccessor(user, "Robin Heir");
+    await chooseSuccessor(user, "Robin Heir (robin@firm.example)");
     // Two members can share a name: the address says which one this is.
-    expect(screen.getByText("robin@firm.example")).toBeInTheDocument();
+    expect(screen.getByLabelText("Hand over to")).toHaveTextContent(
+      "Robin Heir (robin@firm.example)",
+    );
     await user.click(confirmButton());
 
     await waitFor(() =>
@@ -187,7 +202,7 @@ describe("a member who alone owns projects and workflows", () => {
     mocks.removeOrgMember.mockRejectedValue(refusal);
     renderDialog();
     await screen.findByLabelText("Hand over to");
-    await chooseSuccessor(user, "Dana Owner");
+    await chooseSuccessor(user, "Dana Owner (dana@firm.example)");
     await user.click(confirmButton());
 
     await waitFor(() =>
@@ -207,7 +222,8 @@ describe("a member who alone owns projects and workflows", () => {
     expect(confirmButton()).toBeDisabled();
   });
 
-  it("counts the titles it does not list", async () => {
+  it("keeps multiple items collapsed and lets the user inspect the entire list", async () => {
+    const user = userEvent.setup();
     mocks.getOrgMemberHandover.mockResolvedValue({
       ...NOTHING,
       projects: Array.from({ length: 9 }, (_, index) => ({
@@ -217,9 +233,20 @@ describe("a member who alone owns projects and workflows", () => {
     });
     renderDialog();
 
-    expect(await screen.findByText("Matter 6")).toBeInTheDocument();
-    expect(screen.queryByText("Matter 7")).not.toBeInTheDocument();
-    expect(screen.getByText("and 3 more")).toBeInTheDocument();
+    expect(
+      await screen.findByText("9 public projects need a new owner."),
+    ).toBeVisible();
+    expect(screen.getByText("Matter 1")).not.toBeVisible();
+    expect(screen.getByText("Matter 9")).not.toBeVisible();
+    const disclosure = screen.getByText("View items");
+    await user.click(disclosure);
+    expect(screen.getByText("Matter 1")).toBeVisible();
+    expect(screen.getByText("Matter 9")).toBeVisible();
+    expect(screen.getAllByRole("listitem")).toHaveLength(9);
+    await user.click(disclosure);
+    expect(screen.getByText("Matter 9")).not.toBeVisible();
+    expect(confirmButton()).toBeDisabled();
+    expect(mocks.removeOrgMember).not.toHaveBeenCalled();
   });
 });
 
@@ -240,18 +267,16 @@ describe("leaving", () => {
       ),
     ).toBeInTheDocument();
     expect(
-      await screen.findByText(
-        "You are the only owner of 1 workflow. Choose who takes it over.",
-      ),
+      await screen.findByText("1 public workflow needs a new owner."),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "Your 1 private chat in this organization will be permanently deleted.",
-      ),
+      screen.getByText("1 private chat will be permanently deleted."),
     ).toBeInTheDocument();
+    expect(screen.getByText("Disclosure checklist")).toBeVisible();
+    expect(screen.queryByText("View items")).not.toBeInTheDocument();
     expect(mocks.listOrgMembers).toHaveBeenCalledWith("org-1");
 
-    await chooseSuccessor(user, "Dana Owner");
+    await chooseSuccessor(user, "Dana Owner (dana@firm.example)");
     await user.click(confirmButton("Leave"));
     await waitFor(() =>
       expect(mocks.removeOrgMember).toHaveBeenCalledWith(
@@ -266,12 +291,11 @@ describe("leaving", () => {
 describe("removing several members together", () => {
   it("hands all of their work to one successor, who is none of them", async () => {
     const user = userEvent.setup();
-    mocks.getOrgMemberHandover.mockImplementation(
-      async (_orgId: string, userId: string) =>
-        userId === "sam"
-          ? { ...NOTHING, projects: [{ id: "p1", title: "Project Atlas" }] }
-          : { ...NOTHING, workflows: [{ id: "w1", title: "Checklist" }] },
-    );
+    mocks.getOrgMemberHandover.mockResolvedValue({
+      ...NOTHING,
+      projects: [{ id: "p1", title: "Project Atlas" }],
+      workflows: [{ id: "w1", title: "Checklist" }],
+    });
     renderDialog({ departing: [ROSTER[1], ROSTER[2]] });
 
     expect(
@@ -280,15 +304,16 @@ describe("removing several members together", () => {
       ),
     ).toBeInTheDocument();
     expect(
-      await screen.findByText(
-        "These members are the only owners of 1 project and 1 workflow. Choose who takes them over.",
-      ),
+      await screen.findByText("1 public project and 1 public workflow need a new owner."),
     ).toBeInTheDocument();
+    expect(mocks.getOrgMemberHandover).toHaveBeenCalledWith("org-1", "sam", ["sam", "robin"]);
     await user.click(screen.getByLabelText("Hand over to"));
     expect(
       (await screen.findAllByRole("menuitem")).map((o) => o.textContent),
-    ).toEqual(["Dana Owner", "pat@firm.example"]);
-    await user.click(screen.getByRole("menuitem", { name: "Dana Owner" }));
+    ).toEqual(["Dana Owner (dana@firm.example)", "pat@firm.example"]);
+    await user.click(
+      screen.getByRole("menuitem", { name: "Dana Owner (dana@firm.example)" }),
+    );
     await user.click(confirmButton());
 
     await waitFor(() => expect(onDone).toHaveBeenCalled());
@@ -326,7 +351,7 @@ describe("when what would be handed over cannot be read", () => {
     renderDialog();
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not check what would be handed over.",
+      "Could not check what would be transferred or deleted.",
     );
     expect(confirmButton()).toBeDisabled();
     await user.click(
@@ -336,5 +361,23 @@ describe("when what would be handed over cannot be read", () => {
     );
     expect(onCancel).toHaveBeenCalled();
     expect(mocks.removeOrgMember).not.toHaveBeenCalled();
+  });
+});
+
+describe("private work without another owner", () => {
+  it("shows deletion counts without a transfer selector or private titles", async () => {
+    const user = userEvent.setup();
+    mocks.getOrgMemberHandover.mockResolvedValue({
+      ...NOTHING, privateProjects: 2, privateWorkflows: 1, documents: 3,
+    });
+    renderDialog();
+    expect(await screen.findByText(
+      "2 private projects, 1 private workflow and 3 documents will be permanently deleted.",
+    )).toBeVisible();
+    expect(screen.getByText(/These items have no remaining owner/)).toBeVisible();
+    expect(screen.queryByLabelText("Hand over to")).not.toBeInTheDocument();
+    expect(screen.queryByText("View items")).not.toBeInTheDocument();
+    await user.click(confirmButton());
+    expect(mocks.removeOrgMember).toHaveBeenCalledWith("org-1", "sam", undefined);
   });
 });

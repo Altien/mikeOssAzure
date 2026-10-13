@@ -20,6 +20,8 @@ export type ModalSelectOption =
     | {
           value: string;
           label: string;
+          /** Muted text displayed inline after the label. */
+          suffix?: string;
           icon?: LucideIcon;
           iconClassName?: string;
       };
@@ -36,6 +38,7 @@ interface ModalSelectProps {
     onOpenChange?: (open: boolean) => void;
     className?: string;
     menuClassName?: string;
+    wrapLabels?: boolean;
 }
 
 function normalizeOption(option: ModalSelectOption) {
@@ -56,6 +59,7 @@ export function ModalSelect({
     onOpenChange,
     className,
     menuClassName,
+    wrapLabels = false,
 }: ModalSelectProps) {
     const [internalOpen, setInternalOpen] = useState(false);
     const isOpen = open ?? internalOpen;
@@ -86,6 +90,8 @@ export function ModalSelect({
                     className={cn(
                         FORM_CONTROL_GLASS_CLASS,
                         `flex h-10 items-center justify-between ${LIQUID_GLASS_HOVER_CLASS}`,
+                        (wrapLabels || selected?.suffix) &&
+                            "h-auto min-h-10 py-2",
                         isOpen && LIQUID_GLASS_SELECTED_CLASS,
                         className,
                     )}
@@ -101,12 +107,20 @@ export function ModalSelect({
                         )}
                         <span
                             className={cn(
-                                "truncate",
+                                wrapLabels || selected?.suffix
+                                    ? "min-w-0 whitespace-normal text-left [overflow-wrap:anywhere]"
+                                    : "truncate",
                                 !selected && !hasValue && "text-gray-400",
                             )}
                         >
                             {selected?.label ??
                                 (hasValue ? value : placeholder)}
+                            {selected?.suffix && (
+                                <span className="font-normal text-gray-400">
+                                    {" "}
+                                    {selected.suffix}
+                                </span>
+                            )}
                         </span>
                     </span>
                     <ChevronDown
@@ -131,7 +145,14 @@ export function ModalSelect({
                     {normalizedOptions.map((option) => (
                         <DropdownItem
                             key={option.value}
-                            textValue={option.label}
+                            textValue={[option.label, option.suffix]
+                                .filter(Boolean)
+                                .join(" ")}
+                            aria-label={
+                                option.suffix
+                                    ? `${option.label} ${option.suffix}`
+                                    : undefined
+                            }
                             selected={option.value === value}
                             onSelect={() => handleSelect(option.value)}
                             className={cn(
@@ -150,8 +171,20 @@ export function ModalSelect({
                                         )}
                                     />
                                 )}
-                                <span className="truncate">
+                                <span
+                                    className={
+                                        wrapLabels || option.suffix
+                                            ? "min-w-0 whitespace-normal [overflow-wrap:anywhere]"
+                                            : "truncate"
+                                    }
+                                >
                                     {option.label}
+                                    {option.suffix && (
+                                        <span className="font-normal text-gray-400">
+                                            {" "}
+                                            {option.suffix}
+                                        </span>
+                                    )}
                                 </span>
                             </span>
                         </DropdownItem>

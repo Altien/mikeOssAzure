@@ -285,7 +285,8 @@ describe("leaving", () => {
 
     await user.click(screen.getByRole("button", { name: "Leave" }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("Leave organization")).toBeInTheDocument();
+    expect(dialog).toHaveAccessibleName("Leave");
+    expect(dialog.querySelector("header")).toHaveTextContent("Organization›Members›Leave");
     expect(mocks.removeOrgMember).not.toHaveBeenCalled();
     // It asks what leaving would hand over and delete before it lets go.
     expect(mocks.getOrgMemberHandover).toHaveBeenCalledWith("org-1", "me");

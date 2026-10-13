@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { Modal } from "@/app/components/modals/Modal";
 import { ModalSelect } from "@/app/components/modals/ModalSelect";
-import { FieldLabel } from "@/app/components/ui/form-field";
+import { SkeletonLine } from "@/app/components/shared/TablePrimitive";
+import { textButtonUIClassName } from "@/shared/ui/TextButtonUI.styles";
 import {
   getOrgMemberHandover,
   listOrgMembers,
@@ -17,11 +19,11 @@ import {
 //
 // A member's work does not simply vanish or drift to whoever is in charge:
 //
-//   * the private projects and workflows they alone own are handed to a
+//   * the public projects and workflows they alone own are handed to a
 //     member chosen here, by the admin removing them or by the member
 //     themselves when leaving;
-//   * their own standalone chats and tabular reviews are private to them and
-//     are deleted.
+//   * private items are deleted if no other owner remains, including the
+//     contents of deleted projects or workflows.
 //
 // So this dialog first asks the server what the departure would do, says so,
 // and — when there is something to hand over — will not go on until a
@@ -40,13 +42,12 @@ export interface MemberDepartureResult {
   error: unknown | null;
 }
 
-/** How many titles are listed before the rest are counted. */
-const LISTED_ITEMS = 6;
-
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
 function joinCounts(parts: string[]): string {
-  return parts.length <= 1 ? (parts[0] ?? "") : parts.join(" and ");
+  return parts.length <= 1
+    ? (parts[0] ?? "")
+    : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
 }
 
 const nameOf = (member: DepartingMember) =>
@@ -70,7 +71,7 @@ export function MemberDepartureDialog({
   onCancel: () => void;
   onDone: (result: MemberDepartureResult) => void;
 }) {
-  const [handovers, setHandovers] = useState<OrgMemberHandover[] | null>(null);
+  const [handover, setHandover] = useState<OrgMemberHandover | null>(null);
   const [loadedMembers, setLoadedMembers] = useState<OrgMember[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [successor, setSuccessor] = useState("");
@@ -82,12 +83,14 @@ export function MemberDepartureDialog({
     let cancelled = false;
     const ids = departingIds.split(",").filter(Boolean);
     Promise.all([
-      Promise.all(ids.map((id) => getOrgMemberHandover(orgId, id))),
+      ids.length > 1
+        ? getOrgMemberHandover(orgId, ids[0], ids)
+        : getOrgMemberHandover(orgId, ids[0]),
       hasRoster ? Promise.resolve(null) : listOrgMembers(orgId),
     ]).then(
       ([loaded, roster]) => {
         if (cancelled) return;
-        setHandovers(loaded);
+        setHandover(loaded);
         setLoadedMembers(roster);
       },
       () => {
@@ -112,20 +115,19 @@ export function MemberDepartureDialog({
           return {
             value: member.user_id,
             label: name || member.email || "Unnamed member",
-            // Shown in full beneath the control once chosen: the control
-            // itself is one line, and two members can share a name.
-            email: name ? member.email : null,
+            suffix: name && member.email ? `(${member.email})` : undefined,
           };
         }),
     [roster, departing],
   );
 
-  const chosen = candidates.find((candidate) => candidate.value === successor);
-
-  const projects = (handovers ?? []).flatMap((handover) => handover.projects);
-  const workflows = (handovers ?? []).flatMap((handover) => handover.workflows);
-  const chats = (handovers ?? []).reduce((sum, h) => sum + h.chats, 0);
-  const reviews = (handovers ?? []).reduce((sum, h) => sum + h.reviews, 0);
+  const projects = handover?.projects ?? [];
+  const workflows = handover?.workflows ?? [];
+  const privateProjects = handover?.privateProjects ?? 0;
+  const privateWorkflows = handover?.privateWorkflows ?? 0;
+  const chats = handover?.chats ?? 0;
+  const reviews = handover?.reviews ?? 0;
+  const documents = handover?.documents ?? 0;
   const owed = projects.length + workflows.length;
   const titles = [...projects, ...workflows].map(
     (item) => item.title.trim() || "Untitled",
@@ -143,25 +145,34 @@ export function MemberDepartureDialog({
       ? `${departing.length} selected members will lose access to this organization.`
       : `${who} will lose organization access.`;
   const owedSummary = joinCounts([
-    ...(projects.length ? [count(projects.length, "project")] : []),
-    ...(workflows.length ? [count(workflows.length, "workflow")] : []),
+    ...(projects.length ? [count(projects.length, "public project")] : []),
+    ...(workflows.length ? [count(workflows.length, "public workflow")] : []),
   ]);
   const deletedSummary = joinCounts([
+    ...(privateProjects ? [count(privateProjects, "private project")] : []),
+    ...(privateWorkflows ? [count(privateWorkflows, "private workflow")] : []),
     ...(chats ? [count(chats, "private chat")] : []),
     ...(reviews ? [count(reviews, "tabular review")] : []),
+    ...(documents ? [count(documents, "document")] : []),
   ]);
 
-  const ready = handovers !== null && roster !== null && !loadFailed;
+  const ready = handover !== null && roster !== null && !loadFailed;
   const canConfirm = ready && !working && (owed === 0 || successor !== "");
 
   async function confirm() {
     if (!canConfirm) return;
     setWorking(true);
-    const results = await Promise.allSettled(
-      departing.map((member) =>
-        removeOrgMember(orgId, member.user_id, successor || undefined),
-      ),
-    );
+    // Remove one at a time: an item retained for a selected co-owner must
+    // be rechecked when that final owner is removed as well.
+    const results: PromiseSettledResult<void>[] = [];
+    for (const member of departing) {
+      try {
+        await removeOrgMember(orgId, member.user_id, successor || undefined);
+        results.push({ status: "fulfilled", value: undefined });
+      } catch (reason) {
+        results.push({ status: "rejected", reason });
+      }
+    }
     const failure = results.find(
       (result): result is PromiseRejectedResult => result.status === "rejected",
     );
@@ -179,13 +190,7 @@ export function MemberDepartureDialog({
       onClose={() => {
         if (!working) onCancel();
       }}
-      breadcrumbs={[
-        leaving
-          ? "Leave organization"
-          : several
-            ? "Remove members"
-            : "Remove member",
-      ]}
+      breadcrumbs={["Organization", "Members", leaving ? "Leave" : "Remove"]}
       size="sm"
       className="h-auto max-h-[calc(100vh-2rem)]"
       cancelAction={{
@@ -210,65 +215,84 @@ export function MemberDepartureDialog({
         data-modal-scroll="vertical"
         className="min-h-0 min-w-0 space-y-5 overflow-y-auto pb-4"
       >
-        <p className="text-sm text-gray-700">{lead}</p>
+        <p className="text-sm text-gray-700 [overflow-wrap:anywhere]">{lead}</p>
 
         {loadFailed ? (
           <p role="alert" className="text-sm text-red-600">
-            Could not check what would be handed over. Close this and try
-            again.
+            Could not check what would be transferred or deleted. Close this and try again.
           </p>
         ) : !ready ? (
           <div
             role="status"
-            aria-label="Checking what would be handed over"
-            className="space-y-2"
+            aria-label="Checking what would be transferred or deleted"
+            className="space-y-5"
           >
-            <span className="block h-3 w-3/4 animate-pulse rounded bg-gray-200" />
-            <span className="block h-9 w-full animate-pulse rounded-xl bg-gray-100" />
+            <div className="space-y-2">
+              <SkeletonLine className="w-32" />
+              <SkeletonLine className="w-3/4" />
+              <SkeletonLine className="w-24" />
+              <span className="block h-10 w-full animate-pulse rounded-xl bg-gray-100" />
+            </div>
+            <div className="space-y-2">
+              <SkeletonLine className="w-24" />
+              <SkeletonLine className="w-full" />
+              <SkeletonLine className="w-1/2" />
+            </div>
           </div>
         ) : (
           <>
             {owed > 0 ? (
-              <section className="space-y-2">
-                <FieldLabel htmlFor="member-departure-successor">
-                  Hand over to
-                </FieldLabel>
-                <p className="text-sm text-gray-600">
-                  {who} {leaving || several ? "are" : "is"} the only{" "}
-                  {several ? "owners" : "owner"} of {owedSummary}. Choose who
-                  takes {owed === 1 ? "it" : "them"} over.
+              <section
+                className="space-y-2"
+                aria-labelledby="member-departure-transfer"
+              >
+                <h2
+                  id="member-departure-transfer"
+                  className="text-sm font-medium text-gray-700"
+                >
+                  Transfer ownership
+                </h2>
+                <p className="text-sm text-gray-500">
+                  {owedSummary} {owed === 1 ? "needs" : "need"} a new owner.
                 </p>
-                <ul className="space-y-1 text-sm text-gray-700">
-                  {titles.slice(0, LISTED_ITEMS).map((title, index) => (
-                    <li
-                      key={`${index}-${title}`}
-                      className="break-words [overflow-wrap:anywhere]"
+                {titles.length === 1 ? (
+                  <p className="text-xs text-gray-500 [overflow-wrap:anywhere]">
+                    {titles[0]}
+                  </p>
+                ) : (
+                  <details className="group/items">
+                    <summary
+                      className={textButtonUIClassName({
+                        className:
+                          "list-none px-0 [&::-webkit-details-marker]:hidden",
+                      })}
                     >
-                      {title}
-                    </li>
-                  ))}
-                  {titles.length > LISTED_ITEMS ? (
-                    <li className="text-gray-500">
-                      and {titles.length - LISTED_ITEMS} more
-                    </li>
-                  ) : null}
-                </ul>
+                      View items
+                      <ChevronDown className="h-3.5 w-3.5 transition-transform group-open/items:rotate-180" />
+                    </summary>
+                    <ul className="mt-2 space-y-1 text-xs text-gray-500">
+                      {titles.map((title, index) => (
+                        <li
+                          key={`${index}-${title}`}
+                          className="[overflow-wrap:anywhere]"
+                        >
+                          {title}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
                 {candidates.length > 0 ? (
-                  <>
-                    <ModalSelect
-                      id="member-departure-successor"
-                      value={successor}
-                      onChange={setSuccessor}
-                      options={candidates}
-                      placeholder="Choose a member"
-                      disabled={working}
-                    />
-                    {chosen?.email ? (
-                      <p className="break-words text-xs text-gray-500 [overflow-wrap:anywhere]">
-                        {chosen.email}
-                      </p>
-                    ) : null}
-                  </>
+                  <ModalSelect
+                    id="member-departure-successor"
+                    aria-label="Hand over to"
+                    value={successor}
+                    onChange={setSuccessor}
+                    options={candidates}
+                    placeholder="Choose a member"
+                    disabled={working}
+                    wrapLabels
+                  />
                 ) : (
                   <p role="alert" className="text-sm text-red-600">
                     There is no other member to hand this to.
@@ -278,11 +302,23 @@ export function MemberDepartureDialog({
             ) : null}
 
             {deletedSummary ? (
-              <p className="text-sm text-gray-600">
-                {leaving ? "Your" : several ? "Their" : `${who}'s`}{" "}
-                {deletedSummary} in this organization will be permanently
-                deleted.
-              </p>
+              <section
+                className="space-y-2"
+                aria-labelledby="member-departure-private-activity"
+              >
+                <h2
+                  id="member-departure-private-activity"
+                  className="text-sm font-medium text-gray-700"
+                >
+                  Private items to delete
+                </h2>
+                <p className="text-sm text-gray-500">
+                  {deletedSummary} will be permanently deleted.
+                </p>
+                <p className="text-xs text-gray-500">
+                  These items have no remaining owner. Their contents will also be deleted.
+                </p>
+              </section>
             ) : null}
           </>
         )}

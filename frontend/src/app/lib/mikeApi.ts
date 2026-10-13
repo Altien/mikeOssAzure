@@ -1,4 +1,7 @@
 import type { RouterProfileLists } from "@/shared/lib/modelCatalog";
+import type { OrgMemberHandover } from "@mike/contracts";
+export type { OrgMemberHandover } from "@mike/contracts";
+
 /**
  * Mike API client — all requests to the Node.js backend.
  * Attaches the active browser auth token for user authentication.
@@ -1823,39 +1826,23 @@ export async function updateOrgMember(
     });
 }
 
-/**
- * What a member's leaving does to their work in the organization.
- *
- * `projects` and `workflows` are the private ones they alone own: a member
- * has to be named to take those over before they can go. `chats` and
- * `reviews` count their standalone ones nobody else owns, which are deleted
- * with the membership.
- */
-export interface OrgMemberHandover {
-    projects: { id: string; title: string }[];
-    workflows: { id: string; title: string }[];
-    chats: number;
-    reviews: number;
-    /**
-     * Their own documents in the organization's library, deleted with the
-     * membership like their chats and reviews. Absent from an older server.
-     */
-    documents?: number;
-}
-
 /** Asked before removing a member, or before leaving (the caller's own id). */
 export async function getOrgMemberHandover(
     orgId: string,
     userId: string,
+    departingUserIds?: string[],
 ): Promise<OrgMemberHandover> {
+    const query = departingUserIds?.length
+        ? `?${new URLSearchParams({ departing_user_ids: departingUserIds.join(",") })}`
+        : "";
     return apiRequest<OrgMemberHandover>(
-        `/orgs/${orgId}/members/${userId}/handover`,
+        `/orgs/${orgId}/members/${userId}/handover${query}`,
     );
 }
 
 /**
  * Remove a member, or leave (the caller's own id). `assignTo` names the
- * member who takes over the projects and workflows they alone own; the
+ * member who takes over the public projects and workflows they alone own; the
  * server refuses the removal with `handover_required` when there are some
  * and nobody is named.
  */

@@ -2,11 +2,8 @@
 // org_member_private_standalone, assign_org_member_items), for tests whose
 // Supabase stand-in is a map of tables.
 //
-// When a member leaves an organization, the private projects and workflows
-// they alone own are handed to a named successor, and their standalone chats
-// and reviews that nobody else owns, and their own documents there, are
-// deleted. The backend asks the
-// database which those are, so a fake has to answer the same way.
+// Public items with no remaining explicit owner are transferred. Private
+// items with no remaining owner are deleted; their titles are never returned.
 
 type Row = Record<string, unknown>;
 type Tables = Record<string, Row[] | undefined>;
@@ -40,83 +37,51 @@ const isMember = (tables: Tables, orgId: unknown, userId: unknown) =>
         (member) => member.org_id === orgId && member.user_id === userId,
     );
 
-function soleOwnedItems(tables: Tables, orgId: unknown, userId: unknown) {
-    return (Object.keys(OWNED) as (keyof typeof OWNED)[]).flatMap((kind) => {
+function departureItems(tables: Tables, orgId: unknown, userIds: unknown[]) {
+    const leaving = (id: unknown) => userIds.includes(id);
+    const remaining = (id: unknown) => !leaving(id) && isMember(tables, orgId, id);
+    const projects = (Object.keys(OWNED) as (keyof typeof OWNED)[]).flatMap((kind) => {
         const config = OWNED[kind];
         const overrides = tables[config.overrides] ?? [];
-        const ownerOverride = (item: Row, of: (holder: unknown) => boolean) =>
-            overrides.some(
-                (override) =>
-                    override[config.key] === item.id &&
-                    override.role === "owner" &&
-                    of(override.user_id),
-            );
+        const hasOwner = (item: Row, matches: (id: unknown) => boolean) =>
+            overrides.some((grant) => grant[config.key] === item.id &&
+                grant.role === "owner" && matches(grant.user_id));
         return (tables[config.table] ?? [])
-            .filter(
-                (item) =>
-                    item.org_id === orgId &&
-                    item.visibility !== "organization" &&
-                    (item.user_id === userId ||
-                        ownerOverride(item, (holder) => holder === userId)) &&
-                    !(
-                        item.user_id !== userId &&
-                        isMember(tables, orgId, item.user_id)
-                    ) &&
-                    !ownerOverride(item, (holder) => holder !== userId),
-            )
+            .filter((item) => item.org_id === orgId &&
+                (leaving(item.user_id) || hasOwner(item, leaving)) &&
+                !remaining(item.user_id) && !hasOwner(item, remaining))
             .map((item) => ({
-                kind,
-                item_id: item.id,
-                title: item[config.title] ?? null,
+                kind, item_id: item.id,
+                title: item.visibility === "organization" ? item[config.title] ?? null : null,
+                disposition: item.visibility === "organization" ? "transfer" : "delete",
             }));
     });
+    const profiles = new Map((tables.user_profiles ?? []).map((profile) => [
+        String(profile.email ?? "").toLowerCase(), profile.user_id,
+    ]));
+    const standalone = (Object.keys(STANDALONE) as (keyof typeof STANDALONE)[]).flatMap((kind) => {
+        const config = STANDALONE[kind];
+        const hasOwner = (item: Row, matches: (id: unknown) => boolean) =>
+            (tables[config.grants] ?? []).some((grant) =>
+                grant[config.key] === item.id && grant.role === "owner" &&
+                matches(profiles.get(String(grant.email))));
+        return (tables[config.table] ?? [])
+            .filter((item) => item.org_id === orgId && !item.project_id &&
+                (leaving(item.user_id) || hasOwner(item, leaving)) &&
+                !remaining(item.user_id) && !hasOwner(item, remaining))
+            .map((item) => ({ kind, item_id: item.id, title: null, disposition: "delete" }));
+    });
+    const documents = (tables.documents ?? [])
+        .filter((item) => item.org_id === orgId && !item.project_id &&
+            !item.workflow_id && leaving(item.user_id))
+        .map((item) => ({ kind: "document", item_id: item.id, title: null, disposition: "delete" }));
+    return [...projects, ...standalone, ...documents];
 }
 
-function privateStandalone(tables: Tables, orgId: unknown, userId: unknown) {
-    const userIdByEmail = new Map(
-        (tables.user_profiles ?? []).map((profile) => [
-            String(profile.email ?? "").toLowerCase(),
-            profile.user_id,
-        ]),
-    );
-    return (Object.keys(STANDALONE) as (keyof typeof STANDALONE)[]).flatMap(
-        (kind) => {
-            const config = STANDALONE[kind];
-            const ownedByAnotherMember = (item: Row) =>
-                (tables[config.grants] ?? []).some((grant) => {
-                    if (grant[config.key] !== item.id || grant.role !== "owner")
-                        return false;
-                    const holder = userIdByEmail.get(String(grant.email));
-                    return (
-                        holder !== undefined &&
-                        holder !== userId &&
-                        isMember(tables, orgId, holder)
-                    );
-                });
-            return (tables[config.table] ?? [])
-                .filter(
-                    (item) =>
-                        item.org_id === orgId &&
-                        !item.project_id &&
-                        item.user_id === userId &&
-                        !ownedByAnotherMember(item),
-                )
-                .map((item) => ({ kind, item_id: item.id }));
-        },
-    );
-}
-
-/** Their own documents in the organization: in no project and no workflow. */
-function ownStandaloneDocuments(tables: Tables, orgId: unknown, userId: unknown) {
-    return (tables.documents ?? [])
-        .filter(
-            (document) =>
-                document.org_id === orgId &&
-                !document.project_id &&
-                !document.workflow_id &&
-                document.user_id === userId,
-        )
-        .map((document) => ({ kind: "document", item_id: document.id }));
+function soleOwnedItems(tables: Tables, orgId: unknown, userId: unknown) {
+    return departureItems(tables, orgId, [userId])
+        .filter((item) => item.disposition === "transfer")
+        .map((item) => ({ kind: item.kind as keyof typeof OWNED, item_id: item.item_id, title: item.title }));
 }
 
 /**
@@ -134,12 +99,13 @@ export function handoverRpcResult(
     const orgId = args?.p_org_id;
     if (name === "org_member_sole_owned_items")
         return { data: soleOwnedItems(tables, orgId, args?.p_user_id), error: null };
+    if (name === "org_members_departure_items")
+        return { data: departureItems(tables, orgId, args?.p_user_ids as unknown[]), error: null };
     if (name === "org_member_private_standalone")
         return {
-            data: [
-                ...privateStandalone(tables, orgId, args?.p_user_id),
-                ...ownStandaloneDocuments(tables, orgId, args?.p_user_id),
-            ],
+            data: departureItems(tables, orgId, [args?.p_user_id])
+                .filter((item) => ["chat", "tabular_review", "document"].includes(item.kind))
+                .map((item) => ({ kind: item.kind, item_id: item.item_id })),
             error: null,
         };
     if (name === "assign_org_member_items") {
@@ -155,6 +121,9 @@ export function handoverRpcResult(
                 },
             };
         const items = soleOwnedItems(tables, orgId, from);
+        if ((tables.org_members ?? []).some((member) =>
+            member.org_id === orgId && member.user_id === to && member.role === "owner"))
+            return { data: items.length, error: null };
         for (const item of items) {
             const config = OWNED[item.kind];
             const overrides = (tables[config.overrides] ??= []);
