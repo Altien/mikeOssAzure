@@ -41,7 +41,9 @@ import {
 import type {
   VerificationArtifact,
 } from "../../../../altien/authorityTrace/core/service";
-import { executeMcpToolCall } from "../../../../lib/mcpConnectors";
+import { executeMcpToolCall, type McpToolEvent } from "../../../../lib/mcpConnectors";
+import { registerMcpLegalSource } from "./mcpSourceDocuments";
+import type { LegalDataHunterSource } from "../../../../lib/mcp/sourceDocuments";
 import {
   APPROVAL_UNAVAILABLE_MESSAGE,
   addApprovalItems,
@@ -747,7 +749,7 @@ export async function runToolCalls(
           name: tc.function.name,
         })}\n\n`,
       );
-      const { content, event } =
+      const result: { content: string; event: McpToolEvent; legalSource?: LegalDataHunterSource | null } =
         plan.type === "result"
           ? plan
           : plan.type === "approval"
@@ -786,10 +788,16 @@ export async function runToolCalls(
                     args,
                     db,
                   );
+      const { content, event } = result;
+      let sourceCitation = "";
+      if (event.status === "ok" && result.legalSource && docIndex) {
+        const handle = registerMcpLegalSource(result.legalSource, docIndex, docStore);
+        sourceCitation = `\n\nCanonical legal source: {"doc_id":"${handle}"}. Cite an exact quote from this source with that doc_id.`;
+      }
       toolResults.push({
         role: "tool",
         tool_call_id: tc.id,
-        content,
+        content: `${content}${sourceCitation}`,
       });
       mcpEvents.push(event);
       write(
