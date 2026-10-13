@@ -83,16 +83,25 @@ function SignupContent() {
 
     useEffect(() => {
         if (isAccountCreatedPreview) return;
-        if (!authLoading && isAuthenticated && !success) {
+        if (!authLoading && isAuthenticated && !loading && !success) {
             router.replace("/onboarding/profile");
         }
     }, [
         authLoading,
         isAccountCreatedPreview,
         isAuthenticated,
+        loading,
         router,
         success,
     ]);
+
+    useEffect(() => {
+        if (!success) return;
+        const timer = setTimeout(() => {
+            router.push("/onboarding/profile");
+        }, 2000);
+        return () => clearTimeout(timer);
+    }, [router, success]);
 
     const handleSignup = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -130,9 +139,6 @@ function SignupContent() {
             if (!result.requiresEmailConfirmation) {
                 await refreshSession();
                 setSuccess(true);
-                setTimeout(() => {
-                    router.push("/onboarding/profile");
-                }, 2000);
             } else {
                 router.push("/signup/check-email");
             }

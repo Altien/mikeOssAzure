@@ -1,14 +1,15 @@
-import { render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SignupPage from "./page";
 
-const { signup, startGoogleOAuth, refreshSession, replace, push } = vi.hoisted(() => ({
+const { signup, startGoogleOAuth, refreshSession, replace, push, authState } = vi.hoisted(() => ({
     signup: vi.fn(),
     startGoogleOAuth: vi.fn(),
     refreshSession: vi.fn(),
     replace: vi.fn(),
     push: vi.fn(),
+    authState: { isAuthenticated: false },
 }));
 
 vi.mock("next/navigation", () => ({
@@ -23,7 +24,7 @@ vi.mock("@/app/lib/authApi", () => ({
 
 vi.mock("@/app/contexts/AuthContext", () => ({
     useAuth: () => ({
-        isAuthenticated: false,
+        isAuthenticated: authState.isAuthenticated,
         authLoading: false,
         refreshSession,
     }),
@@ -40,6 +41,50 @@ describe("SignupPage", () => {
         refreshSession.mockReset();
         replace.mockReset();
         push.mockReset();
+        authState.isAuthenticated = false;
+    });
+
+    afterEach(() => {
+        cleanup();
+        vi.useRealTimers();
+    });
+
+    it.each([false, true])("does not restart onboarding after signup (leave page: %s)", async (leavePage) => {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        signup.mockResolvedValue({ requiresEmailConfirmation: false });
+        let finishRefresh!: () => void;
+        refreshSession.mockImplementation(() => new Promise<void>((resolve) => {
+            finishRefresh = resolve;
+        }));
+        const view = render(<SignupPage />);
+        fireEvent.change(screen.getByRole("textbox", { name: "Email" }), {
+            target: { value: "alex@example.com" },
+        });
+        fireEvent.change(screen.getByLabelText("Password"), {
+            target: { value: "secret1234" },
+        });
+        fireEvent.change(screen.getByLabelText("Confirm Password"), {
+            target: { value: "secret1234" },
+        });
+        await act(async () => {
+            fireEvent.click(screen.getByRole("button", { name: "Sign up" }));
+        });
+
+        // AuthContext publishes the user before refreshSession resolves.
+        // The existing-session redirect must not race the signup handoff.
+        authState.isAuthenticated = true;
+        view.rerender(<SignupPage />);
+        expect(replace).not.toHaveBeenCalled();
+        await act(async () => finishRefresh());
+        expect(screen.getByText("Account created!")).toBeVisible();
+
+        if (leavePage) view.unmount();
+        await act(async () => vi.advanceTimersByTime(2_000));
+        if (leavePage) {
+            expect(push).not.toHaveBeenCalled();
+        } else {
+            expect(push).toHaveBeenCalledExactlyOnceWith("/onboarding/profile");
+        }
     });
 
     it("creates credentials and waits for email confirmation", async () => {

@@ -97,7 +97,12 @@ maybeDescribe("get_chats_overview — role-aware grants", () => {
         if (members.error) throw members.error;
 
         const projects = await admin.from("projects").insert([
-            { id: myProjectId, user_id: callerId, name: `mine-${suffix}` },
+            {
+                id: myProjectId,
+                user_id: callerId,
+                name: `mine-${suffix}`,
+                visibility: "private",
+            },
             {
                 id: sharedOrgProjectId,
                 user_id: strangerId,
@@ -109,6 +114,7 @@ maybeDescribe("get_chats_overview — role-aware grants", () => {
                 id: grantedProjectId,
                 user_id: strangerId,
                 name: `granted-${suffix}`,
+                visibility: "private",
             },
             {
                 id: foreignOrgProjectId,
