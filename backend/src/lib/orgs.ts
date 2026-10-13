@@ -348,6 +348,7 @@ export async function listOrgResources(
                 .from("projects")
                 .select("id, user_id, org_id, visibility, name, cm_number, practice, created_at, updated_at")
                 .eq("org_id", params.orgId)
+                .is("archived_at", null)
                 .order("created_at", { ascending: false }),
             db
                 .from("workflows")
@@ -355,6 +356,7 @@ export async function listOrgResources(
                     "id, user_id, org_id, visibility, title, type, practice, created_at",
                 )
                 .eq("org_id", params.orgId)
+                .is("archived_at", null)
                 .order("created_at", { ascending: false }),
             db
                 .from("project_org_access_overrides")
@@ -585,7 +587,7 @@ export async function updateMember(
     return { ok: true, member };
 }
 
-/** Public work to transfer and counts of private items with no remaining owner. */
+/** Shared work to transfer and counts of unshared work to retain for 30 days. */
 export type MemberHandover = OrgMemberHandover;
 
 async function loadMemberHandover(
@@ -598,11 +600,14 @@ async function loadMemberHandover(
         p_user_ids: userIds,
     });
     // Fail closed until the migration is installed: an empty fallback could
-    // remove a member without the public handover or private deletion preview.
+    // remove a member without the shared handover or private retention preview.
     if (error) return { ok: false, detail: error.message };
     const handover: MemberHandover = {
         projects: [],
         workflows: [],
+        sharedChats: 0,
+        sharedReviews: 0,
+        sharedDocuments: 0,
         privateProjects: 0,
         privateWorkflows: 0,
         chats: 0,
@@ -616,10 +621,13 @@ async function loadMemberHandover(
         disposition: string;
     }[]) {
         if (row.disposition === "transfer") {
-            const item = { id: row.item_id, title: row.title ?? "" };
+            const item = { id: row.item_id, title: row.title === null ? "" : row.title?.trim() || "Untitled" };
             if (row.kind === "project") handover.projects.push(item);
             else if (row.kind === "workflow") handover.workflows.push(item);
-        } else if (row.disposition === "delete") {
+            else if (row.kind === "chat") handover.sharedChats += 1;
+            else if (row.kind === "tabular_review") handover.sharedReviews += 1;
+            else if (row.kind === "document") handover.sharedDocuments += 1;
+        } else if (row.disposition === "archive") {
             if (row.kind === "project") handover.privateProjects += 1;
             else if (row.kind === "workflow") handover.privateWorkflows += 1;
             else if (row.kind === "chat") handover.chats += 1;
@@ -658,7 +666,7 @@ async function authorizeRemoval(
 }
 
 /**
- * What removing a member (or leaving) would hand over and delete, for the
+ * What removing a member (or leaving) would hand over and archive, for the
  * dialog that asks. Answered only to somebody who could go on to do it.
  */
 export async function getMemberHandover(
@@ -689,8 +697,8 @@ export async function removeMember(
         orgId: string;
         targetUserId: string;
         /**
-         * The member who takes over the public projects and workflows the departing
-         * member alone explicitly owns. Required when there are any.
+         * The member who takes over the shared work the departing member alone owns. Defaults to a remaining
+         * organization owner when omitted.
          */
         assignTo?: unknown;
     },
@@ -717,49 +725,26 @@ export async function removeMember(
     if (!loaded.ok)
         return { ok: false, kind: "db_error", detail: loaded.detail };
     const { handover } = loaded;
-    const owed = handover.projects.length + handover.workflows.length;
-    let assignedTo: string | null = null;
-    if (owed > 0) {
-        const { assignTo } = params;
-        if (assignTo === undefined || assignTo === null || assignTo === "")
-            return {
-                ok: false,
-                kind: "handover_required",
-                projects: handover.projects.length,
-                workflows: handover.workflows.length,
-            };
-        if (
-            typeof assignTo !== "string" ||
-            assignTo === params.targetUserId ||
-            !(await getOrgRole(assignTo, params.orgId, db))
-        )
-            return {
-                ok: false,
-                kind: "validation",
-                detail: "Choose another member of this organization to take over their public projects and workflows.",
-            };
-        const { error: assignError } = await db.rpc("assign_org_member_items", {
-            p_org_id: params.orgId,
-            p_from_user_id: params.targetUserId,
-            p_to_user_id: assignTo,
-            p_assigned_by: params.actorId,
-        });
-        if (assignError)
-            return { ok: false, kind: "db_error", detail: assignError.message };
-        assignedTo = assignTo;
-    }
+    const assignTo = params.assignTo;
+    if (assignTo !== undefined && assignTo !== null && assignTo !== "" && (
+        typeof assignTo !== "string" || assignTo === params.targetUserId ||
+        !(await getOrgRole(assignTo, params.orgId, db))
+    )) return { ok: false, kind: "validation", detail: "Choose another member of this organization to take over the shared work." };
 
-    // Deleting the membership also deletes their private items without
-    // another owner, including project/workflow contents, in the same statement
-    // (cleanup_removed_org_member_overrides).
-    const { error } = await db
-        .from("org_members")
-        .delete()
-        .eq("org_id", params.orgId)
-        .eq("user_id", params.targetUserId);
+    // The RPC rechecks roles and ownership under an organization lock, then
+    // transfers/archives and removes membership in the same transaction.
+    const assignedTo = typeof assignTo === "string" && assignTo ? assignTo : null;
+    const { error } = await db.rpc("remove_org_member", {
+        p_org_id: params.orgId,
+        p_user_id: params.targetUserId,
+        p_actor_id: params.actorId,
+        p_successor_id: assignedTo,
+    });
     if (error) {
-        if (isLastOwnerViolation(error))
-            return { ok: false, kind: "last_owner" };
+        if (isLastOwnerViolation(error)) return { ok: false, kind: "last_owner" };
+        if (error.code === "42501") return { ok: false, kind: "forbidden" };
+        if (error.code === "P0002") return { ok: false, kind: "not_found" };
+        if (error.code === "23514") return { ok: false, kind: "validation", detail: "Choose another current organization member." };
         return { ok: false, kind: "db_error", detail: error.message };
     }
     const profiles = await attachProfiles(db, [
@@ -775,15 +760,18 @@ export async function removeMember(
             target_user_id: params.targetUserId,
             role: targetRole,
             // What became of their work: who took over what they alone
-            // owned, and how much of what was private to them was deleted.
+            // owned, and how much of what was private to them was archived.
             assigned_to: assignedTo,
             assigned_projects: handover.projects.length,
             assigned_workflows: handover.workflows.length,
-            deleted_projects: handover.privateProjects,
-            deleted_workflows: handover.privateWorkflows,
-            deleted_chats: handover.chats,
-            deleted_reviews: handover.reviews,
-            deleted_documents: handover.documents,
+            assigned_chats: handover.sharedChats,
+            assigned_reviews: handover.sharedReviews,
+            assigned_documents: handover.sharedDocuments,
+            archived_projects: handover.privateProjects,
+            archived_workflows: handover.privateWorkflows,
+            archived_chats: handover.chats,
+            archived_reviews: handover.reviews,
+            archived_documents: handover.documents,
         },
     });
     return { ok: true };

@@ -16,6 +16,8 @@ import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import { sendOrgFailure } from "../../lib/orgFailure";
 import { isPersonalOrg } from "../../lib/personalOrgs";
+import { parsePaginationQuery } from "../../lib/pagination";
+import { sendServiceFailure } from "../../lib/serviceResult";
 import {
     listMyOrgs,
     createOrg,
@@ -42,6 +44,8 @@ import {
     removeOrgLogo,
     saveOrgRouterModels,
     normalizeOrgRouterSlug,
+    listDepartureArchives,
+    resolveDepartureArchive,
 } from "./orgs.service";
 import { normalizeApiKeyProvider } from "../user/user.service";
 
@@ -62,6 +66,33 @@ function refusePersonalOrg(req: Request, res: Response, next: NextFunction) {
     );
 }
 const requireOrgAuth = [requireAuth, refusePersonalOrg];
+
+orgsRouter.get("/:orgId/archives", requireOrgAuth, asyncRoute(async (req, res) => {
+    const result = await listDepartureArchives(createServerSupabase(), {
+        orgId: req.params.orgId, userId: res.locals.userId,
+        ...parsePaginationQuery(req.query),
+    });
+    if (!result.ok) return sendServiceFailure(res, result);
+    res.json(result.data);
+}));
+
+orgsRouter.post("/:orgId/archives/:archiveId/recover", requireOrgAuth, asyncRoute(async (req, res) => {
+    const result = await resolveDepartureArchive(createServerSupabase(), {
+        orgId: req.params.orgId, archiveId: req.params.archiveId,
+        userId: res.locals.userId, successorId: req.body?.assign_to, delete: false,
+    });
+    if (!result.ok) return sendServiceFailure(res, result);
+    res.status(204).send();
+}));
+
+orgsRouter.delete("/:orgId/archives/:archiveId", requireOrgAuth, requireMfaIfEnrolled, asyncRoute(async (req, res) => {
+    const result = await resolveDepartureArchive(createServerSupabase(), {
+        orgId: req.params.orgId, archiveId: req.params.archiveId,
+        userId: res.locals.userId, delete: true,
+    });
+    if (!result.ok) return sendServiceFailure(res, result);
+    res.status(204).send();
+}));
 
 // GET /orgs — orgs the caller belongs to (with their role + member count).
 orgsRouter.get("/", requireAuth, asyncRoute(async (_req, res) => {

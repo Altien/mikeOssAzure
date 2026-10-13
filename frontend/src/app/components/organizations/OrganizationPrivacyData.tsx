@@ -25,6 +25,7 @@ import {
 } from "@/app/lib/mikeApi";
 import { isOrgOwner } from "@/app/lib/permissions";
 import { GlassCardUI } from "@/shared/ui/GlassCardUI";
+import { OrganizationArchivedWork } from "./OrganizationArchivedWork";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import {
   organizationSettingsHref,
@@ -139,6 +140,7 @@ export function OrganizationPrivacyData() {
 
   return (
     <div className="space-y-8">
+      {org && isOrgOwner(org.role) ? <OrganizationArchivedWork key={orgId} orgId={orgId} /> : null}
       <section aria-labelledby="org-privacy-delete" className="space-y-3">
         <SettingsHeading id="org-privacy-delete">Delete data</SettingsHeading>
         <GlassCardUI>

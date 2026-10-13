@@ -1,6 +1,6 @@
 import type { RouterProfileLists } from "@/shared/lib/modelCatalog";
-import type { OrgMemberHandover } from "@mike/contracts";
-export type { OrgMemberHandover } from "@mike/contracts";
+import type { OrgMemberHandover, OrgDepartureArchivePage } from "@mike/contracts";
+export type { OrgMemberHandover, OrgDepartureArchive, OrgDepartureArchivePage } from "@mike/contracts";
 
 /**
  * Mike API client — all requests to the Node.js backend.
@@ -1845,9 +1845,8 @@ export async function getOrgMemberHandover(
 
 /**
  * Remove a member, or leave (the caller's own id). `assignTo` names the
- * member who takes over the public projects and workflows they alone own; the
- * server refuses the removal with `handover_required` when there are some
- * and nobody is named.
+ * member who takes over shared work. If omitted, the server selects a
+ * remaining organization owner. Unshared work is archived for 30 days.
  */
 export async function removeOrgMember(
     orgId: string,
@@ -1860,6 +1859,22 @@ export async function removeOrgMember(
     await apiRequest(`/orgs/${orgId}/members/${userId}${query}`, {
         method: "DELETE",
     });
+}
+
+/** Owner-only recovery of private work left by departed members. */
+export function listOrgDepartureArchives(orgId: string, offset = 0): Promise<OrgDepartureArchivePage> {
+    return apiRequest(`/orgs/${orgId}/archives?${new URLSearchParams({ limit: "50", offset: String(offset) })}`);
+}
+
+export async function recoverOrgDepartureArchive(orgId: string, archiveId: string, assignTo: string): Promise<void> {
+    await apiRequest(`/orgs/${orgId}/archives/${archiveId}/recover`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assign_to: assignTo }),
+    });
+}
+
+export async function deleteOrgDepartureArchive(orgId: string, archiveId: string): Promise<void> {
+    await apiRequest(`/orgs/${orgId}/archives/${archiveId}`, { method: "DELETE" });
 }
 
 // --- Invitations: the admin's side ---------------------------------------

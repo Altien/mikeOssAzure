@@ -38,7 +38,7 @@ function makeDb(
                 error: { message: `unexpected rpc ${name}` },
             },
         from(table: string) {
-            let rows = [...(tables[table] ?? [])];
+            let rows: Row[] = (tables[table] ?? []).map(row => ({ archived_at: null, ...row }));
             let pageFrom = 0;
             const failure = options.selectErrors?.[table]
                 ? { message: options.selectErrors[table] }
@@ -126,6 +126,18 @@ function makeDb(
 }
 
 describe("access helpers", () => {
+    it("denies archived containers to former creators and organization owners", async () => {
+        const db = makeDb({
+            organizations: [{ id: "org", kind: "team" }],
+            org_members: [{ org_id: "org", user_id: "owner", role: "owner" }],
+            projects: [{ id: "p", org_id: "org", user_id: "owner", visibility: "organization", archived_at: "2026-10-13" }],
+            workflows: [{ id: "w", org_id: "org", user_id: "owner", visibility: "organization", archived_at: "2026-10-13" }],
+        });
+        expect(await checkProjectAccess("p", "owner", "owner@example.test", db)).toEqual({ ok: false });
+        expect(await checkWorkflowAccess("w", "owner", "owner@example.test", db)).toEqual({ ok: false });
+        expect(await listAccessibleProjectIds("owner", "owner@example.test", db)).toEqual([]);
+    });
+
     const db = makeDb({
         projects: [
             { id: "own-project", user_id: "owner", org_id: null },

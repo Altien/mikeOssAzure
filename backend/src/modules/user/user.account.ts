@@ -15,14 +15,7 @@ import {
 } from "./user.dataCleanup";
 import { type Db, errorMessage } from "./user.shared";
 
-/**
- * Turn the sole-owner blockers into instructions the user can actually act
- * on. The two reasons need DIFFERENT actions — appointing a successor fixes
- * an org that still has members, and does nothing for an org whose only
- * problem is that it still owns matters — so a single "make another member
- * an owner" sentence sent the second group off to look for members who do
- * not exist. A mixed batch gets both sentences, each naming its own orgs.
- */
+/** Explain which organizations need an owner before account deletion. */
 export function describeAccountDeletionBlockers(
     blockers: AccountDeletionOrgBlocker[],
 ): string {
@@ -40,7 +33,7 @@ export function describeAccountDeletionBlockers(
     const withContent = named("content");
     if (withContent)
         sentences.push(
-            `You are the only owner of ${withContent}, which still owns content. Delete or move the organization's projects, workflows, documents and reviews, or delete the organization, before deleting your account.`,
+            `You are the only owner of ${withContent}, and must appoint another owner or explicitly delete the organization before deleting your account.`,
         );
     return sentences.join(" ");
 }
@@ -57,7 +50,7 @@ export async function deleteUserAccount(
 > {
     try {
         // ORGANIZATIONS FIRST. An account that is the only owner of an
-        // organization which still has members or content cannot be deleted:
+        // team organization cannot be deleted, even when it is empty:
         // promoting an arbitrary successor hands a firm's matters to whoever
         // joined first (and silently clears their `deny` overrides), while
         // removing the member outright is refused by the last-owner guard
@@ -78,6 +71,10 @@ export async function deleteUserAccount(
             p_user_email: userEmail?.toLowerCase() ?? null,
             p_provider: provider,
         });
+        if (error?.code === "23514") {
+            const currentBlockers = await listOrgsBlockingAccountDeletion(db, userId);
+            if (currentBlockers.length) return { ok: false, kind: "org_successor_required", blockers: currentBlockers };
+        }
         if (error || !data) throw error ?? new Error("Erasure was not scheduled");
         return { ok: true };
     } catch (err) {

@@ -5,8 +5,8 @@ import type { OrgMember } from "@/app/lib/mikeApi";
 import { MemberDepartureDialog } from "./MemberDepartureDialog";
 
 // What becomes of a member's work when they leave an organization: the
-// public projects and workflows they alone own go to a member named here,
-// and their own standalone chats and reviews are deleted. The dialog says
+// shared work they alone own goes to one successor; private, unshared work
+// is retained for 30 days for organization owners to recover. The dialog says
 // so before anything happens, and will not go on without a successor when
 // one is needed.
 
@@ -39,7 +39,7 @@ const ROSTER = [
   member("robin", "Robin Heir"),
   member("pat", null),
 ];
-const NOTHING = { projects: [], workflows: [], privateProjects: 0, privateWorkflows: 0, documents: 0, chats: 0, reviews: 0 };
+const NOTHING = { sharedChats: 0, sharedReviews: 0, sharedDocuments: 0, projects: [], workflows: [], privateProjects: 0, privateWorkflows: 0, documents: 0, chats: 0, reviews: 0 };
 const SAMS_WORK = {
   ...NOTHING,
   projects: [
@@ -118,17 +118,17 @@ describe("a member who alone owns projects and workflows", () => {
     mocks.getOrgMemberHandover.mockResolvedValue(SAMS_WORK);
   });
 
-  it("says what has to be handed over, and what will be deleted", async () => {
+  it("says what has to be handed over and what will be archived", async () => {
     renderDialog();
 
     expect(
-      await screen.findByText("2 public projects and 1 public workflow need a new owner."),
+      await screen.findByText("2 projects and 1 workflow need a new owner. Shared and public work will transfer together."),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Transfer ownership" }),
     ).toBeVisible();
     expect(
-      screen.getByRole("heading", { name: "Private items to delete" }),
+      screen.getByRole("heading", { name: "Private work retained for 30 days" }),
     ).toBeVisible();
     const dialog = screen.getByRole("dialog", { name: "Remove" });
     expect(dialog.querySelector("header")).toHaveTextContent(
@@ -136,23 +136,22 @@ describe("a member who alone owns projects and workflows", () => {
     );
     expect(screen.getByText("Project Atlas")).not.toBeVisible();
     expect(screen.getByText("Disclosure checklist")).toBeInTheDocument();
-    // A project with no name is still listed.
-    expect(screen.getByText("Untitled")).toBeInTheDocument();
+    // Private shared titles are withheld; counts still include those items.
+    expect(screen.queryByText("Untitled")).not.toBeInTheDocument();
     expect(
       screen.getByText(
-        "2 private chats and 1 tabular review will be permanently deleted.",
+        "2 private chats and 1 tabular review will be archived for 30 days.",
       ),
     ).toBeInTheDocument();
   });
 
-  it("will not remove them until a successor is chosen", async () => {
+  it("defaults to a remaining organization owner for one bulk handover", async () => {
     const user = userEvent.setup();
     renderDialog();
-    await screen.findByLabelText("Hand over to");
-
-    expect(confirmButton()).toBeDisabled();
+    expect(await screen.findByLabelText("Hand over to")).toHaveTextContent("Dana Owner");
+    expect(confirmButton()).toBeEnabled();
     await user.click(confirmButton());
-    expect(mocks.removeOrgMember).not.toHaveBeenCalled();
+    await waitFor(() => expect(mocks.removeOrgMember).toHaveBeenCalledWith("org-1", "sam", "dana"));
   });
 
   it("offers the organization's other members, never the one who is going", async () => {
@@ -234,7 +233,7 @@ describe("a member who alone owns projects and workflows", () => {
     renderDialog();
 
     expect(
-      await screen.findByText("9 public projects need a new owner."),
+      await screen.findByText("9 projects need a new owner. Shared and public work will transfer together."),
     ).toBeVisible();
     expect(screen.getByText("Matter 1")).not.toBeVisible();
     expect(screen.getByText("Matter 9")).not.toBeVisible();
@@ -245,7 +244,7 @@ describe("a member who alone owns projects and workflows", () => {
     expect(screen.getAllByRole("listitem")).toHaveLength(9);
     await user.click(disclosure);
     expect(screen.getByText("Matter 9")).not.toBeVisible();
-    expect(confirmButton()).toBeDisabled();
+    expect(confirmButton()).toBeEnabled();
     expect(mocks.removeOrgMember).not.toHaveBeenCalled();
   });
 });
@@ -267,10 +266,10 @@ describe("leaving", () => {
       ),
     ).toBeInTheDocument();
     expect(
-      await screen.findByText("1 public workflow needs a new owner."),
+      await screen.findByText("1 workflow needs a new owner. Shared and public work will transfer together."),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("1 private chat will be permanently deleted."),
+      screen.getByText("1 private chat will be archived for 30 days."),
     ).toBeInTheDocument();
     expect(screen.getByText("Disclosure checklist")).toBeVisible();
     expect(screen.queryByText("View items")).not.toBeInTheDocument();
@@ -304,7 +303,7 @@ describe("removing several members together", () => {
       ),
     ).toBeInTheDocument();
     expect(
-      await screen.findByText("1 public project and 1 public workflow need a new owner."),
+      await screen.findByText("1 project and 1 workflow need a new owner. Shared and public work will transfer together."),
     ).toBeInTheDocument();
     expect(mocks.getOrgMemberHandover).toHaveBeenCalledWith("org-1", "sam", ["sam", "robin"]);
     await user.click(screen.getByLabelText("Hand over to"));
@@ -351,7 +350,7 @@ describe("when what would be handed over cannot be read", () => {
     renderDialog();
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not check what would be transferred or deleted.",
+      "Could not check what would be transferred or archived.",
     );
     expect(confirmButton()).toBeDisabled();
     await user.click(
@@ -365,16 +364,16 @@ describe("when what would be handed over cannot be read", () => {
 });
 
 describe("private work without another owner", () => {
-  it("shows deletion counts without a transfer selector or private titles", async () => {
+  it("shows archive counts without a transfer selector or private titles", async () => {
     const user = userEvent.setup();
     mocks.getOrgMemberHandover.mockResolvedValue({
       ...NOTHING, privateProjects: 2, privateWorkflows: 1, documents: 3,
     });
     renderDialog();
     expect(await screen.findByText(
-      "2 private projects, 1 private workflow and 3 documents will be permanently deleted.",
+      "2 private projects, 1 private workflow and 3 documents will be archived for 30 days.",
     )).toBeVisible();
-    expect(screen.getByText(/These items have no remaining owner/)).toBeVisible();
+    expect(screen.getByText(/Only organization owners can recover, reassign or delete this work/)).toBeVisible();
     expect(screen.queryByLabelText("Hand over to")).not.toBeInTheDocument();
     expect(screen.queryByText("View items")).not.toBeInTheDocument();
     await user.click(confirmButton());

@@ -2,8 +2,8 @@
 // org_member_private_standalone, assign_org_member_items), for tests whose
 // Supabase stand-in is a map of tables.
 //
-// Public items with no remaining explicit owner are transferred. Private
-// items with no remaining owner are deleted; their titles are never returned.
+// Public items with no remaining explicit owner are transferred. Unshared
+// items with no remaining owner are archived; their titles are never returned.
 
 type Row = Record<string, unknown>;
 type Tables = Record<string, Row[] | undefined>;
@@ -53,7 +53,7 @@ function departureItems(tables: Tables, orgId: unknown, userIds: unknown[]) {
             .map((item) => ({
                 kind, item_id: item.id,
                 title: item.visibility === "organization" ? item[config.title] ?? null : null,
-                disposition: item.visibility === "organization" ? "transfer" : "delete",
+                disposition: item.visibility === "organization" || overrides.some((grant) => grant[config.key] === item.id && ["owner", "editor", "viewer"].includes(String(grant.role)) && remaining(grant.user_id)) ? "transfer" : "archive",
             }));
     });
     const profiles = new Map((tables.user_profiles ?? []).map((profile) => [
@@ -69,12 +69,12 @@ function departureItems(tables: Tables, orgId: unknown, userIds: unknown[]) {
             .filter((item) => item.org_id === orgId && !item.project_id &&
                 (leaving(item.user_id) || hasOwner(item, leaving)) &&
                 !remaining(item.user_id) && !hasOwner(item, remaining))
-            .map((item) => ({ kind, item_id: item.id, title: null, disposition: "delete" }));
+            .map((item) => ({ kind, item_id: item.id, title: null, disposition: "archive" }));
     });
     const documents = (tables.documents ?? [])
         .filter((item) => item.org_id === orgId && !item.project_id &&
             !item.workflow_id && leaving(item.user_id))
-        .map((item) => ({ kind: "document", item_id: item.id, title: null, disposition: "delete" }));
+        .map((item) => ({ kind: "document", item_id: item.id, title: null, disposition: "archive" }));
     return [...projects, ...standalone, ...documents];
 }
 
@@ -97,6 +97,22 @@ export function handoverRpcResult(
     | { data: null; error: { code: string; message: string } }
     | undefined {
     const orgId = args?.p_org_id;
+    if (name === "remove_org_member") {
+        const from = args?.p_user_id;
+        const to = args?.p_successor_id ?? (tables.org_members ?? []).find((m) => m.org_id === orgId && m.role === "owner" && m.user_id !== from)?.user_id;
+        const items = departureItems(tables, orgId, [from]);
+        handoverRpcResult(tables, "assign_org_member_items", { p_org_id: orgId, p_from_user_id: from, p_to_user_id: to, p_assigned_by: args?.p_actor_id });
+        for (const item of items.filter((item) => item.disposition === "archive")) {
+            const table = item.kind === "project" ? "projects" : item.kind === "workflow" ? "workflows" : item.kind === "chat" ? "chats" : item.kind === "tabular_review" ? "tabular_reviews" : "documents";
+            const row = (tables[table] ?? []).find((row) => row.id === item.item_id);
+            if (row) row.archived_at = new Date().toISOString();
+        }
+        for (const table of ["projects", "workflows", "chats", "tabular_reviews", "documents"]) {
+            for (const row of tables[table] ?? []) if (row.org_id === orgId && row.user_id === from) row.user_id = null;
+        }
+        tables.org_members = (tables.org_members ?? []).filter((m) => m.org_id !== orgId || m.user_id !== from);
+        return { data: null, error: null };
+    }
     if (name === "org_member_sole_owned_items")
         return { data: soleOwnedItems(tables, orgId, args?.p_user_id), error: null };
     if (name === "org_members_departure_items")

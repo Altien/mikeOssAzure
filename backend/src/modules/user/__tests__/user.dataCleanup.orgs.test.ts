@@ -300,7 +300,7 @@ describe("deleteUserOrganizations", () => {
         expect(members[0]).toMatchObject({ user_id: "u2", role: "owner" });
     });
 
-    it("deletes an org only when nobody and nothing is left in it", async () => {
+    it("requires explicit organization deletion even when nobody and nothing else remains", async () => {
         const db = makeDb({
             organizations: [{ id: "empty", name: "Empty" }],
             org_members: [
@@ -308,8 +308,8 @@ describe("deleteUserOrganizations", () => {
             ],
             projects: [],
         });
-        await deleteUserOrganizations(db, "u1");
-        expect(db._tables.organizations).toHaveLength(0);
+        await expect(deleteUserOrganizations(db, "u1")).rejects.toThrow("only owner");
+        expect(db._tables.organizations).toHaveLength(1);
     });
 
     it("leaves the account's personal organization for the account's own deletion to remove", async () => {
@@ -482,11 +482,11 @@ describe("deleteUserOrganizations", () => {
                 ],
                 projects: [{ id: "p1", org_id: "o1", user_id: "u1" }],
             },
-            { selectErrors: { projects: "connection reset" } },
+            { selectErrors: { org_members: "connection reset" } },
         );
 
         await expect(deleteUserOrganizations(db, "u1")).rejects.toThrow(
-            /Failed to load org projects/,
+            /Failed to load org memberships/,
         );
         expect(db._tables.organizations).toHaveLength(1);
     });
@@ -571,8 +571,8 @@ describe("listOrgsBlockingAccountDeletion", () => {
         );
     });
 
-    it("does not block an empty org with no other members", async () => {
-        // deleteUserOrganizations deletes this one outright, so the account
+    it("requires explicit deletion even for an empty team organization", async () => {
+        // An empty team still needs an explicit organization deletion.
         // deletion may proceed.
         const db = makeDb({
             organizations: [{ id: "o1", name: "Empty" }],
@@ -582,7 +582,7 @@ describe("listOrgsBlockingAccountDeletion", () => {
             projects: [],
         });
         await expect(listOrgsBlockingAccountDeletion(db, "u1")).resolves.toEqual(
-            [],
+            [{ org_id: "o1", name: "Empty", reason: "content" }],
         );
     });
 
@@ -676,10 +676,10 @@ describe("listOrgsBlockingAccountDeletion", () => {
                 ],
                 projects: [{ id: "p1", org_id: "o1", user_id: "u1" }],
             },
-            { selectErrors: { projects: "connection reset" } },
+            { selectErrors: { organizations: "connection reset" } },
         );
         await expect(listOrgsBlockingAccountDeletion(db, "u1")).rejects.toThrow(
-            /Failed to load org projects/,
+            /Failed to read the personal organization|Failed to load organization/,
         );
     });
 });

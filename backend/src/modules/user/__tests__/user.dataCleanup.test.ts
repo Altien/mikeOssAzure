@@ -132,6 +132,9 @@ function makeDb(
     };
     const db = {
         async rpc(name: string, args: Record<string, unknown>) {
+            // These fixtures exercise the post-offboarding data/storage cascade.
+            // Departure classification and atomicity have real PostgreSQL tests.
+            if (name === "prepare_account_org_departures") return { data: null, error: null };
             // The cleanup worker's reference checks are body-based RPCs (a
             // GET `in(...)` with hundreds of keys drew a gateway 414).
             if (name === "document_cache_writer_active") {

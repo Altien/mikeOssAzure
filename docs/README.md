@@ -12,6 +12,8 @@
 
 ## Features and clients
 
+- [Organization offboarding](organization-offboarding.md) — member removal,
+  account deletion, shared-work transfer and owner-only recovery
 - [MCP connectors](connectors.md) — hosted presets, custom servers, OAuth,
   redirect URIs, and Slack/Google deployment setup
 - [Scoped memory](memory.md) — app and project Markdown memory, permissions,

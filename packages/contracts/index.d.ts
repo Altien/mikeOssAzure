@@ -490,6 +490,9 @@ export interface NativeConnectorTool {
 
 /** Organization departure preview: only public transfer items expose titles. */
 export interface OrgMemberHandover {
+    sharedChats: number;
+    sharedReviews: number;
+    sharedDocuments: number;
     projects: { id: string; title: string }[];
     workflows: { id: string; title: string }[];
     privateProjects: number;
@@ -497,4 +500,18 @@ export interface OrgMemberHandover {
     chats: number;
     reviews: number;
     documents: number;
+}
+
+/** Owner-only recovery list; these items are excluded from normal access. */
+export interface OrgDepartureArchive {
+    id: string;
+    kind: "project" | "workflow" | "chat" | "tabular_review" | "document";
+    item_id: string;
+    title: string;
+    archived_at: string;
+    expires_at: string;
+}
+export interface OrgDepartureArchivePage {
+    items: OrgDepartureArchive[];
+    nextOffset: number | null;
 }

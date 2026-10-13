@@ -14,20 +14,8 @@ import {
   type OrgMemberHandover,
 } from "@/app/lib/mikeApi";
 
-// The step between asking for somebody to be removed from an organization
-// (or asking to leave it) and it happening.
-//
-// A member's work does not simply vanish or drift to whoever is in charge:
-//
-//   * the public projects and workflows they alone own are handed to a
-//     member chosen here, by the admin removing them or by the member
-//     themselves when leaving;
-//   * private items are deleted if no other owner remains, including the
-//     contents of deleted projects or workflows.
-//
-// So this dialog first asks the server what the departure would do, says so,
-// and — when there is something to hand over — will not go on until a
-// successor is named.
+// Shared work is handed to one successor; unshared work is archived for
+// 30 days. Existing co-owned items stay with their remaining owners.
 
 export interface DepartingMember {
   user_id: string;
@@ -128,10 +116,15 @@ export function MemberDepartureDialog({
   const chats = handover?.chats ?? 0;
   const reviews = handover?.reviews ?? 0;
   const documents = handover?.documents ?? 0;
-  const owed = projects.length + workflows.length;
-  const titles = [...projects, ...workflows].map(
-    (item) => item.title.trim() || "Untitled",
-  );
+  const sharedChats = handover?.sharedChats ?? 0;
+  const sharedReviews = handover?.sharedReviews ?? 0;
+  const sharedDocuments = handover?.sharedDocuments ?? 0;
+  const owed = projects.length + workflows.length + sharedChats + sharedReviews + sharedDocuments;
+  const defaultSuccessor = (roster ?? []).find((member) => member.role === "owner" &&
+    !departing.some((gone) => gone.user_id === member.user_id))?.user_id ?? "";
+  const selectedSuccessor = successor || defaultSuccessor;
+  const titles = [...projects, ...workflows]
+    .map((item) => item.title.trim()).filter(Boolean);
 
   const several = departing.length > 1;
   const who = leaving
@@ -145,10 +138,13 @@ export function MemberDepartureDialog({
       ? `${departing.length} selected members will lose access to this organization.`
       : `${who} will lose organization access.`;
   const owedSummary = joinCounts([
-    ...(projects.length ? [count(projects.length, "public project")] : []),
-    ...(workflows.length ? [count(workflows.length, "public workflow")] : []),
+    ...(projects.length ? [count(projects.length, "project")] : []),
+    ...(workflows.length ? [count(workflows.length, "workflow")] : []),
+    ...(sharedChats ? [count(sharedChats, "shared chat")] : []),
+    ...(sharedReviews ? [count(sharedReviews, "shared tabular review")] : []),
+    ...(sharedDocuments ? [count(sharedDocuments, "document")] : []),
   ]);
-  const deletedSummary = joinCounts([
+  const archivedSummary = joinCounts([
     ...(privateProjects ? [count(privateProjects, "private project")] : []),
     ...(privateWorkflows ? [count(privateWorkflows, "private workflow")] : []),
     ...(chats ? [count(chats, "private chat")] : []),
@@ -157,7 +153,7 @@ export function MemberDepartureDialog({
   ]);
 
   const ready = handover !== null && roster !== null && !loadFailed;
-  const canConfirm = ready && !working && (owed === 0 || successor !== "");
+  const canConfirm = ready && !working && (owed === 0 || selectedSuccessor !== "");
 
   async function confirm() {
     if (!canConfirm) return;
@@ -167,7 +163,7 @@ export function MemberDepartureDialog({
     const results: PromiseSettledResult<void>[] = [];
     for (const member of departing) {
       try {
-        await removeOrgMember(orgId, member.user_id, successor || undefined);
+        await removeOrgMember(orgId, member.user_id, owed > 0 ? selectedSuccessor : undefined);
         results.push({ status: "fulfilled", value: undefined });
       } catch (reason) {
         results.push({ status: "rejected", reason });
@@ -219,12 +215,12 @@ export function MemberDepartureDialog({
 
         {loadFailed ? (
           <p role="alert" className="text-sm text-red-600">
-            Could not check what would be transferred or deleted. Close this and try again.
+            Could not check what would be transferred or archived. Close this and try again.
           </p>
         ) : !ready ? (
           <div
             role="status"
-            aria-label="Checking what would be transferred or deleted"
+            aria-label="Checking what would be transferred or archived"
             className="space-y-5"
           >
             <div className="space-y-2">
@@ -253,9 +249,9 @@ export function MemberDepartureDialog({
                   Transfer ownership
                 </h2>
                 <p className="text-sm text-gray-500">
-                  {owedSummary} {owed === 1 ? "needs" : "need"} a new owner.
+                  {owedSummary} {owed === 1 ? "needs" : "need"} a new owner. Shared and public work will transfer together.
                 </p>
-                {titles.length === 1 ? (
+                {titles.length === 0 ? null : titles.length === 1 ? (
                   <p className="text-xs text-gray-500 [overflow-wrap:anywhere]">
                     {titles[0]}
                   </p>
@@ -286,7 +282,7 @@ export function MemberDepartureDialog({
                   <ModalSelect
                     id="member-departure-successor"
                     aria-label="Hand over to"
-                    value={successor}
+                    value={selectedSuccessor}
                     onChange={setSuccessor}
                     options={candidates}
                     placeholder="Choose a member"
@@ -301,7 +297,7 @@ export function MemberDepartureDialog({
               </section>
             ) : null}
 
-            {deletedSummary ? (
+            {archivedSummary ? (
               <section
                 className="space-y-2"
                 aria-labelledby="member-departure-private-activity"
@@ -310,13 +306,13 @@ export function MemberDepartureDialog({
                   id="member-departure-private-activity"
                   className="text-sm font-medium text-gray-700"
                 >
-                  Private items to delete
+                  Private work retained for 30 days
                 </h2>
                 <p className="text-sm text-gray-500">
-                  {deletedSummary} will be permanently deleted.
+                  {archivedSummary} will be archived for 30 days.
                 </p>
                 <p className="text-xs text-gray-500">
-                  These items have no remaining owner. Their contents will also be deleted.
+                  Only organization owners can recover, reassign or delete this work. Anything not recovered within 30 days will be permanently deleted, including its contents.
                 </p>
               </section>
             ) : null}

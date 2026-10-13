@@ -5,8 +5,8 @@ import { NonRetryableJobError } from "../../lib/dbq/runner";
 import { removeGrantsForEmail } from "../../lib/projectAccess";
 import { removeContentGrantsForEmail } from "../../lib/contentAccess";
 import { chunkArray } from "../../lib/arrays";
-import { ORG_CONTENT_TABLES } from "../../lib/orgs";
 import { listPersonalOrgIds } from "../../lib/personalOrgs";
+import { deleteOrgContent } from "../orgs/orgs.service";
 import { throwIfError, uniqueStrings } from "./user.shared";
 
 const DELETE_BATCH_SIZE = 500;
@@ -85,31 +85,7 @@ const PROJECT_CONTENT_TABLES = [
 ] as const;
 
 /**
- * Does this organization still directly own anything?
- *
- * Every org_id foreign key is ON DELETE RESTRICT, so an org that owns content
- * cannot be removed as a side effect of an account going — the probe is how
- * we say so deliberately instead of surfacing a constraint violation. (An
- * owner deleting the organization itself is a different path: `deleteOrg` in
- * modules/orgs destroys the content first, on purpose.)
- */
-async function orgOwnsContent(db: Db, orgId: string): Promise<boolean> {
-    for (const table of ORG_CONTENT_TABLES) {
-        const { data, error } = await (db as any)
-            .from(table)
-            .select("id")
-            .eq("org_id", orgId)
-            .limit(1);
-        // A transient read error must never read as "this org holds nothing":
-        // that is the difference between tidying up and deleting a firm.
-        await throwIfError(error, `Failed to load org ${table}`);
-        if (((data ?? []) as unknown[]).length > 0) return true;
-    }
-    return false;
-}
-
-/**
- * Every organization-owned project this user left content in â€” including
+ * Every organization-owned project this user left content in — including
  * projects somebody else created.
  *
  * The distinction matters more than it looks. A departing associate's
@@ -304,7 +280,7 @@ async function detachOrgProjectContent(
 
     // Org-tagged content that sits outside any project still belongs to the
     // organization; `org_id` is the whole claim.
-    for (const table of ["documents", "tabular_reviews"] as const) {
+    for (const table of ["documents", "tabular_reviews", "chats"] as const) {
         const { error } = await (db as any)
             .from(table)
             .update({ user_id: null })
@@ -548,8 +524,8 @@ export type AccountDeletionOrgBlocker = {
     /**
      * "members" â€” other people are still in the org and would be left with
      * nobody able to administer it (or, worse, with an arbitrary successor).
-     * "content" â€” nobody else is left, but the org still owns matters, so it
-     * cannot be deleted either.
+     * "content" — legacy wire value for no other members. The organization
+     * still requires explicit deletion, even when it owns no content.
      */
     reason: "members" | "content";
 };
@@ -557,8 +533,8 @@ export type AccountDeletionOrgBlocker = {
 /**
  * The organizations that make this account undeletable, and why.
  *
- * PRODUCT DECISION: an account that is the SOLE OWNER of an organization
- * which still has other members, or still owns content, cannot be deleted.
+ * An account that is the sole owner of any team organization cannot be
+ * deleted, including when that organization is empty.
  * The user must appoint another owner or delete the organization first.
  *
  * Both of the alternatives were implemented here before, and both were wrong:
@@ -625,11 +601,6 @@ export async function listOrgsBlockingAccountDeletion(
             "Failed to load remaining org members",
         );
         const hasOtherMembers = ((otherMembers ?? []) as unknown[]).length > 0;
-        if (!hasOtherMembers && !(await orgOwnsContent(db, m.org_id))) {
-            // Nobody and nothing left: deleteUserOrganizations deletes the
-            // whole org, so this one blocks nothing.
-            continue;
-        }
 
         const { data: org, error: orgError } = await db
             .from("organizations")
@@ -649,26 +620,9 @@ export async function listOrgsBlockingAccountDeletion(
     return blockers;
 }
 
-/**
- * Tear down a user's organization footprint on account deletion.
- *
- * An organization is a durable owner in its own right, not an extension of
- * whoever happened to create it, so this NEVER deletes an org that still has
- * people or content in it:
- *
- *  - The departing user's membership row is removed.
- *  - A sole owner whose org still has members or content is REFUSED — see
- *    listOrgsBlockingAccountDeletion for why neither auto-promotion nor
- *    "leave it to the cascade" is an acceptable alternative. The route
- *    answers 409 long before this runs, and deleteUserAccountData re-asks
- *    the same question as its FIRST act, before a single row is destroyed.
- *    The throw here is the last line of defence for a caller that reached
- *    this function on its own, so by the time it fires the caller's content
- *    is already gone â€” which is exactly why the check above it exists.
- *  - An org left with no members and no content at all is deleted, which is
- *    what closing a personal workspace should do.
- *  - Any invitations the user sent lose their inviter reference through the
- *    FK's ON DELETE SET NULL; invitations addressed TO them are cancelled.
+/** Remove remaining membership references and cancel pending invitations.
+ * The account deletion transaction normally already removed team memberships.
+ * Keep the last-owner check here for direct callers and interrupted old jobs.
  */
 export async function deleteUserOrganizations(
     db: Db,
@@ -701,43 +655,9 @@ export async function deleteUserOrganizations(
                 .limit(1);
             await throwIfError(otherOwnersError, "Failed to load org owners");
             if (((otherOwners ?? []) as unknown[]).length === 0) {
-                const { data: otherMembers, error: otherMembersError } =
-                    await db
-                        .from("org_members")
-                        .select("id")
-                        .eq("org_id", m.org_id)
-                        .neq("id", m.id)
-                        .limit(1);
-                await throwIfError(
-                    otherMembersError,
-                    "Failed to load remaining org members",
+                throw new NonRetryableJobError(
+                    `Cannot delete this account while it is the only owner of organization ${m.org_id}`,
                 );
-                const hasOtherMembers =
-                    ((otherMembers ?? []) as unknown[]).length > 0;
-
-                if (hasOtherMembers || (await orgOwnsContent(db, m.org_id))) {
-                    // Unreachable through the API â€” routes/user.ts refuses
-                    // this account with a 409 before enqueueing anything, and
-                    // deleteUserAccountData re-checks before it destroys a
-                    // single row. Reaching it means the org changed underneath
-                    // a request that was already in flight, so stop here
-                    // rather than improvise a successor.
-                    //
-                    // NonRetryableJobError, not Error: an organization does
-                    // not acquire a second owner because the queue asked
-                    // twenty more times over the next few hours. A plain
-                    // Error burned the whole retry budget re-deriving the
-                    // same refusal and buried the reason under the repeats.
-                    throw new NonRetryableJobError(
-                        `Cannot delete this account while it is the only owner of organization ${m.org_id}`,
-                    );
-                }
-
-                // Nobody and nothing left: the org goes with the account, and
-                // the ON DELETE CASCADE from organizations takes the
-                // membership row with it.
-                await deleteByIds(db, "organizations", [m.org_id]);
-                continue;
             }
         }
 
@@ -889,6 +809,15 @@ export async function deleteUserAccountData(
     }
     if (process.env.DB_JOBS_ENABLED === "false") assertStorageConfigured();
 
+    // The same transaction as member removal, before any grants or creator
+    // references are detached. Safe to repeat after the request already ran it.
+    const departure = await db.rpc("prepare_account_org_departures", { p_user_id: userId });
+    await throwIfError(departure.error, "Failed to hand over organization work");
+
+    for (const personalOrgId of await listPersonalOrgIds(db, userId)) {
+        await deleteOrgContent(db, personalOrgId);
+    }
+
     const { personal: personalProjectIds, org: createdOrgProjectIds } =
         await partitionOwnedProjects(db, userId);
     // Retention follows the organization's projects, not this user's. Their
@@ -997,10 +926,12 @@ export async function deleteUserAccountData(
 
     // The outbox below keeps version keys retryable after metadata deletion.
 
-    // An organization's content is held by ON DELETE RESTRICT foreign keys â€”
-    // deleting an org that still owns anything is refused outright, never
-    // silently detached â€” so none of the content deletions above touch the
-    // user's org memberships. Settle those here.
+    // Only now — with every doomed row actually gone — is it safe to ask the
+    // database which objects under this user's storage prefixes are orphans.
+    await deleteOrphanedUserStorage(db, userId);
+
+    // Cancel pending invitations and clean up any remaining membership
+    // references. Team memberships were offboarded before personal erasure.
     await deleteUserOrganizations(db, userId, userEmail);
 
     // The tombstone in account_erasure_requests remains, but all mutable

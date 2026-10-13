@@ -372,10 +372,10 @@ export async function checkProjectAccess(
 ): Promise<ProjectAccess> {
     const { data: project } = await db
         .from("projects")
-        .select("id, user_id, org_id, visibility")
+        .select("id, user_id, org_id, visibility, archived_at")
         .eq("id", projectId)
         .maybeSingle();
-    if (!project) return { ok: false };
+    if (!project || project.archived_at) return { ok: false };
     const proj = project as ProjectRow;
 
     const isCreator = !!proj.user_id && proj.user_id === userId;
@@ -561,10 +561,10 @@ export async function checkWorkflowAccess(
 ): Promise<WorkflowAccess> {
     const { data } = await db
         .from("workflows")
-        .select("id, user_id, org_id, visibility")
+        .select("id, user_id, org_id, visibility, archived_at")
         .eq("id", workflowId)
         .maybeSingle();
-    if (!data) return { ok: false };
+    if (!data || data.archived_at) return { ok: false };
     const workflow = data as WorkflowRow;
     const isCreator = !!workflow.user_id && workflow.user_id === userId;
 
@@ -667,8 +667,8 @@ export async function ensureDocAccess(
     // A document that sits in no project or workflow has nothing to be
     // shared through: it is its uploader's alone, in Personal and in an
     // organization's workspace alike. The organization's owners have no
-    // standing on it — it is deleted when its uploader leaves, not taken
-    // over. In a team organization the uploader must still be a member.
+    // implicit access. Departure transfers referenced files or archives
+    // unshared files. In a team organization the uploader must still be a member.
     const isCreator = !!doc.user_id && doc.user_id === userId;
     if (!isCreator) return { ok: false };
     const teamOrgId = await teamOrgIdOf(db, doc.org_id);
@@ -686,8 +686,8 @@ export async function ensureDocAccess(
  * A standalone row in a team organization belongs to that organization and
  * is private to its author: only current members reach it at all (its author
  * included), its author is its Owner, and a direct grant gives a member its
- * role. Nobody takes it over — not the organization's owners either: when
- * its author leaves, it is deleted with their membership.
+ * role. Organization owners have no implicit access. Unshared work is
+ * archived when its final owner leaves and must be recovered before use.
  * public.standalone_org_access_role is the SQL twin.
  *
  * Any other standalone row is personal: its creator, and whoever it is
@@ -973,8 +973,9 @@ export async function listAccessibleProjectIds(
                   }>((from, to) =>
                       db
                           .from("projects")
-                          .select("id, user_id, org_id, visibility")
+                          .select("id, user_id, org_id, visibility, archived_at")
                           .in("org_id", orgIds)
+                          .is("archived_at", null)
                           .order("id", { ascending: true })
                           .range(from, to),
                   )

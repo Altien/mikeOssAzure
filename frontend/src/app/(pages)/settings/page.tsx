@@ -410,8 +410,7 @@ export default function SettingsPage() {
                                 Delete account
                             </p>
                             <p className="text-sm text-gray-500">
-                                Permanently delete your account and all
-                                associated data. This action cannot be undone.
+                                Permanently delete your account and personal workspace. Organization work follows its member removal policy. This action cannot be undone.
                             </p>
                         </div>
                         <PillButtonUI
@@ -431,7 +430,7 @@ export default function SettingsPage() {
             <ConfirmPopup
                 open={deleteConfirm}
                 title="Delete account?"
-                message="This will permanently delete your account and all associated data. This action cannot be undone."
+                message="This will permanently delete your account and personal workspace. Organization work follows its member removal policy. This action cannot be undone."
                 confirmLabel="Delete"
                 confirmVariant="danger"
                 confirmStatus={isDeleting ? "loading" : "idle"}
