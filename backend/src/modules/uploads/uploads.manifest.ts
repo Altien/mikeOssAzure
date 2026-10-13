@@ -44,8 +44,16 @@ const clientFileSchema = z
   })
   .strict();
 
+// A document uploaded on its own — attached to a chat, or added to the
+// library — belongs to the workspace it is uploaded in: `org_id` names that
+// organization, and its absence is Personal. A project or workflow decides
+// for the documents uploaded into it.
+const workspaceOrgId = z.string().uuid().nullable().optional();
+
 const documentDestinationSchema = z.discriminatedUnion("scope", [
-  z.object({ scope: z.literal("standalone") }).strict(),
+  z
+    .object({ scope: z.literal("standalone"), org_id: workspaceOrgId })
+    .strict(),
   z
     .object({
       scope: z.literal("project"),
@@ -58,6 +66,7 @@ const documentDestinationSchema = z.discriminatedUnion("scope", [
       scope: z.literal("library"),
       library_kind: z.enum(["file", "template"]),
       folder_id: z.string().uuid().nullable().optional(),
+      org_id: workspaceOrgId,
     })
     .strict(),
   z

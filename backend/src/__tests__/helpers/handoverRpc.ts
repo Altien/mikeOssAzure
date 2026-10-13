@@ -4,7 +4,8 @@
 //
 // When a member leaves an organization, the private projects and workflows
 // they alone own are handed to a named successor, and their standalone chats
-// and reviews that nobody else owns are deleted. The backend asks the
+// and reviews that nobody else owns, and their own documents there, are
+// deleted. The backend asks the
 // database which those are, so a fake has to answer the same way.
 
 type Row = Record<string, unknown>;
@@ -105,6 +106,19 @@ function privateStandalone(tables: Tables, orgId: unknown, userId: unknown) {
     );
 }
 
+/** Their own documents in the organization: in no project and no workflow. */
+function ownStandaloneDocuments(tables: Tables, orgId: unknown, userId: unknown) {
+    return (tables.documents ?? [])
+        .filter(
+            (document) =>
+                document.org_id === orgId &&
+                !document.project_id &&
+                !document.workflow_id &&
+                document.user_id === userId,
+        )
+        .map((document) => ({ kind: "document", item_id: document.id }));
+}
+
 /**
  * The answer to one of the hand-over RPCs, or `undefined` for any other
  * function so the caller's own `rpc` stub can handle it.
@@ -122,7 +136,10 @@ export function handoverRpcResult(
         return { data: soleOwnedItems(tables, orgId, args?.p_user_id), error: null };
     if (name === "org_member_private_standalone")
         return {
-            data: privateStandalone(tables, orgId, args?.p_user_id),
+            data: [
+                ...privateStandalone(tables, orgId, args?.p_user_id),
+                ...ownStandaloneDocuments(tables, orgId, args?.p_user_id),
+            ],
             error: null,
         };
     if (name === "assign_org_member_items") {

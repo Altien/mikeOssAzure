@@ -1,5 +1,6 @@
 "use client";
 
+import { useWorkspaceParam } from "@/app/contexts/WorkspaceContext";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
@@ -60,6 +61,8 @@ export function PresetTemplatesPage({
   folderId?: string | null;
 }) {
   const router = useRouter();
+  // Presets are added to the active workspace's template library.
+  const workspace = useWorkspaceParam();
   const { collections, setDocumentsForKind } = useLibraryWorkspace();
   const templatesLoaded = collections.templates !== null;
   const [search, setSearch] = useState("");
@@ -102,6 +105,7 @@ export function PresetTemplatesPage({
             preset!,
             folderId,
             controller.signal,
+            workspace,
           );
           if (controller.signal.aborted) return;
           setImportStatus((current) => ({ ...current, [preset!.id]: "complete" }));
@@ -131,7 +135,7 @@ export function PresetTemplatesPage({
         }
       }
     },
-    [folderId, importStatus, setDocumentsForKind, templatesLoaded],
+    [folderId, importStatus, setDocumentsForKind, templatesLoaded, workspace],
   );
 
   const catalog = useMemo<DocTableCatalog>(

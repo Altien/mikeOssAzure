@@ -89,8 +89,17 @@ describe("bundled preset catalog", () => {
       expect(fetchMock).toHaveBeenCalledWith(presetTemplateUrl(preset), {
         signal: controller.signal,
       });
+      // No workspace named: the template library is not narrowed.
       expect(uploadLibraryDocument).toHaveBeenCalledWith(
-        "templates",
+        { kind: "templates" },
+        expect.any(File),
+        "folder-1",
+        { signal: controller.signal },
+      );
+      // In a workspace, the copy is added to that workspace's templates.
+      await addPresetTemplate(preset, "folder-1", controller.signal, "org-1");
+      expect(uploadLibraryDocument).toHaveBeenLastCalledWith(
+        { kind: "templates", workspace: "org-1" },
         expect.any(File),
         "folder-1",
         { signal: controller.signal },

@@ -175,15 +175,31 @@ describe("standalone chats and reviews in an organization", () => {
         "standalone_org_access_role",
         "chat_access_role",
         "review_access_role",
-        "cleanup_removed_org_member_overrides",
         "org_member_sole_owned_items",
-        "org_member_private_standalone",
         "assign_org_member_items",
     ])(
         "a fresh install defines %s exactly as the hand-over migration does",
         (name) => {
             expect(functionSource(schema, name)).toBe(
                 functionSource(handover, name),
+            );
+        },
+    );
+
+    // The library migration added a member's own documents to what leaving
+    // deletes, so these two are as it left them.
+    const library = readFileSync(
+        resolve(ROOT, "migrations/0123_workspace_library.sql"),
+        "utf8",
+    );
+    it.each([
+        "cleanup_removed_org_member_overrides",
+        "org_member_private_standalone",
+    ])(
+        "a fresh install defines %s exactly as the library migration does",
+        (name) => {
+            expect(functionSource(schema, name)).toBe(
+                functionSource(library, name),
             );
         },
     );
@@ -220,10 +236,23 @@ describe("standalone chats and reviews in an organization", () => {
         );
     });
 
-    it("keeps what another member owns, and never touches a project's chats or reviews", () => {
+    it("keeps what another member owns, and never touches a project's chats, reviews or documents", () => {
         const body = functionSource(schema, "org_member_private_standalone");
-        expect(body.match(/and \w\.project_id is null/g)).toHaveLength(2);
+        // Chats, reviews and documents: each only where it sits in no project.
+        expect(body.match(/and \w\.project_id is null/g)).toHaveLength(3);
         expect(body.match(/and g\.role = 'owner'\s+and holder\.user_id <> p_user_id/g)).toHaveLength(2);
+    });
+
+    it("deletes a departing member's own documents there too, but not a workflow's or a project's", () => {
+        const body = functionSource(schema, "org_member_private_standalone");
+        expect(body).toMatch(
+            /select 'document'::text, d\.id\s+from public\.documents d\s+where d\.org_id = p_org_id\s+and d\.project_id is null\s+and d\.workflow_id is null\s+and d\.user_id = p_user_id/,
+        );
+        expect(
+            functionSource(schema, "cleanup_removed_org_member_overrides"),
+        ).toMatch(
+            /delete from public\.documents d\s+using public\.org_member_private_standalone\(old\.org_id, old\.user_id\) gone\s+where gone\.kind = 'document' and d\.id = gone\.item_id;/,
+        );
     });
 
     it("hands over only private items nobody else owns", () => {

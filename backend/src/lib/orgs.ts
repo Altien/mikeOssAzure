@@ -589,14 +589,16 @@ export async function updateMember(
  *
  * `projects` and `workflows` are the private ones they alone own: somebody
  * has to be named to take those over before they can go. `chats` and
- * `reviews` count the standalone ones nobody else owns, which are private to
- * their author and are deleted with the membership.
+ * `reviews` count the standalone ones nobody else owns, and `documents` their
+ * own documents in the organization's library; all three are private to
+ * them and are deleted with the membership.
  */
 export type MemberHandover = {
     projects: { id: string; title: string }[];
     workflows: { id: string; title: string }[];
     chats: number;
     reviews: number;
+    documents: number;
 };
 
 /** A database that has not run the hand-over migration has nothing to hand over. */
@@ -619,6 +621,7 @@ async function loadMemberHandover(
         workflows: [],
         chats: 0,
         reviews: 0,
+        documents: 0,
     };
     for (const result of [owned, standalone]) {
         if (!result.error) continue;
@@ -638,6 +641,7 @@ async function loadMemberHandover(
     for (const row of (standalone.data ?? []) as { kind?: string }[]) {
         if (row.kind === "chat") handover.chats += 1;
         else if (row.kind === "tabular_review") handover.reviews += 1;
+        else if (row.kind === "document") handover.documents += 1;
     }
     return { ok: true, handover };
 }
@@ -789,6 +793,7 @@ export async function removeMember(
             assigned_workflows: handover.workflows.length,
             deleted_chats: handover.chats,
             deleted_reviews: handover.reviews,
+            deleted_documents: handover.documents,
         },
     });
     return { ok: true };

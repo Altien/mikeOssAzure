@@ -234,6 +234,59 @@ describe("access helpers", () => {
         ).resolves.toEqual({ ok: false });
     });
 
+    // A document in no project or workflow is its uploader's alone — in
+    // Personal, and in an organization's workspace, where it also needs them
+    // to still be a member. The organization's owners have no standing on it.
+    it("keeps a standalone document in an organization to its uploader, while they are a member", async () => {
+        const orgDb = makeDb({
+            organizations: [
+                { id: "org-a", kind: "team" },
+                { id: "mine", kind: "personal", personal_user_id: "alice" },
+            ],
+            org_members: [
+                { org_id: "org-a", user_id: "alice", role: "member" },
+                { org_id: "org-a", user_id: "dave", role: "owner" },
+                { org_id: "org-a", user_id: "ivan", role: "admin" },
+                { org_id: "mine", user_id: "alice", role: "owner" },
+            ],
+        });
+        const doc = (uploader: string, orgId: string | null) => ({
+            user_id: uploader,
+            project_id: null,
+            org_id: orgId,
+        });
+        const open = (document: ReturnType<typeof doc>, user: string) =>
+            ensureDocAccess(document, user, `${user}@example.com`, orgDb);
+
+        await expect(open(doc("alice", "org-a"), "alice")).resolves.toEqual({
+            ok: true,
+            isCreator: true,
+            orgRole: "member",
+            projectRole: "owner",
+        });
+        // Not the organization's owner, nor an admin, nor a colleague.
+        for (const other of ["dave", "ivan", "carol"])
+            await expect(open(doc("alice", "org-a"), other)).resolves.toEqual({
+                ok: false,
+            });
+        // Not its uploader either, once they have left.
+        await expect(open(doc("frank", "org-a"), "frank")).resolves.toEqual({
+            ok: false,
+        });
+        // ... and nobody takes it over.
+        await expect(open(doc("frank", "org-a"), "dave")).resolves.toEqual({
+            ok: false,
+        });
+        // Personal, with or without a personal organization behind it.
+        for (const orgId of [null, "mine"])
+            await expect(open(doc("alice", orgId), "alice")).resolves.toEqual({
+                ok: true,
+                isCreator: true,
+                orgRole: null,
+                projectRole: "owner",
+            });
+    });
+
     it("allows document creators and readers of the containing project", async () => {
         await expect(
             ensureDocAccess(

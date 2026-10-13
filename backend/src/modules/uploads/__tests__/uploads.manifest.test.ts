@@ -176,4 +176,49 @@ describe("parseUploadSessionRequest", () => {
       ).toThrow("filename is invalid");
     }
   });
+
+  // A document uploaded on its own belongs to the workspace it is uploaded
+  // in: the manifest names that organization, and its absence is Personal.
+  it.each([
+    ["a standalone document", { scope: "standalone" }],
+    ["a library document", { scope: "library", library_kind: "file" }],
+  ])("lets %s name the organization it is uploaded in", (_label, destination) => {
+    const parsed = parseUploadSessionRequest(
+      { ...documentRequest(1), destination: { ...destination, org_id: SESSION_ID } },
+      USER_ID,
+      SESSION_ID,
+    );
+    expect(parsed.destination).toMatchObject({ org_id: SESSION_ID });
+    // ... or leave it out, or say null, for Personal.
+    for (const personal of [{}, { org_id: null }]) {
+      expect(() =>
+        parseUploadSessionRequest(
+          { ...documentRequest(1), destination: { ...destination, ...personal } },
+          USER_ID,
+          SESSION_ID,
+        ),
+      ).not.toThrow();
+    }
+  });
+
+  it("rejects an organization that is not an id, and one named for a project upload", () => {
+    expect(() =>
+      parseUploadSessionRequest(
+        { ...documentRequest(1), destination: { scope: "standalone", org_id: "acme" } },
+        USER_ID,
+        SESSION_ID,
+      ),
+    ).toThrow(UploadSessionValidationError);
+    // A project decides for what is uploaded into it.
+    expect(() =>
+      parseUploadSessionRequest(
+        {
+          ...documentRequest(1),
+          destination: { scope: "project", project_id: USER_ID, org_id: SESSION_ID },
+        },
+        USER_ID,
+        SESSION_ID,
+      ),
+    ).toThrow(UploadSessionValidationError);
+  });
 });

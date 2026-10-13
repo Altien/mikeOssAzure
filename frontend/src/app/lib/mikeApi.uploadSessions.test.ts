@@ -383,6 +383,63 @@ describe("direct upload sessions", () => {
         ).toBe(true);
     });
 
+    // A document uploaded on its own belongs to the workspace it is uploaded
+    // in: the manifest names that organization, and names none in Personal.
+    describe("the workspace a document is uploaded in", () => {
+        const pdf = () => ({
+            file: new File(["contract"], "contract.pdf", {
+                type: "application/pdf",
+            }),
+        });
+        const ORG = "7b1d9d0e-3c5a-4f6e-9a51-0c2f7d3e8a11";
+
+        it("names the organization for a document attached to a chat there", async () => {
+            const server = installSuccessfulSessionServer();
+            await uploadStandaloneDocuments([pdf()], undefined, ORG);
+            expect(server.manifests[0].destination).toEqual({
+                scope: "standalone",
+                org_id: ORG,
+            });
+        });
+
+        it.each([undefined, "personal"])(
+            "names none for a document attached in Personal (%s)",
+            async (workspace) => {
+                const server = installSuccessfulSessionServer();
+                await uploadStandaloneDocuments([pdf()], undefined, workspace);
+                expect(server.manifests[0].destination).toEqual({
+                    scope: "standalone",
+                });
+            },
+        );
+
+        it("names the organization for a document added to its library", async () => {
+            const server = installSuccessfulSessionServer();
+            await uploadLibraryDocuments(
+                { kind: "templates", workspace: ORG },
+                [pdf()],
+            );
+            expect(server.manifests[0].destination).toEqual({
+                scope: "library",
+                library_kind: "template",
+                org_id: ORG,
+            });
+        });
+
+        it("names none for the library of a bare kind, or of Personal", async () => {
+            const server = installSuccessfulSessionServer();
+            await uploadLibraryDocuments("files", [pdf()]);
+            await uploadLibraryDocuments(
+                { kind: "files", workspace: "personal" },
+                [pdf()],
+            );
+            expect(server.manifests.map((m) => m.destination)).toEqual([
+                { scope: "library", library_kind: "file" },
+                { scope: "library", library_kind: "file" },
+            ]);
+        });
+    });
+
     it("reports each file as it uploads and completes", async () => {
         installSuccessfulSessionServer();
         const progress: Array<{ filename: string; status: string }> = [];

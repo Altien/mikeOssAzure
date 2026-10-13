@@ -12,6 +12,7 @@ import {
     uploadStandaloneDocuments,
 } from "@/app/lib/mikeApi";
 import type { AccessAssignmentRole } from "@/app/lib/mikeApi";
+import { useWorkspaceParam } from "@/app/contexts/WorkspaceContext";
 import { userFacingApiError } from "@/app/lib/userFacingError";
 import {
     SUPPORTED_DOCUMENT_ACCEPT,
@@ -85,6 +86,9 @@ export function NewTRModal({
     projectName,
     projectCmNumber,
 }: Props) {
+    // A document uploaded on its own belongs to the workspace it is
+    // uploaded in.
+    const workspace = useWorkspaceParam();
     const isProjectMode = projectId !== undefined;
     const [step, setStep] = useState<"details" | "access" | "documents">(
         "details",
@@ -354,6 +358,8 @@ export function NewTRModal({
                   )
                 : await uploadStandaloneDocuments(
                       supported.map((file) => ({ file })),
+                      undefined,
+                      workspace,
                   );
             const uploaded = outcomes.flatMap((outcome) =>
                 outcome.status === "completed" && outcome.result

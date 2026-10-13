@@ -1893,10 +1893,44 @@ describe("Library search", () => {
 
     await getLibraryFilterOptions("files");
 
-    expect(lastFetchCall().url).toBe(
-      "http://localhost:3001/api/library/files/filter-options",
-    );
-  });
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/library/files/filter-options");
+    });
+
+    // The library is per workspace: a call that names one carries it on the
+    // query string, after whatever else the call asks for.
+    it("names the workspace on every library call that is given one", async () => {
+        const scope = { kind: "files" as const, workspace: "org-1" };
+        fetchMock.mockImplementation(async () =>
+            jsonResponse({ fileTypes: [], documents: [], folders: [] }),
+        );
+
+        await getLibraryFilterOptions(scope);
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/api/library/files/filter-options?workspace=org-1",
+        );
+        await getLibrary(scope, { limit: 50 });
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/api/library/files?limit=50&workspace=org-1",
+        );
+        await searchLibraryDocuments(scope, { search: "nda" });
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/api/library/files?view=search&search=nda&workspace=org-1",
+        );
+        await getLibrary({ kind: "templates", workspace: "personal" });
+        expect(lastFetchCall().url).toBe(
+            "http://localhost:3001/api/library/templates?workspace=personal",
+        );
+    });
+
+    it("names no workspace for a bare kind, or a scope without one", async () => {
+        fetchMock.mockImplementation(async () =>
+            jsonResponse({ documents: [], folders: [] }),
+        );
+        await getLibrary("files");
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/library/files");
+        await getLibrary({ kind: "files" });
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/library/files");
+    });
 });
 
 describe("tabular review CRUD", () => {

@@ -664,20 +664,18 @@ export async function ensureDocAccess(
               )
             : { ok: false };
     }
-    if (doc.org_id) {
-        // An organization's document that sits in no project or workflow has
-        // nothing to be shared through, so it is its creator's and the
-        // organization's owners' alone.
-        const orgRole = await getOrgRole(userId, doc.org_id, db);
-        if (!orgRole) return { ok: false };
-        const isCreator = !!doc.user_id && doc.user_id === userId;
-        return isCreator || isOrgOwner(orgRole)
-            ? resourceAccessFor("owner", orgRole, isCreator)
-            : { ok: false };
-    }
+    // A document that sits in no project or workflow has nothing to be
+    // shared through: it is its uploader's alone, in Personal and in an
+    // organization's workspace alike. The organization's owners have no
+    // standing on it — it is deleted when its uploader leaves, not taken
+    // over. In a team organization the uploader must still be a member.
     const isCreator = !!doc.user_id && doc.user_id === userId;
-    return isCreator
-        ? resourceAccessFor("owner", null, true)
+    if (!isCreator) return { ok: false };
+    const teamOrgId = await teamOrgIdOf(db, doc.org_id);
+    if (!teamOrgId) return resourceAccessFor("owner", null, true);
+    const orgRole = await getOrgRole(userId, teamOrgId, db);
+    return orgRole
+        ? resourceAccessFor("owner", orgRole, true)
         : { ok: false };
 }
 

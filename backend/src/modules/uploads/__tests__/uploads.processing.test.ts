@@ -629,4 +629,56 @@ describe("upload processing", () => {
     );
     expect(db.remaining).toHaveLength(0);
   });
+
+  // A document uploaded on its own is filed under the workspace its session
+  // named; inside a project or a workflow, that decides.
+  describe("the organization a new document is filed under", () => {
+    const ORG = "66666666-6666-4666-8666-666666666666";
+    /** The row written to `documents` while one file is processed. */
+    async function documentRowFor(destination: Record<string, unknown>) {
+      const document = {
+        id: baseFile.resource_id,
+        user_id: baseSession.user_id,
+        folder_id: null,
+        library_folder_id: null,
+      };
+      const db = fakeDb({ documents: [{ data: document, error: null }] });
+      const rows: Record<string, unknown>[] = [];
+      const from = db.from;
+      db.from = vi.fn((table: string) => {
+        const query = from(table);
+        if (table === "documents") {
+          const upsert = query.upsert.bind(query);
+          query.upsert = (...args: unknown[]) => {
+            rows.push(args[0] as Record<string, unknown>);
+            return (upsert as (...a: unknown[]) => typeof query)(...args);
+          };
+        }
+        return query;
+      }) as typeof db.from;
+      await processUploadFile(
+        db as never,
+        { ...baseSession, destination } as never,
+        baseFile,
+      );
+      expect(rows).toHaveLength(1);
+      return rows[0];
+    }
+
+    it.each([
+      ["a standalone upload", { scope: "standalone", org_id: ORG }],
+      ["a library upload", { scope: "library", library_kind: "file", org_id: ORG }],
+    ])("is the workspace named by %s", async (_label, destination) => {
+      expect(await documentRowFor(destination)).toMatchObject({
+        org_id: ORG,
+        project_id: null,
+      });
+    });
+
+    it("is none — Personal — when the upload names no organization", async () => {
+      expect(await documentRowFor({ scope: "standalone" })).toMatchObject({
+        org_id: null,
+      });
+    });
+  });
 });

@@ -701,6 +701,7 @@ export async function runLLMStream(params: {
           {
             connectorApprovals: connectorApprovals && includeAskInputs,
             userEmail,
+            orgId,
           },
         );
         throwIfAborted(signal);

@@ -102,6 +102,8 @@ describe("preset templates page", () => {
       expect.objectContaining({ id: "Common Paper/Order Form.docx" }),
       "my-folder",
       expect.any(AbortSignal),
+      // The active workspace; none outside a workspace provider.
+      undefined,
     );
     expect(setDocumentsForKind).toHaveBeenCalledWith(
       "templates",

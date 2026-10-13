@@ -66,6 +66,7 @@ import {
     uploadStandaloneDocuments,
     type UploadProgress,
 } from "@/app/lib/mikeApi";
+import { useWorkspaceParam } from "@/app/contexts/WorkspaceContext";
 import {
     SUPPORTED_DOCUMENT_ACCEPT,
     formatUnsupportedDocumentWarning,
@@ -184,6 +185,9 @@ function ChatInputForChatImpl(
     }: Props,
     ref: ForwardedRef<ChatInputHandle>,
 ) {
+    // A document attached to a chat outside a project belongs to the
+    // workspace it is uploaded in.
+    const workspace = useWorkspaceParam();
     // Sending needs both a grant and a loaded thread; the placeholder below
     // names whichever one is missing.
     const composerOpen = canSend === true && !chatLoading;
@@ -436,9 +440,11 @@ function ChatInputForChatImpl(
                     ? await uploadProjectDocuments(projectId, uploadInputs, {
                           onProgress: handleProgress,
                       })
-                    : await uploadStandaloneDocuments(uploadInputs, {
-                          onProgress: handleProgress,
-                      });
+                    : await uploadStandaloneDocuments(
+                          uploadInputs,
+                          { onProgress: handleProgress },
+                          workspace,
+                      );
                 if (!uploadGenerationActiveRef.current) return;
                 const uploaded = outcomes.flatMap((outcome) =>
                     outcome.status === "completed" && outcome.result
@@ -467,6 +473,7 @@ function ChatInputForChatImpl(
             }
         },
         [
+            workspace,
             addAttachedDocuments,
             canSend,
             composerOpen,

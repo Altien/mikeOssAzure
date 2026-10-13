@@ -1836,6 +1836,11 @@ export interface OrgMemberHandover {
     workflows: { id: string; title: string }[];
     chats: number;
     reviews: number;
+    /**
+     * Their own documents in the organization's library, deleted with the
+     * membership like their chats and reviews. Absent from an older server.
+     */
+    documents?: number;
 }
 
 /** Asked before removing a member, or before leaving (the caller's own id). */
@@ -2083,27 +2088,64 @@ interface LibrarySearchResults {
     documentsHasMore: boolean;
 }
 
-function libraryPaginationQuery(pagination?: LibraryPagination): string {
+/**
+ * Which library a call is about. The library is per workspace — a person's
+ * own documents and folders in Personal, and their own in each organization
+ * they belong to — so a call that lists, or files into, one of them names it:
+ * `{ kind, workspace }`, with `workspace` "personal" or an organization id.
+ * A bare kind names no workspace, and is not narrowed.
+ */
+export type LibraryScope =
+    | LibraryKind
+    | { kind: LibraryKind; workspace?: string };
+
+function libraryKindOf(scope: LibraryScope): LibraryKind {
+    return typeof scope === "string" ? scope : scope.kind;
+}
+
+function libraryWorkspaceOf(scope: LibraryScope): string | undefined {
+    return typeof scope === "string" ? undefined : scope.workspace;
+}
+
+/** `org_id` for an upload made in `workspace`: none in Personal. */
+function workspaceOrgId(workspace: string | undefined): string | undefined {
+    return workspace && workspace !== "personal" ? workspace : undefined;
+}
+
+/** A library route, with the scope's workspace on the query string. */
+function libraryUrl(
+    scope: LibraryScope,
+    suffix = "",
+    params: URLSearchParams = new URLSearchParams(),
+): string {
+    const workspace = libraryWorkspaceOf(scope);
+    if (workspace) params.set("workspace", workspace);
+    const qs = params.toString();
+    return `/library/${libraryKindOf(scope)}${suffix}${qs ? `?${qs}` : ""}`;
+}
+
+function libraryPaginationParams(
+    pagination?: LibraryPagination,
+): URLSearchParams {
     const params = new URLSearchParams();
     if (pagination?.limit != null)
         params.set("limit", String(pagination.limit));
     if (pagination?.offset != null)
         params.set("offset", String(pagination.offset));
-    const qs = params.toString();
-    return qs ? `?${qs}` : "";
+    return params;
 }
 
 export async function getLibrary(
-    kind: LibraryKind,
+    kind: LibraryScope,
     pagination?: LibraryPagination,
 ): Promise<LibraryCollection> {
     return apiRequest<LibraryCollection>(
-        `/library/${kind}${libraryPaginationQuery(pagination)}`,
+        libraryUrl(kind, "", libraryPaginationParams(pagination)),
     );
 }
 
 export async function getLibraryFolderChildren(
-    kind: LibraryKind,
+    kind: LibraryScope,
     folderId: string,
     pagination?: LibraryPagination,
 ): Promise<LibraryCollection> {
@@ -2112,27 +2154,25 @@ export async function getLibraryFolderChildren(
         params.set("limit", String(pagination.limit));
     if (pagination?.offset != null)
         params.set("offset", String(pagination.offset));
-    return apiRequest<LibraryCollection>(
-        `/library/${kind}?${params.toString()}`,
-    );
+    return apiRequest<LibraryCollection>(libraryUrl(kind, "", params));
 }
 
 export async function getLibraryFolderPath(
-    kind: LibraryKind,
+    kind: LibraryScope,
     folderId: string,
 ): Promise<{ folders: LibraryFolder[] }> {
     return apiRequest<{ folders: LibraryFolder[] }>(
-        `/library/${kind}/folders/${folderId}`,
+        libraryUrl(kind, `/folders/${folderId}`),
     );
 }
 
 export async function getLibraryLevels(
-    kind: LibraryKind,
+    kind: LibraryScope,
     levels: { parentId: string | null; limit: number }[],
 ): Promise<{
     levels: Array<LibraryCollection & { parentId: string | null }>;
 }> {
-    return apiRequest(`/library/${kind}/levels`, {
+    return apiRequest(libraryUrl(kind, "/levels"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ levels }),
@@ -2140,7 +2180,7 @@ export async function getLibraryLevels(
 }
 
 export async function searchLibraryDocuments(
-    kind: LibraryKind,
+    kind: LibraryScope,
     options: LibrarySearchParams,
 ): Promise<LibrarySearchResults> {
     const params = new URLSearchParams({ view: "search" });
@@ -2151,40 +2191,37 @@ export async function searchLibraryDocuments(
     if (options.sortKey) params.set("sort_key", options.sortKey);
     if (options.sortDirection)
         params.set("sort_direction", options.sortDirection);
-    return apiRequest<LibrarySearchResults>(
-        `/library/${kind}?${params.toString()}`,
-        { signal: options.signal },
-    );
+    return apiRequest<LibrarySearchResults>(libraryUrl(kind, "", params), {
+        signal: options.signal,
+    });
 }
 
 export async function getLibraryFilterOptions(
-    kind: LibraryKind,
+    kind: LibraryScope,
 ): Promise<{ fileTypes: string[] }> {
     return apiRequest<{ fileTypes: string[] }>(
-        `/library/${kind}/filter-options`,
+        libraryUrl(kind, "/filter-options"),
     );
 }
 
 export async function listLibraryDocumentIds(
-    kind: LibraryKind,
+    kind: LibraryScope,
     options?: { search?: string; fileType?: string; signal?: AbortSignal },
 ): Promise<string[]> {
     const params = new URLSearchParams();
     if (options?.search) params.set("search", options.search);
     if (options?.fileType) params.set("file_type", options.fileType);
-    const query = params.toString();
-    return apiRequest<string[]>(
-        `/library/${kind}/ids${query ? `?${query}` : ""}`,
-        { signal: options?.signal },
-    );
+    return apiRequest<string[]>(libraryUrl(kind, "/ids", params), {
+        signal: options?.signal,
+    });
 }
 
 export async function bulkDeleteLibraryDocuments(
-    kind: LibraryKind,
+    kind: LibraryScope,
     ids: string[],
 ): Promise<{ deletedIds: string[] }> {
     return apiRequest<{ deletedIds: string[] }>(
-        `/library/${kind}/documents/bulk-delete`,
+        libraryUrl(kind, "/documents/bulk-delete"),
         {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -2194,7 +2231,7 @@ export async function bulkDeleteLibraryDocuments(
 }
 
 export async function uploadLibraryDocument(
-    kind: LibraryKind,
+    kind: LibraryScope,
     file: File,
     folderId?: string | null,
     options?: UploadRequestOptions<Document>,
@@ -2205,7 +2242,7 @@ export async function uploadLibraryDocument(
 }
 
 export async function uploadLibraryDocuments(
-    kind: LibraryKind,
+    kind: LibraryScope,
     files: UploadSessionInput[],
     options?: UploadRequestOptions<Document>,
 ): Promise<UploadOutcome<Document>[]> {
@@ -2213,7 +2250,11 @@ export async function uploadLibraryDocuments(
         purpose: "document_create",
         destination: {
             scope: "library",
-            library_kind: kind === "files" ? "file" : "template",
+            library_kind: libraryKindOf(kind) === "files" ? "file" : "template",
+            // Filed under the workspace it is uploaded in; Personal has none.
+            ...(workspaceOrgId(libraryWorkspaceOf(kind))
+                ? { org_id: workspaceOrgId(libraryWorkspaceOf(kind)) }
+                : {}),
         },
         files,
         onProgress: options?.onProgress,
@@ -2222,11 +2263,11 @@ export async function uploadLibraryDocuments(
 }
 
 export async function createLibraryFolder(
-    kind: LibraryKind,
+    kind: LibraryScope,
     name: string,
     parentFolderId?: string | null,
 ): Promise<LibraryFolder> {
-    return apiRequest<LibraryFolder>(`/library/${kind}/folders`, {
+    return apiRequest<LibraryFolder>(libraryUrl(kind, "/folders"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2237,13 +2278,13 @@ export async function createLibraryFolder(
 }
 
 export async function resolveLibraryFolderPath(
-    kind: LibraryKind,
+    kind: LibraryScope,
     segments: string[],
     baseFolderId: string | null,
     conflictResolution: FolderConflictResolution = "error",
 ): Promise<FolderPathResolution<LibraryFolder>> {
     return apiRequest<FolderPathResolution<LibraryFolder>>(
-        `/library/${kind}/folder-paths/resolve`,
+        libraryUrl(kind, "/folder-paths/resolve"),
         {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -2257,45 +2298,51 @@ export async function resolveLibraryFolderPath(
 }
 
 export async function renameLibraryFolder(
-    kind: LibraryKind,
+    kind: LibraryScope,
     folderId: string,
     name: string,
 ): Promise<LibraryFolder> {
-    return apiRequest<LibraryFolder>(`/library/${kind}/folders/${folderId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-    });
+    return apiRequest<LibraryFolder>(
+        libraryUrl(kind, `/folders/${folderId}`),
+        {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name }),
+        },
+    );
 }
 
 export async function deleteLibraryFolder(
-    kind: LibraryKind,
+    kind: LibraryScope,
     folderId: string,
 ): Promise<void> {
-    await apiRequest(`/library/${kind}/folders/${folderId}`, {
+    await apiRequest(libraryUrl(kind, `/folders/${folderId}`), {
         method: "DELETE",
     });
 }
 
 export async function moveLibraryFolder(
-    kind: LibraryKind,
+    kind: LibraryScope,
     folderId: string,
     parentFolderId: string | null,
 ): Promise<LibraryFolder> {
-    return apiRequest<LibraryFolder>(`/library/${kind}/folders/${folderId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ parent_folder_id: parentFolderId }),
-    });
+    return apiRequest<LibraryFolder>(
+        libraryUrl(kind, `/folders/${folderId}`),
+        {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ parent_folder_id: parentFolderId }),
+        },
+    );
 }
 
 export async function moveLibraryDocument(
-    kind: LibraryKind,
+    kind: LibraryScope,
     documentId: string,
     folderId: string | null,
 ): Promise<Document> {
     return apiRequest<Document>(
-        `/library/${kind}/documents/${documentId}/folder`,
+        libraryUrl(kind, `/documents/${documentId}/folder`),
         {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
@@ -2305,15 +2352,18 @@ export async function moveLibraryDocument(
 }
 
 export async function renameLibraryDocument(
-    kind: LibraryKind,
+    kind: LibraryScope,
     documentId: string,
     filename: string,
 ): Promise<Document> {
-    return apiRequest<Document>(`/library/${kind}/documents/${documentId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filename }),
-    });
+    return apiRequest<Document>(
+        libraryUrl(kind, `/documents/${documentId}`),
+        {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ filename }),
+        },
+    );
 }
 
 export async function addDocumentToProject(
@@ -2471,20 +2521,34 @@ export async function uploadProjectDocuments(
     });
 }
 
+/**
+ * Upload documents on their own — attached to a chat, outside any project.
+ * `workspace` is the workspace they are uploaded in ("personal" or an
+ * organization id): a document uploaded in an organization's workspace
+ * belongs to that organization.
+ */
 export async function uploadStandaloneDocument(
     file: File,
     options?: UploadRequestOptions<Document>,
+    workspace?: string,
 ): Promise<Document> {
-    return firstUploadResult(await uploadStandaloneDocuments([{ file }], options));
+    return firstUploadResult(
+        await uploadStandaloneDocuments([{ file }], options, workspace),
+    );
 }
 
 export async function uploadStandaloneDocuments(
     files: UploadSessionInput[],
     options?: UploadRequestOptions<Document>,
+    workspace?: string,
 ): Promise<UploadOutcome<Document>[]> {
+    const orgId = workspaceOrgId(workspace);
     return uploadFilesWithSession<Document>({
         purpose: "document_create",
-        destination: { scope: "standalone" },
+        destination: {
+            scope: "standalone",
+            ...(orgId ? { org_id: orgId } : {}),
+        },
         files,
         onProgress: options?.onProgress,
         signal: options?.signal,

@@ -22,6 +22,7 @@ import {
   searchLibraryDocuments,
   searchProjectDirectory,
 } from "@/app/lib/mikeApi";
+import { useWorkspaceParam } from "@/app/contexts/WorkspaceContext";
 import {
     LIQUID_GLASS_MODAL_ROW_HOVER_CLASS,
     LIQUID_GLASS_MODAL_ROW_SELECTED_CLASS,
@@ -230,6 +231,8 @@ export function FileDirectory({
     loadProjectLevel = async () => {},
     loadMoreProjectDocuments = async () => {},
     } = useDirectoryData(showTabs, initialDirectoryTab);
+  // Searching a library tab searches the active workspace's library.
+  const workspace = useWorkspaceParam();
 
   useEffect(() => {
     const term = debouncedSearch.trim();
@@ -254,7 +257,9 @@ export function FileDirectory({
             setSearchProjects(rows.slice(0, DIRECTORY_SEARCH_PAGE_SIZE));
             setSearchHasMore(rows.length > DIRECTORY_SEARCH_PAGE_SIZE);
           })
-        : searchLibraryDocuments(selectedTab, {
+        : searchLibraryDocuments(
+          { kind: selectedTab, workspace },
+          {
             search: term,
             limit: DIRECTORY_SEARCH_PAGE_SIZE + 1,
             signal: controller.signal,
@@ -274,7 +279,7 @@ export function FileDirectory({
         if (!controller.signal.aborted) setSearchLoading(false);
       });
     return () => controller.abort();
-  }, [debouncedSearch, selectedTab, showTabs]);
+  }, [debouncedSearch, selectedTab, showTabs, workspace]);
 
   async function loadMoreSearchResults() {
     const term = debouncedSearch.trim();
@@ -295,7 +300,9 @@ export function FileDirectory({
         setSearchHasMore(rows.length > DIRECTORY_SEARCH_PAGE_SIZE);
       } else {
         const offset = searchDocuments?.length ?? 0;
-        const result = await searchLibraryDocuments(selectedTab, {
+        const result = await searchLibraryDocuments(
+          { kind: selectedTab, workspace },
+          {
           search: term,
           limit: DIRECTORY_SEARCH_PAGE_SIZE,
           offset,

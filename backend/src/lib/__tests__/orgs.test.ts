@@ -784,6 +784,16 @@ describe("handing over a departing member's work", () => {
                 { id: "r1", org_id: "o1", user_id: "sam", project_id: null },
             ],
             tabular_review_access_grants: [],
+            // Two of his own in the organization's library; the one in a
+            // project, the workflow's asset and a colleague's are not his
+            // to lose.
+            documents: [
+                { id: "d1", org_id: "o1", user_id: "sam", project_id: null },
+                { id: "d2", org_id: "o1", user_id: "sam", project_id: null },
+                { id: "d3", org_id: "o1", user_id: "sam", project_id: "p-public" },
+                { id: "d4", org_id: "o1", user_id: "sam", project_id: null, workflow_id: "w-private" },
+                { id: "d5", org_id: "o1", user_id: "robin", project_id: null },
+            ],
         });
     const remove = (db: any, actorId: string, assignTo?: unknown) =>
         removeMember(db, {
@@ -813,6 +823,7 @@ describe("handing over a departing member's work", () => {
                 // Not the chat robin also owns, nor the one in a project.
                 chats: 1,
                 reviews: 1,
+                documents: 2,
             },
         });
     });
@@ -904,6 +915,7 @@ describe("handing over a departing member's work", () => {
                     assigned_workflows: 1,
                     deleted_chats: 1,
                     deleted_reviews: 1,
+                    deleted_documents: 2,
                 }),
             }),
         ]);

@@ -13,6 +13,8 @@ export async function addPresetTemplate(
   preset: PresetTemplate,
   folderId: string | null,
   signal: AbortSignal,
+  /** The workspace whose template library it is added to. */
+  workspace?: string,
 ) {
   if (!isPresetDocument(preset)) {
     throw new Error("This reference file is available for download only.");
@@ -34,7 +36,12 @@ export async function addPresetTemplate(
         ? "application/pdf"
         : "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   });
-  return uploadLibraryDocument("templates", file, folderId, { signal });
+  return uploadLibraryDocument(
+    { kind: "templates", workspace },
+    file,
+    folderId,
+    { signal },
+  );
 }
 
 // The day the bundled snapshot was downloaded from the publishers; shown as

@@ -7,7 +7,9 @@ import {
   getLibraryFolderChildren,
   listProjectSummaries,
   type LibraryKind,
+  type LibraryScope,
 } from "@/app/lib/mikeApi";
+import { useWorkspaceParam } from "@/app/contexts/WorkspaceContext";
 import type { Document, LibraryFolder, Project } from "./types";
 
 export type DirectoryTab = "files" | "templates" | "projects";
@@ -55,6 +57,16 @@ export function useDirectoryData(
     enabled: boolean,
     initialTab: DirectoryTab = "files",
 ) {
+  // The library tabs show the active workspace's library: what the caller
+  // filed in the workspace they are working in, and nothing from another.
+  const workspace = useWorkspaceParam();
+  const scoped = useCallback(
+    (tab: LibraryDirectoryTab): LibraryScope => ({
+      kind: libraryKind(tab),
+      workspace,
+    }),
+    [workspace],
+  );
   const [standaloneDocuments, setStandaloneDocuments] = useState<Document[]>(
     [],
   );
@@ -172,7 +184,7 @@ export function useDirectoryData(
           );
           setProjectsHasMore(rows.length > DIRECTORY_PAGE_SIZE);
                 } else {
-          const result = await getLibrary(libraryKind(tab), {
+          const result = await getLibrary(scoped(tab), {
             limit: DIRECTORY_PAGE_SIZE,
           });
           setLibraryDocuments(tab, () => sortDocuments(result.documents));
@@ -207,7 +219,7 @@ export function useDirectoryData(
                 setLoadingTabs((prev) => ({ ...prev, [tab]: false }));
             }
         },
-    [enabled, setLibraryDocuments, setLibraryFolders],
+    [enabled, scoped, setLibraryDocuments, setLibraryFolders],
   );
 
   const loadFolderChildren = useCallback(
@@ -224,7 +236,7 @@ export function useDirectoryData(
       const request = (async () => {
         try {
           const result = await getLibraryFolderChildren(
-            libraryKind(tab),
+            scoped(tab),
             folderId,
             {
               limit: DIRECTORY_PAGE_SIZE,
@@ -271,7 +283,7 @@ export function useDirectoryData(
       folderRequestsRef.current.set(requestKey, request);
       return request;
     },
-    [enabled, setLibraryDocuments, setLibraryFolders],
+    [enabled, scoped, setLibraryDocuments, setLibraryFolders],
   );
 
   const loadMoreLibraryDocuments = useCallback(
@@ -297,11 +309,11 @@ export function useDirectoryData(
       const request = (async () => {
         try {
           const result = parentId
-            ? await getLibraryFolderChildren(libraryKind(tab), parentId, {
+            ? await getLibraryFolderChildren(scoped(tab), parentId, {
                 limit: DIRECTORY_PAGE_SIZE,
                 offset,
               })
-            : await getLibrary(libraryKind(tab), {
+            : await getLibrary(scoped(tab), {
                 limit: DIRECTORY_PAGE_SIZE,
                 offset,
               });
@@ -334,7 +346,7 @@ export function useDirectoryData(
       moreRequestsRef.current.set(requestKey, request);
       return request;
     },
-    [enabled, setLibraryDocuments, setLibraryFolders],
+    [enabled, scoped, setLibraryDocuments, setLibraryFolders],
   );
 
   const loadMoreProjects = useCallback(async () => {
