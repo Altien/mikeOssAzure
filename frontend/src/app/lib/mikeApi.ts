@@ -656,17 +656,32 @@ export interface MemoryCurrent {
     status_updated_at?: string;
 }
 
+/**
+ * The caller's own memory. They have one per workspace — Personal, and one
+ * for each organization they belong to — each private to them. `workspace`
+ * names which ("personal" or an organization id); omitted, it is Personal.
+ */
+function userMemoryPath(path: string, workspace?: string): string {
+    return workspace
+        ? `${path}?${new URLSearchParams({ workspace }).toString()}`
+        : path;
+}
+
 export async function getUserMemory(
     signal?: AbortSignal,
+    workspace?: string,
 ): Promise<MemoryCurrent> {
-    return apiRequest<MemoryCurrent>("/user/memory", { signal });
+    return apiRequest<MemoryCurrent>(userMemoryPath("/user/memory", workspace), {
+        signal,
+    });
 }
 
 export async function updateUserMemory(
     content: string,
     expectedRevision: number,
+    workspace?: string,
 ): Promise<MemoryCurrent> {
-    return apiRequest<MemoryCurrent>("/user/memory", {
+    return apiRequest<MemoryCurrent>(userMemoryPath("/user/memory", workspace), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -678,12 +693,16 @@ export async function updateUserMemory(
 
 export async function setUserMemoryEnabled(
     enabled: boolean,
+    workspace?: string,
 ): Promise<MemoryCurrent> {
-    return apiRequest<MemoryCurrent>("/user/memory/settings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled }),
-    });
+    return apiRequest<MemoryCurrent>(
+        userMemoryPath("/user/memory/settings", workspace),
+        {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled }),
+        },
+    );
 }
 
 export async function getProjectMemory(

@@ -188,12 +188,35 @@ export async function deleteOrgChats(db: Db, orgId: string): Promise<void> {
 }
 
 /**
- * Empty the memory of every project the organization owns. The files stay,
+ * Empty the organization's memory: every project it owns, and each member's
+ * own memory for this organization. The files stay,
  * and stay enabled, so memory rebuilds from later conversations; the database
  * function empties each body under its row lock so an in-flight curator job
  * cannot write the old content back.
  */
 export async function deleteOrgMemories(db: Db, orgId: string): Promise<void> {
+    // Each member's own memory for this organization. It is private to them
+    // and nobody here reads it; clearing the organization's memory clears
+    // these too, so that nothing learned in it is left anywhere.
+    const { data: memberFiles, error: memberError } = await db
+        .from("memory_files")
+        .select("id")
+        .eq("scope", "user")
+        .eq("org_id", orgId);
+    // 42703: a database from before memory was per workspace has none.
+    if (memberError && memberError.code !== "42703" && memberError.code !== "PGRST204")
+        fail("Failed to load organization memory");
+    for (const row of (memberFiles ?? []) as { id?: unknown }[]) {
+        if (typeof row.id !== "string" || !row.id) continue;
+        const result = await db.rpc("wipe_memory_file", {
+            p_memory_file_id: row.id,
+            p_enabled: null,
+            p_updated_by: null,
+            p_source: "wipe",
+        });
+        if (result.error) fail("Failed to delete organization memory");
+    }
+
     const projectIds = await allOrgIds(db, "projects", orgId);
     for (const batch of chunkArray(projectIds, BATCH_SIZE)) {
         const { data, error } = await db

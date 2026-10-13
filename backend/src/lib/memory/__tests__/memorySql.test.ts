@@ -72,3 +72,149 @@ describe("numbered scoped memory migrations on private PostgREST", () => {
     expect(schedule).toContain("memory_state_missing");
   });
 });
+
+// ---------------------------------------------------------------------------
+// A person's memory, per workspace (20261013_02_workspace_memory).
+//
+// One private file for Personal and one for each team organization the
+// person belongs to. A conversation reads and learns only the memory of the
+// workspace it is in. Like the checks above, these read the shipped SQL: the
+// behaviour itself needs a live Postgres.
+// ---------------------------------------------------------------------------
+
+const workspaceMigration = readFileSync(
+  resolve(backendRoot, "migrations/20261013_02_workspace_memory.sql"),
+  "utf8",
+);
+
+describe("per-workspace memory SQL", () => {
+  it.each([
+    "memory_source_org_id",
+    "ensure_user_memory_file",
+    "initialize_new_user_memory",
+    "memory_source_allows_app_memory",
+    "write_memory_file",
+    "delete_user_private_memories",
+    "schedule_memory_consolidation",
+    "refresh_memory_file_status",
+  ])("a fresh install defines %s exactly as the migration does", (name) => {
+    expect(functionBody(schemaSql, name)).toBe(
+      functionBody(workspaceMigration, name),
+    );
+  });
+
+  it.each([
+    ["schema", schemaSql],
+    ["migration", workspaceMigration],
+  ] as const)("%s keeps one file per person per workspace", (_name, sql) => {
+    // Null is Personal and nulls are distinct, so one index each.
+    expect(sql).toMatch(
+      /create unique index if not exists memory_files_user_personal_unique\s+on public\.memory_files\(user_id\) where org_id is null;/,
+    );
+    expect(sql).toMatch(
+      /create unique index if not exists memory_files_user_workspace_unique\s+on public\.memory_files\(user_id, org_id\) where org_id is not null;/,
+    );
+  });
+
+  it("no longer keeps the one-file-per-person index, which would refuse a second workspace", () => {
+    expect(schemaSql).not.toContain("memory_files_user_unique");
+    expect(workspaceMigration).toContain(
+      "drop index if exists public.memory_files_user_unique;",
+    );
+    // ... nor leans on it: an upsert naming (user_id) needs that index.
+    for (const name of ["initialize_new_user_memory", "delete_user_private_memories"]) {
+      expect(functionBody(schemaSql, name)).not.toContain(
+        "on conflict (user_id)",
+      );
+    }
+  });
+
+  it.each([
+    ["schema", schemaSql],
+    ["migration", workspaceMigration],
+  ] as const)(
+    "%s ties a workspace memory to the membership, so leaving takes it away",
+    (_name, sql) => {
+      expect(sql).toMatch(
+        /memory_files_workspace_member_fkey\s+foreign key \(org_id, user_id\)\s+references public\.org_members\(org_id, user_id\) on delete cascade/,
+      );
+    },
+  );
+
+  it("gives only a standalone chat in a team organization a workspace", () => {
+    const body = functionBody(schemaSql, "memory_source_org_id");
+    expect(body).toContain("case when p_surface = 'chat' then");
+    expect(body).toContain("and chat.project_id is null");
+    expect(body).toContain("and public.org_is_team(chat.org_id)");
+  });
+
+  it("lets an organization's chat learn only when it is standalone and its author is still a member", () => {
+    const body = functionBody(schemaSql, "memory_source_allows_app_memory");
+    expect(body).toMatch(
+      /not public\.org_is_team\(chat\.org_id\)\s+or \(\s+chat\.project_id is null\s+and exists \(\s+select 1 from public\.org_members member\s+where member\.org_id = chat\.org_id\s+and member\.user_id = p_actor_user_id/,
+    );
+    // The old rule, which kept every organization chat out, is gone.
+    expect(body).not.toContain("and chat.org_id is null");
+  });
+
+  it("refuses, under the row lock, a write into any workspace but the conversation's own", () => {
+    const body = functionBody(schemaSql, "write_memory_file");
+    const lock = body.indexOf("where id = p_memory_file_id\n  for update;");
+    const fence = body.indexOf(
+      "and target.org_id is distinct from\n        public.memory_source_org_id(p_source_surface, p_source_chat_id)",
+    );
+    expect(lock).toBeGreaterThan(0);
+    expect(fence).toBeGreaterThan(lock);
+    expect(body.slice(fence, fence + 240)).toContain("memory_scope_ineligible");
+  });
+
+  it("schedules and marks only the actor's file for the conversation's workspace", () => {
+    const body = functionBody(schemaSql, "schedule_memory_consolidation");
+    expect(body).toContain(
+      "workspace_org_id := public.memory_source_org_id(p_surface, p_conversation_id);",
+    );
+    expect(
+      body.match(/org_id is not distinct from workspace_org_id/g),
+    ).toHaveLength(2);
+    expect(body).toContain(
+      "'appOrgId', case when app_enabled then app_file.org_id else null end,",
+    );
+    // No file is created for somebody by inserting directly any more.
+    expect(body).not.toContain(
+      "insert into public.memory_files(scope, user_id, enabled)",
+    );
+  });
+
+  it("does not take a job for one of a person's memories for a job on another", () => {
+    const body = functionBody(schemaSql, "refresh_memory_file_status");
+    expect(
+      body.match(
+        /job\.payload->>'appOrgId' is not distinct from target\.org_id::text/g,
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("starts a new workspace memory as the person left their Personal one", () => {
+    const body = functionBody(schemaSql, "ensure_user_memory_file");
+    expect(body).toMatch(
+      /select personal\.enabled from public\.memory_files personal\s+where personal\.scope = 'user'\s+and personal\.user_id = p_user_id\s+and personal\.org_id is null/,
+    );
+    // ... and gives a non-member nothing.
+    expect(body).toMatch(
+      /if p_org_id is not null and not exists \(\s+select 1 from public\.org_members member/,
+    );
+  });
+
+  it("keeps creating one out of reach of signed-in and anonymous callers", () => {
+    for (const sql of [schemaSql, workspaceMigration]) {
+      for (const signature of [
+        "memory_source_org_id(text, uuid)",
+        "ensure_user_memory_file(uuid, uuid)",
+      ]) {
+        expect(sql).toContain(
+          `revoke all on function public.${signature}\n  from public, anon, authenticated;`,
+        );
+      }
+    }
+  });
+});

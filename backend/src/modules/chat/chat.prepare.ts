@@ -23,6 +23,7 @@ import {
     resolveContentOrgId,
     resolveStandaloneOrgId,
 } from "../../lib/access";
+import { teamOrgIdOf } from "../../lib/personalOrgs";
 import { hasDirectContentGrants } from "../../lib/contentAccess";
 import { can } from "../../lib/permissions";
 import { resolveEffectiveReasoningLevel } from "../../lib/modelSelection";
@@ -175,8 +176,14 @@ export async function prepareChatStream(
         // user gets an answer, and an unhandled rejection here used to
         // leave the request open with no response and no log.
         try {
+            // A chat in an organization's project is the project's
+            // audience. One started on its own in an organization is its
+            // author's alone until it is shared, like a personal chat — and
+            // reads the author's memory for that organization, never their
+            // Personal one (see buildMemoryTurn).
             memorySharedAudience =
-                !!existing.org_id ||
+                (existingProjectId !== null &&
+                    (await teamOrgIdOf(db, existing.org_id)) !== null) ||
                 existing.user_id !== userId ||
                 (await hasDirectContentGrants(db, "chat", existing.id));
         } catch (error) {

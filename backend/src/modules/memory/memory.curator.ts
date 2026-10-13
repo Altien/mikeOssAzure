@@ -14,8 +14,9 @@ import {
   type UserModelSettings,
 } from "../user/user.service";
 import { DbJobDeferredError, type Db, type DbJob } from "../../lib/dbq/types";
-import { ensureMemoryFile, getMemoryCurrent, MemoryConversationNotQuietError, MemoryDisabledError, MemoryEpochSupersededError, MemoryJobSupersededError, MemoryValidationError, writeMemoryFile, type MemoryFileRow, type MemoryScope, type MemorySurface } from "../../lib/memory/files";
+import { ensureMemoryFile, getMemoryCurrentForFile, MemoryConversationNotQuietError, MemoryDisabledError, MemoryEpochSupersededError, MemoryJobSupersededError, MemoryValidationError, writeMemoryFile, type MemoryFileRow, type MemoryScope, type MemorySurface } from "../../lib/memory/files";
 import { MEMORY_INACTIVITY_MS } from "../../lib/memory/schedule";
+import { teamOrgIdOf } from "../../lib/personalOrgs";
 
 const TRANSCRIPT_MESSAGE_LIMIT = 120;
 const TRANSCRIPT_CHARACTER_LIMIT = 48_000;
@@ -50,6 +51,12 @@ type CuratorConversation = {
   orgId: string | null;
   projectWritable: boolean;
   appMemoryEligible: boolean;
+  /**
+   * The workspace whose memory the actor learns into from this
+   * conversation: a team organization, or null for Personal. The database
+   * refuses a write to any other (memory_source_org_id).
+   */
+  appOrgId: string | null;
   actorEmail: string | null;
   messages: MemoryCuratorStoredMessage[];
 };
@@ -451,6 +458,7 @@ async function loadConversation(
   let model: string | null = null;
   let projectId: string | null = null;
   let orgId: string | null = null;
+  let appOrgId: string | null = null;
   let projectWritable = false;
   let appMemoryEligible = state.surface !== "tabular";
   let messages: MemoryCuratorStoredMessage[] = [];
@@ -478,12 +486,17 @@ async function loadConversation(
     projectId = (data.project_id as string | null) ?? null;
     orgId = (data.org_id as string | null) ?? null;
     // App memory may only learn from a conversation nobody else can read:
-    // the chat must be the actor's own, outside any organization, with no
-    // direct grants. This mirrors memory_source_allows_app_memory and the
-    // routes' read-side audience check.
+    // the chat must be the actor's own, with no direct grants, and either
+    // personal or started on its own in a team organization — in which case
+    // it learns into the actor's memory for THAT workspace. A chat in an
+    // organization's project is the project's. This mirrors
+    // memory_source_allows_app_memory / memory_source_org_id and the routes'
+    // read-side audience check.
+    const teamOrgId = await teamOrgIdOf(db, orgId);
+    appOrgId = teamOrgId && !projectId ? teamOrgId : null;
     appMemoryEligible =
       data.user_id === state.actor_user_id &&
-      !data.org_id &&
+      (!teamOrgId || !projectId) &&
       !(await hasDirectContentGrants(db, "chat", state.conversation_id));
     if (projectId) {
       const projectAccess = await checkProjectAccess(
@@ -602,6 +615,7 @@ async function loadConversation(
     orgId,
     projectWritable,
     appMemoryEligible,
+    appOrgId,
     actorEmail: email,
     messages,
   };
@@ -976,14 +990,22 @@ async function refreshJobFileStatuses(args: {
       epoch: payloadEpoch(args.job, "projectEpoch"),
     },
   ];
+  // The actor has one memory per workspace; the job names the one it is for.
+  const appOrgId = payloadString(args.job, "appOrgId");
   for (const target of targets) {
     if (!target.ownerId || target.epoch == null) continue;
-    const { data, error } = await args.db
+    const lookup = args.db
       .from("memory_files")
       .select("id, epoch")
       .eq("scope", target.scope)
-      .eq(target.ownerColumn, target.ownerId)
-      .maybeSingle();
+      .eq(target.ownerColumn, target.ownerId);
+    const { data, error } = await (
+      target.scope !== "user"
+        ? lookup
+        : appOrgId
+          ? lookup.eq("org_id", appOrgId)
+          : lookup.is("org_id", null)
+    ).maybeSingle();
     if (error) throw new Error("Memory curator could not refresh file status");
     if (!data || numeric(data.epoch as number | string) !== target.epoch) {
       continue;
@@ -1232,7 +1254,12 @@ export async function handleMemoryConsolidation(
     const sourceEpoch = payloadEpoch(job, "sourceEpoch");
     const terminalAt = payloadString(job, "terminalAt") ?? undefined;
     const terminalTurnId = payloadString(job, "turnId");
-    const appFile = await ensureMemoryFile(db, "user", state.actor_user_id);
+    const appFile = await ensureMemoryFile(
+      db,
+      "user",
+      state.actor_user_id,
+      conversation.appOrgId,
+    );
     const appTranscript = buildMemoryCuratorTranscript(
       conversation.messages,
       state.actor_user_id,
@@ -1363,10 +1390,9 @@ export async function handleMemoryConsolidation(
       continue;
     }
     try {
-      const { current, file } = await getMemoryCurrent(
+      const { current, file } = await getMemoryCurrentForFile(
         db,
-        candidate.file.scope,
-        candidate.ownerId,
+        candidate.file,
       );
       if (!current.enabled || numeric(file.epoch) !== candidate.expectedEpoch) {
         await recordResult({
