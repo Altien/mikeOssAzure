@@ -19,6 +19,8 @@ import { AuthDividerUI } from "@/shared/ui/AuthDividerUI";
 import { SsoAuthButton } from "@/app/components/auth/SsoAuthButton";
 import { GoogleAuthButton } from "@/app/components/auth/GoogleAuthButton";
 import { FieldLabel } from "@/app/components/ui/form-field";
+import { WarningPopup } from "@/app/components/popups/WarningPopup";
+import { noticeActionClassName } from "@/shared/ui/NoticeCardUI";
 import {
     describeError,
     supportMailtoFor,
@@ -47,6 +49,9 @@ const LOGIN_ERROR_MESSAGES = authMessages({
     invalid_request: "Enter your email address and password.",
     request_timeout: "The login request timed out. Try again.",
 });
+
+/** The title `notifyError` gives the same warning away from this page. */
+const SESSION_WARNING_TITLE = "Couldn't check your session";
 
 /** Classify a login failure into text a person can act on. */
 function describeLoginError(error: unknown): UserFacingError {
@@ -88,7 +93,18 @@ export default function LoginPage() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<UserFacingError | null>(null);
     const [retryingSession, setRetryingSession] = useState(false);
-    const [loginMode, setLoginMode] = useState<"account" | "guest" | "session" | null>(null);
+    // The session warning is not about the form: a failed Retry is reported
+    // in its place rather than as a sign-in error.
+    const [sessionError, setSessionError] = useState<UserFacingError | null>(null);
+    const [sessionWarningDismissed, setSessionWarningDismissed] = useState(false);
+    const [shownAuthError, setShownAuthError] = useState(authError);
+    if (shownAuthError !== authError) {
+        // A new failure is a new warning, even after the last was dismissed.
+        setShownAuthError(authError);
+        setSessionError(null);
+        setSessionWarningDismissed(false);
+    }
+    const [loginMode, setLoginMode] = useState<"account" | "guest" | null>(null);
 
     useEffect(() => {
         if (!authLoading && isAuthenticated) {
@@ -144,24 +160,47 @@ export default function LoginPage() {
     };
 
     const handleRetrySession = async () => {
-        setLoginMode("session");
         setRetryingSession(true);
-        setError(null);
+        setSessionError(null);
         try {
             await retrySession();
         } catch (caught: unknown) {
             // The Retry button failing silently is what made the original
             // session error look permanent; say so instead.
-            setError(
+            setSessionError(
                 describeError(caught, {
                     action: "restore your session",
                     fallback: "Unable to restore your session. Try again.",
                 }),
             );
+            setSessionWarningDismissed(false);
         } finally {
             setRetryingSession(false);
         }
     };
+
+    // One warning at a time: the form's own failure first, then the session's.
+    const sessionWarningOpen =
+        !error && !!authError && !sessionWarningDismissed;
+    const shownError = error ?? (sessionWarningOpen ? sessionError : null);
+    const retryAction = error
+        ? error.retryable && loginMode
+            ? {
+                  label: "Retry",
+                  onClick: () =>
+                      void (loginMode === "guest"
+                          ? handleGuestLogin()
+                          : submitLogin()),
+                  disabled: loading,
+              }
+            : undefined
+        : sessionWarningOpen
+          ? {
+                label: retryingSession ? "Retrying..." : "Retry",
+                onClick: () => void handleRetrySession(),
+                disabled: retryingSession,
+            }
+          : undefined;
 
     return (
         <div className="relative flex min-h-dvh items-center justify-center bg-gray-50/80 px-6 py-10">
@@ -248,51 +287,6 @@ export default function LoginPage() {
                         <SsoAuthButton disabled={loading} /></>}
                     </form>
                     </details>
-                    {(error || authError) && (
-                        <div
-                            role="alert"
-                            className="text-red-600 text-sm bg-red-50 p-3 rounded"
-                        >
-                            {error ? error.message : authError}
-                            {!error && authError && (
-                                <button
-                                    type="button"
-                                    onClick={() => void handleRetrySession()}
-                                    disabled={retryingSession}
-                                    className="ml-2 underline underline-offset-2 disabled:no-underline disabled:opacity-60"
-                                >
-                                    {retryingSession
-                                        ? "Retrying..."
-                                        : "Retry"}
-                                </button>
-                            )}
-                            {error?.retryable && loginMode && (
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        if (loginMode === "session") void handleRetrySession();
-                                        else if (loginMode === "guest") void handleGuestLogin();
-                                        else void submitLogin();
-                                    }}
-                                    disabled={loading || retryingSession}
-                                    className="ml-2 underline underline-offset-2 disabled:no-underline disabled:opacity-60"
-                                >
-                                    Retry
-                                </button>
-                            )}
-                            {error?.supportable && (
-                                <a
-                                    href={supportMailtoFor(
-                                        error,
-                                        "Failed to log in.",
-                                    )}
-                                    className="ml-2 underline underline-offset-2"
-                                >
-                                    Contact support
-                                </a>
-                            )}
-                        </div>
-                    )}
                 </div>
                 {config.authProvider === "supabase" && <div className="text-center text-sm text-gray-500">
                     Don&apos;t have an account?{" "}
@@ -304,6 +298,31 @@ export default function LoginPage() {
                     </Link>
                 </div>}
             </div>
+            <WarningPopup
+                open={!!error || sessionWarningOpen}
+                onClose={() => {
+                    if (error) setError(null);
+                    else setSessionWarningDismissed(true);
+                }}
+                title={shownError ? shownError.title : SESSION_WARNING_TITLE}
+                message={shownError ? shownError.message : authError}
+                actions={
+                    shownError?.supportable ? (
+                        <a
+                            href={supportMailtoFor(
+                                shownError,
+                                "Failed to log in.",
+                            )}
+                            className={noticeActionClassName(
+                                retryAction ? "secondary" : "primary",
+                            )}
+                        >
+                            Contact support
+                        </a>
+                    ) : undefined
+                }
+                primaryAction={retryAction}
+            />
         </div>
     );
 }

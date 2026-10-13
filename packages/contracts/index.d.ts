@@ -515,3 +515,33 @@ export interface OrgDepartureArchivePage {
     items: OrgDepartureArchive[];
     nextOffset: number | null;
 }
+/** An archived item as the Departed members view lists it. */
+export interface OrgDepartureItem extends OrgDepartureArchive {
+    /** What a project or workflow holds; absent for the other kinds. */
+    contents?: { documents: number; chats: number; tabular_reviews: number };
+}
+/** The archived work one member left behind when they departed. */
+export interface OrgDeparture {
+    /** Identifies the departure for as long as any of its work is archived. */
+    key: string;
+    /** Null once the departed account has been deleted. */
+    member: {
+        user_id: string;
+        display_name: string | null;
+        email: string | null;
+    } | null;
+    departed_at: string;
+    /** When the earliest of its items is permanently deleted. */
+    expires_at: string;
+    items: OrgDepartureItem[];
+}
+/** Soonest deletion first. `truncated` when there was more than is listed. */
+export interface OrgDepartureList {
+    departures: OrgDeparture[];
+    truncated: boolean;
+}
+/** `unresolved` items could not be reassigned or deleted and are still archived. */
+export interface OrgDepartureResolution {
+    resolved: number;
+    unresolved: number;
+}

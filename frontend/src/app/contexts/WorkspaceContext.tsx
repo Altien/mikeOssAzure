@@ -80,7 +80,8 @@ function readStoredWorkspace(userId: string | undefined): string {
     }
 }
 
-function storeWorkspace(userId: string | undefined, workspaceId: string) {
+/** Also used during onboarding, before the app's WorkspaceProvider mounts. */
+export function storeWorkspace(userId: string | undefined, workspaceId: string) {
     if (!userId) return;
     try {
         window.localStorage.setItem(STORAGE_PREFIX + userId, workspaceId);

@@ -1,6 +1,16 @@
 import type { RouterProfileLists } from "@/shared/lib/modelCatalog";
-import type { OrgMemberHandover, OrgDepartureArchivePage } from "@mike/contracts";
-export type { OrgMemberHandover, OrgDepartureArchive, OrgDepartureArchivePage } from "@mike/contracts";
+import type {
+    OrgMemberHandover,
+    OrgDepartureList,
+    OrgDepartureResolution,
+} from "@mike/contracts";
+export type {
+    OrgMemberHandover,
+    OrgDeparture,
+    OrgDepartureItem,
+    OrgDepartureList,
+    OrgDepartureResolution,
+} from "@mike/contracts";
 
 /**
  * Mike API client — all requests to the Node.js backend.
@@ -1861,20 +1871,34 @@ export async function removeOrgMember(
     });
 }
 
-/** Owner-only recovery of private work left by departed members. */
-export function listOrgDepartureArchives(orgId: string, offset = 0): Promise<OrgDepartureArchivePage> {
-    return apiRequest(`/orgs/${orgId}/archives?${new URLSearchParams({ limit: "50", offset: String(offset) })}`);
+/** Owner-only: private work left by departed members, by departure. */
+export function listOrgDepartures(orgId: string): Promise<OrgDepartureList> {
+    return apiRequest(`/orgs/${orgId}/departures`);
 }
 
-export async function recoverOrgDepartureArchive(orgId: string, archiveId: string, assignTo: string): Promise<void> {
-    await apiRequest(`/orgs/${orgId}/archives/${archiveId}/recover`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assign_to: assignTo }),
+/** Hands archived items to a member, who becomes their owner. */
+export function reassignOrgDepartureArchives(
+    orgId: string,
+    archiveIds: string[],
+    assignTo: string,
+): Promise<OrgDepartureResolution> {
+    return apiRequest(`/orgs/${orgId}/archives/recover`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archive_ids: archiveIds, assign_to: assignTo }),
     });
 }
 
-export async function deleteOrgDepartureArchive(orgId: string, archiveId: string): Promise<void> {
-    await apiRequest(`/orgs/${orgId}/archives/${archiveId}`, { method: "DELETE" });
+/** Permanently deletes archived items with their contents. */
+export function deleteOrgDepartureArchives(
+    orgId: string,
+    archiveIds: string[],
+): Promise<OrgDepartureResolution> {
+    return apiRequest(`/orgs/${orgId}/archives/delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archive_ids: archiveIds }),
+    });
 }
 
 // --- Invitations: the admin's side ---------------------------------------

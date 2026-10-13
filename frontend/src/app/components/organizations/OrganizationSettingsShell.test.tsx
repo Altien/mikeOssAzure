@@ -18,6 +18,7 @@ import {
 
 const mocks = vi.hoisted(() => ({
   push: vi.fn(),
+  replace: vi.fn(),
   pathname: "/organizations/org-1/settings",
   role: "owner" as "owner" | "admin" | "member",
   getOrg: vi.fn(),
@@ -28,10 +29,11 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: mocks.push }),
+  useRouter: () => ({ push: mocks.push, replace: mocks.replace }),
   usePathname: () => mocks.pathname,
 }));
 vi.mock("@/app/contexts/WorkspaceContext", () => ({
+  PERSONAL_WORKSPACE: "personal",
   useWorkspace: () => ({
     workspaceId: mocks.workspaceId,
     organizations: mocks.organizations,
@@ -331,11 +333,71 @@ describe("an organization's settings belong to its workspace", () => {
     expect(mocks.getOrg).toHaveBeenCalledExactlyOnceWith("org-1");
   });
 
-  it("closes again when the caller switches to another workspace", async () => {
+  // The caller switches workspace with the settings open.
+  const switchWorkspace = async (workspaceId: string) => {
     const view = renderShell();
     await screen.findByText("section for Elite Law LLP");
+    mocks.workspaceId = workspaceId;
+    view.rerender(
+      <OrganizationSettingsProvider orgId="org-1">
+        <OrganizationSettingsFrame>
+          <Section />
+        </OrganizationSettingsFrame>
+      </OrganizationSettingsProvider>,
+    );
+  };
 
-    mocks.workspaceId = "org-2";
+  it("follows a switch to another organization, to the same section of its settings", async () => {
+    mocks.pathname = "/organizations/org-1/settings/members";
+    await switchWorkspace("org-2");
+
+    expect(mocks.replace).toHaveBeenCalledExactlyOnceWith(
+      "/organizations/org-2/settings/members",
+    );
+    // Nothing of the organization left behind, and no offer to switch back.
+    expect(screen.queryByText(/section for/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^Switch to/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens General where the caller's role is not offered the section", async () => {
+    // An owner's page here; a member there.
+    mocks.pathname = "/organizations/org-1/settings/privacy-data";
+    await switchWorkspace("org-2");
+
+    expect(mocks.replace).toHaveBeenCalledExactlyOnceWith(
+      "/organizations/org-2/settings",
+    );
+  });
+
+  it("keeps an admin's section in an organization the caller administers", async () => {
+    mocks.organizations = [
+      { id: "org-1", name: "Elite Law LLP", role: "owner" },
+      { id: "org-2", name: "Beta Chambers", role: "admin" },
+    ];
+    mocks.pathname = "/organizations/org-1/settings/providers";
+    await switchWorkspace("org-2");
+
+    expect(mocks.replace).toHaveBeenCalledExactlyOnceWith(
+      "/organizations/org-2/settings/providers",
+    );
+  });
+
+  it("follows a switch to Personal, to the caller's own settings", async () => {
+    await switchWorkspace("personal");
+
+    expect(mocks.replace).toHaveBeenCalledExactlyOnceWith("/settings");
+  });
+
+  it("does not follow the fall back to Personal when the organization is gone", async () => {
+    // Leaving, removal and deletion navigate for themselves.
+    const view = renderShell();
+    await screen.findByText("section for Elite Law LLP");
+    mocks.workspaceId = "personal";
+    mocks.organizations = [
+      { id: "org-2", name: "Beta Chambers", role: "member" },
+    ];
     view.rerender(
       <OrganizationSettingsProvider orgId="org-1">
         <OrganizationSettingsFrame>
@@ -344,7 +406,14 @@ describe("an organization's settings belong to its workspace", () => {
       </OrganizationSettingsProvider>,
     );
 
-    expect(screen.queryByText(/section for/)).not.toBeInTheDocument();
+    expect(mocks.replace).not.toHaveBeenCalled();
+  });
+
+  it("does not move somebody who arrived from another workspace", () => {
+    mocks.workspaceId = "org-2";
+    renderShell();
+
+    expect(mocks.replace).not.toHaveBeenCalled();
     expect(
       screen.getByRole("button", { name: "Switch to Elite Law LLP" }),
     ).toBeInTheDocument();

@@ -30,8 +30,8 @@ vi.mock("@/app/contexts/ChatHistoryContext", () => ({
   }),
 }));
 vi.mock("./OrganizationSettingsShell", () => ({
-  organizationSettingsHref: (orgId: string) =>
-    `/organizations/${orgId}/settings`,
+  organizationSettingsHref: (orgId: string, section?: string) =>
+    `/organizations/${orgId}/settings${section ? `/${section}` : ""}`,
   useOrganizationSettings: () => ({ orgId: "org-1", org: mocks.org }),
 }));
 vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
@@ -110,6 +110,18 @@ describe("who may use it", () => {
       expect(mocks.push).toHaveBeenCalledWith("/organizations/org-1/settings");
     },
   );
+
+  it("leads an owner to the departed members' work on the Members page", async () => {
+    const user = userEvent.setup();
+    render(<OrganizationPrivacyData />);
+
+    await user.click(
+      screen.getByRole("button", { name: "Review departed members" }),
+    );
+    expect(mocks.push).toHaveBeenCalledWith(
+      "/organizations/org-1/settings/members?view=departed",
+    );
+  });
 
   it("keeps the deletes disabled until the caller's role is known", () => {
     mocks.org = null;

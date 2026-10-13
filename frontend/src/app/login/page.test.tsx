@@ -248,3 +248,44 @@ it("retries a failed session refresh without submitting the empty login form", a
     expect(retrySession).toHaveBeenCalledTimes(2);
     expect(login).not.toHaveBeenCalled();
 });
+
+it("shows the session warning as a popup that can be dismissed", async () => {
+    authState.error = "We could not check your session. Please try again.";
+    render(<LoginPage />);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+        "Couldn't check your session",
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+        "We could not check your session. Please try again.",
+    );
+    await userEvent.click(
+        screen.getByRole("button", { name: "Dismiss warning" }),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("shows a sign-in failure in the popup ahead of the session warning", async () => {
+    authState.error = "We could not check your session. Please try again.";
+    login.mockRejectedValue(
+        new AuthApiError(401, "invalid_credentials", "Invalid credentials"),
+    );
+    const user = userEvent.setup();
+    render(<LoginPage />);
+    await user.type(
+        screen.getByRole("textbox", { name: "Email" }),
+        "person@example.com",
+    );
+    await user.type(screen.getByLabelText("Password"), "wrong-password");
+    await user.click(screen.getByRole("button", { name: "Log in" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Couldn't log in");
+    expect(alert).toHaveTextContent("The email or password is incorrect.");
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+
+    // Dismissing it brings back the warning it was covering.
+    await user.click(screen.getByRole("button", { name: "Dismiss warning" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+        "We could not check your session",
+    );
+});

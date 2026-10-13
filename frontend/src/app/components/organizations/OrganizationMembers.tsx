@@ -68,6 +68,7 @@ import {
   type OrgRole,
 } from "@/app/lib/permissions";
 import { userFacingApiError } from "@/app/lib/userFacingError";
+import { OrganizationDepartedMembers } from "./OrganizationDepartedMembers";
 import { InviteOrganizationMemberModal } from "./OrganizationModals";
 
 /** The roster's fixed order: who decides, who runs it, everybody else. */
@@ -96,14 +97,21 @@ const ROLE_FILTER_OPTIONS: TableFilterOption<OrgRole>[] = [
   },
 ];
 
-/** The roster's tabs: everyone, or the people holding one role. */
-type RosterTab = "all" | OrgRole;
+/**
+ * The page's tabs: everyone, the people holding one role, or — for the
+ * organization's owners — the people who have left and the work they left.
+ */
+type RosterTab = "all" | OrgRole | "departed";
 
 const ROSTER_TABS: { id: RosterTab; label: string }[] = [
   { id: "all", label: "All" },
   { id: "owner", label: "Owners" },
   { id: "admin", label: "Admins" },
   { id: "member", label: "Members" },
+];
+const OWNER_TABS: { id: RosterTab; label: string }[] = [
+  ...ROSTER_TABS,
+  { id: "departed", label: "Departed" },
 ];
 
 function formatDate(value?: string | null) {
@@ -135,9 +143,12 @@ function formatDate(value?: string | null) {
 export function OrganizationMembers({
   orgId,
   onViewerRoleChanged,
+  initialTab = "all",
 }: {
   orgId: string;
   onViewerRoleChanged?: () => void;
+  /** Opens on the Departed view, for a link that leads straight to it. */
+  initialTab?: "all" | "departed";
 }) {
   const router = useRouter();
   const { user } = useAuth();
@@ -152,7 +163,7 @@ export function OrganizationMembers({
   const [busyMemberId, setBusyMemberId] = useState<string | null>(null);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [search, setSearch] = useState("");
-  const [rosterTab, setRosterTab] = useState<RosterTab>("all");
+  const [rosterTab, setRosterTab] = useState<RosterTab>(initialTab);
   const [removeSelectedOpen, setRemoveSelectedOpen] = useState(false);
   const [removeMember, setRemoveMember] = useState<OrgMember | null>(null);
   const [pendingSelfRoleChange, setPendingSelfRoleChange] = useState<{
@@ -266,6 +277,16 @@ export function OrganizationMembers({
 
   const viewerRole = org?.role ?? null;
   const isAdmin = isOrgAdmin(viewerRole);
+  // The Departed view is its owners' alone: nobody else is offered the tab,
+  // and a link to it opens the roster for them.
+  const tabs = viewerRole === "owner" ? OWNER_TABS : ROSTER_TABS;
+  const tab = rosterTab === "departed" && viewerRole !== "owner" ? "all" : rosterTab;
+  const changeTab = (next: RosterTab) => {
+    setRosterTab(next);
+    // A selection made under one tab does not carry into another, where
+    // some of it would be out of sight.
+    setSelectedMemberIds([]);
+  };
 
   /**
    * Mirrors the server: the viewer must outrank both the role the member
@@ -456,7 +477,8 @@ export function OrganizationMembers({
               // another, where some of it would be out of sight.
               setSelectedMemberIds([]);
             },
-            placeholder: "Search members…",
+            placeholder:
+              tab === "departed" ? "Search departed members…" : "Search members…",
           },
           {
             type: "new",
@@ -474,34 +496,47 @@ export function OrganizationMembers({
         ]}
       />
 
-      <TableToolbar
-        items={ROSTER_TABS}
-        active={rosterTab}
-        onChange={(tab) => {
-          setRosterTab(tab);
-          // A selection made under one tab does not carry into another,
-          // where some of it would be out of sight.
-          setSelectedMemberIds([]);
-        }}
-        actions={selectionActions ?? undefined}
-      />
+      {tab === "departed" ? (
+        <OrganizationDepartedMembers
+          orgId={orgId}
+          members={members}
+          search={search}
+          renderToolbar={(actions) => (
+            <TableToolbar
+              items={tabs}
+              active={tab}
+              onChange={changeTab}
+              actions={actions}
+            />
+          )}
+        />
+      ) : (
+        <>
+          <TableToolbar
+            items={tabs}
+            active={tab}
+            onChange={changeTab}
+            actions={selectionActions ?? undefined}
+          />
 
-      <PeopleTable
-        loading={loading}
-        error={loadError}
-        members={members}
-        search={search}
-        roleFilter={rosterTab === "all" ? null : rosterTab}
-        selectedMemberIds={selectedMemberIds}
-        onSelectedMemberIdsChange={setSelectedMemberIds}
-        currentUserId={user?.id ?? null}
-        viewerRole={viewerRole}
-        busyMemberId={busyMemberId}
-        onRetry={load}
-        onRoleChange={requestRoleChange}
-        onRemove={setRemoveMember}
-        renderActions={renderMemberActions}
-      />
+          <PeopleTable
+            loading={loading}
+            error={loadError}
+            members={members}
+            search={search}
+            roleFilter={tab === "all" ? null : tab}
+            selectedMemberIds={selectedMemberIds}
+            onSelectedMemberIdsChange={setSelectedMemberIds}
+            currentUserId={user?.id ?? null}
+            viewerRole={viewerRole}
+            busyMemberId={busyMemberId}
+            onRetry={load}
+            onRoleChange={requestRoleChange}
+            onRemove={setRemoveMember}
+            renderActions={renderMemberActions}
+          />
+        </>
+      )}
 
       {org ? (
         <>
@@ -726,7 +761,7 @@ function PeopleTable({
             {/* How many people the open tab and the search come to, drawn
                 or not. Plain text beside the column's name. */}
             <span className="mr-1">
-              User
+              Name
               {!loading && !error ? (
                 <>
                   {" "}
@@ -738,7 +773,7 @@ function PeopleTable({
             </span>
             {!loading ? (
               <TableSortFilter
-                label="Sort by user"
+                label="Sort by name"
                 value={sort?.key === "name" ? sort.direction : null}
                 allLabel="Default order"
                 align="right"

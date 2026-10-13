@@ -1,4 +1,4 @@
-import { listOrgDepartureArchives, recoverOrgDepartureArchive, deleteOrgDepartureArchive } from "./mikeApi";
+import { listOrgDepartures, reassignOrgDepartureArchives, deleteOrgDepartureArchives } from "./mikeApi";
 import { getGoogleWorkspaceStatus, startGoogleWorkspaceOAuth, cancelGoogleWorkspaceOAuth, disconnectGoogleWorkspace, updateGoogleWorkspaceSettings, setGoogleWorkspaceToolEnabled, updateGoogleDriveSettings, setGoogleDriveToolEnabled } from "./mikeApi";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssistantEvent, Chat } from "@/app/components/shared/types";
@@ -3588,19 +3588,16 @@ describe("workspace parameter on list requests", () => {
 
 
 describe("organization archives", () => {
-    it("lists a requested page", async () => {
-        fetchMock.mockResolvedValue(jsonResponse({ items: [], nextOffset: null }));
-        await listOrgDepartureArchives("org", 50);
-        expect(lastFetchCall().url).toBe("/api/orgs/org/archives?limit=50&offset=50");
-        fetchMock.mockResolvedValue(jsonResponse({ items: [], nextOffset: null }));
-        await listOrgDepartureArchives("org");
-        expect(lastFetchCall().url).toBe("/api/orgs/org/archives?limit=50&offset=0");
+    it("lists the archive by departure", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ departures: [], truncated: false }));
+        expect(await listOrgDepartures("org")).toEqual({ departures: [], truncated: false });
+        expect(lastFetchCall().url).toBe("/api/orgs/org/departures");
     });
-    it("sends the recovery owner and permanent deletion requests", async () => {
-        fetchMock.mockImplementation(async () => new Response(null, { status: 204 }));
-        await recoverOrgDepartureArchive("org", "archive", "member");
-        expect(lastFetchCall()).toMatchObject({ url: "/api/orgs/org/archives/archive/recover", init: { method: "POST", body: JSON.stringify({ assign_to: "member" }) } });
-        await deleteOrgDepartureArchive("org", "archive");
-        expect(lastFetchCall()).toMatchObject({ url: "/api/orgs/org/archives/archive", init: { method: "DELETE" } });
+    it("sends the new owner and permanent deletion for several items at once", async () => {
+        fetchMock.mockImplementation(async () => jsonResponse({ resolved: 2, unresolved: 0 }));
+        expect(await reassignOrgDepartureArchives("org", ["a", "b"], "member")).toEqual({ resolved: 2, unresolved: 0 });
+        expect(lastFetchCall()).toMatchObject({ url: "/api/orgs/org/archives/recover", init: { method: "POST", body: JSON.stringify({ archive_ids: ["a", "b"], assign_to: "member" }) } });
+        await deleteOrgDepartureArchives("org", ["a", "b"]);
+        expect(lastFetchCall()).toMatchObject({ url: "/api/orgs/org/archives/delete", init: { method: "POST", body: JSON.stringify({ archive_ids: ["a", "b"] }) } });
     });
 });

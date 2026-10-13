@@ -45,7 +45,9 @@ import {
     saveOrgRouterModels,
     normalizeOrgRouterSlug,
     listDepartureArchives,
+    listDepartures,
     resolveDepartureArchive,
+    resolveDepartureArchives,
 } from "./orgs.service";
 import { normalizeApiKeyProvider } from "../user/user.service";
 
@@ -71,6 +73,34 @@ orgsRouter.get("/:orgId/archives", requireOrgAuth, asyncRoute(async (req, res) =
     const result = await listDepartureArchives(createServerSupabase(), {
         orgId: req.params.orgId, userId: res.locals.userId,
         ...parsePaginationQuery(req.query),
+    });
+    if (!result.ok) return sendServiceFailure(res, result);
+    res.json(result.data);
+}));
+
+// The archive grouped by departed member, for the Departed members view.
+orgsRouter.get("/:orgId/departures", requireOrgAuth, asyncRoute(async (req, res) => {
+    const result = await listDepartures(createServerSupabase(), {
+        orgId: req.params.orgId, userId: res.locals.userId,
+    });
+    if (!result.ok) return sendServiceFailure(res, result);
+    res.json(result.data);
+}));
+
+// Several archived items at once: one member's whole departure, or a selection.
+orgsRouter.post("/:orgId/archives/recover", requireOrgAuth, asyncRoute(async (req, res) => {
+    const result = await resolveDepartureArchives(createServerSupabase(), {
+        orgId: req.params.orgId, userId: res.locals.userId,
+        archiveIds: req.body?.archive_ids, successorId: req.body?.assign_to, delete: false,
+    });
+    if (!result.ok) return sendServiceFailure(res, result);
+    res.json(result.data);
+}));
+
+orgsRouter.post("/:orgId/archives/delete", requireOrgAuth, requireMfaIfEnrolled, asyncRoute(async (req, res) => {
+    const result = await resolveDepartureArchives(createServerSupabase(), {
+        orgId: req.params.orgId, userId: res.locals.userId,
+        archiveIds: req.body?.archive_ids, delete: true,
     });
     if (!result.ok) return sendServiceFailure(res, result);
     res.json(result.data);

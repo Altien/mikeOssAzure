@@ -50,6 +50,7 @@ function ProfileDetailsForm({
 
     const handleSubmit = async (event: React.FormEvent) => {
         event.preventDefault();
+        if (submitting) return;
         const displayName = name.trim();
 
         setSubmitting(true);
@@ -74,7 +75,7 @@ function ProfileDetailsForm({
 
     return (
         <OnboardingShell
-            step="Step 1 of 2"
+            step="Step 1 of 3"
             title="Tell us about you"
             description="Add the details we should use across Mike."
         >

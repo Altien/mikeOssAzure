@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   createOrgInvitation: vi.fn(),
   cancelOrgInvitation: vi.fn(),
   resendOrgInvitation: vi.fn(),
+  listOrgDepartures: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -49,6 +50,7 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
   createOrgInvitation: mocks.createOrgInvitation,
   cancelOrgInvitation: mocks.cancelOrgInvitation,
   resendOrgInvitation: mocks.resendOrgInvitation,
+  listOrgDepartures: mocks.listOrgDepartures,
 }));
 
 beforeEach(() => {
@@ -91,6 +93,74 @@ beforeEach(() => {
     },
   ]);
   mocks.listOrgInvitations.mockResolvedValue([]);
+  mocks.listOrgDepartures.mockResolvedValue({
+    truncated: false,
+    departures: [
+      {
+        key: "sam:1",
+        member: {
+          user_id: "sam",
+          display_name: "Sam Park",
+          email: "sam@firm.example",
+        },
+        departed_at: "2026-10-01T09:00:00Z",
+        expires_at: "2099-01-01T00:00:00Z",
+        items: [
+          {
+            id: "a1",
+            kind: "chat",
+            item_id: "c1",
+            title: "Limitation periods",
+            archived_at: "2026-10-01T09:00:00Z",
+            expires_at: "2099-01-01T00:00:00Z",
+          },
+        ],
+      },
+    ],
+  });
+});
+
+describe("the Departed view", () => {
+  it("is a tab for owners, showing who left in place of the roster", async () => {
+    const user = userEvent.setup();
+    render(<OrganizationMembers orgId="org-1" />);
+    await screen.findByText("William Chen");
+    expect(mocks.listOrgDepartures).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Departed" }));
+
+    expect(await screen.findByText("Sam Park")).toBeInTheDocument();
+    expect(mocks.listOrgDepartures).toHaveBeenCalledExactlyOnceWith("org-1");
+    expect(screen.queryByText("William Chen")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Search departed members…" }),
+    ).toBeInTheDocument();
+
+    // And back to the roster.
+    await user.click(screen.getByRole("button", { name: "All" }));
+    expect(screen.getByText("William Chen")).toBeInTheDocument();
+    expect(screen.queryByText("Sam Park")).not.toBeInTheDocument();
+  });
+
+  it("opens there from a link that leads to it", async () => {
+    render(<OrganizationMembers orgId="org-1" initialTab="departed" />);
+
+    expect(await screen.findByText("Sam Park")).toBeInTheDocument();
+  });
+
+  it.each(["admin", "member"] as const)(
+    "is not offered to a %s, and a link to it opens the roster",
+    async (role) => {
+      mocks.role = role;
+      render(<OrganizationMembers orgId="org-1" initialTab="departed" />);
+
+      expect(await screen.findByText("William Chen")).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Departed" }),
+      ).not.toBeInTheDocument();
+      expect(mocks.listOrgDepartures).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("OrganizationMembers", () => {
@@ -171,7 +241,7 @@ describe("OrganizationMembers", () => {
       await screen.findByText("Olive");
 
       await user.click(
-        screen.getByRole("button", { name: "Sort by user" }),
+        screen.getByRole("button", { name: "Sort by name" }),
       );
       await user.click(screen.getByRole("menuitem", { name: "Descending" }));
 
@@ -372,8 +442,8 @@ describe("OrganizationMembers", () => {
     it("shows no count while the roster loads", () => {
       mocks.getOrg.mockReturnValue(new Promise(() => {}));
       render(<OrganizationMembers orgId="org-1" />);
-      expect(screen.getByText("User")).toBeInTheDocument();
-      expect(screen.queryByText(/User \(/)).not.toBeInTheDocument();
+      expect(screen.getByText("Name")).toBeInTheDocument();
+      expect(screen.queryByText(/Name \(/)).not.toBeInTheDocument();
     });
   });
 

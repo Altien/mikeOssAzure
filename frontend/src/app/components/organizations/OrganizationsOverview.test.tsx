@@ -291,7 +291,7 @@ describe("OrganizationsOverview", () => {
     expect(mocks.listOrgs.mock.calls.length).toBeGreaterThan(1);
   });
 
-  it("says so, in a card, when the person belongs to no organization", async () => {
+  it("says so when the person belongs to no organization", async () => {
     mocks.listOrgs.mockResolvedValue([]);
     render(<OrganizationsOverview />);
 

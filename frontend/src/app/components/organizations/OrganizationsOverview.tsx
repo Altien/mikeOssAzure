@@ -179,14 +179,10 @@ export function OrganizationsOverview() {
             </div>
           </GlassCardUI>
         ) : listedOrgs.length === 0 ? (
-          <GlassCardUI>
-            <div className="p-4">
-              <SettingsDescription>
-                No organizations yet. Create one to share projects and
-                workflows with your team.
-              </SettingsDescription>
-            </div>
-          </GlassCardUI>
+          <SettingsDescription>
+            No organizations yet. Create one to share projects and
+            workflows with your team.
+          </SettingsDescription>
         ) : (
           <div className={CARD_GRID_CLASS}>
             {listedOrgs.map((org) => {

@@ -124,6 +124,18 @@ describe("SignupPage", () => {
         expect(await screen.findByRole("alert")).toHaveTextContent(shown);
     });
 
+    it("shows a failure as a popup that can be dismissed", async () => {
+        await fillAndSubmit("x".repeat(73));
+
+        expect(await screen.findByRole("alert")).toHaveTextContent(
+            "Couldn't create your account",
+        );
+        await userEvent.click(
+            screen.getByRole("button", { name: "Dismiss warning" }),
+        );
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
     it("rejects a password longer than bcrypt accepts before calling the API", async () => {
         await fillAndSubmit("x".repeat(73));
 

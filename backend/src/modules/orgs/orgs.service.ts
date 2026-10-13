@@ -58,4 +58,7 @@ export {
 } from "./orgs.deletion";
 
 export { deleteOrgContent } from "./orgs.dataCleanup";
-export { listDepartureArchives, resolveDepartureArchive, expireDepartureArchives } from "./orgs.retention";
+export {
+    listDepartureArchives, listDepartures, resolveDepartureArchive, resolveDepartureArchives,
+    expireDepartureArchives,
+} from "./orgs.retention";

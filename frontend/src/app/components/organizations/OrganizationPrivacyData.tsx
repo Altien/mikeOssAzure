@@ -25,7 +25,6 @@ import {
 } from "@/app/lib/mikeApi";
 import { isOrgOwner } from "@/app/lib/permissions";
 import { GlassCardUI } from "@/shared/ui/GlassCardUI";
-import { OrganizationArchivedWork } from "./OrganizationArchivedWork";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import {
   organizationSettingsHref,
@@ -140,7 +139,40 @@ export function OrganizationPrivacyData() {
 
   return (
     <div className="space-y-8">
-      {org && isOrgOwner(org.role) ? <OrganizationArchivedWork key={orgId} orgId={orgId} /> : null}
+      {/* The archive itself is a table of people and their work, so it
+          lives with the roster; this is the way to it from here. */}
+      {org && isOrgOwner(org.role) ? (
+        <section aria-labelledby="org-privacy-departed" className="space-y-3">
+          <SettingsHeading id="org-privacy-departed">
+            Departed members
+          </SettingsHeading>
+          <GlassCardUI>
+            <SettingsRow>
+              <div className="space-y-1">
+                <SettingsLabel>Work left by departed members</SettingsLabel>
+                <SettingsDescription>
+                  Private, unshared work a member leaves behind is kept for 30
+                  days, then permanently deleted. Reassign or delete it from
+                  the Members page.
+                </SettingsDescription>
+              </div>
+              <PillButtonUI
+                tone="black"
+                size="sm"
+                aria-label="Review departed members"
+                onClick={() =>
+                  router.push(
+                    `${organizationSettingsHref(orgId, "members")}?view=departed`,
+                  )
+                }
+                className="w-full shrink-0 sm:w-auto"
+              >
+                Review
+              </PillButtonUI>
+            </SettingsRow>
+          </GlassCardUI>
+        </section>
+      ) : null}
       <section aria-labelledby="org-privacy-delete" className="space-y-3">
         <SettingsHeading id="org-privacy-delete">Delete data</SettingsHeading>
         <GlassCardUI>

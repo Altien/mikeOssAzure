@@ -32,6 +32,9 @@ describe.skipIf(!container)("organization offboarding retention in PostgreSQL", 
         const migration = readFileSync(resolve(process.cwd(), "migrations/20261013_05_org_departure_retention.sql"), "utf8");
         sql(migration);
         sql(migration);
+        const listing = readFileSync(resolve(process.cwd(), "migrations/20261013_06_org_departure_listing.sql"), "utf8");
+        sql(listing);
+        sql(listing);
     }, 60_000);
     afterAll(() => {
         if (created) execFileSync("docker", ["exec", container!, "dropdb", "-U", "postgres", "--force", database]);
@@ -199,6 +202,33 @@ describe.skipIf(!container)("organization offboarding retention in PostgreSQL", 
         expect(sql(`select public.project_access_role(${q(20)},null,${q(10)},${q(2)},'departing@example.test') is null`)).toBe("t");
         expect(sql(`select user_id from public.projects where id=${q(21)}`)).toBe(uid(2));
         expect(count("org_departure_archives")).toBe(1);
+    });
+
+    it("lists archived work for owners with whose it was and what a project holds", () => {
+        sql(`insert into public.user_profiles(user_id,display_name,email) values (${q(2)},'Jane Doe','departing@example.test')
+                on conflict (user_id) do update set display_name=excluded.display_name,email=excluded.email;
+            insert into public.projects(id,org_id,user_id,name,visibility) values (${q(60)},${q(10)},${q(2)},'Private matter','private');
+            insert into public.documents(id,org_id,user_id,project_id) values (${q(61)},${q(10)},${q(2)},${q(60)}),(${q(62)},${q(10)},${q(2)},${q(60)});
+            insert into public.chats(id,org_id,user_id,project_id,title) values (${q(63)},${q(10)},${q(2)},${q(60)},'In the matter');
+            insert into public.chats(id,org_id,user_id,title) values (${q(64)},${q(10)},${q(2)},'Standalone');`);
+        depart();
+        const list = (actor: number) => JSON.parse(sql(`set role service_role;
+            select coalesce(json_agg(x order by kind),'[]') from public.list_org_departure_work(${q(10)},${q(actor)}) x;`)) as Record<string, unknown>[];
+        expect(list(4)).toEqual([]);
+        expect(list(3)).toEqual([]);
+        expect(list(1)).toMatchObject([
+            { kind: "chat", item_id: uid(64), title: "Standalone", former_user_id: uid(2), former_display_name: "Jane Doe",
+                former_email: "departing@example.test", documents: null, chats: null, tabular_reviews: null },
+            { kind: "project", item_id: uid(60), title: "Private matter", documents: 2, chats: 1, tabular_reviews: 0 },
+        ]);
+        // The account is deleted: the work stays listed, without a name.
+        sql(`delete from auth.users where id=${q(2)}`);
+        expect(list(1)).toMatchObject([
+            { kind: "chat", former_user_id: null, former_display_name: null, former_email: null },
+            { kind: "project", former_user_id: null, former_display_name: null, former_email: null, documents: 2 },
+        ]);
+        sql(`update public.org_departure_archives set expires_at=now()-interval '1 second'`);
+        expect(list(1)).toEqual([]);
     });
 
     it("keeps every lifecycle RPC backend-only", () => {
