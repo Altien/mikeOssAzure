@@ -12,3 +12,5 @@
 - Source125 7058f104 dated rename mapping only: 20261014_03_organization_audit_lifecycle.sql →0131;20261014_04_org_private_content_access.sql →0132;20261014_05_audit_private_content_access.sql →0133. Canonical order already follows photos0128–0130; no SQL replay or new migration.
 
 - Source134 99d25630: audit_actor_picker →0134_audit_actor_picker.sql. TEXT audit actor/results, UUID profile lookup via::text, service-only scope. Actor filter accepts bounded TEXT actor identifiers; picker/API callbacks retain account/workspace/epoch fences. needs_review.
+
+- Source138 399ea5a7: lifecycle review fixes →0135_org_lifecycle_review_fixes.sql; selected-row audit pagination →0136_paginate_organization_audit.sql. Preserve TEXT actors/filters, validated UUID profile provenance, private grants. Inactive-org departures archive instead of transferring; shared canonical erasure retains profile cascade behavior. needs_review.

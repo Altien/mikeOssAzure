@@ -636,7 +636,7 @@ function AuditHistoryOwned({
                 {title} unavailable
               </p>
               <p className="mt-1 text-xs text-gray-400">
-                Your activity could not be loaded.
+                {orgId ? "The audit log could not be loaded." : "Your activity could not be loaded."}
               </p>
               <PillButtonUI
                 tone="white"
@@ -658,7 +658,7 @@ function AuditHistoryOwned({
                 {orgId ? "No audit events yet" : "No activity yet"}
               </p>
               <p className="mt-1 text-xs text-gray-400">
-                Actions appear here as you use the app.
+                {orgId ? "Actions taken in this organization appear here." : "Actions appear here as you use the app."}
               </p>
             </TableEmptyState>
           </TableBody>
@@ -817,6 +817,7 @@ function AuditHistoryOwned({
       {exportOpen && (
         <HistoryExportModal
           title={title}
+          organization={Boolean(orgId)}
           from={from}
           to={to}
           exporting={exporting}
@@ -831,6 +832,7 @@ function AuditHistoryOwned({
 
 function HistoryExportModal({
   title,
+  organization,
   from,
   to,
   exporting,
@@ -839,6 +841,7 @@ function HistoryExportModal({
   onExport,
 }: {
   title: string;
+  organization: boolean;
   from: string;
   to: string;
   exporting: boolean;
@@ -887,7 +890,8 @@ function HistoryExportModal({
         </fieldset>
         {error && (
           <p role="alert" className="mt-3 text-sm text-red-600">
-            Your activity could not be exported. Please try again.
+            {organization ? "The audit log could not be exported." : "Your activity could not be exported."}{" "}
+            Please try again.
           </p>
         )}
       </div>
