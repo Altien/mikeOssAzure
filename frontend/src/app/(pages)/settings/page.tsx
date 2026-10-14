@@ -35,7 +35,7 @@ interface EmailWarning {
 export default function SettingsPage() {
     const router = useRouter();
     const { user, signOut, updateEmail } = useAuth();
-    const { profile, updateDisplayName, updateOrganisation } = useUserProfile();
+    const { profile, updateDisplayName } = useUserProfile();
     // Dev (OSS-6, auth): see the Email and Danger Zone notes.
     const { authProvider } = useConfig();
     const emailEditable = authProvider === "supabase";
@@ -43,10 +43,6 @@ export default function SettingsPage() {
     const [isSavingName, setIsSavingName] = useState(false);
     const [saved, setSaved] = useState(false);
     const [nameError, setNameError] = useState<string | null>(null);
-    const [organisation, setOrganisation] = useState("");
-    const [isSavingOrg, setIsSavingOrg] = useState(false);
-    const [orgSaved, setOrgSaved] = useState(false);
-    const [orgError, setOrgError] = useState<string | null>(null);
     const [email, setEmail] = useState("");
     const [isSavingEmail, setIsSavingEmail] = useState(false);
     const [emailSaved, setEmailSaved] = useState(false);
@@ -75,9 +71,6 @@ export default function SettingsPage() {
         setDisplayName(profile?.displayName ?? "");
     }, [profile?.displayName]);
 
-    useEffect(() => {
-        setOrganisation(profile?.organisation ?? "");
-    }, [profile?.organisation]);
 
     useEffect(() => {
         if (user?.email) {
@@ -188,21 +181,6 @@ export default function SettingsPage() {
         }
     };
 
-    const handleSaveOrganisation = async () => {
-        const nextOrganisation = organisation.trim();
-        if (nextOrganisation === (profile?.organisation ?? "")) return;
-        setIsSavingOrg(true);
-        setOrgError(null);
-        const success = await updateOrganisation(nextOrganisation);
-        setIsSavingOrg(false);
-
-        if (success) {
-            setOrgSaved(true);
-            setTimeout(() => setOrgSaved(false), 2000);
-        } else {
-            setOrgError("Unable to save your organisation.");
-        }
-    };
 
     if (!user) return null;
 
@@ -247,38 +225,7 @@ export default function SettingsPage() {
                                 />
                             </div>
                         </div>
-                        <div>
-                            <div className="flex items-start justify-between gap-3">
-                                <FieldLabel>Organisation</FieldLabel>
-                                <span
-                                    className={`text-xs ${orgError ? "text-red-600" : "text-gray-400"}`}
-                                    aria-live="polite"
-                                >
-                                    {isSavingOrg
-                                        ? "Saving..."
-                                        : orgError
-                                          ? orgError
-                                          : orgSaved
-                                            ? "Saved"
-                                            : ""}
-                                </span>
-                            </div>
-                            <div className="space-y-2">
-                                <SettingsTextInput
-                                    type="text"
-                                    value={organisation}
-                                    onChange={(e) => {
-                                        setOrganisation(e.target.value);
-                                        setOrgError(null);
-                                        setOrgSaved(false);
-                                    }}
-                                    onBlur={() =>
-                                        void handleSaveOrganisation()
-                                    }
-                                    placeholder="Enter your organisation"
-                                />
-                            </div>
-                        </div>
+                        <ProfilePhotoSettings />
                     </div>
                 </SettingsSection>
             </section>
@@ -377,7 +324,6 @@ export default function SettingsPage() {
                 </SettingsSection>
             </section>
 
-            <ProfilePhotoSettings />
 
             {/* Actions */}
             <section className="space-y-3">
