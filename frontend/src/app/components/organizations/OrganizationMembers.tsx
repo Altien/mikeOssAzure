@@ -865,7 +865,7 @@ function PeopleTable({
                   onSelectionChange={() => toggleMember(member.id)}
                   checkboxTitle={`Select ${label}`}
                 >
-                  <UserAvatar photo={member.profile_photo} name={member.display_name} email={member.email} className="mr-2 h-6 w-6 text-[10px]" />
+                  <UserAvatar photo={member.profile_photo} name={member.display_name} email={member.email} className="mr-2" />
                   <span className="min-w-0 flex-1 text-xs text-gray-800 [overflow-wrap:anywhere]">
                     {label}
                   </span>
@@ -997,7 +997,7 @@ function LoadingRows({ columns }: { columns: string[] }) {
         <TableRow key={row} interactive={false}>
           <TableStickyCell hover={false} bgClassName="bg-transparent">
             <SkeletonCheckbox />
-            <span className="h-6 w-6 shrink-0 animate-pulse rounded-full bg-gray-100" />
+            <span className="h-5 w-5 shrink-0 animate-pulse rounded-full bg-gray-100" />
             <SkeletonLine className="w-40" />
           </TableStickyCell>
           {columns.map((width, index) => (

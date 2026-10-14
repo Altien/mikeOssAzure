@@ -129,7 +129,7 @@ export function ImageCropModal({
   }, [file]);
 
   const isPhoto = variant === "photo";
-  const previewSide = isPhoto ? 28 : SIDEBAR_SIDE;
+  const previewSide = isPhoto ? 20 : SIDEBAR_SIDE;
   const [saveError, setSaveError] = useState(false);
   const image = loaded?.file === file ? loaded.image : null;
   const frame = loaded?.file === file ? loaded.frame : null;

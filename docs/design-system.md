@@ -128,8 +128,9 @@ single palette.
 `components/ui/user-avatar.tsx` renders profile photos and the monogram fallback
 for the account button, People/share rows, member pickers, and organization
 members. Pass the identity's email, display name, and `profile_photo` from the
-existing authorized roster response. White initials use a stable background
-keyed to the normalized email, falling back to the display name. A missing or
+existing authorized roster response. Row avatars are 20px across, with white
+serif initials for monograms. The background colour is stable and keyed to the
+normalized email, falling back to the display name. A missing or
 unreadable image restores those initials.
 
 Settings > Profile offers upload, replace, and remove controls. Profile photos

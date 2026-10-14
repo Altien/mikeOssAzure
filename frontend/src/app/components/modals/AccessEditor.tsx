@@ -396,7 +396,7 @@ function OrganizationAssignmentList({
                                     <UserAvatar photo={assignment.profile_photo} name={assignment.display_name} email={assignment.email} />
                                     <span className="min-w-0 [overflow-wrap:anywhere]">{assignment.display_name?.trim() || "—"}</span>
                                 </span>
-                                <span className="col-span-full row-start-2 min-w-0 max-w-full justify-self-start pl-9 text-xs text-gray-500 [overflow-wrap:anywhere] sm:col-auto sm:row-auto sm:justify-self-end sm:pl-0">
+                                <span className="col-span-full row-start-2 min-w-0 max-w-full justify-self-start pl-7 text-xs text-gray-500 [overflow-wrap:anywhere] sm:col-auto sm:row-auto sm:justify-self-end sm:pl-0">
                                     {assignment.email || "—"}
                                 </span>
                                 {showRole && onRoleChange ? (
@@ -865,10 +865,10 @@ export function AccessEditor({
                                 className="grid grid-cols-[minmax(0,1fr)_5rem_1.5rem] sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_5rem_1.5rem] items-center gap-x-3 gap-y-0 sm:gap-y-3 rounded-lg px-2 py-2"
                             >
                                 <div className="flex min-w-0 items-center gap-2">
-                                    <div className="h-7 w-7 shrink-0 animate-pulse rounded-full bg-gray-100" />
+                                    <div className="h-5 w-5 shrink-0 animate-pulse rounded-full bg-gray-100" />
                                     <div className="h-3 w-20 animate-pulse rounded bg-gray-100" />
                                 </div>
-                                <div className="col-span-full row-start-2 ml-9 h-3 w-28 animate-pulse rounded bg-gray-100 sm:col-auto sm:row-auto sm:ml-0" />
+                                <div className="col-span-full row-start-2 ml-7 h-3 w-28 animate-pulse rounded bg-gray-100 sm:col-auto sm:row-auto sm:ml-0" />
                                 <div className="h-4 w-12 animate-pulse rounded-full bg-gray-100" />
                                 <div className="h-6 w-6" />
                             </div>
@@ -915,7 +915,7 @@ export function AccessEditor({
                                         <UserAvatar photo={entry.profile_photo} name={entry.display_name} email={entry.email} />
                                         <span className="min-w-0 [overflow-wrap:anywhere]">{name}</span>
                                     </div>
-                                    <p className="col-span-full row-start-2 min-w-0 justify-self-start pl-9 text-left text-xs text-gray-500 [overflow-wrap:anywhere] sm:col-auto sm:row-auto sm:pl-0 sm:pt-1">{entry.email || "—"}</p>
+                                    <p className="col-span-full row-start-2 min-w-0 justify-self-start pl-7 text-left text-xs text-gray-500 [overflow-wrap:anywhere] sm:col-auto sm:row-auto sm:pl-0 sm:pt-1">{entry.email || "—"}</p>
                                     <AccessRolePill
                                         role={entry.role}
                                         label={email || name}
