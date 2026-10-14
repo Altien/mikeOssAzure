@@ -39,6 +39,7 @@ export async function accessibleProjectIds(
 export type AuditQuery = {
     orgId?: string;
     userName?: string;
+    actorUserId?: string;
     eventIds?: string[];
     q?: string;
     action?: string;
@@ -86,6 +87,11 @@ export function parseQuery(
     if (raw.username !== undefined && typeof raw.username !== "string")
         return { ok: false, error: "Invalid username filter" };
     const userName = str(raw.username)?.slice(0, 200);
+    const actorUserId = str(raw.actor_user_id);
+    if (raw.actor_user_id !== undefined && (!actorUserId || actorUserId.length > 200))
+        return { ok: false, error: "Invalid audit actor id" };
+    if (actorUserId && !orgId)
+        return { ok: false, error: "Actor filtering requires an organization" };
     if (userName && !orgId)
         return { ok: false, error: "Username filtering requires an organization" };
     let eventIds: string[] | undefined;
@@ -126,6 +132,7 @@ export function parseQuery(
         query: {
             ...(orgId ? { orgId } : {}),
             ...(userName ? { userName } : {}),
+            ...(actorUserId ? { actorUserId } : {}),
             ...(eventIds ? { eventIds } : {}),
             q: str(raw.q)?.slice(0, 200),
             action: str(raw.action)?.slice(0, 60),
@@ -356,6 +363,7 @@ export async function queryEvents(
 
     const applyFilters = (query: EventsQuery): EventsQuery => {
         let next = query;
+        if (q.orgId && q.actorUserId) next = next.eq("user_id", q.actorUserId);
         if (q.action) next = next.eq("action", q.action);
         if (q.status) next = next.eq("status", q.status);
         if (q.surface) next = next.eq("surface", q.surface);

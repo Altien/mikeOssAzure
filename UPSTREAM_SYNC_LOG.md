@@ -10,3 +10,5 @@
 - Source124 a0598375: private-content access →0132_org_private_content_access.sql; audit-derived discovery →0133_audit_private_content_access.sql. TEXT actor/owner RPCs with UUID membership/provenance; explicit org-scoped audited viewer grant, no Entra deployment-admin bypass. needs_review.
 
 - Source125 7058f104 dated rename mapping only: 20261014_03_organization_audit_lifecycle.sql →0131;20261014_04_org_private_content_access.sql →0132;20261014_05_audit_private_content_access.sql →0133. Canonical order already follows photos0128–0130; no SQL replay or new migration.
+
+- Source134 99d25630: audit_actor_picker →0134_audit_actor_picker.sql. TEXT audit actor/results, UUID profile lookup via::text, service-only scope. Actor filter accepts bounded TEXT actor identifiers; picker/API callbacks retain account/workspace/epoch fences. needs_review.

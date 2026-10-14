@@ -1,10 +1,13 @@
 import type { RouterProfileLists } from "@/shared/lib/modelCatalog";
 import type {
+    AuditActorPage,
     OrgMemberHandover,
     OrgDepartureList,
     OrgDepartureResolution,
 } from "@mike/contracts";
 export type {
+    AuditActor,
+    AuditActorPage,
     OrgMemberHandover,
     OrgDeparture,
     OrgDepartureItem,
@@ -923,6 +926,7 @@ export async function getAuditHistory(
     params: {
         orgId?: string;
         username?: string;
+        actorUserId?: string;
         q?: string;
         action?: string;
         status?: string;
@@ -943,6 +947,7 @@ export async function getAuditHistory(
     const qs = new URLSearchParams();
     if (params.orgId) qs.set("org_id", params.orgId);
     if (params.username) qs.set("username", params.username);
+    if (params.actorUserId) qs.set("actor_user_id", params.actorUserId);
     if (params.q) qs.set("q", params.q);
     if (params.action) qs.set("action", params.action);
     if (params.status) qs.set("status", params.status);
@@ -953,6 +958,18 @@ export async function getAuditHistory(
     if (params.sortDirection) qs.set("sort_dir", params.sortDirection);
     if (params.page) qs.set("page", String(params.page));
     return apiRequest(`/audit?${qs.toString()}`, { signal }, isCurrentAccount);
+}
+
+/** Search the people represented in an organization's audit log, one page at a time. */
+export async function getAuditActors(
+    params: { orgId: string; search?: string; offset?: number },
+    signal?: AbortSignal,
+    isCurrentAccount?: () => boolean,
+): Promise<AuditActorPage> {
+    const qs = new URLSearchParams({ org_id: params.orgId });
+    if (params.search) qs.set("q", params.search);
+    if (params.offset) qs.set("offset", String(params.offset));
+    return apiRequest(`/audit/actors?${qs.toString()}`, { signal }, isCurrentAccount);
 }
 
 export async function getUserProfile(): Promise<UserProfile> {
