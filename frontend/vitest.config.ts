@@ -22,6 +22,8 @@ const localMaxWorkers = Math.max(
 
 export default defineConfig({
     plugins: [tsconfigPaths(), react()],
+    // Match Next file-backed imported images for preload checks.
+    build: { assetsInlineLimit: 0 },
     resolve: {
         // Upstream #450 test (src/wordAddin/client.test.ts) imports Word add-in
         // source outside this root, where tsconfigPaths() does not apply the
