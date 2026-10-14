@@ -5,6 +5,7 @@ export const MONTHLY_CREDIT_LIMIT = 999999;
 
 export type UserProfileRow = {
     display_name: string | null;
+    profile_photo?: string | null;
     organisation: string | null;
     jurisdiction?: string | null;
     practice_setting?: string | null;
@@ -90,16 +91,18 @@ function isMissingProfileColumn(error: unknown, column: string): boolean {
 // cascade (which also handles missing fast_model / mfa_on_login) and applies
 // safe defaults for missing fields.
 export async function selectProfile(db: Db, userId: string, mode: "maybe" | "single") {
-    const newestQuery = db
-        .from("user_profiles")
-        .select(PROFILE_SELECT_NEWEST)
-        .eq("user_id", userId);
-    const newest =
-        mode === "single"
-            ? await newestQuery.single()
-            : await newestQuery.maybeSingle();
+    const query = db.from("user_profiles")
+        .select(`${PROFILE_SELECT_NEWEST}, profile_photo`).eq("user_id", userId);
+    const newest = mode === "single" ? await query.single() : await query.maybeSingle();
     if (!newest.error) return newest;
     let cascadeError: unknown = newest.error;
+    if (isMissingProfileColumn(cascadeError, "profile_photo")) {
+        const previousQuery = db.from("user_profiles")
+            .select(PROFILE_SELECT_NEWEST).eq("user_id", userId);
+        const previous = mode === "single" ? await previousQuery.single() : await previousQuery.maybeSingle();
+        if (!previous.error) return previous;
+        cascadeError = previous.error;
+    }
 
     if (isMissingProfileColumn(cascadeError, "memory_curator_model")) {
         const previousQuery = db

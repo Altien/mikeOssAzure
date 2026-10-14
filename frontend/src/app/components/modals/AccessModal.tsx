@@ -213,6 +213,7 @@ export function AccessModal({
         rows.push({
             key: "creator",
             user_id: accessRoster?.owner?.user_id ?? null,
+            profile_photo: accessRoster?.owner?.profile_photo ?? null,
             email: ownerEmail,
             display_name:
                 accessRoster?.owner?.display_name ??
@@ -229,6 +230,7 @@ export function AccessModal({
         rows.push({
             key: member?.user_id ?? email,
             user_id: member?.user_id ?? null,
+            profile_photo: member?.profile_photo ?? null,
             email,
             display_name:
                 member?.display_name ?? lookupNames.get(email) ?? null,
@@ -320,6 +322,7 @@ export function AccessModal({
                 user_id: member.user_id,
                 email: member.email,
                 display_name: member.display_name,
+                profile_photo: member.profile_photo ?? null,
                 role: isOrgOwner(member.role) ? "owner" : "editor",
                 isCreator: member.user_id === creatorUserId,
             }));
@@ -341,6 +344,7 @@ export function AccessModal({
                 return {
                     key: member?.user_id ?? grant.email,
                     user_id: member?.user_id ?? null,
+                    profile_photo: member?.profile_photo ?? null,
                     email: grant.email,
                     display_name:
                         member?.display_name ??
@@ -356,6 +360,7 @@ export function AccessModal({
                       user_id: accessRoster.owner.user_id,
                       email: accessRoster.owner.email,
                       display_name: accessRoster.owner.display_name,
+                      profile_photo: accessRoster.owner.profile_photo ?? null,
                       role: "owner",
                       isCreator: true,
                   }

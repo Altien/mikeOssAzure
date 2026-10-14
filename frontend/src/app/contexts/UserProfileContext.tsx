@@ -25,6 +25,7 @@ import {
     isMfaRequiredError,
     MikeApiError,
     saveApiKey,
+    setUserProfilePhoto,
     setApiKeyEnabled,
     updateUserMfaOnLogin,
     updateUserProfile,
@@ -302,6 +303,15 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     useEffect(() => {
         applyDarkMode(profile?.darkMode === true);
     }, [profile?.darkMode]);
+
+    const updateProfilePhoto = useCallback(async (photo: string | null) => {
+        if (!user) return;
+        const current = accountGuard(user.id);
+        if (!current()) return;
+        const updated = await setUserProfilePhoto(photo, current);
+        if (!current()) return;
+        setProfile((previous) => previous ? { ...previous, profilePhoto: updated.profilePhoto } : previous);
+    }, [user, accountGuard]);
 
     const updateDisplayName = useCallback(
         async (displayName: string): Promise<boolean> => {
@@ -702,6 +712,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             profile,
             loading,
             apiKeysDegraded,
+            updateProfilePhoto,
             updateDisplayName,
             updateOrganisation,
             completeOnboarding,
@@ -725,6 +736,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             profile,
             loading,
             apiKeysDegraded,
+            updateProfilePhoto,
             updateDisplayName,
             updateOrganisation,
             completeOnboarding,

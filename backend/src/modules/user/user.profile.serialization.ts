@@ -14,6 +14,7 @@ export function serializeProfile(
     const creditsUsed = row.message_credits_used ?? 0;
     return {
         displayName: row.display_name,
+        profilePhoto: row.profile_photo ?? null,
         organisation: row.organisation,
         jurisdiction: row.jurisdiction ?? null,
         practiceSetting: row.practice_setting ?? null,

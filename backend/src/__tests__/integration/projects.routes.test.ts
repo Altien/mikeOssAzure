@@ -1411,6 +1411,7 @@ describe("projects.routes", () => {
                         user_id: "u2",
                         email: "colleague@test.local",
                         display_name: "Colleague",
+                        profile_photo: "data:image/png;base64,iVBORw0KGgo=",
                     },
                 ],
                 error: null,
@@ -1445,8 +1446,10 @@ describe("projects.routes", () => {
                 });
                 expect(res.body.members).toEqual([
                     {
+                        user_id: "u2",
                         email: "colleague@test.local",
                         display_name: "Colleague",
+                        profile_photo: "data:image/png;base64,iVBORw0KGgo=",
                         role: "editor",
                     },
                 ]);

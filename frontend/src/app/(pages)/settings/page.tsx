@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { ProfilePhotoSettings } from "@/app/components/settings/ProfilePhotoSettings";
 import { useRouter } from "next/navigation";
 import { LogOut, Trash2 } from "lucide-react";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
@@ -374,6 +375,8 @@ export default function SettingsPage() {
                     </div>
                 </SettingsSection>
             </section>
+
+            <ProfilePhotoSettings />
 
             {/* Actions */}
             <section className="space-y-3">

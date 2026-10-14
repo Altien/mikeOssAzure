@@ -14,12 +14,14 @@ export type ResourcePeopleResult =
               user_id: string;
               email: string | null;
               display_name: string | null;
+              profile_photo?: string | null;
               role: "owner";
           } | null;
           members: {
               user_id?: string | null;
               email: string;
               display_name: string | null;
+              profile_photo?: string | null;
               role: "owner" | "editor" | "viewer" | "deny";
           }[];
       }
@@ -68,13 +70,13 @@ export async function listContentPeople(
             profileEmails.length
                 ? db
                       .from("user_profiles")
-                      .select("user_id, email, display_name")
+                      .select("user_id, email, display_name, profile_photo")
                       .in("email", profileEmails)
                 : Promise.resolve({ data: [], error: null }),
             profileIds.length
                 ? db
                       .from("user_profiles")
-                      .select("user_id, email, display_name")
+                      .select("user_id, email, display_name, profile_photo")
                       .in("user_id", profileIds)
                 : Promise.resolve({ data: [], error: null }),
         ]);
@@ -88,12 +90,14 @@ export async function listContentPeople(
             user_id: string;
             email: string;
             display_name: string | null;
+            profile_photo?: string | null;
         }[]).map((profile) => [profile.email, profile]),
     );
     const creator = (byId?.[0] ?? null) as {
         user_id: string;
         email: string | null;
         display_name: string | null;
+        profile_photo?: string | null;
     } | null;
     return {
         ok: true,
@@ -106,6 +110,7 @@ export async function listContentPeople(
             email: grant.email,
             display_name:
                 profileByEmail.get(grant.email)?.display_name ?? null,
+            profile_photo: profileByEmail.get(grant.email)?.profile_photo ?? null,
             role: grant.role,
         })),
     };

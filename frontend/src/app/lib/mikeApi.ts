@@ -837,6 +837,7 @@ export interface PersonalisationDetails {
     practiceAreas?: string[];}
 
 export interface UserProfile extends RouterProfileLists {
+    profilePhoto?: string | null;
     displayName: string | null;
     organisation: string | null;
     jurisdiction: string | null;
@@ -863,7 +864,14 @@ export interface UserProfile extends RouterProfileLists {
     apiKeyStatus: ApiKeyStatus;
 }
 
+export async function setUserProfilePhoto(photo: string | null, isCurrentAccount?: () => boolean): Promise<{ profilePhoto: string | null }> {
+    return apiRequest("/user/profile/photo", photo === null
+        ? { method: "DELETE" }
+        : { method: "PUT", body: JSON.stringify({ data_url: photo }) }, isCurrentAccount);
+}
+
 export interface UserLookupResult {
+    profile_photo?: string | null;
     exists: boolean;
     email: string;
     display_name: string | null;
@@ -1494,6 +1502,7 @@ export interface ProjectPeople {
         user_id: string;
         email: string | null;
         display_name: string | null;
+        profile_photo?: string | null;
         role?: ProjectRole;
     } | null;
     /** Direct recipients and their grant roles. */
@@ -1501,6 +1510,7 @@ export interface ProjectPeople {
         user_id?: string | null;
         email: string;
         display_name: string | null;
+        profile_photo?: string | null;
         role?: AccessAssignmentRole;
     }[];
     admin_contacts?: ProjectContact[];
@@ -1622,6 +1632,7 @@ export interface OrgMemberRow {
 
 /** Roster row from GET /members: the bare row plus mirrored profile fields. */
 export interface OrgMember extends OrgMemberRow {
+    profile_photo?: string | null;
     email: string | null;
     display_name: string | null;
 }

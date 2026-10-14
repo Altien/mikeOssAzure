@@ -1,5 +1,7 @@
 "use client";
 
+import { UserAvatar } from "@/app/components/ui/user-avatar";
+
 import {
     useState,
     useEffect,
@@ -409,11 +411,6 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
         setCurrentChatId(routeChatId);
     }, [routeChatId, setCurrentChatId]);
 
-    const getUserInitials = (email: string) => {
-        if (profile?.displayName)
-            return profile.displayName.charAt(0).toUpperCase();
-        return email.charAt(0).toUpperCase();
-    };
 
     const getDisplayName = () => {
         if (!profile) return "";
@@ -812,9 +809,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                 )}
                                 title={!isOpen ? user.email : undefined}
                             >
-                                <div className="h-5.5 w-5.5 flex-shrink-0 rounded-full bg-gray-700 flex items-center justify-center text-white text-[13px] font-medium font-serif">
-                                    {getUserInitials(user.email)}
-                                </div>
+                                <UserAvatar photo={profile?.profilePhoto} name={profile?.displayName} email={user.email} className="h-5.5 w-5.5 text-[10px]" />
                                 {isOpen && (
                                     <div
                                         className={`text-left flex-1 min-w-0 pl-2 flex items-center justify-between gap-2 ${

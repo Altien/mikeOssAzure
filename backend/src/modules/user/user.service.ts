@@ -50,6 +50,8 @@ export {
     recordPasswordSet,
 } from "./user.profile";
 
+export { setUserProfilePhoto } from "./user.photo";
+
 export { setMfaOnLogin } from "./user.mfa";
 export { setApiKeyEnabled, setApiKeyEnabledFor } from "./user.apiKeyEnabled";
 

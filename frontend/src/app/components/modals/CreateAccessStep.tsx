@@ -20,6 +20,7 @@ import {
 export interface PendingDirectGrant {
     email: string;
     display_name: string | null;
+    profile_photo?: string | null;
     role: ProjectRole;
 }
 
@@ -34,6 +35,7 @@ export function CreateAccessStep({
     organizationName,
     currentUserEmail,
     currentUserId,
+    currentUserProfile: profile,
     directGrants,
     onDirectGrantsChange,
     orgOverrides = [],
@@ -48,6 +50,7 @@ export function CreateAccessStep({
     organizationName?: string | null;
     currentUserEmail?: string | null;
     currentUserId?: string | null;
+    currentUserProfile?: { displayName?: string | null; profilePhoto?: string | null } | null;
     directGrants: PendingDirectGrant[];
     onDirectGrantsChange: (grants: PendingDirectGrant[]) => void;
     orgOverrides?: PendingOrgOverride[];
@@ -114,6 +117,7 @@ export function CreateAccessStep({
                         user_id: people.owner.user_id,
                         email: people.owner.email,
                         display_name: people.owner.display_name,
+                        profile_photo: people.owner.profile_photo,
                         role: "owner",
                         isCreator: true,
                     });
@@ -126,6 +130,7 @@ export function CreateAccessStep({
                         user_id: member.user_id ?? null,
                         email: member.email,
                         display_name: member.display_name,
+                        profile_photo: member.profile_photo,
                         role: member.role ?? "editor",
                     });
                 }
@@ -171,7 +176,8 @@ export function CreateAccessStep({
                           {
                               key: "creator",
                               email: currentEmail,
-                              display_name: null,
+                              display_name: profile?.displayName ?? null,
+                              profile_photo: profile?.profilePhoto,
                               role: "owner" as const,
                               isCreator: true,
                           },
@@ -181,6 +187,7 @@ export function CreateAccessStep({
                     key: grant.email,
                     email: grant.email,
                     display_name: grant.display_name,
+                    profile_photo: grant.profile_photo,
                     role: grant.role,
                 })),
             ];
@@ -195,6 +202,7 @@ export function CreateAccessStep({
             user_id: member.user_id,
             email: member.email,
             display_name: member.display_name,
+            profile_photo: member.profile_photo,
             // Marked so the editor can leave the organization's owners out
             // of a public item's pickers: they own those already. A private
             // item is shared with them like with anyone.
@@ -211,6 +219,7 @@ export function CreateAccessStep({
             user_id: override.user_id,
             email: override.email,
             display_name: member?.display_name ?? null,
+            profile_photo: member?.profile_photo,
             role: override.role,
         };
     });
@@ -242,7 +251,7 @@ export function CreateAccessStep({
         const email = user.email.trim().toLowerCase();
         onDirectGrantsChange([
             ...directGrants,
-            { email, display_name: user.display_name, role: newRole },
+            { email, display_name: user.display_name, profile_photo: user.profile_photo, role: newRole },
         ]);
     }
 

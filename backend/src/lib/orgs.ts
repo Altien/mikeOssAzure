@@ -449,25 +449,26 @@ export async function listOrgResources(
 async function attachProfiles(
     db: Db,
     rows: { user_id: string }[],
-): Promise<Map<string, { email: string | null; display_name: string | null }>> {
+): Promise<Map<string, { email: string | null; display_name: string | null; profile_photo?: string | null }>> {
     const byUser = new Map<
         string,
-        { email: string | null; display_name: string | null }
+        { email: string | null; display_name: string | null; profile_photo?: string | null }
     >();
     const userIds = [...new Set(rows.map((r) => r.user_id).filter(Boolean))];
     if (userIds.length === 0) return byUser;
     const { data } = await db
         .from("user_profiles")
-        .select("user_id, email, display_name")
+        .select("user_id, email, display_name, profile_photo")
         .in("user_id", userIds);
     for (const p of (data ?? []) as {
         user_id: string;
         email: string | null;
-        display_name: string | null;
+        display_name: string | null; profile_photo?: string | null;
     }[]) {
         byUser.set(p.user_id, {
             email: p.email ?? null,
             display_name: p.display_name ?? null,
+            profile_photo: p.profile_photo ?? null,
         });
     }
     return byUser;
@@ -499,6 +500,7 @@ export async function listMembers(
             ...m,
             email: profiles.get(m.user_id)?.email ?? null,
             display_name: profiles.get(m.user_id)?.display_name ?? null,
+            profile_photo: profiles.get(m.user_id)?.profile_photo ?? null,
         })),
     };
 }

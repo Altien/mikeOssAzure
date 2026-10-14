@@ -848,6 +848,7 @@ export function NewWorkflowModal({
                         orgId={orgId === PERSONAL_WORKSPACE ? null : orgId}
                         organizationName={organizationName}
                         currentUserEmail={user?.email ?? null}
+                        currentUserProfile={profile}
                         currentUserId={user?.id ?? null}
                         directGrants={directGrants}
                         onDirectGrantsChange={setDirectGrants}

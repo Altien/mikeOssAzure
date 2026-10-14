@@ -1,3 +1,4 @@
+import { setUserProfilePhoto } from "./mikeApi";
 import { listOrgDepartures, reassignOrgDepartureArchives, deleteOrgDepartureArchives } from "./mikeApi";
 import { getGoogleWorkspaceStatus, startGoogleWorkspaceOAuth, cancelGoogleWorkspaceOAuth, disconnectGoogleWorkspace, updateGoogleWorkspaceSettings, setGoogleWorkspaceToolEnabled, updateGoogleDriveSettings, setGoogleDriveToolEnabled } from "./mikeApi";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -3692,5 +3693,26 @@ describe("organization logos", () => {
         const error = new TypeError("Network unavailable");
         fetchMock.mockRejectedValueOnce(error);
         await expect(getOrgLogo("org-1")).rejects.toBe(error);
+    });
+});
+
+
+describe("profile photos", () => {
+    it("saves a raster data URL through the authenticated gateway", async () => {
+        const photo = "data:image/png;base64,iVBORw0KGgo=";
+        fetchMock.mockResolvedValue(jsonResponse({ profilePhoto: photo }));
+        expect(await setUserProfilePhoto(photo)).toEqual({ profilePhoto: photo });
+        const { url, init } = lastFetchCall();
+        expect(url).toContain("/user/profile/photo");
+        expect(init.method).toBe("PUT");
+        expect(JSON.parse(init.body as string)).toEqual({ data_url: photo });
+    });
+    it("removes a photo without sending image data", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ profilePhoto: null }));
+        await setUserProfilePhoto(null);
+        const { url, init } = lastFetchCall();
+        expect(url).toContain("/user/profile/photo");
+        expect(init.method).toBe("DELETE");
+        expect(init.body).toBeUndefined();
     });
 });

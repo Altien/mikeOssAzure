@@ -694,6 +694,7 @@ export function NewTRModal({
                         orgId={workspaceOrgId}
                         organizationName={activeOrganization?.name ?? null}
                         currentUserEmail={user?.email ?? null}
+                        currentUserProfile={profile}
                         currentUserId={user?.id ?? null}
                         directGrants={directGrants}
                         onDirectGrantsChange={setDirectGrants}

@@ -44,12 +44,14 @@ export async function lookupUserByEmail(
     exists: boolean;
     email: string;
     display_name: string | null;
+    profile_photo: string | null;
 }> {
     const user = await findProfileUserByEmail(db, email);
     return {
         exists: !!user,
         email: user?.email ?? email.trim().toLowerCase(),
         display_name: user?.display_name ?? null,
+        profile_photo: user?.profile_photo ?? null,
     };
 }
 

@@ -4,6 +4,7 @@ export type ProfileUserInfo = {
     id: string;
     email: string;
     display_name: string | null;
+    profile_photo?: string | null;
 };
 
 export function normalizeEmail(value: unknown) {
@@ -25,12 +26,27 @@ export function profileAttributionName(
     );
 }
 
-export async function loadProfileUsersByEmail(db: Db) {
-    const { data, error } = await db
-        .from("user_profiles")
-        .select("user_id, email, display_name")
-        .not("email", "is", null);
-    if (error) throw error;
+export async function loadProfileUsersByEmail(
+    db: Db,
+    people?: { userIds: string[]; emails: string[] },
+) {
+    // Photos are loaded only for an authorized roster's explicit identities.
+    // Legacy callers that need names alone retain the smaller projection.
+    const results = people
+        ? await Promise.all([
+            people.userIds.length ? db.from("user_profiles")
+                .select("user_id, email, display_name, profile_photo")
+                .in("user_id", [...new Set(people.userIds)])
+                : Promise.resolve({ data: [], error: null }),
+            people.emails.length ? db.from("user_profiles")
+                .select("user_id, email, display_name, profile_photo")
+                .in("email", [...new Set(people.emails.map(normalizeEmail))])
+                : Promise.resolve({ data: [], error: null }),
+        ])
+        : [await db.from("user_profiles").select("user_id, email, display_name")
+            .not("email", "is", null)];
+    for (const result of results) if (result.error) throw result.error;
+    const data = results.flatMap((result) => result.data ?? []);
 
     const userByEmail = new Map<string, ProfileUserInfo>();
     const userById = new Map<string, ProfileUserInfo>();
@@ -41,6 +57,7 @@ export async function loadProfileUsersByEmail(db: Db) {
             id: row.user_id as string,
             email,
             display_name: normalizeDisplayName(row.display_name),
+            ...(people ? { profile_photo: (row as { profile_photo?: string | null }).profile_photo ?? null } : {}),
         };
         userByEmail.set(email, info);
         userById.set(info.id, info);
@@ -55,7 +72,7 @@ export async function findProfileUserByEmail(db: Db, email: string) {
 
     const { data, error } = await db
         .from("user_profiles")
-        .select("user_id, email, display_name")
+        .select("user_id, email, display_name, profile_photo")
         .eq("email", normalized)
         .maybeSingle();
     if (error) throw error;
@@ -65,6 +82,7 @@ export async function findProfileUserByEmail(db: Db, email: string) {
         id: data.user_id as string,
         email: normalized,
         display_name: normalizeDisplayName(data.display_name),
+        profile_photo: data.profile_photo ?? null,
     };
 }
 
