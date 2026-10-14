@@ -607,7 +607,7 @@ export const userKeyOwner = (id: string): ApiKeyOwner => ({ kind: "user", id });
 export const orgKeyOwner = (id: string): ApiKeyOwner => ({ kind: "org", id });
 
 async function requireOrgKeyMembership(userId: string, orgId: string, db: Db): Promise<void> {
-    const { data, error } = await db.from("org_members").select("role")
+    const { data, error } = await db.from("org_members").select("role, organizations!inner(id)").is("organizations.deleted_at", null)
         .eq("org_id", orgId).eq("user_id", userId).maybeSingle();
     if (error) throw error;
     if (!data || !["owner", "admin", "member"].includes(data.role))

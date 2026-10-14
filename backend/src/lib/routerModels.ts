@@ -230,7 +230,7 @@ function isMissingOrgRouterSchema(error: unknown): boolean {
 // organization work too, so organization lists govern every router here.
 // A saved model list never grants membership or credential availability.
 async function orgRouterKeyOwners(userId: string, orgId: string, db: Db): Promise<Set<RouterSlug>> {
-    const { data, error } = await db.from("org_members").select("org_id")
+    const { data, error } = await db.from("org_members").select("org_id, organizations!inner(id)").is("organizations.deleted_at", null)
         .eq("org_id", orgId).eq("user_id", userId).maybeSingle();
     if (error) throw error;
     if (!data) throw new UserFacingError("workspace_not_found");

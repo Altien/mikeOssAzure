@@ -78,6 +78,7 @@ export function organizationSettingsHref(
 type OrganizationSettingsSection =
   | "general"
   | "members"
+  | "audit"
   | "providers"
   | "privacy-data";
 
@@ -208,6 +209,11 @@ export function OrganizationSettingsFrame({
       // Not offered to a member, nor before the caller's role is known.
       ...(canManage
         ? [
+            {
+              id: "audit",
+              label: "Audit log",
+              href: organizationSettingsHref(orgId, "audit"),
+            },
             {
               id: "providers",
               label: "Model Providers",

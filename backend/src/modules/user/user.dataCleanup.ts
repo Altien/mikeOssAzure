@@ -563,7 +563,8 @@ export async function listOrgsBlockingAccountDeletion(
 ): Promise<AccountDeletionOrgBlocker[]> {
     const { data: memberships, error: membershipError } = await db
         .from("org_members")
-        .select("id, org_id, role")
+        .select("id, org_id, role, organizations!inner(id)")
+        .is("organizations.deleted_at", null)
         .eq("user_id", userId);
     await throwIfError(membershipError, "Failed to load org memberships");
     // The account's own organization is the account's: what it holds is
@@ -631,7 +632,8 @@ export async function deleteUserOrganizations(
 ) {
     const { data: memberships, error: membershipError } = await db
         .from("org_members")
-        .select("id, org_id, role")
+        .select("id, org_id, role, organizations!inner(id)")
+        .is("organizations.deleted_at", null)
         .eq("user_id", userId);
     await throwIfError(membershipError, "Failed to load org memberships");
     // Left alone: the account's own organization is removed with the account
@@ -886,9 +888,10 @@ export async function deleteUserAccountData(
                   .delete()
                   .eq("shared_with_email", userEmail.trim().toLowerCase())
             : Promise.resolve({ error: null }),
-        // Audit rows carry the user's id, email, chat/document titles and prompt
-        // excerpts, so account erasure must remove them as well.
-        db.from("audit_events").delete().eq("user_id", userId),
+        // Personal history is erased; organization history keeps its action
+        // evidence without the departing account identifier or email.
+        db.from("audit_events").delete().eq("user_id", userId).is("org_id", null),
+        db.from("audit_events").update({ user_id: null, user_email: null }).eq("user_id", userId).not("org_id", "is", null),
         db.from("quick_actions").delete().eq("user_id", userId),
         db.from("user_api_keys").delete().eq("user_id", userId),
         db.from("user_mcp_tool_audit_logs").delete().eq("user_id", userId),

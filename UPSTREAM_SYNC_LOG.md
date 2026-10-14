@@ -4,3 +4,5 @@
 - Source105: org departure retention →0126_org_departure_retention.sql. Canonical TEXT identities and profile UUID provenance retained; prepare_account_org_departures is atomic within existing request_account_erasure; provider/session/tombstone guards and storage outbox preserved. needs_review.
 
 - Source106: departure listing →0127_org_departure_listing.sql; actor TEXT/profile metadata UUID, private grants. Preserved local cookie guest login while adopting session warning and invitation onboarding. Retired browser harness omitted. needs_review.
+
+- Source123 06c05192: 20261014_01_organization_audit_lifecycle.sql →0131_organization_audit_lifecycle.sql. Nullable TEXT actors/profile-delete nulling, active-org memory/managed credential gating, soft delete/restore/purge with durable document and private-logo cleanup. needs_review.

@@ -864,6 +864,7 @@ chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                 db,
                 {
                     userId,
+                    orgId,
                     userEmail,
                     chatId,
                     projectId: resolvedProjectId,
@@ -891,6 +892,7 @@ chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                     db,
                     {
                         userId,
+                    orgId,
                         userEmail,
                         chatId,
                         projectId: resolvedProjectId,
