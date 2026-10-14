@@ -370,6 +370,35 @@ describe("user.routes", () => {
         });
     });
 
+    describe("GET /user/lookup", () => {
+        it("does not select or expose an unrelated user's photo", async () => {
+            supabaseState.tables.user_profiles = {
+                data: {
+                    user_id: "unrelated-user",
+                    email: "alice@example.com",
+                    display_name: "Alice",
+                    profile_photo: "data:image/png;base64,iVBORw0KGgo=",
+                },
+                error: null,
+            };
+
+            const res = await request(app)
+                .get("/user/lookup")
+                .query({ email: "ALICE@example.com" })
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual({
+                exists: true,
+                email: "alice@example.com",
+                display_name: "Alice",
+            });
+            expect(supabaseState.selects.user_profiles).toEqual([
+                "user_id, email, display_name",
+            ]);
+        });
+    });
+
     // ── GET /user/profile (MFA bootstrap path) ────────────────────────────
     describe("GET /user/profile", () => {
         it("returns the serialized profile plus apiKeyStatus", async () => {

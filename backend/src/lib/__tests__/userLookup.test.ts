@@ -197,10 +197,15 @@ describe("loadProfileUsersByEmail", () => {
 
 describe("findProfileUserByEmail", () => {
     const rows = [
-        { user_id: "u1", email: "alice@example.com", display_name: "Alice" },
+        {
+            user_id: "u1",
+            email: "alice@example.com",
+            display_name: "Alice",
+            profile_photo: "data:image/png;base64,iVBORw0KGgo=",
+        },
     ];
 
-    it("finds a profile by normalized email", async () => {
+    it("finds a profile by normalized email without exposing its photo", async () => {
         const db = makeDb(rows);
         await expect(
             findProfileUserByEmail(db as any, "  ALICE@example.com "),
@@ -208,7 +213,6 @@ describe("findProfileUserByEmail", () => {
             id: "u1",
             email: "alice@example.com",
             display_name: "Alice",
-            profile_photo: null,
         });
     });
 

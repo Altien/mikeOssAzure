@@ -464,7 +464,7 @@ describe("a failed grants read fails closed", () => {
 
 
 it("carries photos through direct project and inherited content rosters", async () => {
-    const { listContentPeople } = await import("../resourcePeople");
+    const { listContentPeople } = await import("../resourcePeople.js");
     const photo = "data:image/png;base64,iVBORw0KGgo=";
     const db = makeDb({
         projects: [{ id: "p1", user_id: "owner", org_id: null }],

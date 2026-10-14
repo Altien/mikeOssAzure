@@ -66,13 +66,14 @@ export async function loadProfileUsersByEmail(
     return { userByEmail, userById };
 }
 
+/** Finds public sharing identity fields without exposing an unscoped photo. */
 export async function findProfileUserByEmail(db: Db, email: string) {
     const normalized = normalizeEmail(email);
     if (!normalized) return null;
 
     const { data, error } = await db
         .from("user_profiles")
-        .select("user_id, email, display_name, profile_photo")
+        .select("user_id, email, display_name")
         .eq("email", normalized)
         .maybeSingle();
     if (error) throw error;
@@ -82,7 +83,6 @@ export async function findProfileUserByEmail(db: Db, email: string) {
         id: data.user_id as string,
         email: normalized,
         display_name: normalizeDisplayName(data.display_name),
-        profile_photo: data.profile_photo ?? null,
     };
 }
 

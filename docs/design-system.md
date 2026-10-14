@@ -133,6 +133,10 @@ serif initials for monograms. The background colour is stable and keyed to the
 normalized email, falling back to the display name. A missing or
 unreadable image restores those initials.
 
+The general email lookup returns only identity fields. New direct-share
+recipients show a monogram until their photo is available through an authorized
+roster response; organization pickers can use their existing member photos.
+
 Settings > Profile offers upload, replace, and remove controls. Profile photos
 and organization logos share `ImageCropModal`: both support dragging, keyboard
 positioning, zoom, preview, and explicit saving. Photos use a circular preview

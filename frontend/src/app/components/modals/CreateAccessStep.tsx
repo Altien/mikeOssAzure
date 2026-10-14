@@ -251,7 +251,7 @@ export function CreateAccessStep({
         const email = user.email.trim().toLowerCase();
         onDirectGrantsChange([
             ...directGrants,
-            { email, display_name: user.display_name, profile_photo: user.profile_photo, role: newRole },
+            { email, display_name: user.display_name, role: newRole },
         ]);
     }
 

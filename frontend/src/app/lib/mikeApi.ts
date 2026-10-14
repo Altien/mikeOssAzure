@@ -871,7 +871,6 @@ export async function setUserProfilePhoto(photo: string | null, isCurrentAccount
 }
 
 export interface UserLookupResult {
-    profile_photo?: string | null;
     exists: boolean;
     email: string;
     display_name: string | null;
