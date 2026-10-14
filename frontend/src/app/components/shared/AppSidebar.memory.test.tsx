@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listProjectChats, listProjectsPage } from "@/app/lib/mikeApi";
@@ -247,7 +247,10 @@ describe("AppSidebar account dropdown", () => {
         name: "Show recent chats and reviews in Other matter",
       }),
     ).toHaveAttribute("aria-expanded", "false");
-    expect(listProjectChats).toHaveBeenCalledWith("open-project");
+    // The expanded button can render before the row's loading effect runs.
+    await waitFor(() =>
+      expect(listProjectChats).toHaveBeenCalledWith("open-project"),
+    );
     expect(listProjectChats).not.toHaveBeenCalledWith("other-project");
   });
 
