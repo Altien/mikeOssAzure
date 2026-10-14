@@ -785,7 +785,7 @@ export type UserExportStatus =
 
 /**
  * `params` carries the inputs of the filtered exports — the History CSV's
- * filter values (wire names: q/action/status/surface/from/to/sort_by/sort_dir)
+ * filter values (including username and event_ids for selected audit entries)
  * and documents-zip's `document_ids`. The backend re-validates them and 400s
  * on anything it would have rejected on the synchronous route.
  */
@@ -902,6 +902,7 @@ export interface AuditEvent {
 export async function getAuditHistory(
     params: {
         orgId?: string;
+        username?: string;
         q?: string;
         action?: string;
         status?: string;
@@ -921,6 +922,7 @@ export async function getAuditHistory(
 }> {
     const qs = new URLSearchParams();
     if (params.orgId) qs.set("org_id", params.orgId);
+    if (params.username) qs.set("username", params.username);
     if (params.q) qs.set("q", params.q);
     if (params.action) qs.set("action", params.action);
     if (params.status) qs.set("status", params.status);
@@ -1613,6 +1615,7 @@ export interface Org {
     updated_at?: string;
     /** The caller's role in this org. */
     role: OrgRole;
+    can_access_private_content?: boolean;
     /**
      * When the organization's logo was last set, or null/absent for none. It
      * says whether there is a logo to fetch, and changes when the logo does.
@@ -1630,6 +1633,7 @@ export interface OrgMemberRow {
     id: string;
     user_id: string;
     role: OrgRole;
+    can_access_private_content?: boolean;
     created_at?: string;
 }
 
@@ -1849,6 +1853,27 @@ export async function setOrgPersonalApiKeysAllowed(
 
 export async function listOrgMembers(orgId: string): Promise<OrgMember[]> {
     return apiRequest<OrgMember[]>(`/orgs/${orgId}/members`);
+}
+
+export type { OrgPrivateContentItem, OrgPrivateContentKind, OrgPrivateContentPage } from "@mike/contracts";
+
+export async function listOrgPrivateContent(orgId: string, offset = 0, search = "") {
+    const query = new URLSearchParams({ limit: "50", offset: String(offset), search });
+    return apiRequest<import("@mike/contracts").OrgPrivateContentPage>(`/orgs/${orgId}/private-content?${query}`);
+}
+
+export async function setOrgPrivateContentPermission(orgId: string, userId: string, enabled: boolean): Promise<void> {
+    await apiRequest(`/orgs/${orgId}/members/${userId}/private-content-permission`, {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }),
+    });
+}
+
+export async function openOrgPrivateContent(orgId: string, kind: import("@mike/contracts").OrgPrivateContentKind, itemId: string): Promise<void> {
+    await apiRequest(`/orgs/${orgId}/private-content/${kind}/${itemId}/open`, { method: "POST" });
+}
+
+export async function closeOrgPrivateContent(orgId: string, kind: import("@mike/contracts").OrgPrivateContentKind, itemId: string): Promise<void> {
+    await apiRequest(`/orgs/${orgId}/private-content/${kind}/${itemId}`, { method: "DELETE" });
 }
 
 export async function updateOrgMember(

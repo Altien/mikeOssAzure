@@ -53,7 +53,6 @@ import {
     SettingsSkeuoIcon,
     SignOutSkeuoIcon,
 } from "@/app/components/shared/AppSidebarSkeuoIcons";
-import { HistorySkeuoIcon } from "@/app/components/shared/HistorySkeuoIcon";
 import { listProjectsPage } from "@/app/lib/mikeApi";
 import type { Project } from "@/app/components/shared/types";
 import { cn } from "@/app/lib/utils";
@@ -803,7 +802,6 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                     isOpen ? "rounded-xl" : "rounded-[18px]",
                                     !isOpen ? "hidden md:flex" : "",
                                     pathname.startsWith("/settings") ||
-                                        pathname === "/history" ||
                                         isDropdownOpen
                                         ? LIQUID_GLASS_SELECTED_CLASS
                                         : LIQUID_GLASS_HOVER_CLASS,
@@ -876,14 +874,6 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                       <DropdownSeparator className="my-1" />
                                   </>
                               ) : null}
-                              <DropdownItem
-                                  selected={pathname === "/history"}
-                                  onSelect={() => router.push("/history")}
-                                  className="h-8 gap-2 rounded-md px-2 py-2 text-sm font-medium text-gray-700 hover:text-gray-700 focus:text-gray-700 data-[selected=true]:text-gray-900 data-[selected=true]:hover:text-gray-900 data-[selected=true]:focus:text-gray-900"
-                              >
-                                  <HistorySkeuoIcon className={cn("h-4 w-4", pathname === "/history" ? "text-gray-900" : "text-black")} />
-                                  History
-                              </DropdownItem>
                               <DropdownItem
                                   onSelect={() => router.push("/settings")}
                                   className="h-8 gap-2 rounded-md px-2 py-2 text-sm font-medium text-gray-700 hover:text-gray-700 focus:text-gray-700 data-[selected=true]:text-gray-900 data-[selected=true]:hover:text-gray-900 data-[selected=true]:focus:text-gray-900"

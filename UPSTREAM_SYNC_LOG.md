@@ -6,3 +6,5 @@
 - Source106: departure listing →0127_org_departure_listing.sql; actor TEXT/profile metadata UUID, private grants. Preserved local cookie guest login while adopting session warning and invitation onboarding. Retired browser harness omitted. needs_review.
 
 - Source123 06c05192: 20261014_01_organization_audit_lifecycle.sql →0131_organization_audit_lifecycle.sql. Nullable TEXT actors/profile-delete nulling, active-org memory/managed credential gating, soft delete/restore/purge with durable document and private-logo cleanup. needs_review.
+
+- Source124 a0598375: private-content access →0132_org_private_content_access.sql; audit-derived discovery →0133_audit_private_content_access.sql. TEXT actor/owner RPCs with UUID membership/provenance; explicit org-scoped audited viewer grant, no Entra deployment-admin bypass. needs_review.
