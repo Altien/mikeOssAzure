@@ -8,3 +8,5 @@
 - Source123 06c05192: 20261014_01_organization_audit_lifecycle.sql →0131_organization_audit_lifecycle.sql. Nullable TEXT actors/profile-delete nulling, active-org memory/managed credential gating, soft delete/restore/purge with durable document and private-logo cleanup. needs_review.
 
 - Source124 a0598375: private-content access →0132_org_private_content_access.sql; audit-derived discovery →0133_audit_private_content_access.sql. TEXT actor/owner RPCs with UUID membership/provenance; explicit org-scoped audited viewer grant, no Entra deployment-admin bypass. needs_review.
+
+- Source125 7058f104 dated rename mapping only: 20261014_03_organization_audit_lifecycle.sql →0131;20261014_04_org_private_content_access.sql →0132;20261014_05_audit_private_content_access.sql →0133. Canonical order already follows photos0128–0130; no SQL replay or new migration.
