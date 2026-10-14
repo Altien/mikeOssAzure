@@ -681,6 +681,10 @@ export type ProjectPeopleResult =
   | { ok: false; kind: "not_found" }
   | { ok: false; kind: "db_error"; error: unknown };
 
+/**
+ * Authorizes project visibility before returning its creator, member photos, and admin contacts.
+ * Reading this roster does not grant permission to manage access.
+ */
 export async function getProjectPeople(
   db: Db,
   args: { projectId: string; userId: string; userEmail?: string },

@@ -474,6 +474,7 @@ async function attachProfiles(
     return byUser;
 }
 
+/** Lists organization members and their profile identities after verifying the caller belongs to the organization. */
 export async function listMembers(
     db: Db,
     params: { userId: string; orgId: string },

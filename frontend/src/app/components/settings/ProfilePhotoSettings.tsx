@@ -12,6 +12,7 @@ import { userFacingApiError } from "@/app/lib/userFacingError";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsDescription, SettingsLabel } from "./SettingsText";
 
+/** Lets the current user choose, crop, replace, or remove a profile photo and displays recoverable save errors. */
 export function ProfilePhotoSettings() {
   const { user } = useAuth();
   const { profile, loading, updateProfilePhoto } = useUserProfile();
@@ -20,6 +21,7 @@ export function ProfilePhotoSettings() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /** Persists a photo or removal once at a time, closing the crop modal only after a successful update. */
   async function save(photo: string | null) {
     if (saving) return;
     setSaving(true);

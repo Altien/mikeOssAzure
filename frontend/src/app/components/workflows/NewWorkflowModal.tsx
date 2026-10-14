@@ -175,6 +175,7 @@ interface Props {
     readOnly?: boolean;
     onUpdated?: (workflow: Workflow) => void;
 }
+/** Coordinates workflow creation and initial sharing choices, preserving authorized member identities in the access step. */
 export function NewWorkflowModal({
     open,
     onClose,

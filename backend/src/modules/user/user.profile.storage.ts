@@ -90,6 +90,10 @@ function isMissingProfileColumn(error: unknown, column: string): boolean {
 // columns. Tries the full select first, then falls back through the legacy
 // cascade (which also handles missing fast_model / mfa_on_login) and applies
 // safe defaults for missing fields.
+/**
+ * Reads one profile using the newest projection, retrying without unavailable columns during staged migrations.
+ * The requested single-row mode is preserved across compatibility fallbacks.
+ */
 export async function selectProfile(db: Db, userId: string, mode: "maybe" | "single") {
     const query = db.from("user_profiles")
         .select(`${PROFILE_SELECT_NEWEST}, profile_photo`).eq("user_id", userId);

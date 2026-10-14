@@ -62,6 +62,7 @@ interface Props {
     access: AccessControls;
 }
 
+/** Loads the selected resource's authorized roster and coordinates supported access changes inside the modal. */
 export function AccessModal({
     open,
     onClose,

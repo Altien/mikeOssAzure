@@ -104,6 +104,7 @@ interface AppSidebarProps {
     onToggle: () => void;
 }
 
+/** Renders workspace navigation, recent content, and the current account menu with its photo or monogram. */
 export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
     const { user, signOut } = useAuth();
     const { profile } = useUserProfile();

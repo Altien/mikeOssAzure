@@ -27,6 +27,10 @@ export type ResourcePeopleResult =
       }
     | { ok: false; detail: string };
 
+/**
+ * Builds an already-authorized content roster, inheriting the project roster when present.
+ * Standalone content loads photos only for its creator and direct grantees.
+ */
 export async function listContentPeople(
     db: Db,
     kind: ContentGrantKind,

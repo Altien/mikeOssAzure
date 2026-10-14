@@ -31,6 +31,7 @@ interface EmailWarning {
     message: string;
 }
 
+/** Composes authenticated account settings, including profile-photo editing and account security controls. */
 export default function SettingsPage() {
     const router = useRouter();
     const { user, signOut, updateEmail } = useAuth();

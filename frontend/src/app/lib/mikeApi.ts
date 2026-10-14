@@ -864,6 +864,7 @@ export interface UserProfile extends RouterProfileLists {
     apiKeyStatus: ApiKeyStatus;
 }
 
+/** Uploads a cropped profile-photo data URL, or removes the current photo when passed null. */
 export async function setUserProfilePhoto(photo: string | null, isCurrentAccount?: () => boolean): Promise<{ profilePhoto: string | null }> {
     return apiRequest("/user/profile/photo", photo === null
         ? { method: "DELETE" }

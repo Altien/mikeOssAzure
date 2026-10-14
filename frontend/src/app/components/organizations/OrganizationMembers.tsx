@@ -621,6 +621,7 @@ export function OrganizationMembers({
   );
 }
 
+/** Renders searchable, sortable organization members with compact avatars and permission-aware actions. */
 function PeopleTable({
   loading,
   error,
@@ -990,6 +991,7 @@ function OrganizationRoleTab({
   );
 }
 
+/** Matches the people table's columns and compact identity layout while member data loads. */
 function LoadingRows({ columns }: { columns: string[] }) {
   return (
     <TableBody>

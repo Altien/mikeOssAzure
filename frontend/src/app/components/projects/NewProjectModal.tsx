@@ -46,6 +46,7 @@ interface Props {
     onCreated: (project: Project) => void;
 }
 
+/** Collects project details, pending access choices, and documents before creating the project. */
 export function NewProjectModal({ open, onClose, onCreated }: Props) {
     const [step, setStep] = useState<"details" | "access" | "documents">(
         "details",

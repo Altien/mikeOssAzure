@@ -26,6 +26,10 @@ export function profileAttributionName(
     );
 }
 
+/**
+ * Indexes normalized profile identities by email and user ID.
+ * Only explicit, caller-authorized roster identities include photos; legacy unscoped reads return names alone.
+ */
 export async function loadProfileUsersByEmail(
     db: Db,
     people?: { userIds: string[]; emails: string[] },

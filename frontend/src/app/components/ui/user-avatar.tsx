@@ -11,6 +11,7 @@ const COLOURS = [
   "bg-violet-700", "bg-pink-700",
 ];
 
+/** Selects a stable monogram background from normalized email, then display name, then a shared fallback key. */
 export function avatarColour(email?: string | null, name?: string | null) {
   const key = email?.trim().toLowerCase() || name?.trim().toLowerCase() || "user";
   let hash = 0;
@@ -18,6 +19,7 @@ export function avatarColour(email?: string | null, name?: string | null) {
   return COLOURS[hash % COLOURS.length];
 }
 
+/** Builds up to two initials from display-name words or the email local part, using a question mark when absent. */
 export function avatarInitials(name?: string | null, email?: string | null) {
   const label = name?.trim() || email?.trim().split("@")[0] || "?";
   const words = label.split(/[\s._-]+/u).filter(Boolean);

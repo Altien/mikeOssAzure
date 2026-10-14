@@ -208,6 +208,7 @@ function InfoLabelTooltip({
     );
 }
 
+/** Searches eligible organization members and presents their existing roster photos for selection. */
 function OrganizationMemberPicker({
     id,
     label,
@@ -327,6 +328,7 @@ function OrganizationMemberPicker({
     );
 }
 
+/** Displays assigned people with compact avatars and responsive role controls, respecting read-only access. */
 function OrganizationAssignmentList({
     label,
     assignments,
@@ -706,6 +708,10 @@ export function OrganizationAccessEditor({
     );
 }
 
+/**
+ * Renders shared access controls for direct grants, organization assignments, and inherited project access.
+ * Receives authorized roster identities and delegates changes to the owning flow.
+ */
 export function AccessEditor({
     scope,
     rows,

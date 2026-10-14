@@ -2,6 +2,7 @@
 
 import { ImageCropModal } from "@/app/components/modals/ImageCropModal";
 
+/** Adapts the shared crop modal to organization-logo naming and its square framing variant. */
 export function OrganizationLogoModal({ organizationName, ...props }: {
   file: File;
   organizationName: string;

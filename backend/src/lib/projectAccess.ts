@@ -34,6 +34,10 @@ export type ProjectGrant = {
     updated_at: string;
 };
 
+/**
+ * Builds the direct or organization roster for a project the caller has already authorized.
+ * Photo queries are limited to the creator and the roster identities.
+ */
 export async function listProjectPeople(
     db: Db,
     project: {

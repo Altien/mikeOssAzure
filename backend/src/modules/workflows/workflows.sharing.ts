@@ -18,6 +18,7 @@ export type ListWorkflowPeopleResult =
 // GET /workflows/:workflowId/people — the access roster any viewer of the
 // workflow may read. Organization workflows answer from the org roster (with
 // its overrides); personal ones answer from the direct-grant table.
+/** Authorizes workflow access before returning its organization or direct-share roster and scoped profile photos. */
 export async function listWorkflowPeople(
   db: Db,
   params: { workflowId: string; userId: string; userEmail: string | undefined },

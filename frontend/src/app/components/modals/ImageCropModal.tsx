@@ -71,6 +71,10 @@ function FramedLogo({
   );
 }
 
+/**
+ * Decodes and frames a selected raster image with drag, keyboard, and zoom controls.
+ * Shows a logo or circular photo preview and emits the cropped data URL only on Save.
+ */
 export function ImageCropModal({
   file,
   name,
@@ -101,6 +105,7 @@ export function ImageCropModal({
   useEffect(() => {
     let cancelled = false;
     let bitmap: ImageBitmap | undefined;
+    /** Validates and decodes this file, discarding late results and releasing bitmaps after cancellation. */
     async function decode() {
       try {
         validateOrgLogoFile(file);
@@ -136,6 +141,7 @@ export function ImageCropModal({
   const unreadable = failedFile === file;
   const drag = useRef<{ x: number; y: number } | null>(null);
 
+  /** Applies a crop update only to the active file and clamps its zoom and position to the variant bounds. */
   const change = (next: (current: OrgLogoFrame) => OrgLogoFrame) =>
     setLoaded((current) => {
       if (current?.file !== file) return current;
@@ -156,19 +162,23 @@ export function ImageCropModal({
       };
     });
 
+  /** Captures the pointer and starts a drag only when an editable image frame is available. */
   function onPointerDown(event: PointerEvent<HTMLDivElement>) {
     if (!frame || saving) return;
     event.currentTarget.setPointerCapture?.(event.pointerId);
     drag.current = { x: event.clientX, y: event.clientY };
   }
+  /** Moves the crop by the pointer delta during an active drag, ignoring input while saving. */
   function onPointerMove(event: PointerEvent<HTMLDivElement>) {
     if (!drag.current || saving) return;
     moveBy(event.clientX - drag.current.x, event.clientY - drag.current.y);
     drag.current = { x: event.clientX, y: event.clientY };
   }
+  /** Clears drag state so subsequent pointer movement cannot shift the crop. */
   function endDrag() {
     drag.current = null;
   }
+  /** Nudges the crop with arrow keys and prevents page scrolling for handled keys. */
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     // An arrow key moves the picture that way, as dragging it would.
     const moves: Record<string, [number, number]> = {

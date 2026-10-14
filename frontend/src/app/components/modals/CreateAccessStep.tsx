@@ -30,6 +30,10 @@ export interface PendingOrgOverride {
     role: AccessAssignmentRole;
 }
 
+/**
+ * Edits pending access choices before resource creation, retaining photos only from authorized rosters.
+ * Unscoped email lookup supplies identity fields for monogram-only pending recipients.
+ */
 export function CreateAccessStep({
     orgId,
     organizationName,

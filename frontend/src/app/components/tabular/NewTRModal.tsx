@@ -80,6 +80,7 @@ interface Props {
     projectCmNumber?: string | null;
 }
 
+/** Collects tabular-review configuration and pending access choices before creating a review. */
 export function NewTRModal({
     open,
     onClose,

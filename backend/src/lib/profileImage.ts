@@ -7,6 +7,7 @@ type ProfileImageContentType = "image/png" | "image/jpeg" | "image/webp";
 // What each accepted format begins with. The declared type is the client's
 // word; these are the file's. SVG is deliberately absent: it is a document
 // that can carry script, not a picture.
+/** Checks raster magic bytes against the declared MIME type without decoding image content. */
 function hasImageSignature(contentType: ProfileImageContentType, bytes: Buffer): boolean {
     switch (contentType) {
         case "image/png":
