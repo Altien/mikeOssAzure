@@ -14,3 +14,7 @@
 - Source134 99d25630: audit_actor_picker →0134_audit_actor_picker.sql. TEXT audit actor/results, UUID profile lookup via::text, service-only scope. Actor filter accepts bounded TEXT actor identifiers; picker/API callbacks retain account/workspace/epoch fences. needs_review.
 
 - Source138 399ea5a7: lifecycle review fixes →0135_org_lifecycle_review_fixes.sql; selected-row audit pagination →0136_paginate_organization_audit.sql. Preserve TEXT actors/filters, validated UUID profile provenance, private grants. Inactive-org departures archive instead of transferring; shared canonical erasure retains profile cascade behavior. needs_review.
+
+- Source153 58b2687b: document text search →0137; updated sort →0138; History status →0139; creator filter →0140; generation activity →0141. Canonical TEXT/UUID access and private service-role history; preserve0061 stale-cell reset. Parent placement/read original-workspace corrections follow as separate fix. needs_review.
+
+  Dev queue translation:0137 processing/publication/terminal failure RPCs retain canonical job→version→text lock order, claim token/attempt/payload/revision checks and retry/cancel guards. Disabled-runner inline work uses the same claim_db_job/processClaimedJob facade.

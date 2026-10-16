@@ -1278,6 +1278,11 @@ export default function ProjectAssistantChatPage() {
         openSideChat("");
     }
 
+    function handleCloseSideChat() {
+        activatePrimaryChat();
+        closeSideChat();
+    }
+
     // The document on screen rides along with a message as context.
     const displayedDoc = useMemo(
         () =>
@@ -1695,6 +1700,7 @@ export default function ProjectAssistantChatPage() {
                 }
                 onActivate={activatePrimaryChat}
                 onOpenSideChat={sideChatOpen ? undefined : handleOpenSideChat}
+                onCloseSideChat={sideChatOpen ? handleCloseSideChat : undefined}
                 onAskInSideChat={askInSideChat}
             />
             {sideChatId !== null && (
@@ -1713,10 +1719,7 @@ export default function ProjectAssistantChatPage() {
                         width={panelWidths.sideChat}
                         roundedClassName="rounded-l-lg rounded-r-2xl"
                         onActivate={activateSideChat}
-                        onClose={() => {
-                            activatePrimaryChat();
-                            closeSideChat();
-                        }}
+                        onClose={handleCloseSideChat}
                     />
                 </>
             )}

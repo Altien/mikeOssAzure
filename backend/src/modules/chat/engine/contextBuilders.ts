@@ -810,6 +810,7 @@ const COMPLETES_TEXTLESS_TURN = {
   authority_trace_verification: true,
   doc_read: false,
   doc_find: false,
+  doc_search: false,
   doc_created: true,
   doc_download: true,
   doc_replicated: true,

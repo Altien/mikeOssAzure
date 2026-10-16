@@ -100,6 +100,7 @@ function AssistantChatPageForWorkspace() {
                 onOpenSideChat={
                     sideChatId === null ? () => openSideChat("") : undefined
                 }
+                onCloseSideChat={hasSideChat ? closeSideChat : undefined}
             />
             {hasSideChat && <AssistantChatDivider onResize={resizeChats} />}
             {sideChatId !== null && (

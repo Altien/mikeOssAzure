@@ -258,3 +258,107 @@ describe("DocTable empty state", () => {
         expect(openUpload).not.toHaveBeenCalled();
     });
 });
+
+describe("DocTable creator column", () => {
+    it("shows each document's and folder's creator with their avatar", () => {
+        const colleagueDoc = {
+            ...document("doc-2", "Two.pdf"),
+            folder_id: null,
+            user_id: "user-2",
+            owner_display_name: "Ada Lovelace",
+            owner_profile_photo: "data:image/png;base64,AAAA",
+        };
+        render(
+            <DocTable
+                showCreator
+                scopeKey="project-1"
+                documents={[{ ...document("doc-1", "One.pdf"), folder_id: null }, colleagueDoc]}
+                setDocuments={vi.fn()}
+                folders={[{
+                    id: "folder-1",
+                    project_id: "project-1",
+                    user_id: "user-2",
+                    name: "Folder",
+                    parent_folder_id: null,
+                    owner_display_name: "Ada Lovelace",
+                    created_at: ORIGINAL_DATE,
+                    updated_at: ORIGINAL_DATE,
+                }]}
+                setFolders={vi.fn()}
+                loading={false}
+                search=""
+                operations={operations(vi.fn())}
+                emptyStateTitle="Documents"
+                canDo={allowAll}
+            />,
+        );
+        expect(screen.getByText("Creator")).toBeInTheDocument();
+        expect(screen.getByText("Me")).toBeInTheDocument();
+        const avatars = screen.getAllByRole("img", { name: "Ada Lovelace" });
+        expect(avatars).toHaveLength(2);
+        expect(avatars.some((avatar) => avatar.querySelector("img")?.getAttribute("src") === "data:image/png;base64,AAAA")).toBe(true);
+    });
+});
+
+describe("DocTable creator filter", () => {
+    it("narrows documents to the chosen creator", async () => {
+        const user = userEvent.setup();
+        render(
+            <DocTable
+                showCreator
+                enableHeaderFilters
+                scopeKey="project-1"
+                documents={[
+                    { ...document("doc-1", "One.pdf"), folder_id: null },
+                    { ...document("doc-2", "Two.pdf"), folder_id: null, user_id: "user-2", owner_display_name: "Ada Lovelace" },
+                ]}
+                setDocuments={vi.fn()}
+                folders={[]}
+                setFolders={vi.fn()}
+                loading={false}
+                search=""
+                operations={operations(vi.fn())}
+                emptyStateTitle="Documents"
+                canDo={allowAll}
+            />,
+        );
+        await user.click(screen.getByRole("button", { name: "Filter by creator" }));
+        await user.click(await screen.findByRole("button", { name: /Ada Lovelace/ }));
+        expect(screen.getByText("Two.pdf")).toBeInTheDocument();
+        expect(screen.queryByText("One.pdf")).toBeNull();
+    });
+
+    it("keeps the creator filter on refresh and clears it when switching scope", async () => {
+        const user = userEvent.setup();
+        const props: ComponentProps<typeof DocTable> = {
+            showCreator: true,
+            enableHeaderFilters: true,
+            scopeKey: "project-1",
+            documents: [
+                { ...document("doc-1", "One.pdf"), folder_id: null },
+                { ...document("doc-2", "Two.pdf"), folder_id: null, user_id: "user-2", owner_display_name: "Ada Lovelace" },
+            ],
+            setDocuments: vi.fn(),
+            folders: [],
+            setFolders: vi.fn(),
+            loading: false,
+            search: "",
+            operations: operations(vi.fn()),
+            emptyStateTitle: "Documents",
+            canDo: allowAll,
+        };
+        const { rerender } = render(<DocTable {...props} />);
+        await user.click(screen.getByRole("button", { name: "Filter by creator" }));
+        await user.click(await screen.findByRole("button", { name: /Ada Lovelace/ }));
+
+        rerender(<DocTable {...props} documents={[...props.documents]} />);
+        expect(screen.getByText("Two.pdf")).toBeInTheDocument();
+        expect(screen.queryByText("One.pdf")).not.toBeInTheDocument();
+
+        rerender(<DocTable {...props} scopeKey="project-2" documents={[
+            { ...document("doc-3", "Three.pdf"), project_id: "project-2", folder_id: null },
+        ]} />);
+        expect(screen.getByText("Three.pdf")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Filter by creator" })).toBeInTheDocument();
+    });
+});

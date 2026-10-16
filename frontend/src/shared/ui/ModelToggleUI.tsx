@@ -9,6 +9,7 @@ import {
   Settings2,
 } from "lucide-react";
 import { twMerge } from "tailwind-merge";
+import { TabPillButtonUI } from "./TabPillButtonUI";
 import {
   DROPDOWN_ROWS_CLASS,
   Dropdown,
@@ -155,6 +156,8 @@ export interface ModelToggleUIProps {
   /** `default` matches the toolbar's other buttons; `muted` is the lighter chat-composer look. */
   tone?: "muted" | "default";
   modalInput?: boolean;
+  /** Use the shared table-toolbar pill for the picker trigger. */
+  toolbar?: boolean;
   /** Extra classes for the compact trigger button, for a host row's sizing. */
   triggerClassName?: string;
   emptyLabel?: string;
@@ -181,6 +184,7 @@ export function ModelToggleUI({
   compact = false,
   tone = "muted",
   modalInput = false,
+  toolbar = false,
   triggerClassName,
   emptyLabel = "No Models",
   onEmptyClick,
@@ -188,6 +192,7 @@ export function ModelToggleUI({
   onReasoningChange,
   reasoningLevels = REASONING_LEVELS,
 }: ModelToggleUIProps) {
+  const TriggerButton = toolbar ? TabPillButtonUI : "button";
   const [open, setOpen] = React.useState(false);
   const reasoningInputRef = React.useRef<HTMLInputElement>(null);
   const selected = models.find((model) => model.id === value);
@@ -221,14 +226,16 @@ export function ModelToggleUI({
 
   if (!loading && models.length === 0) {
     return (
-      <button
+      <TriggerButton
         type="button"
         aria-label="No models available"
         title="Configure models"
         onClick={onEmptyClick}
         disabled={!onEmptyClick}
         className={
-          modalInput
+          toolbar
+            ? twMerge("min-w-0 max-w-full", triggerClassName)
+            : modalInput
             ? `flex h-10 w-full items-center rounded-xl px-3 text-sm text-gray-400 ${LIQUID_GLASS_SUBTLE_CLASS} ${LIQUID_GLASS_HOVER_CLASS} transition-colors enabled:cursor-pointer enabled:hover:text-gray-700 disabled:cursor-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2`
             : twMerge(
                 "flex h-8 shrink-0 items-center rounded-lg px-2 text-sm text-gray-400 transition-colors enabled:cursor-pointer enabled:hover:text-gray-700 disabled:cursor-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2",
@@ -237,14 +244,14 @@ export function ModelToggleUI({
         }
       >
         <span className="max-w-[200px] truncate">{emptyLabel}</span>
-      </button>
+      </TriggerButton>
     );
   }
 
   return (
     <Dropdown open={open} onOpenChange={handleOpenChange}>
       <DropdownTrigger asChild>
-        <button
+        <TriggerButton
           type="button"
           aria-label="Choose model"
           title={
@@ -258,7 +265,9 @@ export function ModelToggleUI({
           }
           disabled={loading}
           className={
-            modalInput
+            toolbar
+              ? twMerge("min-w-0 max-w-full", triggerClassName)
+              : modalInput
               ? `flex h-10 w-full items-center justify-between gap-2 rounded-xl px-3 text-sm text-gray-700 ${LIQUID_GLASS_SUBTLE_CLASS} ${LIQUID_GLASS_HOVER_CLASS} transition-colors enabled:cursor-pointer disabled:cursor-default disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 ${open ? LIQUID_GLASS_SELECTED_CLASS : ""}`
               : twMerge(
                   `flex h-8 shrink-0 items-center rounded-lg text-sm ${tone === "default" ? "text-gray-700 enabled:hover:text-gray-900 disabled:hover:text-gray-700" : "text-gray-400 enabled:hover:text-gray-700 disabled:hover:text-gray-400"} transition-colors enabled:cursor-pointer disabled:cursor-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 ${compact ? "w-8 justify-center px-0" : "gap-1.5 px-2"} ${open ? "text-gray-700" : ""}`,
@@ -286,11 +295,11 @@ export function ModelToggleUI({
               />
             </>
           )}
-        </button>
+        </TriggerButton>
       </DropdownTrigger>
       <DropdownContent
-        side={modalInput ? "bottom" : "top"}
-        align={modalInput ? "start" : "end"}
+        side={modalInput || toolbar ? "bottom" : "top"}
+        align={modalInput || toolbar ? "start" : "end"}
         sideOffset={modalInput ? 4 : 8}
         className={`flex max-h-[min(320px,60vh)] flex-col overflow-hidden rounded-2xl text-gray-700 ${modalInput ? "w-[var(--radix-dropdown-menu-trigger-width)]" : "w-56"}`}
       >

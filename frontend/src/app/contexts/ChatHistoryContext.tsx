@@ -19,6 +19,7 @@ import {
 import {
     createChat,
     deleteChat,
+    leaveChat,
     listChats,
     renameChat,
 } from "@/app/lib/mikeApi";
@@ -58,6 +59,7 @@ interface ChatHistoryContextType {
         title?: string,
     ) => void;
     deleteChat: (chatId: string) => Promise<void>;
+    leaveChat: (chatId: string) => Promise<void>;
 }
 
 const ChatHistoryContext = createContext<ChatHistoryContextType | undefined>(
@@ -96,7 +98,9 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
     // history showing, and its slower answer must not land on top of the new
     // one.
     const chatsRequestRef = useRef(0);
-    const loadedWorkspaceRef = useRef<string | undefined>(undefined);
+    const loadedScopeRef = useRef<string | undefined>(undefined);
+    const scopeVersionRef = useRef(0);
+    const scopeKey = JSON.stringify([user?.id, workspace]);
     const [currentChatId, setCurrentChatId] = useState<string | null>(null);
     const [sideChatId, setSideChatId] = useState<string | null>(null);
     const [pendingSideChat, setPendingSideChat] = useState<{ identity: string; id: string | null } | null>(null);
@@ -113,21 +117,23 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
     const setNewChatMessages = useCallback((messages: Message[] | null) => {
         if (activeIdentity.current === identity) setPendingMessages({ identity, messages });
     }, [identity]);
+    const invalidateScope = useCallback(() => {
+        ++chatsRequestRef.current;
+        ++scopeVersionRef.current;
+    }, []);
 
     const loadChats = useCallback(async () => {
+        // A detached turn may invoke the callback captured before navigation.
+        if (loadedScopeRef.current !== scopeKey || activeIdentity.current !== identity) return;
+        const request = ++chatsRequestRef.current;
+        loadingMoreChatsRef.current = false;
+        setLoadingMoreChats(false);
         if (!user) {
             setChats([]);
             setHasMoreChats(false);
             return;
         }
 
-        const request = ++chatsRequestRef.current;
-        if (loadedWorkspaceRef.current !== identity) {
-            loadedWorkspaceRef.current = identity;
-            setChats(null);
-            setHasMoreChats(false);
-            nextChatCursorRef.current = null;
-        }
         try {
             const data = await listChats({
                 limit: INITIAL_CHAT_LIMIT + 1,
@@ -144,24 +150,27 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
             nextChatCursorRef.current = null;
             setHasMoreChats(false);
         }
-    }, [user, workspace, identity]);
+    }, [user, workspace, scopeKey, identity]);
 
     useEffect(() => {
-        if (!user) {
-            setChats([]);
+        if (loadedScopeRef.current !== scopeKey) {
+            loadedScopeRef.current = scopeKey;
+            ++scopeVersionRef.current;
+            setChats(null);
             setHasMoreChats(false);
-            setLoadingMoreChats(false);
-            loadingMoreChatsRef.current = false;
             nextChatCursorRef.current = null;
-            setCurrentChatId(null);
-            return;
         }
-
+        if (!user) setCurrentChatId(null);
         void loadChats();
-    }, [user, loadChats]);
+        // Invalidate first pages, pagination and pending optimistic saves,
+        // even when switching away and back before an old request finishes.
+        return invalidateScope;
+    }, [user, loadChats, scopeKey, invalidateScope]);
 
     const loadMoreChats = useCallback(async () => {
         if (
+            loadedScopeRef.current !== scopeKey ||
+            activeIdentity.current !== identity ||
             !user ||
             !hasMoreChats ||
             loadingMoreChatsRef.current ||
@@ -172,6 +181,7 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
 
         loadingMoreChatsRef.current = true;
         setLoadingMoreChats(true);
+        const request = chatsRequestRef.current;
         try {
             const cursor = nextChatCursorRef.current;
             if (!cursor) {
@@ -186,12 +196,7 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
             });
             // The workspace changed while this page was in flight: it
             // belongs to a list that is no longer on screen.
-            if (
-                loadedWorkspaceRef.current !== identity ||
-                activeIdentity.current !== identity
-            ) {
-                return;
-            }
+            if (request !== chatsRequestRef.current || activeIdentity.current !== identity) return;
             const page = data.slice(0, CHAT_PAGE_SIZE);
             nextChatCursorRef.current = cursorFor(page.at(-1));
             setChats((current) => {
@@ -207,10 +212,12 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
         } catch {
             // Preserve the current page and allow another scroll to retry.
         } finally {
-            loadingMoreChatsRef.current = false;
-            setLoadingMoreChats(false);
+            if (request === chatsRequestRef.current && activeIdentity.current === identity) {
+                loadingMoreChatsRef.current = false;
+                setLoadingMoreChats(false);
+            }
         }
-    }, [chats, hasMoreChats, user, workspace, identity]);
+    }, [chats, hasMoreChats, user, workspace, scopeKey, identity]);
 
     useEffect(
         () =>
@@ -256,6 +263,7 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
             projectRole?: ProjectRole | null,
         ): Promise<string | null> => {
             if (activeIdentity.current !== identity) return null;
+            const scopeVersion = scopeVersionRef.current;
             try {
                 // A chat started on its own belongs to the workspace it is
                 // started in; inside a project, the project decides.
@@ -266,7 +274,7 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
                           ? { org_id: workspaceOrgId }
                           : undefined,
                 );
-                if (activeIdentity.current !== identity) return null;
+                if (scopeVersion !== scopeVersionRef.current || loadedScopeRef.current !== scopeKey || activeIdentity.current !== identity) return null;
                 const now = new Date().toISOString();
                 // The optimistic row must say what the server would say.
                 // The overview RPC serves is_owner + access_role on every
@@ -307,11 +315,12 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
                 return null;
             }
         },
-        [user, workspaceOrgId, identity],
+        [user, workspaceOrgId, scopeKey, identity],
     );
 
     const renameChatFn = useCallback(
         async (chatId: string, title: string) => {
+            const scopeVersion = scopeVersionRef.current;
             setChats((prev) =>
                 touchChatActivity(
                     (prev ?? []).map((c) =>
@@ -328,7 +337,7 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
                 // refused rename show the new title and then quietly revert
                 // it on reload — the caller rethrows so the row's UI can say
                 // why the title snapped back.
-                void loadChats();
+                if (scopeVersion === scopeVersionRef.current) void loadChats();
                 throw error;
             }
         },
@@ -348,6 +357,7 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
 
     const deleteChatFn = useCallback(
         async (chatId: string) => {
+            const scopeVersion = scopeVersionRef.current;
             setChats((prev) => (prev ?? []).filter((c) => c.id !== chatId));
             if (currentChatId === chatId) setCurrentChatId(null);
             try {
@@ -357,12 +367,28 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
                 // the row back and let the caller tell the user why. The old
                 // bare catch here was the client-side twin of the
                 // filter-scoped 204 this stack removes on the server.
-                void loadChats();
+                if (scopeVersion === scopeVersionRef.current) void loadChats();
                 throw error;
             }
         },
         [currentChatId, loadChats],
     );
+
+    const leaveChatFn = useCallback(async (chatId: string) => {
+        const scopeVersion = scopeVersionRef.current;
+        await leaveChat(chatId);
+        if (scopeVersion !== scopeVersionRef.current || loadedScopeRef.current !== scopeKey || activeIdentity.current !== identity) return;
+        // Invalidate reads started before the grant was removed.
+        chatsRequestRef.current += 1;
+        loadingMoreChatsRef.current = false;
+        setLoadingMoreChats(false);
+        setChats((prev) => prev?.filter((chat) => chat.id !== chatId) ?? null);
+        setCurrentChatId((current) => current === chatId ? null : current);
+        setSideChatId((current) => current === chatId ? null : current);
+        // A directly opened chat can be left before History finishes loading.
+        // Replace that invalidated read so the list does not stay a skeleton.
+        if (chats === null) void loadChats();
+    }, [scopeKey, identity, chats, loadChats]);
 
     const value = useMemo(
         () => ({
@@ -384,6 +410,7 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
             setNewChatMessages,
             replaceChatId,
             deleteChat: deleteChatFn,
+            leaveChat: leaveChatFn,
         }),
         [
             chats,
@@ -402,6 +429,7 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
             setNewChatMessages,
             replaceChatId,
             deleteChatFn,
+            leaveChatFn,
         ],
     );
 
