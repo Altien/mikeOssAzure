@@ -681,24 +681,24 @@ export async function createProject(
     });
 }
 
-export async function deleteAccount(): Promise<void> {
-    return apiRequest<void>("/user/account", { method: "DELETE" });
+export async function deleteAccount(isCurrentAccount?: () => boolean): Promise<void> {
+    return apiRequest<void>("/user/account", { method: "DELETE" }, isCurrentAccount);
 }
 
-export async function deleteAllChats(): Promise<void> {
-    return apiRequest<void>("/user/chats", { method: "DELETE" });
+export async function deleteAllChats(isCurrentAccount?: () => boolean): Promise<void> {
+    return apiRequest<void>("/user/chats", { method: "DELETE" }, isCurrentAccount);
 }
 
-export async function deleteAllProjects(): Promise<void> {
-    return apiRequest<void>("/user/projects", { method: "DELETE" });
+export async function deleteAllProjects(isCurrentAccount?: () => boolean): Promise<void> {
+    return apiRequest<void>("/user/projects", { method: "DELETE" }, isCurrentAccount);
 }
 
-export async function deleteAllTabularReviews(): Promise<void> {
-    return apiRequest<void>("/user/tabular-reviews", { method: "DELETE" });
+export async function deleteAllTabularReviews(isCurrentAccount?: () => boolean): Promise<void> {
+    return apiRequest<void>("/user/tabular-reviews", { method: "DELETE" }, isCurrentAccount);
 }
 
-export async function deleteAllMemories(): Promise<void> {
-    return apiRequest<void>("/user/memories", { method: "DELETE" });
+export async function deleteAllMemories(isCurrentAccount?: () => boolean): Promise<void> {
+    return apiRequest<void>("/user/memories", { method: "DELETE" }, isCurrentAccount);
 }
 
 export type MemoryStatus = "idle" | "scheduled" | "processing" | "failed";
@@ -1000,8 +1000,8 @@ export async function getAuditActors(
     return apiRequest(`/audit/actors?${qs.toString()}`, { signal }, isCurrentAccount);
 }
 
-export async function getUserProfile(): Promise<UserProfile> {
-    return apiRequest<UserProfile>("/user/profile");
+export async function getUserProfile(isCurrentAccount?: () => boolean): Promise<UserProfile> {
+    return apiRequest<UserProfile>("/user/profile", undefined, isCurrentAccount);
 }
 
 export async function lookupUserByEmail(
@@ -2172,18 +2172,20 @@ export async function moveSubfolderToFolder(
     projectId: string,
     folderId: string,
     parentFolderId: string | null,
+    isCurrentAccount?: () => boolean,
 ): Promise<Folder> {
     return apiRequest<Folder>(`/projects/${projectId}/folders/${folderId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ parent_folder_id: parentFolderId }),
-    });
+    }, isCurrentAccount);
 }
 
 export async function moveDocumentToFolder(
     projectId: string,
     documentId: string,
     folderId: string | null,
+    isCurrentAccount?: () => boolean,
 ): Promise<Document> {
     return apiRequest<Document>(
         `/projects/${projectId}/documents/${documentId}/folder`,
@@ -2191,7 +2193,7 @@ export async function moveDocumentToFolder(
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ folder_id: folderId }),
-        },
+        }, isCurrentAccount,
     );
 }
 

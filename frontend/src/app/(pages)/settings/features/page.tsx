@@ -8,12 +8,8 @@ import { SettingsToggle } from "../SettingsToggle";
 
 export default function FeaturesPage() {
     const { profile, updateLegalResearchUs, updateQuickActionsVisible } = useUserProfile();
-    const [quickActionsError, setQuickActionsError] = useState<string | null>(
-        null,
-    );
     const [saving, setSaving] = useState(false);
     const [savingQuickActions, setSavingQuickActions] = useState(false);
-    const [saveError, setSaveError] = useState<string | null>(null);
     const [optimisticLegalResearchUs, setOptimisticLegalResearchUs] = useState<
         boolean | null
     >(null);
@@ -24,11 +20,9 @@ export default function FeaturesPage() {
     const quickActionsVisible = profile?.quickActionsVisible ?? true;
 
     const setQuickActionsVisible = async (visible: boolean) => {
-        setQuickActionsError(null);
         setSavingQuickActions(true);
-        const ok = await updateQuickActionsVisible(visible);
+        await updateQuickActionsVisible(visible);
         setSavingQuickActions(false);
-        if (!ok) setQuickActionsError("Could not update. Try again.");
     };
     const courtListenerConfigured =
         !!profile?.apiKeys.courtlistener.configured;
@@ -38,15 +32,11 @@ export default function FeaturesPage() {
 
     const handleCourtListenerChange = async (enabled: boolean) => {
         if (saving) return;
-        setSaveError(null);
         setOptimisticLegalResearchUs(enabled);
         setSaving(true);
-        const ok = await updateLegalResearchUs(enabled);
+        await updateLegalResearchUs(enabled);
         setSaving(false);
         setOptimisticLegalResearchUs(null);
-        if (!ok) {
-            setSaveError("Could not update. Try again.");
-        }
     };
 
     return (
@@ -67,11 +57,6 @@ export default function FeaturesPage() {
                                 Show the quick actions row on the assistant
                                 start screen.
                             </p>
-                            {quickActionsError && (
-                                <p className="text-sm text-red-600">
-                                    {quickActionsError}
-                                </p>
-                            )}
                         </div>
                         <SettingsToggle
                             checked={quickActionsVisible}
@@ -110,11 +95,6 @@ export default function FeaturesPage() {
                             }
                         />
                     </div>
-                    {saveError && (
-                        <p className="px-4 pb-4 text-sm text-red-600">
-                            {saveError}
-                        </p>
-                    )}
                     {courtListenerEnabled && (
                         // Upstream divergence (OSS-6, §2.3 item 3): dev stores
                         // CourtListener as an organisation Key Vault secret;

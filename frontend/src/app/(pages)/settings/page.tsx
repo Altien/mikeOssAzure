@@ -18,7 +18,9 @@ import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 // via Conditional Access â€” so the popup and its retry paths are omitted.
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { deleteAccount } from "@/app/lib/mikeApi";
-import { userFacingApiError } from "@/app/lib/userFacingError";
+import { describeError, notifyError } from "@/app/lib/userFacingError";
+import { authMessages } from "@/app/lib/authMessages";
+import { useRequestOwner } from "@/app/hooks/useRequestOwner";
 import { SettingsSection } from "./SettingsSection";
 
 const isDev = process.env.NODE_ENV !== "production";
@@ -31,9 +33,22 @@ interface EmailWarning {
     message: string;
 }
 
+const EMAIL_ERROR_MESSAGES = authMessages({
+  validation_failed: "Enter a valid email address.",
+  invalid_request: "Enter a valid email address.",
+  reauthentication_needed: "Log in again before changing your email.",
+});
+
+const EMAIL_TAKEN_CODES = new Set(["email_exists", "user_already_exists"]);
+const EMAIL_RATE_LIMIT_CODES = new Set([
+  "over_email_send_rate_limit",
+  "over_request_rate_limit",
+]);
+
 /** Composes authenticated account settings, including profile-photo editing and account security controls. */
 export default function SettingsPage() {
     const router = useRouter();
+    const requestOwner = useRequestOwner();
     const { user, signOut, updateEmail } = useAuth();
     const { profile, updateDisplayName } = useUserProfile();
     // Dev (OSS-6, auth): see the Email and Danger Zone notes.
@@ -42,7 +57,6 @@ export default function SettingsPage() {
     const [displayName, setDisplayName] = useState("");
     const [isSavingName, setIsSavingName] = useState(false);
     const [saved, setSaved] = useState(false);
-    const [nameError, setNameError] = useState<string | null>(null);
     const [email, setEmail] = useState("");
     const [isSavingEmail, setIsSavingEmail] = useState(false);
     const [emailSaved, setEmailSaved] = useState(false);
@@ -52,7 +66,6 @@ export default function SettingsPage() {
         emailEditable && user?.createdWithGoogle === true && profile?.passwordSet !== true;
     const [deleteConfirm, setDeleteConfirm] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
-    const [deleteError, setDeleteError] = useState<string | null>(null);
 
     const handleLogout = async () => {
         await signOut();
@@ -95,22 +108,26 @@ export default function SettingsPage() {
     }, [user]);
 
     const handleDeleteAccount = async () => {
+        const isCurrent = requestOwner.capture();
+        if (!isCurrent()) return;
         devLog("[account] delete account requested");
         setIsDeleting(true);
-        setDeleteError(null);
         try {
-            await deleteAccount();
+            await deleteAccount(isCurrent);
+            if (!isCurrent()) return;
             await signOut();
             router.push("/");
         } catch (error) {
             setIsDeleting(false);
             devLog("[account] delete account failed", { error });
             setDeleteConfirm(false);
-            setDeleteError(userFacingApiError(error, "Your account could not be deleted. Please try again."));
+            if (isCurrent()) notifyError(error, { action: "delete your account", onRetry: () => { if (isCurrent()) setDeleteConfirm(true); }, supportNote: "Account deletion failed." });
         }
     };
 
     const handleSaveEmail = async () => {
+        const isCurrent = requestOwner.capture();
+        if (!isCurrent() || !emailEditable) return;
         if (requiresPasswordForEmailChange) {
             setEmailWarning({ title: "Set or update your password", message: "Open Security settings to set or update a password before changing your email." });
             return;
@@ -124,6 +141,7 @@ export default function SettingsPage() {
         setEmailWarning(null);
         try {
             const updatedUser = await updateEmail(nextEmail);
+            if (!isCurrent()) return;
             const pendingEmail = updatedUser.pendingEmail;
             setEmail(pendingEmail || updatedUser.email);
             setEmailSaved(true);
@@ -135,12 +153,10 @@ export default function SettingsPage() {
             setTimeout(() => setEmailSaved(false), 2000);
         } catch (error: unknown) {
             devLog("[account] save email failed", { error });
-            const message =
-                error instanceof Error
-                    ? error.message
-                    : "Failed to update email. Please try again.";
+            if (!isCurrent()) return;
+            const described = describeError(error, {action: "update your email", codeMessages: EMAIL_ERROR_MESSAGES, fallback: "Unable to update your email. Try again."});
 
-            if (isAlreadyRegisteredEmailError(message)) {
+            if (described.code && EMAIL_TAKEN_CODES.has(described.code)) {
                 setEmail(user?.pendingEmail || user?.email || "");
                 setEmailWarning({
                     title: "Email already registered",
@@ -149,7 +165,7 @@ export default function SettingsPage() {
                 return;
             }
 
-            if (isEmailRateLimitError(message)) {
+            if ((described.code && EMAIL_RATE_LIMIT_CODES.has(described.code)) || described.kind === "rate_limited") {
                 setEmail(user?.pendingEmail || user?.email || "");
                 setEmailWarning({
                     title: "Email change unavailable",
@@ -159,7 +175,7 @@ export default function SettingsPage() {
                 return;
             }
 
-            setEmailStatus("Failed to update email. Please try again.");
+            setEmailStatus(described.message);
         } finally {
             setIsSavingEmail(false);
         }
@@ -169,15 +185,12 @@ export default function SettingsPage() {
         const nextName = displayName.trim();
         if (nextName === (profile?.displayName ?? "")) return;
         setIsSavingName(true);
-        setNameError(null);
         const success = await updateDisplayName(nextName);
         setIsSavingName(false);
 
         if (success) {
             setSaved(true);
             setTimeout(() => setSaved(false), 2000);
-        } else {
-            setNameError("Unable to save your name.");
         }
     };
 
@@ -197,13 +210,11 @@ export default function SettingsPage() {
                             <div className="flex items-start justify-between gap-3">
                                 <FieldLabel>Display Name</FieldLabel>
                                 <span
-                                    className={`text-xs ${nameError ? "text-red-600" : "text-gray-400"}`}
+                                    className="text-xs text-gray-400"
                                     aria-live="polite"
                                 >
                                     {isSavingName
                                         ? "Saving..."
-                                        : nameError
-                                          ? nameError
                                           : saved
                                             ? "Saved"
                                             : ""}
@@ -215,7 +226,6 @@ export default function SettingsPage() {
                                     value={displayName}
                                     onChange={(e) => {
                                         setDisplayName(e.target.value);
-                                        setNameError(null);
                                         setSaved(false);
                                     }}
                                     onBlur={() =>
@@ -392,12 +402,6 @@ export default function SettingsPage() {
                 onConfirm={() => void handleDeleteAccount()}
             />
             <WarningPopup
-                open={deleteError !== null}
-                title="Account deletion failed"
-                message={deleteError}
-                onClose={() => setDeleteError(null)}
-            />
-            <WarningPopup
                 open={!!emailWarning}
                 title={emailWarning?.title}
                 message={emailWarning?.message}
@@ -411,12 +415,3 @@ export default function SettingsPage() {
     );
 }
 
-function isAlreadyRegisteredEmailError(message: string) {
-    return message
-        .toLowerCase()
-        .includes("a user with this email address has already been registered");
-}
-
-function isEmailRateLimitError(message: string) {
-    return /email.*rate limit|rate limit.*email/i.test(message);
-}

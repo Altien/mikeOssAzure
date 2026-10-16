@@ -5,7 +5,8 @@ import { Download, Trash2 } from "lucide-react";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
-import { WarningPopup } from "@/app/components/popups/WarningPopup";
+import { UserVisibleError, notifyError } from "@/app/lib/userFacingError";
+import { useRequestOwner } from "@/app/hooks/useRequestOwner";
 // Upstream divergence (sync-log: 3a10943): upstream wraps these actions in
 // a Supabase Auth MFA step-up flow (MfaVerificationPopup +
 // needsMfaVerification + isMfaRequiredError retries). Dev did not adopt
@@ -61,7 +62,10 @@ const DELETE_DATA_COPY: Record<
     },
 };
 
+const DELETE_ACTION_LABELS = { chats: "delete your chats", "tabular-reviews": "delete your tabular reviews", projects: "delete your projects", memory: "delete your memory" };
+
 export default function PrivacyDataPage() {
+    const requestOwner = useRequestOwner();
     const { loadChats, setCurrentChatId } = useChatHistoryContext();
     const [pendingDeleteAction, setPendingDeleteAction] =
         useState<DeleteDataAction | null>(null);
@@ -72,7 +76,6 @@ export default function PrivacyDataPage() {
     const [isExportingTabularReviews, setIsExportingTabularReviews] =
         useState(false);
     const [isExportingMemory, setIsExportingMemory] = useState(false);
-    const [warningMessage, setWarningMessage] = useState<string | null>(null);
 
     const downloadBlob = (blob: Blob, filename: string) => {
         const url = URL.createObjectURL(blob);
@@ -94,17 +97,19 @@ export default function PrivacyDataPage() {
     const runAsyncExport = async (
         type: UserExportType,
         fallbackFilename: string,
+        isCurrent: () => boolean,
     ) => {
-        const { export_id } = await startUserExport(type);
+        const { export_id } = await startUserExport(type, undefined, isCurrent);
         for (let i = 0; i < EXPORT_POLL_LIMIT; i++) {
             await new Promise((resolve) =>
                 setTimeout(resolve, EXPORT_POLL_MS),
             );
-            const status = await getUserExportStatus(export_id);
+            const status = await getUserExportStatus(export_id, isCurrent);
             if (status.status === "failed")
-                throw new Error("Export build failed");
+                throw new UserVisibleError("Mike could not build the export. Try again, and contact support if it keeps happening.", { retryable: true });
             if (status.status === "done") {
-                const { blob, filename } = await downloadUserExport(export_id);
+                const { blob, filename } = await downloadUserExport(export_id, isCurrent);
+                if (!isCurrent()) return;
                 downloadBlob(
                     blob,
                     filename ?? status.filename ?? fallbackFilename,
@@ -112,82 +117,96 @@ export default function PrivacyDataPage() {
                 return;
             }
         }
-        throw new Error("Export timed out");
+        throw new UserVisibleError("The export is taking longer than expected. It may still be building, so try again in a few minutes.", { retryable: true });
     };
 
     const handleExportAccountData = async () => {
+        const isCurrent = requestOwner.capture();
+        if (!isCurrent()) return;
         devLog("[privacy-data] export account requested");
         setIsExportingAccount(true);
         try {
-            await runAsyncExport("account", "mike-account-export.json");
+            await runAsyncExport("account", "mike-account-export.json", isCurrent);
         } catch (error) {
             devLog("[privacy-data] export account failed", { error });
-            setWarningMessage("Failed to export account data. Please try again.");
+            if (isCurrent()) notifyError(error, { action: "export your account data", onRetry: () => { if (isCurrent()) void handleExportAccountData(); } });
         } finally {
             setIsExportingAccount(false);
         }
     };
 
     const handleExportChatData = async () => {
+        const isCurrent = requestOwner.capture();
+        if (!isCurrent()) return;
         devLog("[privacy-data] export chats requested");
         setIsExportingChats(true);
         try {
-            await runAsyncExport("chats", "mike-chat-export.json");
+            await runAsyncExport("chats", "mike-chat-export.json", isCurrent);
         } catch (error) {
             devLog("[privacy-data] export chats failed", { error });
-            setWarningMessage("Failed to export chats. Please try again.");
+            if (isCurrent()) notifyError(error, { action: "export your chats", onRetry: () => { if (isCurrent()) void handleExportChatData(); } });
         } finally {
             setIsExportingChats(false);
         }
     };
 
     const handleExportTabularReviewsData = async () => {
+        const isCurrent = requestOwner.capture();
+        if (!isCurrent()) return;
         devLog("[privacy-data] export tabular reviews requested");
         setIsExportingTabularReviews(true);
         try {
-            await runAsyncExport("tabular-reviews", "mike-tabular-reviews-export.json");
+            await runAsyncExport("tabular-reviews", "mike-tabular-reviews-export.json", isCurrent);
         } catch (error) {
             devLog("[privacy-data] export tabular reviews failed", { error });
-            setWarningMessage("Failed to export tabular reviews. Please try again.");
+            if (isCurrent()) notifyError(error, { action: "export your tabular reviews", onRetry: () => { if (isCurrent()) void handleExportTabularReviewsData(); } });
         } finally {
             setIsExportingTabularReviews(false);
         }
     };
 
     const handleExportMemoryData = async () => {
+        const isCurrent = requestOwner.capture();
+        if (!isCurrent()) return;
         devLog("[privacy-data] export memory requested");
         setIsExportingMemory(true);
         try {
-            await runAsyncExport("memory-zip", "mike-memory-export.zip");
+            await runAsyncExport("memory-zip", "mike-memory-export.zip", isCurrent);
         } catch (error) {
             devLog("[privacy-data] export memory failed", { error });
-            setWarningMessage("Failed to export memory. Please try again.");
+            if (isCurrent()) notifyError(error, { action: "export your memory", onRetry: () => { if (isCurrent()) void handleExportMemoryData(); } });
         } finally {
             setIsExportingMemory(false);
         }
     };
 
     const handleDeleteData = async (action: DeleteDataAction) => {
+        const isCurrent = requestOwner.capture();
+        if (!isCurrent()) return;
         devLog("[privacy-data] delete requested", { action });
         setDeletingAction(action);
         try {
             if (action === "chats") {
-                await deleteAllChats();
+                await deleteAllChats(isCurrent);
+                if (!isCurrent()) return;
                 setCurrentChatId(null);
                 await loadChats();
             } else if (action === "tabular-reviews") {
-                await deleteAllTabularReviews();
+                await deleteAllTabularReviews(isCurrent);
+                if (!isCurrent()) return;
             } else if (action === "memory") {
-                await deleteAllMemories();
+                await deleteAllMemories(isCurrent);
+                if (!isCurrent()) return;
             } else {
-                await deleteAllProjects();
+                await deleteAllProjects(isCurrent);
+                if (!isCurrent()) return;
                 setCurrentChatId(null);
                 await loadChats();
             }
             setPendingDeleteAction(null);
         } catch (error) {
             devLog("[privacy-data] delete failed", { action, error });
-            setWarningMessage("Failed to delete data. Please try again.");
+            if (isCurrent()) notifyError(error, { action: DELETE_ACTION_LABELS[action], onRetry: () => { if (isCurrent()) setPendingDeleteAction(action); } });
         } finally {
             setDeletingAction(null);
         }
@@ -413,12 +432,6 @@ export default function PrivacyDataPage() {
                     if (!pendingDeleteAction) return;
                     void handleDeleteData(pendingDeleteAction);
                 }}
-            />
-            <WarningPopup
-                open={!!warningMessage}
-                title="Action failed"
-                message={warningMessage}
-                onClose={() => setWarningMessage(null)}
             />
         </div>
     );

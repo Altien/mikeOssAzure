@@ -2,12 +2,18 @@
 
 import { useEffect, useId, useState, type ReactNode } from "react";
 import { Eye, EyeOff } from "lucide-react";
-import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { SettingsTextInput } from "@/app/components/settings/SettingsTextInput";
 import { FieldLabel, FormTextInput } from "@/app/components/ui/form-field";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsDescription, SettingsLabel } from "./SettingsText";
-import { MikeApiError } from "@/app/lib/mikeApi";
+import {
+  UserVisibleError,
+  notifyError,
+  notifyInfo,
+  notifySuccess,
+} from "@/app/lib/userFacingError";
+import { useRequestOwner } from "@/app/hooks/useRequestOwner";
+import { useLatestRef } from "@/app/hooks/useLatestRef";
 import { settingsGlassIconButtonClassName } from "@/app/(pages)/settings/settingsStyles";
 
 // Upstream divergence (sync-log: 25779536): Entra owns MFA and shared
@@ -73,6 +79,7 @@ export function ApiKeyField({
     removeAction: ApiKeyFieldAction | undefined,
   ) => ReactNode;
 }) {
+  const requestOwner = useRequestOwner();
   const settingInputId = useId();
   const settingErrorId = useId();
   const keyErrorId = useId();
@@ -87,7 +94,13 @@ export function ApiKeyField({
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [warningMessage, setWarningMessage] = useState<string | null>(null);
+
+  // The field is cleared on success and whenever the saved-key state
+  // changes, and the user may well correct a rejected key before reaching
+  // for the notice. A Retry therefore reads the box as it is NOW instead of
+  // resending the value the failed attempt closed over.
+  const valueRef = useLatestRef(value);
+  const settingValueRef = useLatestRef(settingValue);
 
   useEffect(() => {
     setValue("");
@@ -105,7 +118,28 @@ export function ApiKeyField({
   const dirty = keyDirty || (hasSavedKey && settingDirty);
   const showMask = hasSavedKey && !isEditing && !keyDirty;
 
+  /**
+   * Re-run a save only while the box still holds the key that failed.
+   * Anything else — a corrected key, a cleared field — would silently store
+   * the wrong secret, so say what happened and leave the input alone.
+   */
+  const retrySave = (attempted: string, attemptedSetting: string, isCurrent = requestOwner.capture()) => {
+    if (!isCurrent()) return;
+    if (valueRef.current === attempted && settingValueRef.current === attemptedSetting) {
+      void handleSave();
+      return;
+    }
+    notifyInfo(
+      valueRef.current.trim().length > 0
+        ? `Your ${label} has changed since that attempt. Press Save to store the key now in the field.`
+        : `The ${label} field is empty, so there is nothing to retry. Enter the key again and press Save.`,
+      "Nothing was sent",
+    );
+  };
+
   const handleSave = async () => {
+    const isCurrent = requestOwner.capture();
+    if (!isCurrent()) return;
     if (isServerConfigured) return;
     const invalidKey = keyDirty ? (validateKey?.(value) ?? null) : null;
     if (invalidKey) {
@@ -122,35 +156,64 @@ export function ApiKeyField({
       normalizedSetting = normalized;
     }
     setSettingError(null);
+    const attempted = valueRef.current;
+    const attemptedSetting = settingValueRef.current;
     setIsSaving(true);
     try {
       const ok = setting
         ? await onSave(value, normalizedSetting)
         : await onSave(value);
+      if (!isCurrent()) return;
       if (ok) {
         setValue("");
         setSaved(true);
         setTimeout(() => setSaved(false), 2000);
       } else {
-        setWarningMessage(`Failed to save ${label}. Please try again.`);
+        // The caller reports failure as `false`, with no error to classify.
+        notifyError(
+          new UserVisibleError(
+            `Mike couldn't save your ${label}. The key was not changed.`,
+            { retryable: true },
+          ),
+          {
+            action: `save your ${label}`,
+            onRetry: () => retrySave(attempted, attemptedSetting, isCurrent),
+          },
+        );
       }
     } catch (error) {
-        setWarningMessage(error instanceof MikeApiError && error.status === 400 ? error.message : `Failed to save ${label}. Please try again.`);
+      if (!isCurrent()) return;
+      notifyError(error, { action: `save your ${label}`, onRetry: () => retrySave(attempted, attemptedSetting, isCurrent) });
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleRemove = async () => {
+    const isCurrent = requestOwner.capture();
+    if (!isCurrent()) return;
     if (isServerConfigured) return;
     setIsSaving(true);
     try {
       const ok = await onRemove();
-      if (!ok) {
-        setWarningMessage(`Failed to remove ${label}. Please try again.`);
+      if (!isCurrent()) return;
+      if (ok) {
+        notifySuccess(`${label} removed.`);
+      } else {
+        notifyError(
+          new UserVisibleError(
+            `Mike couldn't remove your ${label}. The key is still saved.`,
+            { retryable: true },
+          ),
+          {
+            action: `remove your ${label}`,
+            onRetry: () => { if (isCurrent()) void handleRemove(); },
+          },
+        );
       }
-    } catch {
-        setWarningMessage(`Failed to remove ${label}. Please try again.`);
+    } catch (error) {
+      if (!isCurrent()) return;
+      notifyError(error, { action: `remove your ${label}`, onRetry: () => { if (isCurrent()) void handleRemove(); } });
     } finally {
       setIsSaving(false);
     }
@@ -288,12 +351,6 @@ export function ApiKeyField({
   return (
     <>
       {render ? render(fields, saveAction, removeAction) : fields}
-      <WarningPopup
-        open={!!warningMessage}
-        title="API key update failed"
-        message={warningMessage}
-        onClose={() => setWarningMessage(null)}
-      />
     </>
   );
 }
