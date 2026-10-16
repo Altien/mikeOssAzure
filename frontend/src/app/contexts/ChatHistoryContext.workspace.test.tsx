@@ -12,6 +12,7 @@ const createChat = vi.fn();
 const renameChat = vi.fn();
 const deleteChat = vi.fn();
 const leaveChat = vi.fn();
+const notifyError = vi.hoisted(() => vi.fn());
 const workspace = vi.hoisted(() => ({
     current: "personal" as string | undefined,
 }));
@@ -25,6 +26,7 @@ vi.mock("@/app/lib/mikeApi", () => ({
     deleteChat: (...args: unknown[]) => deleteChat(...args),
     leaveChat: (...args: unknown[]) => leaveChat(...args),
 }));
+vi.mock("@/app/lib/userFacingError", () => ({ notifyError }));
 vi.mock("@/app/contexts/AuthContext", () => ({
     useAuth: () => ({ user: auth.user }),
 }));
@@ -123,6 +125,50 @@ describe("starting a chat", () => {
 });
 
 describe("ChatHistoryProvider and the active workspace", () => {
+    it.each([
+        ["loadChats", "workspace round trip"],
+        ["loadMoreChats", "workspace round trip"],
+        ["saveChat", "workspace round trip"],
+        ["loadChats", "sign-out"],
+        ["loadMoreChats", "sign-out"],
+        ["saveChat", "sign-out"],
+    ] as const)("ignores a stale %s failure after a %s", async (operation, transition) => {
+        const page = Array.from({ length: 21 }, (_, index) =>
+            chat(`c${index}`, `Personal note ${index}`),
+        );
+        listChats.mockResolvedValue(page);
+        const { rerender } = render(tree());
+        await waitFor(() => expect(latest.hasMoreChats).toBe(true));
+
+        let reject!: (reason: Error) => void;
+        const api = operation === "saveChat" ? createChat : listChats;
+        api.mockReturnValueOnce(new Promise((_resolve, fail) => { reject = fail; }));
+        let pending!: Promise<unknown>;
+        act(() => { pending = latest[operation](); });
+
+        if (transition === "sign-out") {
+            auth.user = null;
+            rerender(tree());
+            await screen.findByText("empty");
+        } else {
+            workspace.current = "org-1";
+            listChats.mockResolvedValueOnce([chat("org-chat", "Firm matter")]);
+            rerender(tree());
+            await screen.findByText("Firm matter");
+            workspace.current = "personal";
+            rerender(tree());
+            await waitFor(() => expect(latest.chats).toHaveLength(20));
+        }
+
+        await act(async () => {
+            reject(new Error("Old request failed"));
+            await pending;
+        });
+        expect(notifyError).not.toHaveBeenCalled();
+        expect(latest.chats).toHaveLength(transition === "sign-out" ? 0 : 20);
+        expect(latest.loadingMoreChats).toBe(false);
+    });
+
     it("ignores a reload callback retained by a detached turn in another workspace", async () => {
         listChats.mockImplementation(async ({ workspace: scope }) => [chat(scope, scope)]);
         const { rerender } = render(tree());
