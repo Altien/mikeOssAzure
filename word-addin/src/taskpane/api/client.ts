@@ -264,7 +264,7 @@ export async function listProjects(pagination?: {
   limit?: number;
   offset?: number;
 }): Promise<Project[]> {
-  const params = new URLSearchParams({ view: "summary" });
+  const params = new URLSearchParams({ view: "summary", workspace: "personal" });
   if (pagination?.limit != null) {
     params.set("limit", String(pagination.limit));
   }
@@ -353,7 +353,7 @@ export async function getLibrary(
   kind: LibraryKind,
   pagination?: { limit?: number; offset?: number },
 ): Promise<LibraryCollection> {
-  const params = new URLSearchParams();
+  const params = new URLSearchParams({ workspace: "personal" });
   if (pagination?.limit != null) {
     params.set("limit", String(pagination.limit));
   }
@@ -371,7 +371,7 @@ export async function getLibraryFolderChildren(
   folderId: string,
   pagination?: { limit?: number; offset?: number },
 ): Promise<LibraryCollection> {
-  const params = new URLSearchParams({ parent_folder_id: folderId });
+  const params = new URLSearchParams({ parent_folder_id: folderId, workspace: "personal" });
   if (pagination?.limit != null) {
     params.set("limit", String(pagination.limit));
   }
@@ -605,7 +605,7 @@ export async function listQuickActions(): Promise<
   import("../types").QuickAction[]
 > {
   return apiRequest<import("../types").QuickAction[]>(
-    "/quick-actions?surface=word",
+    "/quick-actions?surface=word&workspace=personal",
   );
 }
 
@@ -711,7 +711,7 @@ export async function deleteWorkflowAsset(
 }
 
 export async function listWorkflows(type: WorkflowType): Promise<Workflow[]> {
-  return apiRequest<Workflow[]>(`/workflows?type=${type}`);
+  return apiRequest<Workflow[]>(`/workflows?type=${type}&workspace=personal`);
 }
 
 export async function createWorkflow(payload: {
