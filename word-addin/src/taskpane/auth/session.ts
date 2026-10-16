@@ -1,5 +1,7 @@
 /// <reference types="office-js" />
-import { describeNetworkFailure } from "../lib/networkError";
+import { networkFailure } from "../lib/networkError";
+import { responseError } from "../api/client";
+import { notifyError, userMessage } from "../lib/notify";
 import { parseGoogleOAuthDialogMessage } from "./oauthProtocol";
 import { EntraAuth, entraConfigProblem } from "./entra";
 import { API_BASE_URL, loadRuntimeConfig, type AuthProvider } from "./runtimeConfig";
@@ -42,25 +44,30 @@ export function subscribe(fn: () => void): () => void {
   return () => _subscribers.delete(fn);
 }
 
+/** A retry/request keeps the initiating session generation; a new sign-in never adopts it. */
+export function captureSessionOwner(): () => boolean {
+  const generation = _sessionGeneration;
+  const owner = _user?.id;
+  return () => Boolean(owner) && generation === _sessionGeneration && (_user === null || _user.id === owner);
+}
+
 export function getSessionState(): SessionState {
   return { user: _user, loading: _loading, error: _error, mode: _mode };
 }
 
 async function clearLegacyTokenStorage(): Promise<void> {
+  // Best-effort cleanup of a storage format no longer read. Nothing the user
+  // asked for depends on it, so a failure stays silent.
   await Promise.all([
     OfficeRuntime.storage.removeItem(LEGACY_ACCESS_KEY).catch(() => {}),
     OfficeRuntime.storage.removeItem(LEGACY_REFRESH_KEY).catch(() => {}),
   ]);
 }
 
-async function parseError(response: Response): Promise<string> {
-  const body = (await response.json().catch(() => ({}))) as {
-    detail?: unknown;
-  };
-  return typeof body.detail === "string" && body.detail
-    ? `${body.detail} (HTTP ${response.status}).`
-    : `Authentication failed (HTTP ${response.status}).`;
-}
+// Auth routes answer with the same error envelope as the rest of the API,
+// so `responseError` (api/client) is reused: the backend's 4xx `detail` is
+// kept because it is written for the user, a 5xx body never is, and the
+// status/code/request id ride along for `describeError` and support.
 
 async function requestSession(): Promise<AddinAuthUser | null> {
   const url = `${API_BASE}/auth/session`;
@@ -71,12 +78,10 @@ async function requestSession(): Promise<AddinAuthUser | null> {
       cache: "no-store",
     });
   } catch (error) {
-    throw new Error(describeNetworkFailure(error, { method: "GET", url }), {
-      cause: error,
-    });
+    throw networkFailure(error, { method: "GET", url });
   }
   if (response.status === 401) return null;
-  if (!response.ok) throw new Error(await parseError(response));
+  if (!response.ok) throw await responseError(response);
   const body = (await response.json()) as { user: AddinAuthUser };
   return body.user;
 }
@@ -85,13 +90,14 @@ async function bootstrapEntraSession(accessToken: string): Promise<void> {
   const bootstrap = await fetch(`${API_BASE}/auth/bootstrap`, {
     method: "POST", credentials: "include", headers: { Authorization: `Bearer ${accessToken}` },
   });
-  if (!bootstrap.ok) throw new Error(await parseError(bootstrap));
+  if (!bootstrap.ok) throw await responseError(bootstrap);
 }
 
 async function requestOrBootstrapSession(generation: number): Promise<AddinAuthUser | null> {
   const current = await requestSession();
   if (current || generation !== _sessionGeneration || _mode !== "entra" || !_entra?.supportsNestedAuthentication) return current;
   if (await OfficeRuntime.storage.getItem(SIGNED_OUT_KEY) === "1") return null;
+  if (generation !== _sessionGeneration) return null;
   const token = await _entra.acquireSilent();
   if (!token || generation !== _sessionGeneration) return null;
   await bootstrapEntraSession(token.accessToken);
@@ -101,7 +107,9 @@ async function requestOrBootstrapSession(generation: number): Promise<AddinAuthU
 async function redeemAuthHandoff(
   ticket: string,
   requestId: string,
+  generation: number,
 ): Promise<AddinAuthUser> {
+  if (generation !== _sessionGeneration) throw Object.assign(new Error("Sign-in owner changed"), { name: "AbortError" });
   const url = `${API_BASE}/auth/handoff`;
   let response: Response;
   try {
@@ -112,12 +120,11 @@ async function redeemAuthHandoff(
       body: JSON.stringify({ ticket, requestId }),
     });
   } catch (error) {
-    throw new Error(describeNetworkFailure(error, { method: "POST", url }), {
-      cause: error,
-    });
+    throw networkFailure(error, { method: "POST", url });
   }
-  if (!response.ok) throw new Error(await parseError(response));
+  if (!response.ok) throw await responseError(response);
   const body = (await response.json()) as { user: AddinAuthUser };
+  if (generation !== _sessionGeneration) throw Object.assign(new Error("Sign-in owner changed"), { name: "AbortError" });
   const confirmed = await requestSession();
   if (!confirmed || confirmed.id !== body.user.id) throw new Error("Word could not retain the sign-in cookie. Enable cookies for this add-in host.");
   return confirmed;
@@ -154,7 +161,7 @@ async function signInWithMicrosoftDialog(generation: number): Promise<void> {
     });
   });
   if (generation !== _sessionGeneration) return;
-  const user = await redeemAuthHandoff(ticket, requestId);
+  const user = await redeemAuthHandoff(ticket, requestId, generation);
   if (generation !== _sessionGeneration) return;
   await OfficeRuntime.storage.removeItem(SIGNED_OUT_KEY);
   _user = user;
@@ -163,17 +170,40 @@ async function signInWithMicrosoftDialog(generation: number): Promise<void> {
 export function refreshSession(): Promise<AddinAuthUser | null> {
   const generation = _sessionGeneration;
   if (!_sessionPromise) {
-    _sessionPromise = requestOrBootstrapSession(generation).finally(() => {
-      _sessionPromise = null;
+    const pending = requestOrBootstrapSession(generation).finally(() => {
+      if (_sessionPromise === pending) _sessionPromise = null;
     });
+    _sessionPromise = pending;
   }
   return _sessionPromise.then((user) => {
     if (generation !== _sessionGeneration) return null;
+    if (_user && user && _user.id !== user.id) {
+      // A cookie now belonging to another principal must invalidate all original retries.
+      _sessionGeneration += 1;
+      _sessionPromise = null;
+    }
     _user = user;
     _error = null;
     broadcast();
     return user;
   });
+}
+
+/**
+ * Drop the pane's signed-in state locally, without calling /auth/logout.
+ *
+ * Used when the backend has positively said this session is gone: there is
+ * nothing left to log out, and leaving `_user` populated would keep the
+ * chat UI on screen while telling the user to sign in — with no gate to
+ * sign in through. Bumping the generation abandons any in-flight sign-in.
+ */
+export function markSessionEnded(): void {
+  _sessionGeneration += 1;
+  _sessionPromise = null;
+  _user = null;
+  _error = null;
+  _loading = false;
+  broadcast();
 }
 
 export function initialize(): void {
@@ -192,7 +222,10 @@ export function initialize(): void {
     })
     .catch((error: unknown) => {
       _user = null;
-      _error = error instanceof Error ? error.message : "Login failed";
+      _error = userMessage(error, {
+        action: "sign in",
+        fallback: "Mike couldn't sign you in. Try again.",
+      });
     })
     .finally(() => {
       _loading = false;
@@ -233,11 +266,9 @@ export async function signIn(email?: string, password?: string): Promise<void> {
         body: JSON.stringify(_mode === "local" ? { email } : { email, password }),
       });
     } catch (error) {
-      throw new Error(describeNetworkFailure(error, { method: "POST", url }), {
-        cause: error,
-      });
+      throw networkFailure(error, { method: "POST", url });
     }
-    if (!response.ok) throw new Error(await parseError(response));
+    if (!response.ok) throw await responseError(response);
     await response.json();
     if (generation !== _sessionGeneration) return;
     const confirmed = await requestSession();
@@ -246,7 +277,13 @@ export async function signIn(email?: string, password?: string): Promise<void> {
   } catch (error) {
     if (generation !== _sessionGeneration) return;
     _user = null;
-    _error = error instanceof Error ? error.message : "Login failed";
+    _error = userMessage(error, {
+      action: "sign in",
+      fallback: "Mike couldn't sign you in. Try again.",
+      codeMessages: {
+        invalid_credentials: "That email and password don't match an account.",
+      },
+    });
   } finally {
     if (generation === _sessionGeneration) {
       _loading = false;
@@ -299,7 +336,7 @@ export async function signInWithGoogle(): Promise<void> {
             try {
               dialog.close();
             } catch {
-              // The host may already have closed the dialog.
+              // The host may already have closed the dialog; nothing to say.
             }
           };
 
@@ -320,13 +357,14 @@ export async function signInWithGoogle(): Promise<void> {
               }
               if (message.status === "error") {
                 close();
+                // Written by our own OAuth dialog page, already user-facing.
                 fail(message.message);
                 return;
               }
 
               settled = true;
               close();
-              void redeemAuthHandoff(message.handoffTicket, requestId)
+              void redeemAuthHandoff(message.handoffTicket, requestId, generation)
                 .then((user) => {
                   if (generation === _sessionGeneration) {
                     _user = user;
@@ -335,10 +373,10 @@ export async function signInWithGoogle(): Promise<void> {
                 })
                 .catch((error: unknown) => {
                   if (generation === _sessionGeneration) {
-                    _error =
-                      error instanceof Error
-                        ? error.message
-                        : "Unable to complete Google sign-in.";
+                    _error = userMessage(error, {
+                      action: "complete Google sign-in",
+                      fallback: "Mike couldn't complete Google sign-in.",
+                    });
                   }
                 })
                 .finally(() => {
@@ -363,10 +401,12 @@ export async function signInWithGoogle(): Promise<void> {
         },
       );
     } catch (error) {
+      // Office.js throws host text here ("The dialog box has been directed
+      // to a URL..."), which means nothing to a user.
       fail(
-        error instanceof Error
-          ? error.message
-          : "Unable to open Google sign-in.",
+        userMessage(error, {
+          fallback: "Mike couldn't open Google sign-in. Try again.",
+        }),
       );
     }
   }).finally(() => {
@@ -391,21 +431,23 @@ export async function signOut(): Promise<void> {
         body: JSON.stringify({ scope: "local" }),
       });
     } catch (error) {
-      throw new Error(describeNetworkFailure(error, { method: "POST", url }), {
-        cause: error,
-      });
+      throw networkFailure(error, { method: "POST", url });
     }
-    if (!response.ok) throw new Error(await parseError(response));
+    if (!response.ok) throw await responseError(response);
     if (generation !== _sessionGeneration) return;
     _user = null;
     await clearLegacyTokenStorage();
     await OfficeRuntime.storage.setItem(SIGNED_OUT_KEY, "1");
   } catch (error) {
     if (generation !== _sessionGeneration) return;
-    _error =
-      error instanceof Error
-        ? error.message
-        : "Unable to sign out. Please try again.";
+    // The pane stays signed in, so the failure is a toast whose Retry signs
+    // out again, not the sign-in screen's error state.
+    notifyError(error, {
+      action: "sign out",
+      fallback: "Mike couldn't sign you out. Try again.",
+      dedupeKey: "sign-out",
+      onRetry: () => { if (generation === _sessionGeneration) return signOut(); },
+    });
   }
   broadcast();
 }

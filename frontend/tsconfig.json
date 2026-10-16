@@ -29,6 +29,7 @@
       "@mike/sentry-event": ["./src/shared/lib/sentryEvent.ts"],
       "@mike/user-error": ["./src/shared/lib/userError.ts"],
       "@mike/toast-store": ["./src/shared/lib/toastStore.ts"],
+      "@mike/error-notifier": ["./src/shared/lib/errorNotifier.ts"],
       "@mike/toast-ui": ["./src/shared/ui/ToastUI.tsx"],
       "@mike/model-catalog": ["./src/shared/lib/modelCatalog.ts"]
     }
@@ -41,5 +42,12 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules",
+    // Imports the add-in's chat hook, whose dependencies use Office.js
+    // globals typed by word-addin's @types/office-js, which this package
+    // doesn't install. Vitest still runs it (Vitest doesn't typecheck), and
+    // the hook itself is typechecked by `npm run typecheck --prefix word-addin`.
+    "src/wordAddin/useWordAssistantChat.retry.test.ts"
+  ]
 }

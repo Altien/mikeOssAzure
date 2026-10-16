@@ -169,6 +169,25 @@ The chat header and composer float over the message surface. Use **New chat** to
 
 When an answer proposes document edits, it streams each change using `<original>`, `<replacement>`, and `<reason>` tags. The task pane hides those transport tags, renders edit cards immediately, applies sealed edits to Word as tracked changes, and provides **Accept** and **Reject** controls for review.
 
+## Errors and support
+
+The task pane never renders a raw `error.message`. `describeError` (shared
+with the web app, `frontend/src/shared/lib/userError.ts`) classifies a thrown
+value once, and `word-addin/src/taskpane/lib/notify.ts` shows the result as a
+toast with an honest "Retry", built on the toast core it shares with the web
+app (`frontend/src/shared/lib/errorNotifier.ts`). Transport failures go through
+`word-addin/src/taskpane/lib/networkError.ts`, which calls the shared
+`networkMessage(origin)` so both clients say the same sentence; the add-in
+passes the API origin, because a self-hoster whose own container is down is
+not helped by "check your connection". Failures a user cannot fix offer a
+support hand-off carrying the request id, code, status, page and time —
+enough for support to find the request in the logs without the user quoting
+anything from a document. `frontend/src/wordAddin/errorReporting.test.tsx`
+exercises these add-in modules through the same `@mike/*` aliases webpack
+resolves, so a change on either side of the contract fails that suite.
+
+## Automated tests
+
 ### Quick Actions
 
 Quick Actions are shortcuts that prepare the Assistant rather than running a separate execution screen. Selecting one attaches its linked workflow and fills the composer with a complete starting prompt; the user can review or edit that prompt before sending it.

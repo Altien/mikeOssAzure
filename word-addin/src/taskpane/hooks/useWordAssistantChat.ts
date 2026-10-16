@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   resumeAssistant,
   streamAssistant,
@@ -22,6 +22,7 @@ import {
   saveLocalWordMessage,
   setLocalWordChatActiveTurn,
 } from "../lib/localWordChats";
+import { saveWordMessageOrNotify } from "../lib/localWordChatSaves";
 import type { WordChatStorageMode } from "../lib/wordChatSettings";
 import { notifyWordChatHistoryChanged } from "../lib/wordChatHistoryEvents";
 import type {
@@ -44,7 +45,18 @@ import {
   setAssistantError,
   upsertDocumentReadEvent,
 } from "../lib/wordChatEvents";
+import { captureSessionOwner } from "../auth/session";
 import { readCurrentDocumentName } from "../lib/wordDocumentIdentity";
+import {
+  UserVisibleError,
+  describeError,
+  notifyError,
+  notifyInfo,
+} from "../lib/notify";
+import {
+  TURN_OUTCOME_UNKNOWN_MESSAGE,
+  failedTurnRecovery,
+} from "../lib/wordTurnRecovery";
 
 /**
  * What one run of the turn pipeline was asked to do. Sending and resuming
@@ -57,6 +69,7 @@ type WordTurnInput =
       kind: "send";
       submission: WordChatSubmission;
       options: WordChatSubmitOptions;
+      chatId?: string;
     }
   | { kind: "resume"; chatId: string; turnId: string };
 
@@ -196,6 +209,9 @@ export function useWordAssistantChat({
   );
   const mountedRef = useRef(true);
   const sessionGenerationRef = useRef(0);
+  const ownerScope = JSON.stringify([sessionKey, wordDocumentId, wordChatOwnerId, wordChatStorage]);
+  const ownerScopeRef = useRef(ownerScope);
+  ownerScopeRef.current = ownerScope;
   const sendSequenceRef = useRef(0);
   const sendingRef = useRef(false);
   const { readDocumentMarkdown } = useWordDoc();
@@ -227,9 +243,9 @@ export function useWordAssistantChat({
     );
     setIsResponseLoading(false);
     setRequestError(null);
-    // sessionKey is the explicit boundary between conversations.
+    // Conversation, document and account changes all invalidate old actions.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionKey]);
+  }, [sessionKey, wordDocumentId, wordChatOwnerId, wordChatStorage]);
 
   const cancel = useCallback((): void => {
     const cursor = activeTurnRef.current;
@@ -249,6 +265,8 @@ export function useWordAssistantChat({
     // the sealed edits and saves the partial transcript.
     abortRef.current?.abort();
   }, [wordDocumentId]);
+  // Each notice captures its own failed turn; only the runner is kept fresh.
+  const runTurnRef = useRef<((input: WordTurnInput) => Promise<void>) | null>(null);
   const dismissRequestError = useCallback(
     (): void => setRequestError(null),
     [],
@@ -273,6 +291,9 @@ export function useWordAssistantChat({
       if (input.kind === "send" && !text) return;
 
       const generation = sessionGenerationRef.current;
+      const sessionIsCurrent = captureSessionOwner();
+      const originalScope = ownerScopeRef.current;
+      const saveIsCurrent = () => sessionIsCurrent() && mountedRef.current && generation === sessionGenerationRef.current && originalScope === ownerScopeRef.current;
       const sendToken = sendSequenceRef.current + 1;
       sendSequenceRef.current = sendToken;
       sendingRef.current = true;
@@ -287,11 +308,13 @@ export function useWordAssistantChat({
       let assistantEvents: WordAssistantEvent[] = [];
       let runCursor: WordTurnCursor | null = null;
       let turnIsTerminal = false;
+      let requestPosted = false;
 
       // Whether this send still owns the transcript. Cancellation is tracked
       // separately: an aborted stream is no longer current, but the sealed
       // edits it already received must still be applied (see the abort path).
       const sendIsCurrent = (): boolean =>
+        sessionIsCurrent() && originalScope === ownerScopeRef.current &&
         mountedRef.current &&
         generation === sessionGenerationRef.current &&
         sendToken === sendSequenceRef.current;
@@ -306,10 +329,12 @@ export function useWordAssistantChat({
           try {
             documentContext = await readDocumentMarkdown();
           } catch (error) {
+            // Office.js failure text ("GeneralException") means nothing to
+            // a user; the composer alert says what actually could not happen.
             console.error("Failed to read the current Word document", error);
             if (requestIsCurrent()) {
               setRequestError(
-                "Mike couldn't read the current Word document. Please try again.",
+                "Mike couldn't read this Word document. Try again.",
               );
             }
             return;
@@ -334,7 +359,7 @@ export function useWordAssistantChat({
         const requestChatId =
           input.kind === "resume"
             ? input.chatId
-            : (chatId ??
+            : (input.chatId ?? chatId ??
               (wordChatStorage === "local" ? crypto.randomUUID() : undefined));
         if (requestChatId && !chatId) {
           onChatIdChange(requestChatId);
@@ -489,8 +514,12 @@ export function useWordAssistantChat({
                   await new Promise((resolve) => setTimeout(resolve, 1500));
                   continue;
                 }
-                // A cancel mid-delivery aborts the fetch: that is the user
-                // stopping the turn, not a failure to report.
+                // Nothing more to try. The backend times the tool call out
+                // and ends the turn with its own error frame, which the
+                // catch below turns into a message the user sees — a toast
+                // here would only duplicate it. A cancel mid-delivery aborts
+                // the fetch: that is the user stopping the turn, not a
+                // failure to report.
                 const cancelled =
                   controller.signal.aborted ||
                   (error instanceof Error && error.name === "AbortError");
@@ -628,6 +657,8 @@ export function useWordAssistantChat({
             }
             await respond({ error: `Unknown client tool: ${call.name}` });
           } catch (error) {
+            // This text goes back to the model as a tool result, not to the
+            // screen, so the raw message is the useful thing to send.
             await respond({
               error:
                 error instanceof Error
@@ -767,6 +798,7 @@ export function useWordAssistantChat({
           for (let attempt = 0; ; attempt += 1) {
             try {
               if (opener === "post" && submission) {
+                requestPosted = true;
                 await streamAssistant(
                   {
                     ...handlers,
@@ -836,11 +868,23 @@ export function useWordAssistantChat({
           await awaitClientToolCalls();
           await editController.waitForMessageEdits(assistantMessageId);
           if (wordChatStorage === "local" && requestChatId) {
-            await saveLocalWordMessage({
+            // The answer finished and its edits are already in the document;
+            // only the device copy failed. Letting this throw would fall into
+            // the catch below and report "couldn't get a response" for an
+            // answer the user can see, so it gets the save-specific notice
+            // and a Retry that re-saves this message, never re-sends the turn.
+            const completedPayload = {
               documentId: wordDocumentId,
               ownerId: wordChatOwnerId,
               chatId: requestChatId,
               message: buildLocalAssistantMessage(),
+            };
+            await saveWordMessageOrNotify({
+              ownerKey: originalScope,
+              isCurrentOwner: saveIsCurrent,
+              storage: wordChatStorage,
+              chatId: requestChatId,
+              save: () => saveLocalWordMessage(completedPayload),
             });
           } else if (wordChatStorage === "cloud") {
             notifyWordChatHistoryChanged();
@@ -877,12 +921,22 @@ export function useWordAssistantChat({
               (streamedContent ||
                 completeAssistantEvents(assistantEvents).length > 0)
             ) {
-              await saveLocalWordMessage({
+              // Device-only mode has no server copy: a lost save loses the
+              // transcript, so the failure is shown with a Retry that
+              // re-saves this exact message.
+              const cancelledPayload = {
                 documentId: wordDocumentId,
                 ownerId: wordChatOwnerId,
                 chatId: requestChatId,
                 message: buildLocalAssistantMessage(),
-              }).catch(() => {});
+              };
+              await saveWordMessageOrNotify({
+              ownerKey: originalScope,
+              isCurrentOwner: saveIsCurrent,
+                storage: wordChatStorage,
+                chatId: requestChatId,
+                save: () => saveLocalWordMessage(cancelledPayload),
+              });
             } else if (wordChatStorage === "cloud") {
               notifyWordChatHistoryChanged();
             }
@@ -892,18 +946,89 @@ export function useWordAssistantChat({
           await awaitClientToolCalls();
           await editController.waitForMessageEdits(assistantMessageId);
           if (!requestIsCurrent()) return;
-          const errorMessage =
-            error instanceof Error
-              ? `Error: ${error.message}`
-              : "An error occurred.";
+          // The bubble shows the classified sentence, never the thrown text:
+          // a stream failure carries provider and stack wording. The toast
+          // carries what the bubble cannot: the actions on the failure.
+          const failureCopy = {
+            action: "get a response",
+            fallback: "Mike couldn't finish that answer. Try again.",
+          };
+          const recovery = failedTurnRecovery({
+            wasSend: input.kind === "send",
+            requestPosted,
+            turnIsTerminal,
+            chatId: cursor.chatId,
+            turnId: cursor.turnId,
+            status: describeError(error, failureCopy).status,
+          });
+          const failure =
+            recovery.kind === "uncertain"
+              ? new UserVisibleError(TURN_OUTCOME_UNKNOWN_MESSAGE, {
+                  cause: error,
+                })
+              : error;
+          const errorMessage = describeError(failure, failureCopy).message;
+          // Immutable input + the owning sequence prevents an old action from
+          // reading a newer submission or acting in another document/session.
+          const retryInput: WordTurnInput | null =
+            recovery.kind === "resume"
+              ? {
+                  kind: "resume",
+                  chatId: recovery.chatId,
+                  turnId: recovery.turnId,
+                }
+              : recovery.kind === "resend" && input.kind === "send"
+                ? { ...input, chatId: cursor.chatId ?? undefined }
+                : null;
+          notifyError(failure, {
+            ...failureCopy,
+            dedupeKey: "assistant-turn",
+            page: "Assistant",
+            onRetry: retryInput
+              ? async () => {
+                  if (!sendIsCurrent()) {
+                    // A newer send in this same chat is not a chat change.
+                    const sameChat =
+                      mountedRef.current &&
+                      generation === sessionGenerationRef.current;
+                    notifyInfo(
+                      sameChat
+                        ? "A newer message was sent after this one, so Retry no longer applies to it."
+                        : "This chat has changed. Open the original chat to check its answer.",
+                    );
+                    return;
+                  }
+                  if (sendingRef.current || isResponseLoadingRef.current) {
+                    return;
+                  }
+                  if (retryInput.kind === "resume") {
+                    // Replay the SAME server turn from the beginning into one
+                    // bubble. Stable edit IDs keep the applied-edit guards.
+                    setMessages((current) =>
+                      current.filter(
+                        (message) => message.id !== assistantMessageId,
+                      ),
+                    );
+                  }
+                  await runTurnRef.current?.(retryInput);
+                }
+              : undefined,
+          });
           assistantEvents = setAssistantError(assistantEvents, errorMessage);
           if (wordChatStorage === "local" && requestChatId) {
-            await saveLocalWordMessage({
+            const failedTurnPayload = {
               documentId: wordDocumentId,
               ownerId: wordChatOwnerId,
               chatId: requestChatId,
               message: buildLocalAssistantMessage(errorMessage),
-            }).catch(() => {});
+            };
+            await saveWordMessageOrNotify({
+              ownerKey: originalScope,
+              isCurrentOwner: saveIsCurrent,
+              storage: wordChatStorage,
+              chatId: requestChatId,
+              save: () => saveLocalWordMessage(failedTurnPayload),
+            });
           } else if (wordChatStorage === "cloud") {
             // The Word-chat backend persists non-abort stream failures before
             // sending its terminal error frame. Refresh history exactly once
@@ -1000,6 +1125,11 @@ export function useWordAssistantChat({
     ): Promise<void> => runTurn({ kind: "send", submission, options }),
     [runTurn],
   );
+  // After commit, not during render: a discarded concurrent render must not
+  // leave a Retry calling that render's closure.
+  useLayoutEffect(() => {
+    runTurnRef.current = runTurn;
+  }, [runTurn]);
 
   /**
    * Attach to an answer the server is already generating into `chatId` — a

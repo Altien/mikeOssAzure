@@ -54,6 +54,14 @@ function editFailureState(result: {
   reason?: string;
   error?: string;
 }): Pick<EditRuntimeState, "status" | "error"> {
+  // Checked before `status`: an unverified apply is an "error" status whose
+  // wording and (absent) actions differ from every other failure.
+  if (result.reason === "unverified") {
+    return { status: "unverified", error: UNVERIFIED_APPLY_MESSAGE };
+  }
+  if (result.reason === "already-applied") {
+    return { status: "already-applied", error: ALREADY_APPLIED_MESSAGE };
+  }
   if (result.status === "error") {
     return { status: "error", error: result.error };
   }
@@ -94,6 +102,11 @@ import type {
 import type { WordEditApplyMode } from "../lib/wordChatSettings";
 import { getEditKey, parseEditKey } from "../lib/wordTrackedEditKeys";
 import { listWordEditAnchorIds } from "../lib/wordEditAnchors";
+import { userMessage } from "../lib/notify";
+import {
+  ALREADY_APPLIED_MESSAGE,
+  UNVERIFIED_APPLY_MESSAGE,
+} from "../lib/editApplyOutcome";
 
 export function useWordTrackedEdits({
   sessionKey,
@@ -189,6 +202,9 @@ export function useWordTrackedEdits({
         .catch(() => undefined)
         .then(() => update(parsed.messageId, parsed.blockIndex, patch));
       persistenceQueueRef.current = next.catch((error: unknown) => {
+        // The change itself already landed in the document; only the record
+        // of its status failed to save, so the card stays correct for this
+        // session and nothing is worth interrupting the user for.
         console.warn("[word-addin] failed to persist Word edit state", error);
       });
       return persistenceQueueRef.current;
@@ -328,6 +344,8 @@ export function useWordTrackedEdits({
             try {
               passIds = listWordEditAnchorIds(`${cardKey}#`);
             } catch {
+              // No anchor index yet (a chat restored from history). The
+              // fixed-width scan below covers it; nothing has gone wrong.
               passIds = [];
             }
             if (passIds.length === 0) {
@@ -458,10 +476,9 @@ export function useWordTrackedEdits({
           setEditRuntimeState(cardKey, {
             status: "error",
             busy: false,
-            error:
-              error instanceof Error
-                ? error.message
-                : "Word couldn't check whether this change can be applied.",
+            error: userMessage(error, {
+              fallback: "Word couldn't check whether this change can be applied.",
+            }),
           });
         }
       });
@@ -632,6 +649,28 @@ export function useWordTrackedEdits({
             ? `Applied ${appliedCount} of ${matchesFound} occurrences; the rest couldn’t be applied.`
             : undefined;
 
+        // Checked on the LAST pass, before the applied branch: a replace-all
+        // pass Word faulted on may have landed, so earlier passes must not
+        // make the card look safely resolvable. Their handles are released;
+        // the user reviews the whole change in Word.
+        if (last.reason === "unverified") {
+          if (handles.length > 0) await releaseTrackedEdits(handles);
+          setEditRuntimeState(key, {
+            status: "unverified",
+            matches: matchesFound,
+            appliedMatches: appliedCount,
+            busy: false,
+            error: UNVERIFIED_APPLY_MESSAGE,
+          });
+          void updatePersistedEdit(key, {
+            apply_status: "failed",
+            matched_occurrences: matchesFound,
+            applied_occurrences: appliedCount,
+            error_code: "unverified",
+            error_message: UNVERIFIED_APPLY_MESSAGE,
+          });
+          return;
+        }
         if (appliedCount > 0) {
           editHandlesRef.current.set(key, handles);
           if (first.persistentAnchor) {
@@ -675,6 +714,24 @@ export function useWordTrackedEdits({
           });
           return;
         }
+        if (first.reason === "already-applied") {
+          // The document already carries this edit; a replayed frame must not
+          // add a second revision over the first.
+          setEditRuntimeState(key, {
+            status: "already-applied",
+            matches: matchesFound,
+            busy: false,
+            error: ALREADY_APPLIED_MESSAGE,
+          });
+          void updatePersistedEdit(key, {
+            apply_status: "applied",
+            matched_occurrences: matchesFound,
+            applied_occurrences: 0,
+            error_code: "already-applied",
+            error_message: ALREADY_APPLIED_MESSAGE,
+          });
+          return;
+        }
         if (first.reason === "pre-existing-revisions") {
           conflictedRetryRef.current.set(key, {
             edit,
@@ -713,18 +770,16 @@ export function useWordTrackedEdits({
         setEditRuntimeState(key, {
           status: "error",
           busy: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : "Word couldn't apply this change.",
+          error: userMessage(error, {
+            fallback: "Word couldn't apply this change.",
+          }),
         });
         void updatePersistedEdit(key, {
           apply_status: "failed",
           error_code: "word-error",
-          error_message:
-            error instanceof Error
-              ? error.message
-              : "Word couldn't apply this change.",
+          error_message: userMessage(error, {
+            fallback: "Word couldn't apply this change.",
+          }),
         });
       });
       editApplyJobsRef.current.set(key, job);
@@ -815,18 +870,16 @@ export function useWordTrackedEdits({
           setEditRuntimeState(key, {
             status: "error",
             busy: false,
-            error:
-              error instanceof Error
-                ? error.message
-                : "Word couldn't check whether this change can be applied.",
+            error: userMessage(error, {
+              fallback: "Word couldn't check whether this change can be applied.",
+            }),
           });
           void updatePersistedEdit(key, {
             apply_status: "failed",
             error_code: "validation-error",
-            error_message:
-              error instanceof Error
-                ? error.message
-                : "Word couldn't check whether this change can be applied.",
+            error_message: userMessage(error, {
+              fallback: "Word couldn't check whether this change can be applied.",
+            }),
           });
         });
       editApplyJobsRef.current.set(key, job);
@@ -930,6 +983,21 @@ export function useWordTrackedEdits({
               status: "skipped",
               reason: "pre-existing-revisions",
               ...(state.error ? { error: state.error } : {}),
+            };
+          // The document already carries it: tell the model it is applied so
+          // it does not propose the same change a third time.
+          case "already-applied":
+            return {
+              index,
+              status: "applied",
+              matches: state.matches,
+            };
+          case "unverified":
+            return {
+              index,
+              status: "error",
+              reason: "unverified",
+              error: UNVERIFIED_APPLY_MESSAGE,
             };
           case "error":
             return {
@@ -1276,10 +1344,9 @@ export function useWordTrackedEdits({
         setEditRuntimeState(key, {
           status: "error",
           busy: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : "Word couldn't update the tracked change.",
+          error: userMessage(error, {
+            fallback: "Word couldn't update the tracked change.",
+          }),
         });
       } finally {
         resolvingEditKeysRef.current.delete(key);
@@ -1373,10 +1440,9 @@ export function useWordTrackedEdits({
           setEditRuntimeState(entry.key, {
             status: "error",
             busy: false,
-            error:
-              error instanceof Error
-                ? error.message
-                : "Word couldn't update the tracked changes.",
+            error: userMessage(error, {
+              fallback: "Word couldn't update the tracked changes.",
+            }),
           });
         }
       } finally {

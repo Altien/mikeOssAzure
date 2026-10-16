@@ -12,7 +12,9 @@ import type {
 // the web app's type-check graph.
 export type { ApiKeyStatus } from "../types";
 import type { RouterProfileLists } from "@mike/model-catalog";
-import { describeNetworkFailure } from "../lib/networkError";
+import { SERVER_FAILURE_MESSAGE } from "@mike/user-error";
+import { networkFailure } from "../lib/networkError";
+import { sessionHandledError } from "../lib/sessionRefresh";
 import { reportApiFailure, reportNetworkFailure } from "../lib/errorReporting";
 import type { ReasoningLevel } from "../lib/wordChatTypes";
 import {
@@ -38,12 +40,14 @@ interface MikeApiClientConfig {
   baseUrl?: string;
   getAuthHeaders?: AuthHeaderProvider;
   fetchImpl?: typeof fetch;
+  captureOwner?: () => (() => boolean);
 }
 
 interface ResolvedMikeApiClientConfig {
   baseUrl: string;
   getAuthHeaders: AuthHeaderProvider;
   fetchImpl: typeof fetch;
+  captureOwner: () => (() => boolean);
 }
 
 const isDev = process.env.NODE_ENV !== "production";
@@ -51,16 +55,92 @@ const devLog = (...args: Parameters<typeof console.log>): void => {
   if (isDev) console.log(...args);
 };
 
-class MikeApiError extends Error {
+/**
+ * A non-ok HTTP response. Carries everything the UI needs to classify the
+ * failure (`status`, `code`) and everything support needs to find it in the
+ * logs (`requestId`). `message` is only ever safe-to-show text: the
+ * backend's own 4xx `detail`, or a generic line for 5xx.
+ */
+export class MikeApiError extends Error {
   readonly status: number;
   readonly code: string | null;
+  readonly requestId: string | null;
 
-  constructor(args: { message: string; status: number; code?: string | null }) {
+  constructor(args: {
+    message: string;
+    status: number;
+    code?: string | null;
+    requestId?: string | null;
+  }) {
     super(args.message);
     this.name = "MikeApiError";
     this.status = args.status;
     this.code = args.code ?? null;
+    this.requestId = args.requestId ?? null;
   }
+}
+
+export interface ParsedApiError {
+  message: string;
+  code: string | null;
+  requestId: string | null;
+}
+
+/**
+ * Turn a non-ok response body into the fields the UI shows. Pure, so the
+ * rules ("never echo a 5xx body", "keep the backend's 4xx detail") can be
+ * checked without a server.
+ *
+ * `message` falls back to `API error: <status>`, which `describeError`
+ * recognises as "no usable text" and replaces with its own wording.
+ */
+export function parseApiErrorBody(args: {
+  status: number;
+  body: string;
+  requestId?: string | null;
+}): ParsedApiError {
+  const generic = `API error: ${args.status}`;
+  let code: string | null = null;
+  let requestId = args.requestId ?? null;
+  let detail: string | null = null;
+
+  try {
+    const parsed = JSON.parse(args.body) as {
+      detail?: unknown;
+      code?: unknown;
+      request_id?: unknown;
+      error?: { code?: unknown; message?: unknown; request_id?: unknown };
+    };
+    code =
+      typeof parsed.error?.code === "string"
+        ? parsed.error.code
+        : typeof parsed.code === "string"
+          ? parsed.code
+          : null;
+    requestId =
+      (typeof parsed.request_id === "string" ? parsed.request_id : null) ??
+      (typeof parsed.error?.request_id === "string"
+        ? parsed.error.request_id
+        : null) ??
+      requestId;
+    detail =
+      typeof parsed.error?.message === "string" && parsed.error.message
+        ? parsed.error.message
+        : typeof parsed.detail === "string" && parsed.detail
+          ? parsed.detail
+          : null;
+  } catch {
+    // A non-JSON body is a proxy or host page, never user-facing copy.
+    detail = null;
+  }
+
+  return {
+    // 4xx detail is written for users by the backend. A 5xx body (a stack
+    // trace, a proxy's HTML, a provider's complaint) never is: replace it.
+    message: args.status >= 500 ? SERVER_FAILURE_MESSAGE : (detail ?? generic),
+    code,
+    requestId,
+  };
 }
 
 let clientConfig: ResolvedMikeApiClientConfig = {
@@ -69,6 +149,7 @@ let clientConfig: ResolvedMikeApiClientConfig = {
   // A wrapper keeps native fetch detached from the config object. Chromium
   // throws "Illegal invocation" when native fetch is called as a method.
   fetchImpl: (...args: Parameters<typeof fetch>) => fetch(...args),
+  captureOwner: () => () => true,
 };
 
 export function configureMikeApiClient(config: MikeApiClientConfig): void {
@@ -76,11 +157,20 @@ export function configureMikeApiClient(config: MikeApiClientConfig): void {
     baseUrl: config.baseUrl ?? clientConfig.baseUrl,
     getAuthHeaders: config.getAuthHeaders ?? clientConfig.getAuthHeaders,
     fetchImpl: config.fetchImpl ?? clientConfig.fetchImpl,
+    captureOwner: config.captureOwner ?? clientConfig.captureOwner,
   };
 }
 
+function assertRequestOwner(isCurrent: () => boolean): void {
+  if (!isCurrent()) { const error = new Error("Word request owner changed"); error.name = "AbortError"; throw error; }
+}
+
 async function getAuthHeaders(): Promise<Record<string, string>> {
-  return clientConfig.getAuthHeaders();
+  const isCurrent = clientConfig.captureOwner();
+  assertRequestOwner(isCurrent);
+  const headers = await clientConfig.getAuthHeaders();
+  assertRequestOwner(isCurrent);
+  return headers;
 }
 
 function apiUrl(path: string): string {
@@ -95,8 +185,12 @@ async function sendRequest(
   url: string,
   init: RequestInit & { method?: string },
 ): Promise<Response> {
+  const isCurrent = clientConfig.captureOwner();
+  assertRequestOwner(isCurrent);
   try {
-    return await clientConfig.fetchImpl(url, init);
+    const response = await clientConfig.fetchImpl(url, init);
+    assertRequestOwner(isCurrent);
+    return response;
   } catch (error) {
     // Preserve cancellation identity for callers and avoid reporting normal
     // user stops, including signals aborted with a custom reason.
@@ -110,96 +204,63 @@ async function sendRequest(
       throw error;
     }
     reportNetworkFailure(error, { method: init.method ?? "GET", url });
-    throw new Error(
-      describeNetworkFailure(error, {
-        method: init.method ?? "GET",
-        url,
-      }),
-      { cause: error },
-    );
+    throw networkFailure(error, { method: init.method ?? "GET", url });
   }
 }
 
-async function toApiError(
+/**
+ * Build the error for a non-ok response. Exported so every hand-rolled
+ * fetch in the add-in (auth, word-chat) produces the same shape as the
+ * typed client instead of a bespoke `new Error(status + body)`.
+ */
+export async function responseError(
   response: Response,
-  path: string,
+  path?: string,
   method = "GET",
 ): Promise<MikeApiError> {
-  const text = await response.text();
-  try {
-    const parsed = JSON.parse(text) as {
-      detail?: unknown;
-      code?: unknown;
-      request_id?: unknown;
-      error?: { code?: unknown; message?: unknown };
-    };
-    const code =
-      typeof parsed.error?.code === "string"
-        ? parsed.error.code
-        : typeof parsed.code === "string"
-          ? parsed.code
-          : null;
-    const message =
-      typeof parsed.error?.message === "string" && parsed.error.message
-        ? parsed.error.message
-        : typeof parsed.detail === "string" && parsed.detail
-          ? parsed.detail
-          : `API error: ${response.status}`;
-    devLog("[mike-api] non-ok response", {
-      path,
+  const text = await response.text().catch(() => "");
+  const parsed = parseApiErrorBody({
+    status: response.status,
+    body: text,
+    requestId: response.headers.get("x-request-id"),
+  });
+  devLog("[mike-api] non-ok response", {
+    path: path ?? response.url,
+    status: response.status,
+    code: parsed.code,
+    requestId: parsed.requestId,
+    bodyPreview: text.slice(0, 200),
+  });
+  // A 401 the session layer already handled carries its own sentence: the
+  // session toast or login gate said what happened, and the body's "Not
+  // authenticated" would only contradict it.
+  const handled = sessionHandledError(response);
+  const apiError = new MikeApiError({
+    status: response.status,
+    code: handled?.code ?? parsed.code,
+    requestId: parsed.requestId,
+    message: handled?.message ?? parsed.message,
+  });
+  // A 5xx is the server's fault and worth an event; 4xx are user-facing
+  // outcomes (validation, permission) and stay out of Sentry.
+  if (response.status >= 500) {
+    reportApiFailure({
+      path: path ?? response.url,
+      method,
       status: response.status,
-      code,
-      detail: parsed.detail,
+      code: parsed.code,
+      requestId: parsed.requestId,
+      error: apiError,
     });
-    const apiError = new MikeApiError({
-      status: response.status,
-      code,
-      message,
-    });
-    if (response.status >= 500) {
-      reportApiFailure({
-        path,
-        method,
-        status: response.status,
-        code,
-        requestId:
-          typeof parsed.request_id === "string"
-            ? parsed.request_id
-            : response.headers.get("x-request-id"),
-        error: apiError,
-      });
-    }
-    return apiError;
-  } catch {
-    devLog("[mike-api] non-ok non-json response", {
-      path,
-      status: response.status,
-      bodyPreview: text.slice(0, 200),
-    });
-    const apiError = new MikeApiError({
-      status: response.status,
-      // A body that is not our JSON came from something in front of the
-      // API (a proxy's HTML error page, a load balancer's plain text). It
-      // is not written for users, so it never becomes the message; the
-      // devLog above keeps a preview for debugging. describeError turns
-      // this placeholder into the sentence for the status.
-      message: `API error: ${response.status}`,
-    });
-    if (response.status >= 500) {
-      reportApiFailure({
-        path,
-        method,
-        status: response.status,
-        requestId: response.headers.get("x-request-id"),
-        error: apiError,
-      });
-    }
-    return apiError;
   }
+  return apiError;
 }
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const isCurrent = clientConfig.captureOwner();
+  assertRequestOwner(isCurrent);
   const authHeaders = await getAuthHeaders();
+  assertRequestOwner(isCurrent);
   const { headers: initHeaders, ...restInit } = init ?? {};
   const response = await sendRequest(apiUrl(path), {
     cache: "no-store",
@@ -212,7 +273,7 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
-    throw await toApiError(response, path, restInit.method ?? "GET");
+    throw await responseError(response, path, restInit.method ?? "GET");
   }
   if (
     response.status === 204 ||
@@ -220,7 +281,9 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   ) {
     return undefined as T;
   }
-  return (await response.json()) as T;
+  const result = (await response.json()) as T;
+  assertRequestOwner(isCurrent);
+  return result;
 }
 
 /**
@@ -431,8 +494,11 @@ export async function streamWordChat(payload: {
   client_tools?: boolean;
   signal?: AbortSignal;
 }): Promise<Response> {
+  const isCurrent = clientConfig.captureOwner();
+  assertRequestOwner(isCurrent);
   const { signal, ...body } = payload;
   const authHeaders = await getAuthHeaders();
+  assertRequestOwner(isCurrent);
   return sendRequest(apiUrl("/word-chat"), {
     method: "POST",
     headers: {
@@ -478,6 +544,10 @@ export async function streamWordChatTurn(payload: {
   from?: number;
   signal?: AbortSignal;
 }): Promise<Response> {
+  const isCurrent = clientConfig.captureOwner();
+  assertRequestOwner(isCurrent);
+  const authHeaders = await getAuthHeaders();
+  assertRequestOwner(isCurrent);
   const params = new URLSearchParams({
     document_id: payload.documentId,
     from: String(payload.from ?? 1),
@@ -489,7 +559,7 @@ export async function streamWordChatTurn(payload: {
     ),
     {
       method: "GET",
-      headers: { Accept: "text/event-stream", ...(await getAuthHeaders()) },
+      headers: { Accept: "text/event-stream", ...authHeaders },
       signal: payload.signal,
     },
   );

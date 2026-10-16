@@ -206,6 +206,7 @@ module.exports = async (_env, options) => {
         "@mike/secure-uuid": frontendShared("lib", "secureUuid.ts"),
         // Error presentation is shared across the web app and add-in.
         "@mike/toast-store": frontendShared("lib", "toastStore.ts"),
+        "@mike/error-notifier": frontendShared("lib", "errorNotifier.ts"),
         "@mike/toast-ui": frontendSharedUi("ToastUI.tsx"),
         "@mike/user-error": frontendShared("lib", "userError.ts"),
         // One model catalog (routers, picker rows, key-based availability)

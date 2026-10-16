@@ -116,6 +116,13 @@ export function networkMessage(origin?: string): string {
     return "Mike couldn't reach the server. Check your connection and try again.";
 }
 
+/**
+ * What a server failure says. Exported so the add-in's API client, which
+ * replaces every 5xx body with it, says the same sentence.
+ */
+export const SERVER_FAILURE_MESSAGE =
+    "Something went wrong on our side. Try again.";
+
 const KIND_MESSAGES: Record<UserErrorKind, string> = {
     offline: "Your device is offline. Check your connection and try again.",
     network: networkMessage(),
@@ -130,7 +137,7 @@ const KIND_MESSAGES: Record<UserErrorKind, string> = {
     rate_limited: "Too many requests. Wait a moment and try again.",
     unavailable:
         "Mike is temporarily unavailable. Try again in a moment.",
-    server: "Something went wrong on our side. Try again.",
+    server: SERVER_FAILURE_MESSAGE,
     unknown: GENERIC_FAILURE_MESSAGE,
 };
 
@@ -386,6 +393,33 @@ export interface SupportMailtoContext {
 }
 
 /**
+ * The lines support uses to find a failure in the logs: request id, code,
+ * status, category, page (query and hash stripped), client, time and user
+ * agent. Shared by the support email and the add-in's clipboard block so the
+ * two can never disagree on what is sent. Contains no credentials, no URL
+ * query, and nothing the user typed.
+ */
+export function supportDetailLines(
+    error: Pick<UserFacingError, "kind" | "status" | "code" | "requestId">,
+    context: SupportMailtoContext & { userAgent?: string } = {},
+): string[] {
+    const when = context.when ?? new Date();
+    const userAgent =
+        context.userAgent ??
+        (typeof navigator !== "undefined" ? navigator.userAgent : undefined);
+    const lines: string[] = [];
+    if (error.requestId) lines.push(`Request ID: ${error.requestId}`);
+    if (error.code) lines.push(`Error code: ${error.code}`);
+    if (error.status !== null) lines.push(`HTTP status: ${error.status}`);
+    lines.push(`Category: ${error.kind}`);
+    if (context.page) lines.push(`Page: ${supportPageContext(context.page)}`);
+    if (context.product) lines.push(`Client: ${context.product}`);
+    lines.push(`Time: ${when.toISOString()}`);
+    if (userAgent) lines.push(`Browser: ${userAgent}`);
+    return lines;
+}
+
+/**
  * Build a `mailto:` link to support that carries everything needed to
  * find the failure in the logs. Fields are omitted when unknown so the
  * draft never contains "null".
@@ -409,16 +443,7 @@ export function buildSupportMailto(
     if (context.note) lines.push(`Details: ${context.note}`);
     lines.push("");
     lines.push("--- Details for support (please keep) ---");
-    if (error.requestId) lines.push(`Request ID: ${error.requestId}`);
-    if (error.code) lines.push(`Error code: ${error.code}`);
-    if (error.status !== null) lines.push(`HTTP status: ${error.status}`);
-    lines.push(`Category: ${error.kind}`);
-    if (context.page) lines.push(`Page: ${supportPageContext(context.page)}`);
-    if (context.product) lines.push(`Client: ${context.product}`);
-    lines.push(`Time: ${when.toISOString()}`);
-    if (typeof navigator !== "undefined" && navigator.userAgent) {
-        lines.push(`Browser: ${navigator.userAgent}`);
-    }
+    lines.push(...supportDetailLines(error, { ...context, when }));
     lines.push("", "Thanks,");
 
     const subject = `Mike support: ${error.title}`;
