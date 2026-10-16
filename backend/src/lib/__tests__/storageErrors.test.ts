@@ -52,6 +52,8 @@ beforeAll(async () => {
     getSignedUrl,
     uploadFileFromPath,
   } = await import("../storage.js"));
+  // Dev drift: match the awaited API/worker credential bootstrap.
+  await (await import("../storage.js")).initStorage();
 });
 
 beforeEach(() => {

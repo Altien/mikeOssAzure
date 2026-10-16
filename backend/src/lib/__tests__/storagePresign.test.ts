@@ -21,7 +21,10 @@ async function loadStorage(publicEndpoint?: string) {
   } else {
     process.env.R2_PUBLIC_ENDPOINT_URL = publicEndpoint;
   }
-  return import("../storage.js");
+  const storage = await import("../storage.js");
+  // Dev drift: storage credentials are resolved asynchronously at boot.
+  await storage.initStorage();
+  return storage;
 }
 
 describe("getSignedUrl presign endpoint split", () => {

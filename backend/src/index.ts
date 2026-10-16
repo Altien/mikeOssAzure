@@ -7,6 +7,7 @@ import { installProcessGuards } from "./lib/processGuards";
 installProcessGuards();
 import { buildApp } from "./app";
 import { initDownloadSigningSecret } from "./lib/downloadTokens";
+import { initStorage } from "./lib/storage";
 import { initManifestSigningKey, manifestPublicKey } from "./lib/manifestSigning";
 import { checkSchemaVersion } from "./lib/schemaCheck";
 import { initServerSessionKeys } from "./lib/serverSession";
@@ -91,6 +92,7 @@ async function start(): Promise<void> {
     return delivered;
   });
   await initDownloadSigningSecret();
+  await initStorage();
   await initManifestSigningKey();
   const signingKey = manifestPublicKey();
   if (signingKey) console.log(`Export manifests signed with key ${signingKey.key_id}`);

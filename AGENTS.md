@@ -64,6 +64,30 @@ This project is based on an upstream open-source repository. Prefer the smallest
 - When removing Supabase, AWS, or other upstream dependencies, do it incrementally and preserve upstream-shaped interfaces where practical.
 - Document intentional divergence from upstream so future merges can evaluate conflicts quickly.
 
+## Storage Adapter Boundary
+
+`backend/src/lib/storage.ts` is the policy facade for the upstream-shaped
+`storage/adapter.ts` seam. Transports live only under `lib/storage/`.
+API, worker and storage CLI bootstraps await `initStorage()` before serving or
+claiming work; this resolves credentials through the existing Key Vault-first
+boundary. Desktop uses the same API/worker bootstrap with the filesystem driver.
+`setStorageAdapter()` supports explicit boot-time injection and updates the live
+`storageEnabled` binding. Callers continue importing only the facade.
+
+Mutations (upload, copy, delete, part staging/sealing, streamed write and discard)
+MUST call `requireStorageConfig()` before adapter delegation. Never turn a missing
+adapter into optional success: that can orphan DB rows or finalize durable cleanup
+without deleting bytes (`efdb687` / `2dbce7c` precedent). Signing/download reads
+may return null and list reads may return empty; HEAD retains an explicit
+configuration check so misconfiguration is not evidence a staging object is gone.
+
+Copy must forward the optional source ETag. Azure retains authenticated backend
+block uploads and download proxy fallback (no browser SAS); filesystem retains
+bounded atomic signed PUTs and `/api/download/signed` capabilities. SDK errors
+are translated at the facade, and transport-specific missing-object handling
+must not swallow bucket/container/proxy/auth failures. Preserve claim, actor and
+workspace fences at callers when changing the transport.
+
 ## Environment Variables and Secrets
 
 ### `.env` files must never contain real secrets in committed form

@@ -17,6 +17,8 @@ beforeAll(async () => {
   process.env.R2_BUCKET_NAME = "mike";
   vi.resetModules();
   ({ getSignedUploadUrl, getSignedUrl } = await import("../storage.js"));
+  // Dev drift: match the awaited API/worker credential bootstrap.
+  await (await import("../storage.js")).initStorage();
 });
 
 describe("signed download URLs", () => {

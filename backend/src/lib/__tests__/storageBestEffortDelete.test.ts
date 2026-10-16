@@ -49,6 +49,8 @@ beforeAll(async () => {
   process.env.R2_SECRET_ACCESS_KEY = "test-secret-key";
   vi.resetModules();
   storage = await import("../storage.js");
+  // Dev drift: match the awaited API/worker credential bootstrap.
+  await storage.initStorage();
 });
 
 beforeEach(() => {

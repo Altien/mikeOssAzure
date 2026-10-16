@@ -27,6 +27,7 @@ import { uploadProcessingConfiguration } from "./lib/runtimeConfig";
 import { createServerSupabase } from "./lib/supabase";
 import { initServerSessionKeys } from "./lib/serverSession";
 import { initDownloadSigningSecret } from "./lib/downloadTokens";
+import { initStorage } from "./lib/storage";
 import { initManifestSigningKey, manifestPublicKey } from "./lib/manifestSigning";
 import { enforceDocumentLifecycleMigration } from "./lib/dbq/lifecycleGuard";
 import { reportError } from "./lib/observability/sentry";
@@ -93,6 +94,7 @@ export async function startAllWorkers(): Promise<void> {
     // warm-up cannot initialize this process's signing or session state.
     await initServerSessionKeys();
     await initDownloadSigningSecret();
+    await initStorage();
     await initManifestSigningKey();
     manifestPublicKey();
     const db = createServerSupabase();

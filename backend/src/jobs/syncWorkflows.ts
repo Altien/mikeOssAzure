@@ -1,9 +1,13 @@
+import "dotenv/config";
+import "../telemetry";
+import { initStorage } from "../lib/storage";
 import { createServerSupabase } from "../lib/supabase";
 import { flushSentry, reportError } from "../lib/observability/sentry";
 import { syncWorkflowCatalog } from "../lib/workflowCatalogSync";
 import { resolveProviderSecret } from "../lib/envSecrets";
 
 async function main() {
+  await initStorage();
   const githubToken = await resolveProviderSecret("mike-workflows-github-token");
   const result = await syncWorkflowCatalog(
     createServerSupabase(),
