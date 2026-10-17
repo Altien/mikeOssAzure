@@ -1103,6 +1103,7 @@ export function AssistantChatColumn({
                                                         content={msg.content ?? ""}
                                                         files={msg.files}
                                                         workflow={msg.workflow}
+                                                        playbook={msg.playbook}
                                                         onWorkflowClick={(wf) => {
                                                             setWorkflowModalInitialId(
                                                                 wf.id,

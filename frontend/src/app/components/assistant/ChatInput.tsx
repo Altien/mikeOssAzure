@@ -13,13 +13,14 @@ import {
 } from "react";
 import {
     ArrowRight,
-    Check,
+    ClipboardCheck,
     Loader2,
     Square,
     Waypoints,
     X,
 } from "lucide-react";
 import { AddDocButton } from "./AddDocButton";
+import { PlaybookPickerModal } from "../playbooks/PlaybookPickerModal";
 import { UploadOverlay } from "./UploadOverlay";
 import { COMPOSER_SEND_BUTTON_CLASS } from "@/shared/ui/ComposerSendButtonUI.styles";
 import { ExcerptModalUI } from "@/shared/ui/ExcerptModalUI";
@@ -244,6 +245,15 @@ function ChatInputForChatImpl(
     const [docSelectorInitialTab, setDocSelectorInitialTab] =
         useState<DirectoryTab>("files");
     const [workflowModalOpen, setWorkflowModalOpen] = useState(false);
+    // A playbook picked to run on the attached documents, like a workflow.
+    const [selectedPlaybook, setSelectedPlaybook] = useState<{
+        id: string;
+        title: string;
+    } | null>(null);
+    const [playbookModalOpen, setPlaybookModalOpen] = useState(false);
+    const [playbookModalInitialId, setPlaybookModalInitialId] = useState<
+        string | undefined
+    >(undefined);
     // Set when the modal is opened from a pill, so it lands on that workflow
     // instead of the picker's default listing.
     const [workflowModalInitialId, setWorkflowModalInitialId] = useState<
@@ -628,6 +638,7 @@ function ChatInputForChatImpl(
         }));
         setAttachedDocs([]);
         setSelectedWorkflow(null);
+        setSelectedPlaybook(null);
         setExcerpts([]);
 
         onSubmit?.({
@@ -635,6 +646,7 @@ function ChatInputForChatImpl(
             content: serializeExcerpts(excerpts, query),
             files: files.length > 0 ? files : undefined,
             workflow: workflow ?? undefined,
+            playbook: selectedPlaybook ?? undefined,
             model,
             reasoning: reasoningLevel,
         });
@@ -727,6 +739,7 @@ function ChatInputForChatImpl(
                 >
                     {/* Attached chips */}
                     {(selectedWorkflow ||
+                        selectedPlaybook ||
                         attachedDocs.length > 0 ||
                         excerpts.length > 0) && (
                         <div className="flex flex-wrap gap-1.5 px-2 pt-2">
@@ -753,6 +766,34 @@ function ChatInputForChatImpl(
                                         onClick={() =>
                                             setSelectedWorkflow(null)
                                         }
+                                        className="rounded-full p-0.5 ml-0.5 text-white/60 hover:text-white hover:bg-white/20 transition-colors"
+                                    >
+                                        <X className="h-2.5 w-2.5" />
+                                    </button>
+                                </div>
+                            )}
+                            {selectedPlaybook && (
+                                <div className="inline-flex items-center gap-1 pl-2.5 pr-1 py-0.5 rounded-full text-xs bg-slate-700 text-white border border-white/20 shadow">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setPlaybookModalInitialId(
+                                                selectedPlaybook.id,
+                                            );
+                                            setPlaybookModalOpen(true);
+                                        }}
+                                        aria-label={`Open playbook ${selectedPlaybook.title}`}
+                                        className="inline-flex min-w-0 items-center gap-1 rounded-full transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                                    >
+                                        <ClipboardCheck className="h-2.5 w-2.5 shrink-0" />
+                                        <span className="max-w-[140px] truncate">
+                                            {selectedPlaybook.title}
+                                        </span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        aria-label={`Remove playbook ${selectedPlaybook.title}`}
+                                        onClick={() => setSelectedPlaybook(null)}
                                         className="rounded-full p-0.5 ml-0.5 text-white/60 hover:text-white hover:bg-white/20 transition-colors"
                                     >
                                         <X className="h-2.5 w-2.5" />
@@ -886,42 +927,27 @@ function ChatInputForChatImpl(
                                         setDocSelectorInitialTab("files");
                                         setDocSelectorOpen(true);
                                     }}
-                                    selectedDocIds={attachedDocs.map(
-                                        (d) => d.id,
-                                    )}
-                                    hideLabel={compactControls}
+                                    onWorkflows={
+                                        hideWorkflowButton
+                                            ? undefined
+                                            : () => {
+                                                  setWorkflowModalInitialId(
+                                                      undefined,
+                                                  );
+                                                  setWorkflowModalOpen(true);
+                                              }
+                                    }
+                                    onPlaybooks={
+                                        hideWorkflowButton
+                                            ? undefined
+                                            : () => {
+                                                  setPlaybookModalInitialId(
+                                                      undefined,
+                                                  );
+                                                  setPlaybookModalOpen(true);
+                                              }
+                                    }
                                 />
-                            )}
-                            {!hideWorkflowButton && composerOpen && (
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setWorkflowModalInitialId(undefined);
-                                        setWorkflowModalOpen(true);
-                                    }}
-                                    aria-label="Open workflows"
-                                    className={cn(
-                                        "flex h-7.5 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-sm transition-colors",
-                                        selectedWorkflow
-                                            ? "text-blue-600 hover:text-blue-700"
-                                            : "text-gray-400 hover:text-gray-700",
-                                    )}
-                                >
-                                    {selectedWorkflow ? (
-                                        <Check className="h-3.5 w-3.5" />
-                                    ) : (
-                                        <Waypoints className="h-3.5 w-3.5" />
-                                    )}
-                                    <span
-                                        className={
-                                            compactControls
-                                                ? "hidden"
-                                                : "hidden sm:inline"
-                                        }
-                                    >
-                                        Workflows
-                                    </span>
-                                </button>
                             )}
                         </div>
 
@@ -1025,6 +1051,22 @@ function ChatInputForChatImpl(
                 projectName={projectName}
                 projectCmNumber={projectCmNumber}
                 initialWorkflowId={workflowModalInitialId}
+            />
+            <PlaybookPickerModal
+                open={playbookModalOpen}
+                onClose={() => setPlaybookModalOpen(false)}
+                onSelect={(playbook) =>
+                    setSelectedPlaybook({
+                        id: playbook.id,
+                        title: playbook.name || "Untitled playbook",
+                    })
+                }
+                breadcrumbs={
+                    projectName
+                        ? ["Projects", projectName, "Assistant", "Add playbook"]
+                        : ["Assistant", "Add playbook"]
+                }
+                initialPlaybookId={playbookModalInitialId}
             />
             <ApiKeyMissingPopup
                 open={apiKeyModalProvider !== null}

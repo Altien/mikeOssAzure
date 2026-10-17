@@ -1,6 +1,12 @@
 import type { DocumentSearchEvent } from "@mike/contracts";
 import { internalFailure } from "../../../../lib/serviceResult";
 import { canUseWorkflowInWorkspace } from "../../../../lib/workflowWorkspace";
+import { safeError } from "../../../../lib/safeError";
+import {
+  listPlaybooks,
+  PlaybookRequestError,
+  reviewWithPlaybook,
+} from "../../../playbooks/playbooks.service";
 import { catalogKeyFromWorkflowId } from "../../../../lib/workflowCatalog";
 import { teamOrgIdOf } from "../../../../lib/personalOrgs";
 import {
@@ -379,6 +385,8 @@ export async function runToolCalls(
      * done in an organization's workspace stays in that organization.
      */
     orgId?: string | null;
+    /** The conversation's model, used by run_playbook for its review. */
+    model?: string;
   } = {},
 ): Promise<{
   toolResults: unknown[];
@@ -969,6 +977,143 @@ export async function runToolCalls(
         tool_call_id: tc.id,
         content: parts.join("\n\n"),
       });
+    } else if (tc.function.name === "list_playbooks") {
+      try {
+        const workspace = (await teamOrgIdOf(db, options.orgId)) ?? "personal";
+        const playbooks = await listPlaybooks(userId, db, {
+          workspace,
+          email: options.userEmail,
+        });
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify(
+            playbooks.map((playbook) => ({
+              id: playbook.id,
+              name: playbook.name,
+              description: playbook.description,
+              document_types: playbook.content.documentTypes,
+              represented_party: playbook.content.representedParty,
+            })),
+          ),
+        });
+      } catch (error) {
+        console.error("[run_tools] list_playbooks failed", safeError(error));
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({ error: "Playbooks could not be listed." }),
+        });
+      }
+    } else if (tc.function.name === "run_playbook") {
+      const rawDocId = String(args.doc_id ?? "");
+      const docId = resolveDocLabel(rawDocId, docStore, docIndex) ?? rawDocId;
+      const docInfo = docStore.get(docId);
+      const indexed = docIndex?.[docId];
+      const fail = (error: string) =>
+        toolResults.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({ error }),
+        });
+      if (!docInfo || !indexed) {
+        fail(`Document '${rawDocId}' not found in this chat's attachments.`);
+      } else if (!options.model) {
+        fail("No model is selected for the review.");
+      } else {
+        try {
+          const isDocx = docInfo.file_type === "docx";
+          // A Word document is read from its file by the review itself; other
+          // formats are reviewed from their extracted text.
+          const documentText = isDocx
+            ? undefined
+            : await readDocumentContent(docId, docStore, write, docIndex, db, {
+                emitEvents: false,
+              });
+          const run = await reviewWithPlaybook({
+            userId,
+            userEmail: options.userEmail,
+            playbookId: String(args.playbook_id ?? ""),
+            documentId: indexed.document_id,
+            documentText,
+            documentName: docInfo.filename,
+            instructions:
+              typeof args.instructions === "string" ? args.instructions : undefined,
+            model: options.model,
+            reviewMode: args.review_mode === "permissive" ? "permissive" : "strict",
+            db,
+          });
+          const annotations = run.findings.flatMap((finding) =>
+            finding.edit ? [finding.edit] : [],
+          );
+          if (
+            run.editedVersionId &&
+            run.editedVersionNumber !== null &&
+            annotations.length
+          ) {
+            // The same shape edit_document streams, so the changes render as
+            // Accept/Reject cards, and later reads in this turn see them.
+            // A later edit_document in this turn starts a new version on top
+            // of the review's changes rather than rewriting an earlier one.
+            turnEditState?.delete(indexed.document_id);
+            clearTurnReadsForDocument(turnReadState, indexed.document_id);
+            if (docIndex?.[docId]) {
+              docIndex[docId] = {
+                ...docIndex[docId],
+                version_id: run.editedVersionId,
+                version_number: run.editedVersionNumber,
+              };
+            }
+            const currentDocStore = docStore.get(docId);
+            if (currentDocStore)
+              docStore.set(docId, { ...currentDocStore, search_source: undefined });
+            const payload: DocEditedResult = {
+              filename: docInfo.filename,
+              document_id: indexed.document_id,
+              version_id: run.editedVersionId,
+              version_number: run.editedVersionNumber,
+              download_url: run.editedDownloadUrl ?? "",
+              annotations,
+            };
+            docsEdited.push(payload);
+            write(
+              `data: ${JSON.stringify({ type: "doc_edited_start", filename: docInfo.filename })}\n\n`,
+            );
+            write(`data: ${JSON.stringify({ type: "doc_edited", ...payload })}\n\n`);
+          }
+          toolResults.push({
+            role: "tool",
+            tool_call_id: tc.id,
+            content: JSON.stringify({
+              run_id: run.id,
+              doc_id: docId,
+              summary: run.summary,
+              tracked_changes: annotations.length,
+              findings: run.findings.map((finding) => ({
+                rule: finding.ruleName,
+                status: finding.status,
+                location: finding.location,
+                analysis: finding.analysis,
+                quote: finding.quote,
+                suggested_text: finding.suggestedText,
+                has_tracked_change: !!finding.edit,
+              })),
+              next_required_action: [
+                "Summarise the findings for the user, most serious first, grouped by status.",
+                annotations.length
+                  ? "Tracked changes are already shown as Accept/Reject cards; do not repeat their suggested language in full."
+                  : "No tracked changes were made; give the suggested language where it matters.",
+              ].join(" "),
+            }),
+          });
+        } catch (error) {
+          if (error instanceof PlaybookRequestError) fail(error.message);
+          else {
+            console.error("[run_tools] run_playbook failed", safeError(error));
+            fail("The playbook review failed. Try again.");
+          }
+        }
+      }
     } else if (tc.function.name === "list_workflows") {
       const list = workflowStore
         ? Array.from(workflowStore.entries())

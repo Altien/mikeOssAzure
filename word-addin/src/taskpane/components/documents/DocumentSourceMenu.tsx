@@ -8,7 +8,7 @@ import {
   DropdownTrigger,
 } from "@mike/dropdown-ui";
 import desktopIcon from "@icons/desktop.svg";
-import earthIcon from "@icons/earth.svg";
+import cloudIcon from "@icons/cloud.svg";
 
 interface DocumentSourceMenuProps {
   attachedCount: number;
@@ -64,7 +64,7 @@ export function DocumentSourceMenu({
         </DropdownItem>
         <DropdownItem onSelect={onWebFiles}>
           <img
-            src={earthIcon}
+            src={cloudIcon}
             alt=""
             aria-hidden="true"
             draggable={false}

@@ -32,6 +32,7 @@ vi.mock("../../../../../lib/downloadTokens", () => ({
     `download:${filename}:${path}`,
 }));
 import { runEditDocument } from "../documentOps";
+import { applyTrackedEditsToDocument } from "../../../../documents/documents.service";
 const change = {
   id: "change",
   delId: "del",
@@ -194,6 +195,21 @@ describe("assistant document-edit authorization", () => {
 });
 
 describe("assistant document-edit lifecycle", () => {
+  it.each([
+    { id: "older", storagePath: "current" },
+    { id: "active", storagePath: "replaced-path" },
+  ])("refuses a review of stale bytes before editing or uploading (%j)", async (expectedVersion) => {
+    const fake = scriptedDb([{ table: "documents", data: { id: "doc" } }]);
+    const result = await applyTrackedEditsToDocument({
+      db: fake.db, documentId: "doc", userId: "actor", edits: [], expectedVersion,
+    });
+    expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/document changed/i) });
+    expect(mocks.downloadFile).not.toHaveBeenCalled();
+    expect(mocks.apply).not.toHaveBeenCalled();
+    expect(mocks.uploadFile).not.toHaveBeenCalled();
+    fake.done();
+  });
+
   it("saves edit rows before activation and returns annotations with the allocated version and inherited filename", async () => {
     const fake = newVersionDb();
     const result = await run(fake.db);

@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { Waypoints } from "lucide-react";
+import Link from "next/link";
+import { ClipboardCheck, Waypoints } from "lucide-react";
+import { playbookPath } from "../playbooks/PlaybookTable";
 import { FileTypeIcon } from "../shared/FileTypeIcon";
 import type { MessageFile } from "../shared/types";
 import { LIQUID_GLASS_FLAT_CLASS } from "@/shared/ui/LiquidGlassUI";
@@ -16,6 +18,8 @@ interface Props {
     content: string;
     files?: MessageFile[];
     workflow?: { id: string; title: string };
+    /** The playbook this message ran; its pill links to the playbook. */
+    playbook?: { id: string; title: string };
     onFileClick?: (file: MessageFile) => void;
     /** Reveals the workflow this message ran, in the workflow modal. */
     onWorkflowClick?: (workflow: { id: string; title: string }) => void;
@@ -25,6 +29,7 @@ export function UserMessage({
     content,
     files,
     workflow,
+    playbook,
     onFileClick,
     onWorkflowClick,
 }: Props) {
@@ -44,7 +49,7 @@ export function UserMessage({
                         {body}
                     </p>
                 )}
-                {(workflow || hasFiles || excerpts.length > 0) && (
+                {(workflow || playbook || hasFiles || excerpts.length > 0) && (
                     <div
                         className={`flex flex-wrap justify-end gap-1.5 ${body ? "mt-3" : ""}`}
                     >
@@ -78,6 +83,18 @@ export function UserMessage({
                                     </>
                                 )}
                             </div>
+                        )}
+                        {playbook && (
+                            <Link
+                                href={playbookPath(playbook.id)}
+                                aria-label={`Open playbook ${playbook.title}`}
+                                className="inline-flex min-w-0 items-center gap-1 rounded-full border border-slate-700 bg-slate-700 py-0.5 pl-2 pr-2.5 text-xs text-white shadow transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                            >
+                                <ClipboardCheck className="h-2.5 w-2.5 shrink-0" />
+                                <span className="max-w-[140px] truncate">
+                                    {playbook.title}
+                                </span>
+                            </Link>
                         )}
                         {hasFiles &&
                             files.map((f, i) => {

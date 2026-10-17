@@ -26,6 +26,7 @@ import {
   TOOL_ERROR_MESSAGE,
 } from "./types";
 import {
+  PLAYBOOK_TOOLS,
   TOOLS,
   WORKFLOW_TOOLS,
   isDocumentMutatingTool,
@@ -329,7 +330,7 @@ export async function runLLMStream(params: {
   const conversationTools = includeAskInputs
     ? TOOLS
     : TOOLS.filter((tool) => tool.function.name !== "ask_inputs");
-  const baseTools = [...conversationTools, ...researchTools, ...EXTERNAL_SOURCE_TOOLS, ...WORKFLOW_TOOLS];
+  const baseTools = [...conversationTools, ...researchTools, ...EXTERNAL_SOURCE_TOOLS, ...WORKFLOW_TOOLS, ...PLAYBOOK_TOOLS];
   const advertisedTools = [
     ...baseTools,
     ...mcpTools,
@@ -707,6 +708,7 @@ export async function runLLMStream(params: {
             connectorApprovals: connectorApprovals && includeAskInputs,
             userEmail,
             orgId,
+            model: selectedModel,
           },
         );
         throwIfAborted(signal);

@@ -392,13 +392,19 @@ describe("tabular.routes", () => {
             expect(supabaseState.rpcCalls[0].args).not.toHaveProperty("p_owner_user_id");
         });
 
-        it("skips the creator lookup for the cross-project list", async () => {
+        it("labels the cross-project list's reviews with each creator", async () => {
             supabaseState.rpc = { data: [{ id: "r1", user_id: "u2" }], error: null };
+            supabaseState.tables.user_profiles = {
+                data: [{ user_id: "u2", display_name: "Ada", profile_photo: null }],
+                error: null,
+            };
             const res = await request(app)
                 .get("/tabular-review")
                 .set(...AUTH);
             expect(res.status).toBe(200);
-            expect(supabaseState.operations).not.toContain("from:user_profiles");
+            expect(res.body).toEqual([
+                { id: "r1", user_id: "u2", owner_display_name: "Ada", owner_profile_photo: null },
+            ]);
         });
 
         it("returns 500 with detail when the RPC errors", async () => {

@@ -27,7 +27,8 @@ function hasImplicitOwnerAccess(
 
 export type OrgResourceKind =
     | "project"
-    | "workflow";
+    | "workflow"
+    | "playbook";
 
 export type OrgAccessOverrideRole = ProjectRole | "deny";
 export type OrgAssignableRole = ProjectRole | "deny";
@@ -40,6 +41,10 @@ const CONFIG = {
     workflow: {
         table: "workflow_org_access_overrides",
         resourceColumn: "workflow_id",
+    },
+    playbook: {
+        table: "playbook_org_access_overrides",
+        resourceColumn: "playbook_id",
     },
 } as const;
 
@@ -200,6 +205,16 @@ export async function listOrgAccessPeople(
         creatorId: string | null;
         /** The item's visibility; anything but "organization" is private. */
         visibility: unknown;
+        /**
+         * What every member holds on a public item without an override.
+         * Projects and workflows give Editor; playbooks give Viewer.
+         */
+        publicRole?: "editor" | "viewer";
+        /**
+         * Whether the organization's owners take over a private item with no
+         * Owner left. Projects and workflows do; playbooks do not.
+         */
+        ownerlessTakeover?: boolean;
     },
 ): Promise<
     | { ok: true; people: OrgAccessPerson[] }
@@ -248,6 +263,7 @@ export async function listOrgAccessPeople(
     // nobody else was made an Owner. Both lists are complete here, so this is
     // the same answer the database's *_is_ownerless functions give.
     const ownerless =
+        (params.ownerlessTakeover ?? true) &&
         !memberRows.some(
             (membership) => membership.user_id === params.creatorId,
         ) && !listed.overrides.some((override) => override.role === "owner");
@@ -268,7 +284,9 @@ export async function listOrgAccessPeople(
         const role: OrgAssignableRole | null = implicitOwner
             ? "owner"
             : (override ??
-              (params.visibility === "organization" ? "editor" : null));
+              (params.visibility === "organization"
+                  ? (params.publicRole ?? "editor")
+                  : null));
         if (!role) continue;
         people.push({
             user_id: userId,

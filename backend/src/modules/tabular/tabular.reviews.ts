@@ -389,16 +389,13 @@ export async function listTabularReviews(
         owner_display_name?: string | null;
         owner_profile_photo?: string | null;
     }[];
-    // A project's review list shows a Creator column; the cross-project list
-    // does not, so it skips the profile lookup.
-    if (filters.projectIdFilter) {
-        const profileByUserId = await loadCreatorProfiles(db, reviews);
-        for (const review of reviews) {
-            if (!review.user_id) continue;
-            const profile = profileByUserId.get(review.user_id);
-            review.owner_display_name = profile?.display_name ?? null;
-            review.owner_profile_photo = profile?.profile_photo ?? null;
-        }
+    // Both review lists show a Creator column with each creator's name and photo.
+    const profileByUserId = await loadCreatorProfiles(db, reviews);
+    for (const review of reviews) {
+        if (!review.user_id) continue;
+        const profile = profileByUserId.get(review.user_id);
+        review.owner_display_name = profile?.display_name ?? null;
+        review.owner_profile_photo = profile?.profile_photo ?? null;
     }
     if (filters.includeStatus && reviews.length) {
         // Only resolve projects from this authorized page, including those

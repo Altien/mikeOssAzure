@@ -174,7 +174,7 @@ function Divider({ onDrag }: { onDrag: (dx: number) => void }) {
                 className="absolute inset-y-0 -left-1 -right-1 flex cursor-col-resize items-stretch justify-center"
             >
                 {isDragging && (
-                    <div className="w-1 bg-blue-500 transition-colors" />
+                    <div className="w-1 bg-blue-600 transition-colors" />
                 )}
             </div>
         </div>

@@ -2191,8 +2191,8 @@ export function TRChatPanel({
                 }}
                 className={`absolute top-0 left-0 h-full w-1 cursor-col-resize z-20 transition-colors hidden md:block ${
                     isResizing
-                        ? "bg-blue-400/70"
-                        : "bg-transparent hover:bg-blue-400/70"
+                        ? "bg-blue-600"
+                        : "bg-transparent hover:bg-blue-600/60"
                 }`}
             />
             {/* Header — fixed, overlaid on top of the messages */}

@@ -91,7 +91,7 @@ export function ConfirmPopup({
         aria-labelledby={title ? titleId : undefined}
         aria-label={title ? undefined : "Confirm action"}
         className={cn(
-          `pointer-events-auto relative w-[min(92vw,520px)] rounded-2xl px-4 py-3 text-sm ${LIQUID_GLASS_FLOAT_CLASS}`,
+          `pointer-events-auto relative w-[min(92vw,520px)] rounded-2xl p-2.5 pl-3 text-sm ${LIQUID_GLASS_FLOAT_CLASS}`,
           className,
         )}
       >
@@ -99,7 +99,7 @@ export function ConfirmPopup({
           onClick={onCancel}
           label="Close confirmation"
           size="sm"
-          className="absolute right-1.5 top-1.5"
+          className="absolute right-2.5 top-2.5"
         />
         {title && (
           <div id={titleId} className="pr-4 text-sm font-medium text-gray-950 mb-3">

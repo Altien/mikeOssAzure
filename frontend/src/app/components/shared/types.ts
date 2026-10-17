@@ -387,6 +387,8 @@ export interface Message {
   content: string;
   files?: MessageFile[];
   workflow?: { id: string; title: string };
+  /** The playbook the user picked to run, shown as a pill. */
+  playbook?: { id: string; title: string };
   model?: string;
   reasoning?: "none" | "low" | "medium" | "high" | "xhigh" | "max";
   citations?: Citation[];
@@ -746,7 +748,7 @@ export interface TabularReview {
   access_role?: "owner" | "editor" | "viewer";
   owner_email?: string | null;
   owner_display_name?: string | null;
-  /** The creator's photo; a project's review list carries it. */
+  /** The creator's photo; both review lists carry it. */
   owner_profile_photo?: string | null;
   created_at: string;
   updated_at: string;

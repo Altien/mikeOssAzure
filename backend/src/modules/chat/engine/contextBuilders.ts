@@ -678,6 +678,13 @@ export function buildMessages(
         : msg.workflow.title;
       content = `[Workflow: ${title} (id: ${msg.workflow.id})]\n\n${content}`;
     }
+    if (msg.role === "user" && msg.playbook) {
+      // Playbook names are user-controlled; spotlight them.
+      const title = nonce
+        ? spotlight(msg.playbook.title, nonce)
+        : msg.playbook.title;
+      content = `[Playbook: ${title} (id: ${msg.playbook.id}). Review the attached document with run_playbook using this playbook id, unless the user asks for something else.]\n\n${content}`;
+    }
     if (msg.role === "user" && msg.files?.length) {
       const lines = msg.files.map((f) => {
         const slug = f.document_id

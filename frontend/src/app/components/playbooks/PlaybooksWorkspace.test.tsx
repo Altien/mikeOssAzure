@@ -1,0 +1,1740 @@
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  getDocumentFile,
+  getPlaybookPeople,
+  listPlaybookShares,
+  createPlaybook,
+  getPlaybookConfiguration,
+  importPlaybook,
+  listPlaybooks,
+  listAllPlaybookRuns,
+  listPlaybookRuns,
+  uploadLibraryDocument,
+  listPlaybookSources,
+  reviewDocumentWithPlaybook,
+  updatePlaybook,
+  deletePlaybook,
+  type Playbook,
+  type PlaybookRun,
+} from "@/app/lib/mikeApi";
+import { PlaybooksWorkspaceLayout as PlaybooksPage } from "./PlaybooksWorkspace";
+import { SETTINGS_MODELS } from "@/shared/lib/modelCatalog";
+
+const TEST_MODEL = SETTINGS_MODELS[0].id;
+
+// A small router: push and replace update the path and query, so tabs kept
+// in ?tab= and playbook pages behave as they do in the app.
+const navigation = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  const state = {
+    params: {} as { playbookId?: string },
+    search: "",
+  };
+  const go = (href: string) => {
+    const url = new URL(href, "http://mike.test");
+    const match = url.pathname.match(/^\/playbooks\/([^/]+)$/);
+    state.params = match ? { playbookId: match[1] } : {};
+    state.search = url.search.slice(1);
+    listeners.forEach((listener) => listener());
+  };
+  const push = vi.fn(go);
+  const replace = vi.fn(go);
+  return {
+    state,
+    listeners,
+    get params() {
+      return state.params;
+    },
+    set params(value: { playbookId?: string }) {
+      state.params = value;
+    },
+    get search() {
+      return state.search;
+    },
+    set search(value: string) {
+      state.search = value;
+    },
+    push,
+    replace,
+    router: { push, replace },
+  };
+});
+vi.mock("next/navigation", async () => {
+  const { useMemo, useSyncExternalStore } = await import("react");
+  const subscribe = (listener: () => void) => {
+    navigation.listeners.add(listener);
+    return () => {
+      navigation.listeners.delete(listener);
+    };
+  };
+  return {
+    useRouter: () => navigation.router,
+    useParams: () => useSyncExternalStore(subscribe, () => navigation.params),
+    usePathname: () =>
+      useSyncExternalStore(subscribe, () =>
+        navigation.params.playbookId
+          ? `/playbooks/${navigation.params.playbookId}`
+          : "/playbooks",
+      ),
+    useSearchParams: () => {
+      const search = useSyncExternalStore(subscribe, () => navigation.search);
+      return useMemo(() => new URLSearchParams(search), [search]);
+    },
+  };
+});
+
+vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/app/lib/mikeApi")>()),
+  getDocumentFile: vi.fn(),
+  getPlaybookPeople: vi.fn(),
+  listPlaybookShares: vi.fn(),
+  createPlaybook: vi.fn(),
+  listPlaybooks: vi.fn(),
+  getPlaybookConfiguration: vi.fn(),
+  importPlaybook: vi.fn(),
+  updatePlaybook: vi.fn(),
+  deletePlaybook: vi.fn(),
+  reviewDocumentWithPlaybook: vi.fn(),
+  listPlaybookSources: vi.fn(),
+  listPlaybookRuns: vi.fn(),
+  listAllPlaybookRuns: vi.fn(),
+  uploadLibraryDocument: vi.fn(),
+}));
+
+// The real viewer lazy-loads a Word renderer that jsdom cannot run.
+vi.mock("@/app/components/shared/views/DocxView", () => ({
+  DocxView: ({
+    filename,
+    displayUrl,
+  }: {
+    filename?: string;
+    displayUrl?: string | null;
+  }) => (
+    <div
+      role="document"
+      aria-label={`Viewing ${filename}`}
+      data-url={displayUrl}
+    />
+  ),
+}));
+
+vi.mock("@/app/hooks/useOllamaModels", () => ({
+  useOllamaModels: () => [],
+}));
+
+vi.mock("@/app/contexts/AuthContext", () => ({
+  useAuth: () => ({ user: { id: "u1", email: "owner@example.com" } }),
+}));
+
+vi.mock("@/app/contexts/UserProfileContext", () => ({
+  useUserProfile: () => ({ profile: null }),
+}));
+
+const workspace = vi.hoisted(() => ({
+  workspaceId: "personal",
+  activeOrganization: null as { name: string } | null,
+}));
+vi.mock("@/app/contexts/WorkspaceContext", () => ({
+  PERSONAL_WORKSPACE: "personal",
+  useWorkspace: () => workspace,
+  useDocumentWorkspace: () => workspace.workspaceId,
+}));
+vi.mock("@/app/components/modals/AddDocumentsModal", () => ({
+  AddDocumentsModal: ({
+    open,
+    onSelect,
+  }: {
+    open: boolean;
+    onSelect: (docs: unknown[]) => void;
+  }) =>
+    open ? (
+      <>
+        <button
+          onClick={() =>
+            onSelect([
+              {
+                id: "saved-1",
+                filename: "saved.txt",
+                current_version_id: "doc-version",
+              },
+            ])
+          }
+        >
+          Choose saved contract
+        </button>
+        <button
+          onClick={() =>
+            onSelect([
+              {
+                id: "saved-1",
+                filename: "saved.txt",
+                current_version_id: "doc-version",
+              },
+              {
+                id: "saved-2",
+                filename: "another-saved.txt",
+                current_version_id: "doc-version-2",
+              },
+            ])
+          }
+        >
+          Choose saved contracts
+        </button>
+      </>
+    ) : null,
+}));
+
+function playbook(id: string, name: string): Playbook {
+  return {
+    id,
+    userId: "u1",
+    name,
+    description: "",
+    orgId: null,
+    visibility: "private",
+    role: "owner",
+    isCreator: true,
+    canEdit: true,
+    canManageAccess: true,
+    sharedWith: [],
+    creatorName: null,
+    creatorPhoto: null,
+    content: {
+      name,
+      description: "",
+      representedParty: "Customer",
+      globalGuidance: "",
+      documentTypes: [],
+      jurisdictions: [],
+      topics: [
+        {
+          id: `${id}-liability`,
+          name: "Liability",
+          rules: [
+            {
+              id: `${id}-cap`,
+              name: "Liability cap",
+              concept: "",
+              scope: "clause",
+              required: true,
+              guidance: "",
+              standard: null,
+              fallbacks: [],
+              unacceptable: [],
+              conditions: [],
+              actions: [],
+              sourceRefs: [],
+            },
+          ],
+        },
+      ],
+    },
+    sourceFilename: null,
+    importModel: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  } as Playbook;
+}
+
+const RUN: PlaybookRun = {
+  id: "run-1",
+  playbookId: "pb-a",
+  model: TEST_MODEL,
+  documentName: "contract.docx",
+  reviewMode: "strict",
+  status: "completed",
+  summary: "Playbook A found an uncapped liability clause.",
+  findings: [],
+  error: null,
+  startedAt: "2026-01-01T00:00:00.000Z",
+  completedAt: "2026-01-01T00:01:00.000Z",
+};
+
+describe("playbooks page", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(listPlaybookSources).mockResolvedValue([]);
+    vi.mocked(listPlaybookRuns).mockResolvedValue([]);
+    vi.mocked(listAllPlaybookRuns).mockResolvedValue([]);
+    // A reviewed upload is saved to Library Files first.
+    vi.mocked(uploadLibraryDocument).mockImplementation(
+      async (_scope, file) =>
+        ({ id: `stored-${file.name}`, filename: file.name }) as never,
+    );
+    navigation.params = {};
+    navigation.search = "";
+    workspace.workspaceId = "personal";
+    workspace.activeOrganization = null;
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: true,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+    vi.mocked(listPlaybooks).mockResolvedValue([
+      playbook("pb-a", "Playbook A"),
+      playbook("pb-b", "Playbook B"),
+    ]);
+    vi.mocked(getPlaybookConfiguration).mockResolvedValue({
+      availableModelIds: [TEST_MODEL],
+      defaultModel: TEST_MODEL,
+    });
+    vi.mocked(reviewDocumentWithPlaybook).mockResolvedValue(RUN);
+    const blank = playbook("pb-new", "Untitled playbook");
+    blank.content.rules = blank.content.topics[0].rules;
+    blank.content.topics = [];
+    vi.mocked(createPlaybook).mockResolvedValue(blank);
+    vi.mocked(importPlaybook).mockResolvedValue(playbook("pb-a", "Replaced"));
+    vi.mocked(updatePlaybook).mockImplementation(async (id, content) => ({
+      ...playbook(id, content.name),
+      content,
+    }));
+    vi.mocked(deletePlaybook).mockResolvedValue(undefined);
+  });
+
+  it("gives each playbook its own page and opens it from its link", async () => {
+    render(<PlaybooksPage />);
+    const link = await screen.findByRole("link", { name: "Playbook A" });
+    expect(link).toHaveAttribute("href", "/playbooks/pb-a");
+
+    await userEvent.click(link);
+
+    expect(navigation.push).toHaveBeenCalledWith("/playbooks/pb-a");
+    expect(screen.getByLabelText("Rule")).toHaveValue("Liability cap");
+  });
+
+  it("opens the playbook named in the URL", async () => {
+    navigation.params = { playbookId: "pb-a" };
+    render(<PlaybooksPage />);
+
+    expect(await screen.findByLabelText("Rule")).toHaveValue("Liability cap");
+    // The URL gains its default tab; it does not fall back to the list.
+    expect(navigation.replace).toHaveBeenCalledWith(
+      "/playbooks/pb-a?tab=rules",
+      expect.anything(),
+    );
+    expect(navigation.replace).not.toHaveBeenCalledWith("/playbooks");
+  });
+
+  it("keeps a playbook's tab in the URL", async () => {
+    navigation.params = { playbookId: "pb-a" };
+    navigation.search = "tab=references";
+    render(<PlaybooksPage />);
+
+    // A shared link opens the tab it names.
+    expect(
+      await screen.findByRole("button", { name: "References", pressed: true }),
+    ).toBeVisible();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Playbook overview" }),
+    );
+
+    expect(navigation.push).toHaveBeenLastCalledWith(
+      "/playbooks/pb-a?tab=overview",
+      expect.anything(),
+    );
+    expect(screen.getByRole("region", { name: "Overview" })).toBeVisible();
+  });
+
+  it("keeps the list's tab in the URL and returns to it from a playbook", async () => {
+    navigation.search = "tab=mine";
+    render(<PlaybooksPage />);
+    expect(
+      await screen.findByRole("button", {
+        name: "My playbooks",
+        pressed: true,
+      }),
+    ).toBeVisible();
+
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Playbook A" }),
+    );
+    // The real router changes the URL a moment after Back; hold it there.
+    navigation.push.mockImplementationOnce(() => {});
+    await userEvent.click(screen.getByRole("button", { name: "Back" }));
+
+    expect(navigation.push).toHaveBeenLastCalledWith("/playbooks?tab=mine");
+    // While the URL still names the playbook, the table shows, not a
+    // loading playbook page.
+    expect(
+      screen.queryByRole("status", { name: "Loading playbook" }),
+    ).toBeNull();
+    expect(screen.getByRole("table", { name: "Playbooks" })).toBeVisible();
+    await act(async () => navigation.replace("/playbooks?tab=mine"));
+    await userEvent.click(screen.getByRole("button", { name: "Runs" }));
+    expect(navigation.push).toHaveBeenLastCalledWith(
+      "/playbooks?tab=runs",
+      expect.anything(),
+    );
+  });
+
+  it("keeps a linked playbook's page while the playbooks load", async () => {
+    navigation.params = { playbookId: "pb-a" };
+    let finish!: (items: Playbook[]) => void;
+    vi.mocked(listPlaybooks).mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    render(<PlaybooksPage />);
+
+    expect(
+      screen.getByRole("status", { name: "Loading playbook" }),
+    ).toBeInTheDocument();
+    // A refresh must not flash the playbooks table.
+    expect(screen.queryByRole("table", { name: "Playbooks" })).toBeNull();
+
+    finish([playbook("pb-a", "Playbook A")]);
+
+    expect(await screen.findByLabelText("Rule")).toHaveValue("Liability cap");
+    expect(
+      screen.queryByRole("status", { name: "Loading playbook" }),
+    ).toBeNull();
+  });
+
+  it("shows the list when the linked playbook is not in this workspace", async () => {
+    navigation.params = { playbookId: "gone" };
+    render(<PlaybooksPage />);
+
+    await screen.findByRole("link", { name: "Playbook A" });
+    expect(navigation.replace).toHaveBeenCalledWith("/playbooks");
+  });
+
+  it("opens from the table and preserves content edits while switching between details and rules", async () => {
+    render(<PlaybooksPage />);
+    const table = await screen.findByRole("table", { name: "Playbooks" });
+    await screen.findByRole("link", { name: "Playbook A" });
+    expect(
+      within(table)
+        .getAllByRole("columnheader")
+        .map((cell) => cell.textContent),
+    ).toEqual([
+      "Name",
+      "Creator",
+      "Access",
+      "Type",
+      "Represented",
+      "Jurisdiction",
+      "Rules",
+      "Updated",
+      "Actions",
+    ]);
+    expect(within(table).getAllByRole("row")).toHaveLength(3);
+    expect(screen.queryByLabelText("Playbook name")).toBeNull();
+
+    await userEvent.click(screen.getByRole("link", { name: "Playbook A" }));
+    expect(screen.getByLabelText("Rule")).toHaveValue("Liability cap");
+    expect(
+      screen.queryByRole("button", { name: "Playbook details" }),
+    ).toBeNull();
+    expect(screen.queryByLabelText("Playbook name")).toBeNull();
+    const toolbar = screen.getByRole("navigation", {
+      name: "Playbook toolbar",
+    });
+    expect(
+      within(toolbar).getByRole("button", { name: "Playbook overview" }),
+    ).toBeVisible();
+    const runButton = screen.getByRole("button", { name: "Run" });
+    expect(runButton).toBeVisible();
+    expect(toolbar).not.toContainElement(runButton);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Playbook overview" }),
+    );
+    expect(
+      screen.getByRole("button", { name: "Playbook overview" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    const details = screen.getByRole("region", { name: "Overview" });
+    for (const label of [
+      "Playbook name",
+      "Represented party",
+      "Description",
+      "Global guidance",
+    ]) {
+      expect(within(details).getByLabelText(label)).toBeInTheDocument();
+    }
+    await userEvent.type(
+      screen.getByLabelText("Description"),
+      "Negotiation guide",
+    );
+    await userEvent.type(
+      screen.getByLabelText("Global guidance"),
+      "Protect the customer",
+    );
+    await userEvent.clear(screen.getByLabelText("Represented party"));
+    await userEvent.type(screen.getByLabelText("Represented party"), "Buyer");
+    await userEvent.clear(screen.getByLabelText("Playbook name"));
+    await userEvent.type(
+      screen.getByLabelText("Playbook name"),
+      "Updated playbook",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Rules" }));
+    expect(screen.queryByLabelText("Playbook name")).toBeNull();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Liability cap" }),
+    );
+    expect(
+      screen.getByRole("button", { name: "Liability cap" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await userEvent.type(
+      screen.getByLabelText("Concept to detect"),
+      "Limit liability",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Playbook overview" }),
+    );
+    expect(screen.getByLabelText("Playbook name")).toHaveValue(
+      "Updated playbook",
+    );
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    await waitFor(() =>
+      expect(updatePlaybook).toHaveBeenCalledWith(
+        "pb-a",
+        expect.objectContaining({
+          name: "Updated playbook",
+          description: "Negotiation guide",
+          representedParty: "Buyer",
+          globalGuidance: "Protect the customer",
+          topics: [
+            expect.objectContaining({
+              rules: [expect.objectContaining({ concept: "Limit liability" })],
+            }),
+          ],
+        }),
+        { visibility: "private" },
+      ),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Rules" }));
+    expect(screen.getByLabelText("Rule")).toHaveValue("Liability cap");
+    await userEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(
+      await screen.findByRole("link", {
+        name: "Updated playbook",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("adds, selects, and autosaves an ungrouped rule from the toolbar", async () => {
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Playbook A" }),
+    );
+    const toolbar = screen.getByRole("navigation", {
+      name: "Playbook toolbar",
+    });
+    await userEvent.click(
+      within(toolbar).getByRole("button", { name: "New rule" }),
+    );
+    expect(screen.getByLabelText("Rule")).toHaveValue("New rule 2");
+    expect(screen.getByRole("button", { name: "New rule 2" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await waitFor(() =>
+      expect(updatePlaybook).toHaveBeenCalledWith(
+        "pb-a",
+        expect.objectContaining({
+          rules: [
+            expect.objectContaining({ name: "New rule 2", scope: "clause" }),
+          ],
+          topics: playbook("pb-a", "Playbook A").content.topics,
+        }),
+        { visibility: "private" },
+      ),
+    );
+  });
+
+  it("opens a newly added rule even when its topic was collapsed", async () => {
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Playbook A" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Collapse topic Liability" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Topic actions for Liability" }),
+    );
+    await userEvent.click(screen.getByRole("menuitem", { name: "Add rule" }));
+    expect(screen.getByLabelText("Rule")).toHaveValue("New rule 2");
+    expect(screen.getByRole("button", { name: "New rule 2" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(
+      screen.getByRole("button", { name: "Collapse topic Liability" }),
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Concept to detect")).not.toHaveValue("");
+  });
+
+  it("shows a retryable load failure instead of an empty playbook collection", async () => {
+    vi.mocked(listPlaybooks).mockRejectedValueOnce(
+      new Error("private database stack"),
+    );
+    render(<PlaybooksPage />);
+    await screen.findByText("Couldn’t load playbooks");
+    expect(screen.queryByText("private database stack")).toBeNull();
+    expect(screen.queryByText("No playbooks yet")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(
+      await screen.findByRole("link", { name: "Playbook A" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shares row actions with right-click and selection menus without opening the row", async () => {
+    const user = userEvent.setup();
+    render(<PlaybooksPage />);
+    const link = await screen.findByRole("link", { name: "Playbook B" });
+    const trigger = screen.getByRole("button", {
+      name: "Actions for Playbook B",
+    });
+    const labels = ["Open", "Details", "Run", "People", "Delete"];
+    const menuLabels = () =>
+      within(screen.getByRole("menu"))
+        .getAllByRole("menuitem")
+        .map((item) => item.textContent);
+
+    await user.click(trigger);
+    expect(menuLabels()).toEqual(labels);
+    expect(navigation.push).not.toHaveBeenCalled();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(trigger).toHaveFocus());
+
+    fireEvent.contextMenu(link.closest('[role="row"]')!, {
+      clientX: 100,
+      clientY: 200,
+    });
+    expect(menuLabels()).toEqual(labels);
+    expect(navigation.push).not.toHaveBeenCalled();
+    await user.keyboard("{Escape}");
+
+    await user.click(
+      screen.getByRole("checkbox", { name: "Select Playbook B" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    expect(menuLabels()).toEqual(["Deselect rows", ...labels]);
+    await user.click(screen.getByRole("menuitem", { name: "Open" }));
+    expect(navigation.push).toHaveBeenCalledWith("/playbooks/pb-b");
+    expect(screen.getByLabelText("Rule")).toHaveValue("Liability cap");
+  });
+
+  it("opens Details for the row from its context menu", async () => {
+    render(<PlaybooksPage />);
+    const link = await screen.findByRole("link", { name: "Playbook B" });
+    fireEvent.contextMenu(link.closest('[role="row"]')!, {
+      clientX: 100,
+      clientY: 200,
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "Details" }));
+    expect(navigation.push).toHaveBeenCalledWith(
+      "/playbooks/pb-b?tab=overview",
+    );
+    expect(await screen.findByLabelText("Playbook name")).toHaveValue(
+      "Playbook B",
+    );
+  });
+
+  it("runs the playbook named by the row menu", async () => {
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Actions for Playbook B" }),
+    );
+    await userEvent.click(screen.getByRole("menuitem", { name: "Run" }));
+    await userEvent.upload(
+      screen.getByLabelText("Upload review document"),
+      new File(["Synthetic contract"], "contract.txt", { type: "text/plain" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Start review" }));
+    await waitFor(() =>
+      expect(reviewDocumentWithPlaybook).toHaveBeenCalledWith(
+        "pb-b",
+        expect.any(Object),
+      ),
+    );
+  });
+
+  it("opens People for a table row without navigating into the playbook", async () => {
+    vi.mocked(getPlaybookPeople).mockResolvedValue({
+      scope: "direct",
+      owner: {
+        user_id: "u1",
+        email: "owner@example.com",
+        display_name: "Olive Owner",
+      },
+      members: [
+        {
+          email: "reader@example.com",
+          display_name: "Rae Reader",
+          role: "viewer",
+        },
+      ],
+    });
+    vi.mocked(listPlaybookShares).mockResolvedValue([]);
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Actions for Playbook B" }),
+    );
+    await userEvent.click(screen.getByRole("menuitem", { name: "People" }));
+    expect(await screen.findByText("Rae Reader")).toBeInTheDocument();
+    expect(getPlaybookPeople).toHaveBeenCalledWith("pb-b");
+    expect(listPlaybookShares).toHaveBeenCalledWith("pb-b");
+    expect(navigation.push).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("table", { name: "Playbooks", hidden: true }),
+    ).toBeInTheDocument();
+  });
+
+  it("confirms and deletes only the context-menu row while preserving other selections", async () => {
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      await screen.findByRole("checkbox", { name: "Select Playbook A" }),
+    );
+    const row = screen
+      .getByRole("link", { name: "Playbook B" })
+      .closest('[role="row"]')!;
+    fireEvent.contextMenu(row, { clientX: 100, clientY: 200 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+    const confirmation = screen.getByRole("dialog", {
+      name: "Delete playbook?",
+    });
+    expect(confirmation).toHaveTextContent(
+      "“Playbook B” and its rules will be deleted.",
+    );
+    expect(deletePlaybook).not.toHaveBeenCalled();
+    await userEvent.click(
+      within(confirmation).getByRole("button", { name: "Cancel" }),
+    );
+    expect(deletePlaybook).not.toHaveBeenCalled();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Actions for Playbook B" }),
+    );
+    await userEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+    await userEvent.click(
+      within(
+        screen.getByRole("dialog", { name: "Delete playbook?" }),
+      ).getByRole("button", { name: "Delete" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("link", { name: "Playbook B" })).toBeNull(),
+    );
+    expect(deletePlaybook).toHaveBeenCalledExactlyOnceWith("pb-b");
+    expect(
+      screen.getByRole("checkbox", { name: "Select Playbook A" }),
+    ).toBeChecked();
+    expect(navigation.push).not.toHaveBeenCalled();
+  });
+
+  it.each(["viewer", "editor"] as const)(
+    "disables Delete in all menus for a shared %s",
+    async (role) => {
+      const shared = {
+        ...playbook("pb-shared", "Shared playbook"),
+        role,
+        userId: "another-user",
+        isCreator: false,
+        canEdit: role === "editor",
+        canManageAccess: false,
+      };
+      vi.mocked(listPlaybooks).mockResolvedValue([shared]);
+      render(<PlaybooksPage />);
+      const link = await screen.findByRole("link", { name: "Shared playbook" });
+      await userEvent.click(
+        screen.getByRole("button", { name: "Actions for Shared playbook" }),
+      );
+      expect(screen.getByRole("menuitem", { name: "Delete" })).toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
+      await userEvent.keyboard("{Escape}");
+      fireEvent.contextMenu(link.closest('[role="row"]')!, {
+        clientX: 100,
+        clientY: 200,
+      });
+      expect(screen.getByRole("menuitem", { name: "Delete" })).toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
+      expect(screen.getByRole("menuitem", { name: "Run" })).not.toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
+      await userEvent.keyboard("{Escape}");
+      await userEvent.click(
+        screen.getByRole("checkbox", { name: "Select Shared playbook" }),
+      );
+      await userEvent.click(screen.getByRole("button", { name: "Actions" }));
+      expect(screen.getByRole("menuitem", { name: "Delete" })).toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
+      expect(deletePlaybook).not.toHaveBeenCalled();
+    },
+  );
+
+  it("returns to the table after a confirmed deletion", async () => {
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Playbook A" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Playbook actions" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "Delete playbook" }),
+    );
+    expect(deletePlaybook).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(
+      screen.queryByRole("dialog", { name: "Delete playbook?" }),
+    ).toBeNull();
+    await userEvent.click(screen.getByRole("link", { name: "Playbook A" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Playbook actions" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "Delete playbook" }),
+    );
+    await userEvent.click(
+      within(
+        screen.getByRole("dialog", { name: "Delete playbook?" }),
+      ).getByRole("button", { name: "Delete" }),
+    );
+    await screen.findByRole("link", { name: "Playbook B" });
+    expect(deletePlaybook).toHaveBeenCalledWith("pb-a");
+    expect(screen.queryByRole("link", { name: "Playbook A" })).toBeNull();
+  });
+
+  it("names the topic toggle and reports whether it is expanded", async () => {
+    render(<PlaybooksPage />);
+
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Playbook A" }),
+    );
+
+    const toggle = await screen.findByRole("button", {
+      name: /collapse topic Liability/i,
+    });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+    await userEvent.click(toggle);
+
+    const collapsed = await screen.findByRole("button", {
+      name: /expand topic Liability/i,
+    });
+    expect(collapsed).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("does not show one playbook's review under another playbook", async () => {
+    render(<PlaybooksPage />);
+
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Playbook A" }),
+    );
+
+    // Run a review against the playbook opened from the table.
+    await userEvent.click(
+      await screen.findByRole("button", { name: /^Run$/i }),
+    );
+    await userEvent.upload(
+      screen.getByLabelText("Upload review document"),
+      new File(["A contract."], "contract.txt", { type: "text/plain" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Start review/i }),
+    );
+
+    expect(await screen.findByText(RUN.summary as string)).toBeInTheDocument();
+    // A finished run opens on the Runs tab.
+    expect(screen.getByRole("button", { name: "Runs" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(
+      within(screen.getByRole("region", { name: "Your runs" })).getByRole(
+        "button",
+        { name: /contract\.docx/ },
+      ),
+    ).toHaveAttribute("aria-pressed", "true");
+
+    // Returning to the table and opening another playbook clears the findings.
+    await userEvent.click(screen.getByRole("button", { name: "Back" }));
+    await userEvent.click(screen.getByRole("link", { name: /Playbook B/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByText(RUN.summary as string)).toBeNull();
+    });
+    expect(screen.queryByText(/Latest review/i)).toBeNull();
+  });
+
+  it("lists runs across playbooks and opens one on its playbook", async () => {
+    const older = {
+      ...RUN,
+      id: "run-0",
+      documentName: "Old NDA.pdf",
+      playbookName: "Playbook B",
+      playbookId: "pb-b",
+    };
+    vi.mocked(listAllPlaybookRuns).mockResolvedValue([
+      { ...RUN, playbookName: "Playbook A" },
+      older,
+    ]);
+    vi.mocked(listPlaybookRuns).mockResolvedValue([older]);
+    render(<PlaybooksPage />);
+    await screen.findByRole("link", { name: "Playbook A" });
+
+    await userEvent.click(screen.getByRole("button", { name: "Runs" }));
+
+    const table = await screen.findByRole("table", { name: "Playbook runs" });
+    expect(listAllPlaybookRuns).toHaveBeenCalledWith("personal");
+    expect(within(table).getByText("Playbook B")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Search runs…" }));
+    await userEvent.type(screen.getByPlaceholderText("Search runs…"), "NDA");
+    expect(
+      within(table).queryByRole("button", { name: "contract.docx" }),
+    ).toBeNull();
+
+    await userEvent.click(
+      within(table).getByRole("button", { name: "Old NDA.pdf" }),
+    );
+
+    expect(navigation.push).toHaveBeenCalledWith("/playbooks/pb-b?tab=runs");
+    expect(
+      screen.getByRole("button", { name: "Runs", pressed: true }),
+    ).toBeVisible();
+    expect(
+      await within(
+        screen.getByRole("region", { name: "Your runs" }),
+      ).findByRole("button", { name: "Old NDA.pdf" }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("offers both ways to add a playbook", async () => {
+    render(<PlaybooksPage />);
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /New playbook/i }),
+    );
+
+    expect(
+      await screen.findByRole("menuitem", { name: /Import Word playbook/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: /Start from scratch/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("creates a blank playbook and opens its overview first", async () => {
+    render(<PlaybooksPage />);
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /New playbook/i }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: /Start from scratch/i }),
+    );
+
+    await waitFor(() => expect(createPlaybook).toHaveBeenCalled());
+    expect(screen.queryByLabelText("Topic 1 name")).toBeNull();
+    expect(await screen.findByRole("button", { name: "Playbook overview" }))
+      .toHaveAttribute("aria-pressed", "true");
+    expect(
+      await screen.findByDisplayValue("Untitled playbook"),
+    ).toBeInTheDocument();
+  });
+
+  it("starts with flat rules and can group or ungroup an existing rule without losing its content", async () => {
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: /New playbook/i }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: /Start from scratch/i }),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Rules" }));
+    const sidebar = await screen.findByRole("region", {
+      name: "Topics and rules",
+    });
+    expect(within(sidebar).queryByRole("textbox")).toBeNull();
+    await userEvent.click(
+      within(sidebar).getByRole("button", { name: "Add rule" }),
+    );
+    expect(screen.getByLabelText("Rule")).toHaveValue("New rule 2");
+    await userEvent.type(
+      screen.getByLabelText("Additional guidance"),
+      "Keep this guidance",
+    );
+    await userEvent.click(
+      within(sidebar).getByRole("button", { name: "Rules actions" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "Add topic" }),
+    );
+    const topicName = screen.getByLabelText("Topic 1 name");
+    await userEvent.clear(topicName);
+    await userEvent.type(topicName, "Commercial terms");
+    expect(screen.getByLabelText("Rule")).toHaveValue("New rule 2");
+    // Rules move between topics by dragging, or from the rule's menu.
+    await userEvent.click(screen.getByRole("button", { name: "Rule actions" }));
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "Move to Commercial terms" }),
+    );
+    await userEvent.click(
+      within(sidebar).getByRole("button", {
+        name: "Collapse topic Commercial terms",
+      }),
+    );
+    expect(
+      within(sidebar).queryByRole("button", { name: "New rule 2" }),
+    ).toBeNull();
+    expect(
+      within(sidebar).getByRole("button", { name: "Liability cap" }),
+    ).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Rule actions" }));
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "Remove from topic" }),
+    );
+    expect(
+      within(sidebar).getByRole("button", { name: "New rule 2" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("Additional guidance")).toHaveValue(
+      "Keep this guidance",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(updatePlaybook).toHaveBeenLastCalledWith(
+      "pb-new",
+      expect.objectContaining({
+        rules: [
+          expect.objectContaining({ name: "Liability cap" }),
+          expect.objectContaining({
+            name: "New rule 2",
+            guidance: "Keep this guidance",
+          }),
+        ],
+        topics: [
+          expect.objectContaining({ name: "Commercial terms", rules: [] }),
+        ],
+      }),
+      expect.any(Object),
+    );
+    const row = (
+      await screen.findByRole("link", { name: "Untitled playbook" })
+    ).closest('[role="row"]')!;
+    // Name, Creator, Access, Type, Represented, Jurisdiction, then Rules.
+    expect(
+      within(row as HTMLElement).getAllByRole("cell")[6],
+    ).toHaveTextContent("2");
+  });
+
+  it("names both ways to begin when there are no playbooks", async () => {
+    vi.mocked(listPlaybooks).mockResolvedValue([]);
+    render(<PlaybooksPage />);
+
+    expect(
+      await screen.findByRole("button", { name: "Import" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create" })).toBeInTheDocument();
+  });
+
+  it("replaces the selected playbook from a Word file", async () => {
+    render(<PlaybooksPage />);
+
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Playbook A" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Playbook actions" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: /Replace from Word/i }),
+    );
+    await userEvent.upload(
+      screen.getByLabelText(/Word playbook/i),
+      new File(["docx"], "updated.docx", {
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Replace and compile/i }),
+    );
+
+    await waitFor(() =>
+      expect(importPlaybook).toHaveBeenCalledWith(
+        expect.any(File),
+        TEST_MODEL,
+        "",
+        "pb-a",
+        "personal",
+      ),
+    );
+
+    // The replacement rewrites a playbook; it must not add a second row.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Playbook overview" }),
+      ).toBeEnabled(),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Playbook overview" }),
+    );
+    expect(await screen.findByDisplayValue("Replaced")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Back" }));
+    const rows = await screen.findAllByRole("link", { name: /Replaced/i });
+    expect(rows).toHaveLength(1);
+    expect(screen.queryByRole("link", { name: /Playbook A/i })).toBeNull();
+  });
+
+  it("does not ask for a name when replacing", async () => {
+    render(<PlaybooksPage />);
+
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Playbook A" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Playbook actions" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: /Replace from Word/i }),
+    );
+
+    // Replacing from Word keeps the name; it remains editable in Overview.
+    expect(screen.queryByLabelText(/Playbook name \(optional\)/i)).toBeNull();
+    expect(screen.getByLabelText(/Word playbook/i)).toBeInTheDocument();
+  });
+  it("selects rows without opening them and clears selection when switching tabs", async () => {
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      await screen.findByRole("checkbox", { name: "Select Playbook A" }),
+    );
+    expect(screen.queryByLabelText("Playbook name")).toBeNull();
+    expect(
+      screen.getByRole("checkbox", { name: "Select all playbooks" }),
+    ).toBePartiallyChecked();
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "Select all playbooks" }),
+    );
+    expect(
+      screen.getByRole("checkbox", { name: "Select all playbooks" }),
+    ).toBeChecked();
+    await userEvent.click(screen.getByRole("button", { name: "Actions" }));
+    expect(
+      screen.getByRole("menuitem", { name: "Delete 2 playbooks" }),
+    ).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Shared with me" }),
+    );
+    expect(screen.queryByRole("button", { name: "Actions" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "All" }));
+    expect(
+      screen.getByRole("checkbox", { name: "Select all playbooks" }),
+    ).not.toBeChecked();
+  });
+
+  it("offers the same actions from the toolbar and from each row", async () => {
+    const menu = async (trigger: HTMLElement) => {
+      await userEvent.click(trigger);
+      const names = screen
+        .getAllByRole("menuitem")
+        .map((item) => item.textContent?.trim());
+      await userEvent.keyboard("{Escape}");
+      return names;
+    };
+    const single = ["Open", "Details", "Run", "People", "Delete"];
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      await screen.findByRole("checkbox", { name: "Select Playbook A" }),
+    );
+
+    // One selected playbook: its row and the toolbar offer the same menu.
+    const toolbarActions = () =>
+      screen.getByRole("button", { name: "Actions" });
+    expect(await menu(toolbarActions())).toEqual(["Deselect rows", ...single]);
+    expect(
+      await menu(
+        screen.getByRole("button", { name: "Actions for Playbook A" }),
+      ),
+    ).toEqual(["Deselect rows", ...single]);
+    // A row outside the selection acts on that row alone.
+    expect(
+      await menu(
+        screen.getByRole("button", { name: "Actions for Playbook B" }),
+      ),
+    ).toEqual(single);
+
+    // Several selected: the toolbar and each selected row act on them all.
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "Select Playbook B" }),
+    );
+    const several = ["Deselect rows", "Delete 2 playbooks"];
+    expect(await menu(toolbarActions())).toEqual(several);
+    expect(
+      await menu(
+        screen.getByRole("button", { name: "Actions for Playbook B" }),
+      ),
+    ).toEqual(several);
+  });
+
+  it("shows owned and shared playbooks in All and filters each personal tab", async () => {
+    vi.mocked(listPlaybooks).mockResolvedValue([
+      playbook("owned", "Owned guide"),
+      {
+        ...playbook("shared", "Shared guide"),
+        canEdit: false,
+        role: "viewer",
+        isCreator: false,
+        canManageAccess: false,
+        userId: "someone-else",
+      },
+    ]);
+    render(<PlaybooksPage />);
+    await screen.findByRole("link", { name: "Owned guide" });
+    const all = screen.getByRole("button", { name: "All" });
+    expect(all).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("link", { name: "Shared guide" })).toBeVisible();
+
+    await userEvent.click(screen.getByRole("button", { name: "My playbooks" }));
+    expect(screen.getByRole("link", { name: "Owned guide" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Shared guide" })).toBeNull();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Shared with me" }),
+    );
+    expect(screen.getByRole("link", { name: "Shared guide" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Owned guide" })).toBeNull();
+    await userEvent.click(all);
+    expect(screen.getByRole("link", { name: "Owned guide" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Shared guide" })).toBeVisible();
+  });
+
+  it("shows all, private, and public tabs in an organization workspace", async () => {
+    workspace.workspaceId = "org-1";
+    workspace.activeOrganization = { name: "Test firm" };
+    vi.mocked(listPlaybooks).mockResolvedValue([
+      playbook("private", "Private guide"),
+      { ...playbook("public", "Public guide"), visibility: "organization" },
+    ]);
+    render(<PlaybooksPage />);
+    await screen.findByRole("link", { name: "Private guide" });
+    expect(listPlaybooks).toHaveBeenCalledWith("org-1");
+    const all = screen.getByRole("button", { name: "All" });
+    expect(all).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("link", { name: "Public guide" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Private" }));
+    expect(screen.getByRole("link", { name: "Private guide" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Public guide" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Public" }));
+    expect(
+      screen.getByRole("link", { name: "Public guide" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Private guide" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Shared with me" })).toBeNull();
+    await userEvent.click(all);
+    expect(screen.getByRole("link", { name: "Private guide" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Public guide" })).toBeVisible();
+  });
+
+  it("switches between the rules and the Word file the playbook came from", async () => {
+    vi.mocked(listPlaybookSources).mockResolvedValue([
+      {
+        id: "src-1",
+        filename: "Data policy.pdf",
+        fileType: "pdf",
+        sizeBytes: 1200,
+        createdAt: "2026-10-17T01:00:00.000Z",
+      },
+    ]);
+    vi.mocked(listPlaybooks).mockResolvedValue([
+      {
+        ...playbook("imported", "Imported guide"),
+        canEdit: false,
+        role: "viewer",
+        isCreator: false,
+        canManageAccess: false,
+        userId: "someone-else",
+        sourceFilename: "Negotiation guide.docx",
+      },
+    ]);
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Imported guide" }),
+    );
+    const views = screen.getByRole("group", { name: "Playbook view" });
+    expect(
+      within(views).getByRole("button", { name: "Rules" }),
+    ).toHaveAttribute("aria-pressed", "true");
+
+    await userEvent.click(
+      within(views).getByRole("button", { name: "References" }),
+    );
+    expect(screen.queryByLabelText("Rule")).toBeNull();
+    expect(screen.queryByRole("button", { name: "New rule" })).toBeNull();
+    expect(
+      within(
+        screen.getByRole("region", { name: "Reference documents" }),
+      ).getByRole("button", { name: "Negotiation guide.docx" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(
+      screen.getByRole("document", { name: "Viewing Negotiation guide.docx" }),
+    ).toHaveAttribute("data-url", "/api/playbooks/imported/source");
+    expect(
+      await screen.findByRole("button", { name: "Data policy.pdf" }),
+    ).toBeInTheDocument();
+    expect(listPlaybookSources).toHaveBeenCalledWith("imported");
+    // A reader can open the documents but not add or remove them.
+    expect(
+      screen.queryByRole("button", { name: "Add reference document" }),
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: "Upload" })).toBeDisabled();
+
+    await userEvent.click(within(views).getByRole("button", { name: "Rules" }));
+    expect(screen.getByLabelText("Rule")).toHaveValue("Liability cap");
+  });
+
+  it("uploads a reference document from the References toolbar", async () => {
+    vi.mocked(listPlaybookSources).mockResolvedValue([]);
+    const click = vi
+      .spyOn(HTMLInputElement.prototype, "click")
+      .mockImplementation(() => {});
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Playbook A" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "References" }));
+
+    await userEvent.click(screen.getByRole("button", { name: "Upload" }));
+
+    const input = click.mock.contexts[0] as HTMLInputElement;
+    expect(input).toHaveAttribute("type", "file");
+    click.mockRestore();
+  });
+
+  it("lets a shared reader browse the rules without editing them", async () => {
+    vi.mocked(listPlaybooks).mockResolvedValue([
+      {
+        ...playbook("shared", "Shared guide"),
+        canEdit: false,
+        role: "viewer",
+        isCreator: false,
+        canManageAccess: false,
+        userId: "someone-else",
+      },
+    ]);
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Shared with me" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Shared guide" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Liability cap" }),
+    );
+    expect(screen.getByLabelText("Rule")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "New rule" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Playbook overview" }),
+    );
+    for (const label of [
+      "Playbook name",
+      "Represented party",
+      "Description",
+      "Global guidance",
+    ]) {
+      expect(screen.getByLabelText(label)).toBeDisabled();
+    }
+  });
+
+  it("shows playbook details on its overview and offers saved files in the review footer", async () => {
+    vi.mocked(getDocumentFile).mockResolvedValue({
+      blob: new Blob(["Saved contract"]),
+      filename: "saved.txt",
+    });
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Playbook A" }),
+    );
+    expect(screen.queryByLabelText("Global guidance")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Publish" })).toBeNull();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Playbook overview" }),
+    );
+    expect(screen.getByLabelText("Global guidance")).toBeInTheDocument();
+    const facts = screen.getByRole("region", { name: "Playbook information" });
+    expect(within(facts).getByText("Created in Mike")).toBeVisible();
+    expect(within(facts).getByText("Personal")).toBeVisible();
+    expect(within(facts).getByText("Me")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Run" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add document" }));
+    expect(
+      screen.getByRole("menuitem", { name: "Upload documents" }),
+    ).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: "Saved files" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Choose saved contract" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Start review" }));
+    await waitFor(() =>
+      expect(getDocumentFile).toHaveBeenCalledWith("saved-1", "doc-version"),
+    );
+    await waitFor(() =>
+      expect(reviewDocumentWithPlaybook).toHaveBeenCalledWith(
+        "pb-a",
+        expect.objectContaining({ documentName: "saved.txt" }),
+      ),
+    );
+  });
+  it("adds multiple dropped documents as removable tiles and appends uploads without duplicates", async () => {
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Playbook A" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Run" }));
+    const area = screen.getByRole("region", { name: "Documents to review" });
+    const one = new File(["First contract"], "one.txt", { type: "text/plain" });
+    const two = new File(["Second contract"], "two.txt", {
+      type: "text/plain",
+    });
+    expect(
+      within(area)
+        .getByRole("button", { name: /Add documents to review/ })
+        .querySelector("svg"),
+    ).toBeNull();
+    fireEvent.dragEnter(area, { dataTransfer: { types: ["Files"] } });
+    expect(within(area).getByText("Drop documents to add them")).toBeVisible();
+    fireEvent.drop(area, { dataTransfer: { files: [one, two] } });
+    expect(within(area).getAllByRole("listitem")).toHaveLength(2);
+    await userEvent.upload(screen.getByLabelText("Upload review document"), [
+      one,
+      new File(["Third"], "three.txt", { type: "text/plain" }),
+    ]);
+    expect(within(area).getAllByRole("listitem")).toHaveLength(3);
+    await userEvent.click(
+      within(area).getByRole("button", { name: "Remove two.txt" }),
+    );
+    expect(within(area).queryByText("two.txt")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Start 2 reviews" }),
+    ).toBeEnabled();
+  });
+
+  it("rejects unsupported dropped files without discarding valid documents", async () => {
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Playbook A" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Run" }));
+    const area = screen.getByRole("region", { name: "Documents to review" });
+    fireEvent.drop(area, {
+      dataTransfer: {
+        files: [
+          new File(["Contract"], "contract.txt"),
+          new File(["Image"], "image.png"),
+        ],
+      },
+    });
+    expect(within(area).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(area).getByText("contract.txt")).toBeVisible();
+    expect(within(area).queryByText("image.png")).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Some files weren’t added. Choose PDF, DOCX, or TXT documents.",
+    );
+    await userEvent.click(
+      within(area).getByRole("button", { name: "Remove contract.txt" }),
+    );
+    expect(screen.getByRole("button", { name: "Start review" })).toBeDisabled();
+  });
+
+  it("reviews every uploaded and saved document separately and shows all completed runs", async () => {
+    const completed: PlaybookRun[] = [];
+    vi.mocked(listPlaybookRuns).mockImplementation(async () => [...completed]);
+    vi.mocked(reviewDocumentWithPlaybook).mockImplementation(
+      async (playbookId, payload) => {
+        const result = {
+          ...RUN,
+          id: `run-${payload.documentName}`,
+          playbookId,
+          documentName: payload.documentName!,
+        };
+        completed.push(result);
+        return result;
+      },
+    );
+    vi.mocked(getDocumentFile).mockImplementation(async (id) => ({
+      blob: new File([`Saved ${id}`], "saved.txt"),
+      filename: id === "saved-1" ? "saved.txt" : "another-saved.txt",
+    }));
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Playbook A" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Run" }));
+    await userEvent.upload(screen.getByLabelText("Upload review document"), [
+      new File(["Uploaded one"], "one.txt"),
+      new File(["Uploaded two"], "two.txt"),
+    ]);
+    await userEvent.click(screen.getByRole("button", { name: "Add document" }));
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: "Saved files" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Choose saved contracts" }),
+    );
+    expect(
+      within(
+        screen.getByRole("region", { name: "Documents to review" }),
+      ).getAllByRole("listitem"),
+    ).toHaveLength(4);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Start 4 reviews" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Run playbook" })).toBeNull(),
+    );
+    expect(reviewDocumentWithPlaybook).toHaveBeenCalledTimes(4);
+    expect(
+      vi
+        .mocked(reviewDocumentWithPlaybook)
+        .mock.calls.map(([id, payload]) => [
+          id,
+          payload.documentName,
+          payload.documentText,
+        ]),
+    ).toEqual([
+      ["pb-a", "one.txt", "Uploaded one"],
+      ["pb-a", "two.txt", "Uploaded two"],
+      ["pb-a", "saved.txt", "Saved saved-1"],
+      ["pb-a", "another-saved.txt", "Saved saved-2"],
+    ]);
+    expect(getDocumentFile).toHaveBeenCalledWith("saved-2", "doc-version-2");
+    const runs = screen.getByRole("region", { name: "Your runs" });
+    for (const name of ["one.txt", "two.txt", "saved.txt", "another-saved.txt"])
+      expect(await within(runs).findByRole("button", { name })).toBeVisible();
+  });
+
+  it("continues after a failed document and retries only that document", async () => {
+    let finishFirst!: (run: PlaybookRun) => void;
+    vi.mocked(reviewDocumentWithPlaybook)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishFirst = resolve;
+          }),
+      )
+      .mockRejectedValueOnce(new Error("private provider error"))
+      .mockResolvedValueOnce({
+        ...RUN,
+        id: "third-run",
+        documentName: "three.txt",
+      })
+      .mockResolvedValueOnce({
+        ...RUN,
+        id: "retried-run",
+        documentName: "two.txt",
+      });
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Playbook A" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Run" }));
+    await userEvent.upload(
+      screen.getByLabelText("Upload review document"),
+      ["one", "two", "three"].map((name) => new File([name], `${name}.txt`)),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Start 3 reviews" }),
+    );
+    const area = screen.getByRole("region", { name: "Documents to review" });
+    await waitFor(() =>
+      expect(reviewDocumentWithPlaybook).toHaveBeenCalledTimes(1),
+    );
+    expect(screen.getByRole("button", { name: "Reviewing…" })).toBeDisabled();
+    expect(
+      within(area).getByRole("button", { name: "Remove two.txt" }),
+    ).toBeDisabled();
+    fireEvent.drop(area, {
+      dataTransfer: { files: [new File(["extra"], "extra.txt")] },
+    });
+    expect(within(area).getAllByRole("listitem")).toHaveLength(3);
+    finishFirst({ ...RUN, id: "first-run", documentName: "one.txt" });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Retry failed documents" }),
+      ).toBeEnabled(),
+    );
+    expect(reviewDocumentWithPlaybook).toHaveBeenCalledTimes(3);
+    expect(within(area).getAllByText("Reviewed")).toHaveLength(2);
+    expect(within(area).getByText("Couldn’t review")).toBeVisible();
+    expect(within(area).queryByText("private provider error")).toBeNull();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Retry failed documents" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Run playbook" })).toBeNull(),
+    );
+    expect(
+      vi
+        .mocked(reviewDocumentWithPlaybook)
+        .mock.calls.map(([, payload]) => payload.documentName),
+    ).toEqual(["one.txt", "two.txt", "three.txt", "two.txt"]);
+  });
+
+  it("stores an uploaded contract and reviews a Word file by its document", async () => {
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Playbook A" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Run" }));
+    await userEvent.upload(screen.getByLabelText("Upload review document"), [
+      new File(["word"], "supply.docx", {
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      }),
+      new File(["Plain contract"], "notes.txt", { type: "text/plain" }),
+    ]);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Start 2 reviews" }),
+    );
+
+    await waitFor(() =>
+      expect(reviewDocumentWithPlaybook).toHaveBeenCalledTimes(2),
+    );
+    expect(uploadLibraryDocument).toHaveBeenCalledWith(
+      { kind: "files", workspace: "personal" },
+      expect.objectContaining({ name: "supply.docx" }),
+    );
+    // The server reads the Word file itself, so it can add tracked changes.
+    expect(reviewDocumentWithPlaybook).toHaveBeenCalledWith(
+      "pb-a",
+      expect.objectContaining({
+        documentId: "stored-supply.docx",
+        documentText: undefined,
+        documentName: "supply.docx",
+      }),
+    );
+    expect(reviewDocumentWithPlaybook).toHaveBeenCalledWith(
+      "pb-a",
+      expect.objectContaining({
+        documentId: "stored-notes.txt",
+        documentText: "Plain contract",
+      }),
+    );
+  });
+
+  it("waits for pending edits before reviewing", async () => {
+    let finishSave!: (book: Playbook) => void;
+    vi.mocked(updatePlaybook).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishSave = resolve;
+        }),
+    );
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Playbook A" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Playbook overview" }),
+    );
+    await userEvent.type(screen.getByLabelText("Description"), "Updated");
+    await userEvent.click(screen.getByRole("button", { name: "Run" }));
+    await userEvent.upload(
+      screen.getByLabelText("Upload review document"),
+      new File(["Contract"], "contract.txt", { type: "text/plain" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Start review" }));
+    await waitFor(() =>
+      expect(updatePlaybook).toHaveBeenCalledWith("pb-a", expect.any(Object), {
+        visibility: "private",
+      }),
+    );
+    expect(reviewDocumentWithPlaybook).not.toHaveBeenCalled();
+    finishSave(playbook("pb-a", "Playbook A"));
+    await waitFor(() => expect(reviewDocumentWithPlaybook).toHaveBeenCalled());
+  });
+  it("manages people from the header instead of the overview", async () => {
+    vi.mocked(getPlaybookPeople).mockResolvedValue({
+      scope: "direct",
+      owner: {
+        user_id: "u1",
+        email: "owner@example.com",
+        display_name: "Olive Owner",
+      },
+      members: [
+        {
+          email: "reader@example.com",
+          display_name: "Rae Reader",
+          role: "viewer",
+        },
+      ],
+    });
+    vi.mocked(listPlaybookShares).mockResolvedValue([
+      {
+        id: "share-1",
+        shared_with_email: "reader@example.com",
+        role: "viewer",
+      },
+    ]);
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Playbook A" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Playbook overview" }),
+    );
+    expect(screen.queryByLabelText("Share with")).toBeNull();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Playbook people" }),
+    );
+    expect(await screen.findByText("Rae Reader")).toBeInTheDocument();
+    expect(getPlaybookPeople).toHaveBeenCalledWith("pb-a");
+    expect(listPlaybookShares).toHaveBeenCalledWith("pb-a");
+  });
+  it("selects another rule after deletion and offers to add one when none remain", async () => {
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Playbook A" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Topic actions for Liability" }),
+    );
+    await userEvent.click(screen.getByRole("menuitem", { name: "Add rule" }));
+    expect(screen.getByLabelText("Rule")).toHaveValue("New rule 2");
+    await userEvent.click(screen.getByRole("button", { name: "Rule actions" }));
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: "Delete rule" }),
+    );
+    expect(screen.getByLabelText("Rule")).toHaveValue("Liability cap");
+    expect(
+      screen.getByRole("button", { name: "Liability cap" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(screen.getByRole("button", { name: "Rule actions" }));
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: "Delete rule" }),
+    );
+    expect(screen.getByText("No rules yet")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Playbook name")).toBeNull();
+    await userEvent.click(
+      within(screen.getByRole("region", { name: "Rule editor" })).getByRole(
+        "button",
+        { name: "Add" },
+      ),
+    );
+    expect(screen.getByLabelText("Rule")).toHaveValue("New rule 1");
+  });
+});

@@ -439,6 +439,7 @@ function TabularReviewsWorkspacePage({ workspace }: { workspace?: string }) {
                     filter: projectFilter,
                     onFilterChange: handleProjectFilterChange,
                 }}
+                showCreator
                 reviews={visibleReviews}
                 selectedReviewIds={selectedIds}
                 setSelectedReviewIds={setSelectedIds}

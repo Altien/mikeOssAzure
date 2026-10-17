@@ -1,6 +1,6 @@
 "use client";
 
-import { Files, FolderUp, Upload } from "lucide-react";
+import { Cloud, FolderUp, Upload } from "lucide-react";
 import {
     Dropdown,
     DropdownContent,
@@ -52,7 +52,7 @@ export function DocumentUploadMenu({
                         onSelect={() => onSavedFiles?.()}
                         className="flex items-center px-3 py-2"
                     >
-                        <Files className="mr-2 h-3.5 w-3.5" />
+                        <Cloud className="mr-2 h-3.5 w-3.5" />
                         Saved Documents
                     </DropdownItem>
                 )}

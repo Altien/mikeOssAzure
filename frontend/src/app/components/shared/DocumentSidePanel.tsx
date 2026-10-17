@@ -539,7 +539,7 @@ export function DocumentSidePanel({
         >
             <div
                 onMouseDown={handlePanelResizeMouseDown}
-                className="absolute inset-y-0 left-0 z-20 hidden w-1 cursor-col-resize bg-transparent transition-colors hover:bg-blue-400/60 md:block"
+                className="absolute inset-y-0 left-0 z-20 hidden w-1 cursor-col-resize bg-transparent transition-colors hover:bg-blue-600/60 active:bg-blue-600 md:block"
                 title="Resize document view"
             />
             <div className="flex shrink-0 justify-end px-3 py-2 md:absolute md:right-3 md:top-3 md:z-20 md:p-0">
@@ -631,7 +631,7 @@ export function DocumentSidePanel({
                     onMouseDown={handleResizeMouseDown}
                     className={cn(
                         "relative z-10 hidden w-1.5 -translate-x-1/2 cursor-col-resize transition-colors md:block",
-                        "bg-transparent hover:bg-blue-400/60",
+                        "bg-transparent hover:bg-blue-600/60 active:bg-blue-600",
                     )}
                     title="Resize document panel"
                 />

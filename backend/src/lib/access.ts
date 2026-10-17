@@ -504,7 +504,9 @@ function resourceAccessFor(
 }
 
 async function organizationResourceAccess(
-    kind: OrgResourceKind,
+    // Playbooks resolve their own access (modules/playbooks), without the
+    // ownerless take-over and audited admin access below.
+    kind: Exclude<OrgResourceKind, "playbook">,
     row: {
         id: string;
         user_id: string | null;

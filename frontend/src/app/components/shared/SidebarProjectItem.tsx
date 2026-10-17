@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronRight, CornerDownRight } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import {
     ChatSkeuoIcon,
     TabularReviewSkeuoIcon,
@@ -239,14 +239,14 @@ export function SidebarProjectItem({
 
     const listId = `sidebar-project-items-${project.id}`;
     // Sub-rows are not indented: they share the project row's pl-2, 16px
-    // icon box and gap-2. A curved arrow fills the box under the folder
+    // icon box and gap-2. A dot sits in the box under the folder
     // icon, so each item's own icon starts where the project name does.
-    const subRowArrow = (
-        <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-            <CornerDownRight
-                aria-hidden="true"
-                className="h-3.5 w-3.5 text-gray-400"
-            />
+    const subRowDot = (
+        <span
+            aria-hidden="true"
+            className="flex h-4 w-4 shrink-0 items-center justify-center"
+        >
+            <span className="h-1 w-1 rounded-full bg-gray-400" />
         </span>
     );
 
@@ -309,7 +309,7 @@ export function SidebarProjectItem({
                                 aria-hidden="true"
                                 className="flex h-7 items-center gap-2 pl-2 pr-2"
                             >
-                                {subRowArrow}
+                                {subRowDot}
                                 <span className="flex min-w-0 flex-1 items-center gap-2">
                                     <span className="flex h-4 w-4 shrink-0 items-center justify-center">
                                         <span className="h-3.5 w-3.5 animate-pulse rounded bg-gray-200" />
@@ -360,7 +360,7 @@ export function SidebarProjectItem({
                                                     : `text-gray-600 ${LIQUID_GLASS_HOVER_CLASS}`,
                                             )}
                                         >
-                                            {subRowArrow}
+                                            {subRowDot}
                                             <span className="flex min-w-0 flex-1 items-center gap-2">
                                                 {/* Same icon and size as the
                                                     History rows. */}

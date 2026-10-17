@@ -84,6 +84,7 @@ import type {
     Citation,
     ContentVisibility,
     Document,
+    EditAnnotation,
     Folder,
     LibraryFolder,
     Message,
@@ -124,6 +125,7 @@ interface ServerMessage {
     content: string | AssistantEvent[] | null;
     files?: MessageFile[] | null;
     workflow?: { id: string; title: string } | null;
+    playbook?: { id: string; title: string } | null;
     citations?: Citation[] | null;
     created_at: string;
 }
@@ -2900,6 +2902,7 @@ export async function getChat(
                 content: typeof m.content === "string" ? m.content : "",
                 files: m.files ?? undefined,
                 workflow: m.workflow ?? undefined,
+                playbook: m.playbook ?? undefined,
             };
         }
         const events = Array.isArray(m.content)
@@ -4096,4 +4099,404 @@ export async function setGoogleWorkspaceToolEnabled(
         },
         isCurrentAccount,
     );
+}
+
+// ---------------------------------------------------------------------------
+// Playbooks
+// ---------------------------------------------------------------------------
+
+export type PlaybookClauseUsage =
+    | "illustrative"
+    | "preferred"
+    | "verbatim"
+    | "accepted"
+    | "unacceptable";
+export interface PlaybookClause {
+    text: string;
+    usage: PlaybookClauseUsage;
+    sourceRefs: string[];
+}
+export interface PlaybookPosition {
+    name: string;
+    criteria: string;
+    sampleClauses: PlaybookClause[];
+}
+export interface PlaybookRule {
+    id: string;
+    name: string;
+    concept: string;
+    scope: "clause" | "agreement";
+    required: boolean;
+    guidance: string;
+    standard: PlaybookPosition | null;
+    fallbacks: PlaybookPosition[];
+    unacceptable: PlaybookPosition[];
+    conditions: string[];
+    actions: Array<{ scenario: string; instruction: string }>;
+    sourceRefs: string[];
+}
+export interface PlaybookTopic {
+    id: string;
+    name: string;
+    rules: PlaybookRule[];
+}
+export interface PlaybookContent {
+    name: string;
+    description: string;
+    globalGuidance: string;
+    representedParty: string;
+    documentTypes: string[];
+    jurisdictions: string[];
+    /** Rules outside a topic; absent on older saved playbooks. */
+    rules?: PlaybookRule[];
+    topics: PlaybookTopic[];
+}
+export interface Playbook {
+    id: string;
+    userId: string;
+    name: string;
+    description: string;
+    orgId: string | null;
+    visibility: "private" | "organization";
+    /** The caller's role: viewer (view and run), editor, or owner. */
+    role: "owner" | "editor" | "viewer";
+    isCreator: boolean;
+    /** Edit rules, details and sources: editor or owner. */
+    canEdit: boolean;
+    /** Share, change visibility and delete: owner. */
+    canManageAccess: boolean;
+    /** Who it is shared with; filled for its owners only. */
+    sharedWith: string[];
+    /** The creator's profile name and photo; null when they have not set one. */
+    creatorName: string | null;
+    creatorPhoto: string | null;
+    content: PlaybookContent;
+    sourceFilename: string | null;
+    importModel: string | null;
+    createdAt: string;
+    updatedAt: string;
+}
+export type PlaybookFindingStatus =
+    | "not_applicable"
+    | "acceptable"
+    | "needs_review"
+    | "unacceptable"
+    | "missing_required"
+    | "outside_scope";
+export interface PlaybookFinding {
+    id: string;
+    topicId: string | null;
+    ruleId: string | null;
+    ruleName: string;
+    status: PlaybookFindingStatus;
+    quote: string;
+    location: string;
+    analysis: string;
+    suggestedText: string;
+    /** For a missing clause: the end of the clause it was inserted after. */
+    insertAfter?: string;
+    /** The tracked change made in the reviewed Word document, if any. */
+    edit?: EditAnnotation | null;
+}
+export interface PlaybookRun {
+    id: string;
+    playbookId: string;
+    model: string;
+    documentName: string | null;
+    /** The stored document reviewed, when it was one. */
+    documentId?: string | null;
+    /** The version holding the review's tracked changes, if it made any. */
+    editedVersionId?: string | null;
+    reviewMode: "strict" | "permissive";
+    status: string;
+    summary: string | null;
+    findings: PlaybookFinding[];
+    error: string | null;
+    startedAt: string;
+    completedAt: string | null;
+}
+export interface PlaybookConfiguration {
+    availableModelIds: string[];
+    defaultModel: string | null;
+}
+
+export async function getPlaybookConfiguration(
+    workspace?: string | null,
+): Promise<PlaybookConfiguration> {
+    return apiRequest(
+        `/playbooks/configuration${workspace ? `?workspace=${encodeURIComponent(workspace)}` : ""}`,
+    );
+}
+
+export async function listPlaybooks(
+    workspace?: string | null,
+): Promise<Playbook[]> {
+    return apiRequest(
+        `/playbooks${workspace ? `?workspace=${encodeURIComponent(workspace)}` : ""}`,
+    );
+}
+
+export async function getPlaybook(playbookId: string): Promise<Playbook> {
+    return apiRequest(`/playbooks/${encodeURIComponent(playbookId)}`);
+}
+
+/** The Word file a playbook was imported from, streamed for the viewer. */
+export function getPlaybookSourceUrl(playbookId: string): string {
+    return `${API_BASE}/playbooks/${encodeURIComponent(playbookId)}/source`;
+}
+
+/** A supplementary document: a copy the playbook keeps for its rules to cite. */
+export interface PlaybookSupplementarySource {
+    id: string;
+    filename: string;
+    fileType: "docx" | "pdf";
+    sizeBytes: number;
+    createdAt: string;
+}
+
+function playbookSourcesPath(playbookId: string): string {
+    return `/playbooks/${encodeURIComponent(playbookId)}/sources`;
+}
+
+export async function listPlaybookSources(
+    playbookId: string,
+): Promise<PlaybookSupplementarySource[]> {
+    return apiRequest(playbookSourcesPath(playbookId));
+}
+
+export function getPlaybookSupplementaryFileUrl(
+    playbookId: string,
+    sourceId: string,
+): string {
+    return `${API_BASE}${playbookSourcesPath(playbookId)}/${encodeURIComponent(sourceId)}/file`;
+}
+
+/** Upload a .docx or .pdf straight to storage, then add it to the playbook. */
+export async function uploadPlaybookSource(
+    playbookId: string,
+    file: File,
+): Promise<PlaybookSupplementarySource> {
+    const staged = await apiRequest<{
+        uploadUrl: string;
+        storageKey: string;
+        contentType: string;
+    }>(`${playbookSourcesPath(playbookId)}/upload-url`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: file.name, sizeBytes: file.size }),
+    });
+    const upload = await fetch(staged.uploadUrl, {
+        method: "PUT",
+        headers: { "Content-Type": staged.contentType },
+        body: file,
+    });
+    if (!upload.ok) {
+        throw new Error("The document could not be uploaded. Please try again.");
+    }
+    return apiRequest(playbookSourcesPath(playbookId), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storageKey: staged.storageKey, filename: file.name }),
+    });
+}
+
+/** Copy a document from the library or a project into the playbook. */
+export async function addPlaybookSourceFromDocument(
+    playbookId: string,
+    documentId: string,
+): Promise<PlaybookSupplementarySource> {
+    return apiRequest(playbookSourcesPath(playbookId), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documentId }),
+    });
+}
+
+export async function deletePlaybookSource(
+    playbookId: string,
+    sourceId: string,
+): Promise<void> {
+    return apiRequest(
+        `${playbookSourcesPath(playbookId)}/${encodeURIComponent(sourceId)}`,
+        { method: "DELETE" },
+    );
+}
+
+/**
+ * Start a playbook with no Word source. The editor can author one by hand, so
+ * an import is not the only way to get a first playbook.
+ */
+export type NewPlaybookDetails = Partial<
+    Pick<
+        PlaybookContent,
+        | "name"
+        | "description"
+        | "representedParty"
+        | "documentTypes"
+        | "jurisdictions"
+    >
+>;
+
+export async function createPlaybook(
+    details: NewPlaybookDetails = {},
+    workspace?: string | null,
+): Promise<Playbook> {
+    const name = details.name?.trim();
+    return apiRequest("/playbooks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            ...details,
+            name: name || undefined,
+            ...(workspace ? { workspace } : {}),
+        }),
+    });
+}
+
+/**
+ * The source .docx goes straight to object storage under a signed URL, then
+ * the API compiles it from that key. The API never receives the file body.
+ */
+export async function importPlaybook(
+    file: File,
+    model: string,
+    name?: string,
+    /** Replace this playbook's content rather than create a new playbook. */
+    playbookId?: string,
+    workspace?: string | null,
+): Promise<Playbook> {
+    const staged = await apiRequest<{
+        uploadUrl: string;
+        storageKey: string;
+        contentType: string;
+    }>("/playbooks/import/upload-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: file.name, sizeBytes: file.size }),
+    });
+
+    const upload = await fetch(staged.uploadUrl, {
+        method: "PUT",
+        headers: { "Content-Type": staged.contentType },
+        body: file,
+    });
+    if (!upload.ok) {
+        throw new Error("The playbook could not be uploaded. Please try again.");
+    }
+
+    return apiRequest<Playbook>("/playbooks/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            storageKey: staged.storageKey,
+            filename: file.name,
+            model,
+            ...(name?.trim() ? { name: name.trim() } : {}),
+            ...(playbookId ? { playbookId } : {}),
+            ...(workspace ? { workspace } : {}),
+        }),
+    });
+}
+
+export async function updatePlaybook(
+    playbookId: string,
+    content: PlaybookContent,
+    /** Sharing has its own calls (sharePlaybook); only visibility rides along. */
+    access?: Pick<Playbook, "visibility">,
+    isCurrentAccount?: () => boolean,
+): Promise<Playbook> {
+    return apiRequest(`/playbooks/${encodeURIComponent(playbookId)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, ...access }),
+    }, isCurrentAccount);
+}
+
+/** Who can open a playbook, in the roster shape the people dialog reads. */
+export async function getPlaybookPeople(
+    playbookId: string,
+): Promise<ProjectPeople> {
+    return apiRequest(`/playbooks/${encodeURIComponent(playbookId)}/people`);
+}
+
+export interface PlaybookShare {
+    /** The grant's id; a member's user id for an organization's playbook. */
+    id: string;
+    user_id?: string;
+    shared_with_email: string;
+    display_name?: string | null;
+    role: AccessAssignmentRole;
+}
+
+/** The grants themselves, for the playbook's owners. */
+export async function listPlaybookShares(
+    playbookId: string,
+): Promise<PlaybookShare[]> {
+    return apiRequest(`/playbooks/${encodeURIComponent(playbookId)}/shares`);
+}
+
+export async function sharePlaybook(
+    playbookId: string,
+    payload: { emails: string[]; role: AccessAssignmentRole },
+): Promise<void> {
+    return apiRequest(`/playbooks/${encodeURIComponent(playbookId)}/share`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+}
+
+export async function revokePlaybookShare(
+    playbookId: string,
+    shareId: string,
+): Promise<void> {
+    return apiRequest(
+        `/playbooks/${encodeURIComponent(playbookId)}/shares/${encodeURIComponent(shareId)}`,
+        { method: "DELETE" },
+    );
+}
+
+export async function reviewDocumentWithPlaybook(
+    playbookId: string,
+    payload: {
+        /** Text to review; a stored Word document is read by the server. */
+        documentText?: string;
+        documentName?: string;
+        /** A stored document: a Word document also gets tracked changes. */
+        documentId?: string;
+        instructions?: string;
+        model: string;
+        reviewMode: "strict" | "permissive";
+    },
+): Promise<PlaybookRun> {
+    return apiRequest(`/playbooks/${encodeURIComponent(playbookId)}/review`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+}
+
+export async function listPlaybookRuns(
+    playbookId: string,
+): Promise<PlaybookRun[]> {
+    return apiRequest(`/playbooks/${encodeURIComponent(playbookId)}/runs`);
+}
+
+/** A run listed across playbooks, named after the playbook it reviewed. */
+export type PlaybookRunListItem = PlaybookRun & { playbookName: string };
+
+/** The caller's runs across the playbooks they can open in a workspace. */
+export async function listAllPlaybookRuns(
+    workspace?: string | null,
+): Promise<PlaybookRunListItem[]> {
+    const query = workspace
+        ? `?workspace=${encodeURIComponent(workspace)}`
+        : "";
+    return apiRequest(`/playbooks/runs${query}`);
+}
+
+export async function deletePlaybook(playbookId: string): Promise<void> {
+    return apiRequest(`/playbooks/${encodeURIComponent(playbookId)}`, {
+        method: "DELETE",
+    });
 }

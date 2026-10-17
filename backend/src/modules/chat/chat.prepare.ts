@@ -425,6 +425,7 @@ export async function prepareChatStream(
                 content: lastUser.content,
                 files: lastUser.files ?? null,
                 workflow: lastUser.workflow ?? null,
+                playbook: lastUser.playbook ?? null,
                 author_user_id: userId,
             });
         if (userMessageError) {

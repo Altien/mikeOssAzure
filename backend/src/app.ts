@@ -37,6 +37,7 @@ import {
   projectMemoryRouter,
   userMemoryRouter,
 } from "./modules/memory/memory.routes";
+import { playbooksRouter } from "./modules/playbooks/playbooks.routes";
 import { manifestPublicKey } from "./lib/manifestSigning";
 import { safeErrorLog } from "./lib/safeError";
 import { authorityTraceRouter } from "./altien/authorityTrace/router";
@@ -156,6 +157,12 @@ export function buildApp(): express.Express {
     windowMs: hours(envInt("RATE_LIMIT_EXPORT_WINDOW_HOURS", 1)),
     max: envInt("RATE_LIMIT_EXPORT_MAX", 10),
     message: "Too many export requests. Please try again later.",
+  });
+
+  const playbookImportLimiter = makeLimiter({
+    windowMs: hours(envInt("RATE_LIMIT_UPLOAD_WINDOW_HOURS", 1)),
+    max: envInt("RATE_LIMIT_UPLOAD_MAX", 50),
+    message: "Too many playbook imports. Please try again later.",
   });
 
   const dataDeleteLimiter = makeLimiter({
@@ -352,6 +359,7 @@ export function buildApp(): express.Express {
   // its download stay on the general limiter (upstream 33facdba removed the
   // synchronous user/audit export GETs and the /api/users alias).
   app.post("/api/user/exports", exportLimiter);
+  app.post(["/api/playbooks/import", "/api/playbooks/import/upload-url"], playbookImportLimiter);
   app.delete("/api/user/account", dataDeleteLimiter);
   app.delete("/api/user/chats", dataDeleteLimiter);
   app.delete("/api/user/projects", dataDeleteLimiter);
@@ -379,6 +387,7 @@ export function buildApp(): express.Express {
   app.use("/api/authority-trace", authorityTraceRouter);
   app.use("/api/altien/skills", skillsRouter);
   app.use("/api/audit", auditRouter);
+  app.use("/api/playbooks", playbooksRouter);
   app.use("/api/auth", authRouter);
   app.use("/api/llm", llmRouter);
   app.use("/api/admin/diagnostics", diagnosticsRouter);

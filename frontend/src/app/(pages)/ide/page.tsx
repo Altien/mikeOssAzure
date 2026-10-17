@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { SvgAssetIcon } from "@/app/components/ui/svg-asset-icon";
-import ide from "../../../../public/icons/features/ide.svg";
+import ide from "../../../../public/icons/features/ide-new.svg";
 import { useRouter } from "next/navigation";
 import { EmptyState } from "@/app/components/ui/empty-state";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
