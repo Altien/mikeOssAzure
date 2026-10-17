@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import Image from "next/image";
-import { Plus } from "lucide-react";
+import { FolderPlus, Plus } from "lucide-react";
 import { ConnectorSetupGuideLink } from "@/app/components/settings/ConnectorSetupGuideLink";
 import { NewCustomMcpModal } from "@/app/components/settings/NewCustomMcpModal";
 import { ConnectorCard } from "@/app/components/settings/ConnectorCard";
@@ -32,6 +32,7 @@ import {
   type GoogleConnector,
   type GoogleConnectorProvider,
 } from "@/app/components/settings/useGoogleConnector";
+import { useGoogleDrivePicker } from "@/app/components/settings/useGoogleDrivePicker";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import {
   type McpConnectorSummary,
@@ -423,6 +424,7 @@ export default function ConnectorsPage() {
     "Google Calendar",
   );
   const googleConnectors = [googleDrive, gmail, googleCalendar];
+  const drivePicker = useGoogleDrivePicker();
   const [selectedGoogleProvider, setSelectedGoogleProvider] =
     useState<GoogleConnectorProvider | null>(null);
   const selectedGoogle =
@@ -1483,6 +1485,31 @@ export default function ConnectorsPage() {
         connector={selectedGoogleView}
         busyKey={busyKey}
         toolsLoading={false}
+        actions={
+          selectedGoogle?.provider === "google-drive" &&
+          selectedGoogle.status?.connected &&
+          selectedGoogle.status.pickerAvailable ? (
+            <div className="flex flex-col items-start gap-1.5">
+              <PillButtonUI
+                tone="white"
+                disabled={busyKey !== null}
+                loading={busyKey === "picker:google-drive"}
+                onClick={() =>
+                  void runGoogleUpdate(
+                    "picker:google-drive",
+                    drivePicker.addFiles,
+                  )
+                }
+              >
+                <FolderPlus className="h-3.5 w-3.5" aria-hidden="true" />
+                Add files from Google Drive
+              </PillButtonUI>
+              <p role="status" className="text-xs text-gray-500">
+                {drivePicker.message}
+              </p>
+            </div>
+          ) : undefined
+        }
         onClose={() => setSelectedGoogleProvider(null)}
         onRefresh={() =>
           selectedGoogle &&

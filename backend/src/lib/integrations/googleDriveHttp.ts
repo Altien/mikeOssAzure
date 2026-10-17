@@ -4,7 +4,10 @@ import path from "node:path";
 import { googleDriveLimits } from "./googleDriveLimits";
 
 export const GOOGLE_DRIVE_REQUEST_TIMEOUT_MS = 30_000;
-export class GoogleDriveUserError extends Error {}
+export class GoogleDriveUserError extends Error {
+    /** Stable machine-readable reason, when a subclass has one. */
+    code?: string;
+}
 
 /** Fixed, intentional user messages; never expose Google's response body. */
 export function googleDriveHttpError(status: number): GoogleDriveUserError {

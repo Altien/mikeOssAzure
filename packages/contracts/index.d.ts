@@ -486,7 +486,7 @@ export interface GoogleDriveStatus {
     connected: boolean;
     scope: string | null;
     enabled: boolean;
-    /** Full Drive permission was granted and connection binding is available. */
+    /** A Drive write scope (drive.file or legacy full drive) was granted and connection binding is available. */
     writeEnabled: boolean;
     requireWriteApproval: boolean;
     /** Disables write tools while preserving individual tool choices. */
@@ -494,8 +494,24 @@ export interface GoogleDriveStatus {
     grantId?: string;
     /** Absent for connections made before the account was recorded. */
     accountEmail?: string;
+    /**
+     * Add files from Google Drive can be offered: the server has the Picker's
+     * browser key and app id, and the connection (if any) holds the per-file
+     * drive.file scope rather than a legacy whole-Drive one.
+     */
+    pickerAvailable: boolean;
     tools: NativeConnectorTool[];
     redirectUri?: string | null;
+}
+/** What the browser needs to open the Google Picker; never a refresh token. */
+export interface GoogleDrivePickerSession {
+    /** Short-lived drive.file access token. */
+    accessToken: string;
+    expiresAt: string;
+    /** Google Cloud project number; picked files are granted to this app. */
+    appId: string;
+    /** Browser API key restricted to the Google Picker and Google Drive APIs. */
+    developerKey: string;
 }
 export interface GoogleWorkspaceStatus {
     configured: boolean;

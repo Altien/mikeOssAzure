@@ -1472,48 +1472,50 @@ export function isConnectorSetupError(error: unknown): error is MikeApiError {
     );
 }
 
-export async function getGoogleDriveStatus(): Promise<GoogleDriveStatus> {
-    return apiRequest<GoogleDriveStatus>("/user/integrations/google-drive");
+export async function getGoogleDriveStatus(isCurrentAccount?: () => boolean): Promise<GoogleDriveStatus> {
+    return apiRequest<GoogleDriveStatus>("/user/integrations/google-drive", undefined, isCurrentAccount);
 }
 
-export async function startGoogleDriveOAuth(): Promise<{
+export async function startGoogleDriveOAuth(isCurrentAccount?: () => boolean): Promise<{
     authorizationUrl: string;
 }> {
     return apiRequest<{ authorizationUrl: string }>(
         "/user/integrations/google-drive/oauth/start",
         { method: "POST" },
+        isCurrentAccount,
     );
 }
 
-export async function cancelGoogleDriveOAuth(state: string): Promise<void> {
+export async function cancelGoogleDriveOAuth(state: string, isCurrentAccount?: () => boolean): Promise<void> {
     await apiRequest("/user/integrations/google-drive/oauth/cancel", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ state }),
-    });
+    }, isCurrentAccount);
 }
 
-export async function disconnectGoogleDrive(): Promise<void> {
+export async function disconnectGoogleDrive(isCurrentAccount?: () => boolean): Promise<void> {
     return apiRequest<void>("/user/integrations/google-drive", {
         method: "DELETE",
-    });
+    }, isCurrentAccount);
 }
 
 export async function updateGoogleDriveSettings(settings: {
     enabled?: boolean;
     requireWriteApproval?: boolean;
     readOnly?: boolean;
-}): Promise<GoogleDriveStatus> {
+}, isCurrentAccount?: () => boolean): Promise<GoogleDriveStatus> {
     return apiRequest<GoogleDriveStatus>("/user/integrations/google-drive", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(settings),
-    });
+    }, isCurrentAccount);
 }
 
 export async function setGoogleDriveToolEnabled(
     toolName: string,
     enabled: boolean,
+    isCurrentAccount?: () => boolean,
 ): Promise<GoogleDriveStatus> {
     return apiRequest<GoogleDriveStatus>(
         `/user/integrations/google-drive/tools/${encodeURIComponent(toolName)}`,
@@ -1522,6 +1524,19 @@ export async function setGoogleDriveToolEnabled(
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ enabled }),
         },
+        isCurrentAccount,
+    );
+}
+
+export type GoogleDrivePickerSession =
+    import("@mike/contracts").GoogleDrivePickerSession;
+
+/** A short-lived Drive token plus the keys the Google Picker needs. */
+export async function createGoogleDrivePickerSession(isCurrentAccount?: () => boolean): Promise<GoogleDrivePickerSession> {
+    return apiRequest<GoogleDrivePickerSession>(
+        "/user/integrations/google-drive/picker-session?workspace=personal",
+        { method: "POST" },
+        isCurrentAccount,
     );
 }
 
@@ -4018,40 +4033,43 @@ export async function deleteWorkflowAsset(
 }
 
 export async function getGoogleWorkspaceStatus(
-    provider: import("@mike/contracts").GoogleWorkspaceProvider,
+    provider: import("@mike/contracts").GoogleWorkspaceProvider,    isCurrentAccount?: () => boolean,
 ) {
     return apiRequest<import("@mike/contracts").GoogleWorkspaceStatus>(
         `/user/integrations/${provider}`,
+        undefined, isCurrentAccount,
     );
 }
 export async function startGoogleWorkspaceOAuth(
-    provider: import("@mike/contracts").GoogleWorkspaceProvider,
+    provider: import("@mike/contracts").GoogleWorkspaceProvider,    isCurrentAccount?: () => boolean,
 ) {
     return apiRequest<{ authorizationUrl: string }>(
         `/user/integrations/${provider}/oauth/start`,
         { method: "POST" },
+        isCurrentAccount,
     );
 }
 export async function cancelGoogleWorkspaceOAuth(
     provider: import("@mike/contracts").GoogleWorkspaceProvider,
     state: string,
+    isCurrentAccount?: () => boolean,
 ) {
     return apiRequest<void>(`/user/integrations/${provider}/oauth/cancel`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ state }),
-    });
+    }, isCurrentAccount);
 }
 export async function disconnectGoogleWorkspace(
-    provider: import("@mike/contracts").GoogleWorkspaceProvider,
+    provider: import("@mike/contracts").GoogleWorkspaceProvider,    isCurrentAccount?: () => boolean,
 ) {
     return apiRequest<void>(`/user/integrations/${provider}`, {
         method: "DELETE",
-    });
+    }, isCurrentAccount);
 }
 export async function updateGoogleWorkspaceSettings(
     provider: import("@mike/contracts").GoogleWorkspaceProvider,
-    settings: { enabled?: boolean; requireWriteApproval?: boolean; readOnly?: boolean },
+    settings: { enabled?: boolean; requireWriteApproval?: boolean; readOnly?: boolean },    isCurrentAccount?: () => boolean,
 ) {
     return apiRequest<import("@mike/contracts").GoogleWorkspaceStatus>(
         `/user/integrations/${provider}`,
@@ -4060,12 +4078,14 @@ export async function updateGoogleWorkspaceSettings(
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(settings),
         },
+        isCurrentAccount,
     );
 }
 export async function setGoogleWorkspaceToolEnabled(
     provider: import("@mike/contracts").GoogleWorkspaceProvider,
     toolName: string,
     enabled: boolean,
+    isCurrentAccount?: () => boolean,
 ) {
     return apiRequest<import("@mike/contracts").GoogleWorkspaceStatus>(
         `/user/integrations/${provider}/tools/${encodeURIComponent(toolName)}`,
@@ -4074,5 +4094,6 @@ export async function setGoogleWorkspaceToolEnabled(
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ enabled }),
         },
+        isCurrentAccount,
     );
 }

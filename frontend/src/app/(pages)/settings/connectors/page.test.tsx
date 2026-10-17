@@ -810,6 +810,7 @@ describe("Google Drive connection lifecycle", () => {
         schemaReady: true,
         redirectUri: null,
         enabled: true,
+        pickerAvailable: false,
         tools: driveTools,
     };
     const state = "a".repeat(32);
@@ -836,6 +837,22 @@ describe("Google Drive connection lifecycle", () => {
             await flushMicrotasks();
         });
         expect(setGoogleDriveToolEnabled).toHaveBeenCalledWith("google_drive_trash_file", false);
+    });
+
+    it("offers Add files from Google Drive only when the server can open the Picker", async () => {
+        const addFiles = { name: "Add files from Google Drive" };
+        vi.mocked(getGoogleDriveStatus).mockResolvedValue({ ...ready, connected: true });
+        render(<ConnectorsPage />);
+        await act(flushMicrotasks);
+        fireEvent.click(screen.getByRole("button", { name: "Manage Google Drive" }));
+        expect(within(screen.getByRole("dialog")).queryByRole("button", addFiles)).toBeNull();
+        cleanup();
+
+        vi.mocked(getGoogleDriveStatus).mockResolvedValue({ ...ready, connected: true, pickerAvailable: true });
+        render(<ConnectorsPage />);
+        await act(flushMicrotasks);
+        fireEvent.click(screen.getByRole("button", { name: "Manage Google Drive" }));
+        expect(within(screen.getByRole("dialog")).getByRole("button", addFiles)).toHaveAttribute("type", "button");
     });
 
     let popup: { location: { href: string }; close: ReturnType<typeof vi.fn> };
@@ -1269,7 +1286,7 @@ describe("Connector read-only mode", () => {
     const status = {
         configured: true, schemaReady: true, connected: true, enabled: true,
         writeEnabled: true, readOnly: false, requireWriteApproval: true,
-        scope: null, redirectUri: null, tools,
+        scope: null, redirectUri: null, pickerAvailable: false, tools,
     };
     beforeEach(() => {
         vi.clearAllMocks();

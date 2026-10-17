@@ -13,13 +13,14 @@ const mocks = vi.hoisted(() => ({
   tool: vi.fn(),
   driveSettings: vi.fn(),
   driveStatus: vi.fn(),
+  db: {} as unknown,
 }));
 vi.mock("../../lib/integrations/googleDrive", async (original) => ({
   ...(await original<typeof import("../../lib/integrations/googleDrive")>()),
   updateGoogleDriveSettings: mocks.driveSettings,
   getGoogleDriveStatus: mocks.driveStatus,
 }));
-vi.mock("../../lib/supabase", () => ({ createServerSupabase: () => ({}) }));
+vi.mock("../../lib/supabase", () => ({ createServerSupabase: () => mocks.db }));
 vi.mock("../../middleware/auth", () => ({
   requireAuth: (_r: unknown, res: Response, next: () => void) => {
     if (!mocks.auth) return void res.status(401).end();
@@ -51,8 +52,11 @@ const app = express();
 app.use(express.json());
 app.use("/user", userRouter);
 import { ConnectorSetupError } from "../../lib/mcp/errors";
+import { encryptString } from "../../lib/mcp/client";
+import { driveDb } from "../../lib/integrations/__tests__/googleDriveDb";
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.db = {};
   mocks.auth = true;
   vi.stubEnv("API_PUBLIC_URL", "http://localhost:3000/api");
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -232,5 +236,78 @@ describe("Google read-only settings validation", () => {
     expect((await request(app).patch(`/user/integrations/${provider}`).send({ readOnly: "false" })).status).toBe(400);
     expect(mocks.settings).not.toHaveBeenCalled();
     expect(mocks.driveSettings).not.toHaveBeenCalled();
+  });
+});
+
+describe("Google Drive picker session", () => {
+  const pickerSession = () =>
+    request(app).post("/user/integrations/google-drive/picker-session");
+  const connected = (overrides: Record<string, unknown> = {}) => {
+    vi.stubEnv("MCP_CONNECTORS_ENCRYPTION_SECRET", "test-encryption-secret");
+    const access = encryptString("access-token-1");
+    const refresh = encryptString("refresh-token-1");
+    mocks.db = driveDb({
+      tokenRow: {
+        user_id: "owner",
+        grant_id: "grant-1",
+        encrypted_access_token: access.encrypted,
+        access_token_iv: access.iv,
+        access_token_tag: access.tag,
+        encrypted_refresh_token: refresh.encrypted,
+        refresh_token_iv: refresh.iv,
+        refresh_token_tag: refresh.tag,
+        scope: "openid email https://www.googleapis.com/auth/drive.file",
+        expires_at: new Date(Date.now() + 3600_000).toISOString(),
+        ...overrides,
+      },
+    }).db;
+  };
+  beforeEach(() => {
+    vi.stubEnv("GOOGLE_DRIVE_PICKER_API_KEY", "picker-key");
+    vi.stubEnv("GOOGLE_DRIVE_PICKER_APP_ID", "123456789");
+  });
+
+  it("requires a signed-in user", async () => {
+    mocks.auth = false;
+    expect((await pickerSession()).status).toBe(401);
+  });
+
+  it("answers 404 when the server has no Picker key or app id", async () => {
+    connected();
+    vi.stubEnv("GOOGLE_DRIVE_PICKER_APP_ID", "");
+    const res = await pickerSession();
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe("google_drive_picker_unavailable");
+  });
+
+  it("answers 409 when Drive is not connected or is turned off", async () => {
+    mocks.db = driveDb().db;
+    const missing = await pickerSession();
+    expect(missing.status).toBe(409);
+    expect(missing.body.code).toBe("google_drive_auth_required");
+    connected({ enabled: false });
+    expect((await pickerSession()).status).toBe(409);
+  });
+
+  it("answers 409 for a connection made with whole-Drive access, without a token", async () => {
+    connected({ scope: "openid email https://www.googleapis.com/auth/drive" });
+    const res = await pickerSession();
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe("google_drive_picker_reconnect");
+    expect(JSON.stringify(res.body)).not.toContain("access-token-1");
+  });
+
+  it("returns a short-lived token for the Picker and never the refresh token", async () => {
+    connected();
+    const res = await pickerSession();
+    expect(res.status).toBe(200);
+    expect(res.headers["cache-control"]).toBe("no-store");
+    expect(res.body).toEqual({
+      accessToken: "access-token-1",
+      expiresAt: expect.any(String),
+      appId: "123456789",
+      developerKey: "picker-key",
+    });
+    expect(JSON.stringify(res.body)).not.toContain("refresh-token-1");
   });
 });

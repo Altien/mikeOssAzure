@@ -25,7 +25,7 @@ export const GOOGLE_PROVIDERS = {
   gmail: {
     name: "Gmail",
     read: ["https://www.googleapis.com/auth/gmail.readonly"],
-    write: ["https://www.googleapis.com/auth/gmail.modify"],
+    write: ["https://www.googleapis.com/auth/gmail.compose"],
   },
   "google-calendar": {
     name: "Google Calendar",
@@ -67,8 +67,24 @@ export function requestedScopes(provider: GoogleProvider): string[] {
   const config = GOOGLE_PROVIDERS[provider];
   return ["openid", "email", ...config.read, ...config.write];
 }
+/**
+ * Broader scopes that cover narrower ones Mike checks for. gmail.modify was
+ * Mike's Gmail write scope before gmail.compose; listing it keeps those grants
+ * readable and writable without a reconnect.
+ */
+const IMPLIED_SCOPES: Record<string, readonly string[]> = {
+  "https://www.googleapis.com/auth/gmail.modify": [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.compose",
+  ],
+  "https://www.googleapis.com/auth/calendar.events": [
+    "https://www.googleapis.com/auth/calendar.events.readonly",
+  ],
+};
+/** The granted scopes plus every scope they imply. */
 function grantedScopes(scope: unknown): string[] {
-  return typeof scope === "string" ? scope.split(/\s+/) : [];
+  const granted = typeof scope === "string" ? scope.split(/\s+/) : [];
+  return granted.concat(granted.flatMap((s) => IMPLIED_SCOPES[s] ?? []));
 }
 function grantedWriteAccess(provider: GoogleProvider, scope: unknown): boolean {
   const scopes = grantedScopes(scope);
@@ -268,16 +284,7 @@ async function tokenPatch(
     throw new Error("Invalid Google token response");
   const scopes = grantedScopes(scope);
   // Read access is required; write access is optional and recorded as granted.
-  if (
-    !GOOGLE_PROVIDERS[provider].read.every(
-      (s) =>
-        scopes.includes(s) ||
-        (s.endsWith("/gmail.readonly") &&
-          scopes.includes("https://www.googleapis.com/auth/gmail.modify")) ||
-        (s.endsWith("/calendar.events.readonly") &&
-          scopes.includes("https://www.googleapis.com/auth/calendar.events")),
-    )
-  )
+  if (!GOOGLE_PROVIDERS[provider].read.every((s) => scopes.includes(s)))
     throw new GoogleWorkspaceError(
       "Required Google permissions were not granted. Reconnect and grant the requested access.",
     );

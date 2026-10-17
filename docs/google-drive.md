@@ -15,17 +15,41 @@ The integration does not require a Google MCP server or a service account.
 > only), serves callbacks under the same-origin `/api` prefix, uses Entra
 > sign-in policy instead of in-app MFA, and builds with pnpm. Write approval is
 > on by default; see `docs/connectors.md`.
+Mike asks Google only for the `drive.file` scope, so it reaches two kinds of
+files: files Mike created, and files the user explicitly added. To add files,
+open the Google Drive connector's **Manage** dialog and choose **Add files from
+Google Drive**. Google's own file chooser (the Google Picker) opens over the
+page; the user selects one or more files, and Mike reports how many were added
+(or that none were). From then on the assistant can search, list and read
+those files. Everything else in the user's Drive stays invisible: search and
+list do not return it, and the assistant tells the user to add a file it
+cannot find. Folders can be browsed in the Picker but not selected, because
+picking a folder does not give Mike its contents; select the files inside
+instead. The button appears only when the server has the Picker configured
+(see below).
 
 ## Technical approach
 
 - **Authorization:** Web application OAuth, PKCE S256, a random state token,
-  full `drive` access, offline access, and explicit consent. OpenID/email
-  identifies the selected account for the Manage dialog; connections made
-  before it was recorded show no account until connected again. Connections made
-  before Mike asked for full access hold `drive.readonly` and keep working for
-  reads; write tools appear after the user deletes the connector and connects it again with full access. State is hashed in the
-  database; its verifier and redirect URI are encrypted. State expires after
-  ten minutes. The backend owns the client secret; no token reaches the browser.
+  `drive.file` access, offline access, and explicit consent. `drive.file` is
+  non-sensitive and grants read and write on files Mike created or the user
+  picked. OpenID/email identifies the selected account for the Manage dialog;
+  connections made before it was recorded show no account until connected
+  again. Legacy grants keep working unchanged: connections that hold the full
+  `drive` scope keep full read and write access, and the earliest connections
+  that hold `drive.readonly` keep working for reads; either moves to
+  `drive.file` when the user deletes the connector and connects it again.
+  One table in `googleDrive.ts` (`driveScopeGrants`) decides what each scope
+  allows. State is hashed in the database; its verifier and redirect URI are
+  encrypted. State expires after ten minutes. The backend owns the client
+  secret and the refresh token.
+- **Google Picker:** the Picker runs in the browser, so
+  `POST /user/integrations/google-drive/picker-session` (signed in, MFA step-up
+  when enrolled) hands the browser a short-lived `drive.file` access token,
+  refreshed first when it is near expiry, together with the Picker browser key
+  and app id. The response is `Cache-Control: no-store` and never includes the
+  refresh token, which stays server-side. It answers 404 when the Picker is not
+  configured and 409 when Drive is not connected or is switched off.
   The callback relays to the fixed frontend API gateway and completes only
   with the session of the Mike user who initiated that state; a different user
   or an unauthenticated popup cannot attach a Google grant.
@@ -72,6 +96,7 @@ Code entry points:
 | Routes and MFA gates | `backend/src/modules/user/user.routes.ts` |
 | Database lifecycle | `backend/migrations/20260921_02_google_drive_integration.sql` and `backend/schema.sql` |
 | Card and API calls | `frontend/src/app/(pages)/settings/connectors/page.tsx`, `frontend/src/app/lib/mikeApi.ts` |
+| Google Picker | `frontend/src/app/lib/googlePicker.ts`, `frontend/src/app/components/settings/useGoogleDrivePicker.ts` |
 
 ## Write actions and approval
 
@@ -101,7 +126,7 @@ Google Docs imports follow Google's [upload and conversion API](https://develope
 
 Approval-required writes pause inside the assistant turn. Only a persisted
 explicit approval can run them; rejection does not make a write request. The
-server rechecks the actor's full Drive grant, current connection identity,
+server rechecks the actor's Drive write grant, current connection identity,
 connector switch, and tool switch. Reconnected or disabled grants invalidate
 pending approvals. Source and destination metadata are shown for review, and
 their versions are checked again before execution. When Google supplies an
@@ -169,7 +194,7 @@ and [first-sheet-only CSV export](https://developers.google.com/workspace/drive/
    This is separate from the Supabase Google **sign-in** callback. Keep existing
    callbacks if using the same client for both. Mike email/password login works
    independently of the Google Drive connection.
-3. Configure `https://www.googleapis.com/auth/drive`, `openid`, and
+3. Configure `https://www.googleapis.com/auth/drive.file`, `openid`, and
    `.../auth/userinfo.email` in Google Auth Platform → Data Access. For External/Testing, add your Google account as a
    test user. Internal is for users within the Workspace organization that owns
    the Cloud project; Workspace administrators may need to allow the client.
@@ -183,10 +208,28 @@ and [first-sheet-only CSV export](https://developers.google.com/workspace/drive/
    If neither dedicated value is set, `GOOGLE_MCP_OAUTH_CLIENT_ID` and
    `GOOGLE_MCP_OAUTH_CLIENT_SECRET` are used together. An incomplete dedicated
    pair is a setup error; credentials from different clients are never mixed.
-5. Ensure `USER_API_KEYS_ENCRYPTION_SECRET` and `DOWNLOAD_SIGNING_SECRET` are
+5. To show **Add files from Google Drive**, enable the **Google Picker API** in
+   the same Cloud project, alongside the Google Drive API. Create an API key
+   (APIs & Services → Credentials → Create credentials → API key) and restrict
+   it the way Google's Picker guide requires: under **API restrictions**
+   select both the Google Picker API and the Google Drive API; under **Website
+   restrictions** add this deployment's origin (for example
+   `http://localhost:3000/*`) **and** `https://docs.google.com/*`, which the
+   Picker's own frame loads from. Without the docs.google.com entry the Picker
+   opens and then reports "API developer key is invalid" although Mike shows
+   the button. Copy the project **number** from Project settings. Then set:
+
+   ```dotenv
+   GOOGLE_DRIVE_PICKER_API_KEY=YOUR_BROWSER_API_KEY
+   GOOGLE_DRIVE_PICKER_APP_ID=YOUR_PROJECT_NUMBER
+   ```
+
+   The key is sent to the browser, so never reuse a server key. Without both
+   values the button is hidden and users can only work with files Mike created.
+6. Ensure `USER_API_KEYS_ENCRYPTION_SECRET` and `DOWNLOAD_SIGNING_SECRET` are
    configured. Generate each missing secret separately with
    `openssl rand -hex 32`; do not replace existing encryption keys.
-6. For Compose, set root `.env` to:
+7. For Compose, set root `.env` to:
 
    ```dotenv
    API_PUBLIC_URL=http://localhost:3000/api
@@ -198,7 +241,7 @@ and [first-sheet-only CSV export](https://developers.google.com/workspace/drive/
    Add a supported model-provider key or a working Ollama model for chat tests.
    If testing Mike email/password login only, set
    `GOTRUE_EXTERNAL_GOOGLE_ENABLED=false` in root `.env`.
-7. Follow [local development](local-development.md) for a new stack, preserving
+8. Follow [local development](local-development.md) for a new stack, preserving
    existing env files, then run `docker compose up --build -d`. Confirm `db-init`
    succeeded with `docker compose ps -a` and its logs. Fresh installs include the
    schema; existing installations need the Drive migration **before** the new
@@ -219,10 +262,10 @@ No remote database migration is implicit in these instructions.
 
 Google permits HTTP localhost redirects but requires exact matching:
 [web-server OAuth guide](https://developers.google.com/identity/protocols/oauth2/web-server).
-`drive` is a restricted scope. External distribution may require
-verification and a security assessment, subject to applicable exceptions:
-[Drive scopes](https://developers.google.com/workspace/drive/api/guides/api-specific-auth),
-[verification requirements](https://developers.google.com/identity/protocols/oauth2/production-readiness/restricted-scope-verification).
+`drive.file` is a non-sensitive scope, so external distribution needs brand
+verification but not the security assessment that the restricted `drive` scope
+requires: [Drive scopes](https://developers.google.com/workspace/drive/api/guides/api-specific-auth),
+[Google Picker](https://developers.google.com/workspace/drive/picker/guides/overview).
 External/Testing refresh tokens expire after seven days. Internal apps avoid
 that specific rule, but tokens can still be revoked or expire for other reasons:
 [token expiration](https://developers.google.com/identity/protocols/oauth2).
@@ -240,13 +283,15 @@ actual Cloud client, consent configuration and Workspace policy work together.
    or prove the lifecycle RPCs were deployed.
 2. **Consent:** choose Add on the Google Drive card. Complete Mike MFA if
    enrolled, choose your test
-   Google account, and approve full Drive access (read and write). Expect Google Drive under
-   Installed, including after page reload and backend restart. No access/refresh tokens should appear
-   in browser API responses. If Google denies consent, close the popup and use
+   Google account, and approve access to the Drive files you use with Mike. Expect Google Drive under
+   Installed, including after page reload and backend restart. No refresh token should appear
+   in browser API responses; only the picker-session response carries a short-lived access token. If Google denies consent, close the popup and use
    Cancel in Mike to end its polling attempt; a retry should work.
 3. **Search/read:** create `MIKE434 Consulting Agreement` in Google Docs with
    “Payment is due in 17 days. Liability cap is USD 43,210.” Ask Mike to search
-   for it, read it, and quote both terms. Verify actual Drive search and read
+   for it first: it must not be found, and Mike should tell you to add it. Then
+   open Manage → **Add files from Google Drive**, pick the document, and expect
+   “Added 1 file.” Ask again; Mike should find it, read it, and quote both terms. Verify actual Drive search and read
    activity, not just a plausible answer. Also request the ten most recently
    modified files and check the fixture appears.
 4. **Formats:** read small PDF, DOCX, TXT and Slides fixtures with unique markers.

@@ -25,10 +25,10 @@ By default the assistant runs write actions directly, as it does for every conne
 
 | Service | Reads | Changes |
 | --- | --- | --- |
-| Gmail | Search messages, read messages/threads, list labels, list/read drafts | Send new plain-text email; create/replace/delete drafts; add/remove message labels; move messages to Trash |
+| Gmail | Search messages, read messages/threads, list labels, list/read drafts | Send new plain-text email; create/replace/delete drafts |
 | Calendar | List calendars, search/list events, read individual events | Create, patch, or delete a single event or recurring occurrence; Google notifies attendees |
 
-Gmail Trash is recoverable through Gmail; permanently deleting received/sent mail is not exposed. Draft deletion removes the draft. Sent email body editing is not supported; message edits concern labels. Draft replacement is plain text and rejects drafts with attachments or reply headers, so it cannot silently discard attachments or detach a reply from its conversation. Sending attachments, sending existing drafts, email-thread replies, calendar administration, and entire recurring-series mutations are outside this version. Attendee changes replace the attendee list; the approval shows the new list and the existing event.
+Gmail access is limited to reading mail, sending new mail, and managing drafts: Mike cannot change labels, archive, trash, or delete received or sent messages. Draft deletion removes the draft. Sent email body editing is not supported. Draft replacement is plain text and rejects drafts with attachments or reply headers, so it cannot silently discard attachments or detach a reply from its conversation. Sending attachments, sending existing drafts, email-thread replies, calendar administration, and entire recurring-series mutations are outside this version. Attendee changes replace the attendee list; the approval shows the new list and the existing event.
 
 ## Operator setup
 
@@ -43,11 +43,11 @@ Gmail Trash is recoverable through Gmail; permanently deleting received/sent mai
 
    Production uses the corresponding `<API_PUBLIC_URL>/user/integrations/.../oauth/callback`. The Next.js gateway on 3000 forwards to Express on 3001. SSO retains its separate Supabase callback; adding these callbacks does not change sign-in behavior.
 4. Set `GOOGLE_WORKSPACE_OAUTH_CLIENT_ID` and `GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET` in backend environment. If both are absent, the complete Drive/MCP credential profile is reused. An incomplete dedicated pair fails closed. Preserve the encryption secret used by the parent integration; never rotate it as a setup workaround.
-5. Add these consent scopes. Mike requests all of them on connect; the write permission is the one users or administrators may withhold:
+5. Add these consent scopes. Mike requests all of them on connect; the write permission is the one users or administrators may withhold. Gmail connections made before Mike moved from `gmail.modify` to `gmail.compose` keep read and write access without reconnecting, because `gmail.modify` covers both narrower scopes; a project that still lists `gmail.modify` on its consent screen can remove it:
 
    | Connection | Read permission | Write permission |
    | --- | --- | --- |
-   | Gmail | `openid`, `email`, `https://www.googleapis.com/auth/gmail.readonly` | `https://www.googleapis.com/auth/gmail.modify` |
+   | Gmail | `openid`, `email`, `https://www.googleapis.com/auth/gmail.readonly` | `https://www.googleapis.com/auth/gmail.compose` |
    | Calendar | `openid`, `email`, `https://www.googleapis.com/auth/calendar.calendarlist.readonly`, `https://www.googleapis.com/auth/calendar.events.readonly` | `https://www.googleapis.com/auth/calendar.events` |
 
    OpenID/email identifies the selected account for the Manage dialog and approvals. No Mike login email is passed as a hint or used to restrict account choice. Each deployment's OAuth audience and use determine Google's verification requirements; see the self-hosting guidance below, [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes), and [Calendar scopes](https://developers.google.com/workspace/calendar/api/auth).
@@ -99,7 +99,7 @@ Use two test Google accounts and synthetic mail/events; do not use real client i
 3. Search for a synthetic email marker and read the message and thread. Verify text, headers, labels, attachment metadata, pagination, and truncation. List calendars and events in a known time range, including an all-day event and a recurring occurrence.
 4. Ask to send/edit/delete while connected read-only. No mutation occurs. Delete the connector, connect it again, and grant write access; the write tools then appear.
 5. With **Ask for permission for write actions** off, ask for a new email to a test recipient: exactly one email is sent. Turn the setting on and ask again: the turn pauses on an approval showing every recipient, subject, body, and the connected account, and nothing is sent. Approve it: exactly one email is sent and the assistant continues with the result. Reload and double-click must not send it again. Reject a second request and verify no send.
-6. Create a draft, replace its content, and delete it. Modify a test message's labels and move another to Trash. Try header-injection text, attachment-bearing draft replacement, and reply-draft replacement; all must be rejected safely.
+6. Create a draft, replace its content, and delete it. Try header-injection text, attachment-bearing draft replacement, and reply-draft replacement; all must be rejected safely.
 7. Create a calendar event with a test attendee, then edit and delete it. Verify invitation/update/cancellation notices. With approvals on, change an event directly in Calendar after the approval appears: approving must reject the stale version. Entire recurring-series edits must be rejected; a single occurrence is supported.
 8. Switch off a tool, then the whole connection: the assistant must lose those tools. With an approval pending, change Google accounts or delete the connection: approving must not run against either account. A second Mike user must not be able to answer the first user's approval.
 9. Cancel immediately after clicking Add, close the popup, and test with popup blocking. Confirm retry works without a dangling authorization. For MFA-enrolled users, test connection, reconnect, settings changes, and Delete through the verification prompt.
