@@ -5,9 +5,14 @@
 // `pnpm migrate:local`. Replaces hand-juggling DATABASE_URL + flags.
 //
 // Honors an existing DATABASE_URL if you set one (e.g. a different local DB).
+// backend/.env supplies SUPABASE_URL/SUPABASE_SECRET_KEY for the catalogue sync.
+import "dotenv/config";
+
 process.env.DATABASE_URL ??=
   "postgres://mikeadmin:devpassword@localhost:5432/mike?sslmode=disable";
 process.env.PGSSLMODE ??= "disable";
+// Local auth secrets come from backend/.env, not Key Vault.
+process.env.AUTH_SECRET_PROVISIONING_MODE ??= "local";
 
 // runMigrations.ts runs main() on import.
 void import("./runMigrations.js");

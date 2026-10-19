@@ -1,5 +1,6 @@
 allowBuilds:
   '@openrouter/sdk': true
+  '@swc/core': false
   esbuild: true
   msw: true
   sharp: true

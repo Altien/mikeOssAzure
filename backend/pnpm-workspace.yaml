@@ -1,6 +1,7 @@
 allowBuilds:
   '@google/genai': false
   esbuild: true
+  msgpackr-extract: false
   protobufjs: true
 overrides:
   'glob@11.0.3': 11.1.0

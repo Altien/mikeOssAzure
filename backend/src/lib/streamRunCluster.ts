@@ -94,7 +94,8 @@ export class StreamRunCluster {
     if (!/^postgres(?:ql)?:$/.test(parsed.protocol)) throw new Error("Stream run database URI must be PostgreSQL");
     if (parsed.port && parsed.port !== "5432") throw new Error("Stream run database requires direct PostgreSQL port 5432");
     const local = ["localhost", "127.0.0.1", "::1"].includes(parsed.hostname);
-    const ssl = !(process.env.NODE_ENV === "test" && local);
+    // Loopback is the local docker-compose Postgres, which has no TLS.
+    const ssl = !local;
     const cluster = new StreamRunCluster(uri, ssl);
     await cluster.initialize();
     return cluster;
