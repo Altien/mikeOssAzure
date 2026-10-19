@@ -337,6 +337,7 @@ export function buildApp(): express.Express {
   app.post("/api/projects/:projectId/chat", chatLimiter);
   app.post("/api/tabular-review/:reviewId/chat", chatLimiter);
   app.post("/api/tabular-review/:reviewId/generate", chatLimiter);
+  app.post("/api/playbooks/:playbookId/review", chatLimiter);
   app.post("/api/chat/create", chatCreateLimiter);
   app.post("/api/single-documents", uploadLimiter);
   app.post("/api/library/:kind/documents", uploadLimiter);
