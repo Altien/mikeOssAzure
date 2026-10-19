@@ -11,7 +11,7 @@
 // with nothing else in it.
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
-const STAGED_IMPORT_NAME = new RegExp(`^${UUID}\\.docx$`);
+const STAGED_IMPORT_NAME = new RegExp(`^${UUID}\\.(?:docx|pdf)$`);
 const STAGED_SOURCE_NAME = new RegExp(`^${UUID}\\.(?:docx|pdf)$`);
 
 export function playbookImportPrefix(userId: string): string {
