@@ -34,6 +34,8 @@ const PROFILE_FIXTURE = {
     creditsResetDate: "2026-12-01T00:00:00.000Z",
     creditsRemaining: 999994,
     tier: "Pro",
+    subagentModel: null,
+    subagentReasoning: null,
     titleModel: "aoai:title-deploy",
     tabularModel: "gemini-3-flash-preview",
     mfaOnLogin: false,

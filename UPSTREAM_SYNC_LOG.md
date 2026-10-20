@@ -20,3 +20,5 @@
   Dev queue translation:0137 processing/publication/terminal failure RPCs retain canonical job→version→text lock order, claim token/attempt/payload/revision checks and retry/cancel guards. Disabled-runner inline work uses the same claim_db_job/processClaimedJob facade.
 
   Separate153 fix: server-resolved search_source.workspace stays request-scoped and is rechecked before read/revision. No cross-turn persistence added. Find parent joins/CASE fail closed for dangling parents and preserve parentNULL Personal; original actor retained.
+
+- Source178 e8f73821: delegation modules, per-user defaults and retained continuations →0158/0159;0160 extends canonical fenced assistant append atomically with initiating actor/chat/message/workspace/document/version checks. No raw continuation insert path; cancellation-aware edit locks, scoped approval inheritance and canonical account erasure retained. needs_review.

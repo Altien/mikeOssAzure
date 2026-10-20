@@ -54,10 +54,13 @@ export {
   writeApprovedConnectorFrames,
   generateSpotlightNonce,
   spotlightFilename,
+  createSubagentRunStore,
+  purgeExpiredSubagentRuns,
   type AskInputsResponseRequest,
   type AssistantEvent,
   type ChatDocumentReference,
   type ChatMessage,
+  type SubagentDefaults,
   type TabularCellStore,
   TABULAR_TOOLS,
   parseOptionalDocumentContext,
@@ -81,3 +84,5 @@ export {
   WORD_EDIT_FORMATS,
   type WordEditApplyMode,
 } from "./engine/wordDocumentEdits";
+
+export { deleteUserSubagentRuns } from "./engine/tools/delegateRuns";

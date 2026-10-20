@@ -604,10 +604,12 @@ export async function streamAiSdk(
               | undefined),
       include: { rawChunks: true },
       onError: () => {},
-      prepareStep: ({ steps }: { steps: Array<{ toolCalls: Array<{ toolName: string }> }> }) => ({
+      prepareStep: ({ steps, stepNumber }: { steps: Array<{ toolCalls: Array<{ toolName: string }> }>; stepNumber: number }) => ({
         ...(steps.length >= Math.max(0, maxIterations)
           ? { activeTools: [], toolChoice: "none" as const }
           : {}),
+        ...(params.finishWithoutToolsOnLastStep && stepNumber === maxIterations - 1
+          ? { toolChoice: "none" as const } : {}),
         ...(config.courtlistenerCitationReminder && usesCourtlistenerTool(steps)
           ? { system: `${params.systemPrompt}\n\n${COURTLISTENER_CITATION_REMINDER}` }
           : {}),
@@ -664,6 +666,7 @@ export async function streamAiSdk(
             id: part.toolCallId,
             name: part.toolName,
             input: normalizeToolInput(part.input),
+            ...(part.invalid ? { invalid: true as const } : {}),
           };
           params.callbacks?.onToolCallStart?.(call);
           break;
@@ -699,6 +702,18 @@ export async function streamAiSdk(
           }
           break;
         case "finish-step":
+          if (
+            part.usage.inputTokens !== undefined ||
+            part.usage.outputTokens !== undefined
+          ) {
+            params.callbacks?.onUsage?.(
+              {
+                inputTokens: part.usage.inputTokens ?? 0,
+                outputTokens: part.usage.outputTokens ?? 0,
+              },
+              part.finishReason,
+            );
+          }
           lastFinishReason = part.finishReason;
           lastRawFinishReason = part.rawFinishReason;
           break;

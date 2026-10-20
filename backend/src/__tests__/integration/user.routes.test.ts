@@ -287,6 +287,8 @@ function profileRow(overrides: Record<string, unknown> = {}) {
         fast_model: null,
         tabular_model: "gemini-3.8-flash",
         memory_curator_model: null,
+        subagent_model: null,
+        subagent_reasoning: null,
         last_selected_chat_model: null,
         mfa_on_login: false,
         legal_research_us: true,
@@ -355,7 +357,7 @@ describe("user.routes", () => {
             expect(removed.body).toEqual({ profilePhoto: null });
         });
         it.each([
-            "memory_curator_model", "project_memory_default",
+            "subagent_model", "memory_curator_model", "project_memory_default",
             "last_selected_reasoning_level", "last_selected_chat_model",
             "dark_mode", "password_set_at", "onboarding_version",
             "quick_actions_visible", "legal_research_us", "mfa_on_login", "title_model",

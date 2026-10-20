@@ -22,6 +22,7 @@ import {
     AssistantStreamError,
     assistantStreamErrorPayload,
     buildStoppedAssistantMessage,
+    createSubagentRunStore,
     extractCitations,
     isAbortError,
 
@@ -108,6 +109,8 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
     const attached_documents = parsedAttachedDocuments.value;
     const askInputsResponse = parsedAskInputsResponse.value;
     const assistantMessageId = askInputsResponse ? null : randomUUID();
+    const turnMessageId =
+        assistantMessageId ?? askInputsResponse?.assistant_message_id ?? "";
     const inputMessageId = askInputsResponse ? null : randomUUID();
 
     const db = createServerSupabase();
@@ -149,6 +152,7 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
         apiKeys,
         orgId,
         titleModel,
+        subagentDefaults,
         selectedModel,
         selectedReasoningLevel,
         nonce,
@@ -169,10 +173,7 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
             id: assistantMessageId ?? randomUUID(),
             chatId,
             userId,
-            assistantMessageId:
-                assistantMessageId ??
-                askInputsResponse?.assistant_message_id ??
-                "",
+            assistantMessageId: turnMessageId,
         });
         if (!run) {
             return void res.status(409).json({
@@ -181,6 +182,18 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
             });
         }
         const stream = attachAssistantTurnSse(res, run);
+        const subagentRuns = createSubagentRunStore({
+            db, userId, userEmail, chatId, messageId: turnMessageId,
+            orgId: orgId ?? null, signal: stream.signal,
+            async commitRows(rows, signal) {
+                signal.throwIfAborted();
+                const committed = await appendAssistantEventsToMessage(
+                    db, chatId, turnMessageId, userId, [], [], run.id,
+                    { rows, userEmail, orgId: orgId ?? null },
+                );
+                if (!committed) throw new Error("Subagent continuation owner or resource scope changed");
+            },
+        });
         const write = stream.write;
 
         let titlePromise: Promise<void> = Promise.resolve();
@@ -259,6 +272,8 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                 includeResearchTools: legalResearchUs,
                 includeGoogleConnectors: true,
                 webSearch,
+                subagentRuns,
+                subagentDefaults,
                 model: selectedModel,
                 reasoning: selectedReasoningLevel,
                 apiKeys,
@@ -310,6 +325,7 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                     return;
                 }
             }
+            await subagentRuns.flush();
 
             await abortable(titlePromise, stream.signal).catch(() => {});
             if (titleOutcome.failure) {
@@ -423,6 +439,8 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                             "[project-chat/stream] failed to save aborted stream",
                             saveError,
                         );
+                    } else {
+                        await subagentRuns.flush();
                     }
                 }
                 write(stopOutcomeFrame(run));
@@ -466,6 +484,7 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                         "[project-chat/stream] failed to save error",
                         saveError,
                     );
+                else await subagentRuns.flush();
             } catch (saveErr) {
                 console.error(
                     "[project-chat/stream] failed to save error",

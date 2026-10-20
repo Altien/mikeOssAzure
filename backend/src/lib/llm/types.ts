@@ -57,6 +57,8 @@ export type NormalizedToolCall = {
     id: string;
     name: string;
     input: Record<string, unknown>;
+    /** The SDK could not parse or validate the input, so it never runs. */
+    invalid?: true;
 };
 
 export type NormalizedToolResult = {
@@ -72,7 +74,11 @@ export type StreamCallbacks = {
     onContentDelta?: (text: string) => void;
     onToolCallStart?: (call: NormalizedToolCall) => void;
     onWebSearch?: (event: ProviderWebSearchEvent) => void;
+    /** Skipped when the provider reports no usage. */
+    onUsage?: (usage: TokenUsage, finishReason: string) => void;
 };
+
+export type TokenUsage = { inputTokens: number; outputTokens: number };
 
 export type ProviderWebSearchEvent =
     | { kind: "search_started"; id: string; query?: string }
@@ -182,6 +188,11 @@ export type StreamChatParams = {
      * at most `maxSearches` searches in each request.
      */
     providerWebSearch?: { maxSearches: number } | null;
+    /**
+     * Withdraw every tool on the last step, so a run that reaches its step
+     * limit ends with an answer instead of an unanswered tool call.
+     */
+    finishWithoutToolsOnLastStep?: boolean;
 };
 
 export type StreamChatResult = {

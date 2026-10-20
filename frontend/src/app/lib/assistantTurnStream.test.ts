@@ -1848,3 +1848,84 @@ describe("web activity", () => {
     ]);
   });
 });
+
+describe("delegation", () => {
+  const start = (id: string) => ({
+    type: "delegation_start", delegation_id: id, title: `Review ${id}`, task: "Summarise the lease.",
+  });
+  const running = (id: string) => ({
+    type: "delegation", delegation_id: id, title: `Review ${id}`, task: "Summarise the lease.",
+    events: [], isStreaming: true,
+  });
+  const finished = (id: string) => ({
+    type: "delegation", delegation_id: id, title: `Review ${id}`, task: "Summarise the lease.",
+    status: "completed", brief: "Rent is due monthly.", events: [{ type: "doc_read", filename: "lease.pdf" }],
+    model: "claude-haiku-4-5", effort: "standard",
+  });
+
+  it("retains the source run when a continued task omits its display labels", async () => {
+    expect(await eventsOf([
+      { type: "delegation_start", delegation_id: "d2", continued_from: "d1", title: null, task: 42 },
+    ])).toEqual([
+      { type: "delegation", delegation_id: "d2", continued_from: "d1", title: "", task: "", events: [], isStreaming: true },
+    ]);
+  });
+
+  it.each([
+    { type: "delegation_start" },
+    { type: "delegation_start", delegation_id: 42 },
+    { type: "delegation" },
+    { type: "delegation", delegation_id: 42 },
+  ])("ignores a delegation without a usable ID: %j", async (event) => {
+    expect(await eventsOf([event])).toEqual([]);
+  });
+
+  it("ignores orphan activity and clears missing activity only on the matching task", async () => {
+    expect(await eventsOf([
+      { type: "delegation_activity", delegation_id: "missing", name: "read_document" },
+      start("d1"),
+      start("d2"),
+      { type: "delegation_activity", delegation_id: "d1", name: "web_search" },
+      { type: "delegation_activity", delegation_id: "d2", name: "read_document" },
+      { type: "delegation_activity", delegation_id: "d1" },
+    ])).toEqual([
+      { ...running("d1"), activity: "" },
+      { ...running("d2"), activity: "read_document" },
+    ]);
+  });
+
+  it("retains a completed delegation received without its start after reconnecting", async () => {
+    expect(await eventsOf([
+      { type: "content_delta", text: "Earlier findings." },
+      finished("d1"),
+    ])).toEqual([
+      { type: "content", text: "Earlier findings." },
+      finished("d1"),
+      thinking,
+    ]);
+  });
+
+  it("shows the running step, then the persisted result", async () => {
+    expect(await eventsOf([
+      { type: "tool_call_start", name: "delegate" },
+      start("d1"),
+      { type: "delegation_activity", delegation_id: "d1", name: "web_search" },
+    ])).toEqual([{ ...running("d1"), activity: "web_search" }]);
+
+    expect(await eventsOf([start("d1"), finished("d1")])).toEqual([finished("d1"), thinking]);
+  });
+
+  it("keeps parallel delegations apart and waits for the last before thinking", async () => {
+    expect(await eventsOf([start("d1"), start("d2"), finished("d1")]))
+      .toEqual([finished("d1"), running("d2")]);
+    expect(await eventsOf([start("d1"), start("d2"), finished("d1"), finished("d2")]))
+      .toEqual([finished("d1"), finished("d2"), thinking]);
+  });
+
+  it("stops a running delegation on Stop", async () => {
+    expect(await eventsOf([start("d1"), { type: "cancelled" }])).toEqual([
+      { ...running("d1"), isStreaming: undefined },
+      { type: "content", text: "Cancelled by user." },
+    ]);
+  });
+});

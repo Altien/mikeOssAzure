@@ -38,6 +38,7 @@ import {
     parseOptionalReasoning,
     parseOptionalProjectId,
     createReservedAssistantMessageUpdater,
+    createSubagentRunStore,
 
     reserveAssistantMessage,
 } from "./engine/index";
@@ -545,6 +546,8 @@ chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
     // Reserve a stable assistant identity before streaming. This lets clients
     // associate streamed UI with the same durable message after a reload.
     const assistantMessageId = askInputsResponse ? null : randomUUID();
+    const turnMessageId =
+        assistantMessageId ?? askInputsResponse?.assistant_message_id ?? "";
     const inputMessageId = askInputsResponse ? null : randomUUID();
 
     devLog("[chat/stream] incoming request", {
@@ -598,6 +601,7 @@ chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
         apiKeys,
         orgId,
         titleModel,
+        subagentDefaults,
         selectedModel,
         selectedReasoningLevel,
         nonce,
@@ -621,10 +625,7 @@ chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
             id: assistantMessageId ?? randomUUID(),
             chatId,
             userId,
-            assistantMessageId:
-                assistantMessageId ??
-                askInputsResponse?.assistant_message_id ??
-                "",
+            assistantMessageId: turnMessageId,
         });
         if (!run) {
             return void res.status(409).json({
@@ -658,6 +659,18 @@ chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
         }
 
         const stream = attachAssistantTurnSse(res, run);
+        const subagentRuns = createSubagentRunStore({
+            db, userId, userEmail, chatId, messageId: turnMessageId,
+            orgId: orgId ?? null, signal: stream.signal,
+            async commitRows(rows, signal) {
+                signal.throwIfAborted();
+                const committed = await appendAssistantEventsToMessage(
+                    db, chatId, turnMessageId, userId, [], [], run.id,
+                    { rows, userEmail, orgId: orgId ?? null },
+                );
+                if (!committed) throw new Error("Subagent continuation owner or resource scope changed");
+            },
+        });
         const write = stream.write;
         const updateReservedAssistantMessage =
             createReservedAssistantMessageUpdater({
@@ -744,6 +757,8 @@ chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                 includeResearchTools: legalResearchUs,
                 includeGoogleConnectors: true,
                 webSearch,
+                subagentRuns,
+                subagentDefaults,
                 model: selectedModel,
                 reasoning: selectedReasoningLevel,
                 apiKeys,
@@ -822,6 +837,7 @@ chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                     return;
                 }
             }
+            await subagentRuns.flush();
 
             await abortable(titlePromise, stream.signal).catch(() => {});
             if (titleOutcome.failure) {
@@ -959,6 +975,8 @@ chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                             "[chat/stream] failed to save aborted stream",
                             saveError,
                         );
+                    } else {
+                        await subagentRuns.flush();
                     }
                 }
                 // Readers still attached (Stop came from another tab, or
@@ -1001,6 +1019,7 @@ chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                         "[chat/stream] failed to save error",
                         saveError,
                     );
+                else await subagentRuns.flush();
             } catch (saveErr) {
                 console.error("[chat/stream] failed to save error", saveErr);
             }

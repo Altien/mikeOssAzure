@@ -72,6 +72,41 @@ describe("success path is untouched", () => {
     expect(model.doStreamCalls[2]?.toolChoice).toEqual({ type: "none" });
   });
 
+  it("reports each step's tokens and finish reason to onUsage", async () => {
+    const model = await makeModel([
+      callStep("c1", "read_document", { doc_id: "doc-0" }),
+      textStep("done"),
+    ]);
+    const onUsage = vi.fn();
+    await streamAiSdk(
+      { ...base, runTools: okRunTools, callbacks: { onUsage } },
+      config(model),
+    );
+    expect(onUsage.mock.calls).toEqual([
+      [{ inputTokens: 10, outputTokens: 5 }, "tool-calls"],
+      [{ inputTokens: 10, outputTokens: 5 }, "stop"],
+    ]);
+  });
+
+  it("forbids tool calls on the last step when asked to finish without them", async () => {
+    const model = await makeModel([
+      callStep("c1", "read_document", { doc_id: "doc-0" }),
+      textStep("brief"),
+    ]);
+    const res = await streamAiSdk(
+      {
+        ...base,
+        runTools: okRunTools,
+        maxIterations: 2,
+        finishWithoutToolsOnLastStep: true,
+      },
+      config(model),
+    );
+    expect(res.fullText).toBe("brief");
+    expect(model.doStreamCalls[1].tools?.length).toBe(1);
+    expect(model.doStreamCalls[1].toolChoice).toEqual({ type: "none" });
+  });
+
   it("retains the default 16 tool rounds plus one final synthesis", async () => {
     const model = await makeModel([
       ...Array.from({ length: 16 }, (_, i) =>

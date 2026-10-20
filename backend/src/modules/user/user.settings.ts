@@ -21,6 +21,9 @@ export type UserModelSettings = {
     tabular_model: string | null;
     /** Explicit override for asynchronous memory curation. */
     memory_curator_model: string | null;
+    /** Told to the assistant as defaults for its subagents; never enforced. */
+    subagent_model: string | null;
+    subagent_reasoning: ReasoningLevel | null;
     /** Cross-surface fallback used only when a chat has no usable model. */
     last_selected_chat_model: string | null;
     last_selected_reasoning_level: ReasoningLevel | null;
@@ -60,10 +63,21 @@ export async function getUserModelSettings(
     options: { orgId?: string | null } = {},
 ): Promise<UserModelSettings> {
     const client = db ?? createServerSupabase();
-    const [profileResult, api_keys, routerModels, customInstructions, responseStyle, webSearch] = await Promise.all([
-        client.from("user_profiles")
-            .select("fast_model, tabular_model, memory_curator_model, last_selected_chat_model, last_selected_reasoning_level, legal_research_us, display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas")
-            .eq("user_id", userId).single(),
+    const [
+        profileResult,
+        api_keys,
+        routerModels,
+        customInstructions,
+        responseStyle,
+        webSearch,
+    ] = await Promise.all([
+        client
+            .from("user_profiles")
+            .select(
+                "fast_model, tabular_model, memory_curator_model, subagent_model, subagent_reasoning, last_selected_chat_model, last_selected_reasoning_level, legal_research_us, display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas",
+            )
+            .eq("user_id", userId)
+            .single(),
         getEffectiveApiKeys(userId, options.orgId, client),
         getEffectiveRouterModels(userId, options.orgId, client),
         // Instructions are an enhancement: a failed read must not block chat.
@@ -88,12 +102,56 @@ export async function getUserModelSettings(
     ]);
     let data = profileResult.data;
     let profileError = profileResult.error;
-    if (profileError?.code === "42703" && profileError.message?.includes("memory_curator_model")) {
-        const previous = await client.from("user_profiles")
-            .select("fast_model, tabular_model, last_selected_chat_model, last_selected_reasoning_level, legal_research_us, display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas")
-            .eq("user_id", userId).single();
-        data = previous.error ? null : { ...previous.data, memory_curator_model: null } as typeof data;
-        profileError = previous.error;
+
+    // Deploy-before-migrate tolerance for the subagent defaults.
+    if (
+        profileError?.code === "42703" &&
+        typeof profileError.message === "string" &&
+        profileError.message.includes("subagent_")
+    ) {
+        const withoutSubagentDefaults = await client
+            .from("user_profiles")
+            .select(
+                "fast_model, tabular_model, memory_curator_model, last_selected_chat_model, last_selected_reasoning_level, legal_research_us, display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas",
+            )
+            .eq("user_id", userId)
+            .single();
+        if (!withoutSubagentDefaults.error) {
+            data = {
+                ...withoutSubagentDefaults.data,
+                subagent_model: null,
+                subagent_reasoning: null,
+            } as typeof data;
+            profileError = null;
+        } else {
+            profileError = withoutSubagentDefaults.error;
+        }
+    }
+
+    // Deploy-before-migrate tolerance for the memory curator preference. Keep
+    // every previously available setting while the new nullable column is
+    // still being rolled out.
+    if (
+        profileError?.code === "42703" &&
+        typeof profileError.message === "string" &&
+        profileError.message.includes("memory_curator_model")
+    ) {
+        const withoutMemoryCuratorModel = await client
+            .from("user_profiles")
+            .select(
+                "fast_model, tabular_model, last_selected_chat_model, last_selected_reasoning_level, legal_research_us, display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas",
+            )
+            .eq("user_id", userId)
+            .single();
+        if (!withoutMemoryCuratorModel.error) {
+            data = {
+                ...withoutMemoryCuratorModel.data,
+                memory_curator_model: null,
+            } as typeof data;
+            profileError = null;
+        } else {
+            profileError = withoutMemoryCuratorModel.error;
+        }
     }
     if (profileError?.code === "42703") {
         const withoutReasoning = await client.from("user_profiles")
@@ -133,6 +191,8 @@ export async function getUserModelSettings(
         last_selected_chat_model: optional(data?.last_selected_chat_model),
         last_selected_reasoning_level: normalizeReasoningLevel(data?.last_selected_reasoning_level),
         legal_research_us: data?.legal_research_us !== false,
+        subagent_model: optional(data?.subagent_model),
+        subagent_reasoning: normalizeReasoningLevel(data?.subagent_reasoning),
         web_search: webSearch,
         personalisation: {
             displayName: typeof data?.display_name === "string" ? data.display_name : null,

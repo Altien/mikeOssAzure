@@ -277,6 +277,8 @@ export const MAX_REPLAYED_REASONING_CHARS = 12_000;
  */
 export const MAX_REPLAYED_REASONING_TOTAL_CHARS = 36_000;
 
+const MAX_REPLAYED_BRIEF_CHARS = 4_000;
+
 /**
  * Attaches each earlier assistant turn's stored reasoning to the matching
  * message in `messages`, for models that opt into reasoning replay
@@ -369,6 +371,17 @@ export async function attachPriorReasoning(
   });
 }
 
+/** An answer's events with each delegation's own events after it. */
+export function withDelegationEvents<T extends { type?: unknown; events?: unknown }>(
+  events: T[],
+): T[] {
+  return events.flatMap((event) =>
+    event?.type === "delegation" && Array.isArray(event.events)
+      ? [event, ...(event.events as T[])]
+      : [event],
+  );
+}
+
 export async function enrichWithPriorEvents(
   messages: ChatMessage[],
   chatId: string | null | undefined,
@@ -421,13 +434,46 @@ export async function enrichWithPriorEvents(
   const approvedIds: string[] = [];
   const approvalOutcomes = new Set<string>();
   let rejectedApprovalSeen = false;
-  for (const ev of content as Record<string, unknown>[]) {
+  const documentLines = (ev: Record<string, unknown>): string[] | null => {
     if (ev?.type === "doc_created") {
-      lines.push(
-        `- generated_document → ${refFor(ev.document_id, ev.filename)}`,
-      );
-    } else if (ev?.type === "doc_edited") {
-      lines.push(`- edit_document → ${refFor(ev.document_id, ev.filename)}`);
+      return [`- generated_document → ${refFor(ev.document_id, ev.filename)}`];
+    }
+    if (ev?.type === "doc_edited") {
+      return [`- edit_document → ${refFor(ev.document_id, ev.filename)}`];
+    }
+    if (ev?.type !== "doc_replicated") return null;
+    // The model needs to know what each copy resolved to so it
+    // can call edit_document / read_document on them. Emit one
+    // line per copy, all attributed back to the same source.
+    const srcLabel =
+      typeof ev.filename === "string" ? untrustedRef(ev.filename) : "";
+    const copies = Array.isArray(ev.copies)
+      ? (ev.copies as {
+          new_filename?: unknown;
+          document_id?: unknown;
+        }[])
+      : [];
+    return copies.map((c) => {
+      const ref = refFor(c.document_id, c.new_filename);
+      return srcLabel
+        ? `- replicate_document → ${ref} (copy of ${srcLabel})`
+        : `- replicate_document → ${ref}`;
+    });
+  };
+  // A subagent's connector calls that ran without waiting on an approval.
+  const subagentConnectorLines = (ev: Record<string, unknown>): string[] => {
+    if (ev?.type !== "mcp_tool_call") return [];
+    const label = `${untrustedRef(ev.tool_name)} on ${untrustedRef(ev.connector_name)}`;
+    return [
+      ev.status === "error"
+        ? `- ${label} failed: ${untrustedRef(ev.error)}`
+        : `- ran ${label}`,
+    ];
+  };
+  for (const ev of content as Record<string, unknown>[]) {
+    const docLines = documentLines(ev);
+    if (docLines) {
+      lines.push(...docLines);
     } else if (ev?.type === "doc_read") {
       // Live Word reads have no doc_id and belong to a different tool;
       // labeling them read_document would name a handle that doesn't exist.
@@ -435,26 +481,6 @@ export async function enrichWithPriorEvents(
         lines.push("- read_active_document → live document text");
       } else {
         lines.push(`- read_document → ${refFor(ev.document_id, ev.filename)}`);
-      }
-    } else if (ev?.type === "doc_replicated") {
-      // The model needs to know what each copy resolved to so it
-      // can call edit_document / read_document on them. Emit one
-      // line per copy, all attributed back to the same source.
-      const srcLabel =
-        typeof ev.filename === "string" ? untrustedRef(ev.filename) : "";
-      const copies = Array.isArray(ev.copies)
-        ? (ev.copies as {
-            new_filename?: unknown;
-            document_id?: unknown;
-          }[])
-        : [];
-      for (const c of copies) {
-        const ref = refFor(c.document_id, c.new_filename);
-        lines.push(
-          srcLabel
-            ? `- replicate_document → ${ref} (copy of ${srcLabel})`
-            : `- replicate_document → ${ref}`,
-        );
       }
     } else if (ev?.type === "workflow_applied") {
       lines.push(`- applied workflow: ${untrustedRef(ev.title)}`);
@@ -469,6 +495,27 @@ export async function enrichWithPriorEvents(
       for (const source of ev.sources as { url?: unknown }[]) {
         lines.push(`- cited web page → ${untrustedRef(source.url)}`);
       }
+    } else if (ev?.type === "delegation") {
+      const question =
+        typeof ev.question === "string"
+          ? `; question: ${untrustedRef(ev.question)}`
+          : "";
+      const brief =
+        typeof ev.brief === "string"
+          ? `; brief: ${untrustedRef(ev.brief.slice(0, MAX_REPLAYED_BRIEF_CHARS))}`
+          : "";
+      const awaitingApproval = Array.isArray(ev.approval_ids)
+        ? " (waiting on the user's approval)"
+        : "";
+      lines.push(
+        `- delegated ${untrustedRef(ev.title)} (id: ${String(ev.delegation_id)}) → ${String(ev.status)}${awaitingApproval}${question}${brief}`,
+        ...(Array.isArray(ev.events)
+          ? (ev.events as Record<string, unknown>[]).flatMap(
+              (nested) =>
+                documentLines(nested) ?? subagentConnectorLines(nested),
+            )
+          : []),
+      );
     } else if (ev?.type === "ask_inputs") {
       const items = (Array.isArray(ev.items) ? ev.items : []) as Record<
         string,
@@ -626,6 +673,41 @@ export function parseOptionalDocumentContext(
   };
 }
 
+const DOCUMENT_LIST_HEADING = "\n\n---\nAVAILABLE DOCUMENTS:\n";
+
+function documentListPrompt(
+  docs: { doc_id: string; filename: string; folder_path?: string }[],
+  nonce?: string,
+): string {
+  if (!docs.length) return "";
+  let section = DOCUMENT_LIST_HEADING;
+  for (const doc of docs) {
+    // Filenames are user-controlled and may contain injected text.
+    // Wrap in the spotlight fence so the LLM treats them as data.
+    const rawLabel = doc.folder_path
+      ? `${doc.folder_path} / ${doc.filename}`
+      : doc.filename;
+    const label = spotlightFilename(rawLabel, nonce);
+    section += `- ${doc.doc_id}: ${label}\n`;
+  }
+  section +=
+    "\nYou do NOT retain document content between conversation turns. You MUST call read_document (or fetch_documents) once at the start of every response that involves a document's content, even if you have read it in a previous turn. Within the same response, do not call read_document or fetch_documents again for a document/version that has already been read; use the prior tool result, find_in_document for targeted checks, or proceed to the next required tool. Failure to read once per turn will result in hallucinated or stale content.\n---\n";
+  return section;
+}
+
+export function withDocumentList(
+  systemPrompt: string,
+  docStore: DocStore,
+  nonce?: string,
+): string {
+  // buildMessages ends the system prompt with its document list.
+  const listStart = systemPrompt.indexOf(DOCUMENT_LIST_HEADING);
+  const withoutList =
+    listStart < 0 ? systemPrompt : systemPrompt.slice(0, listStart);
+  const docs = [...docStore].map(([doc_id, { filename }]) => ({ doc_id, filename }));
+  return withoutList + documentListPrompt(docs, nonce);
+}
+
 export function buildMessages(
   messages: ChatMessage[],
   docAvailability: {
@@ -653,20 +735,7 @@ export function buildMessages(
     systemContent += `\n\n${MESSAGE_TIME_PROMPT}`;
   }
 
-  if (docAvailability.length) {
-    systemContent += "\n\n---\nAVAILABLE DOCUMENTS:\n";
-    for (const doc of docAvailability) {
-      // Filenames are user-controlled and may contain injected text.
-      // Wrap in the spotlight fence so the LLM treats them as data.
-      const rawLabel = doc.folder_path
-        ? `${doc.folder_path} / ${doc.filename}`
-        : doc.filename;
-      const label = spotlightFilename(rawLabel, nonce);
-      systemContent += `- ${doc.doc_id}: ${label}\n`;
-    }
-    systemContent +=
-      "\nYou do NOT retain document content between conversation turns. You MUST call read_document (or fetch_documents) once at the start of every response that involves a document's content, even if you have read it in a previous turn. Within the same response, do not call read_document or fetch_documents again for a document/version that has already been read; use the prior tool result, find_in_document for targeted checks, or proceed to the next required tool. Failure to read once per turn will result in hallucinated or stale content.\n---\n";
-  }
+  systemContent += documentListPrompt(docAvailability, nonce);
   formatted.push({ role: "system", content: systemContent });
 
   // Map document_id (UUID) → current-turn doc_id slug, so when we
@@ -845,6 +914,7 @@ const COMPLETES_TEXTLESS_TURN = {
   web_search: false,
   web_read: false,
   web_sources: false,
+  delegation: false,
   case_opinions: false,
   content: false,
   word_edit_block: false,
@@ -1006,12 +1076,13 @@ export async function appendAssistantEventsToMessage(
   events: AssistantEvent[],
   citations: unknown[] | undefined,
   runId?: string,
+  continuations?: { rows: readonly import("./tools/delegateRuns").SavedSubagentRun[]; userEmail?: string | null; orgId: string | null },
 ): Promise<boolean> {
-  if (events.length === 0 && (!citations || citations.length === 0))
+  if (!continuations?.rows.length && events.length === 0 && (!citations || citations.length === 0))
     return true;
   const cluster = streamRunCluster();
   const fence = runId ? streamRunFenceArgs(runId) : null;
-  if (cluster && !fence) return false;
+  if ((cluster || continuations?.rows.length) && !fence) return false;
   const { data, error } = await db.rpc(cluster ? "append_chat_assistant_events_fenced" : "append_chat_assistant_events", {
     ...(fence ?? {}),
     p_chat_id: chatId,
@@ -1019,6 +1090,7 @@ export async function appendAssistantEventsToMessage(
     p_author_user_id: authorUserId,
     p_events: events,
     p_citations: citations ?? [],
+    ...(continuations?.rows.length ? { p_subagent_runs: continuations.rows, p_user_email: continuations.userEmail ?? null, p_org_id: continuations.orgId } : {}),
   });
   if (error || data !== "appended") {
     console.error(
@@ -1303,7 +1375,7 @@ export async function buildDocContext(
     for (const row of rows ?? []) {
       const content = (row as { content?: unknown }).content;
       if (!Array.isArray(content)) continue;
-      for (const ev of content as Record<string, unknown>[]) {
+      for (const ev of withDelegationEvents(content as Record<string, unknown>[])) {
         if (
           (ev?.type === "doc_created" || ev?.type === "doc_edited") &&
           typeof ev.document_id === "string"
