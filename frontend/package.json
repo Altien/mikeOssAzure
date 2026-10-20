@@ -84,7 +84,9 @@
     "typescript": "npm:@typescript/typescript6@^6.0.2",
     "vite-tsconfig-paths": "^5.1.4",
     "vitest": "^5.0.0",
-    "wrangler": "^4.149.0"
+    "wrangler": "^4.149.0",
+    "@types/office-js": "^1.0.612",
+    "@types/office-runtime": "^1.0.40"
   },
   "license": "AGPL-3.0-only",
   "packageManager": "pnpm@11.1.2",

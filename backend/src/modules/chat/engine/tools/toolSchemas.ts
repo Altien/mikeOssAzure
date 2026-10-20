@@ -1,3 +1,4 @@
+import { TEXT_CARD_TOOL } from "./textCard";
 import { AUTHORITY_TRACE_TOOLS } from "../../../../altien/authorityTrace/chatTools";
 /**
  * The tools that WRITE to stored content rather than read it: they create
@@ -205,6 +206,7 @@ export const PLAYBOOK_TOOLS = [
 ];
 
 export const TOOLS = [
+  TEXT_CARD_TOOL,
   {
     type: "function",
     function: {

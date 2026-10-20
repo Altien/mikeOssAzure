@@ -230,6 +230,7 @@ type WireActivity<T extends WireAssistantEvent["type"]> = Extract<
   { type: T }
 >;
 export type AssistantEvent =
+  | WireActivity<"text_card">
   | AuthorityTraceAssistantEvent
   | (WireActivity<"doc_search"> & { isStreaming?: boolean })
   | (Omit<WireActivity<"reasoning">, "isStreaming"> & { isStreaming?: boolean })
