@@ -2,6 +2,7 @@
 
 import { TextCardUI } from "@/shared/ui/TextCardUI";
 import { useRef, useState } from "react";
+import type { WebSource } from "@mike/contracts";
 import { Check, Copy } from "lucide-react";
 import type {
     AssistantEvent,
@@ -15,6 +16,11 @@ import { EditCard } from "./EditCard";
 import { PreResponseWrapper } from "./PreResponseWrapper";
 import { ResponseStatus, type StatusState } from "./message/ResponseStatus";
 import { DocSearchBlock } from "./message/DocSearchBlock";
+import {
+    WebReadBlock,
+    WebSearchBlock,
+    WebSourcesBlock,
+} from "./message/WebActivityBlock";
 import {
     connectorToolLabel,
     eventErrorMessage,
@@ -194,7 +200,8 @@ export function AssistantMessage({
         event.type !== "error" &&
         event.type !== "ask_inputs_response" &&
         event.type !== "case_citation" &&
-        event.type !== "case_opinions";
+        event.type !== "case_opinions" &&
+        event.type !== "web_sources";
 
     // Find the last content event so its raw text can be smoothed before
     // citation preprocessing — slicing already-preprocessed text would risk
@@ -278,6 +285,19 @@ export function AssistantMessage({
     const canOpenCitationSource = (citation: Citation) =>
         !!onOpenCitationSource ||
         (citation.kind !== "case" && !!onOpenDocument);
+    // The pages an answer cites follow the answer, not the steps before it.
+    // Several provider steps can cite the same page, so list each URL once.
+    const webSourcesByUrl = new Map<string, WebSource>();
+    for (const event of events ?? []) {
+        if (event.type !== "web_sources") continue;
+        for (const source of event.sources) {
+            const existing = webSourcesByUrl.get(source.url);
+            if (!existing || (!existing.title && source.title)) {
+                webSourcesByUrl.set(source.url, source);
+            }
+        }
+    }
+    const webSources = [...webSourcesByUrl.values()];
     const showCitationBlock =
         !!citationStatus || (!isStreaming && citations.length > 0);
     const handleCopy = async () => {
@@ -506,6 +526,14 @@ export function AssistantMessage({
         }
         if (event.type === "doc_search") {
             return <DocSearchBlock key={globalIdx} event={event}
+                isStreaming={event.isStreaming} showConnector={showConnector} />;
+        }
+        if (event.type === "web_search") {
+            return <WebSearchBlock key={globalIdx} event={event}
+                isStreaming={event.isStreaming} showConnector={showConnector} />;
+        }
+        if (event.type === "web_read") {
+            return <WebReadBlock key={globalIdx} event={event}
                 isStreaming={event.isStreaming} showConnector={showConnector} />;
         }
         if (event.type === "doc_find") {
@@ -1181,6 +1209,12 @@ export function AssistantMessage({
                             })}
                         </div>
                     )}
+
+                {webSources.length > 0 && (
+                    <div className="mt-2 mb-3">
+                        <WebSourcesBlock sources={webSources} />
+                    </div>
+                )}
 
                 {showCitationBlock && (
                     <CitationsBlock

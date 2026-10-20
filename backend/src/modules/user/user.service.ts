@@ -68,6 +68,12 @@ export {
 } from "./user.responseStyle";
 
 export {
+    getWebSearchSettings,
+    saveWebSearchSettings,
+    validateWebSearchPayload,
+} from "./user.webSearch";
+
+export {
     getApiKeyStatus,
     saveApiKey,
     saveApiKeyForOwner,

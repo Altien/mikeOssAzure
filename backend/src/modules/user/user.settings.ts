@@ -7,6 +7,8 @@ import {
     loadResponseStyle,
     type ResponseStyle,
 } from "./user.responseStyle";
+import { loadWebSearchSettings } from "./user.webSearch";
+import { DEFAULT_WEB_SEARCH_SETTINGS, type WebSearchSettings } from "../../lib/webSearch";
 import { safeError } from "../../lib/safeError";
 import { getEffectiveRouterModels, ROUTER_SLUGS, type RouterModelSelections } from "../../lib/routerModels";
 import { normalizeOptionalModelPreference, normalizeReasoningLevel } from "../../lib/modelSelection";
@@ -23,6 +25,7 @@ export type UserModelSettings = {
     last_selected_chat_model: string | null;
     last_selected_reasoning_level: ReasoningLevel | null;
     legal_research_us: boolean;
+    web_search: WebSearchSettings;
     api_keys: UserApiKeys;
     personalisation?: {
         displayName: string | null;
@@ -57,7 +60,7 @@ export async function getUserModelSettings(
     options: { orgId?: string | null } = {},
 ): Promise<UserModelSettings> {
     const client = db ?? createServerSupabase();
-    const [profileResult, api_keys, routerModels, customInstructions, responseStyle] = await Promise.all([
+    const [profileResult, api_keys, routerModels, customInstructions, responseStyle, webSearch] = await Promise.all([
         client.from("user_profiles")
             .select("fast_model, tabular_model, memory_curator_model, last_selected_chat_model, last_selected_reasoning_level, legal_research_us, display_name, organisation, jurisdiction, practice_setting, professional_title, practice_areas")
             .eq("user_id", userId).single(),
@@ -77,6 +80,10 @@ export async function getUserModelSettings(
                 safeError(error),
             );
             return DEFAULT_RESPONSE_STYLE;
+        }),
+        loadWebSearchSettings(client, userId).catch((error: unknown) => {
+            console.error("[user-settings] web search settings load failed", safeError(error));
+            return DEFAULT_WEB_SEARCH_SETTINGS;
         }),
     ]);
     let data = profileResult.data;
@@ -126,6 +133,7 @@ export async function getUserModelSettings(
         last_selected_chat_model: optional(data?.last_selected_chat_model),
         last_selected_reasoning_level: normalizeReasoningLevel(data?.last_selected_reasoning_level),
         legal_research_us: data?.legal_research_us !== false,
+        web_search: webSearch,
         personalisation: {
             displayName: typeof data?.display_name === "string" ? data.display_name : null,
             organisation: typeof data?.organisation === "string" ? data.organisation : null,

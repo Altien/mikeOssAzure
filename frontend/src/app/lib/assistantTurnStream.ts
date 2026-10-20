@@ -6,7 +6,10 @@ import { isPanelDocument } from "@/app/components/shared/types";
 import { handleAuthorityTraceStreamEvent } from "@/altien/authorityTrace/events";
 import type { AssistantEvent, Citation } from "@/app/components/shared/types";
 import type { AssistantTurnHandle } from "@/app/lib/assistantTurns";
-import type { ConnectorApprovalItem } from "@mike/contracts";
+import type {
+  ConnectorApprovalItem,
+  WebSource,
+} from "@mike/contracts";
 
 /**
  * Reading an assistant turn's SSE stream into its turn record.
@@ -141,6 +144,19 @@ function isConnectorApprovalItem(
     !!binding.grant_id.trim() &&
     (binding.etag === undefined || typeof binding.etag === "string")
   );
+}
+
+function parseWebSources(value: unknown): WebSource[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const { url, title } = (item ?? {}) as { url?: unknown; title?: unknown };
+    if (typeof url !== "string" || !url) return [];
+    return [{ url, ...(typeof title === "string" && title ? { title } : {}) }];
+  });
+}
+
+function parseWebToolFailure(data: Record<string, unknown>) {
+  return typeof data.error === "string" && data.error ? { error: data.error } : {};
 }
 
 function parseCourtlistenerEventCases(value: unknown) {
@@ -1095,6 +1111,59 @@ export async function consumeAssistantTurnStream(
             () => event,
           )) pushEvent(event);
           if (!event.isStreaming) pushThinkingPlaceholder();
+          continue;
+        }
+
+        if (data.type === "web_search_start" || data.type === "web_search") {
+          if (typeof data.search_id !== "string") continue;
+          const searchId = data.search_id;
+          const isStreaming = data.type === "web_search_start";
+          const query = typeof data.query === "string" ? data.query : "";
+          const event: Extract<AssistantEvent, { type: "web_search" }> = {
+            type: "web_search",
+            search_id: searchId,
+            query,
+            results: parseWebSources(data.results),
+            ...(isStreaming ? {} : parseWebToolFailure(data)),
+            isStreaming,
+          };
+          // Either frame may lack the query; keep whichever one had it.
+          if (!updateMatchingEvent(
+            (e) => e.type === "web_search" && e.search_id === searchId,
+            (e) => ({
+              ...event,
+              query: query || (e as typeof event).query,
+            }),
+          )) pushEvent(event);
+          if (!isStreaming) pushThinkingPlaceholder();
+          continue;
+        }
+
+        if (data.type === "web_read_start" || data.type === "web_read") {
+          if (typeof data.read_id !== "string" || typeof data.url !== "string") continue;
+          const readId = data.read_id;
+          const isStreaming = data.type === "web_read_start";
+          const event: Extract<AssistantEvent, { type: "web_read" }> = {
+            type: "web_read",
+            read_id: readId,
+            url: data.url,
+            ...(typeof data.title === "string" && data.title
+              ? { title: data.title }
+              : {}),
+            ...(isStreaming ? {} : parseWebToolFailure(data)),
+            isStreaming,
+          };
+          if (!updateMatchingEvent(
+            (e) => e.type === "web_read" && e.read_id === readId,
+            () => event,
+          )) pushEvent(event);
+          if (!isStreaming) pushThinkingPlaceholder();
+          continue;
+        }
+
+        if (data.type === "web_sources") {
+          const sources = parseWebSources(data.sources);
+          if (sources.length) pushEvent({ type: "web_sources", sources });
           continue;
         }
 

@@ -13,6 +13,10 @@
 // DB preparation live here. `prepareChatStream` returns the prepared data the
 // route needs to run the stream; it does not stream.
 import { type Db } from "../../lib/supabase";
+import {
+    webSearchPlanFor,
+    type WebSearchPlan,
+} from "../../lib/webSearch";
 import { resolveRequestTimeZone } from "../../lib/userTime";
 import { attachPriorReasoning, buildDocContext, buildMessages, buildUserPersonalisationPrompt, devLog, enrichWithPriorEvents, loadUserMessageSentTimes, buildWorkflowStore, appendAskInputsResponseToAssistantMessage, runApprovedConnectorActions, generateSpotlightNonce, type AskInputsResponseRequest, type ChatMessage } from "./engine/index";
 import type { McpToolEvent } from "@mike/contracts";
@@ -74,6 +78,7 @@ export type PreparedChatStream = {
     apiMessages: ReturnType<typeof buildMessages>;
     workflowStore: Awaited<ReturnType<typeof buildWorkflowStore>>;
     legalResearchUs: boolean;
+    webSearch: WebSearchPlan | null;
     apiKeys: Awaited<ReturnType<typeof getUserModelSettings>>["api_keys"];
     /** The organization the chat belongs to, whose keys and model lists apply. */
     orgId: string | null;
@@ -527,6 +532,11 @@ export async function prepareChatStream(
                 apiMessages,
                 workflowStore,
                 legalResearchUs,
+                webSearch: webSearchPlanFor(
+                    modelSettings.web_search,
+                    selectedModel,
+                    apiKeys,
+                ),
                 apiKeys,
                 orgId: contentOrgId,
                 titleModel,

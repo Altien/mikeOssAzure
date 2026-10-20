@@ -233,6 +233,9 @@ export type AssistantEvent =
   | WireActivity<"text_card">
   | AuthorityTraceAssistantEvent
   | (WireActivity<"doc_search"> & { isStreaming?: boolean })
+  | (WireActivity<"web_search"> & { isStreaming?: boolean })
+  | (WireActivity<"web_read"> & { isStreaming?: boolean })
+  | WireActivity<"web_sources">
   | (Omit<WireActivity<"reasoning">, "isStreaming"> & { isStreaming?: boolean })
   | (Omit<WireActivity<"error">, "safe_to_display"> & {
       safe_to_display?: boolean;

@@ -17,6 +17,9 @@ export const API_KEY_PROVIDERS: readonly ApiKeyProvider[] = [
     "courtlistener",
     "kimi",
     "azure_openai",
+    "brave",
+    "tavily",
+    "deepseek",
 ];
 
 /**

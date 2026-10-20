@@ -7,7 +7,10 @@ export function eventErrorMessage(event: AssistantEvent): string | null {
             : "Sorry, something went wrong.";
     }
     if ("error" in event && typeof event.error === "string" && event.error) {
-        return "Sorry, something went wrong.";
+        // Web tool errors are written for the user by the server.
+        return event.type === "web_search" || event.type === "web_read"
+            ? event.error
+            : "Sorry, something went wrong.";
     }
     return null;
 }
@@ -52,6 +55,8 @@ export function toolCallLabel(name: string): string {
     // Upstream divergence (OSS-6, §2.3 item 7): dev's authority-trace tool.
     if (name === "verify_citation_sources")
         return "Verifying citation sources...";
+    if (name === "web_search") return "Searching the web...";
+    if (name === "read_webpage") return "Reading web page...";
     if (name.startsWith("mcp_")) return "Using connector...";
     return name ? `Running ${name}...` : "Working...";
 }

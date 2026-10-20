@@ -326,6 +326,42 @@ export type AuthorityTraceEvent =
       diagnostics?: string[];
       error?: string;
     };
+export type WebSource = { url: string; title?: string };
+
+export type WebToolErrorCode =
+  /** Mike's search has no key for the chosen search service. */
+  | "not_configured"
+  /** The search API refused the key: invalid, or its plan does not cover the request. */
+  | "rejected"
+  /** No search backend could run, or the model provider refused its own search. */
+  | "unavailable"
+  /** The page could not be read: a blocked address, an unsupported type, a failed fetch. */
+  | "unreadable"
+  | "failed";
+
+/**
+ * Web activity in a turn. A search done by the model provider and one done
+ * by Mike's own search look the same.
+ */
+export type WebToolEvent =
+  | {
+      type: "web_search";
+      search_id: string;
+      query: string;
+      results: WebSource[];
+      error?: string;
+      error_code?: WebToolErrorCode;
+    }
+  | {
+      type: "web_read";
+      read_id: string;
+      url: string;
+      title?: string;
+      error?: string;
+      error_code?: WebToolErrorCode;
+    }
+  /** Pages the answer cites, as reported by the model provider. */
+  | { type: "web_sources"; sources: WebSource[] };
 
 export type DocumentSearchErrorCode =
   | "schema_out_of_date"
@@ -429,6 +465,7 @@ export type AssistantEvent =
   | CourtlistenerToolEvent
   | McpToolEvent
   | AuthorityTraceEvent
+  | WebToolEvent
   | {
       type: "case_opinions";
       cluster_id: number;

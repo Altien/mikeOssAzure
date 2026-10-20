@@ -409,6 +409,7 @@ vi.mock("../../modules/chat/engine/index", async (importOriginal) => {
 vi.mock("../../modules/user/user.settings", () => ({
     getUserModelSettings: vi.fn(async () => ({
         legal_research_us: false,
+        web_search: DEFAULT_WEB_SEARCH_SETTINGS,
         title_model: "test-model",
         tabular_model: "test-model",
         last_selected_chat_model: null,
@@ -448,6 +449,7 @@ import { buildApp } from "../../app";
 const app = buildApp();
 import { resetAssistantTurnRunsForTests } from "../../lib/assistantTurnRuns";
 import { createServerSupabase } from "../../lib/supabase";
+import { DEFAULT_WEB_SEARCH_SETTINGS } from "../../lib/webSearch";
 
 const VALID_BODY = {
     messages: [{ role: "user", content: "hello" }],
@@ -711,6 +713,7 @@ describe("POST /chat — streaming endpoint", () => {
             legal_research_us: false,
             // Dev drift: Dev's UserModelSettings keeps the Altien fast_model field
             fast_model: "test-model",
+            web_search: DEFAULT_WEB_SEARCH_SETTINGS,
             title_model: null,
             memory_curator_model: null,
             last_selected_reasoning_level: null,
@@ -1277,6 +1280,7 @@ describe("POST /chat — streaming endpoint", () => {
             legal_research_us: false,
             // Dev drift: Dev's UserModelSettings keeps the Altien fast_model field
             fast_model: "test-model",
+            web_search: DEFAULT_WEB_SEARCH_SETTINGS,
             title_model: null,
             memory_curator_model: null,
             last_selected_reasoning_level: null,
@@ -1923,6 +1927,7 @@ describe("POST /chat — streaming endpoint", () => {
             tabular_model: "test-model",
             last_selected_chat_model: null,
             legal_research_us: true,
+            web_search: DEFAULT_WEB_SEARCH_SETTINGS,
             api_keys: {
                 gemini: "test-key",
                 courtlistener: "configured-but-unused",
@@ -2307,6 +2312,7 @@ async function seedResolvableModel() {
         legal_research_us: false,
         // Dev drift: Dev's UserModelSettings keeps the Altien fast_model field
         fast_model: "test-model",
+        web_search: DEFAULT_WEB_SEARCH_SETTINGS,
         title_model: null,
         memory_curator_model: null,
         last_selected_reasoning_level: null,

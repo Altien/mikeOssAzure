@@ -458,6 +458,17 @@ export async function enrichWithPriorEvents(
       }
     } else if (ev?.type === "workflow_applied") {
       lines.push(`- applied workflow: ${untrustedRef(ev.title)}`);
+    } else if (ev?.type === "web_search" && !ev.error) {
+      const count = Array.isArray(ev.results) ? ev.results.length : 0;
+      lines.push(
+        `- web_search ${untrustedRef(ev.query)} → ${count} result${count === 1 ? "" : "s"}`,
+      );
+    } else if (ev?.type === "web_read" && !ev.error) {
+      lines.push(`- read_webpage → ${untrustedRef(ev.url)}`);
+    } else if (ev?.type === "web_sources" && Array.isArray(ev.sources)) {
+      for (const source of ev.sources as { url?: unknown }[]) {
+        lines.push(`- cited web page → ${untrustedRef(source.url)}`);
+      }
     } else if (ev?.type === "ask_inputs") {
       const items = (Array.isArray(ev.items) ? ev.items : []) as Record<
         string,
@@ -831,6 +842,9 @@ const COMPLETES_TEXTLESS_TURN = {
   courtlistener_read_case: false,
   courtlistener_verify_citations: false,
   mcp_tool_call: false,
+  web_search: false,
+  web_read: false,
+  web_sources: false,
   case_opinions: false,
   content: false,
   word_edit_block: false,

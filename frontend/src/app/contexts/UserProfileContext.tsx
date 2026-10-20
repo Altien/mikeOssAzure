@@ -157,6 +157,9 @@ function emptyApiKeys(): ApiKeyState {
         courtlistener: { configured: false, source: null },
         kimi: { configured: false, source: null },
         azure_openai: { configured: false, source: null },
+        brave: { configured: false, source: null },
+        tavily: { configured: false, source: null },
+        deepseek: { configured: false, source: null },
     };
 }
 

@@ -1,4 +1,5 @@
 "use client";
+import { WebSearchSection } from "@/app/components/settings/WebSearchSection";
 
 import { useState } from "react";
 import { AlertTriangle, CheckCircle2, ExternalLink } from "lucide-react";
@@ -139,6 +140,7 @@ export default function FeaturesPage() {
                     )}
                 </SettingsSection>
             </section>
+            <WebSearchSection />
         </div>
     );
 }

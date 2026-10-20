@@ -9,6 +9,10 @@
 // is delicate. Only the pre-stream preparation lives here.
 
 import type { Db } from "../../lib/supabase";
+import {
+    webSearchPlanFor,
+    type WebSearchPlan,
+} from "../../lib/webSearch";
 import { resolveRequestTimeZone } from "../../lib/userTime";
 import type { McpToolEvent } from "@mike/contracts";
 import {
@@ -127,6 +131,7 @@ export type PreparedProjectChatStream = {
     apiMessages: ReturnType<typeof buildMessages>;
     workflowStore: Awaited<ReturnType<typeof buildWorkflowStore>>;
     legalResearchUs: boolean;
+    webSearch: WebSearchPlan | null;
     apiKeys: Awaited<ReturnType<typeof getUserModelSettings>>["api_keys"];
     /** The organization the chat belongs to, whose keys and model lists apply. */
     orgId: string | null;
@@ -577,6 +582,11 @@ export async function prepareProjectChatStream(
                 apiMessages,
                 workflowStore,
                 legalResearchUs,
+                webSearch: webSearchPlanFor(
+                    modelSettings.web_search,
+                    selectedModel,
+                    apiKeys,
+                ),
                 apiKeys,
                 orgId: projectAccess.project.org_id ?? null,
                 titleModel,

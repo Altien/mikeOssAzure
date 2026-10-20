@@ -1732,3 +1732,119 @@ it.each(["search_id", "scope", "query", "offset"])("ignores malformed search fra
   delete event[key];
   expect(await eventsOf([event])).toEqual([]);
 });
+
+describe("web activity", () => {
+  const web = (events: AssistantEvent[] | undefined) =>
+    events!.filter((e) => e.type.startsWith("web_"));
+
+  it("keeps live activity and completes searches by ID without losing their query", async () => {
+    const starts = [
+      { type: "web_search_start", search_id: "ws-1", query: "late payment interest" },
+      { type: "web_search_start", search_id: "ws-2", query: "directors duties" },
+      { type: "web_read_start", read_id: "wr-1", url: "https://law.example/act", title: "Act" },
+    ];
+    const live = web(await eventsOf([...starts, starts[0], starts[2]]));
+    expect(live).toEqual([
+      { type: "web_search", search_id: "ws-1", query: "late payment interest", results: [], isStreaming: true },
+      { type: "web_search", search_id: "ws-2", query: "directors duties", results: [], isStreaming: true },
+      { type: "web_read", read_id: "wr-1", url: "https://law.example/act", title: "Act", isStreaming: true },
+    ]);
+
+    expect(web(await eventsOf([
+      { type: "web_search", search_id: "ws-2", error: "Search timed out." },
+    ], live))).toEqual([
+      live[0],
+      { type: "web_search", search_id: "ws-2", query: "directors duties", results: [], error: "Search timed out.", isStreaming: false },
+      live[2],
+    ]);
+  });
+
+  it("keeps completion frames received without starts after reconnecting", async () => {
+    expect(await eventsOf([
+      { type: "web_search", search_id: "ws-1", query: 42, results: [] },
+      { type: "web_read", read_id: "wr-1", url: "https://law.example/act", title: "Act" },
+    ])).toEqual([
+      { type: "web_search", search_id: "ws-1", query: "", results: [], isStreaming: false },
+      { type: "web_read", read_id: "wr-1", url: "https://law.example/act", title: "Act", isStreaming: false },
+      thinking,
+    ]);
+  });
+
+  it.each([
+    { type: "web_search_start" },
+    { type: "web_search", search_id: 1 },
+    { type: "web_read_start", url: "https://law.example/act" },
+    { type: "web_read", read_id: 1, url: "https://law.example/act" },
+    { type: "web_read_start", read_id: "wr-1" },
+    { type: "web_read", read_id: "wr-1", url: 1 },
+  ])("ignores malformed web activity: %j", async (event) => {
+    expect(await eventsOf([event])).toEqual([]);
+  });
+
+  it.each([undefined, "", 42])("ignores an unusable error or page title: %j", async (value) => {
+    expect(web(await eventsOf([
+      { type: "web_search", search_id: "ws-1", query: "law", error: value },
+      { type: "web_read", read_id: "wr-1", url: "https://law.example/act", title: value, error: value },
+    ]))).toEqual([
+      { type: "web_search", search_id: "ws-1", query: "law", results: [], isStreaming: false },
+      { type: "web_read", read_id: "wr-1", url: "https://law.example/act", isStreaming: false },
+    ]);
+  });
+
+  it("keeps valid cited sources and search results while discarding malformed entries", async () => {
+    const sources = [
+      null, {}, "not a source", { url: 42 }, { url: "" },
+      { url: "https://law.example/act", title: "Act" },
+      { url: "https://law.example/order" },
+      { url: "https://law.example/rules", title: "" },
+      { url: "https://law.example/case", title: 42 },
+    ];
+    const valid = [
+      { url: "https://law.example/act", title: "Act" },
+      { url: "https://law.example/order" },
+      { url: "https://law.example/rules" },
+      { url: "https://law.example/case" },
+    ];
+    expect(web(await eventsOf([
+      { type: "web_search", search_id: "ws-1", query: "law", results: sources },
+      { type: "web_sources", sources },
+    ]))).toEqual([
+      { type: "web_search", search_id: "ws-1", query: "law", results: valid, isStreaming: false },
+      { type: "web_sources", sources: valid },
+    ]);
+  });
+
+  it.each([undefined, null, {}, [], [null, { url: "" }]])("omits empty or malformed source lists: %j", async (sources) => {
+    expect(await eventsOf([{ type: "web_sources", sources }])).toEqual([]);
+  });
+
+  it("completes a search and a read from their start frames", async () => {
+    const events = await eventsOf([
+      { type: "web_search_start", search_id: "ws-1", query: "late payment interest" },
+      {
+        type: "web_search",
+        search_id: "ws-1",
+        query: "late payment interest",
+        results: [{ url: "https://www.legislation.gov.uk/ukpga/1998/20", title: "Late Payment Act" }],
+      },
+      { type: "web_read_start", read_id: "wr-1", url: "https://b.example/page" },
+      {
+        type: "web_read", read_id: "wr-1", url: "https://b.example/moved",
+        error: "This page could not be read.", error_code: "unreadable",
+      },
+    ]);
+    expect(web(events)).toEqual([
+      {
+        type: "web_search",
+        search_id: "ws-1",
+        query: "late payment interest",
+        results: [{ url: "https://www.legislation.gov.uk/ukpga/1998/20", title: "Late Payment Act" }],
+        isStreaming: false,
+      },
+      {
+        type: "web_read", read_id: "wr-1", url: "https://b.example/moved",
+        error: "This page could not be read.", isStreaming: false,
+      },
+    ]);
+  });
+});

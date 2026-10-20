@@ -2,6 +2,8 @@
 // Callers always speak OpenAI-style tools + { role, content } messages; each
 // provider translates internally.
 
+import type { WebSource } from "@mike/contracts";
+
 export type Provider =
     | "claude"
     | "gemini"
@@ -69,7 +71,21 @@ export type StreamCallbacks = {
     onReasoningBlockEnd?: () => void;
     onContentDelta?: (text: string) => void;
     onToolCallStart?: (call: NormalizedToolCall) => void;
+    onWebSearch?: (event: ProviderWebSearchEvent) => void;
 };
+
+export type ProviderWebSearchEvent =
+    | { kind: "search_started"; id: string; query?: string }
+    | {
+          kind: "search_finished";
+          id: string;
+          query?: string;
+          results: WebSource[];
+          failed: boolean;
+      }
+    | { kind: "cited_source"; source: WebSource }
+    /** The provider refused the search tool, so the turn ran without it. */
+    | { kind: "unavailable" };
 
 export type UserApiKeys = {
     /** Explicitly disabled providers must never fall back to deployment keys. */
@@ -99,6 +115,10 @@ export type UserApiKeys = {
     custom?: string | null;
     courtlistener?: string | null;
     azureOpenai?: AzureOpenaiSettings | null;
+    /** Search API keys for Mike's own web search (see lib/webSearch). */
+    brave?: string | null;
+    tavily?: string | null;
+    deepseek?: string | null;
     /**
      * Non-secret settings that only make sense together with the key above
      * them: the AWS region a Bedrock key belongs to, the Azure resource an
@@ -157,6 +177,11 @@ export type StreamChatParams = {
      * one-shot calls such as the memory curator.
      */
     conversationId?: string | null;
+    /**
+     * Offer the provider's own web search tool, when the adapter has one, for
+     * at most `maxSearches` searches in each request.
+     */
+    providerWebSearch?: { maxSearches: number } | null;
 };
 
 export type StreamChatResult = {

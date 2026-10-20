@@ -23,6 +23,8 @@
 //      lands; remove the function then.
 
 import crypto from "node:crypto";
+import { WEB_SEARCH_BACKENDS, type WebSearchBackend } from "../../lib/webSearch/settings";
+import { loadDeploymentSearchApiKeys } from "../../lib/webSearch/credentials";
 import { getConfig } from "../../lib/config";
 import { resolveSecret, resolveProviderSecret, resolveVercelApiKey } from "../../lib/envSecrets";
 import { createServerSupabase, type Db } from "../../lib/supabase";
@@ -49,7 +51,8 @@ export type ApiKeyProvider =
     | "vertex"
     | "xai"
     | "custom"
-    | "azure_openai";
+    | "azure_openai"
+    | WebSearchBackend;
 
 export type ApiKeySource = "env" | "user" | "org" | null;
 export type ApiKeyStatus = Record<ApiKeyProvider, boolean> & {
@@ -58,7 +61,7 @@ export type ApiKeyStatus = Record<ApiKeyProvider, boolean> & {
     settings: ProviderSettings;
 };
 
-const ORG_PROVIDERS = ["claude", "gemini", "openai", "kimi", "mistral", "openrouter", "opencode-go", "vercel", "courtlistener", "azure_openai", "bedrock", "azure", "azure-foundry", "vertex", "xai", "custom"] as const;
+const ORG_PROVIDERS = ["claude", "gemini", "openai", "kimi", "mistral", "openrouter", "opencode-go", "vercel", "courtlistener", "azure_openai", "bedrock", "azure", "azure-foundry", "vertex", "xai", "custom", ...WEB_SEARCH_BACKENDS] as const;
 
 export function normalizeApiKeyProvider(value: unknown): ApiKeyProvider | null {
     return typeof value === "string" && (ORG_PROVIDERS as readonly string[]).includes(value)
@@ -132,6 +135,7 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
     ]);
 
     return {
+        ...await loadDeploymentSearchApiKeys(),
         claude: claude || null,
         gemini: gemini || null,
         openai: openai || null,
