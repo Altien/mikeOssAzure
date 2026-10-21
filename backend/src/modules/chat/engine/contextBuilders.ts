@@ -915,6 +915,7 @@ const COMPLETES_TEXTLESS_TURN = {
   web_read: false,
   web_sources: false,
   delegation: false,
+  response_details: false,
   case_opinions: false,
   content: false,
   word_edit_block: false,

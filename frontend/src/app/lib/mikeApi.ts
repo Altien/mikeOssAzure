@@ -910,6 +910,8 @@ export interface UserProfile extends RouterProfileLists {
     mfaOnLogin: boolean;
     legalResearchUs: boolean;
     quickActionsVisible: boolean;
+    /** Whether responses and subagents show the model, effort and tokens they used. */
+    responseDetailsVisible?: boolean;
     darkMode: boolean;
     projectMemoryDefault: boolean;
     apiKeyStatus: ApiKeyStatus;
@@ -1032,6 +1034,7 @@ export async function updateUserProfile(payload: {
     lastSelectedReasoningLevel?: NonNullable<Message["reasoning"]>;
     legalResearchUs?: boolean;
     quickActionsVisible?: boolean;
+    responseDetailsVisible?: boolean;
     darkMode?: boolean;
     projectMemoryDefault?: boolean;
     openRouterModels?: string[];

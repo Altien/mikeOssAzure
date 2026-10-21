@@ -22,3 +22,5 @@
   Separate153 fix: server-resolved search_source.workspace stays request-scoped and is rechecked before read/revision. No cross-turn persistence added. Find parent joins/CASE fail closed for dangling parents and preserve parentNULL Personal; original actor retained.
 
 - Source178 e8f73821: delegation modules, per-user defaults and retained continuations →0158/0159;0160 extends canonical fenced assistant append atomically with initiating actor/chat/message/workspace/document/version checks. No raw continuation insert path; cancellation-aware edit locks, scoped approval inheritance and canonical account erasure retained. needs_review.
+
+- Source179 d9c0f573: subagent pills/document content cards and opt-in response details →0161_user_response_details.sql. Retained managed credential UI, TEXT actor configuration and deploy-before-migrate profile fallbacks. needs_review.

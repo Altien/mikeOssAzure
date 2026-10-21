@@ -6,7 +6,8 @@ export function isRenderableEvent(event: AssistantEvent): boolean {
         event.type !== "ask_inputs_response" &&
         event.type !== "case_citation" &&
         event.type !== "case_opinions" &&
-        event.type !== "web_sources"
+        event.type !== "web_sources" &&
+        event.type !== "response_details"
     );
 }
 
@@ -73,7 +74,7 @@ export function toolCallLabel(name: string): string {
         return "Verifying citation sources...";
     if (name === "web_search") return "Searching the web...";
     if (name === "read_webpage") return "Reading web page...";
-    if (name === "delegate") return "Delegating...";
+    if (name === "delegate") return "Starting a subagent...";
     if (name.startsWith("mcp_")) return "Using connector...";
     return name ? `Running ${name}...` : "Working...";
 }
