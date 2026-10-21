@@ -63,7 +63,7 @@ credentials.
 - [Documentation index](docs/README.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [MCP connectors](docs/connectors.md)
-- [Google Drive integration](docs/google-drive.md)
+- [Google Workspace: Drive, Gmail, and Calendar](docs/google-workspace.md)
 - [Preset contract templates and publisher credits](docs/preset-templates.md)
 - [CourtListener integration](docs/courtlistener.md)
 - [Microsoft Word add-in](word-addin/README.md)
