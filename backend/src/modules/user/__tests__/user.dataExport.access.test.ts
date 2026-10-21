@@ -147,6 +147,53 @@ describe("exports enforce current read access", () => {
         expect(ids(result.word_addin_chats.messages)).toEqual(["word-message"]);
     });
 
+    it("exports the user's own readable playbooks, their runs and imports, and nobody else's", async () => {
+        const playbook = (id: string, fields: Row = {}): Row => ({
+            id,
+            user_id: userId,
+            org_id: null,
+            visibility: "private",
+            content_json: { name: id },
+            ...fields,
+        });
+        const { db } = makeExportDb({
+            org_members: [{ org_id: "current-org", user_id: userId, role: "member" }],
+            playbooks: [
+                playbook("playbook-personal"),
+                playbook("playbook-current", { org_id: "current-org", visibility: "organization" }),
+                // The user left this organization: its policy stays there.
+                playbook("playbook-departed", { org_id: "old-org", visibility: "organization" }),
+                playbook("playbook-colleague-public", { user_id: "colleague", org_id: "current-org", visibility: "organization" }),
+                playbook("playbook-colleague-private", { user_id: "colleague", org_id: "current-org" }),
+                playbook("playbook-stranger", { user_id: "stranger" }),
+            ],
+            playbook_sources: [
+                { id: "source-personal", playbook_id: "playbook-personal", filename: "policy.pdf", extracted_text: "secret" },
+                { id: "source-colleague", playbook_id: "playbook-colleague-public", filename: "theirs.pdf" },
+            ],
+            playbook_runs: [
+                { id: "run-personal", playbook_id: "playbook-personal", user_id: userId, findings_json: [] },
+                { id: "run-departed", playbook_id: "playbook-departed", user_id: userId },
+                { id: "run-colleague-public", playbook_id: "playbook-colleague-public", user_id: userId },
+                { id: "run-colleague-private", playbook_id: "playbook-colleague-private", user_id: userId },
+                { id: "run-by-colleague", playbook_id: "playbook-personal", user_id: "colleague" },
+            ],
+            playbook_imports: [
+                { id: "import-personal", user_id: userId, org_id: null },
+                { id: "import-departed", user_id: userId, org_id: "old-org" },
+                { id: "import-colleague", user_id: "colleague", org_id: null },
+            ],
+        });
+
+        const result = await buildUserAccountExport(db, userId, email);
+
+        expect(ids(result.playbooks)).toEqual(["playbook-personal", "playbook-current"]);
+        expect(result.playbooks[0].content_json).toEqual({ name: "playbook-personal" });
+        expect(ids(result.playbook_sources)).toEqual(["source-personal"]);
+        expect(ids(result.playbook_runs)).toEqual(["run-personal", "run-colleague-public"]);
+        expect(ids(result.playbook_imports)).toEqual(["import-personal"]);
+    });
+
     it("fails closed when organization membership or scope cannot be read", async () => {
         const tables = fixtures();
         const membershipFailure = makeExportDb(tables, { org_members: { message: "unavailable" } });

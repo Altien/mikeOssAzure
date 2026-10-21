@@ -57,6 +57,17 @@ open only to the people it is shared with. Sharing sends no email
 notification. Unlike projects and workflows, an organization's owners do not
 take over a private playbook whose creator has left.
 
+When a creator deletes their account, each of their public organization
+playbooks passes to an owner of that organization (the successor that receives
+the rest of their organization work), with its runs by other members and its
+files. Their private and personal playbooks, the reviews and imports they ran,
+and shares addressed to them are deleted with the account. The account export
+in **Settings > Privacy & Data** includes the playbooks they created and can
+still open, the reviews they ran on playbooks they can still open, the
+supplementary documents' details, and their import records. An
+organization's owners can delete all of its playbooks, public and private,
+from the organization's **Privacy & Data** settings.
+
 The editor has two flat glass panels: rules on the left, and the selected
 rule's form on the right. The rules sidebar uses the IDE Explorer's compact
 rows, with a small dot before each rule name. Opening a playbook selects its first rule.
@@ -120,8 +131,8 @@ needs a concept, so the first one carries placeholder text to replace.
 
 A dropped file is uploaded straight to object storage under a presigned URL
 scoped to the signed-in account, then the API compiles it from that key. The
-API never receives the file body, and the staged object is removed as soon as
-the import has read it. A saved file is read from where it is
+API never receives the file body, and the staged object is removed once the
+import has finished, whether it succeeded or failed. A saved file is read from where it is
 stored, after the same access check as opening it; the playbook keeps its own
 copy, so later edits to the saved file do not change the playbook.
 
@@ -145,15 +156,17 @@ takes precedence. The limit bounds how long an import waits; it does not abort
 the model request already in flight.
 
 `POST /playbooks/import` checks the file, the replace target, and the model,
-then answers `202` with the import record while compiling continues on the
-server. A request that cannot be compiled is still refused by that call. The
+records the import, queues a `playbook.import` job in `db_jobs`, and answers
+`202` with the import record. A request that cannot be compiled is still
+refused by that call; a file that turns out to be unreadable fails the import
+when the job reads it. The
 page follows the import by polling `GET /playbooks/imports/:importId`, and
 `GET /playbooks/imports` lists the caller's imports still compiling in the
 workspace, so a page opened later picks them up: the playbooks list shows each
 as **Compiling …**, and a notice says when it is ready (with **Open**) or why
-it failed. An import compiles in the API process that started it and records a
-heartbeat every 30 seconds; one silent for two minutes reads as failed with
-"The import stopped before it finished."
+it failed. Imports and reviews run as durable jobs; see
+[Background jobs](#background-jobs) below for how a restart is survived and
+when one reads as "The import stopped before it finished."
 
 Each import creates an audit record with its current processing stage. Failed
 imports retain the stage and error without retaining the source document,
@@ -166,6 +179,17 @@ an import.
 Open the playbook's actions menu, then **Replace from file**. The compiled
 result rewrites that playbook's content and keeps its name unless you supply a
 new one.
+
+The playbook is read-only while the replacement compiles, even after you close
+the dialog or reload the page, so an edit cannot overwrite the new rules or be
+lost under them; editing resumes when the replacement finishes or fails.
+The server enforces this for every client, including another tab or device:
+while a replacement runs, saving the playbook's content returns 409 "This
+playbook is being replaced. Wait for the import to finish." A replacement
+also saves only over the version of the playbook it began from, so if the
+playbook was saved after it began, the import fails with "The playbook was
+edited while the replacement was compiling. Replace it again." and the edit
+is kept.
 
 A replacement rewrites the current rules. Completed and in-progress reviews
 retain the rules they started with. The replaced file is removed once the
@@ -189,7 +213,9 @@ playbook can open it, and later edits to the original do not change it. Its
 text is extracted when it is added. Files are stored under
 `playbooks/<creator>/<playbook>/sources/`. Database triggers queue durable file
 cleanup on replacement or deletion, including account and organization
-cascades; failed storage deletions are retried by the job worker.
+cascades; failed storage deletions are retried by the job worker. Account
+deletion also sweeps `playbooks/<user>/` for files no remaining playbook
+claims, such as staged uploads an interrupted import never read.
 
 Reviews do not receive supplementary text by default. When a playbook has
 supplementary documents, the review prompt lists their ids, names, and
@@ -206,6 +232,19 @@ built-in cloud models, discovered Ollama models, and OpenRouter models when an
 OpenRouter key is configured. A model is offered only when the account has a
 usable key for its provider; organization playbooks use that workspace’s
 effective provider keys. Local Ollama models need none.
+
+## In the assistant
+
+**Use in assistant**, or **Playbooks** in the composer's **+** menu, attaches
+a playbook to the next message. The message carries it as `playbook: { id,
+title }`, and the chat engine tells the model to review the attached document
+with `run_playbook`, which checks access to the playbook again before it
+reviews anything. The Word add-in's composer has the same **Playbooks** item
+and pill. It lists the Personal playbooks the user can open, and
+`POST /word-chat` answers 404 for a playbook the user cannot open, as `GET
+/playbooks/:id` does. In Word, the review reads the open document's text, so
+it saves no new version: the findings come back in the chat, and the user can
+ask the assistant to make the suggested changes as Word edits.
 
 ## Contract review
 
@@ -227,14 +266,44 @@ or upload more, then choose:
 the form holds. Multiple files can be dropped into the document area; each
 file gets its own review run.
 
-Starting a review stores its run and returns at once; the review then runs on
-the server apart from the request, so leaving the page does not stop it. The
-run shows a spinner in **Runs** and in the sidebar's History until it
-finishes. While it runs, the server refreshes the run's `updated_at` every 30
-seconds; a running run with no refresh for two minutes stopped with its
-process, and is reported as failed with a message to run it again. History
-polls `GET /playbooks/runs/status?ids=` for running runs and pages through
-`GET /playbooks/runs/history`.
+Starting a review stores its run, queues a `playbook.review` job, and returns
+at once, so leaving the page does not stop it. The run shows a spinner in
+**Runs** and in the sidebar's History until it finishes. History polls
+`GET /playbooks/runs/status?ids=` for running runs and pages through
+`GET /playbooks/runs/history`. A running run cannot be deleted. Reviews the
+assistant starts from chat wait for their findings, so they run inside the
+chat turn instead of as jobs.
+
+### Background jobs
+
+Reviews and imports run on the durable job queue (`backend/src/lib/dbq/`), not
+inside the request that started them, so a backend restart delays them
+rather than losing them. The job carries what the row does not record (the
+reviewed text and the document version edits are made against; for an
+import, the staged key or saved document and the ids it saves under), and
+reruns from the row: a review always uses the rules snapshot stored on its
+run.
+
+- **Restarts.** A job whose worker dies is claimed again once its lease goes
+  stale (ten minutes) and runs the work from the start. A finished row is left
+  alone, and results are written only while the row is still `running`, so two
+  claims of one job cannot both record an outcome. A re-run's tracked changes
+  are refused if an earlier run already revised the document.
+- **Heartbeat.** While work runs, its row's `updated_at` is refreshed every 30
+  seconds. A re-claimed job whose row is still being refreshed defers instead
+  of running the model a second time beside a worker that is alive.
+- **Interrupted.** A `running` row is reported as failed with "stopped before
+  it finished" only when it has had no heartbeat for two minutes **and** no
+  pending or running job in `db_jobs`. A job that exhausts its three attempts
+  marks its row failed with the same message.
+- **Failures.** A review or import that fails on its own terms (a model error,
+  an unreadable file) is recorded on its row and not retried. Failures that
+  are faults rather than refusals are also reported to Sentry under
+  `component=playbooks`, by stage, with ids only (see
+  [observability](observability.md#what-gets-reported)).
+- **`DB_JOBS_ENABLED=false`.** With the runner off, the same handler runs in
+  the API process after the response, as before jobs; the heartbeat alone
+  keeps it from reading as interrupted, and a restart loses it.
 
 Review findings include the rule, status, exact contract quote,
 location, analysis, and suggested language. Each run is retained with the
@@ -269,3 +338,26 @@ The current one-pass safety limits are 150,000 extracted characters per
 imported playbook, 100,000 serialized characters per playbook, and
 180,000 characters per reviewed contract. Oversized inputs fail explicitly
 instead of being silently truncated.
+
+## Audit log
+
+Playbook activity is recorded in the activity history (the **History** page,
+an organization's audit page, and the audit CSV export) under the `playbooks`
+surface, as chat, document, and tabular review activity is:
+
+| Action | Recorded when |
+| --- | --- |
+| `playbook.created` | A playbook is started without a file. |
+| `playbook.imported` | An import that creates a playbook ends; a failed one carries the `stage` it stopped at. |
+| `playbook.replaced` | An import that replaces a playbook's content ends; a failed one carries its `stage`. |
+| `playbook.deleted` | A playbook is deleted. |
+| `playbook.run` | A review completes or fails. The row holds the model and the stored document reviewed, if any; `detail` holds the playbook and run ids, scope, posture, and, for a completed review, the number of findings per status. |
+| `playbook.run.deleted` | A review run is deleted. |
+
+Rows carry the playbook's name as their title and ids in `detail`, never
+rule text, findings, or contract text. An import refused in the request that
+asked for it (wrong file type, model unavailable) answers that request with
+the reason and is not recorded. A review or import is recorded by the claim
+of its job that wrote the outcome, so a job run again after a restart does
+not record it twice; an import whose failure could not be written to its row
+is retried and can, rarely, record a second row.

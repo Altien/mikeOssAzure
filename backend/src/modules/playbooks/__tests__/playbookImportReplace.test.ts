@@ -64,12 +64,17 @@ function fakeDb(existing: Record<string, unknown> | null) {
     const query: Record<string, unknown> = {};
     const settle = async () => {
       calls.push({ table, op: state.op, values: state.values });
+      // A replacement's guarded update returns the row it matched; this
+      // fake does not apply filters, so it always matches.
+      if (state.op === "update" && table === "playbooks")
+        return { data: existing ? [existing] : [], error: null };
       if (state.op !== "select") return { data: null, error: null };
       if (table === "playbooks") return { data: existing, error: null };
       return { data: null, error: null };
     };
     query.select = vi.fn((columns?: string) => {
-      state.op = "select";
+      // A query starts as a select; after a write, select names the
+      // columns the write returns and leaves it a write.
       state.columns = columns;
       return query;
     });

@@ -24,3 +24,5 @@
 - Source178 e8f73821: delegation modules, per-user defaults and retained continuations →0158/0159;0160 extends canonical fenced assistant append atomically with initiating actor/chat/message/workspace/document/version checks. No raw continuation insert path; cancellation-aware edit locks, scoped approval inheritance and canonical account erasure retained. needs_review.
 
 - Source179 d9c0f573: subagent pills/document content cards and opt-in response details →0161_user_response_details.sql. Retained managed credential UI, TEXT actor configuration and deploy-before-migrate profile fallbacks. needs_review.
+
+- Source180 19fb8ea1: complete durable Playbooks lifecycle, canonical job/token/lease guarded domain and existing document revision publication; numbered0162–0167. NULL replacement target fails closed; replacement CAS, claim-specific staged-key cleanup, current scope/roles, atomic audit, account handover/export/erasure and Word Personal attachments retained. needs_review.

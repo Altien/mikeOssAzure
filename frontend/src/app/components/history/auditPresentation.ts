@@ -65,6 +65,12 @@ export const ACTION_LABELS: Record<string, string> = {
   "workflow.applied": "Workflow applied",
   "tabular.created": "Review created",
   "tabular.generated": "Review run completed",
+  "playbook.created": "Playbook created",
+  "playbook.imported": "Playbook imported",
+  "playbook.replaced": "Playbook replaced",
+  "playbook.deleted": "Playbook deleted",
+  "playbook.run": "Playbook review run",
+  "playbook.run.deleted": "Playbook run deleted",
   "export.chats": "Chats exported",
   "export.account": "Account data exported",
   "export.tabular": "Review exported",
@@ -76,6 +82,7 @@ export const SURFACE_LABELS: Record<string, string> = {
   project: "Project",
   word: "Word",
   tabular: "Tabular",
+  playbooks: "Playbooks",
   workflows: "Workflows",
   account: "Account",
   organization: "Organization",
@@ -99,6 +106,12 @@ export function auditAction(event: AuditEvent): string {
     "workflow.applied": "Workflow application",
     "tabular.created": "Review creation",
     "tabular.generated": "Review run",
+    "playbook.created": "Playbook creation",
+    "playbook.imported": "Playbook import",
+    "playbook.replaced": "Playbook replacement",
+    "playbook.deleted": "Playbook deletion",
+    "playbook.run": "Playbook review",
+    "playbook.run.deleted": "Playbook run deletion",
     "export.chats": "Chat export",
     "export.account": "Account export",
     "export.tabular": "Review export",
@@ -148,6 +161,8 @@ export function auditSubject(event: AuditEvent) {
   else if (action.startsWith("workflow.")) type = "Workflow";
   else if (action.startsWith("tabular.") || action === "export.tabular")
     type = "Review";
+  else if (action.startsWith("playbook.run")) type = "Playbook run";
+  else if (action.startsWith("playbook.")) type = "Playbook";
   else if (action === "export.chats") type = "Chats";
   else if (action === "export.account") type = "Account";
   else if (action === "export.memory") type = "Memory";

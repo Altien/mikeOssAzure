@@ -95,6 +95,18 @@ export function usePlaybookAutosave(onSaved: (playbook: Playbook) => void) {
     [flush],
   );
 
+  /**
+   * Drop a playbook's unsaved change, for when its content is replaced from
+   * elsewhere (a finished import). A save already in flight still lands, but
+   * its response no longer reports back as the playbook's latest state.
+   */
+  const cancel = useCallback((id: string) => {
+    if (!pending.current.delete(id) || pending.current.size) return;
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+    if (!running.current) setStatus("idle");
+  }, []);
+
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
       if (!pending.current.size) return;
@@ -109,5 +121,11 @@ export function usePlaybookAutosave(onSaved: (playbook: Playbook) => void) {
     };
   }, [flush]);
 
-  return { status, schedule, flush, resetStatus: () => setStatus("idle") };
+  return {
+    status,
+    schedule,
+    flush,
+    cancel,
+    resetStatus: () => setStatus("idle"),
+  };
 }

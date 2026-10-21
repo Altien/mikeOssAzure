@@ -2,6 +2,7 @@ import type {
   ApiKeyStatus,
   Document,
   LibraryFolder,
+  Playbook,
   Project,
   Workflow,
 } from "../types";
@@ -481,6 +482,7 @@ export async function streamWordChat(payload: {
     content: string;
     files?: { filename: string; document_id?: string }[];
     workflow?: { id: string; title: string };
+    playbook?: { id: string; title: string };
   }[];
   chat_id?: string;
   model?: string;
@@ -782,6 +784,11 @@ export async function deleteWorkflowAsset(
 
 export async function listWorkflows(type: WorkflowType): Promise<Workflow[]> {
   return apiRequest<Workflow[]>(`/workflows?type=${type}&workspace=personal`);
+}
+
+/** Playbooks the user can run; Word chats are Personal, like its workflows. */
+export async function listPlaybooks(): Promise<Playbook[]> {
+  return apiRequest<Playbook[]>("/playbooks?workspace=personal");
 }
 
 export async function createWorkflow(payload: {

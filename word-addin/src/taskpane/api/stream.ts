@@ -242,6 +242,8 @@ export async function streamAssistant(
       // Workflow runs travel as a reference — the backend resolves the body
       // server-side (inside the <workflow-instructions> fence), same as the web.
       workflow?: { id: string; title: string };
+      // A playbook travels the same way; the engine tells the model to run it.
+      playbook?: { id: string; title: string };
     }[];
     documentContext?: string;
     model: string;

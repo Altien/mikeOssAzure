@@ -9,6 +9,7 @@ import type { Db } from "../../lib/supabase";
 import {
     deleteOrgChats,
     deleteOrgMemories,
+    deleteOrgPlaybooks,
     deleteOrgProjects,
     deleteOrgTabularReviews,
 } from "./orgs.dataCleanup";
@@ -31,6 +32,7 @@ export const ORG_DATA_KINDS = [
     "tabular-reviews",
     "projects",
     "memories",
+    "playbooks",
 ] as const;
 
 export type OrgDataKind = (typeof ORG_DATA_KINDS)[number];
@@ -44,6 +46,7 @@ const PURGE: Record<OrgDataKind, (db: Db, orgId: string) => Promise<unknown>> = 
     "tabular-reviews": deleteOrgTabularReviews,
     projects: deleteOrgProjects,
     memories: deleteOrgMemories,
+    playbooks: deleteOrgPlaybooks,
 };
 
 /**

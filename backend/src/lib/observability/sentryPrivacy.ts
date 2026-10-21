@@ -18,8 +18,8 @@ const ENUMS: Record<string, ReadonlySet<string>> = Object.fromEntries(Object.ent
   runtime: 'browser server edge',
   surface: 'taskpane commands dialog',
   install: 'community official',
-  component: 'http mike-api api-gateway dbq storage upload-worker conversion-worker extraction-worker app-jobs chat-stream chat-title assistant-chat word-chat word-office boot shutdown worker-shutdown worker-thread worker-thread-supervisor stale-sweep mcp-refresh-sweep workflow-sync best-effort route-error-boundary global-error-boundary',
-  stage: 'runtime-config manifest-key listen shutdown-http shutdown-workers shutdown-flush gateway-config gateway-fetch gateway-response api-unreachable conversion heartbeat process-file iteration failure-hook claim tick retention delivery docx-to-pdf copy-rollback anchor-cleanup resolve-cleanup resolve restore reveal locate citation-select release document-read resolve-batch tool-result sealed-source-after-process failed-file-sealed session-expiry seal-mismatch seal-recover session-cancel user-prefix-cleanup failed-document-remove',
+  component: 'http mike-api api-gateway dbq storage upload-worker conversion-worker extraction-worker app-jobs chat-stream chat-title assistant-chat word-chat word-office boot shutdown worker-shutdown worker-thread worker-thread-supervisor stale-sweep mcp-refresh-sweep workflow-sync best-effort route-error-boundary global-error-boundary playbooks',
+  stage: 'runtime-config manifest-key listen shutdown-http shutdown-workers shutdown-flush gateway-config gateway-fetch gateway-response api-unreachable conversion heartbeat process-file iteration failure-hook claim tick retention delivery docx-to-pdf copy-rollback anchor-cleanup resolve-cleanup resolve restore reveal locate citation-select release document-read resolve-batch tool-result sealed-source-after-process failed-file-sealed session-expiry seal-mismatch seal-recover session-cancel user-prefix-cleanup failed-document-remove import.read import.check import.extract import.compile import.validate import.store import.save import.record import.cleanup review.model review.apply_edits review.save review.record job.terminal',
   http_method: 'GET POST PUT PATCH DELETE HEAD OPTIONS',
   error_code: 'internal_error network_error upstream_unavailable schema_out_of_date',
   capture_source: 'exception console unhandled message',
@@ -34,14 +34,14 @@ const ENUMS: Record<string, ReadonlySet<string>> = Object.fromEntries(Object.ent
   office_code: 'GeneralException InvalidArgument InvalidObjectPath ItemNotFound AccessDenied NotAllowed DocumentNotSaved UnsupportedOperation InvalidOperation InvalidReference',
   office_host: 'Word',
   office_platform: 'PC Mac OfficeOnline Universal iOS Android',
-  job_kind: 'audit.chat_turn account.delete storage.cleanup document.cleanup export.build conversion.convert extraction.extract mcp.refresh_token document.precompute_text memory.consolidate',
+  job_kind: 'audit.chat_turn account.delete storage.cleanup document.cleanup export.build conversion.convert extraction.extract mcp.refresh_token document.precompute_text memory.consolidate playbook.review playbook.import',
   storage: 'local cloud',
   storage_operation: 'HEAD copy upload download delete',
 }).map(([key, values]) => [key, new Set(values.split(' '))]));
 const ROUTE_PARTS = new Set(('word-chat orgs single-documents tabular-review quick-actions workflow-addons audit manifest-signing-key api auth login logout refresh session user users projects directory people access memory ids filter-options folder-paths resolve folder documents versions files folders upload uploads upload-sessions parts complete abort content download preview source text conversion chats chat messages stream cancel assistant tabular tabular-reviews reviews rows columns cells run results export workflows playbooks templates library models configured ollama openrouter vercel opencode-go bedrock azure azure-foundry vertex xai custom settings profile organizations members permissions shares keys api-keys health observability sentry-test').split(' '));
 // Dev divergence: fixed vocabulary of Dev-only Express mounts (authority trace, Altien skills, help, LLM, admin diagnostics, /install, /config).
 for (const part of 'authority-trace altien skills help llm admin diagnostics install config'.split(' ')) ROUTE_PARTS.add(part);
-const ID_KEYS = new Set(('request_id requestId document_id documentId file_id fileId job_id jobId review_id reviewId row_id rowId session_id sessionId version_id versionId').split(' '));
+const ID_KEYS = new Set(('request_id requestId document_id documentId file_id fileId job_id jobId review_id reviewId row_id rowId session_id sessionId version_id versionId run_id import_id playbook_id').split(' '));
 const CONFIGURATION_FIELDS = new Set('SUPABASE_URL SUPABASE_PUBLISHABLE_KEY SUPABASE_SECRET_KEY AUTH_HANDOFF_ENCRYPTION_SECRET FRONTEND_URL API_PUBLIC_URL WORD_ADDIN_URL'.split(' '));
 const ERROR_TYPES = new Set('Error TypeError RangeError ReferenceError SyntaxError URIError EvalError AggregateError AbortError TimeoutError APIError StorageOperationError'.split(' '));
 const LEVELS = new Set('fatal error warning info debug'.split(' '));

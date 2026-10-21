@@ -1062,12 +1062,18 @@ export async function runToolCalls(
           tool_call_id: tc.id,
           content: JSON.stringify({ error }),
         });
-      if (!docInfo || !indexed) {
+      // The open Word document arrives as request-scoped text with no stored
+      // row: it is reviewed from that text, and its suggestions are made in
+      // Word by the pane's edit tools rather than saved as a new version.
+      const liveText = indexed ? undefined : docInfo?.inline_text;
+      if (!docInfo || (!indexed && liveText === undefined)) {
         fail(`Document '${rawDocId}' not found in this chat's attachments.`);
       } else if (!options.model) {
         fail("No model is selected for the review.");
       } else {
-        const release = await documentLocks.acquire(indexed.document_id, signal);
+        // The live Word document has no stored id; its request-local label
+        // still serializes reviews of the same document within this turn.
+        const release = await documentLocks.acquire(indexed?.document_id ?? docId, signal);
         try {
           const isDocx = docInfo.file_type === "docx";
           // A Word document is read from its file by the review itself; other
@@ -1081,7 +1087,7 @@ export async function runToolCalls(
             userId,
             userEmail: options.userEmail,
             playbookId: String(args.playbook_id ?? ""),
-            documentId: indexed.document_id,
+            documentId: indexed?.document_id,
             documentText,
             documentName: docInfo.filename,
             instructions:
@@ -1094,6 +1100,7 @@ export async function runToolCalls(
             finding.edit ? [finding.edit] : [],
           );
           if (
+            indexed &&
             run.editedVersionId &&
             run.editedVersionNumber !== null &&
             annotations.length
@@ -1149,7 +1156,9 @@ export async function runToolCalls(
                 "Summarise the findings for the user, most serious first, grouped by status.",
                 annotations.length
                   ? "Tracked changes are already shown as Accept/Reject cards; do not repeat their suggested language in full."
-                  : "No tracked changes were made; give the suggested language where it matters.",
+                  : liveText !== undefined
+                    ? "This is the open Word document, so no tracked changes were made. Give the suggested language where it matters, and make a change in the document only when the user asks for it."
+                    : "No tracked changes were made; give the suggested language where it matters.",
               ].join(" "),
             }),
           });

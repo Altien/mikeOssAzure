@@ -426,6 +426,28 @@ async function collectDocumentVersionPaths(
                 paths.add(version.pdf_storage_path);
             }
         }
+
+        // A public playbook handed to the organization keeps its files under
+        // the departed creator's prefix.
+        const [playbooks, playbookSources] = await Promise.all([
+            db
+                .from("playbooks")
+                .select("source_storage_key")
+                .in("source_storage_key", batch),
+            db
+                .from("playbook_sources")
+                .select("storage_key")
+                .in("storage_key", batch),
+        ]);
+        await throwIfError(playbooks.error, "Failed to classify playbook files");
+        await throwIfError(
+            playbookSources.error,
+            "Failed to classify playbook source files",
+        );
+        for (const row of (playbooks.data ?? []) as Record<string, unknown>[])
+            claim(row.source_storage_key);
+        for (const row of (playbookSources.data ?? []) as Record<string, unknown>[])
+            claim(row.storage_key);
     }
 
     return [...paths];
@@ -434,12 +456,18 @@ async function collectDocumentVersionPaths(
 async function claimedStoragePaths(db: Db, paths: string[]): Promise<Set<string>> {
     const claimed = new Set<string>();
     for (const batch of chunkArray(paths, DELETE_BATCH_SIZE)) {
-        const [originals, pdfs] = await Promise.all([
+        const [originals, pdfs, playbooks, sources] = await Promise.all([
             db.from("document_versions").select("storage_path, pdf_storage_path").in("storage_path", batch),
             db.from("document_versions").select("storage_path, pdf_storage_path").in("pdf_storage_path", batch),
+            db.from("playbooks").select("source_storage_key").in("source_storage_key", batch),
+            db.from("playbook_sources").select("storage_key").in("storage_key", batch),
         ]);
         await throwIfError(originals.error, "Failed to classify stored versions");
         await throwIfError(pdfs.error, "Failed to classify stored version PDFs");
+        await throwIfError(playbooks.error, "Failed to classify stored playbooks");
+        await throwIfError(sources.error, "Failed to classify stored playbook sources");
+        for (const row of playbooks.data ?? []) if (row.source_storage_key) claimed.add(row.source_storage_key);
+        for (const row of sources.data ?? []) if (row.storage_key) claimed.add(row.storage_key);
         for (const row of [...(originals.data ?? []), ...(pdfs.data ?? [])] as { storage_path?: string | null; pdf_storage_path?: string | null }[]) {
             if (row.storage_path) claimed.add(row.storage_path);
             if (row.pdf_storage_path) claimed.add(row.pdf_storage_path);
@@ -452,6 +480,7 @@ async function deleteOrphanedUserStorage(db: Db, userId: string) {
     const paths = new Set([
         ...(await listFiles(`documents/${userId}/`)),
         ...(await listFiles(`workflow-references/${userId}/`)),
+        ...(await listFiles(`playbooks/${userId}/`)),
     ]);
     const claimed = await claimedStoragePaths(db, [...paths]);
     await Promise.all([...paths].filter((path) => !claimed.has(path)).map((path) => deleteFile(path)));
@@ -721,6 +750,82 @@ export async function deleteAllUserTabularReviews(db: Db, userId: string) {
 }
 
 /**
+ * Hand each organization-public playbook this user created to an owner of
+ * that organization before the account goes.
+ *
+ * `playbooks.user_id` is NOT NULL and cascades from auth.users, so unlike a
+ * project or workflow a playbook cannot be detached to a null creator: left
+ * alone, the firm's published policy would vanish with whoever first wrote
+ * it. The organization's owners already own every public playbook, so the
+ * creator moves to the same successor the departure functions pick for the
+ * rest of a leaver's work. A private playbook is not the organization's and
+ * is deleted with the account, matching docs/playbooks.md.
+ */
+async function handOverOrgPlaybooks(db: Db, userId: string) {
+    const { data, error } = await db
+        .from("playbooks")
+        .select("id, org_id")
+        .eq("user_id", userId)
+        .eq("visibility", "organization")
+        .not("org_id", "is", null);
+    await throwIfError(error, "Failed to load organization playbooks");
+
+    const orgIds = uniqueStrings(
+        ((data ?? []) as { org_id?: string | null }[]).map(
+            (row) => row.org_id ?? null,
+        ),
+    );
+    for (const orgId of orgIds) {
+        const successor = await db.rpc("org_default_departure_successor", {
+            p_org_id: orgId,
+            p_departing: [userId],
+        });
+        await throwIfError(successor.error, "Failed to find a playbook successor");
+        // No other owner: nobody is left to own it, so it goes with the account.
+        if (typeof successor.data !== "string" || !successor.data) continue;
+        const { error: updateError } = await db
+            .from("playbooks")
+            .update({ user_id: successor.data })
+            .eq("user_id", userId)
+            .eq("org_id", orgId)
+            .eq("visibility", "organization");
+        await throwIfError(updateError, "Failed to hand over organization playbooks");
+    }
+}
+
+/**
+ * Delete the playbooks this user created (after handOverOrgPlaybooks kept the
+ * organization's), the reviews and imports they ran on anyone's playbook, and
+ * the shares addressed to their email. The parent delete cascades runs,
+ * sources, shares and overrides; the playbook storage triggers queue durable
+ * cleanup of the imported file and every supplementary file in the same
+ * transaction. deleteOrphanedUserStorage clears the same bytes promptly.
+ */
+async function deleteUserPlaybooks(
+    db: Db,
+    userId: string,
+    userEmail?: string | null,
+) {
+    const normalizedEmail = userEmail?.trim().toLowerCase();
+    const results = await Promise.all([
+        db.from("playbook_runs").delete().eq("user_id", userId),
+        db.from("playbook_imports").delete().eq("user_id", userId),
+        normalizedEmail
+            ? db
+                  .from("playbook_shares")
+                  .delete()
+                  .eq("shared_with_email", normalizedEmail)
+            : Promise.resolve({ error: null }),
+    ]);
+    for (const result of results) {
+        await throwIfError(result.error, "Failed to delete playbook data");
+    }
+
+    const { error } = await db.from("playbooks").delete().eq("user_id", userId);
+    await throwIfError(error, "Failed to delete playbooks");
+}
+
+/**
  * Delete projects (and everything inside them) by id, with no ownership
  * filter. Callers must have authorised the delete themselves â€” routes do that
  * through the `container.delete` capability, and an organization project may
@@ -860,6 +965,7 @@ export async function deleteUserAccountData(
     // the organization BEFORE the by-user deletions below run, so those
     // deletions no longer match the rows we are keeping.
     await detachOrgProjectContent(db, userId, orgProjectIds);
+    await handOverOrgPlaybooks(db, userId);
 
     await deleteByIds(db, "documents", documentIds);
 
@@ -920,6 +1026,8 @@ export async function deleteUserAccountData(
     // application profile. Its FK cascade removes only a sole-member row for
     // an organization that still owns content, after creator attribution has
     // been detached above; ordinary departures keep the last-admin guard.
+    await deleteUserPlaybooks(db, userId, userEmail);
+
     // `wipe_memory_file` empties the body under the file's row lock and bumps
     // its epoch, fencing any curator job still in flight. Organization project
     // memory is deliberately excluded: it belongs to the surviving project,

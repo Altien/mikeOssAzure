@@ -167,6 +167,8 @@ export interface Message {
   content: string;
   files?: { filename: string; document_id?: string }[];
   workflow?: { id: string; title: string };
+  /** The playbook the user attached to this message, shown as a pill. */
+  playbook?: { id: string; title: string };
   /** Assistant turns preserve their content and activity in event order. */
   events?: WordAssistantEvent[];
   /** Canonical normalized edits for this assistant message. */
@@ -189,6 +191,17 @@ export interface Workflow {
   is_default?: boolean;
   default_key?: string | null;
   allow_edit?: boolean;
+}
+
+/**
+ * The fields of GET /playbooks the composer's picker reads. The full shape
+ * is frontend/src/app/lib/mikeApi.ts `Playbook`.
+ */
+export interface Playbook {
+  id: string;
+  name: string;
+  description: string;
+  content: { documentTypes: string[] };
 }
 
 export interface QuickAction {

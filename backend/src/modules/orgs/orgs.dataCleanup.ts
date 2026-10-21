@@ -14,6 +14,8 @@ import {
 } from "../documents/documents.service";
 import { deleteProjectsByIds } from "../user/user.service";
 import { chunkArray } from "../../lib/arrays";
+import { dbJobsEnabled } from "../../lib/dbq/runner";
+import { deleteFilesBestEffort } from "../../lib/storage";
 import type { Db } from "../../lib/supabase";
 
 /** `in(...)` travels in the request URL; 50 uuids stay under the gateway's limit. */
@@ -31,7 +33,8 @@ type OrgContentTable =
     | "documents"
     | "chats"
     | "tabular_reviews"
-    | "workflows";
+    | "workflows"
+    | "playbooks";
 
 function fail(message: string): never {
     throw new Error(message);
@@ -125,6 +128,68 @@ export async function deleteOrgTabularReviews(
             .in("id", ids);
         if (error) fail("Failed to delete organization tabular reviews");
     });
+}
+
+/**
+ * The files a batch of playbooks owns: each imported guide and every
+ * supplementary document. Read only when DB jobs are disabled; otherwise the
+ * playbook storage triggers queue their durable cleanup with the delete.
+ */
+async function inlinePlaybookStorageKeys(
+    db: Db,
+    orgId: string,
+    ids: string[],
+): Promise<string[]> {
+    if (dbJobsEnabled()) return [];
+    const [playbooks, sources] = await Promise.all([
+        db
+            .from("playbooks")
+            .select("source_storage_key")
+            .eq("org_id", orgId)
+            .in("id", ids),
+        db.from("playbook_sources").select("storage_key").in("playbook_id", ids),
+    ]);
+    if (playbooks.error || sources.error)
+        fail("Failed to load organization playbook files");
+    return [
+        ...((playbooks.data ?? []) as { source_storage_key?: unknown }[]).map(
+            (row) => row.source_storage_key,
+        ),
+        ...((sources.data ?? []) as { storage_key?: unknown }[]).map(
+            (row) => row.storage_key,
+        ),
+    ].filter((key): key is string => typeof key === "string" && key.length > 0);
+}
+
+/**
+ * Every playbook the organization owns, public or private, with its runs,
+ * supplementary documents, shares and files, then the finished import
+ * records that name it. An import still compiling keeps its record so its
+ * own progress updates have a row to land on.
+ */
+export async function deleteOrgPlaybooks(
+    db: Db,
+    orgId: string,
+): Promise<number> {
+    const deleted = await purgeOrgTable(db, "playbooks", orgId, async (ids) => {
+        const keys = await inlinePlaybookStorageKeys(db, orgId, ids);
+        // Runs, sources, shares and overrides cascade in this statement.
+        const { error } = await db
+            .from("playbooks")
+            .delete()
+            .eq("org_id", orgId)
+            .in("id", ids);
+        if (error) fail("Failed to delete organization playbooks");
+        await deleteFilesBestEffort(keys, "org-playbook-purge");
+    });
+
+    const { error } = await db
+        .from("playbook_imports")
+        .delete()
+        .eq("org_id", orgId)
+        .neq("status", "running");
+    if (error) fail("Failed to delete organization playbook imports");
+    return deleted;
 }
 
 /**
@@ -245,6 +310,7 @@ export async function deleteOrgMemories(db: Db, orgId: string): Promise<void> {
 export async function deleteOrgContent(db: Db, orgId: string): Promise<void> {
     await deleteOrgProjects(db, orgId);
     await deleteOrgWorkflows(db, orgId);
+    await deleteOrgPlaybooks(db, orgId);
     await deleteOrgDocuments(db, orgId);
     await deleteOrgTabularReviews(db, orgId);
     await deleteOrgChats(db, orgId);

@@ -159,6 +159,16 @@ shares the source document's chat history. Remove the Mike document setting or
 treat the copy as a new document before external distribution when that stable
 metadata is undesirable.
 
+The composer's **+** menu attaches a workflow or a playbook to the next message,
+as the web composer does. The playbook travels on the user message as
+`playbook: { id, title }`, is stored with it (`word_chat_messages.playbook`,
+migration `0163`), and shows as a pill on that message. See
+[Playbooks](playbooks.md#in-the-assistant).
+
+Cloud chat storage uses the backend `word_*` tables. Existing deployments need
+the canonical Word chat migrations; fresh databases already
+contain those tables.
+
 The composer mirrors the web assistant controls:
 
 - **Add documents** opens the same library-style selector used by the web assistant. Search and select files, templates, or project documents, or upload new files from inside the modal; confirmed documents appear as removable chips and are attached to the next message.

@@ -105,6 +105,29 @@ export async function liveDbJobExists(
 }
 
 /**
+ * The batched form of liveDbJobExists: which of these dedupe keys still have
+ * a pending or running job. One indexed query however many keys are asked
+ * about, for readers that judge a page of domain rows at once.
+ */
+export async function liveDbJobDedupeKeys(
+    db: Db,
+    dedupeKeys: readonly string[],
+): Promise<Set<string>> {
+    if (dedupeKeys.length === 0) return new Set();
+    const { data, error } = await db
+        .from("db_jobs")
+        .select("dedupe_key")
+        .in("dedupe_key", [...dedupeKeys])
+        .in("status", ["pending", "running"]);
+    if (error) throw error;
+    return new Set(
+        ((data ?? []) as { dedupe_key: string | null }[]).flatMap((row) =>
+            row.dedupe_key ? [row.dedupe_key] : [],
+        ),
+    );
+}
+
+/**
  * Ask BullMQ to pick up cleanup rows the document_versions trigger inserted.
  *
  * Those rows are written by a database trigger inside the deleting

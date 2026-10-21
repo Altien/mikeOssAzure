@@ -27,6 +27,7 @@ export type DocumentVersionRecord = NewDocumentVersion & {
   version_number: number;
   created_at: string;
   deleted_at: string | null;
+  edit_rows?: Array<{ id: string; change_id: string; deleted_text: string; inserted_text: string; context_before: string | null; context_after: string | null }>;
 };
 
 /**
@@ -39,13 +40,14 @@ export type DocumentVersionRecord = NewDocumentVersion & {
 export async function createDocumentVersion(
   db: Db,
   version: NewDocumentVersion,
-  options: { activate?: boolean } = {},
+  options: { activate?: boolean; job?: { id: string; attempt: number; token: string }; expectedVersion?: { id: string; storagePath: string }; edits?: Record<string, unknown>[] } = {},
 ) {
   const { document_id, ...metadata } = version;
   const { data, error } = await db.rpc("create_document_version", {
     p_document_id: document_id,
     p_version: metadata,
     p_activate: options.activate !== false,
+    ...(options.job ? { p_job_identity: options.job, p_expected_version: options.expectedVersion ?? null, p_edits: options.edits ?? [] } : {}),
   });
   if (!error && data?.id) await processDocumentTextInline(db, [data.id]).catch((err) => logError("document-text", safeError(err)));
   return { data: data as DocumentVersionRecord | null, error };

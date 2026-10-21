@@ -219,6 +219,8 @@ module.exports = async (_env, options) => {
           "ResponseSelectionMenuUI.tsx",
         ),
         "@mike/excerpt-pill-ui": frontendSharedUi("ExcerptPillUI.tsx"),
+        // The attached-playbook pill: the same in both composers.
+        "@mike/playbook-pill-ui": frontendSharedUi("PlaybookPillUI.tsx"),
         "@mike/excerpt-modal-ui": frontendSharedUi("ExcerptModalUI.tsx"),
         "@mike/chat-history-dropdown-ui": frontendSharedUi(
           "ChatHistoryDropdownUI.tsx",

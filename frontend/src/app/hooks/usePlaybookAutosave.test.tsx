@@ -163,6 +163,25 @@ describe("playbook autosave", () => {
     );
     expect(result.current.status).toBe("saved");
   });
+  it("drops a cancelled playbook's waiting edit and keeps the others", async () => {
+    vi.mocked(updatePlaybook).mockImplementation(async (id, content) => (
+      { id, name: content.name } as Playbook
+    ));
+    const { result, unmount } = renderHook(() => usePlaybookAutosave(vi.fn()));
+    act(() => {
+      result.current.schedule(change("Before the import"));
+      result.current.schedule({ ...change("Other playbook"), id: "other" });
+      // The import finished and replaced this playbook's content.
+      result.current.cancel("book");
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(800);
+    });
+    expect(vi.mocked(updatePlaybook).mock.calls).toEqual([
+      ["other", { name: "Other playbook" }, change("").access],
+    ]);
+    unmount();
+  });
   it("flushes the trailing edit when navigation unmounts the editor", async () => {
     vi.mocked(updatePlaybook).mockResolvedValue(saved("Last edit"));
     const { result, unmount } = renderHook(() => usePlaybookAutosave(vi.fn()));

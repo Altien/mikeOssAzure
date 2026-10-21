@@ -10,17 +10,17 @@ const {
   downloadFile,
   getSignedUploadUrl,
   headFile,
-  startPlaybookImport,
-  startPlaybookImportFromDocument,
+  queuePlaybookImport,
+  recordAudit,
 } = vi.hoisted(() => ({
   from: vi.fn(),
+  recordAudit: vi.fn(async () => undefined),
   createFileReadStream: vi.fn(),
   deleteFile: vi.fn(),
   downloadFile: vi.fn(),
   getSignedUploadUrl: vi.fn(),
   headFile: vi.fn(),
-  startPlaybookImport: vi.fn(),
-  startPlaybookImportFromDocument: vi.fn(),
+  queuePlaybookImport: vi.fn(),
 }));
 
 vi.mock("../../lib/supabase", () => ({
@@ -37,6 +37,8 @@ vi.mock("../../lib/supabase", () => ({
   }),
 }));
 
+vi.mock("../../lib/audit", () => ({ recordAudit }));
+
 vi.mock("../../middleware/auth", () => ({
   requireAuth: (
     _req: unknown,
@@ -44,6 +46,7 @@ vi.mock("../../middleware/auth", () => ({
     next: () => void,
   ) => {
     res.locals.userId = "u1";
+    res.locals.userEmail = "u1@example.com";
     next();
   },
   requireMfaIfEnrolled: (_req: unknown, _res: unknown, next: () => void) =>
@@ -68,7 +71,7 @@ vi.mock("../../modules/playbooks/playbooks.service", async (importOriginal) => {
     await importOriginal<
       typeof import("../../modules/playbooks/playbooks.service")
     >();
-  return { ...actual, startPlaybookImport, startPlaybookImportFromDocument };
+  return { ...actual, queuePlaybookImport };
 });
 
 import { playbooksRouter } from "../../modules/playbooks/playbooks.routes";
@@ -107,24 +110,19 @@ function queryReturning(data: unknown) {
   return query;
 }
 
-/** What startPlaybookImport resolves to: the attempt, and its compile. */
-function started(
-  overrides: { done?: Promise<unknown>; attempt?: Record<string, unknown> } = {},
-) {
+/** What queuePlaybookImport resolves to: the recorded, still-running attempt. */
+function started(overrides: Record<string, unknown> = {}) {
   return {
-    attempt: {
-      id: "imp-1",
-      status: "running",
-      stage: "checking_model",
-      error: null,
-      filename: "playbook.docx",
-      name: null,
-      playbookId: null,
-      startedAt: "2026-10-20T00:00:00.000Z",
-      completedAt: null,
-      ...overrides.attempt,
-    },
-    done: overrides.done ?? Promise.resolve({ id: "pb-1" }),
+    id: "imp-1",
+    status: "running",
+    stage: "checking_model",
+    error: null,
+    filename: "playbook.docx",
+    name: null,
+    playbookId: null,
+    startedAt: "2026-10-20T00:00:00.000Z",
+    completedAt: null,
+    ...overrides,
   };
 }
 
@@ -224,7 +222,17 @@ describe("creating a playbook without a Word file", () => {
     const response = await request(app).post("/playbooks").send({});
 
     expect(response.status).toBe(201);
-    expect(startPlaybookImport).not.toHaveBeenCalled();
+    expect(queuePlaybookImport).not.toHaveBeenCalled();
+    expect(recordAudit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        userId: "u1",
+        userEmail: "u1@example.com",
+        action: "playbook.created",
+        surface: "playbooks",
+        title: "Untitled playbook",
+      }),
+    );
   });
 
   it("accepts a name and details for the new playbook", async () => {
@@ -284,6 +292,7 @@ describe("creating a playbook without a Word file", () => {
 
     expect(response.status).toBe(400);
     expect(response.body.detail).toMatch(/too long/i);
+    expect(recordAudit).not.toHaveBeenCalled();
   });
 });
 
@@ -291,9 +300,8 @@ describe("replacing a playbook from a Word file", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     headFile.mockResolvedValue({ size: 2048, etag: null, contentType: null });
-    downloadFile.mockResolvedValue(new TextEncoder().encode("docx").buffer);
     deleteFile.mockResolvedValue(undefined);
-    startPlaybookImport.mockResolvedValue(started());
+    queuePlaybookImport.mockResolvedValue(started());
   });
 
   it("passes the target playbook to the import", async () => {
@@ -305,7 +313,7 @@ describe("replacing a playbook from a Word file", () => {
     });
 
     expect(response.status).toBe(202);
-    expect(startPlaybookImport).toHaveBeenCalledWith(
+    expect(queuePlaybookImport).toHaveBeenCalledWith(
       expect.objectContaining({ playbookId: "pb-1" }),
     );
   });
@@ -318,7 +326,7 @@ describe("replacing a playbook from a Word file", () => {
     });
 
     expect(response.status).toBe(202);
-    expect(startPlaybookImport).toHaveBeenCalledWith(
+    expect(queuePlaybookImport).toHaveBeenCalledWith(
       expect.objectContaining({ playbookId: undefined }),
     );
   });
@@ -340,13 +348,83 @@ describe("playbook input validation", () => {
     ],
     ["a body that is not a playbook", { unrelated: true }, 400],
   ])("handles autosaving %s", async (_label, body, status) => {
-    from.mockImplementation(() => queryReturning(playbookRow()));
+    from.mockImplementation((table: string) =>
+      queryReturning(table === "playbook_imports" ? [] : playbookRow()),
+    );
 
     const response = await request(app).put("/playbooks/pb-1").send(body);
 
     expect(response.status).toBe(status);
     if (status === 400) expect(response.body.detail).toMatch(/invalid field/i);
     expect(response.body.code).not.toBe("internal_error");
+  });
+
+  it("refuses to save while a replacement of the playbook compiles, and saves once it finished", async () => {
+    const now = new Date().toISOString();
+    let running: unknown[] = [
+      {
+        id: "imp-1",
+        status: "running",
+        started_at: now,
+        updated_at: now,
+        target_updated_at: "2026-01-01T00:00:00.000Z",
+      },
+    ];
+    const playbooks: Record<string, unknown>[] = [];
+    from.mockImplementation((table: string) => {
+      if (table === "playbook_imports") return queryReturning(running);
+      const query = queryReturning(playbookRow());
+      if (table === "playbooks")
+        query.update = vi.fn((values: Record<string, unknown>) => {
+          playbooks.push(values);
+          return query;
+        });
+      return query;
+    });
+    const save = () =>
+      request(app)
+        .put("/playbooks/pb-1")
+        .send({ content: playbookRow().content_json });
+
+    const refused = await save();
+    expect(refused.status).toBe(409);
+    expect(refused.body.detail).toBe(
+      "This playbook is being replaced. Wait for the import to finish.",
+    );
+    expect(playbooks).toEqual([]);
+
+    // Finished: no running import targets the playbook any more.
+    running = [];
+    const saved = await save();
+    expect(saved.status).toBe(200);
+    expect(playbooks).toHaveLength(1);
+  });
+
+  it("does not let an import that will never finish hold the playbook", async () => {
+    const stale = new Date(Date.now() - 10 * 60_000).toISOString();
+    from.mockImplementation((table: string) =>
+      queryReturning(
+        table === "playbook_imports"
+          ? [
+              {
+                id: "imp-1",
+                status: "running",
+                started_at: stale,
+                updated_at: stale,
+                target_updated_at: "2026-01-01T00:00:00.000Z",
+              },
+            ]
+          : table === "db_jobs"
+            ? []
+            : playbookRow(),
+      ),
+    );
+
+    const response = await request(app)
+      .put("/playbooks/pb-1")
+      .send({ content: playbookRow().content_json });
+
+    expect(response.status).toBe(200);
   });
 
   it("answers 400, not 500, for a model id it does not recognise", async () => {
@@ -412,6 +490,7 @@ describe("playbook deletion", () => {
     expect(playbook.delete).toHaveBeenCalledOnce();
     // The database cascades runs only when the parent deletion succeeds.
     expect(from).not.toHaveBeenCalledWith("playbook_runs");
+    expect(recordAudit).not.toHaveBeenCalled();
   });
 
   it("answers 204 and clears the stored source when every delete succeeds", async () => {
@@ -431,6 +510,68 @@ describe("playbook deletion", () => {
     expect(deleteFile).toHaveBeenCalledWith(
       "playbooks/u1/pb-1/sources/s1.pdf",
     );
+    expect(recordAudit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: "playbook.deleted",
+        surface: "playbooks",
+        title: "Commercial Playbook",
+        detail: { playbook_id: "pb-1" },
+      }),
+    );
+  });
+});
+
+describe("review run deletion", () => {
+  beforeEach(() => vi.clearAllMocks());
+  const RUN = "33333333-3333-4333-8333-333333333333";
+
+  it("records the deleted run in the audit log", async () => {
+    from.mockImplementation((table: string) =>
+      queryReturning(
+        table === "playbook_runs"
+          ? {
+              id: RUN,
+              playbook_id: "pb-1",
+              document_id: null,
+              status: "completed",
+              error: null,
+            }
+          : playbookRow(),
+      ),
+    );
+
+    const response = await request(app).delete(`/playbooks/runs/${RUN}`);
+
+    expect(response.status).toBe(204);
+    expect(recordAudit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        userId: "u1",
+        userEmail: "u1@example.com",
+        action: "playbook.run.deleted",
+        surface: "playbooks",
+        title: "Commercial Playbook",
+        detail: { playbook_id: "pb-1", run_id: RUN },
+      }),
+    );
+  });
+
+  it("records nothing when the run is still running", async () => {
+    from.mockImplementation(() =>
+      queryReturning({
+        id: RUN,
+        playbook_id: "pb-1",
+        status: "running",
+        started_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }),
+    );
+
+    const response = await request(app).delete(`/playbooks/runs/${RUN}`);
+
+    expect(response.status).toBe(409);
+    expect(recordAudit).not.toHaveBeenCalled();
   });
 });
 
@@ -650,7 +791,7 @@ describe("playbook import upload staging", () => {
 
     expect(response.status).toBe(400);
     expect(headFile).not.toHaveBeenCalled();
-    expect(startPlaybookImport).not.toHaveBeenCalled();
+    expect(queuePlaybookImport).not.toHaveBeenCalled();
   });
 
   it("refuses a storage key outside the import prefix", async () => {
@@ -678,11 +819,9 @@ describe("playbook import upload staging", () => {
     expect(deleteFile).not.toHaveBeenCalled();
   });
 
-  it("starts compiling a staged upload and clears the staged object", async () => {
-    // Compiling outlives the response: the request returns the attempt.
-    startPlaybookImport.mockResolvedValue(
-      started({ done: new Promise(() => undefined) }),
-    );
+  it("queues a staged upload and leaves the staged object to the job", async () => {
+    // Compiling runs as a job: the request returns the attempt.
+    queuePlaybookImport.mockResolvedValue(started());
 
     const response = await request(app).post("/playbooks/import").send({
       storageKey: STAGED_IMPORT_KEY,
@@ -692,29 +831,42 @@ describe("playbook import upload staging", () => {
 
     expect(response.status).toBe(202);
     expect(response.body).toMatchObject({ id: "imp-1", status: "running" });
-    expect(startPlaybookImport).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: "u1", filename: "playbook.docx" }),
+    expect(queuePlaybookImport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "u1",
+        source: {
+          storageKey: STAGED_IMPORT_KEY,
+          filename: "playbook.docx",
+          size: 2048,
+        },
+      }),
     );
-    expect(deleteFile).toHaveBeenCalledWith(STAGED_IMPORT_KEY);
+    // The job reads it later, and removes it once the import has an outcome.
+    expect(downloadFile).not.toHaveBeenCalled();
+    expect(deleteFile).not.toHaveBeenCalled();
   });
 
   it("compiles a staged PDF the upload route minted", async () => {
     const key = "playbooks/u1/imports/11111111-2222-4333-8444-555555555555.pdf";
-    startPlaybookImport.mockResolvedValue(started());
+    queuePlaybookImport.mockResolvedValue(started());
 
     const response = await request(app)
       .post("/playbooks/import")
       .send({ storageKey: key, filename: "Standards.pdf", model: "gpt-5.4" });
 
     expect(response.status).toBe(202);
-    expect(startPlaybookImport).toHaveBeenCalledWith(
-      expect.objectContaining({ filename: "Standards.pdf" }),
+    expect(queuePlaybookImport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: expect.objectContaining({
+          storageKey: key,
+          filename: "Standards.pdf",
+        }),
+      }),
     );
-    expect(deleteFile).toHaveBeenCalledWith(key);
   });
 
-  it("clears the staged object even when compilation fails", async () => {
-    startPlaybookImport.mockRejectedValue(
+  it("clears the staged object when the import is refused", async () => {
+    queuePlaybookImport.mockRejectedValue(
       new PlaybookRequestError("Select a model."),
     );
 
@@ -729,7 +881,7 @@ describe("playbook import upload staging", () => {
   });
 
   it("compiles a saved document without touching staged uploads", async () => {
-    startPlaybookImportFromDocument.mockResolvedValue(started());
+    queuePlaybookImport.mockResolvedValue(started());
 
     const response = await request(app).post("/playbooks/import").send({
       documentId: "doc-1",
@@ -738,17 +890,16 @@ describe("playbook import upload staging", () => {
     });
 
     expect(response.status).toBe(202);
-    expect(startPlaybookImportFromDocument).toHaveBeenCalledWith(
+    expect(queuePlaybookImport).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: "u1",
-        documentId: "doc-1",
+        source: { documentId: "doc-1" },
         model: "gpt-5.4",
         name: "Saved",
       }),
     );
     expect(headFile).not.toHaveBeenCalled();
     expect(deleteFile).not.toHaveBeenCalled();
-    expect(startPlaybookImport).not.toHaveBeenCalled();
   });
 
   it("reports a staged object that expired before the import ran", async () => {
@@ -798,17 +949,24 @@ describe("following a playbook import", () => {
     expect(query.eq).toHaveBeenCalledWith("user_id", "u1");
   });
 
-  it("reads an import whose heartbeat stopped as interrupted", async () => {
+  it("reads a silent import as interrupted only once no job will run it", async () => {
     const stale = new Date(Date.now() - 10 * 60_000).toISOString();
-    from.mockReturnValue(
-      queryReturning(attemptRow({ started_at: stale, updated_at: stale })),
+    let liveJobs: unknown[] = [
+      { dedupe_key: "playbook.import:8b0c3f8e-4c55-4a63-9b0e-0f6f2f9c1a11" },
+    ];
+    from.mockImplementation((table: string) =>
+      table === "db_jobs"
+        ? queryReturning(liveJobs)
+        : queryReturning(attemptRow({ started_at: stale, updated_at: stale })),
     );
+    const read = () =>
+      request(app).get("/playbooks/imports/8b0c3f8e-4c55-4a63-9b0e-0f6f2f9c1a11");
 
-    const response = await request(app).get(
-      "/playbooks/imports/8b0c3f8e-4c55-4a63-9b0e-0f6f2f9c1a11",
-    );
+    // Its worker stopped heartbeating, but its job is still queued or claimed.
+    expect((await read()).body).toMatchObject({ status: "running", error: null });
 
-    expect(response.body).toMatchObject({
+    liveJobs = [];
+    expect((await read()).body).toMatchObject({
       status: "failed",
       error: "The import stopped before it finished. Import the playbook again.",
     });
@@ -830,7 +988,9 @@ describe("following a playbook import", () => {
       attemptRow(),
       attemptRow({ id: "old", started_at: stale, updated_at: stale }),
     ]);
-    from.mockReturnValue(query);
+    from.mockImplementation((table: string) =>
+      table === "db_jobs" ? queryReturning([]) : query,
+    );
 
     const response = await request(app).get("/playbooks/imports");
 

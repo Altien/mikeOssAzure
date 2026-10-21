@@ -119,6 +119,9 @@
       "@mike/excerpt-pill-ui": [
         "../frontend/src/shared/ui/ExcerptPillUI.tsx"
       ],
+      "@mike/playbook-pill-ui": [
+        "../frontend/src/shared/ui/PlaybookPillUI.tsx"
+      ],
       "@mike/excerpt-modal-ui": [
         "../frontend/src/shared/ui/ExcerptModalUI.tsx"
       ],

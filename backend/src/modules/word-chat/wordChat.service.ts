@@ -1,3 +1,4 @@
+import { isUuid } from "../../lib/uuid";
 import { wordChatHasWorkspaceAttachments } from "../../lib/wordWorkspace";
 // Business logic + data-access for the word-chat module.
 //
@@ -46,6 +47,10 @@ import {
   titleModelForChat,
 } from "../../lib/modelSelection";
 import { replaysReasoning } from "../../lib/llm/registry";
+import {
+  getPlaybook,
+  PlaybookRequestError,
+} from "../playbooks/playbooks.service";
 import type { WordEditApplyMode } from "../chat/chat.service";
 
 type LookupResult<T> =
@@ -64,6 +69,33 @@ export type ProposedWordEdit = {
 // ---------------------------------------------------------------------------
 // Internal lookups
 // ---------------------------------------------------------------------------
+
+/**
+ * A playbook attached to the newest message must be one the user can open:
+ * the same check, and the same 404, as GET /playbooks/:id. Earlier messages
+ * were checked when they were sent, and run_playbook checks again before it
+ * reviews anything, so a playbook deleted or unshared since then does not
+ * lock the chat.
+ */
+async function attachedPlaybookError(
+  db: Db,
+  userId: string,
+  userEmail: string | undefined,
+  playbook: ChatMessage["playbook"],
+): Promise<{ status: number; detail: string } | null> {
+  if (!playbook) return null;
+  const notFound = { status: 404, detail: "Playbook not found." };
+  // Playbook ids are uuids; anything else names no playbook and is never queried.
+  if (!isUuid(playbook.id)) return notFound;
+  try {
+    await getPlaybook(userId, playbook.id, db, userEmail);
+    return null;
+  } catch (error) {
+    if (error instanceof PlaybookRequestError)
+      return { status: error.status, detail: error.message };
+    throw error;
+  }
+}
 
 async function getWordDocumentRowId(
   clientDocumentId: string,
@@ -614,6 +646,23 @@ export async function prepareWordChatStream(
   let chatModel: string | null = null;
   let chatReasoningLevel: string | null = null;
   let wordDocumentRowId: string | null = null;
+  const lastUser = [...messages]
+    .reverse()
+    .find((message) => message.role === "user");
+
+  // Access first, so the workspace check below never answers for a playbook
+  // the user cannot open.
+  try {
+    const playbookError = await attachedPlaybookError(
+      db,
+      userId,
+      userEmail,
+      lastUser?.playbook,
+    );
+    if (playbookError) return { ok: false, ...playbookError };
+  } catch (error) {
+    return { ok: false, status: 500, detail: "Could not check the playbook", error };
+  }
 
   // Validate before model selection, persistence or memory scheduling. Existing
   // history is checked too: Word has no organization-scoped destination.
@@ -721,9 +770,6 @@ export async function prepareWordChatStream(
   }
   if (!chatId) chatId = randomUUID();
 
-  const lastUser = [...messages]
-    .reverse()
-    .find((message) => message.role === "user");
   const inputMessageId = persistChat ? randomUUID() : null;
   let memoryTurn: MemoryConversationTurn | null = null;
   if (lastUser && persistChat) {
@@ -736,6 +782,7 @@ export async function prepareWordChatStream(
       content: lastUser.content,
       files: lastUser.files ?? null,
       workflow: lastUser.workflow ?? null,
+      playbook: lastUser.playbook ?? null,
       author_user_id: userId,
     });
     if (error) {

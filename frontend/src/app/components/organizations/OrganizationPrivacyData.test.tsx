@@ -86,6 +86,7 @@ describe("who may use it", () => {
       "Delete all chats",
       "Delete all tabular reviews",
       "Delete all projects",
+      "Delete all playbooks",
       "Delete all memory",
     ]) {
       expect(screen.getByRole("button", { name: label })).toBeEnabled();
@@ -137,6 +138,7 @@ describe("deleting organization data", () => {
     ["Delete all chats", "chats"],
     ["Delete all tabular reviews", "tabular-reviews"],
     ["Delete all projects", "projects"],
+    ["Delete all playbooks", "playbooks"],
     ["Delete all memory", "memories"],
   ])("%s deletes that kind once confirmed", async (label, kind) => {
     const user = userEvent.setup();

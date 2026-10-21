@@ -71,6 +71,15 @@ const DELETE_ROWS: {
       "This will permanently delete every project in the organization, including their documents, chats, and tabular reviews, for every member. Consider exporting anything you need to keep first. This action cannot be undone.",
   },
   {
+    kind: "playbooks",
+    label: "Delete all playbooks",
+    description:
+      "Permanently delete every playbook in the organization, including review history and reference documents.",
+    title: "Delete all organization playbooks?",
+    message:
+      "This will permanently delete every playbook in the organization, public and private, including their review history and reference documents, for every member. Consider exporting anything you need to keep first. This action cannot be undone.",
+  },
+  {
     kind: "memories",
     label: "Delete all memory",
     description:

@@ -1,3 +1,4 @@
+import { mutatePlaybookJob, PlaybookClaimLostError, type PlaybookJobIdentity } from "./playbooks.jobOwnership";
 import crypto from "node:crypto";
 import { safeError } from "../../lib/safeError";
 const { jsonrepair } = require("jsonrepair") as {
@@ -39,8 +40,9 @@ import { getEffectiveRouterModels, resolveRequestedModel } from "../../lib/route
 import { configuredEndpointSummaries } from "../../lib/llm/registry";
 import { hasApiKeyForModel } from "../../lib/modelSelection";
 import { getUserApiKeys, getEffectiveApiKeys } from "../user/user.service";
-import { deleteFile, downloadFile, uploadFile } from "../../lib/storage";
+import { deleteFile, uploadFile } from "../../lib/storage";
 import { getFileStreamSource } from "../documents/documents.service";
+import { liveDbJobDedupeKeys } from "../../lib/dbq/enqueue";
 import {
   extractPlaybookPdfStructure,
   extractPlaybookWordStructure,
@@ -61,6 +63,18 @@ import {
   readPlaybookSourceText,
   type PlaybookSourceRow,
 } from "./playbooks.sourceStore";
+import {
+  recordPlaybookImportAudit,
+  recordPlaybookAudit,
+  recordPlaybookRunAudit,
+  recordPlaybookRunDeletedAudit,
+} from "./playbooks.audit";
+import { UserFacingError } from "../../lib/userFacingError";
+import {
+  importReportStage,
+  reportPlaybookFailure,
+  type PlaybookReportStage,
+} from "./playbooks.reporting";
 
 type Db = ReturnType<typeof createServerSupabase>;
 
@@ -265,6 +279,30 @@ export class PlaybookRequestError extends Error {
   }
 }
 
+/**
+ * The model's answer could not be used. The user sees the message, as with
+ * any PlaybookRequestError, but unlike a refused request it is reported: a
+ * model that stops producing valid output is something to know about.
+ */
+export class PlaybookModelOutputError extends PlaybookRequestError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, 400, options);
+    this.name = "PlaybookModelOutputError";
+  }
+}
+
+/**
+ * A failure that is the expected answer to the request (a bad file, a
+ * missing or rejected key, no access), not a fault: shown to the user, never
+ * reported to Sentry.
+ */
+export function isPlaybookRefusal(error: unknown): boolean {
+  if (error instanceof PlaybookModelOutputError) return false;
+  return (
+    error instanceof PlaybookRequestError || error instanceof UserFacingError
+  );
+}
+
 export class PlaybookImportError extends Error {
   readonly code = "PLAYBOOK_IMPORT_FAILED";
 
@@ -306,7 +344,9 @@ function parseModelJson(raw: string): unknown {
         return JSON.parse(jsonrepair(slice));
       }
     }
-    throw new PlaybookRequestError("The model did not return structured JSON.");
+    throw new PlaybookModelOutputError(
+      "The model did not return structured JSON.",
+    );
   }
 }
 
@@ -397,9 +437,8 @@ export async function validatePlaybookCompilationWithRetry(args: {
     try {
       return validateCompiledPlaybookOutput(repaired, args.structure);
     } catch (retryError) {
-      throw new PlaybookRequestError(
+      throw new PlaybookModelOutputError(
         `The selected model returned invalid structured output twice. ${validationErrorMessage(retryError)}`,
-        400,
         { cause: retryError },
       );
     }
@@ -624,19 +663,26 @@ async function availablePlaybookModels(
   };
 }
 
+/** Whether this write landed: false once another claim finished the attempt. */
 async function updateImportAttempt(
   db: Db,
   attemptId: string,
   values: Record<string, unknown>,
-): Promise<void> {
-  const { error } = await db
+  job?: PlaybookJobIdentity,
+): Promise<boolean> {
+  if (job) { const outcome = await mutatePlaybookJob(db, job, "import_progress", attemptId, values); return outcome.result === "updated"; }
+  const { data, error } = await db
     .from("playbook_imports")
     .update({
       ...values,
       updated_at: new Date().toISOString(),
     })
-    .eq("id", attemptId);
+    .eq("id", attemptId)
+    // Only while it runs: a finished attempt's outcome is final.
+    .eq("status", "running")
+    .select("id");
   if (error) throw error;
+  return Boolean((data as unknown[] | null)?.length);
 }
 
 /** Playbooks are prose; anything this large is not one. */
@@ -684,7 +730,7 @@ export function playbookImportFailureMessage(
     const minutes = Math.max(1, Math.round(timeoutMs / 60_000));
     return `The selected model did not finish within ${minutes} minute${minutes === 1 ? "" : "s"}. Try again or select another model.`;
   }
-  if (error instanceof PlaybookRequestError) return message;
+  if (error instanceof PlaybookRequestError || (error as { code?: string })?.code === "PLAYBOOK_REPLACEMENT_CONFLICT") return message;
   return PLAYBOOK_IMPORT_GENERIC_FAILURE;
 }
 
@@ -1005,12 +1051,157 @@ async function playbookSourceStorageKey(
   return data?.source_storage_key ? String(data.source_storage_key) : null;
 }
 
-/** How often a compiling import records that its process is still at it. */
-const IMPORT_HEARTBEAT_MS = 30_000;
-/** A running import silent for this long stopped with its process. */
-const IMPORT_STALE_MS = 2 * 60_000;
+/**
+ * How often work in progress (a review or an import) records on its row that
+ * it is still at it. The db_jobs lease cannot carry this: the runner fences
+ * every write on the claim's `claimed_at`, so a handler may not renew it, and
+ * its 10-minute stale threshold is longer than a reader should wait to learn
+ * that work stopped.
+ */
+const PLAYBOOK_HEARTBEAT_MS = 30_000;
+/** A running row whose heartbeat is older than this is no longer attended. */
+const PLAYBOOK_SILENT_MS = 2 * 60_000;
+/**
+ * However fresh its heartbeat, work this old is presumed wedged, so a
+ * re-claimed job stops deferring to it and runs the work itself.
+ */
+const PLAYBOOK_MAX_ATTENDED_MS = 60 * 60_000;
+
+/** The db_jobs dedupe key of the job that runs a review. */
+export function playbookReviewJobKey(runId: string): string {
+  return `playbook.review:${runId}`;
+}
+
+/** The db_jobs dedupe key of the job that compiles an import. */
+export function playbookImportJobKey(importId: string): string {
+  return `playbook.import:${importId}`;
+}
+
+/**
+ * True while some process is visibly working on a running row: its heartbeat
+ * is recent and it has not been at it implausibly long.
+ */
+export function playbookWorkAttended(
+  row: Record<string, unknown>,
+  now = Date.now(),
+): boolean {
+  const lastSeen = Date.parse(String(row.updated_at ?? row.started_at));
+  const started = Date.parse(String(row.started_at ?? row.updated_at));
+  return (
+    Number.isFinite(lastSeen) &&
+    now - lastSeen <= PLAYBOOK_SILENT_MS &&
+    !(Number.isFinite(started) && now - started > PLAYBOOK_MAX_ATTENDED_MS)
+  );
+}
+
+/**
+ * The running rows among `rows` that will never finish. A running row is
+ * still running while a process heartbeats it, or while its job is pending or
+ * claimed in db_jobs (a job waiting for a worker, or one whose worker died and
+ * whose lease has not yet expired, will still run). Only a row that is both
+ * silent and jobless is interrupted.
+ */
+async function interruptedPlaybookWork(
+  db: Db,
+  rows: Record<string, unknown>[],
+  jobKey: (id: string) => string,
+  now = Date.now(),
+): Promise<Set<string>> {
+  const silent = rows
+    .filter(
+      (row) => row.status === "running" && !playbookWorkAttended(row, now),
+    )
+    .map((row) => String(row.id));
+  if (!silent.length) return new Set();
+  const live = await liveDbJobDedupeKeys(db, silent.map(jobKey));
+  return new Set(silent.filter((id) => !live.has(jobKey(id))));
+}
+
+/** Bump a running row's heartbeat until the returned stop is called. */
+function keepPlaybookWorkAttended(
+  db: Db,
+  table: "playbook_runs" | "playbook_imports",
+  id: string,
+  job?: PlaybookJobIdentity,
+): () => void {
+  // One report per piece of work: a database that is down fails every beat.
+  let reported = false;
+  const heartbeat = setInterval(() => {
+    if (job) {
+      void mutatePlaybookJob(db, job, "heartbeat", id).catch((error) => {
+        if (!(error instanceof PlaybookClaimLostError)) console.warn("[playbooks] fenced heartbeat failed", safeError(error));
+      });
+      return;
+    }
+    void db
+      .from(table)
+      .update({ updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .eq("status", "running")
+      .then(({ error }) => {
+        if (!error) return;
+        if (!reported) {
+          reported = true;
+          const review = table === "playbook_runs";
+          reportPlaybookFailure(error, {
+            stage: "heartbeat",
+            level: "warning",
+            jobKind: review ? "playbook.review" : "playbook.import",
+            ids: review ? { run_id: id } : { import_id: id },
+          });
+        }
+        console.warn("[playbooks] heartbeat failed", {
+          table,
+          id,
+          error: safeError(error),
+        });
+      });
+  }, PLAYBOOK_HEARTBEAT_MS);
+  heartbeat.unref?.();
+  return () => clearInterval(heartbeat);
+}
+
 export const INTERRUPTED_IMPORT_ERROR =
   "The import stopped before it finished. Import the playbook again.";
+
+/** A content write refused while a replacement import of the playbook runs. */
+export const PLAYBOOK_BEING_REPLACED_ERROR =
+  "This playbook is being replaced. Wait for the import to finish.";
+
+/** A replacement whose target changed after the import began. */
+export const PLAYBOOK_EDITED_DURING_REPLACEMENT_ERROR =
+  "The playbook was edited while the replacement was compiling. Replace it again.";
+
+/**
+ * Refuse a write to a playbook's content while a replacement import of it
+ * runs: the import rewrites the whole content when it finishes, so an edit
+ * saved meanwhile would make it fail (compilePlaybookImport saves only over
+ * the version it began from). Only an import that has resolved its target
+ * holds the playbook, because only such an import compares against it; one
+ * that will never finish (interruptedPlaybookWork) holds nothing.
+ */
+async function assertPlaybookNotBeingReplaced(
+  db: Db,
+  playbookId: string,
+): Promise<void> {
+  const { data, error } = await db
+    .from("playbook_imports")
+    .select("id, status, started_at, updated_at, target_updated_at")
+    .eq("playbook_id", playbookId)
+    .eq("status", "running");
+  if (error) throw error;
+  const replacing = ((data ?? []) as Record<string, unknown>[]).filter(
+    (row) => row.target_updated_at,
+  );
+  if (!replacing.length) return;
+  const interrupted = await interruptedPlaybookWork(
+    db,
+    replacing,
+    playbookImportJobKey,
+  );
+  if (replacing.some((row) => !interrupted.has(String(row.id))))
+    throw new PlaybookRequestError(PLAYBOOK_BEING_REPLACED_ERROR, 409);
+}
 
 /** An import attempt as the page follows it. */
 export type PlaybookImport = {
@@ -1027,26 +1218,21 @@ export type PlaybookImport = {
 };
 
 /**
- * An import's state as readers should see it. An import compiles in the
- * process that started it, so one whose heartbeat has stopped will never
- * finish.
+ * An import's state as readers should see it; `interrupted` holds the ids
+ * interruptedPlaybookWork found will never finish.
  */
 function publicImport(
   row: Record<string, unknown>,
-  now = Date.now(),
+  interrupted: ReadonlySet<string>,
 ): PlaybookImport {
-  const lastSeen = Date.parse(String(row.updated_at ?? row.started_at));
-  const interrupted =
-    row.status === "running" &&
-    Number.isFinite(lastSeen) &&
-    now - lastSeen > IMPORT_STALE_MS;
-  const status = interrupted ? "failed" : String(row.status);
+  const stopped = interrupted.has(String(row.id));
+  const status = stopped ? "failed" : String(row.status);
   return {
     id: String(row.id),
     status:
       status === "completed" || status === "failed" ? status : "running",
     stage: String(row.stage),
-    error: interrupted
+    error: stopped
       ? INTERRUPTED_IMPORT_ERROR
       : row.error
         ? String(row.error)
@@ -1076,7 +1262,11 @@ export async function getPlaybookImport(
     .maybeSingle();
   if (error) throw error;
   if (!data) throw new PlaybookRequestError("Import not found.", 404);
-  return publicImport(data as Record<string, unknown>);
+  const row = data as Record<string, unknown>;
+  return publicImport(
+    row,
+    await interruptedPlaybookWork(db, [row], playbookImportJobKey),
+  );
 }
 
 /**
@@ -1101,83 +1291,167 @@ export async function listRunningPlaybookImports(
     .order("started_at", { ascending: false })
     .limit(20);
   if (error) throw error;
-  return ((data ?? []) as Record<string, unknown>[])
-    .map((row) => publicImport(row))
+  const rows = (data ?? []) as Record<string, unknown>[];
+  const interrupted = await interruptedPlaybookWork(
+    db,
+    rows,
+    playbookImportJobKey,
+  );
+  return rows
+    .map((row) => publicImport(row, interrupted))
     .filter((attempt) => attempt.status === "running");
 }
 
-type PlaybookImportArgs = {
+/** What an import is asked to do, before its file is read. */
+export type PlaybookImportRequest = {
   userId: string;
   /** Needed to replace a personal playbook shared with the caller. */
   userEmail?: string | null;
   filename: string;
-  buffer: Buffer;
+  /** The file's size in bytes, known before it is read. */
+  size: number;
   name?: string;
   workspace?: unknown;
   model: string;
   /** Replace this playbook's content instead of creating a new playbook. */
   playbookId?: string;
   db?: Db;
+};
+
+/**
+ * Everything compiling an import needs besides the file's bytes: its row's
+ * columns, plus two ids the row cannot hold. The replace target is kept
+ * apart because the row's playbook_id is set null if that playbook is
+ * deleted, and a new playbook's id is chosen up front so a re-run of the
+ * same import saves the same playbook instead of a second one.
+ */
+export type PlaybookImportWork = {
+  job?: PlaybookJobIdentity;
+  attemptId: string;
+  userId: string;
+  userEmail: string | null;
+  filename: string;
+  name: string | null;
+  model: string;
+  orgId: string | null;
+  replacePlaybookId: string | null;
+  /**
+   * The replace target's updated_at when the import began. The compiled
+   * content is saved only if the playbook still has it, so an edit made in
+   * between fails the import instead of being overwritten. Absent only on a
+   * job queued before the column existed.
+   */
+  targetUpdatedAt?: string | null;
+  newPlaybookId: string;
+  startedAt: string;
+};
+
+/** An import whose file is already in memory. */
+type PlaybookImportArgs = Omit<PlaybookImportRequest, "size"> & {
+  buffer: Buffer;
   dependencies?: {
     completeText?: typeof completeText;
   };
 };
 
 /**
- * Compile a playbook from a document already in the caller's files, as
- * startPlaybookImport does from an upload. The playbook keeps its own copy
- * of the file, so later changes to the document do not reach it.
+ * Record that an import failed at `stage`, and return the error the caller
+ * reports. Only messages this module wrote reach the row.
  */
-export async function startPlaybookImportFromDocument(
-  args: Omit<PlaybookImportArgs, "filename" | "buffer"> & {
-    documentId: string;
+async function recordImportFailure(
+  db: Db,
+  attemptId: string,
+  stage: PlaybookImportStage,
+  error: unknown,
+  source: {
+    filename: string;
+    playbookId: string | null;
+    /** The compile that failed, audited only by the claim whose write lands. */
+    work?: PlaybookImportWork;
   },
-) {
-  const db = args.db ?? createServerSupabase();
+): Promise<PlaybookImportError> {
+  if (error instanceof PlaybookClaimLostError) throw error;
+  const report = {
+    jobKind: "playbook.import" as const,
+    fileType: playbookImportFileType(source.filename),
+    ids: { import_id: attemptId, playbook_id: source.playbookId },
+  };
+  if (!isPlaybookRefusal(error))
+    reportPlaybookFailure(error, { ...report, stage: importReportStage(stage) });
+  // Not console.error: a refusal is not a fault, and a reported failure would
+  // be filed again by the console bridge.
+  console.warn("[playbooks] import failed", {
+    attemptId,
+    stage,
+    error: safeError(error),
+  });
+  const message = playbookImportFailureMessage(stage, error);
+  let recorded = false;
+  try {
+    recorded = await updateImportAttempt(db, attemptId, {
+      status: "failed",
+      stage,
+      error: message,
+      completed_at: new Date().toISOString(),
+    }, source.work?.job);
+  } catch (recordError) {
+    reportPlaybookFailure(recordError, { ...report, stage: "import.record" });
+    console.warn("[playbooks] failed to record import failure", {
+      attemptId,
+      error: safeError(recordError),
+    });
+  }
+  if (recorded && source.work && !source.work.job)
+    await recordPlaybookImportAudit(db, source.work, { failedStage: stage });
+  return new PlaybookImportError(
+    `Playbook import failed during ${importStageLabel(stage)}: ${message}`,
+    attemptId,
+    stage,
+    { cause: error },
+  );
+}
+
+/**
+ * The document a saved-document import reads, checked the way a download is:
+ * the caller must be able to open it, and it must be small enough.
+ */
+export async function playbookImportDocument(
+  db: Db,
+  userId: string,
+  userEmail: string | null | undefined,
+  documentId: string,
+): Promise<{ filename: string; size: number; storagePath: string }> {
   const source = await getFileStreamSource(
-    args.documentId,
-    args.userId,
-    args.userEmail ?? undefined,
+    documentId,
+    userId,
+    userEmail ?? undefined,
     null,
     db,
   );
   if (!source.ok) throw new PlaybookRequestError("Document not found.", 404);
   if (source.size > MAX_PLAYBOOK_IMPORT_BYTES)
     throw new PlaybookRequestError("The document is too large to import.");
-  const bytes = await downloadFile(source.storagePath);
-  if (!bytes) throw new PlaybookRequestError("The document could not be read.");
-  return startPlaybookImport({
-    ...args,
-    db,
+  return {
     filename: source.filename,
-    buffer: Buffer.from(bytes),
-  });
-}
-
-/** Starts an import and waits for it: for callers that need the playbook. */
-export async function importPlaybookFromFile(
-  args: PlaybookImportArgs,
-): Promise<Playbook> {
-  const { done } = await startPlaybookImport(args);
-  return done;
+    size: source.size,
+    storagePath: source.storagePath,
+  };
 }
 
 /**
- * Checks and records an import, then compiles it apart from the request: the
- * attempt is returned once the file, target, and model are known to be
- * usable, and `done` settles when the playbook is saved. Leaving the page
- * detaches from the import without stopping it; its row says how it went.
+ * Records an import and refuses, in the request that asked for it, anything
+ * that can be refused without reading the file or calling the model: the
+ * file type, an empty file, the replace target, the workspace, and the model.
+ * Compiling is compilePlaybookImport's job, wherever it runs.
  */
-export async function startPlaybookImport(
-  args: PlaybookImportArgs,
-): Promise<{ attempt: PlaybookImport; done: Promise<Playbook> }> {
+export async function beginPlaybookImport(
+  args: PlaybookImportRequest,
+): Promise<{ attempt: PlaybookImport; work: PlaybookImportWork }> {
   const db = args.db ?? createServerSupabase();
   const now = new Date().toISOString();
   const attemptId = crypto.randomUUID();
   const model = args.model.trim();
-  const compilationTimeoutMs = playbookCompilationTimeoutMs();
   let stage: PlaybookImportStage = "validating_file";
-  let uploadedStorageKey: string | null = null;
   const row = {
     id: attemptId,
     user_id: args.userId,
@@ -1185,7 +1459,7 @@ export async function startPlaybookImport(
     requested_name: args.name?.trim() || null,
     model,
     status: "running",
-    stage,
+    stage: stage as PlaybookImportStage,
     error: null,
     playbook_id: args.playbookId ?? null,
     org_id: null as string | null,
@@ -1197,248 +1471,334 @@ export async function startPlaybookImport(
   const attempt = await db.from("playbook_imports").insert(row);
   if (attempt.error) throw attempt.error;
 
-  async function failed(error: unknown): Promise<PlaybookImportError> {
-    console.error("[playbooks] import failed", { attemptId, stage, error: safeError(error) });
-    const message = playbookImportFailureMessage(
-      stage,
-      error,
-      compilationTimeoutMs,
-    );
-    const completedAt = new Date().toISOString();
-    if (uploadedStorageKey) {
-      await deleteFile(uploadedStorageKey).catch(() => {});
-    }
-    try {
-      await updateImportAttempt(db, attemptId, {
-        status: "failed",
-        stage,
-        error: message,
-        completed_at: completedAt,
-      });
-    } catch (auditError) {
-      console.error("[playbooks] failed to record import failure", {
-        attemptId,
-        error: safeError(auditError),
-      });
-    }
-    return new PlaybookImportError(
-      `Playbook import failed during ${importStageLabel(stage)}: ${message}`,
-      attemptId,
-      stage,
-      { cause: error },
-    );
-  }
-
-  // Everything that can be refused without the model is refused here, so the
-  // request that starts the import reports it.
-  let fileType: PlaybookImportFileType;
-  let replacing: Awaited<ReturnType<typeof editablePlaybook>> | null;
-  let orgId: string | null;
-  let apiKeys: UserApiKeys;
   try {
-    const type = playbookImportFileType(args.filename);
-    if (!type)
+    if (!playbookImportFileType(args.filename))
       throw new PlaybookRequestError(
         "Playbook import requires a .docx or .pdf file.",
       );
-    fileType = type;
-    if (!args.buffer.length)
+    if (!args.size)
       throw new PlaybookRequestError("The uploaded playbook is empty.");
 
     // Resolve the replace target first. An unknown or unowned playbook must
     // fail before the import spends a model call on it.
-    replacing = args.playbookId
+    const replacing = args.playbookId
       ? await editablePlaybook(args.userId, args.playbookId, db, args.userEmail)
       : null;
-
-    orgId = replacing
+    row.org_id = replacing
       ? replacing.orgId
       : await creationScope(db, args.userId, args.workspace);
-    row.org_id = orgId;
+    // Read after the attempt was inserted as running: an edit that lands
+    // after this read is refused (updatePlaybookContent) once the value below
+    // is recorded, or detected when the import saves.
+    const targetUpdatedAt = replacing?.updatedAt ?? null;
 
     stage = "checking_model";
-    await updateImportAttempt(db, attemptId, { stage, org_id: orgId });
+    row.stage = stage;
+    await updateImportAttempt(db, attemptId, {
+      stage,
+      org_id: row.org_id,
+      target_updated_at: targetUpdatedAt,
+    });
     validateModel(model);
-    apiKeys = await assertPlaybookModelAvailable(
-      args.userId,
+    await assertPlaybookModelAvailable(args.userId, model, db, row.org_id);
+    return {
+      attempt: publicImport(row, new Set()),
+      work: {
+        attemptId,
+        userId: args.userId,
+        userEmail: args.userEmail ?? null,
+        filename: args.filename,
+        name: row.requested_name,
+        model,
+        orgId: row.org_id,
+        replacePlaybookId: replacing?.id ?? null,
+        targetUpdatedAt,
+        newPlaybookId: crypto.randomUUID(),
+        startedAt: now,
+      },
+    };
+  } catch (error) {
+    throw await recordImportFailure(db, attemptId, stage, error, {
+      filename: args.filename,
+      playbookId: args.playbookId ?? null,
+    });
+  }
+}
+
+/** Postgres unique_violation. */
+const UNIQUE_VIOLATION = "23505";
+
+/**
+ * Compiles a recorded import from its file and saves the playbook. Safe to
+ * run again for the same import, which is what a job re-claimed after its
+ * worker died does: the source object's key and a new playbook's id both come
+ * from the import, so a second run overwrites rather than duplicates, and
+ * every write to the import row is guarded on it still running, so a run
+ * that lost the race cannot overwrite the outcome the winner recorded.
+ */
+export async function compilePlaybookImport(
+  db: Db,
+  work: PlaybookImportWork,
+  /** The file, or how to read it; a file that cannot be read fails the import. */
+  file: Buffer | (() => Promise<Buffer>),
+  dependencies: PlaybookImportArgs["dependencies"] = {},
+): Promise<Playbook> {
+  const { attemptId, userId, model } = work;
+  const compilationTimeoutMs = playbookCompilationTimeoutMs();
+  let stage: PlaybookImportStage = "validating_file";
+  let uploadedStorageKey: string | null = null;
+  const stopHeartbeat = keepPlaybookWorkAttended(
+    db,
+    "playbook_imports",
+    attemptId,
+    work.job,
+  );
+  try {
+    if (work.job) await mutatePlaybookJob(db, work.job, "check", attemptId);
+    const buffer = typeof file === "function" ? await file() : file;
+    const fileType = playbookImportFileType(work.filename);
+    if (!fileType)
+      throw new PlaybookRequestError(
+        "Playbook import requires a .docx or .pdf file.",
+      );
+    stage = "checking_model";
+    // Checked again rather than trusted from the request: access to the
+    // target, or the key for the model, can be lost while a job waits.
+    const replacing = work.replacePlaybookId
+      ? await editablePlaybook(userId, work.replacePlaybookId, db, work.userEmail)
+      : null;
+    if (replacing && !work.targetUpdatedAt) throw new PlaybookRequestError(PLAYBOOK_EDITED_DURING_REPLACEMENT_ERROR, 409);
+    const apiKeys = await assertPlaybookModelAvailable(
+      userId,
       model,
       db,
-      orgId,
+      work.orgId,
     );
-  } catch (error) {
-    throw await failed(error);
-  }
 
-  async function compile(): Promise<Playbook> {
-    const heartbeat = setInterval(() => {
-      void db
-        .from("playbook_imports")
-        .update({ updated_at: new Date().toISOString() })
-        .eq("id", attemptId)
-        .eq("status", "running")
-        .then(({ error }) => {
-          if (error)
-            console.error("[playbooks] import heartbeat failed", {
-              attemptId,
-              error: safeError(error),
-            });
-        });
-    }, IMPORT_HEARTBEAT_MS);
-    heartbeat.unref?.();
-    try {
-      stage = "extracting_text";
-      await updateImportAttempt(db, attemptId, { stage });
-      const structure =
-        fileType === "pdf"
-          ? await extractPlaybookPdfStructure(args.buffer)
-          : await extractPlaybookWordStructure(args.buffer);
-      if (!structure.text) {
-        throw new PlaybookRequestError(
-          "This PDF has no text layer, so its content cannot be read. It is most likely scanned and needs OCR before it can be imported.",
-        );
-      }
-      if (structure.text.length > 150_000) {
-        throw new PlaybookRequestError(
-          "The playbook is too large to compile in one pass. Split it into smaller playbooks before importing.",
-        );
-      }
-      const fallbackName =
-        args.filename.replace(/\.(docx|pdf)$/i, "").trim() || "Imported playbook";
-      const name = args.name?.trim() || replacing?.name || fallbackName;
-
-      stage = "compiling";
-      await updateImportAttempt(db, attemptId, { stage });
-      const runCompletion = args.dependencies?.completeText ?? completeText;
-      const raw = await withCompilationTimeout(
-        runCompletion({
-          model,
-          systemPrompt:
-            "You compile legal playbooks into auditable structured data. Return only valid JSON and never add legal positions absent from the source.",
-          user: compilationPrompt(structure, name),
-          maxTokens: 16_000,
-          apiKeys,
-        }),
-        compilationTimeoutMs,
+    stage = "extracting_text";
+    await updateImportAttempt(db, attemptId, { stage }, work.job);
+    const structure =
+      fileType === "pdf"
+        ? await extractPlaybookPdfStructure(buffer)
+        : await extractPlaybookWordStructure(buffer);
+    if (!structure.text) {
+      throw new PlaybookRequestError(
+        "This PDF has no text layer, so its content cannot be read. It is most likely scanned and needs OCR before it can be imported.",
       );
-
-      stage = "validating_output";
-      await updateImportAttempt(db, attemptId, { stage });
-      const content = await validatePlaybookCompilationWithRetry({
-        raw,
-        structure,
-        retry: async (validationError) => {
-          stage = "repairing_output";
-          await updateImportAttempt(db, attemptId, { stage });
-          const retried = await withCompilationTimeout(
-            runCompletion({
-              model,
-              systemPrompt:
-                "You compile legal playbooks into auditable structured data. Your previous response failed validation. Return exactly one complete valid JSON object and no other text.",
-              user: compilationRetryPrompt(structure, name, validationError),
-              maxTokens: 16_000,
-              apiKeys,
-            }),
-            compilationTimeoutMs,
-          );
-          stage = "validating_output";
-          await updateImportAttempt(db, attemptId, { stage });
-          return retried;
-        },
-      });
-      const id = replacing?.id ?? crypto.randomUUID();
-      // The key carries the attempt id so a replacement never overwrites the
-      // current source before its row update commits.
-      // Under the creator's prefix, whoever replaces it.
-      const storageKey = `playbooks/${replacing?.userId ?? args.userId}/${id}/source-${attemptId}.${fileType}`;
-      const previousStorageKey = replacing
-        ? await playbookSourceStorageKey(db, id)
-        : null;
-
-      stage = "storing_source";
-      await updateImportAttempt(db, attemptId, { stage });
-      await uploadFile(
-        storageKey,
-        args.buffer.buffer.slice(
-          args.buffer.byteOffset,
-          args.buffer.byteOffset + args.buffer.byteLength,
-        ) as ArrayBuffer,
-        PLAYBOOK_IMPORT_CONTENT_TYPES[fileType],
-      );
-      uploadedStorageKey = storageKey;
-
-      stage = "saving_playbook";
-      await updateImportAttempt(db, attemptId, { stage });
-      // Review runs retain their own content snapshot when the source changes.
-      const { error } = replacing
-        ? await db
-            .from("playbooks")
-            .update({
-              name: content.name,
-              description: content.description,
-              content_json: content,
-              source_filename: args.filename,
-              source_storage_key: storageKey,
-              import_model: model,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", id)
-        : await db.from("playbooks").insert({
-            id,
-            user_id: args.userId,
-            name: content.name,
-            description: content.description,
-            content_json: content,
-            org_id: orgId,
-            source_filename: args.filename,
-            source_storage_key: storageKey,
-            import_model: model,
-            created_at: now,
-            updated_at: now,
-          });
-      if (error) {
-        await deleteFile(storageKey).catch(() => {});
-        uploadedStorageKey = null;
-        throw error;
-      }
-      uploadedStorageKey = null;
-      // The row now points at the new object, so the superseded one is safe to
-      // remove. Losing this cleanup must not fail the import.
-      if (previousStorageKey && previousStorageKey !== storageKey)
-        await deleteFile(previousStorageKey).catch((cleanupError) => {
-          console.error("[playbooks] replaced source cleanup failed", {
-            storageKey: previousStorageKey,
-            error: safeError(cleanupError),
-          });
-        });
-
-      stage = "completed";
-      const completedAt = new Date().toISOString();
-      try {
-        await updateImportAttempt(db, attemptId, {
-          status: "completed",
-          stage,
-          playbook_id: id,
-          completed_at: completedAt,
-        });
-      } catch (auditError) {
-        console.error("[playbooks] failed to complete import audit record", {
-          attemptId,
-          playbookId: id,
-          error: safeError(auditError),
-        });
-      }
-      return getPlaybook(args.userId, id, db, args.userEmail);
-    } catch (error) {
-      throw await failed(error);
-    } finally {
-      clearInterval(heartbeat);
     }
-  }
+    if (structure.text.length > 150_000) {
+      throw new PlaybookRequestError(
+        "The playbook is too large to compile in one pass. Split it into smaller playbooks before importing.",
+      );
+    }
+    const fallbackName =
+      work.filename.replace(/\.(docx|pdf)$/i, "").trim() || "Imported playbook";
+    const name = work.name?.trim() || replacing?.name || fallbackName;
 
+    stage = "compiling";
+    await updateImportAttempt(db, attemptId, { stage }, work.job);
+    const runCompletion = dependencies.completeText ?? completeText;
+    const raw = await withCompilationTimeout(
+      runCompletion({
+        model,
+        systemPrompt:
+          "You compile legal playbooks into auditable structured data. Return only valid JSON and never add legal positions absent from the source.",
+        user: compilationPrompt(structure, name),
+        maxTokens: 16_000,
+        apiKeys,
+      }),
+      compilationTimeoutMs,
+    );
+
+    stage = "validating_output";
+    await updateImportAttempt(db, attemptId, { stage }, work.job);
+    const content = await validatePlaybookCompilationWithRetry({
+      raw,
+      structure,
+      retry: async (validationError) => {
+        stage = "repairing_output";
+        await updateImportAttempt(db, attemptId, { stage }, work.job);
+        const retried = await withCompilationTimeout(
+          runCompletion({
+            model,
+            systemPrompt:
+              "You compile legal playbooks into auditable structured data. Your previous response failed validation. Return exactly one complete valid JSON object and no other text.",
+            user: compilationRetryPrompt(structure, name, validationError),
+            maxTokens: 16_000,
+            apiKeys,
+          }),
+          compilationTimeoutMs,
+        );
+        stage = "validating_output";
+        await updateImportAttempt(db, attemptId, { stage }, work.job);
+        return retried;
+      },
+    });
+    const id = replacing?.id ?? work.newPlaybookId;
+    // The key carries the attempt id so a replacement never overwrites the
+    // current source before its row update commits.
+    // Under the creator's prefix, whoever replaces it.
+    const storageKey = `playbooks/${replacing?.userId ?? userId}/${id}/source-${attemptId}${work.job ? `-${work.job.token}` : ""}.${fileType}`;
+    const previousStorageKey = replacing
+      ? await playbookSourceStorageKey(db, id)
+      : null;
+
+    stage = "storing_source";
+    await updateImportAttempt(db, attemptId, { stage }, work.job);
+    await uploadFile(
+      storageKey,
+      buffer.buffer.slice(
+        buffer.byteOffset,
+        buffer.byteOffset + buffer.byteLength,
+      ) as ArrayBuffer,
+      PLAYBOOK_IMPORT_CONTENT_TYPES[fileType],
+    );
+    uploadedStorageKey = storageKey;
+
+    stage = "saving_playbook";
+    await updateImportAttempt(db, attemptId, { stage }, work.job);
+    // Review runs retain their own content snapshot when the source changes.
+    const publicationValues = { id, name: content.name, description: content.description, content_json: content, source_filename: work.filename, source_storage_key: storageKey, import_model: model, updated_at: new Date().toISOString() };
+    if (work.job) {
+      const published = await mutatePlaybookJob(db, work.job, "import_publish", attemptId, publicationValues);
+      if (published.result !== "published") throw new PlaybookClaimLostError();
+      uploadedStorageKey = null;
+      return await getPlaybook(userId, id, db, work.userEmail);
+    }
+    const { data: replaced, error } = replacing
+      ? await replacePlaybookContent(db, id, work.targetUpdatedAt, {
+          name: content.name,
+          description: content.description,
+          content_json: content,
+          source_filename: work.filename,
+          source_storage_key: storageKey,
+          import_model: model,
+          updated_at: new Date().toISOString(),
+        })
+      : await db.from("playbooks").insert({
+          id,
+          user_id: userId,
+          name: content.name,
+          description: content.description,
+          content_json: content,
+          org_id: work.orgId,
+          source_filename: work.filename,
+          source_storage_key: storageKey,
+          import_model: model,
+          created_at: work.startedAt,
+          updated_at: work.startedAt,
+        });
+    // A unique violation on the new playbook's id means an earlier run of
+    // this same import already saved it, under the same source key: the
+    // playbook exists, so this run only has to record that.
+    if (error && (replacing || error.code !== UNIQUE_VIOLATION)) {
+      await deleteFile(storageKey).catch(() => {});
+      uploadedStorageKey = null;
+      throw error;
+    }
+    // Nothing matched: the playbook changed after the import began, unless
+    // the change was an earlier run of this same import (its source key
+    // names this attempt), which already saved this content. Otherwise the
+    // catch below removes the uploaded source; the playbook is untouched.
+    if (
+      replacing &&
+      !(replaced as unknown[] | null)?.length &&
+      (await playbookSourceStorageKey(db, id)) !== storageKey
+    )
+      throw new PlaybookRequestError(
+        PLAYBOOK_EDITED_DURING_REPLACEMENT_ERROR,
+        409,
+      );
+    uploadedStorageKey = null;
+    // The row now points at the new object, so the superseded one is safe to
+    // remove. Losing this cleanup must not fail the import.
+    if (previousStorageKey && previousStorageKey !== storageKey)
+      await deleteFile(previousStorageKey).catch((cleanupError) => {
+        console.error("[playbooks] replaced source cleanup failed", {
+          storageKey: previousStorageKey,
+          error: safeError(cleanupError),
+        });
+      });
+
+    stage = "completed";
+    // Not swallowed: an attempt left running after its playbook was saved
+    // would read as interrupted, so a failed write here fails the run, and a
+    // queued import runs again and lands on the unique-violation branch.
+    const recorded = await updateImportAttempt(db, attemptId, {
+      status: "completed",
+      stage,
+      playbook_id: id,
+      completed_at: new Date().toISOString(),
+    });
+    const playbook = await getPlaybook(userId, id, db, work.userEmail);
+    // Only the claim whose write landed records the import in the audit log.
+    if (recorded) await recordPlaybookImportAudit(db, work, { playbook });
+    return playbook;
+  } catch (error) {
+    // A failed transport may have committed publication. Only delete a staged
+    // key after proving no surviving playbook references it. Claim-specific keys
+    // prevent an old worker from overwriting or deleting a newer claim's bytes.
+    if (uploadedStorageKey) {
+      const claimed = await db.from("playbooks").select("id").eq("source_storage_key", uploadedStorageKey).limit(1);
+      if (!claimed.error && !claimed.data?.length) await deleteFile(uploadedStorageKey).catch(() => {});
+    }
+    throw await recordImportFailure(db, attemptId, stage, error, {
+      filename: work.filename,
+      playbookId: work.replacePlaybookId,
+      work,
+    });
+  } finally {
+    stopHeartbeat();
+  }
+}
+
+/**
+ * Write a replacement's content only if the playbook is still the version
+ * the import began from. Every write to a playbook's content sets
+ * updated_at in this module (there is no trigger), so an unchanged value
+ * means no write since. A job queued before target_updated_at existed has
+ * no value to compare must retry without overwriting current content.
+ */
+function replacePlaybookContent(
+  db: Db,
+  id: string,
+  targetUpdatedAt: string | null | undefined,
+  values: Record<string, unknown>,
+) {
+  if (!targetUpdatedAt) throw new PlaybookRequestError(PLAYBOOK_EDITED_DURING_REPLACEMENT_ERROR, 409);
+  const update = db.from("playbooks").update(values).eq("id", id);
+  return (
+    targetUpdatedAt ? update.eq("updated_at", targetUpdatedAt) : update
+  ).select("id");
+}
+
+/**
+ * Checks, records, and compiles an import in this process: the attempt is
+ * returned once the file, target, and model are known to be usable, and
+ * `done` settles when the playbook is saved. The import route queues the
+ * compile as a durable job instead (playbooks.jobs.ts).
+ */
+export async function startPlaybookImport(
+  args: PlaybookImportArgs,
+): Promise<{ attempt: PlaybookImport; done: Promise<Playbook> }> {
+  const db = args.db ?? createServerSupabase();
+  const { attempt, work } = await beginPlaybookImport({
+    ...args,
+    db,
+    size: args.buffer.length,
+  });
   return {
-    attempt: publicImport({ ...row, stage }),
-    done: compile(),
+    attempt,
+    done: compilePlaybookImport(db, work, args.buffer, args.dependencies),
   };
+}
+
+/** Starts an import and waits for it: for callers that need the playbook. */
+export async function importPlaybookFromFile(
+  args: PlaybookImportArgs,
+): Promise<Playbook> {
+  const { done } = await startPlaybookImport(args);
+  return done;
 }
 
 /**
@@ -1486,6 +1846,7 @@ export async function createPlaybook(
   db: Db = createServerSupabase(),
   workspace?: unknown,
   rawVisibility?: unknown,
+  email?: string | null,
 ): Promise<Playbook> {
   const orgId = await creationScope(db, userId, workspace);
   const visibility = parseContentVisibility(rawVisibility, orgId);
@@ -1521,6 +1882,14 @@ export async function createPlaybook(
     updated_at: now,
   });
   if (error) throw error;
+  void recordPlaybookAudit(db, {
+    userId,
+    userEmail: email,
+    orgId,
+    action: "playbook.created",
+    title: content.name,
+    detail: { playbook_id: id },
+  });
   return getPlaybook(userId, id, db);
 }
 
@@ -1533,6 +1902,7 @@ export async function updatePlaybookContent(
   email?: string | null,
 ): Promise<Playbook> {
   const playbook = await editablePlaybook(userId, id, db, email);
+  await assertPlaybookNotBeingReplaced(db, id);
   const parsed = editablePlaybookSchema.safeParse(raw);
   if (!parsed.success)
     throw new PlaybookRequestError(
@@ -1781,6 +2151,7 @@ async function applyReviewEdits(args: {
   documentId: string;
   expectedVersion: { id: string; storagePath: string };
   findings: PlaybookFinding[];
+  job?: PlaybookJobIdentity;
 }): Promise<{
   findings: PlaybookFinding[];
   version: { id: string; number: number; downloadUrl: string } | null;
@@ -1825,6 +2196,7 @@ async function applyReviewEdits(args: {
     userId: args.userId,
     userEmail: args.userEmail,
     expectedVersion: args.expectedVersion,
+    job: args.job,
     edits: planned.map((item) => item.edit),
     db: args.db,
   });
@@ -1853,26 +2225,21 @@ async function applyReviewEdits(args: {
   };
 }
 
-/** How often a running review records that its process is still at it. */
-const RUN_HEARTBEAT_MS = 30_000;
-/** A running review silent for this long stopped with its process. */
-const RUN_STALE_MS = 2 * 60_000;
 export const INTERRUPTED_RUN_ERROR =
   "The review stopped before it finished. Run it again.";
 
 /**
- * A run's status as readers should see it. A review runs in the process that
- * started it, so one whose heartbeat has stopped will never finish.
+ * A run's status as readers should see it; `interrupted` holds the ids
+ * interruptedPlaybookWork found will never finish.
  */
-function runState(row: Record<string, unknown>, now = Date.now()) {
-  const lastSeen = Date.parse(String(row.updated_at ?? row.started_at));
-  const interrupted =
-    row.status === "running" &&
-    Number.isFinite(lastSeen) &&
-    now - lastSeen > RUN_STALE_MS;
+function runState(
+  row: Record<string, unknown>,
+  interrupted: ReadonlySet<string>,
+) {
+  const stopped = interrupted.has(String(row.id));
   return {
-    status: interrupted ? "failed" : String(row.status),
-    error: interrupted
+    status: stopped ? "failed" : String(row.status),
+    error: stopped
       ? INTERRUPTED_RUN_ERROR
       : row.error
         ? String(row.error)
@@ -1880,21 +2247,18 @@ function runState(row: Record<string, unknown>, now = Date.now()) {
   };
 }
 
+/** The runs among `rows` that will never finish. */
+function interruptedRuns(db: Db, rows: Record<string, unknown>[]) {
+  return interruptedPlaybookWork(db, rows, playbookReviewJobKey);
+}
+
 /** Starts a review and waits for it: for callers that need the findings. */
-export async function reviewWithPlaybook(
-  args: Parameters<typeof startPlaybookReview>[0],
-) {
+export async function reviewWithPlaybook(args: PlaybookReviewRequest) {
   const { done } = await startPlaybookReview(args);
   return done;
 }
 
-/**
- * Checks and records a review, then runs it apart from the request: the run
- * is returned as soon as it is stored, and `done` settles when it finishes.
- * Leaving the page detaches from the review without stopping it; its row says
- * how it went.
- */
-export async function startPlaybookReview(args: {
+export type PlaybookReviewRequest = {
   userId: string;
   userEmail?: string | null;
   playbookId: string;
@@ -1909,7 +2273,64 @@ export async function startPlaybookReview(args: {
   /** "issues" reports only what needs attention; the run records which. */
   reviewScope?: "full" | "issues";
   db?: Db;
-}) {
+};
+
+/**
+ * What a review needs that its run row does not record. The rules, model,
+ * mode, scope, and document reference are all on the row; the text reviewed
+ * and the document version the edits are made against are fixed here when the
+ * review is requested, so a re-run reviews the same text and its edits are
+ * refused, not doubled, if an earlier run already revised the document.
+ */
+export type PlaybookReviewInput = {
+  job?: PlaybookJobIdentity;
+  orgId?: string | null;
+  runId: string;
+  /** Also what account erasure purges queued jobs by (payload.userId). */
+  userId: string;
+  documentText: string;
+  instructions: string | null;
+  userEmail: string | null;
+  expectedVersion: { id: string; storagePath: string } | null;
+};
+
+/** A review as runPlaybookReview performs it: its row plus its input. */
+export type PlaybookReviewWork = PlaybookReviewInput & {
+  playbookId: string;
+  content: PlaybookContent;
+  model: string;
+  reviewMode: "strict" | "permissive";
+  reviewScope: "full" | "issues";
+  documentId: string | null;
+  documentName: string | null;
+  startedAt: string;
+};
+
+/** A stored run and its input, as the review that fills it reads them. */
+export function playbookReviewWork(
+  row: Record<string, unknown>,
+  input: PlaybookReviewInput,
+): PlaybookReviewWork {
+  return {
+    ...input,
+    userId: String(row.user_id),
+    playbookId: String(row.playbook_id),
+    content: (parseJson(row.content_json) ?? row.content_json) as PlaybookContent,
+    model: String(row.model),
+    reviewMode: row.review_mode === "permissive" ? "permissive" : "strict",
+    reviewScope: row.review_scope === "issues" ? "issues" : "full",
+    documentId: row.document_id ? String(row.document_id) : null,
+    documentName: row.document_name ? String(row.document_name) : null,
+    startedAt: String(row.started_at),
+  };
+}
+
+/**
+ * Checks and records a review without running it: everything the request
+ * can be refused for is refused here, and the stored row is the rules
+ * snapshot the review is later run from.
+ */
+export async function beginPlaybookReview(args: PlaybookReviewRequest) {
   const db = args.db ?? createServerSupabase();
   validateModel(args.model);
   const playbook = await getPlaybook(
@@ -1973,87 +2394,110 @@ export async function startPlaybookReview(args: {
   };
   const inserted = await db.from("playbook_runs").insert(row);
   if (inserted.error) throw inserted.error;
-  const done = runReview({
-    db,
-    args,
+  const input: PlaybookReviewInput = {
     runId,
-    startedAt,
-    content,
+    userId: args.userId,
+    orgId: playbook.orgId,
     documentText,
-    documentName,
-    stored,
+    instructions: args.instructions ?? null,
+    userEmail: args.userEmail ?? null,
+    expectedVersion: stored?.version ?? null,
+  };
+  return {
+    run: publicRun(row, new Set()),
+    work: playbookReviewWork(row, input),
     apiKeys,
-  });
-  return { run: publicRun(row), done };
+    db,
+  };
 }
 
-async function runReview({
-  db,
-  args,
-  runId,
-  startedAt,
-  content,
-  documentText,
-  documentName,
-  stored,
-  apiKeys,
-}: {
-  db: Db;
-  args: Parameters<typeof startPlaybookReview>[0];
-  runId: string;
-  startedAt: string;
-  content: PlaybookContent;
-  documentText: string;
-  documentName: string | undefined;
-  stored: Awaited<ReturnType<typeof loadReviewDocument>> | null;
-  apiKeys: UserApiKeys;
-}) {
-  const heartbeat = setInterval(() => {
-    void db
-      .from("playbook_runs")
-      .update({ updated_at: new Date().toISOString() })
-      .eq("id", runId)
-      .eq("status", "running")
-      .then(({ error }) => {
-        if (error)
-          console.error("[playbooks] review heartbeat failed", {
-            runId,
-            error: safeError(error),
-          });
-      });
-  }, RUN_HEARTBEAT_MS);
-  heartbeat.unref?.();
+/**
+ * Checks and records a review, then runs it in this process: the run is
+ * returned as soon as it is stored, and `done` settles when it finishes. The
+ * review route queues the run as a durable job instead (playbooks.jobs.ts);
+ * the chat tool, which waits for the findings, runs it here.
+ */
+export async function startPlaybookReview(args: PlaybookReviewRequest) {
+  const { run, work, apiKeys, db } = await beginPlaybookReview(args);
+  return { run, done: runPlaybookReview(db, work, apiKeys) };
+}
+
+/**
+ * The organization whose keys a playbook's reviews use, for a review run
+ * apart from the request that checked them.
+ */
+async function playbookKeyScope(db: Db, playbookId: string) {
+  const { data, error } = await db
+    .from("playbooks")
+    .select("org_id")
+    .eq("id", playbookId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new PlaybookRequestError("Playbook not found.", 404);
+  return (data.org_id as string | null) ?? null;
+}
+
+/**
+ * Runs a recorded review and stores its outcome. Safe to run again for the
+ * same run, which is what a job re-claimed after its worker died does: the
+ * outcome is written with a guard on the run still being `running`, so of
+ * two runs of one review only the first to finish records anything, and the
+ * other's write matches no row. `apiKeys` is passed by a caller that just
+ * checked them; a queued run looks them up again, since a key can be removed
+ * while the job waits.
+ */
+export async function runPlaybookReview(
+  db: Db,
+  work: PlaybookReviewWork,
+  apiKeys?: UserApiKeys,
+) {
+  const { runId } = work;
+  const stopHeartbeat = keepPlaybookWorkAttended(db, "playbook_runs", runId, work.job);
+  let stage: PlaybookReportStage = "review.model";
   try {
-    const sources = await listPlaybookSourceRows(db, args.playbookId);
-    const scope = args.reviewScope ?? "full";
+    if (work.job) await mutatePlaybookJob(db, work.job, "check", runId);
+    // Checked again rather than trusted from the request: access to the
+    // playbook can be lost while a job waits, as compilePlaybookImport
+    // checks its target.
+    await getPlaybook(work.userId, work.playbookId, db, work.userEmail);
+    const keys =
+      apiKeys ??
+      (await assertPlaybookModelAvailable(
+        work.userId,
+        work.model,
+        db,
+        await playbookKeyScope(db, work.playbookId),
+      ));
+    const sources = await listPlaybookSourceRows(db, work.playbookId);
+    const scope = work.reviewScope;
     const prompt = reviewPrompt(
-      content,
-      documentText,
-      args.reviewMode,
-      args.instructions,
+      work.content,
+      work.documentText,
+      work.reviewMode,
+      work.instructions ?? undefined,
       sources,
       scope,
     );
     const raw = sources.length
       ? await completeReviewWithSources({
           db,
-          playbookId: args.playbookId,
-          model: args.model,
-          apiKeys,
+          playbookId: work.playbookId,
+          model: work.model,
+          apiKeys: keys,
           prompt,
           sources,
         })
       : await completeText({
-          model: args.model,
+          model: work.model,
           systemPrompt: REVIEW_SYSTEM_PROMPT,
           user: prompt,
           maxTokens: 20_000,
-          apiKeys,
+          apiKeys: keys,
         });
     const parsed = reviewSchema.parse(parseModelJson(raw));
     const normalized = normalizeFindings(
-      content,
-      documentText,
+      work.content,
+      work.documentText,
       parsed.findings,
       { flagMissingRules: scope === "full" },
     );
@@ -2062,20 +2506,25 @@ async function runReview({
       scope === "issues"
         ? normalized.filter((finding) => ISSUE_STATUSES.has(finding.status))
         : normalized;
+    stage = "review.apply_edits";
     const { findings, version } =
-      args.documentId && stored?.version
+      work.documentId && work.expectedVersion
         ? await applyReviewEdits({
             db,
-            userId: args.userId,
-            userEmail: args.userEmail,
-            documentId: args.documentId,
-            expectedVersion: stored.version,
+            userId: work.userId,
+            userEmail: work.userEmail,
+            documentId: work.documentId,
+            expectedVersion: work.expectedVersion,
             findings: reviewed,
+            job: work.job,
           })
         : { findings: reviewed, version: null };
     const versionId = version?.id ?? null;
     const completedAt = new Date().toISOString();
-    const updated = await db
+    stage = "review.save";
+    const updated = work.job ? await mutatePlaybookJob(db, work.job, "review_publish", runId, {
+      status: "completed", summary: parsed.summary, findings_json: findings, edited_version_id: versionId, completed_at: completedAt,
+    }).then(data => ({ data: data.result === "published" ? [{ id: runId }] : [], error: null })) : await db
       .from("playbook_runs")
       .update({
         status: "completed",
@@ -2086,31 +2535,44 @@ async function runReview({
         updated_at: completedAt,
       })
       .eq("id", runId)
-      .eq("user_id", args.userId);
+      .eq("user_id", work.userId)
+      .eq("status", "running")
+      .select("id");
     if (updated.error) throw updated.error;
+    // Only the claim whose write landed records the run in the audit log.
+    if (updated.data?.length && !work.job)
+      await recordPlaybookRunAudit(db, work, { status: "completed", findings });
     return {
       id: runId,
-      playbookId: args.playbookId,
-      model: args.model,
-      documentName: documentName ?? null,
-      documentId: args.documentId ?? null,
+      playbookId: work.playbookId,
+      model: work.model,
+      documentName: work.documentName,
+      documentId: work.documentId,
       editedVersionId: versionId,
       /** For the response that made them; a stored run has only the id. */
       editedVersionNumber: version?.number ?? null,
       editedDownloadUrl: version?.downloadUrl ?? null,
-      reviewMode: args.reviewMode,
+      reviewMode: work.reviewMode,
       reviewScope: scope,
       status: "completed" as const,
       summary: parsed.summary,
       findings,
       error: null,
-      startedAt,
+      startedAt: work.startedAt,
       completedAt,
     };
   } catch (error) {
-    console.error("[playbooks] review failed", { runId, error: safeError(error) });
+    if (error instanceof PlaybookClaimLostError) throw error;
+    const report = {
+      jobKind: "playbook.review" as const,
+      ids: { run_id: runId, playbook_id: work.playbookId },
+    };
+    if (!isPlaybookRefusal(error)) reportPlaybookFailure(error, { ...report, stage });
+    // Not console.error: see recordImportFailure.
+    console.warn("[playbooks] review failed", { runId, error: safeError(error) });
     const completedAt = new Date().toISOString();
-    await db
+    const marked = work.job ? await mutatePlaybookJob(db, work.job, "failure", runId, { error: error instanceof PlaybookRequestError ? error.message : "The review could not be completed. Run it again." })
+      .then(data => ({ data: data.result === "updated" ? [{ id: runId }] : [], error: null })) : await db
       .from("playbook_runs")
       .update({
         status: "failed",
@@ -2119,10 +2581,21 @@ async function runReview({
         updated_at: completedAt,
       })
       .eq("id", runId)
-      .eq("user_id", args.userId);
+      .eq("user_id", work.userId)
+      .eq("status", "running")
+      .select("id");
+    if (marked.error) {
+      reportPlaybookFailure(marked.error, { ...report, stage: "review.record" });
+      console.warn("[playbooks] failed to record review failure", {
+        runId,
+        error: safeError(marked.error),
+      });
+    }
+    if (marked.data?.length && !work.job)
+      await recordPlaybookRunAudit(db, work, { status: "failed" });
     throw error;
   } finally {
-    clearInterval(heartbeat);
+    stopHeartbeat();
   }
 }
 
@@ -2203,9 +2676,11 @@ export async function listPlaybookRuns(
     .order("started_at", { ascending: false })
     .limit(50);
   if (error) throw error;
+  const rows = (data ?? []) as Record<string, unknown>[];
+  const interrupted = await interruptedRuns(db, rows);
   return withCurrentEditStatus(
     db,
-    ((data ?? []) as Record<string, unknown>[]).map(publicRun),
+    rows.map((row) => publicRun(row, interrupted)),
   );
 }
 
@@ -2243,7 +2718,10 @@ async function withCurrentEditStatus<
   }));
 }
 
-function publicRun(row: Record<string, unknown>) {
+function publicRun(
+  row: Record<string, unknown>,
+  interrupted: ReadonlySet<string>,
+) {
   return {
     id: String(row.id),
     playbookId: String(row.playbook_id),
@@ -2259,7 +2737,7 @@ function publicRun(row: Record<string, unknown>) {
     reviewScope: (row.review_scope === "issues" ? "issues" : "full") as
       | "full"
       | "issues",
-    ...runState(row),
+    ...runState(row, interrupted),
     summary: row.summary ? String(row.summary) : null,
     findings: (Array.isArray(row.findings_json)
       ? row.findings_json
@@ -2292,8 +2770,10 @@ export async function listAllPlaybookRuns(
     .order("started_at", { ascending: false })
     .limit(100);
   if (error) throw error;
-  return ((data ?? []) as Record<string, unknown>[]).map((row) => ({
-    ...publicRun(row),
+  const rows = (data ?? []) as Record<string, unknown>[];
+  const interrupted = await interruptedRuns(db, rows);
+  return rows.map((row) => ({
+    ...publicRun(row, interrupted),
     playbookName: names.get(String(row.playbook_id)) ?? "",
   }));
 }
@@ -2329,12 +2809,14 @@ export async function listPlaybookRunHistory(
     .order("started_at", { ascending: false })
     .limit(Math.min(Math.max(options.limit ?? 25, 1), 100));
   if (error) throw error;
-  return ((data ?? []) as Record<string, unknown>[]).map((row) => ({
+  const rows = (data ?? []) as Record<string, unknown>[];
+  const interrupted = await interruptedRuns(db, rows);
+  return rows.map((row) => ({
     id: String(row.id),
     playbookId: String(row.playbook_id),
     playbookName: names.get(String(row.playbook_id)) ?? "",
     documentName: row.document_name ? String(row.document_name) : null,
-    ...runState(row),
+    ...runState(row, interrupted),
     startedAt: String(row.started_at),
     completedAt: row.completed_at ? String(row.completed_at) : null,
   }));
@@ -2349,16 +2831,19 @@ export async function deletePlaybookRun(
   userId: string,
   runId: string,
   db: Db = createServerSupabase(),
+  email?: string | null,
 ) {
   const { data, error } = await db
     .from("playbook_runs")
-    .select("id, status, error, started_at, updated_at")
+    .select("id, playbook_id, document_id, status, error, started_at, updated_at")
     .eq("id", runId)
     .eq("user_id", userId)
     .maybeSingle();
   if (error) throw error;
   if (!data) throw new PlaybookRequestError("Run not found.", 404);
-  if (runState(data as Record<string, unknown>).status === "running")
+  const row = data as Record<string, unknown>;
+  // A run whose job is still queued or claimed will write to this row.
+  if (runState(row, await interruptedRuns(db, [row])).status === "running")
     throw new PlaybookRequestError(
       "This review is still running. Delete it once it has finished.",
       409,
@@ -2369,6 +2854,13 @@ export async function deletePlaybookRun(
     .eq("id", runId)
     .eq("user_id", userId);
   if (deleted.error) throw deleted.error;
+  await recordPlaybookRunDeletedAudit(db, {
+    userId,
+    userEmail: email,
+    runId,
+    playbookId: String(row.playbook_id),
+    documentId: row.document_id ? String(row.document_id) : null,
+  });
 }
 
 /** Small status snapshots of the caller's own runs, for polling. */
@@ -2384,9 +2876,11 @@ export async function playbookRunStatuses(
     .eq("user_id", userId)
     .in("id", ids);
   if (error) throw error;
-  return ((data ?? []) as Record<string, unknown>[]).map((row) => ({
+  const rows = (data ?? []) as Record<string, unknown>[];
+  const interrupted = await interruptedRuns(db, rows);
+  return rows.map((row) => ({
     id: String(row.id),
-    status: runState(row).status,
+    status: runState(row, interrupted).status,
     completedAt: row.completed_at ? String(row.completed_at) : null,
   }));
 }
@@ -2425,7 +2919,7 @@ export async function deletePlaybook(
   db: Db = createServerSupabase(),
   email?: string | null,
 ): Promise<void> {
-  await editablePlaybook(userId, id, db, email, "owner");
+  const playbook = await editablePlaybook(userId, id, db, email, "owner");
   const { data, error } = await db
     .from("playbooks")
     .select("source_storage_key")
@@ -2436,8 +2930,16 @@ export async function deletePlaybook(
   const sources = await listPlaybookSourceRows(db, id);
   // Runs and source rows cascade in this same statement. Deleting runs first
   // would lose review history if the playbook delete then failed.
-  const playbook = await db.from("playbooks").delete().eq("id", id);
-  if (playbook.error) throw playbook.error;
+  const deleted = await db.from("playbooks").delete().eq("id", id);
+  if (deleted.error) throw deleted.error;
+  void recordPlaybookAudit(db, {
+    userId,
+    userEmail: email,
+    orgId: playbook.orgId,
+    action: "playbook.deleted",
+    title: playbook.name,
+    detail: { playbook_id: id },
+  });
   if (data.source_storage_key)
     await deleteFile(String(data.source_storage_key)).catch(() => {});
   // Clear bytes promptly; the database also queues durable cleanup for failed

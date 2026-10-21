@@ -8,7 +8,6 @@ import {
   buildContentDisposition,
   createFileReadStream,
   deleteFile,
-  downloadFile,
   getSignedUploadUrl,
   headFile,
   storageEnabled,
@@ -20,8 +19,7 @@ import {
   getPlaybookSource,
   getPlaybookImport,
   listRunningPlaybookImports,
-  startPlaybookImport,
-  startPlaybookImportFromDocument,
+  queuePlaybookImport,
   MAX_PLAYBOOK_IMPORT_BYTES,
   listPlaybookSources,
   listPlaybookPeople,
@@ -50,7 +48,7 @@ import {
   PlaybookImportError,
   PlaybookRequestError,
   playbookConfiguration,
-  startPlaybookReview,
+  queuePlaybookReview,
   updatePlaybookContent,
 } from "./playbooks.service";
 
@@ -156,7 +154,12 @@ playbooksRouter.delete("/runs/:runId", async (req, res) => {
   try {
     if (!UUID.test(req.params.runId))
       return void res.status(404).json({ detail: "Run not found." });
-    await deletePlaybookRun(res.locals.userId as string, req.params.runId);
+    await deletePlaybookRun(
+      res.locals.userId as string,
+      req.params.runId,
+      undefined,
+      res.locals.userEmail,
+    );
     res.status(204).send();
   } catch (error) {
     sendError(res, error);
@@ -226,6 +229,7 @@ playbooksRouter.post("/", async (req, res) => {
         undefined,
         body.workspace,
         body.visibility,
+        res.locals.userEmail,
       ),
     );
   } catch (error) {
@@ -303,17 +307,16 @@ playbooksRouter.post("/import", async (req, res) => {
   // A saved document is read where it is stored; access is checked there.
   if (typeof req.body?.documentId === "string" && req.body.documentId) {
     try {
-      const { attempt, done } = await startPlaybookImportFromDocument({
+      const attempt = await queuePlaybookImport({
         userId,
         userEmail: res.locals.userEmail,
-        documentId: req.body.documentId,
+        source: { documentId: req.body.documentId },
         name,
         model,
         playbookId,
         workspace: req.body?.workspace,
       });
-      // Compiling continues after the response; its row records how it ended.
-      done.catch(() => undefined);
+      // Compiling runs as a job; its row records how it ended.
       return void res.status(202).json(attempt);
     } catch (error) {
       return void sendError(res, error);
@@ -321,6 +324,8 @@ playbooksRouter.post("/import", async (req, res) => {
   }
   const storageKey =
     typeof req.body?.storageKey === "string" ? req.body.storageKey : "";
+  // True while this request owns the staged object and must remove it; the
+  // import's job owns it once queued.
   let staged = false;
   try {
     // Only a key minted for this caller: not another account's staged
@@ -342,36 +347,27 @@ playbooksRouter.post("/import", async (req, res) => {
         .status(400)
         .json({ detail: "The uploaded playbook is too large." });
     }
-    const bytes = await downloadFile(storageKey);
-    if (!bytes) {
-      return void res
-        .status(400)
-        .json({ detail: "The uploaded playbook could not be read." });
-    }
 
     const filename =
       typeof req.body?.filename === "string" && req.body.filename.trim()
         ? req.body.filename.trim()
         : "playbook.docx";
 
-    const { attempt, done } = await startPlaybookImport({
+    const attempt = await queuePlaybookImport({
       userId,
       userEmail: res.locals.userEmail,
-      filename,
-      buffer: Buffer.from(bytes),
+      source: { storageKey, filename, size: stat.size },
       name,
       model,
       playbookId,
       workspace: req.body?.workspace,
     });
-    // Compiling continues after the response; its row records how it ended.
-    done.catch(() => undefined);
+    // The job reads the staged object, and removes it once it has an outcome.
+    staged = false;
     res.status(202).json(attempt);
   } catch (error) {
     sendError(res, error);
   } finally {
-    // The import holds the file in memory and keeps its own copy on success,
-    // so the staged object is redundant once it has been read.
     if (staged) {
       await deleteFile(storageKey).catch((error) => {
         console.error("[playbooks] staged upload cleanup failed", {
@@ -719,7 +715,7 @@ playbooksRouter.post("/:playbookId/review", async (req, res) => {
       req.body?.reviewScope === "issues"
         ? ("issues" as const)
         : ("full" as const);
-    const { run, done } = await startPlaybookReview({
+    const run = await queuePlaybookReview({
       userId: res.locals.userId as string,
       userEmail: res.locals.userEmail,
       playbookId: req.params.playbookId,
@@ -734,9 +730,7 @@ playbooksRouter.post("/:playbookId/review", async (req, res) => {
       reviewMode,
       reviewScope,
     });
-    // The review outlives this response; it records its own outcome, and a
-    // failure is already logged there.
-    done.catch(() => undefined);
+    // The review runs as a job and records its own outcome on the run.
     res.status(202).json(run);
   } catch (error) {
     sendError(res, error);

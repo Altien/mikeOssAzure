@@ -49,3 +49,5 @@ once-a-minute `console.warn` count, back off, and log recovery. A PostgREST
 `console.warn` naming the numbered migrations. Upstream's Next `/api` gateway
 grouping (`upstream-unavailable`) does not apply: the static export has no
 gateway.
+
+Playbook import/review lifecycle reports retain bounded stage/job/UUID identifiers only. Rule, finding, source and contract text remain excluded.

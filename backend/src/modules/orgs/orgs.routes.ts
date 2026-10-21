@@ -256,8 +256,9 @@ orgsRouter.delete("/:orgId/logo", requireOrgAuth, asyncRoute(async (req, res) =>
 }));
 
 // DELETE /orgs/:orgId/data/:kind — permanently delete one kind of content
-// across the organization (owner only): chats, tabular-reviews, projects or
-// memories. The organization-level twin of the DELETE /user/* routes.
+// across the organization (owner only): chats, tabular-reviews, projects,
+// memories or playbooks. The organization-level twin of the DELETE /user/*
+// routes.
 orgsRouter.delete(
     "/:orgId/data/:kind",
     requireOrgAuth,

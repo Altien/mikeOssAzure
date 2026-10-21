@@ -27,11 +27,16 @@ import {
   reviewDocumentWithPlaybook,
   updatePlaybook,
   deletePlaybook,
+  MikeApiError,
   type Playbook,
   type PlaybookImport,
   type PlaybookRun,
 } from "@/app/lib/mikeApi";
 import { showToast } from "@/app/components/ui/toast";
+import {
+  clearToasts,
+  getSnapshot as getToastSnapshot,
+} from "@/shared/lib/toastStore";
 import { PlaybooksWorkspaceLayout as PlaybooksPage } from "./PlaybooksWorkspace";
 import { SETTINGS_MODELS } from "@/shared/lib/modelCatalog";
 
@@ -652,6 +657,35 @@ describe("playbooks page", () => {
         { visibility: "private" },
       ),
     );
+  });
+
+  it("reports a save refused because another tab is replacing the playbook", async () => {
+    // This page never saw the import (another tab or device started it), so
+    // only the server's refusal stops the save.
+    const detail =
+      "This playbook is being replaced. Wait for the import to finish.";
+    vi.mocked(updatePlaybook).mockRejectedValue(
+      new MikeApiError({ message: detail, status: 409 }),
+    );
+    clearToasts();
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Playbook A" }),
+    );
+    await userEvent.click(
+      within(
+        screen.getByRole("navigation", { name: "Playbook toolbar" }),
+      ).getByRole("button", { name: "New rule" }),
+    );
+
+    expect(await screen.findByText("Couldn’t save")).toBeInTheDocument();
+    // The error notice carries the server's sentence, not a generic one.
+    expect(getToastSnapshot()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ tone: "error", message: detail }),
+      ]),
+    );
+    clearToasts();
   });
 
   it("opens a newly added rule even when its topic was collapsed", async () => {
@@ -1664,6 +1698,171 @@ describe("playbooks page", () => {
     );
     // No second row for it.
     expect(screen.queryByRole("row", { busy: true })).toBeNull();
+  });
+
+  /** Replaces Playbook A from a dropped PDF, then closes the dialog. */
+  async function replacePlaybookA() {
+    vi.mocked(startPlaybookImport).mockResolvedValue(
+      importAttempt({ filename: "updated.pdf", playbookId: "pb-a" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Playbook actions" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: /Replace from file/i }),
+    );
+    fireEvent.drop(screen.getByRole("region", { name: "Add document" }), {
+      dataTransfer: {
+        types: ["Files"],
+        files: [new File(["pdf"], "updated.pdf", { type: "application/pdf" })],
+      },
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Compile" }));
+    const footer = (await screen.findByRole("dialog")).querySelector("footer");
+    const close = within(footer!).getByRole("button", { name: "Close" });
+    await waitFor(() => expect(close).toBeEnabled());
+    await userEvent.click(close);
+  }
+
+  it("keeps a playbook read-only while its replacement compiles", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(getPlaybookImport).mockResolvedValue(
+      importAttempt({ playbookId: "pb-a" }),
+    );
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Playbook A" }),
+    );
+    await replacePlaybookA();
+    await pollImports();
+
+    // Closing the dialog detached it; the replacement still holds the rules.
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Liability cap" }),
+    );
+    expect(screen.getByLabelText("Rule")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "New rule" })).toBeDisabled();
+
+    // Leaving and coming back does not reopen it for editing.
+    await userEvent.click(screen.getByRole("button", { name: "Back" }));
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Playbook A" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Liability cap" }),
+    );
+    expect(screen.getByLabelText("Rule")).toBeDisabled();
+    expect(updatePlaybook).not.toHaveBeenCalled();
+  });
+
+  it("does not save an edit over the rules a replacement wrote", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(getPlaybookImport).mockResolvedValue(
+      importAttempt({ playbookId: "pb-a" }),
+    );
+    // An autosave that answers only after the import has finished.
+    let finishSave!: () => void;
+    vi.mocked(updatePlaybook).mockImplementation(
+      (id, content) =>
+        new Promise((resolve) => {
+          finishSave = () => resolve({ ...playbook(id, content.name), content });
+        }),
+    );
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Playbook A" }),
+    );
+    await replacePlaybookA();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Liability cap" }),
+    );
+    await userEvent.type(
+      screen.getByLabelText("Concept to detect"),
+      "Stale edit",
+    );
+    await act(() => vi.advanceTimersByTimeAsync(800));
+
+    vi.mocked(getPlaybookImport).mockResolvedValue(
+      importAttempt({ status: "completed", playbookId: "pb-a" }),
+    );
+    await pollImports();
+    await waitFor(() =>
+      expect(screen.getAllByText("Replaced").length).toBeGreaterThan(0),
+    );
+    await act(async () => {
+      finishSave?.();
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+
+    // The old rules plus the edit would have overwritten the replacement.
+    expect(updatePlaybook).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(
+      await screen.findByRole("link", { name: "Replaced" }),
+    ).toBeInTheDocument();
+  });
+
+  it("gives back the rules as they were when a replacement fails", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(getPlaybookImport).mockResolvedValue(
+      importAttempt({ playbookId: "pb-a" }),
+    );
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Playbook A" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Liability cap" }),
+    );
+    await userEvent.type(
+      screen.getByLabelText("Concept to detect"),
+      "My edit",
+    );
+    await replacePlaybookA();
+    expect(updatePlaybook).toHaveBeenCalledTimes(1);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Liability cap" }),
+    );
+    expect(screen.getByLabelText("Concept to detect")).toBeDisabled();
+
+    vi.mocked(getPlaybookImport).mockResolvedValue(
+      importAttempt({
+        status: "failed",
+        playbookId: "pb-a",
+        error: "The selected model did not finish within 5 minutes.",
+      }),
+    );
+    await pollImports();
+    await waitFor(() =>
+      expect(screen.getByLabelText("Concept to detect")).toBeEnabled(),
+    );
+    expect(screen.getByLabelText("Concept to detect")).toHaveValue("My edit");
+    expect(screen.getByRole("button", { name: "New rule" })).toBeEnabled();
+  });
+
+  it("opens a playbook still being replaced read-only after a reload", async () => {
+    vi.mocked(listRunningPlaybookImports).mockResolvedValue([
+      importAttempt({ name: "Playbook A", playbookId: "pb-a" }),
+    ]);
+    render(<PlaybooksPage />);
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Playbook A" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Liability cap" }),
+    );
+    expect(screen.getByLabelText("Rule")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "New rule" })).toBeDisabled();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Playbook actions" }),
+    );
+    expect(
+      screen.queryByRole("menuitem", { name: /Replace from file/i }),
+    ).toBeNull();
+    expect(
+      await screen.findByRole("menuitem", { name: "View details" }),
+    ).toBeInTheDocument();
   });
 
   it("follows an import started before the page was opened", async () => {

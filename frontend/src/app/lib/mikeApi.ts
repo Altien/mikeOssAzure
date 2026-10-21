@@ -1842,7 +1842,12 @@ export async function deleteOrg(orgId: string): Promise<void> {
     await apiRequest(`/orgs/${orgId}`, { method: "DELETE" });
 }
 
-export type OrgDataKind = "chats" | "tabular-reviews" | "projects" | "memories";
+export type OrgDataKind =
+    | "chats"
+    | "tabular-reviews"
+    | "projects"
+    | "memories"
+    | "playbooks";
 
 /** Permanently deletes one kind of content across an organization. Owner only. */
 export async function deleteOrgData(

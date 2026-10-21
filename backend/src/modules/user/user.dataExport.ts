@@ -5,10 +5,15 @@ import {
     ensureChatAccess,
     ensureDocAccess,
     ensureReviewAccess,
+    type OrgRole,
 } from "../../lib/access";
 import { mapWithConcurrency } from "../../lib/concurrency";
 import { sealManifest } from "../../lib/manifestSigning";
 import { type Db } from "../../lib/supabase";
+import {
+    resolvePlaybookRoles,
+    type PlaybookAccessRow,
+} from "../playbooks/playbooks.service";
 import { throwIfError, uniqueStrings } from "./user.shared";
 
 const PAGE_SIZE = 1000;
@@ -223,6 +228,87 @@ async function loadUserTabularChats(
         chatIds,
     );
     return { chats, messages };
+}
+
+/**
+ * The playbooks this user created, the reviews they ran, and their imports.
+ *
+ * Playbook access is decided by resolvePlaybookRoles, the same rule the
+ * playbooks list uses: an organization's playbook needs current membership,
+ * even for its creator. A run's rules snapshot (`content_json`) is the
+ * playbook's policy, so a run leaves only while its playbook can still be
+ * opened, whoever created that playbook. The supplementary documents' text
+ * stays behind like document bytes do; their metadata is listed.
+ */
+async function loadUserPlaybooks(
+    db: Db,
+    userId: string,
+    userEmail: string | null | undefined,
+    orgMemberships: Record<string, unknown>[],
+) {
+    const orgRoles = new Map<string, OrgRole>();
+    for (const row of orgMemberships) {
+        if (typeof row.org_id === "string" && typeof row.role === "string") {
+            const active = await db.from("organizations").select("id").eq("id", row.org_id).is("deleted_at", null).maybeSingle();
+            if (active.error) throw active.error;
+            if (active.data) orgRoles.set(row.org_id, row.role as OrgRole);
+        }
+    }
+
+    const [created, runCandidates, imports] = await Promise.all([
+        selectAll(db, "playbooks", (query) =>
+            query.eq("user_id", userId).order("created_at", { ascending: true }),
+        ),
+        selectAll(db, "playbook_runs", (query) =>
+            query.eq("user_id", userId).order("started_at", { ascending: true }),
+        ),
+        selectAll(db, "playbook_imports", (query) =>
+            query.eq("user_id", userId).order("started_at", { ascending: true }),
+        ),
+    ]);
+    const createdIds = new Set(idsFrom(created));
+    const runPlaybooks = await selectByIds(
+        db,
+        "playbooks",
+        "id",
+        idsFrom(runCandidates, "playbook_id").filter((id) => !createdIds.has(id)),
+    );
+    const roles = await resolvePlaybookRoles(
+        db,
+        [...created, ...runPlaybooks] as PlaybookAccessRow[],
+        userId,
+        userEmail,
+        orgRoles,
+    );
+    const playbooks = created.filter((row) => roles.has(row.id as string));
+    const playbookIds = idsFrom(playbooks);
+    const sources =
+        playbookIds.length === 0
+            ? []
+            : await selectAll(
+                  db,
+                  "playbook_sources",
+                  (query) =>
+                      query
+                          .in("playbook_id", playbookIds)
+                          .order("created_at", { ascending: true }),
+                  "id, playbook_id, filename, file_type, size_bytes, text_length, created_at",
+              );
+
+    return {
+        playbooks,
+        playbook_sources: sources,
+        playbook_runs: runCandidates.filter(
+            (row) =>
+                typeof row.playbook_id === "string" &&
+                roles.has(row.playbook_id),
+        ),
+        // Import records are metadata (file name, stage, error); one made in
+        // an organization the user has left stays with that organization.
+        playbook_imports: imports.filter(
+            (row) => typeof row.org_id !== "string" || orgRoles.has(row.org_id),
+        ),
+    };
 }
 
 async function loadApiKeyStatus(db: Db, userId: string) {
@@ -602,6 +688,13 @@ export async function buildUserAccountExport(
             : Promise.resolve([]),
     ]);
 
+    const playbooks = await loadUserPlaybooks(
+        db,
+        userId,
+        userEmail,
+        orgMemberships,
+    );
+
     const projectIds = idsFrom(projects);
     const projectDocuments = await selectByIds(
         db,
@@ -649,6 +742,7 @@ export async function buildUserAccountExport(
         tabular_reviews: tabularReviews,
         tabular_cells: tabularCells,
         tabular_review_chats: tabularChats,
+        ...playbooks,
         shared_access: {
             projects: sharedProjects,
             tabular_reviews: sharedTabularReviews,

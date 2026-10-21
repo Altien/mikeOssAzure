@@ -278,7 +278,7 @@ export default function PrivacyDataPage() {
                             </p>
                             <p className="text-sm text-gray-500">
                                 Download account metadata, projects, document
-                                metadata, workflows, and review data as JSON.
+                                metadata, workflows, playbooks, and review data as JSON.
                             </p>
                         </div>
                         <PillButtonUI

@@ -218,6 +218,7 @@ export function messageFromStorage(
       content: message.content,
       files: message.files,
       workflow: message.workflow,
+      playbook: message.playbook,
       live: false,
     };
   }

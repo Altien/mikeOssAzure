@@ -39,6 +39,7 @@
 @source "../../../frontend/src/shared/ui/NoticeCardUI.tsx";
 @source "../../../frontend/src/shared/ui/ResponseSelectionMenuUI.tsx";
 @source "../../../frontend/src/shared/ui/ExcerptPillUI.tsx";
+@source "../../../frontend/src/shared/ui/PlaybookPillUI.tsx";
 @source "../../../frontend/src/shared/ui/ExcerptModalUI.tsx";
 @source "../../../frontend/src/shared/ui/ComposerSendButtonUI.styles.ts";
 @source "../../../frontend/src/shared/ui/ChatHistoryDropdownUI.tsx";

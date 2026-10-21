@@ -13,7 +13,6 @@ import {
 } from "react";
 import {
     ArrowRight,
-    ClipboardCheck,
     Loader2,
     Square,
     Waypoints,
@@ -21,6 +20,7 @@ import {
 } from "lucide-react";
 import { AddDocButton } from "./AddDocButton";
 import { PlaybookPickerModal } from "../playbooks/PlaybookPickerModal";
+import { PlaybookPillUI } from "@/shared/ui/PlaybookPillUI";
 import { UploadOverlay } from "./UploadOverlay";
 import { COMPOSER_SEND_BUTTON_CLASS } from "@/shared/ui/ComposerSendButtonUI.styles";
 import { ExcerptModalUI } from "@/shared/ui/ExcerptModalUI";
@@ -779,32 +779,16 @@ function ChatInputForChatImpl(
                                 </div>
                             )}
                             {selectedPlaybook && (
-                                <div className="inline-flex items-center gap-1 pl-2.5 pr-1 py-0.5 rounded-full text-xs bg-slate-700 text-white border border-white/20 shadow">
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            setPlaybookModalInitialId(
-                                                selectedPlaybook.id,
-                                            );
-                                            setPlaybookModalOpen(true);
-                                        }}
-                                        aria-label={`Open playbook ${selectedPlaybook.title}`}
-                                        className="inline-flex min-w-0 items-center gap-1 rounded-full transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-                                    >
-                                        <ClipboardCheck className="h-2.5 w-2.5 shrink-0" />
-                                        <span className="max-w-[140px] truncate">
-                                            {selectedPlaybook.title}
-                                        </span>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        aria-label={`Remove playbook ${selectedPlaybook.title}`}
-                                        onClick={() => setSelectedPlaybook(null)}
-                                        className="rounded-full p-0.5 ml-0.5 text-white/60 hover:text-white hover:bg-white/20 transition-colors"
-                                    >
-                                        <X className="h-2.5 w-2.5" />
-                                    </button>
-                                </div>
+                                <PlaybookPillUI
+                                    title={selectedPlaybook.title}
+                                    onOpen={() => {
+                                        setPlaybookModalInitialId(
+                                            selectedPlaybook.id,
+                                        );
+                                        setPlaybookModalOpen(true);
+                                    }}
+                                    onRemove={() => setSelectedPlaybook(null)}
+                                />
                             )}
                             {attachedDocs.map((doc) => (
                                 <DocumentPill

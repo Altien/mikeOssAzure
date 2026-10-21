@@ -155,6 +155,78 @@ it("runs a playbook on an attached Word document and shows its tracked changes a
   });
 });
 
+it("reviews the open Word document from its request text, without saving a version", async () => {
+  playbooks.reviewWithPlaybook.mockResolvedValue({
+    id: "run-2",
+    summary: "One issue.",
+    editedVersionId: null,
+    editedVersionNumber: null,
+    findings: [
+      {
+        ruleName: "Liability cap",
+        status: "unacceptable",
+        location: "Clause 9",
+        analysis: "Uncapped.",
+        quote: "unlimited",
+        suggestedText: "capped",
+        edit: null,
+      },
+    ],
+  });
+  // What the Word route puts in the store for the pane's live document:
+  // inline text, and no docIndex entry because there is no stored row.
+  const docStore = new Map([
+    [
+      "active-word-document",
+      {
+        filename: "Contract.docx",
+        file_type: "text/markdown",
+        storage_path: "inline:word-document:w1",
+        inline_text: "Liability is unlimited.",
+      },
+    ],
+  ]) as never;
+  const write = vi.fn();
+
+  const result = await runToolCalls(
+    [
+      call("run_playbook", {
+        playbook_id: "pb-1",
+        doc_id: "active-word-document",
+      }),
+    ],
+    docStore,
+    "u1",
+    db,
+    write,
+    undefined,
+    undefined,
+    {} as never,
+    new Map() as never,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { userEmail: "u1@example.com", model: "claude-opus-5" },
+  );
+
+  expect(playbooks.reviewWithPlaybook).toHaveBeenCalledWith(
+    expect.objectContaining({
+      playbookId: "pb-1",
+      documentId: undefined,
+      documentText: "Liability is unlimited.",
+      documentName: "Contract.docx",
+    }),
+  );
+  expect(result.docsEdited).toEqual([]);
+  const content = JSON.parse(
+    (result.toolResults[0] as { content: string }).content,
+  );
+  expect(content).toMatchObject({ run_id: "run-2", tracked_changes: 0 });
+  expect(content.next_required_action).toMatch(/open Word document/);
+});
+
 it("refuses a document that is not attached, and a turn without a model", async () => {
   const missing = await dispatch([
     call("run_playbook", { playbook_id: "pb-1", doc_id: "doc-9" }),

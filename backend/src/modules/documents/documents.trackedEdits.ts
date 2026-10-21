@@ -47,6 +47,7 @@ export async function applyTrackedEditsToDocument(params: {
   db: Db;
   /** A long-running review must not apply suggestions to a newer document. */
   expectedVersion?: { id: string; storagePath: string };
+  job?: { id: string; attempt: number; token: string };
   /**
    * If provided, append these edits to the existing turn-scoped version
    * (overwrites the file at storagePath and reuses the document_versions
@@ -146,6 +147,40 @@ export async function applyTrackedEditsToDocument(params: {
     editedBytes.byteOffset,
     editedBytes.byteOffset + editedBytes.byteLength,
   ) as ArrayBuffer;
+
+  if (params.job) {
+    if (!params.expectedVersion || reuseVersion) return { ok: false, error: "A fenced review requires its original document version." };
+    const versionId = crypto.randomUUID();
+    const stagedPath = `documents/${userId}/${documentId}/edits/${versionId}.docx`;
+    await uploadFile(stagedPath, ab, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    const result = await createDocumentVersion(db, {
+      id: versionId, document_id: documentId, storage_path: stagedPath, source: "assistant_edit",
+      filename: versionFilename, file_type: "docx", size_bytes: editedBytes.byteLength,
+      page_count: null, content_sha256: contentSha256(editedBytes),
+    }, { activate: true, job: params.job, expectedVersion: params.expectedVersion,
+      edits: changes.map(c => ({ change_id: c.id, del_w_id: c.delId ?? null, ins_w_id: c.insId ?? null,
+        deleted_text: c.deletedText, inserted_text: c.insertedText, context_before: c.contextBefore ?? "", context_after: c.contextAfter ?? "" })),
+    });
+    if (result.error || !result.data) {
+      // A transport failure may follow a commit. Delete only after proving
+      // this claim-specific object has no version row owning it.
+      const owned = await db.from("document_versions").select("id").eq("storage_path", stagedPath).limit(1);
+      if (!owned.error && !owned.data?.length) await deleteFileBestEffort(stagedPath, "playbook-edit-conflict");
+      return { ok: false, error: "The document or review claim changed. Run the review again." };
+    }
+    const version = result.data;
+    return { ok: true, version_id: version.id, version_number: version.version_number,
+      storage_path: stagedPath, download_url: buildDownloadUrl(stagedPath, versionFilename), errors,
+      annotations: (version.edit_rows ?? []).map(row => {
+        const source = changes.find(c => c.id === row.change_id);
+        return { kind: "edit" as const, edit_id: row.id, document_id: documentId,
+          version_id: version.id, version_number: version.version_number, change_id: row.change_id,
+          del_w_id: source?.delId, ins_w_id: source?.insId, deleted_text: row.deleted_text ?? "",
+          inserted_text: row.inserted_text ?? "", context_before: row.context_before ?? "",
+          context_after: row.context_after ?? "", reason: source?.reason, status: "pending" as const };
+      }),
+    };
+  }
 
   let versionRowId: string;
   let newPath: string;
