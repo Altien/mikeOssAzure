@@ -272,6 +272,7 @@ export function redactShaped(value: unknown, depth = 0): unknown {
  * default so the project learns what forks run into; the opt-out and the
  * override are one variable each (see resolveDsn).
  */
+// Upstream divergence (sync-log: 321cdf7c): retain deployment-configured telemetry; no hosted default.
 export const MIKE_SENTRY_DSN = { backend: "", frontend: "", wordAddin: "" } as const;
 
 export type DsnResolution = {
