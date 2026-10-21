@@ -874,6 +874,11 @@ export async function deleteUserProjects(
     return deleteProjectsByIds(db, personalProjectIds);
 }
 
+/**
+ * Erase personal account data after checking organization ownership blockers.
+ * Retain organization work and contributed folder trees in surviving projects,
+ * detaching the departing user's attribution before their account is removed.
+ */
 export async function deleteUserAccountData(
     db: Db,
     userId: string,
@@ -948,6 +953,13 @@ export async function deleteUserAccountData(
 
     await deleteByIds(db, "documents", documentIds);
 
+    // A contributed folder can contain other people's nested folders. Keep
+    // the tree in surviving projects; deleting owned projects below still
+    // cascades their whole tree. Nullable attribution survives canonical profile erasure.
+    const { error: folderError } = await db.from("project_subfolders")
+        .update({ user_id: null }).eq("user_id", userId);
+    await throwIfError(folderError, "Failed to preserve contributed folders");
+
     const deletions = [
         // Entra text IDs have no auth.users cascade; erase saved routing
         // preferences explicitly with the rest of this account's data.
@@ -956,7 +968,6 @@ export async function deleteUserAccountData(
         db.from("tabular_reviews").delete().eq("user_id", userId),
         db.from("chats").delete().eq("user_id", userId),
         db.from("word_documents").delete().eq("user_id", userId),
-        db.from("project_subfolders").delete().eq("user_id", userId),
         // Upstream divergence (sync-log: f0b90ab): UPSTREAM OMISSION â€” the
         // adopted Library feature added library_folders but did not add them
         // to account deletion. KEEP DEV'S DELETE during conflict resolution;

@@ -12,6 +12,7 @@
 // its ordering is delicate. Only the NON-streaming logic and the pre-stream
 // DB preparation live here. `prepareChatStream` returns the prepared data the
 // route needs to run the stream; it does not stream.
+import { getActiveAssistantTurn } from "../../lib/assistantTurnRuns";
 import { type Db } from "../../lib/supabase";
 import {
     webSearchPlanFor,
@@ -93,6 +94,7 @@ export type PreparedChatStream = {
     nonce: ReturnType<typeof generateSpotlightNonce>;
 };
 
+/** Authorize and prepare a chat turn, refusing active turns before saving input. */
 export async function prepareChatStream(
     db: Db,
     args: {
@@ -367,6 +369,13 @@ export async function prepareChatStream(
             ok: false,
             status: 500,
             detail: "Failed to initialize chat",
+        };
+    }
+
+    if (getActiveAssistantTurn(chatId)) {
+        return {
+            ok: false, status: 409, code: "turn_in_progress",
+            detail: "A response is already being generated for this chat.",
         };
     }
 

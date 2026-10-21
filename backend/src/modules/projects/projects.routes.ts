@@ -642,7 +642,7 @@ projectsRouter.post("/:projectId/folders", requireAuth, asyncRoute(async (req, r
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
   const { name, parent_folder_id } = req.body as { name: string; parent_folder_id?: string | null };
-  if (!name?.trim()) return void res.status(400).json({ detail: "name is required" });
+  if (typeof name !== "string" || !name.trim()) return void res.status(400).json({ detail: "name is required" });
 
   const db = createServerSupabase();
   const result = await createProjectFolder(db, {
@@ -653,6 +653,8 @@ projectsRouter.post("/:projectId/folders", requireAuth, asyncRoute(async (req, r
     parent_folder_id,
   });
   if (!result.ok) {
+    if (result.kind === "validation")
+      return void res.status(400).json({ detail: result.detail });
     if (result.kind === "role_forbidden")
       return void res.status(403).json({ detail: result.detail });
     if (result.kind === "forbidden")
@@ -680,6 +682,8 @@ projectsRouter.patch("/:projectId/folders/:folderId", requireAuth, asyncRoute(as
     body,
   });
   if (!result.ok) {
+    if (result.kind === "validation")
+      return void res.status(400).json({ detail: result.detail });
     if (result.kind === "role_forbidden")
       return void res.status(403).json({ detail: result.detail });
     if (result.kind === "forbidden")
