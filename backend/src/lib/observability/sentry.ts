@@ -36,6 +36,14 @@ export type ReportContext = {
 const CONSOLE_MECHANISM = "auto.core.capture_console";
 const NESTED_SEARCH_DEPTH = 2;
 
+// Node's console bridge also captures the warning text printed by Node. The
+// warning object has its own structured reporter below, so drop that duplicate.
+const NODE_WARNING_TEXT = /^\(node:\d+\) (?:\[[\w-]+\] )?[\w$]+: /;
+
+function isNodeWarningText(args: unknown[]): boolean {
+  return args.length === 1 && typeof args[0] === "string" && NODE_WARNING_TEXT.test(args[0]);
+}
+
 // BEGIN shared-redaction
 // This block is the privacy control for every runtime. It is authored once
 // and mirrored, indentation aside, between backend/src/lib/observability/
@@ -693,6 +701,7 @@ export function scrubEvent(
     if (args.some((arg) => findNested(arg, isReported))) {
       return null;
     }
+    if (isNodeWarningText(args)) return null;
     // Positional payloads after the label are never titles or grouping keys.
     const label = typeof args[0] === "string" ? args[0].trim() : "Console error";
     const nestedError = args
@@ -856,6 +865,7 @@ export function initSentry(
     beforeSend: scrubEvent,
   });
   initialized = true;
+  installProcessWarningReporter(env);
   if (config.dsnSource !== "default") {
     console.log(
       `[sentry] enabled for ${role} (environment ${config.environment}` +
@@ -863,6 +873,27 @@ export function initSentry(
     );
   }
   return true;
+}
+
+/** Report Node process warnings with bounded, stable grouping metadata. */
+export function reportProcessWarning(warning: unknown): string | null {
+  const shaped = warning as { name?: unknown; code?: unknown } | null;
+  const name = typeof shaped?.name === "string" ? shaped.name : "Warning";
+  const code = typeof shaped?.code === "string" ? shaped.code : undefined;
+  if (name === "DeprecationWarning" && process.noDeprecation) return null;
+  return reportError(warning, {
+    level: "warning",
+    tags: { component: "runtime-warning", warning_name: name, warning_code: code },
+    fingerprint: ["runtime-warning", name, code ?? ""],
+  });
+}
+
+function installProcessWarningReporter(env: NodeJS.ProcessEnv): void {
+  const silenced =
+    process.execArgv.includes("--no-warnings") ||
+    /(?:^|\s)--no-warnings(?:\s|=|$)/.test(env.NODE_OPTIONS ?? "");
+  if (silenced) return;
+  process.on("warning", reportProcessWarning);
 }
 
 /**
