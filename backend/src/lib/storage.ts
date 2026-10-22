@@ -12,6 +12,7 @@
  * file and call setStorageAdapter() at boot; no call sites change.
  */
 
+import { AppError, type ErrorKind } from "./appError";
 import { bestEffort } from "./observability/sentry";
 import { safeErrorLog } from "./safeError";
 import { createConfiguredStorageAdapter } from "./storage/configured";
@@ -61,12 +62,25 @@ export function setStorageAdapter(next: StorageAdapter): void {
   storageEnabled = next.enabled;
 }
 
-export class StorageOperationError extends Error {
-  constructor(readonly operation: string, options?: { cause?: unknown }) {
-    super(`Object storage ${operation} failed`, options);
-    this.name = "StorageOperationError";
+const STORAGE_FAILURE_KIND = {
+  HEAD: "storage.head_failed",
+  copy: "storage.copy_failed",
+  "source changed": "storage.copy_failed",
+  "copy verification": "storage.copy_failed",
+  upload: "storage.upload_failed",
+  download: "storage.download_failed",
+  delete: "storage.delete_failed",
+} as const satisfies Record<string, ErrorKind>;
+
+export type StorageOperation = keyof typeof STORAGE_FAILURE_KIND;
+
+/** Retain Dev's conditional-copy operation names and the original SDK cause. */
+export class StorageOperationError extends AppError {
+  constructor(readonly operation: StorageOperation, options?: { cause?: unknown }) {
+    super(STORAGE_FAILURE_KIND[operation], `Object storage ${operation} failed`, options);
   }
 }
+
 
 function requireStorageConfig(): void {
   if (!adapter.enabled) {

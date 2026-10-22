@@ -31,7 +31,7 @@ let shuttingDown = false;
 async function startThread(role: WorkerRole): Promise<ThreadWorker> {
   const isTs = __filename.endsWith(".ts");
   const entry = path.join(__dirname, isTs ? "workerThread.ts" : "workerThread.js");
-  const thread = new ThreadWorker(entry, { execArgv: isTs ? ["--require", "tsx/cjs"] : [], workerData: { role } });
+  const thread = new ThreadWorker(entry, { execArgv: isTs ? ["--require", "tsx/cjs"] : process.execArgv, workerData: { role } });
   try {
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error("Worker thread startup timed out")), 30_000);

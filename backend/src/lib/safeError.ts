@@ -1,4 +1,6 @@
 const SECRET_CONTEXT_PATTERNS = [
+  /(\b(?:AccountKey|SharedAccessSignature)\s*=\s*)([^;\s]+)()/gi,
+  /(\b(?:client_secret|clientSecret)\s*[:=]\s*[\x22\x27]?)([^;\s\x22\x27]+)()/gi,
   /(Incorrect API key provided:\s*)([^.\s]+)(\.?)/gi,
   /(api[_ -]?key|x-api-key|token|secret|authorization|bearer)\s*(?:provided\s*)?(?:is|:|=)\s*["']?([A-Za-z0-9._\-]{6,})["']?/gi,
 ];

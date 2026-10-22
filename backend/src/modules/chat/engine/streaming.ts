@@ -1,3 +1,4 @@
+import { AppError } from "../../../lib/appError";
 import { teamOrgIdOf } from "../../../lib/personalOrgs";
 import { webSearchAccountFor, type WebSearchPlan } from "../../../lib/webSearch";
 import { buildGoogleWorkspaceTools } from "../../../lib/integrations/googleWorkspace";
@@ -114,7 +115,7 @@ export interface ClientToolsAdapter {
   ) => Promise<{ content: string; events: AssistantEvent[] }>;
 }
 
-export class AssistantStreamError extends Error {
+export class AssistantStreamError extends AppError {
   fullText: string;
   events: AssistantEvent[];
 
@@ -124,8 +125,7 @@ export class AssistantStreamError extends Error {
     events: AssistantEvent[],
     options?: ErrorOptions,
   ) {
-    super(message, options);
-    this.name = "AssistantStreamError";
+    super("chat.stream_failed", message, options);
     this.fullText = fullText;
     this.events = events;
   }

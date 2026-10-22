@@ -17,7 +17,7 @@
 //      explicitly are remembered so the bridge does not double-report them.
 
 import * as Sentry from "@sentry/node";
-import { diagnosticErrorTags, privacyBoundaryIntegration } from "./sentryPrivacy";
+import { diagnosticErrorTags, privacyBoundaryIntegration, type Operation } from "./sentryPrivacy";
 
 export type SentryRole = "api" | "worker" | "worker-thread" | "job";
 
@@ -151,6 +151,8 @@ function redactQueryParams(value: unknown): unknown {
  * handled by redactUrl, then bearer tokens before the bare-JWT pattern.
  */
 const TEXT_PATTERNS: Array<[RegExp, string | ((match: string) => string)]> = [
+  [/\b(?:AccountKey|SharedAccessSignature)\s*=\s*[^;\s]+/gi, "[azure-storage-secret]"],
+  [/\b(?:client_secret|clientSecret)\s*[:=]\s*[\x22\x27]?[^;\s\x22\x27]+/gi, "[client-secret]"],
   [/https?:\/\/[^\s"'<>]+/g, (match) => redactUrl(match)],
   [/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [Filtered]"],
   [/\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{2,}(?:\.[A-Za-z0-9_-]*)?/g, "[jwt]"],
@@ -420,7 +422,14 @@ function mapStringLeaves(
 export function minimiseForCommunity<T extends CommunityEvent>(event: T): T {
   delete event.server_name;
   delete event.user;
-  delete event.breadcrumbs;
+  // Breadcrumbs are request history; only our own stage trail stays
+  // (category mike.stage, message a stage name), the privacy boundary
+  // checks each one against the stage vocabulary.
+  const trail = Array.isArray(event.breadcrumbs)
+    ? event.breadcrumbs.filter((crumb) => (crumb as { category?: unknown })?.category === "mike.stage")
+    : [];
+  if (trail.length) event.breadcrumbs = trail;
+  else delete event.breadcrumbs;
   if (event.tags) {
     delete event.tags.server_name;
     delete event.tags.url;
@@ -872,6 +881,13 @@ export function initSentry(
         `${config.release ? `, release ${config.release}` : ""})`,
     );
   }
+  if (!config.release && env.NODE_ENV === "production") {
+    // Without a release an event cannot be mapped to the code that produced
+    // it; the images get it from the GIT_SHA build arg (docs/observability.md).
+    console.warn(
+      "[sentry] no release: build the images with GIT_SHA=$(git rev-parse HEAD) or set SENTRY_RELEASE",
+    );
+  }
   return true;
 }
 
@@ -1006,6 +1022,29 @@ export function bestEffort<T>(
     });
     return undefined;
   });
+}
+
+/**
+ * Name the flow this request or job belongs to. Set once at the entry
+ * (route handler, job handler) and every event captured until it finishes
+ * carries `operation`, which leads the issue title and the fingerprint: one
+ * failing operation is one issue, whatever route or stack it fails in.
+ */
+export function setOperation(operation: Operation): void {
+  if (!initialized) return;
+  Sentry.getIsolationScope().setTag("operation", operation);
+}
+
+/**
+ * Record that the current request or job reached a stage. The stages a
+ * failed operation passed through arrive on its event as breadcrumbs, so a
+ * failure in `seal-recover` is distinguishable from the same throw reached
+ * via `copy-rollback`. Only the stage name travels: it is a vocabulary
+ * member, never a message or data.
+ */
+export function markStage(stage: string): void {
+  if (!initialized) return;
+  Sentry.addBreadcrumb({ category: "mike.stage", message: stage, level: "info" });
 }
 
 /** Attach the request id to every event captured during this request. */

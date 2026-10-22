@@ -128,6 +128,10 @@ case "$CMD" in
       docker volume ls -q --filter "label=com.docker.compose.project=$PROJECT" | while IFS= read -r volume; do
         grep -Fxq -- "$volume" "$WORK/volumes" || die "Cannot prove ownership of orphan volume $volume; repair this checkout explicitly before up."
       done
+      # Source a465c4b1: attach the source release without broadening checkout-owned cleanup.
+      if [ -z "${GIT_SHA:-}" ] && command -v git >/dev/null 2>&1; then
+        GIT_SHA="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"; export GIT_SHA
+      fi
       if [ "$DRY_RUN" = 1 ]; then action docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up "$@"
       else docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up "$@"; fi
     fi;;
