@@ -5,7 +5,7 @@ targeted opinion search, and case-law panels in assistant responses.
 
 ## Enable live access
 
-Set `COURTLISTENER_API_TOKEN` in `backend/.env` and restart the backend. The organisation manages the token; user credential settings are read-only.
+Configure `courtlistener-api-token` in Key Vault (with `COURTLISTENER_API_TOKEN` as a local fallback) and restart the backend. CourtListener is managed under **Settings > Connectors**, with an enable switch and read-only deployment credential status. Personal token writes remain disabled (sync-log: 4a026835).
 
 Apply the numbered CourtListener migrations from `backend/migrations/` using the migration runner before enabling the integration.
 

@@ -120,7 +120,7 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
         resolveProviderSecret("openrouter-api-key"),
         resolveVercelApiKey(),
         resolveProviderSecret("opencode-api-key"),
-        resolveSecret("courtlistener-api-token"),
+        resolveProviderSecret("courtlistener-api-token"),
         resolveSecret("azure-openai-endpoint"),
         resolveSecret("azure-openai-api-key"),
         resolveSecret("azure-openai-api-version"),
