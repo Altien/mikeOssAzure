@@ -3,6 +3,7 @@ import { normalizeOptionalModelPreference, normalizeReasoningLevel } from "../..
 import { type ApiKeyStatus } from "./user.apiKeyStore";
 import { ROUTER_SLUGS, type RouterModelSelections } from "../../lib/routerModels";
 import { UserProfileRow, MONTHLY_CREDIT_LIMIT } from "./user.profile.storage";
+import { courtlistenerBulkDataEnabled } from "../../lib/courtlistener";
 
 import { ROUTER_PROFILE_FIELDS } from "./user.profile.routerPreferences";
 
@@ -62,6 +63,7 @@ export function serializeProfile(
             "high",
         mfaOnLogin: row.mfa_on_login === true,
         legalResearchUs: row.legal_research_us !== false,
+        courtlistenerBulkData: courtlistenerBulkDataEnabled(),
         quickActionsVisible: row.quick_actions_visible !== false,
         responseDetailsVisible: row.response_details_visible === true,
         darkMode: row.dark_mode === true,

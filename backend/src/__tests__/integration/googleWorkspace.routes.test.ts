@@ -59,6 +59,9 @@ beforeEach(() => {
   mocks.db = {};
   mocks.auth = true;
   vi.stubEnv("API_PUBLIC_URL", "http://localhost:3000/api");
+  // The app loads backend/.env; a developer's switched-off services must not
+  // decide these tests.
+  vi.stubEnv("GOOGLE_WORKSPACE_DISABLED_PROVIDERS", "");
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 afterEach(() => {
@@ -293,6 +296,17 @@ describe("Google Drive picker session", () => {
     const res = await pickerSession();
     expect(res.status).toBe(404);
     expect(res.body.code).toBe("google_drive_picker_unavailable");
+  });
+
+  it("answers 404 when the operator switched Drive off, without a token", async () => {
+    connected();
+    vi.stubEnv("GOOGLE_WORKSPACE_DISABLED_PROVIDERS", "google-drive");
+    const res = await pickerSession();
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({
+      code: "connector_unavailable",
+      detail: "Google Drive is not offered on this Mike server.",
+    });
   });
 
   it("answers 409 when Drive is not connected or is turned off", async () => {

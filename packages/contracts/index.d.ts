@@ -578,6 +578,13 @@ export type WordEditResolutionStatus = "accepted" | "rejected";
 export type GoogleWorkspaceProvider = 'gmail' | 'google-calendar';
 export interface GoogleDriveStatus {
     configured: boolean;
+    /**
+     * False when the operator switched Drive off for the deployment
+     * (GOOGLE_WORKSPACE_DISABLED_PROVIDERS): Discover does not offer it, new
+     * connections and Picker sessions are refused, and the assistant has none
+     * of its tools.
+     */
+    available: boolean;
     schemaReady?: boolean;
     connected: boolean;
     scope: string | null;

@@ -10,17 +10,23 @@ const COURTLISTENER_R2_OPINIONS_PREFIX = "courtlistener/opinions/by-cluster";
 type JsonRecord = Record<string, unknown>;
 type ServerSupabase = Db;
 
-function courtlistenerBulkDataEnabled() {
+/**
+ * The deployment serves citation lookups and opinion text from its own bulk
+ * index, so CourtListener works without an API token.
+ */
+export function courtlistenerBulkDataEnabled() {
     return process.env.COURTLISTENER_BULK_DATA_ENABLED === "true";
 }
 
+/** Repo-authored, safe to show the user as written. */
+export const COURTLISTENER_TOKEN_REQUIRED_MESSAGE =
+    "CourtListener is not configured for this organization. Ask an administrator to set the courtlistener-api-token Key Vault secret.";
+
+/** Upstream divergence (sync-log: e7ab6bd4): deployment-managed Key Vault credential, with local env fallback. */
 function courtlistenerHeaders(apiToken?: string | null): HeadersInit {
-    const token =
-        apiToken?.trim() || process.env.COURTLISTENER_API_TOKEN?.trim();
+    const token = apiToken?.trim();
     if (!token) {
-        throw new Error(
-            "CourtListener is not configured for this organisation. Ask an administrator to open /install and set the courtlistener-api-token Key Vault secret.",
-        );
+        throw new Error(COURTLISTENER_TOKEN_REQUIRED_MESSAGE);
     }
     return {
         Accept: "application/json",
@@ -542,7 +548,7 @@ function citationMatchKey(value: string | null | undefined): string | null {
 }
 
 function courtlistenerApiTokenAvailable(apiToken?: string | null) {
-    return !!(apiToken?.trim() || process.env.COURTLISTENER_API_TOKEN?.trim());
+    return !!apiToken?.trim();
 }
 
 async function getBulkCitationLookup(args: {

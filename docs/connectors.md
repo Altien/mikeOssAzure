@@ -1,22 +1,18 @@
 # MCP connectors
 
 Mike connects to remote [Model Context Protocol](https://modelcontextprotocol.io)
-servers from **Settings > Connectors**. Integrations that ship with Mike appear
-under **Built in**. Installed connectors appear under **Installed**. Hosted providers appear under **Discover**, and an arbitrary
-remote server can be added with **+ Custom**.
-
-## Built-in connectors
-
-**Built in** lists integrations that ship with Mike rather than connecting to a
-remote MCP server. They are available in every workspace, not only the
-Personal one. [CourtListener](courtlistener.md) is the only built-in connector
-today: its switch turns US case-law research on or off, and **Manage** holds the
-user's own API token.
+servers from **Settings > Connectors**. Installed connectors appear under
+**Installed**. Hosted providers appear under **Discover**, and an arbitrary
+remote server can be added with **+ Custom**. Google Drive, Gmail, Google
+Calendar and [CourtListener](courtlistener.md) are listed the same way. The
+page shows placeholder cards until every connector source has answered, so a
+card never appears in one list and then moves or disappears.
 
 ## Workspace availability
 
 MCP, Drive, Gmail and Calendar connections belong to the user's Personal
-workspace. Creating a connection from account settings while an organization
+workspace. CourtListener is the exception: once added, the assistant can use
+it in every workspace. Creating a connection from account settings while an organization
 is selected still creates a Personal connection. These connections are not
 advertised or executable in organization chats, project chats or tabular chats;
 pending connector write approvals cannot resume there either. Personal chats

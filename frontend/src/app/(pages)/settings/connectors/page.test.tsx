@@ -38,22 +38,42 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => {
         getMcpConnector: vi.fn(),
         updateMcpConnector: vi.fn(),
         setMcpToolEnabled: vi.fn(),
-        getGoogleDriveStatus: vi.fn(() => new Promise(() => {})),
+        // Google answers "not connected" unless a test says otherwise: the
+        // page shows placeholders until every connector source has answered.
+        getGoogleDriveStatus: vi.fn(async () => ({
+            configured: true, available: true, schemaReady: true, connected: false,
+            scope: null, enabled: true, writeEnabled: false, requireWriteApproval: false,
+            pickerAvailable: false, tools: [], redirectUri: null,
+        })),
         startGoogleDriveOAuth: vi.fn(),
         cancelGoogleDriveOAuth: vi.fn(),
         disconnectGoogleDrive: vi.fn(),
         updateGoogleDriveSettings: vi.fn(),
         setGoogleDriveToolEnabled: vi.fn(),
-        getGoogleWorkspaceStatus: vi.fn(() => new Promise(() => {})),
+        getGoogleWorkspaceStatus: vi.fn(async () => ({
+            configured: true, available: true, schemaReady: true, connected: false,
+            writeEnabled: false, enabled: true, requireWriteApproval: false,
+            readOnly: false, tools: [], redirectUri: null,
+        })),
         updateGoogleWorkspaceSettings: vi.fn(),
         setGoogleWorkspaceToolEnabled: vi.fn(),
     };
 });
 
-// The built-in CourtListener card reads the user profile; it has its own
-// tests, so here it only marks where the page places it.
+// CourtListener's state comes from the user profile and its dialog has its
+// own tests; here a test sets where the page should place it.
+const courtListener = vi.hoisted(() => ({
+    loading: false,
+    installed: false,
+    enabled: true,
+    setEnabled: vi.fn(),
+}));
 vi.mock("@/app/components/settings/CourtListenerConnector", () => ({
-    CourtListenerConnector: () => <div data-testid="courtlistener-connector" />,
+    COURTLISTENER_NAME: "CourtListener",
+    CourtListenerIcon: () => null,
+    CourtListenerTokenModal: ({ open }: { open: boolean }) =>
+        open ? <div role="dialog" aria-label="CourtListener token" /> : null,
+    useCourtListenerConnector: () => ({ ...courtListener, busy: false }),
 }));
 
 // MFA gate off, and render nothing for the popup itself.
@@ -816,6 +836,7 @@ describe("Google Drive connection lifecycle", () => {
     const ready = {
         writeEnabled: false,
         requireWriteApproval: false,
+        available: true,
         connected: false,
         scope: null,
         configured: true,
@@ -1454,6 +1475,7 @@ describe("Google services the operator switched off", () => {
     };
     const driveStatus = {
         ...status,
+        available: true,
         scope: null,
         pickerAvailable: false,
     };
@@ -1501,28 +1523,92 @@ describe("Google services the operator switched off", () => {
     });
 });
 
-describe("ConnectorsPage built-in connectors", () => {
+describe("ConnectorsPage CourtListener", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.mocked(listMcpConnectors).mockResolvedValue([]);
+        courtListener.installed = false;
+        courtListener.loading = false;
     });
 
     afterEach(() => {
         cleanup();
     });
 
-    it("lists CourtListener under Built in, apart from Personal connections", () => {
-        render(<ConnectorsPage />);
-        const builtIn = screen.getByRole("region", { name: "Built in" });
-        expect(
-            within(builtIn).getByTestId("courtlistener-connector"),
-        ).toBeTruthy();
-        expect(within(builtIn).queryByText(/Personal workspace/)).toBeNull();
+    const discover = () => within(screen.getByRole("region", { name: "Discover" }));
+    const installed = () => within(screen.getByRole("region", { name: "Installed" }));
 
-        const installed = screen.getByRole("region", { name: "Installed" });
-        expect(
-            within(installed).queryByTestId("courtlistener-connector"),
-        ).toBeNull();
-        expect(within(installed).getByText(/Personal workspace/)).toBeTruthy();
+    it("offers CourtListener in Discover until it is installed, with no extra text", async () => {
+        render(<ConnectorsPage />);
+        await act(flushMicrotasks);
+        expect(screen.queryByRole("region", { name: "Built in" })).toBeNull();
+        expect(installed().queryByRole("button", { name: "Manage CourtListener" })).toBeNull();
+        fireEvent.click(discover().getByRole("button", { name: "Add CourtListener connector" }));
+        expect(screen.getByRole("dialog", { name: "CourtListener token" })).toBeTruthy();
+        expect(screen.getAllByText(/Personal workspace/)).toHaveLength(1);
+    });
+
+    it("lists an installed CourtListener with its switch under Installed", async () => {
+        courtListener.installed = true;
+        render(<ConnectorsPage />);
+        await act(flushMicrotasks);
+        expect(discover().queryByRole("button", { name: "Add CourtListener connector" })).toBeNull();
+        fireEvent.click(installed().getByRole("switch", { name: "CourtListener connector" }));
+        expect(courtListener.setEnabled).toHaveBeenCalledWith(false);
+        fireEvent.click(installed().getByRole("button", { name: "Manage CourtListener" }));
+        expect(screen.getByRole("dialog", { name: "CourtListener token" })).toBeTruthy();
+    });
+});
+
+describe("ConnectorsPage first load", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(listMcpConnectors).mockResolvedValue([]);
+        vi.mocked(getGoogleWorkspaceStatus).mockResolvedValue({
+            configured: true, available: true, schemaReady: true, connected: false,
+            writeEnabled: false, enabled: true, requireWriteApproval: false,
+            readOnly: false, tools: [], redirectUri: null,
+        });
+        courtListener.installed = false;
+        courtListener.loading = false;
+    });
+
+    afterEach(() => {
+        cleanup();
+    });
+
+    const discover = () => within(screen.getByRole("region", { name: "Discover" }));
+
+    it("shows no connector card until every source has answered", async () => {
+        let resolveDrive!: (value: Awaited<ReturnType<typeof getGoogleDriveStatus>>) => void;
+        vi.mocked(getGoogleDriveStatus).mockReturnValue(
+            new Promise((resolve) => {
+                resolveDrive = resolve;
+            }),
+        );
+        render(<ConnectorsPage />);
+        await act(flushMicrotasks);
+        // Gmail, Calendar and the MCP list have answered; Drive has not.
+        expect(discover().queryByRole("button", { name: /^Add / })).toBeNull();
+        expect(screen.queryByText("No connectors yet.")).toBeNull();
+        await act(async () => {
+            resolveDrive({
+                configured: true, available: false, schemaReady: true, connected: false,
+                scope: null, enabled: true, writeEnabled: false, requireWriteApproval: false,
+                pickerAvailable: false, tools: [], redirectUri: null,
+            });
+            await flushMicrotasks();
+        });
+        // A switched-off Drive never appeared, so it cannot flash and vanish.
+        expect(discover().queryByRole("button", { name: "Add Google Drive connector" })).toBeNull();
+        expect(discover().getByRole("button", { name: "Add Gmail connector" })).toBeTruthy();
+        expect(screen.getByText("No connectors yet.")).toBeTruthy();
+    });
+
+    it("waits for the profile before placing CourtListener", async () => {
+        courtListener.loading = true;
+        render(<ConnectorsPage />);
+        await act(flushMicrotasks);
+        expect(discover().queryByRole("button", { name: /^Add / })).toBeNull();
     });
 });

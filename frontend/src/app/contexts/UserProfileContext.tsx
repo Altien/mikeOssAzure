@@ -77,6 +77,11 @@ interface UserProfile extends RouterProfileLists {
     lastSelectedReasoningLevel: NonNullable<Message["reasoning"]>;
     mfaOnLogin: boolean;
     legalResearchUs: boolean;
+    /**
+     * The deployment answers CourtListener lookups from its bulk index, so
+     * the connector is installed for everyone without a token.
+     */
+    courtlistenerBulkData: boolean;
     quickActionsVisible: boolean;
     /** Whether responses and subagents show the model, effort and tokens they used. */
     responseDetailsVisible: boolean;
@@ -198,6 +203,7 @@ function toProfile(data: ApiUserProfile): UserProfile {
         lastSelectedChatModel: profile.lastSelectedChatModel ?? null,
         lastSelectedReasoningLevel: profile.lastSelectedReasoningLevel ?? "high",
         mfaOnLogin: profile.mfaOnLogin === true,
+        courtlistenerBulkData: profile.courtlistenerBulkData === true,
         responseDetailsVisible: profile.responseDetailsVisible === true,
         projectMemoryDefault: profile.projectMemoryDefault !== false,
         ...routerProfileLists(profile),
@@ -330,6 +336,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 lastSelectedReasoningLevel: "high",
                 mfaOnLogin: false,
                 legalResearchUs: true,
+                courtlistenerBulkData: false,
                 quickActionsVisible: true,
                 responseDetailsVisible: false,
                 ...routerProfileLists({}),

@@ -9,6 +9,8 @@ import {
     executeGoogleDriveToolCall,
     getGoogleDriveStatus,
     startGoogleDriveOAuth,
+    createGoogleDrivePickerSession,
+    planGoogleDriveCall,
     GOOGLE_DRIVE_SCOPE,
 } from "../googleDrive";
 import { decryptString } from "../../mcp/client";
@@ -483,5 +485,42 @@ describe("Google Drive OAuth lifecycle", () => {
             completeGoogleDriveOAuth("u1", state, "code", store.db),
         ).rejects.toThrow();
         expect(store.tokens).toHaveLength(0);
+    });
+    it("switches Drive off for the deployment but keeps an existing connection deletable", async () => {
+        const store = await connected();
+        vi.stubEnv("GOOGLE_DRIVE_PICKER_API_KEY", "picker-key");
+        vi.stubEnv("GOOGLE_DRIVE_PICKER_APP_ID", "123456789");
+        expect(await buildGoogleDriveTools("u1", store.db)).not.toEqual([]);
+        vi.stubEnv("GOOGLE_WORKSPACE_DISABLED_PROVIDERS", "gmail, google-drive");
+        const fetchMock = vi.fn();
+        vi.stubGlobal("fetch", fetchMock);
+        expect(await buildGoogleDriveTools("u1", store.db)).toEqual([]);
+        await expect(begin(store)).rejects.toMatchObject({
+            code: "connector_unavailable",
+            message: "Google Drive is not offered on this Mike server.",
+        });
+        await expect(
+            createGoogleDrivePickerSession("u1", store.db),
+        ).rejects.toMatchObject({ code: "connector_unavailable" });
+        for (const [name, args] of [
+            ["google_drive_search", { query: "x" }],
+            ["google_drive_create_folder", { name: "x" }],
+        ] as const) {
+            const refused = await executeGoogleDriveToolCall("u1", name, args, store.db);
+            expect(refused.event.status).toBe("error");
+            expect(refused.content).toContain("not offered on this Mike server");
+        }
+        expect(
+            (await planGoogleDriveCall("u1", "google_drive_create_folder", { name: "x" }, store.db)).type,
+        ).toBe("result");
+        expect(fetchMock).not.toHaveBeenCalled();
+        // Status still describes the grant so Settings can show and delete it.
+        expect(await getGoogleDriveStatus("u1", store.db)).toMatchObject({
+            available: false,
+            connected: true,
+            pickerAvailable: false,
+        });
+        await disconnectGoogleDrive("u1", store.db);
+        expect((await getGoogleDriveStatus("u1", store.db)).connected).toBe(false);
     });
 });

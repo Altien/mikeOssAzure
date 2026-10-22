@@ -1,6 +1,7 @@
 import { createServerSupabase, type Db } from "../../lib/supabase";
 import { DEFAULT_TITLE_MODEL, OPENAI_LOW_MODELS, type UserApiKeys, type ReasoningLevel } from "../../lib/llm";
 import { getEffectiveApiKeys } from "./user.apiKeyStore";
+import { courtlistenerBulkDataEnabled } from "../../lib/courtlistener";
 import { loadCustomInstructions } from "./user.customInstructions";
 import {
     DEFAULT_RESPONSE_STYLE,
@@ -27,6 +28,11 @@ export type UserModelSettings = {
     /** Cross-surface fallback used only when a chat has no usable model. */
     last_selected_chat_model: string | null;
     last_selected_reasoning_level: ReasoningLevel | null;
+    /**
+     * Whether the assistant gets the CourtListener tools: the user's switch is
+     * on and the connector is usable, through a saved token or the
+     * deployment's bulk index.
+     */
     legal_research_us: boolean;
     web_search: WebSearchSettings;
     api_keys: UserApiKeys;
@@ -190,7 +196,7 @@ export async function getUserModelSettings(
         memory_curator_model: optional(data?.memory_curator_model),
         last_selected_chat_model: optional(data?.last_selected_chat_model),
         last_selected_reasoning_level: normalizeReasoningLevel(data?.last_selected_reasoning_level),
-        legal_research_us: data?.legal_research_us !== false,
+        legal_research_us: data?.legal_research_us !== false && (!!api_keys.courtlistener || courtlistenerBulkDataEnabled()),
         subagent_model: optional(data?.subagent_model),
         subagent_reasoning: normalizeReasoningLevel(data?.subagent_reasoning),
         web_search: webSearch,

@@ -11,8 +11,16 @@ import Image from "next/image";
 import { FolderPlus, Plus } from "lucide-react";
 import { ConnectorSetupGuideLink } from "@/app/components/settings/ConnectorSetupGuideLink";
 import { NewCustomMcpModal } from "@/app/components/settings/NewCustomMcpModal";
-import { ConnectorCard } from "@/app/components/settings/ConnectorCard";
-import { CourtListenerConnector } from "@/app/components/settings/CourtListenerConnector";
+import {
+  ConnectorCard,
+  ConnectorCardSkeleton,
+} from "@/app/components/settings/ConnectorCard";
+import {
+  COURTLISTENER_NAME,
+  CourtListenerIcon,
+  CourtListenerTokenModal,
+  useCourtListenerConnector,
+} from "@/app/components/settings/CourtListenerConnector";
 import {
   McpConnectorForm,
   type McpConnectorFormDraft,
@@ -425,6 +433,8 @@ export default function ConnectorsPage() {
     "Google Calendar",
   );
   const googleConnectors = [googleDrive, gmail, googleCalendar];
+  const courtListener = useCourtListenerConnector();
+  const [courtListenerOpen, setCourtListenerOpen] = useState(false);
   const drivePicker = useGoogleDrivePicker();
   const [selectedGoogleProvider, setSelectedGoogleProvider] =
     useState<GoogleConnectorProvider | null>(null);
@@ -433,6 +443,8 @@ export default function ConnectorsPage() {
       (connector) => connector.provider === selectedGoogleProvider,
     ) ?? null;
 
+  // Only the first load shows placeholders; a reload keeps the lists.
+  const [connectorsLoaded, setConnectorsLoaded] = useState(false);
   const loadConnectors = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -442,6 +454,7 @@ export default function ConnectorsPage() {
       setError(connectorMessage(err, "load your connectors"));
     } finally {
       setLoading(false);
+      setConnectorsLoaded(true);
     }
   }, []);
 
@@ -1243,6 +1256,13 @@ export default function ConnectorsPage() {
       ),
   );
   const googleLoading = googleConnectors.some((connector) => connector.loading);
+  // Which list a connector belongs in is only known once every source has
+  // answered. Until then both lists show placeholders, so no card appears in
+  // Discover only to move to Installed or vanish (a service the operator
+  // switched off) a moment later.
+  const initialLoading =
+    !connectorsLoaded || googleLoading || courtListener.loading;
+  const discoverCourtListener = !courtListener.installed;
   const googleAdding = googleConnectors.some(
     (connector) => connector.phase !== "idle",
   );
@@ -1257,17 +1277,11 @@ export default function ConnectorsPage() {
 
   return (
     <div className="@container">
-      <section aria-labelledby="built-in-connectors-heading">
-        <SettingsHeading id="built-in-connectors-heading">Built in</SettingsHeading>
-        <p className="mt-1 mb-4 text-sm text-app-text-muted">
-          Provided by Mike and available in every workspace.
-        </p>
-        <div className="grid grid-cols-1 gap-3 @min-[32rem]:grid-cols-2">
-          <CourtListenerConnector />
-        </div>
-      </section>
-      <section className="mt-6" aria-labelledby="installed-connectors-heading">
-        <div className="flex items-center justify-between gap-3">
+      <p className="mb-4 text-sm text-app-text-muted">
+        Connections belong to your Personal workspace and are available only in Personal chats.
+      </p>
+      <section aria-labelledby="installed-connectors-heading">
+        <div className="mb-4 flex items-center justify-between gap-3">
           <SettingsHeading id="installed-connectors-heading">
             Installed
           </SettingsHeading>
@@ -1282,16 +1296,17 @@ export default function ConnectorsPage() {
             Custom
           </PillButtonUI>
         </div>
-        <p className="mt-1 mb-4 text-sm text-app-text-muted">
-          Connections belong to your Personal workspace and are available only in Personal chats.
-        </p>
         {error && (
           <div className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
             {error}
           </div>
         )}
-        <div className="grid grid-cols-1 gap-3 @min-[32rem]:grid-cols-2">
-          {installedGoogle.map((connector) => (
+        <div
+          className="grid grid-cols-1 gap-3 @min-[32rem]:grid-cols-2"
+          aria-busy={initialLoading || undefined}
+        >
+          {initialLoading && <ConnectorListSkeleton />}
+          {!initialLoading && installedGoogle.map((connector) => (
             <ConnectorRow
               key={connector.provider}
               name={connector.name}
@@ -1309,7 +1324,20 @@ export default function ConnectorsPage() {
               }
             />
           ))}
-          {!loading &&
+          {!initialLoading && courtListener.installed && (
+            <ConnectorRow
+              name={COURTLISTENER_NAME}
+              icon={<CourtListenerIcon />}
+              enabled={courtListener.enabled}
+              busy={courtListener.busy}
+              onOpen={() => setCourtListenerOpen(true)}
+              onEnabledChange={(enabled) =>
+                void courtListener.setEnabled(enabled)
+              }
+            />
+          )}
+          {!initialLoading &&
+            !loading &&
             connectors.map((connector) => {
               const preset = findConnectorPreset(connector.serverUrl);
               return (
@@ -1331,10 +1359,11 @@ export default function ConnectorsPage() {
                 />
               );
             })}
-          {!loading &&
-            !googleLoading &&
+          {!initialLoading &&
+            !loading &&
             connectors.length === 0 &&
-            installedGoogle.length === 0 && (
+            installedGoogle.length === 0 &&
+            !courtListener.installed && (
               <div className="@min-[32rem]:col-span-2">
                 <GlassCardUI>
                   <div className="p-4">
@@ -1353,13 +1382,20 @@ export default function ConnectorsPage() {
             Discover
           </SettingsHeading>
         </div>
-        {discoverGoogle.length === 0 && discoverPresets.length === 0 && (
-          <SettingsDescription>
-            Every available connector is installed.
-          </SettingsDescription>
-        )}
-        <div className="grid grid-cols-1 gap-3 @min-[32rem]:grid-cols-2">
-          {discoverGoogle.map((connector) => (
+        {!initialLoading &&
+          discoverGoogle.length === 0 &&
+          !discoverCourtListener &&
+          discoverPresets.length === 0 && (
+            <SettingsDescription>
+              Every available connector is installed.
+            </SettingsDescription>
+          )}
+        <div
+          className="grid grid-cols-1 gap-3 @min-[32rem]:grid-cols-2"
+          aria-busy={initialLoading || undefined}
+        >
+          {initialLoading && <ConnectorListSkeleton />}
+          {!initialLoading && discoverGoogle.map((connector) => (
             <DiscoverCard
               key={connector.provider}
               name={connector.name}
@@ -1375,7 +1411,19 @@ export default function ConnectorsPage() {
               onCancel={connector.cancel}
             />
           ))}
-          {discoverPresets.map((preset) => {
+          {!initialLoading && discoverCourtListener && (
+            <DiscoverCard
+              name={COURTLISTENER_NAME}
+              icon={<CourtListenerIcon />}
+              adding={false}
+              authorizing={false}
+              loading={false}
+              disabled={busyKey !== null || googleAdding}
+              onAdd={() => setCourtListenerOpen(true)}
+              onCancel={() => setCourtListenerOpen(false)}
+            />
+          )}
+          {!initialLoading && discoverPresets.map((preset) => {
             const isAdding =
               busyKey === "create" &&
               installingPresetUrl !== null &&
@@ -1402,6 +1450,11 @@ export default function ConnectorsPage() {
           })}
         </div>
       </section>
+
+      <CourtListenerTokenModal
+        open={courtListenerOpen}
+        onClose={() => setCourtListenerOpen(false)}
+      />
 
       <NewCustomMcpModal
         open={addOpen}
@@ -1621,6 +1674,16 @@ function ConnectorRow({
         />
       }
     />
+  );
+}
+
+/** Two placeholder cards: one row on a wide page, two on a narrow one. */
+function ConnectorListSkeleton() {
+  return (
+    <>
+      <ConnectorCardSkeleton />
+      <ConnectorCardSkeleton />
+    </>
   );
 }
 

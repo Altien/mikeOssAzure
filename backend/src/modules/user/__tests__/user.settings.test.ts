@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { getEffectiveApiKeys, getEffectiveRouterModels } = vi.hoisted(() => ({
     getEffectiveApiKeys: vi.fn(),
@@ -291,5 +291,32 @@ describe("getUserModelSettings on an un-migrated database", () => {
                 },
             ),
         )).rejects.toThrow("Failed to read legacy user model settings");
+    });
+});
+
+describe("getUserModelSettings CourtListener connector", () => {
+    afterEach(() => {
+        vi.unstubAllEnvs();
+    });
+    const settingsWith = (courtlistener: string | null, enabled = true) => {
+        getEffectiveApiKeys.mockResolvedValue({ ...NO_KEYS, courtlistener });
+        return getUserModelSettings(
+            "user-1",
+            profileDb({ legal_research_us: enabled }),
+        );
+    };
+
+    it("offers research tools only with a saved token or the bulk index", async () => {
+        expect((await settingsWith(null)).legal_research_us).toBe(false);
+        expect((await settingsWith("saved-token")).legal_research_us).toBe(true);
+        vi.stubEnv("COURTLISTENER_BULK_DATA_ENABLED", "true");
+        expect((await settingsWith(null)).legal_research_us).toBe(true);
+    });
+
+    it("keeps the user's switch off whatever is configured", async () => {
+        vi.stubEnv("COURTLISTENER_BULK_DATA_ENABLED", "true");
+        expect((await settingsWith("saved-token", false)).legal_research_us).toBe(
+            false,
+        );
     });
 });

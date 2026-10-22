@@ -27,7 +27,7 @@ export type GoogleConnectorProvider = "google-drive" | GoogleWorkspaceProvider;
 export type GoogleConnectorStatus = {
   connected: boolean;
   configured: boolean;
-  /** Gmail/Calendar only: false when the operator switched the service off. */
+  /** False when the operator switched the service off for the deployment. */
   available?: boolean;
   schemaReady?: boolean;
   enabled: boolean;

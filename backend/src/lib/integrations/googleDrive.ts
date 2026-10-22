@@ -59,6 +59,10 @@ import {
     downloadGoogleDriveFile,
     googleDriveHttpError,
 } from "./googleDriveHttp";
+import {
+    googleServiceUnavailableMessage,
+    isGoogleServiceAvailable,
+} from "./googleAvailability";
 
 const GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
@@ -124,6 +128,23 @@ export class GoogleDriveAuthRequiredError extends GoogleDriveUserError {
 }
 
 /**
+ * The operator switched Drive off for the whole deployment
+ * (GOOGLE_WORKSPACE_DISABLED_PROVIDERS). Not a setup problem the user can
+ * fix; an existing connection stays only so the user can delete it.
+ */
+export class GoogleDriveUnavailableError extends GoogleDriveUserError {
+    code = "connector_unavailable";
+    constructor() {
+        super(googleServiceUnavailableMessage("google-drive"));
+    }
+}
+
+function assertGoogleDriveAvailable(): void {
+    if (!isGoogleServiceAvailable("google-drive"))
+        throw new GoogleDriveUnavailableError();
+}
+
+/**
  * The integration reuses the Google OAuth client configured for MCP
  * connectors when a dedicated one isn't set — one Cloud Console setup serves
  * both features.
@@ -169,6 +190,7 @@ export async function startGoogleDriveOAuth(
     redirectUri: string,
     db: Db = createServerSupabase(),
 ): Promise<{ authorizationUrl: string }> {
+    assertGoogleDriveAvailable();
     const env = await googleDriveOAuthEnv();
     if (!env.clientId || !env.clientSecret) {
         throw new ConnectorSetupError(
@@ -419,6 +441,7 @@ export async function getGoogleDriveStatus(
 ): Promise<GoogleDriveStatus> {
     const env = await googleDriveOAuthEnv();
     const configured = !!(env.clientId && env.clientSecret);
+    const available = isGoogleServiceAvailable("google-drive");
     let row: TokenRow | null;
     try {
         row = await loadTokenRow(userId, db);
@@ -435,12 +458,13 @@ export async function getGoogleDriveStatus(
                 connected: false,
                 scope: null,
                 configured,
+                available,
                 schemaReady: false,
                 enabled: true,
                 writeEnabled: false,
                 requireWriteApproval: false,
                 readOnly: false,
-                pickerAvailable: await googleDrivePickerAvailable(null),
+                pickerAvailable: available && await googleDrivePickerAvailable(null),
                 tools: googleDriveToolList(null),
             };
         }
@@ -450,12 +474,13 @@ export async function getGoogleDriveStatus(
         connected: !!row?.encrypted_access_token,
         scope: row?.scope ?? null,
         configured,
+        available,
         schemaReady: true,
         enabled: row?.enabled !== false,
         writeEnabled: hasDriveWriteAccess(row),
         requireWriteApproval: row?.require_write_approval !== false,
         readOnly: row?.read_only === true,
-        pickerAvailable: await googleDrivePickerAvailable(row),
+        pickerAvailable: available && await googleDrivePickerAvailable(row),
         ...(row?.grant_id ? { grantId: row.grant_id } : {}),
         ...(row?.account_email ? { accountEmail: row.account_email } : {}),
         tools: googleDriveToolList(row),
@@ -714,6 +739,7 @@ export async function createGoogleDrivePickerSession(
     userId: string,
     db: Db = createServerSupabase(),
 ): Promise<GoogleDrivePickerSession> {
+    assertGoogleDriveAvailable();
     const { developerKey, appId } = await googleDrivePickerEnv();
     if (!developerKey || !appId) throw new GoogleDrivePickerUnavailableError();
     const row = await loadTokenRow(userId, db);
@@ -1043,6 +1069,7 @@ async function resolveDriveWrite(
     args: unknown,
     db: Db,
 ) {
+    assertGoogleDriveAvailable();
     const parsed = parseDriveWrite(name, args);
     const row = await loadTokenRow(userId, db);
     if (!row?.encrypted_access_token) throw new GoogleDriveAuthRequiredError();
@@ -1193,6 +1220,9 @@ export async function buildGoogleDriveTools(
     userId: string,
     db: Db = createServerSupabase(),
 ): Promise<unknown[]> {
+    // A switched-off service has no tools, even for a user who connected it
+    // before the switch; the grant stays until they delete it.
+    if (!isGoogleServiceAvailable("google-drive")) return [];
     try {
         const row = await loadTokenRow(userId, db);
         if (!row?.encrypted_access_token || row.enabled === false) return [];
@@ -1237,6 +1267,7 @@ export async function executeGoogleDriveToolCall(
     db: Db = createServerSupabase(),
 ): Promise<{ content: string; event: McpToolEvent }> {
     try {
+        assertGoogleDriveAvailable();
         if (driveWriteTool(toolName)) {
             const { row, args: parsed } = await resolveDriveWrite(
                 userId,

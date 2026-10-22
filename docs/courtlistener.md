@@ -24,7 +24,7 @@ object-storage data before falling back to CourtListener's API:
 
 If bulk data has not been imported, leave
 `COURTLISTENER_BULK_DATA_ENABLED=false`. Live CourtListener tools still work
-with a valid token.
+with a user's or organization's token.
 
 ## Troubleshooting
 
@@ -38,5 +38,5 @@ If bulk lookup does not return local results, confirm that:
 - both CourtListener index tables contain data; and
 - opinion JSON exists beneath `courtlistener/opinions/by-cluster/` in object storage.
 
-Mike falls back to the live API when local bulk data is unavailable and a token
-is configured.
+Mike falls back to the live API when local bulk data is unavailable and the
+user or their organization has saved a token.

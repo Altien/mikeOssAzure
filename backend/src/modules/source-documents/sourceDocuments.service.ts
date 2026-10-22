@@ -10,7 +10,10 @@
 // vocabulary does not carry.
 
 import type { Db } from "../../lib/supabase";
-import { getCourtlistenerCaseOpinions } from "../../lib/courtlistener";
+import {
+  COURTLISTENER_TOKEN_REQUIRED_MESSAGE,
+  getCourtlistenerCaseOpinions,
+} from "../../lib/courtlistener";
 import { getUserModelSettings } from "../user/user.service";
 import {
   caseClusterId,
@@ -36,7 +39,7 @@ export const COURTLISTENER_CREDENTIAL_DETAIL =
 function isCourtlistenerCredentialError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : "";
   return (
-    message.includes("COURTLISTENER_API_TOKEN must be set") ||
+    message === COURTLISTENER_TOKEN_REQUIRED_MESSAGE ||
     message.startsWith("CourtListener error (401") ||
     message.startsWith("CourtListener error (403")
   );

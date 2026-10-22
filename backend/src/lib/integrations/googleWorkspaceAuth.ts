@@ -12,6 +12,10 @@ import {
 } from "../mcp/client";
 import { resolveProviderSecret } from "../envSecrets";
 import { googleDriveOAuthEnv } from "./googleDrive";
+import {
+  googleServiceUnavailableMessage,
+  isGoogleServiceAvailable,
+} from "./googleAvailability";
 import { ConnectorSetupError } from "../mcp/errors";
 import { googleDriveRequest } from "./googleDriveHttp";
 import {
@@ -39,35 +43,14 @@ export const GOOGLE_PROVIDERS = {
 export class GoogleWorkspaceError extends Error {}
 /** The operator has switched this service off for the whole deployment. */
 export class GoogleWorkspaceUnavailableError extends GoogleWorkspaceError {}
-/**
- * Services the operator has switched off with
- * GOOGLE_WORKSPACE_DISABLED_PROVIDERS, a comma-separated list of provider
- * ids ("gmail", "google-calendar"). A hosted deployment uses it to offer only
- * the services whose Google scopes its Cloud project has verified, so the
- * consent screen, the Console and the running code keep requesting the same
- * scopes. Unknown ids are reported and ignored rather than disabling nothing
- * silently or taking every service down.
- */
-export function disabledWorkspaceProviders(): GoogleProvider[] {
-  const ids = (process.env.GOOGLE_WORKSPACE_DISABLED_PROVIDERS ?? "")
-    .split(",")
-    .map((id) => id.trim())
-    .filter(Boolean);
-  const unknown = ids.filter((id) => !(id in GOOGLE_PROVIDERS));
-  if (unknown.length)
-    console.error("[google-workspace] unknown provider ids in GOOGLE_WORKSPACE_DISABLED_PROVIDERS", {
-      unknown,
-      known: Object.keys(GOOGLE_PROVIDERS),
-    });
-  return ids.filter((id): id is GoogleProvider => id in GOOGLE_PROVIDERS);
-}
+/** See GOOGLE_WORKSPACE_DISABLED_PROVIDERS in ./googleAvailability. */
 export function isWorkspaceProviderAvailable(provider: GoogleProvider): boolean {
-  return !disabledWorkspaceProviders().includes(provider);
+  return isGoogleServiceAvailable(provider);
 }
 export function assertWorkspaceProviderAvailable(provider: GoogleProvider): void {
   if (!isWorkspaceProviderAvailable(provider))
     throw new GoogleWorkspaceUnavailableError(
-      `${GOOGLE_PROVIDERS[provider].name} is not offered on this Mike server.`,
+      googleServiceUnavailableMessage(provider),
     );
 }
 export function googleWorkspaceSetupInstructions(
