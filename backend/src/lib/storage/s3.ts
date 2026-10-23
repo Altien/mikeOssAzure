@@ -157,10 +157,13 @@ export function createS3StorageAdapter(options: S3StorageOptions = {}): StorageA
     async downloadFile(key, signal) {
       const abortSignal = storageDownloadSignal(signal);
       abortSignal.throwIfAborted();
-      const response = (await client().send(
-        new GetObjectCommand({ Bucket: bucket, Key: key }),
-        { abortSignal },
-      )) as any;
+      let response: any;
+      try {
+        response = await client().send(new GetObjectCommand({ Bucket: bucket, Key: key }), { abortSignal });
+      } catch (error) {
+        if ((error as { name?: unknown } | null)?.name === "NoSuchKey") return null;
+        throw error;
+      }
       if (!response.Body) return null;
       const stop = () => response.Body.destroy?.(abortSignal.reason);
       abortSignal.addEventListener("abort", stop, { once: true });

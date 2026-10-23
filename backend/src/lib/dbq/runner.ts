@@ -185,7 +185,7 @@ async function runClaimedJob(
             null,
             retryUntilSuccess ? new Date(Date.now() + 60_000).toISOString() : null,
         );
-        const unknownKind = new Error(`Unknown db_jobs kind: ${job.kind}`);
+        const unknownKind = new AppError("dbq.unknown_job_kind", `Unknown db_jobs kind: ${job.kind}`);
         reportError(unknownKind, {
             tags: { component: "dbq", job_kind: job.kind },
             extra: { job_id: job.id },
@@ -213,7 +213,7 @@ async function runClaimedJob(
         }
     };
     try {
-        if (!handler) throw new Error(`unknown job kind: ${job.kind}`);
+        if (!handler) throw new AppError("dbq.unknown_job_kind", `unknown job kind: ${job.kind}`);
         const result = await handler(db, job);
         unpublishedResult = result;
         clearInterval(heartbeat);

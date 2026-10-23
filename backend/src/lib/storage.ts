@@ -13,7 +13,7 @@
  */
 
 import { AppError, type ErrorKind } from "./appError";
-import { bestEffort, reportError } from "./observability/sentry";
+import { bestEffort } from "./observability/sentry";
 import { safeErrorLog } from "./safeError";
 import { createConfiguredStorageAdapter } from "./storage/configured";
 import { StorageCopyInvariantError } from "./storage/adapter";
@@ -88,15 +88,6 @@ export class StorageOperationError extends AppError {
  * event, then log the SAME object: the console bridge recognises a reported
  * error and files no second, context-free "Failure in application".
  */
-function absorbStorageFailure(
-  failure: AppError,
-  label: string,
-  key: string,
-): void {
-  reportError(failure, { tags: { component: "storage" } });
-  void label; void key; // SDK causes stay in the scrubbed report, never raw local logs.
-}
-
 function requireStorageConfig(): void {
   if (!adapter.enabled) {
     throw new Error(adapter.configurationHint);
@@ -158,16 +149,14 @@ export async function getSignedUploadUrl(
       expiresIn,
     );
   } catch (error) {
-    absorbStorageFailure(
-      new AppError(
-        "storage.signed_url_failed",
-        "Object storage signed upload URL failed",
-        { cause: error },
-      ),
-      "getSignedUploadUrl",
-      key,
+    // Thrown once with the SDK's own code on the cause; the route that
+    // answers reports it. Logging and returning null here filed the failure
+    // twice: once from storage, once from the caller's cause-less throw.
+    throw new AppError(
+      "storage.signed_url_failed",
+      "Object storage signed upload URL failed",
+      { cause: error },
     );
-    return null;
   }
 }
 
@@ -211,12 +200,10 @@ export async function downloadFile(key: string, signal?: AbortSignal): Promise<A
   try {
     return signal ? await adapter.downloadFile(key, signal) : await adapter.downloadFile(key);
   } catch (error) {
-    absorbStorageFailure(
-      new StorageOperationError("download", { cause: error }),
-      "downloadFile",
-      key,
-    );
-    return null;
+    // null is "not there" (the adapters translate a missing object); a
+    // transport or permission failure is thrown so the caller's handler
+    // reports it once, with the store's own code on the cause.
+    throw new StorageOperationError("download", { cause: error });
   }
 }
 
@@ -343,14 +330,10 @@ export async function getSignedUrl(
       downloadFilename,
     );
   } catch (error) {
-    absorbStorageFailure(
-      new AppError(
-        "storage.signed_url_failed",
-        "Object storage signed URL failed",
-        { cause: error },
-      ),
-      "getSignedUrl",
-      key,
+    throw new AppError(
+      "storage.signed_url_failed",
+      "Object storage signed URL failed",
+      { cause: error },
     );
     return null;
   }
