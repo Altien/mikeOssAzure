@@ -1,3 +1,4 @@
+import { resolveWorkspaceFilter } from "../../lib/workspace";
 // exportJobs — implementation behind the module facade.
 // Handlers for the DB queue. Every handler runs with at-least-once
 // semantics: it must be idempotent, and it signals "retry me" by throwing.
@@ -21,7 +22,9 @@ import { downloadFilenameForVersion, loadActiveVersion } from "../../lib/documen
 import { downloadFile, uploadFile } from "../../lib/storage";
 import { type Db, type DbJob } from "../../lib/dbq/types";
 import { buildMemoryArchive } from "../../lib/memory/archive";
-import { JsonExportType, MAX_ZIP_EXPORT_DOCUMENTS, ExportType, EXPORT_TYPES } from "./user.exportContracts";
+import { NonRetryableJobError } from "../../lib/dbq/runner";
+import { memberDataActionAllowed } from "../orgs/orgs.service";
+import { JsonExportType, MAX_ZIP_EXPORT_DOCUMENTS, ExportType, EXPORT_TYPES, isWorkspaceExportType } from "./user.exportContracts";
 
 /** One finished artifact, ready to park in storage. */
 type ExportArtifact = {
@@ -42,16 +45,17 @@ async function buildJsonExport(
     userId: string,
     userEmail: string | null,
     type: JsonExportType,
+    orgId: string | null,
 ): Promise<ExportArtifact> {
     const data =
         type === "account"
-            ? await buildUserAccountExport(db, userId, userEmail)
+            ? await buildUserAccountExport(db, userId, userEmail, orgId)
             : type === "chats"
-              ? await buildUserChatsExport(db, userId, userEmail)
-              : await buildUserTabularReviewsExport(db, userId, userEmail);
+              ? await buildUserChatsExport(db, userId, userEmail, orgId)
+              : await buildUserTabularReviewsExport(db, userId, userEmail, orgId);
     return {
         body: Buffer.from(JSON.stringify(data, null, 2), "utf8"),
-        filename: userExportFilename(type, userId),
+        filename: userExportFilename(type, userId, orgId),
         contentType: "application/json",
     };
 }
@@ -158,10 +162,13 @@ async function buildMemoryZipExport(
     db: Db,
     userId: string,
     userEmail: string | null,
+    orgId: string | null,
 ): Promise<ExportArtifact> {
     return {
-        body: await buildMemoryArchive(db, userId, userEmail),
-        filename: "mike-memory-export.zip",
+        body: await buildMemoryArchive(db, userId, userEmail, orgId),
+        filename: orgId
+            ? `mike-memory-export-${orgId.slice(0, 8)}.zip`
+            : "mike-memory-export.zip",
         contentType: "application/zip",
     };
 }
@@ -176,6 +183,7 @@ export async function handleExportBuild(
         throw new Error(`[export.build] malformed payload on job ${job.id}`);
     }
     const userEmail = (job.payload.userEmail as string | undefined) ?? null;
+    const orgId = await workspaceExportOrgId(db, job, userId, type);
 
     const artifact =
         type === "audit-csv"
@@ -183,13 +191,14 @@ export async function handleExportBuild(
             : type === "documents-zip"
               ? await buildDocumentsZipExport(db, job, userId, userEmail)
               : type === "memory-zip"
-                ? await buildMemoryZipExport(db, userId, userEmail)
-              : await buildJsonExport(db, userId, userEmail, type);
+                ? await buildMemoryZipExport(db, userId, userEmail, orgId)
+              : await buildJsonExport(db, userId, userEmail, type, orgId);
 
     // Path is namespaced under the user (account erasure purges the prefix)
     // and keyed by job id (a re-run overwrites its own artifact — idempotent).
     const storagePath = `exports/${userId}/${job.id}-${artifact.filename}`;
     const body = artifact.body;
+    await workspaceExportOrgId(db, job, userId, type);
     await uploadFile(
         storagePath,
         body.buffer.slice(
@@ -206,6 +215,7 @@ export async function handleExportBuild(
         await recordAudit(db, {
             userId,
             userEmail,
+            orgId,
             action: "export.memory",
             surface: "account",
         });
@@ -213,6 +223,7 @@ export async function handleExportBuild(
         await recordAudit(db, {
             userId,
             userEmail,
+            orgId,
             action: JSON_EXPORT_AUDIT_ACTIONS[type],
             surface: "account",
         });
@@ -227,4 +238,18 @@ export async function handleExportBuild(
         filename: artifact.filename,
         content_type: artifact.contentType,
     };
+}
+
+async function workspaceExportOrgId(db: Db, job: DbJob, userId: string, type: ExportType): Promise<string | null> {
+    if (!isWorkspaceExportType(type)) return null;
+    // Legacy jobs mean Personal, never every workspace.
+    const raw = job.payload.orgId;
+    if (raw !== undefined && raw !== null && typeof raw !== "string")
+        throw new NonRetryableJobError("Invalid export workspace");
+    const resolved = await resolveWorkspaceFilter(db, userId, raw ?? "personal");
+    if (!resolved.ok) throw new NonRetryableJobError("Export workspace is unavailable");
+    const orgId = resolved.workspace === "personal" ? null : resolved.workspace;
+    if (orgId && !(await memberDataActionAllowed(db, userId, orgId, "export")))
+        throw new NonRetryableJobError("Exports are not allowed in this workspace");
+    return orgId;
 }

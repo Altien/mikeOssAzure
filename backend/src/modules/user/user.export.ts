@@ -1,3 +1,6 @@
+import { memberDataActionAllowed } from "../orgs/orgs.service";
+import { resolveWorkspaceFilter } from "../../lib/workspace";
+import { isWorkspaceExportType } from "./user.exportContracts";
 // Data export: scheduling the durable export jobs, polling their status and
 // loading the finished artifact.
 //
@@ -98,14 +101,15 @@ export async function startUserExport(
     if (orgId && !(await canReadOrgAudit(db, userId, orgId)))
         return { ok: false, forbidden: true, detail: "Only organization owners and admins can export its audit log." };
     try {
-        // Deduped per (user, type) for the whole-account exports: double
+        // Deduped per (user, type, workspace) for the Settings exports: double
         // clicks and impatient retries collapse into the already-running
         // build. The filtered exports opt out — two requests differing
         // only in their filters or selection are different artifacts.
+        // Each workspace's export is its own artifact.
         const dedupeKey =
             type === "audit-csv" || type === "documents-zip"
                 ? undefined
-                : `export:${userId}:${type}`;
+                : `export:${userId}:${type}:${typeof payload.orgId === "string" ? payload.orgId : "personal"}`;
         const out = await enqueueDbJob(db, {
             kind: "export.build",
             payload,
@@ -142,6 +146,15 @@ async function loadOwnExportJob(
         return null;
     const orgId = (job.payload as { query?: AuditQuery })?.query?.orgId;
     if (orgId && !(await canReadOrgAudit(db, userId, orgId))) return null;
+    const payload = job.payload as { type?: ExportType; orgId?: unknown };
+    if (!payload.type || !EXPORT_TYPES.includes(payload.type)) return null;
+    if (isWorkspaceExportType(payload.type)) {
+        if (payload.orgId !== undefined && payload.orgId !== null && typeof payload.orgId !== "string") return null;
+        const scope = await resolveWorkspaceFilter(db, userId, payload.orgId ?? "personal");
+        if (!scope.ok) return null;
+        const workspaceOrg = scope.workspace === "personal" ? null : scope.workspace;
+        if (workspaceOrg && !(await memberDataActionAllowed(db, userId, workspaceOrg, "export"))) return null;
+    }
     return job as Pick<DbJob, "id" | "status" | "result">;
 }
 
@@ -194,6 +207,7 @@ export async function loadUserExportArtifact(
     if (!storagePath) return { ok: false, kind: "not_found" };
     const raw = await downloadFile(storagePath);
     if (!raw) return { ok: false, kind: "expired" };
+    if (!(await loadOwnExportJob(db, exportId, userId))) return { ok: false, kind: "not_found" };
     // Artifacts are no longer all JSON (CSV, zip). The builder records the
     // type it produced; the default covers jobs finished before it did.
     return {

@@ -54,6 +54,7 @@ import {
     deleteAccount,
     deleteAllChats,
     deleteAllMemories,
+    setOrgMemberDataPolicy,
     deleteAllProjects,
     deleteAllTabularReviews,
     deleteChat,
@@ -2514,6 +2515,17 @@ describe("thin endpoint wrappers", () => {
             call: () => deleteAllMemories("org-1"),
             url: "/user/memories?workspace=org-1",
             method: "DELETE",
+        },
+        {
+            name: "setOrgMemberDataPolicy",
+            call: () =>
+                setOrgMemberDataPolicy("org-1", {
+                    allow_member_exports: true,
+                    allow_member_deletes: false,
+                }),
+            url: "/orgs/org-1/member-data-policy",
+            method: "PUT",
+            body: { allow_member_exports: true, allow_member_deletes: false },
         },
         {
             name: "getUserMemory",
