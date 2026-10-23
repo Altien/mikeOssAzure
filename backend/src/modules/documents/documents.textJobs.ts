@@ -1,9 +1,11 @@
+import { setOperation } from "../../lib/observability/sentry";
 // Compatibility entrypoint for existing precompute jobs; canonical revision-aware text owns publication.
 import type { Db, DbJob } from "../../lib/dbq/types";
 import { requiresLibreOfficeTextExtraction } from "../../lib/documentTypes";
 import { processDocumentTextInline } from "./documents.indexing";
 
 export async function handleDocumentPrecomputeText(db: Db, job: DbJob): Promise<void> {
+  setOperation("documents.precompute_text");
   const { versionId, storagePath, fileType } = job.payload;
   if (typeof versionId !== "string" || typeof storagePath !== "string" || typeof fileType !== "string" || !requiresLibreOfficeTextExtraction(fileType)) return;
   if (!job.claim_token) throw new Error("Document precompute job has no claim fence");

@@ -13,6 +13,8 @@ import { DEFAULT_WEB_SEARCH_SETTINGS, type WebSearchSettings } from "../../lib/w
 import { safeError } from "../../lib/safeError";
 import { getEffectiveRouterModels, ROUTER_SLUGS, type RouterModelSelections } from "../../lib/routerModels";
 import { normalizeOptionalModelPreference, normalizeReasoningLevel } from "../../lib/modelSelection";
+import { AppError } from "../../lib/appError";
+import { reportError } from "../../lib/observability/sentry";
 
 export type UserModelSettings = {
     /** Existing internal title helper for Altien skill paths. */
@@ -63,6 +65,25 @@ function fallbackTitleModel(apiKeys: UserApiKeys, routerModels: RouterModelSelec
     return DEFAULT_TITLE_MODEL;
 }
 
+/**
+ * `options.orgId` is the organization the work belongs to, when it belongs
+ * to one: the keys it runs on are then the organization's, with a member's
+ * own keys beneath them only if the organization allows that (see
+ * getEffectiveApiKeys), and the saved model preferences are judged against
+ * the lists that govern those keys (getEffectiveRouterModels). Everything
+ * else here is the person's own, whichever workspace they are in.
+ */
+/**
+ * A settings read that fell back to its default. The chat goes ahead, so this
+ * is a warning; the failed query is the cause so its code still extracts, and
+ * the same object is logged once (the console bridge knows it is reported).
+ */
+function reportSettingsReadFailure(message: string, error: unknown): void {
+    const failure = new AppError("db.query_failed", message, { cause: error });
+    reportError(failure, { level: "warning" });
+    console.error(`[user-settings] ${message}`, safeError(failure));
+}
+
 export async function getUserModelSettings(
     userId: string,
     db?: Db,
@@ -89,21 +110,15 @@ export async function getUserModelSettings(
         getEffectiveRouterModels(userId, options.orgId, client),
         // Instructions are an enhancement: a failed read must not block chat.
         loadCustomInstructions(client, userId).catch((error: unknown) => {
-            console.error(
-                "[user-settings] custom instructions load failed",
-                safeError(error),
-            );
+            reportSettingsReadFailure("custom instructions load failed", error);
             return "";
         }),
         loadResponseStyle(client, userId).catch((error: unknown) => {
-            console.error(
-                "[user-settings] response style load failed",
-                safeError(error),
-            );
+            reportSettingsReadFailure("response style load failed", error);
             return DEFAULT_RESPONSE_STYLE;
         }),
         loadWebSearchSettings(client, userId).catch((error: unknown) => {
-            console.error("[user-settings] web search settings load failed", safeError(error));
+            reportSettingsReadFailure("web search settings load failed", error);
             return DEFAULT_WEB_SEARCH_SETTINGS;
         }),
         // The CourtListener switch is per workspace, like the connector.
@@ -112,10 +127,7 @@ export async function getUserModelSettings(
             { userId, orgId: options.orgId ?? null },
             client,
         ).catch((error: unknown) => {
-            console.error(
-                "[user-settings] CourtListener connection load failed",
-                safeError(error),
-            );
+            reportSettingsReadFailure("CourtListener connection load failed", error);
             return { enabled: false, token: null };
         }),
     ]);

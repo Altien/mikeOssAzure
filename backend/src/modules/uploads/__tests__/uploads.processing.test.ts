@@ -34,6 +34,8 @@ vi.mock("../../../lib/pdfText", async (importOriginal) => ({
 vi.mock("../../../lib/observability/sentry", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../lib/observability/sentry")>()),
   reportError: mocks.reportError,
+  setOperation: mocks.setOperation,
+  markStage: mocks.markStage,
 }));
 
 vi.mock("../../../lib/storage", async (importOriginal) => {

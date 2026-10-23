@@ -13,7 +13,7 @@
  */
 
 import { AppError, type ErrorKind } from "./appError";
-import { bestEffort } from "./observability/sentry";
+import { bestEffort, reportError } from "./observability/sentry";
 import { safeErrorLog } from "./safeError";
 import { createConfiguredStorageAdapter } from "./storage/configured";
 import { StorageCopyInvariantError } from "./storage/adapter";
@@ -81,6 +81,21 @@ export class StorageOperationError extends AppError {
   }
 }
 
+/**
+ * A storage failure this facade absorbs: the caller gets null, as it does
+ * when storage is not configured, so nothing above reports it. Report it
+ * here, once, with the operation (and the SDK's code via the cause) on the
+ * event, then log the SAME object: the console bridge recognises a reported
+ * error and files no second, context-free "Failure in application".
+ */
+function absorbStorageFailure(
+  failure: AppError,
+  label: string,
+  key: string,
+): void {
+  reportError(failure, { tags: { component: "storage" } });
+  void label; void key; // SDK causes stay in the scrubbed report, never raw local logs.
+}
 
 function requireStorageConfig(): void {
   if (!adapter.enabled) {
@@ -143,7 +158,15 @@ export async function getSignedUploadUrl(
       expiresIn,
     );
   } catch (error) {
-    console.error("[storage] getSignedUploadUrl failed", { key, error: safeErrorLog(error) });
+    absorbStorageFailure(
+      new AppError(
+        "storage.signed_url_failed",
+        "Object storage signed upload URL failed",
+        { cause: error },
+      ),
+      "getSignedUploadUrl",
+      key,
+    );
     return null;
   }
 }
@@ -156,7 +179,8 @@ export async function headFile(
   try {
     return await adapter.headFile(key);
   } catch (error) {
-    console.error("[storage] headFile failed", { key, error: safeErrorLog(error) });
+    // Thrown, not logged: the caller that catches this reports it, and a
+    // console line here filed the same failure a second time.
     throw new StorageOperationError("HEAD", { cause: error });
   }
 }
@@ -187,10 +211,11 @@ export async function downloadFile(key: string, signal?: AbortSignal): Promise<A
   try {
     return signal ? await adapter.downloadFile(key, signal) : await adapter.downloadFile(key);
   } catch (error) {
-    console.error("[storage] downloadFile failed", {
+    absorbStorageFailure(
+      new StorageOperationError("download", { cause: error }),
+      "downloadFile",
       key,
-      error: safeErrorLog(error),
-    });
+    );
     return null;
   }
 }
@@ -214,7 +239,7 @@ export function createFileReadStream(key: string): Readable {
           yield chunk;
         }
       } catch (error) {
-        console.error("[storage] createFileReadStream failed", { key, error: safeErrorLog(error) });
+        // Thrown, not logged (see headFile).
         if (error instanceof StorageOperationError) throw error;
         throw new StorageOperationError("download", { cause: error });
       }
@@ -318,10 +343,15 @@ export async function getSignedUrl(
       downloadFilename,
     );
   } catch (error) {
-    console.error("[storage] getSignedUrl failed", {
+    absorbStorageFailure(
+      new AppError(
+        "storage.signed_url_failed",
+        "Object storage signed URL failed",
+        { cause: error },
+      ),
+      "getSignedUrl",
       key,
-      error: safeErrorLog(error),
-    });
+    );
     return null;
   }
 }

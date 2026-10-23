@@ -1,5 +1,6 @@
 import { UserFacingError } from "../safeError";
-import { asInvalidApiKeyError } from "./apiKeyErrors";
+import type { ErrorKind } from "../appError";
+import { asInvalidApiKeyError, InvalidApiKeyError } from "./apiKeyErrors";
 
 type ProviderContext = { label: string; modelId: string };
 
@@ -9,12 +10,19 @@ type ApiCallErrorLike = Error & { statusCode: number; responseBody?: string };
 // APICallError / RetryError classes. Retried failures (e.g. 429s) arrive as a
 // RetryError whose status code lives on `lastError`.
 function findApiCallError(error: unknown): ApiCallErrorLike | null {
-  if (!(error instanceof Error)) return null;
-  if (typeof (error as Partial<ApiCallErrorLike>).statusCode === "number") {
-    return error as ApiCallErrorLike;
+  const seen = new Set<object>();
+  const pending: unknown[] = [error];
+  for (let depth = 0; pending.length && depth < 12; depth++) {
+    const current = pending.shift();
+    if (!current || typeof current !== "object" || seen.has(current)) continue;
+    seen.add(current);
+    // AI SDK APICallError and Azure RestError expose numeric statusCode.
+    const item = current as { statusCode?: unknown; responseBody?: unknown; cause?: unknown; lastError?: unknown };
+    if (current instanceof Error && typeof item.statusCode === "number" && Number.isInteger(item.statusCode) && item.statusCode >= 100 && item.statusCode <= 599) return current as ApiCallErrorLike;
+    if (item.cause) pending.push(item.cause);
+    if (item.lastError) pending.push(item.lastError);
   }
-  const lastError = (error as { lastError?: unknown }).lastError;
-  return lastError === undefined ? null : findApiCallError(lastError);
+  return null;
 }
 
 /**
@@ -24,15 +32,8 @@ function findApiCallError(error: unknown): ApiCallErrorLike | null {
 export function providerFailureResponse(
   error: unknown,
 ): { status: number; body: string } | null {
-  let current = error;
-  while (current) {
-    const apiError = findApiCallError(current);
-    if (apiError) {
-      return { status: apiError.statusCode, body: apiError.responseBody ?? "" };
-    }
-    current = (current as { cause?: unknown }).cause;
-  }
-  return null;
+  const apiError = findApiCallError(error);
+  return apiError ? { status: apiError.statusCode, body: typeof apiError.responseBody === "string" ? apiError.responseBody : "" } : null;
 }
 
 /**
@@ -43,6 +44,58 @@ export function providerFailureResponse(
 export function providerFailureStatus(error: unknown): number | null {
   return findApiCallError(error)?.statusCode ?? null;
 }
+
+const NETWORK_FAILURE_CODES = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "ENOTFOUND",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "EAI_AGAIN",
+  "EPIPE",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
+
+function isNetworkFailure(error: unknown): boolean {
+  let current = error;
+  for (let depth = 0; depth < 8 && current && typeof current === "object"; depth++) {
+    const { code, message } = current as { code?: unknown; message?: unknown };
+    if (typeof code === "string" && NETWORK_FAILURE_CODES.has(code)) return true;
+    if (message === "fetch failed") return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+/**
+ * The `error_kind` a failed model call reports under: what the provider did,
+ * not what we did with it. Rejected key or forbidden model, rate limit,
+ * outage or unreachable (5xx, a stalled stream, a network failure), else the
+ * generic stream failure. Read off the cause chain, so the error returned by
+ * toProviderStreamError (a UserFacingError around the API error) classifies
+ * the same as the API error itself.
+ */
+export function providerFailureKind(error: unknown): ErrorKind {
+  for (let current = error, depth = 0; current && depth < 8; depth++) {
+    if (current instanceof InvalidApiKeyError) return "chat.provider_rejected";
+    current = (current as { cause?: unknown }).cause;
+  }
+  const response = providerFailureResponse(error);
+  if (response) {
+    if (response.status === 401 || response.status === 403) return "chat.provider_rejected";
+    if (response.status === 429) return "chat.provider_rate_limited";
+    if (response.status >= 500) return "chat.provider_unavailable";
+    return "chat.stream_failed";
+  }
+  if (asProviderStallError(error, { label: "", modelId: "" }) || isNetworkFailure(error)) {
+    return "chat.provider_unavailable";
+  }
+  return "chat.stream_failed";
+}
+
 
 // "The" rather than "your" key: requiredKey() may fall back to the
 // deployment's key, as noted on InvalidApiKeyError.

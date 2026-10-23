@@ -6,7 +6,15 @@ const deleteFile = vi.fn<(key: string) => Promise<void>>(async () => {});
 vi.mock("../../storage", () => ({
     deleteFile: (key: string) => deleteFile(key),
 }));
+const reportError = vi.hoisted(() => vi.fn());
+vi.mock("../../observability/sentry", async (importOriginal) => {
+    const actual =
+        await importOriginal<typeof import("../../observability/sentry")>();
+    reportError.mockImplementation(actual.reportError);
+    return { ...actual, reportError };
+});
 
+import { diagnosticErrorTags } from "../../observability/sentryPrivacy";
 import { enqueueDbJob, enqueueStorageCleanup } from "../enqueue";
 
 // db double: insert(...).select(...).single() resolves `insertResult`;
@@ -49,7 +57,10 @@ function makeDb(opts: {
     return { inserts, from };
 }
 
-beforeEach(() => deleteFile.mockClear());
+beforeEach(() => {
+    deleteFile.mockClear();
+    reportError.mockClear();
+});
 
 describe("enqueueDbJob", () => {
     it("inserts the job and returns its id", async () => {
@@ -84,6 +95,26 @@ describe("enqueueDbJob", () => {
             dedupeKey: "export:u:account",
         });
         expect(out).toEqual({ id: "live-1", deduped: true });
+    });
+
+    // The thrown error names the kind and keeps PostgREST's answer as the
+    // cause, so the caller that reports it gets the SQLSTATE as failure_code
+    // instead of a bare "[dbq] enqueue ... failed" string.
+    it("throws a dbq.enqueue_failed error carrying the PostgREST cause", async () => {
+        const pgError = { code: "42P01", message: "relation db_jobs does not exist" };
+        const db = makeDb({ insertResult: { data: null, error: pgError } });
+        const thrown = await enqueueDbJob(db as never, {
+            kind: "export.build",
+            payload: {},
+        }).catch((error: unknown) => error);
+        expect(thrown).toMatchObject({
+            message: expect.stringContaining("enqueue export.build failed"),
+            cause: pgError,
+        });
+        expect(diagnosticErrorTags(thrown)).toEqual({
+            error_kind: "dbq.enqueue_failed",
+            failure_code: "42P01",
+        });
     });
 
     it("throws on real insert failures so callers can fall back", async () => {

@@ -1,3 +1,5 @@
+import { AppError } from "../../lib/appError";
+import { reportError, setOperation } from "../../lib/observability/sentry";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import { getConfig } from "../../lib/config";
@@ -27,11 +29,16 @@ import { describeAuthProviderError, describeAuthValidationIssues } from "./auth.
 
 function authError(res: Response, error: unknown, fallback: string) {
   const wire = describeAuthProviderError(error, fallback);
-  if (wire.status >= 500) console.error("[auth] provider failure", error);
+  if (wire.status >= 500) reportError(new AppError("auth.session_lookup_failed", "Authentication provider failed", { cause: error }), { tags: { component: "http", http_status: wire.status } });
   res.status(wire.status).json({ code: wire.code, detail: wire.detail });
 }
 
 export const authRouter = Router();
+// Dev auth uses Entra/local opaque sessions and backend PKCE; only diagnostic identity is adopted.
+authRouter.use((req, _res, next) => {
+  setOperation(req.path.startsWith("/mfa/") ? "auth.mfa" : req.path.includes("handoff") ? "auth.handoff" : req.path === "/signup" ? "auth.signup" : ["/login", "/oauth", "/exchange", "/entra", "/callback"].includes(req.path) ? "auth.signin" : "auth.session");
+  next();
+});
 authRouter.use(requireTrustedOrigin);
 const OAUTH_NONCE_COOKIE = "mike-oauth-browser";
 

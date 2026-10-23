@@ -1,3 +1,5 @@
+import { AppError } from "../../lib/appError";
+import { setOperation } from "../../lib/observability/sentry";
 import { createHash } from "node:crypto";
 import { downloadFile } from "../../lib/storage";
 import { EXTRACTION_MAX_BYTES, ExtractionBusyError, ExtractionLimitError, withBackgroundExtraction } from "../../lib/extraction/isolated";
@@ -9,6 +11,7 @@ export { extractDocumentText } from "../../lib/extraction/documentText";
 
 /** Final202 adapter: canonical queue ownership surrounds isolated parsing, not replaced by it. */
 export async function handleDocumentExtractText(db: Db, job: DbJob): Promise<void> {
+  setOperation("documents.extract");
   const { versionId, revision } = job.payload;
   if (typeof versionId !== "string" || typeof revision !== "string" || !job.claim_token) return;
   const identity = { p_job_id: job.id, p_attempt: job.attempts, p_token: job.claim_token,

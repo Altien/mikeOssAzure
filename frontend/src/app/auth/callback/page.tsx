@@ -36,6 +36,7 @@ function describeCallbackError(
         action,
         codeMessages: CALLBACK_ERROR_MESSAGES,
         fallback: LINK_SPENT_MESSAGE,
+        operation: "auth.session",
     });
     const linkIsSpent =
         described.status !== null &&

@@ -57,3 +57,8 @@ and Node diagnostic code. The console bridge drops Node's printed warning line
 because the warning object has already been captured through the backend's
 request-scoped Sentry reporter. Operators can silence Node warning reports
 with --no-warnings or NODE_NO_WARNINGS=1.
+
+
+### Operation and cause identity (46dc4b5c)
+
+Requests and isolated background jobs name their operation; typed AppError failures carry a kind and preserve their real cause. Diagnostic transport keeps only bounded source vocabulary/code/status and scrubbed stacks, never error text, provider bodies, credentials, or document content. Dev keeps its configured telemetry destination, Entra/local opaque sessions, /api/runtime config, canonical claims and revision-aware publication. Retried/optional work retains its existing ownership and fallback policy.

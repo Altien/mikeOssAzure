@@ -11,7 +11,14 @@ import { readServerSession, refreshServerSession } from "../lib/serverSession.js
 import { requestOriginIsTrusted } from "../lib/origins.js";
 import { renewEntraCredential } from "../lib/auth/providers/entraRefresh.js";
 import { renewSupabaseCredential } from "../lib/auth/providers/supabaseSession.js";
-import { setCurrentUser } from "../lib/observability/sentry";
+import { reportError, requestRoutePattern, setCurrentUser } from "../lib/observability/sentry";
+import { AppError, type ErrorKind } from "../lib/appError";
+
+function reportAuthFailure(req: Request, kind: ErrorKind, cause: unknown): void {
+  reportError(new AppError(kind, "Authentication dependency failed", { cause }), {
+    tags: { component: "http", http_method: req.method, http_route: requestRoutePattern(req) },
+  });
+}
 
 // Upstream divergence (sync-log: 3a10943): upstream added app-level MFA
 // enforcement here (enforceLoginMfaIfEnabled / requireMfaIfEnrolled) built
@@ -54,7 +61,7 @@ export async function requireAuth(
     {
       let session;
       try { session = await readServerSession(req); }
-      catch { res.status(503).json({ detail: "Auth session is unavailable" }); return; }
+      catch (error) { reportAuthFailure(req, "auth.session_lookup_failed", error); res.status(503).json({ detail: "Auth session is unavailable" }); return; }
       if (session?.credential.provider === provider) {
         if (Date.parse(session.row.token_expires_at) <= Date.now() + 60_000) {
           if (!session.credential.refreshToken || provider === "local") {
@@ -78,7 +85,8 @@ export async function requireAuth(
               res.status(503).json({ detail: "Auth session refresh is in progress" });
               return;
             }
-          } catch {
+          } catch (error) {
+            reportAuthFailure(req, "auth.session_lookup_failed", error);
             res.status(503).json({ detail: "Auth session is unavailable" });
             return;
           }
@@ -129,7 +137,8 @@ export async function requireAuth(
       res.status(410).json({ detail: "This account has been closed." });
       return;
     }
-  } catch {
+  } catch (error) {
+    reportAuthFailure(req, "db.query_failed", error);
     res.status(503).json({ detail: "Account status is unavailable" });
     return;
   }
@@ -151,7 +160,7 @@ export async function requireAuth(
       result.principal.displayName,
     );
   } catch (error) {
-    console.error("[auth/profile] profile initialization failed", error);
+    reportAuthFailure(req, "db.query_failed", error);
     res.status(500).json({ detail: "Unable to initialize user profile" });
     return;
   }

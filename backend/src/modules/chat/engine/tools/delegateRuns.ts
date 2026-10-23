@@ -8,6 +8,8 @@ import type {
 } from "@mike/contracts";
 import { ensureChatAccess, filterAccessibleDocumentIds } from "../../../../lib/access";
 import type { NormalizedToolCall } from "../../../../lib/llm";
+import { AppError } from "../../../../lib/appError";
+import { reportError } from "../../../../lib/observability/sentry";
 import { safeError } from "../../../../lib/safeError";
 import type { Db } from "../../../../lib/supabase";
 import { findDocumentsOutsideWorkspace } from "../../../../lib/documentWorkspace";
@@ -279,7 +281,16 @@ export function createSubagentRunStore(scope: SubagentStoreScope): SubagentRunSt
                 if (!(await currentChatScope(scope)) || scope.signal.aborted) return;
                 await scope.commitRows(rows, scope.signal);
             } catch (error) {
-                console.error("[subagents] run save failed", safeError(error));
+                // The wrapper carries the kind and the database's own code to
+                // Sentry; the log keeps its redacted category (warn: the
+                // console bridge forwards error-level lines only).
+                reportError(
+                    new AppError("chat.subagent_failed", "Subagent run save failed", {
+                        cause: error,
+                    }),
+                    { tags: { component: "chat-stream", operation: "chat.subagent" } },
+                );
+                console.warn("[subagents] run save failed", safeError(error));
             }
         },
         async load(delegationId) {
@@ -311,7 +322,13 @@ export function createSubagentRunStore(scope: SubagentStoreScope): SubagentRunSt
                 }
                 return scope.signal.aborted ? null : resumed;
             } catch (error) {
-                console.error("[subagents] run load failed", safeError(error));
+                reportError(
+                    new AppError("chat.subagent_failed", "Subagent run load failed", {
+                        cause: error,
+                    }),
+                    { tags: { component: "chat-stream", operation: "chat.subagent" } },
+                );
+                console.warn("[subagents] run load failed", safeError(error));
                 return null;
             }
         },

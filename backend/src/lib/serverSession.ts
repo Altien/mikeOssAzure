@@ -1,3 +1,5 @@
+import { AppError } from "./appError";
+import { reportError } from "./observability/sentry";
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import type { Request, Response } from "express";
 import { createServerSupabase } from "./supabase";
@@ -120,8 +122,12 @@ function scheduleExpiredAuthCleanup(): void {
     db.from("auth_sessions").delete().lt("expires_at", cutoff),
     db.from("auth_handoff_tickets").delete().lt("expires_at", cutoff),
     db.from("auth_oauth_states").delete().lt("expires_at", cutoff),
-  ]).then(results => { if (results.some(result => result.error)) lastCleanupAt = 0; })
-    .catch(() => { lastCleanupAt = 0; });
+  ]).then(results => {
+    for (const result of results) if (result.error) {
+      lastCleanupAt = 0;
+      reportError(new AppError("auth.handoff_failed", "Expired authentication record cleanup failed", { cause: result.error }), { level: "warning" });
+    }
+  }).catch(error => { lastCleanupAt = 0; reportError(new AppError("auth.handoff_failed", "Expired authentication record cleanup failed", { cause: error }), { level: "warning" }); });
 }
 
 function hashOAuthToken(value: string): string {

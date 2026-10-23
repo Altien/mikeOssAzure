@@ -8,6 +8,7 @@ import type {
     OAuthClientMetadata,
     OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
+import { AppError } from "../appError";
 import { createServerSupabase } from "../supabase";
 import { resolveProviderSecret } from "../envSecrets";
 import {
@@ -34,7 +35,7 @@ import {
     type OAuthTokenRow,
 } from "./types";
 
-export class McpOAuthRequiredError extends Error {
+export class McpOAuthRequiredError extends AppError {
     code = "oauth_required";
     /**
      * Whether re-running the same refresh could ever succeed. False only when
@@ -54,8 +55,7 @@ export class McpOAuthRequiredError extends Error {
         message = "OAuth authorization is required for this MCP server.",
         options: { permanent?: boolean; oauthErrorCode?: string | null } = {},
     ) {
-        super(message);
-        this.name = "McpOAuthRequiredError";
+        super("mcp.oauth_required", message);
         this.permanent = options.permanent ?? true;
         this.oauthErrorCode = options.oauthErrorCode ?? null;
     }

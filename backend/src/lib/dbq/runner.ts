@@ -16,6 +16,7 @@
 import { AppError } from "../appError";
 import { createServerSupabase } from "../supabase";
 import { jobErrorMessage } from "./jobError";
+import { runIsolated } from "./jobScope";
 import { deleteFile } from "../storage";
 import { enqueueAppJobDelivery } from "../queue/appJobsQueue";
 import { redisEnabled } from "./driver";
@@ -122,7 +123,7 @@ export class NonRetryableJobError extends AppError {
  *   unknown kind            -> failed immediately (retrying can't fix it)
  * Exported for unit tests; the poll loop below is just claim + fan-in.
  */
-export async function processClaimedJob(
+async function runClaimedJob(
     db: Db,
     handlers: DbJobHandlers,
     job: DbJob,
@@ -527,4 +528,9 @@ export async function stopDbJobRunner(): Promise<void> {
     pollTimer = null;
     sweepTimer = null;
     if (inFlight) await inFlight;
+}
+
+/** Each canonical claimed job keeps its own diagnostic operation/stage scope. */
+export async function processClaimedJob(db: Db, handlers: DbJobHandlers, job: DbJob, failureHooks: Readonly<Record<string, DbJobFailureHook>> = {}): Promise<void> {
+    return runIsolated(() => runClaimedJob(db, handlers, job, failureHooks));
 }

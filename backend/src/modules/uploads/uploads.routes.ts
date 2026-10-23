@@ -15,6 +15,7 @@ import { z } from "zod";
 import { Router, type Response } from "express";
 
 import { sendInternalError } from "../../lib/httpError";
+import { setOperation } from "../../lib/observability/sentry";
 import { uploadSessionRateLimitConfiguration } from "../../lib/runtimeConfig";
 import { storageEnabled } from "../../lib/storage";
 import { createServerSupabase } from "../../lib/supabase";
@@ -140,6 +141,7 @@ uploadSessionsRouter.post(
   requireAuth,
   uploadSessionMutationLimiter,
   asyncRoute(async (req, res) => {
+    setOperation("upload_session.control");
     if (!storageEnabled) {
       return void res.status(503).json({ detail: "Storage is not configured" });
     }
@@ -186,6 +188,7 @@ uploadSessionsRouter.get(
   requireAuth,
   uploadSessionPollingLimiter,
   asyncRoute(async (req, res) => {
+    setOperation("upload_session.control");
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const result = await getUploadSession(db, req.params.sessionId, userId);
@@ -200,6 +203,7 @@ uploadSessionsRouter.post(
   requireAuth,
   uploadSessionMutationLimiter,
   asyncRoute(async (req, res) => {
+    setOperation("upload_session.storage");
     if (!storageEnabled) {
       return void res.status(503).json({ detail: "Storage is not configured" });
     }
@@ -217,6 +221,8 @@ uploadSessionsRouter.post(
   requireAuth,
   uploadSessionMutationLimiter,
   asyncRoute(async (req, res) => {
+    // Sealing reads and copies the uploaded object: a storage flow.
+    setOperation("upload_session.storage");
     if (!storageEnabled) {
       return void res.status(503).json({ detail: "Storage is not configured" });
     }
@@ -245,6 +251,7 @@ uploadSessionsRouter.delete(
   requireAuth,
   uploadSessionMutationLimiter,
   asyncRoute(async (req, res) => {
+    setOperation("upload_session.control");
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const result = await cancelUploadSession(db, req.params.sessionId, userId);

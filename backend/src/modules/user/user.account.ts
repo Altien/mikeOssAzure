@@ -13,7 +13,18 @@ import {
     listOrgsBlockingAccountDeletion,
     type AccountDeletionOrgBlocker,
 } from "./user.dataCleanup";
-import { type Db, errorMessage } from "./user.shared";
+import { AppError, type ErrorKind } from "../../lib/appError";
+import { type Db } from "./user.shared";
+
+/**
+ * The failure as the route's sendInternalError should report it: its kind
+ * names the flow that broke, the thrown value (an Error or a PostgREST
+ * object) stays the cause so its code still extracts. Nothing is logged
+ * here — the route logs the same object once, with the request id.
+ */
+function deletionFailure(kind: ErrorKind, message: string, cause: unknown): AppError {
+    return cause instanceof AppError ? cause : new AppError(kind, message, { cause });
+}
 
 /** Explain which organizations need an owner before account deletion. */
 export function describeAccountDeletionBlockers(
@@ -78,12 +89,10 @@ export async function deleteUserAccount(
         if (error || !data) throw error ?? new Error("Erasure was not scheduled");
         return { ok: true };
     } catch (err) {
-        const detail = errorMessage(err);
-        console.error("[user/account] delete failed", {
-            userId,
-            error: detail,
-        });
-        return { ok: false, error: err };
+        return {
+            ok: false,
+            error: deletionFailure("account.delete_failed", "account deletion failed", err),
+        };
     }
 }
 
@@ -96,12 +105,10 @@ export async function deleteUserChats(
         await deleteAllUserChats(db, userId, orgId);
         return { ok: true };
     } catch (err) {
-        const detail = errorMessage(err);
-        console.error("[user/chats] delete failed", {
-            userId,
-            error: detail,
-        });
-        return { ok: false, error: err };
+        return {
+            ok: false,
+            error: deletionFailure("db.query_failed", "chat deletion failed", err),
+        };
     }
 }
 
@@ -114,12 +121,10 @@ export async function deleteUserProjectsData(
         await deleteUserProjects(db, userId, orgId);
         return { ok: true };
     } catch (err) {
-        const detail = errorMessage(err);
-        console.error("[user/projects] delete failed", {
-            userId,
-            error: detail,
-        });
-        return { ok: false, error: err };
+        return {
+            ok: false,
+            error: deletionFailure("db.query_failed", "project deletion failed", err),
+        };
     }
 }
 
@@ -132,12 +137,10 @@ export async function deleteUserTabularReviews(
         await deleteAllUserTabularReviews(db, userId, orgId);
         return { ok: true };
     } catch (err) {
-        const detail = errorMessage(err);
-        console.error("[user/tabular-reviews] delete failed", {
-            userId,
-            error: detail,
-        });
-        return { ok: false, error: err };
+        return {
+            ok: false,
+            error: deletionFailure("db.query_failed", "tabular review deletion failed", err),
+        };
     }
 }
 
@@ -156,10 +159,9 @@ export async function deletePrivateMemories(
         await deleteUserPrivateMemories(db, userId, orgId);
         return { ok: true };
     } catch (err) {
-        console.error("[user/memories] delete failed", {
-            userId,
-            error: errorMessage(err),
-        });
-        return { ok: false, error: err };
+        return {
+            ok: false,
+            error: deletionFailure("db.query_failed", "private memory deletion failed", err),
+        };
     }
 }

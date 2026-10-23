@@ -20,6 +20,7 @@ import {
   updateGoogleDriveSettings,
   updateGoogleWorkspaceSettings,
 } from "@/app/lib/mikeApi";
+import { reportFault, type Operation } from "@/app/lib/userFacingError";
 
 export type GoogleConnectorProvider = "google-drive" | GoogleWorkspaceProvider;
 
@@ -57,6 +58,13 @@ type GoogleConnectorSettings = {
 };
 
 /** One provider's calls, all bound to the workspace the connection is in. */
+/** The flow each connector's failures belong to in Sentry. */
+const GOOGLE_OPERATIONS: Record<GoogleConnectorProvider, Operation> = {
+  "google-drive": "google.drive",
+  gmail: "google.gmail",
+  "google-calendar": "google.calendar",
+};
+
 function connectorApi(
   provider: GoogleConnectorProvider,
   workspace: string | undefined,
@@ -131,7 +139,10 @@ export function useGoogleConnector(
       .then((next) => {
         if (mounted && isCurrent()) setStatus(next);
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        // The card says it could not load; the report says which connector
+        // and why. The API client already reported a 5xx or an outage.
+        reportFault(error, { operation: GOOGLE_OPERATIONS[provider] });
         if (mounted && isCurrent()) setLoadFailed(true);
       });
     return () => {
@@ -160,6 +171,7 @@ export function useGoogleConnector(
       "popup,width=560,height=720,menubar=no,toolbar=no,location=no,status=no",
     );
     let pending: string | null = null;
+    let pollFailureReported = false;
     setPhase("adding");
     try {
       if (!popup)
@@ -190,7 +202,18 @@ export function useGoogleConnector(
           throw new GoogleAuthorizationCancelledError();
         const next: GoogleConnectorStatus | null = await api
           .status()
-          .catch(() => null);
+          .catch((error: unknown) => {
+            // One poll failing is tolerated; the wait goes on. Reported once
+            // per authorization so a status route that is down is visible.
+            if (!pollFailureReported) {
+              pollFailureReported = true;
+              reportFault(error, {
+                action: "check the Google authorization",
+                operation: GOOGLE_OPERATIONS[provider],
+              });
+            }
+            return null;
+          });
         if (!isCurrent()) throw new GoogleAuthorizationCancelledError();
         if (next?.connected) {
           pending = null;
@@ -204,8 +227,20 @@ export function useGoogleConnector(
     } finally {
       if (pending && isCurrent()) {
         const state = pending;
-        await api.cancel(state).catch(() => undefined);
-        await refresh().catch(() => undefined);
+        // Best effort either way: the user is done with the flow. A fault
+        // here is still a fault in the connector, so it is reported as one.
+        await api.cancel(state).catch((error: unknown) => {
+          reportFault(error, {
+            action: "cancel the Google authorization",
+            operation: GOOGLE_OPERATIONS[provider],
+          });
+        });
+        await refresh().catch((error: unknown) => {
+          reportFault(error, {
+            action: "refresh the Google connector",
+            operation: GOOGLE_OPERATIONS[provider],
+          });
+        });
       }
       try {
         popup?.close();

@@ -1,7 +1,8 @@
 /// <reference types="office-js" />
 import { networkFailure } from "../lib/networkError";
 import { responseError } from "../api/client";
-import { notifyError, userMessage } from "../lib/notify";
+import { reportNetworkFailure } from "../lib/errorReporting";
+import { notifyError, reportFault, userMessage } from "../lib/notify";
 import { parseGoogleOAuthDialogMessage } from "./oauthProtocol";
 import { EntraAuth, entraConfigProblem } from "./entra";
 import { API_BASE_URL, loadRuntimeConfig, type AuthProvider } from "./runtimeConfig";
@@ -68,6 +69,20 @@ async function clearLegacyTokenStorage(): Promise<void> {
 // so `responseError` (api/client) is reused: the backend's 4xx `detail` is
 // kept because it is written for the user, a 5xx body never is, and the
 // status/code/request id ride along for `describeError` and support.
+//
+// Every failure here is filed under operation word.session: a 5xx by
+// `responseError`, an unreachable backend by `sessionFetchFailure`, and
+// anything else (a body that does not parse, a host error) by the screen
+// that shows it or, for the silent refresh, by `refreshSession` itself.
+
+/** The transport failed before the backend answered: report it, then wrap it. */
+function sessionFetchFailure(
+  error: unknown,
+  request: { method: "GET" | "POST"; url: string },
+): Error {
+  reportNetworkFailure(error, { ...request, operation: "word.session" });
+  return networkFailure(error, request);
+}
 
 async function requestSession(): Promise<AddinAuthUser | null> {
   const url = `${API_BASE}/auth/session`;
@@ -78,10 +93,12 @@ async function requestSession(): Promise<AddinAuthUser | null> {
       cache: "no-store",
     });
   } catch (error) {
-    throw networkFailure(error, { method: "GET", url });
+    throw sessionFetchFailure(error, { method: "GET", url });
   }
   if (response.status === 401) return null;
-  if (!response.ok) throw await responseError(response);
+  if (!response.ok) {
+    throw await responseError(response, undefined, "GET", "word.session");
+  }
   const body = (await response.json()) as { user: AddinAuthUser };
   return body.user;
 }
@@ -120,9 +137,11 @@ async function redeemAuthHandoff(
       body: JSON.stringify({ ticket, requestId }),
     });
   } catch (error) {
-    throw networkFailure(error, { method: "POST", url });
+    throw sessionFetchFailure(error, { method: "POST", url });
   }
-  if (!response.ok) throw await responseError(response);
+  if (!response.ok) {
+    throw await responseError(response, undefined, "POST", "word.session");
+  }
   const body = (await response.json()) as { user: AddinAuthUser };
   if (generation !== _sessionGeneration) throw Object.assign(new Error("Sign-in owner changed"), { name: "AbortError" });
   const confirmed = await requestSession();
@@ -170,7 +189,10 @@ async function signInWithMicrosoftDialog(generation: number): Promise<void> {
 export function refreshSession(): Promise<AddinAuthUser | null> {
   const generation = _sessionGeneration;
   if (!_sessionPromise) {
-    const pending = requestOrBootstrapSession(generation).finally(() => {
+    const pending = requestOrBootstrapSession(generation).catch((error: unknown) => {
+      if (generation === _sessionGeneration) reportFault(error, "word.session");
+      throw error;
+    }).finally(() => {
       if (_sessionPromise === pending) _sessionPromise = null;
     });
     _sessionPromise = pending;
@@ -225,6 +247,7 @@ export function initialize(): void {
       _error = userMessage(error, {
         action: "sign in",
         fallback: "Mike couldn't sign you in. Try again.",
+        operation: "word.session",
       });
     })
     .finally(() => {
@@ -266,9 +289,11 @@ export async function signIn(email?: string, password?: string): Promise<void> {
         body: JSON.stringify(_mode === "local" ? { email } : { email, password }),
       });
     } catch (error) {
-      throw networkFailure(error, { method: "POST", url });
+      throw sessionFetchFailure(error, { method: "POST", url });
     }
-    if (!response.ok) throw await responseError(response);
+    if (!response.ok) {
+      throw await responseError(response, undefined, "POST", "word.session");
+    }
     await response.json();
     if (generation !== _sessionGeneration) return;
     const confirmed = await requestSession();
@@ -280,6 +305,7 @@ export async function signIn(email?: string, password?: string): Promise<void> {
     _error = userMessage(error, {
       action: "sign in",
       fallback: "Mike couldn't sign you in. Try again.",
+      operation: "word.session",
       codeMessages: {
         invalid_credentials: "That email and password don't match an account.",
       },
@@ -376,6 +402,7 @@ export async function signInWithGoogle(): Promise<void> {
                     _error = userMessage(error, {
                       action: "complete Google sign-in",
                       fallback: "Mike couldn't complete Google sign-in.",
+                      operation: "word.session",
                     });
                   }
                 })
@@ -406,6 +433,7 @@ export async function signInWithGoogle(): Promise<void> {
       fail(
         userMessage(error, {
           fallback: "Mike couldn't open Google sign-in. Try again.",
+          operation: "word.session",
         }),
       );
     }
@@ -431,9 +459,11 @@ export async function signOut(): Promise<void> {
         body: JSON.stringify({ scope: "local" }),
       });
     } catch (error) {
-      throw networkFailure(error, { method: "POST", url });
+      throw sessionFetchFailure(error, { method: "POST", url });
     }
-    if (!response.ok) throw await responseError(response);
+    if (!response.ok) {
+      throw await responseError(response, undefined, "POST", "word.session");
+    }
     if (generation !== _sessionGeneration) return;
     _user = null;
     await clearLegacyTokenStorage();
@@ -446,6 +476,7 @@ export async function signOut(): Promise<void> {
       action: "sign out",
       fallback: "Mike couldn't sign you out. Try again.",
       dedupeKey: "sign-out",
+      operation: "word.session",
       onRetry: () => { if (generation === _sessionGeneration) return signOut(); },
     });
   }

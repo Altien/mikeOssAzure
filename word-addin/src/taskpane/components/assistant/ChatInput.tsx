@@ -253,6 +253,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
             action: "load your workflows",
             dedupeKey: "slash-workflows",
             page: "Assistant",
+            operation: "word_chat.turn",
             onRetry: () => {
               setSlashWorkflows(null);
             },
@@ -290,6 +291,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
               action: "load your models",
               dedupeKey: "model-preflight",
               page: "Assistant",
+              operation: "word_chat.turn",
               onRetry: () => {
                 setKeyStatusLoading(true);
                 setPreflightAttempt((count) => count + 1);
@@ -442,6 +444,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
           setDocumentUploadError(
             userMessage(reason, {
               fallback: "Documents could not be uploaded. Try again.",
+              operation: "documents.upload",
             }),
           );
         }

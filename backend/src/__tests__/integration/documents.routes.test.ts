@@ -447,6 +447,8 @@ describe("DELETE /single-documents/:documentId/versions/:versionId", () => {
         expect(rpcCalls.map((call) => call.name)).toEqual([
             "delete_document_version",
         ]);
+        // Every event this request produces is tagged with the version flow.
+        expect(sentry.setOperation).toHaveBeenCalledWith("documents.version");
     });
 });
 
@@ -502,5 +504,46 @@ describe("POST /single-documents/:documentId/versions/from-document", () => {
 
         expect(res.status).toBe(404);
         expect(res.body.detail).toBe("Document not found");
+    });
+
+    // An internal failure used to be console.error'd in the service AND
+    // answered as a bare 500 by the route: two context-free events. The
+    // service now hands the route one AppError with the cause, and the route
+    // reports it once through sendInternalError, kind and SQLSTATE attached.
+    it("reports an internal failure once, with its kind, and answers 500", async () => {
+        sentry.reportError.mockClear();
+        const rpcError = { code: "42501", message: "permission denied for function" };
+        versionCopy.override = async () => ({
+            ok: false,
+            kind: "version_insert",
+            detail: "Failed to record new version.",
+            error: new AppError("db.rpc_failed", "[versions/copy] insert failed", {
+                cause: rpcError,
+            }),
+        });
+        const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        try {
+            const res = await request(app)
+                .post(`/single-documents/${DOC}/versions/from-document`)
+                .set(...AUTH)
+                .send({ source_document_id: SOURCE });
+
+            expect(res.status).toBe(500);
+            expect(res.body).toMatchObject({ code: "internal_error" });
+            expect(JSON.stringify(res.body)).not.toContain("permission denied");
+
+            expect(sentry.reportError).toHaveBeenCalledOnce();
+            const [reported, context] = sentry.reportError.mock.calls[0]!;
+            expect(diagnosticErrorTags(reported)).toEqual({
+                error_kind: "db.rpc_failed",
+                failure_code: "42501",
+            });
+            expect(context).toMatchObject({
+                tags: { component: "http", http_status: 500 },
+            });
+        } finally {
+            versionCopy.override = null;
+            log.mockRestore();
+        }
     });
 });
