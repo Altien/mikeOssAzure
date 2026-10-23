@@ -995,6 +995,13 @@ export async function deleteUserAccountData(
         db.from("user_mcp_tool_audit_logs").delete().eq("user_id", userId),
         db.from("user_mcp_oauth_states").delete().eq("user_id", userId),
         db.from("user_mcp_connectors").delete().eq("user_id", userId),
+        // Dev has no auth.users cascade: erase every private connector workspace.
+        db.from("user_courtlistener_connections").delete().eq("user_id", userId),
+        db.from("google_workspace_actions").delete().eq("user_id", userId),
+        db.from("google_workspace_oauth_states").delete().eq("user_id", userId),
+        db.from("google_drive_oauth_states").delete().eq("user_id", userId),
+        db.from("user_google_drive_tokens").delete().eq("user_id", userId),
+        db.from("user_google_workspace_tokens").delete().eq("user_id", userId),
         db
             .from("default_workflow_installations")
             .delete()

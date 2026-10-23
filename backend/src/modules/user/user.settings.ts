@@ -1,6 +1,6 @@
 import { createServerSupabase, type Db } from "../../lib/supabase";
 import { DEFAULT_TITLE_MODEL, OPENAI_LOW_MODELS, type UserApiKeys, type ReasoningLevel } from "../../lib/llm";
-import { getEffectiveApiKeys } from "./user.apiKeyStore";
+import { getEffectiveApiKeys, loadCourtListenerConnection } from "./user.apiKeyStore";
 import { courtlistenerBulkDataEnabled } from "../../lib/courtlistener";
 import { loadCustomInstructions } from "./user.customInstructions";
 import {
@@ -76,6 +76,7 @@ export async function getUserModelSettings(
         customInstructions,
         responseStyle,
         webSearch,
+        courtListener,
     ] = await Promise.all([
         client
             .from("user_profiles")
@@ -104,6 +105,18 @@ export async function getUserModelSettings(
         loadWebSearchSettings(client, userId).catch((error: unknown) => {
             console.error("[user-settings] web search settings load failed", safeError(error));
             return DEFAULT_WEB_SEARCH_SETTINGS;
+        }),
+        // The CourtListener switch is per workspace, like the connector.
+        // Research is an enhancement: a failed read leaves it off.
+        loadCourtListenerConnection(
+            { userId, orgId: options.orgId ?? null },
+            client,
+        ).catch((error: unknown) => {
+            console.error(
+                "[user-settings] CourtListener connection load failed",
+                safeError(error),
+            );
+            return { enabled: false, token: null };
         }),
     ]);
     let data = profileResult.data;
@@ -196,7 +209,7 @@ export async function getUserModelSettings(
         memory_curator_model: optional(data?.memory_curator_model),
         last_selected_chat_model: optional(data?.last_selected_chat_model),
         last_selected_reasoning_level: normalizeReasoningLevel(data?.last_selected_reasoning_level),
-        legal_research_us: data?.legal_research_us !== false && (!!api_keys.courtlistener || courtlistenerBulkDataEnabled()),
+        legal_research_us: courtListener.enabled && (!!api_keys.courtlistener || courtlistenerBulkDataEnabled()),
         subagent_model: optional(data?.subagent_model),
         subagent_reasoning: normalizeReasoningLevel(data?.subagent_reasoning),
         web_search: webSearch,

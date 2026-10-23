@@ -5,6 +5,7 @@ import type {
 } from "@mike/contracts";
 import { z } from "zod";
 import type { Db } from "../supabase";
+import type { ConnectorOwner } from "../connectorOwner";
 import type { ConnectorCallPlan, McpToolEvent } from "../mcp/types";
 import { safeError } from "../safeError";
 import {
@@ -52,18 +53,18 @@ export function workspaceToolList(
 
 export async function workspaceConnectorStatus(
   db: Db,
-  userId: string,
+  owner: ConnectorOwner,
   provider: GoogleProvider,
 ): Promise<Omit<GoogleWorkspaceStatus, "redirectUri">> {
-  const status = await workspaceStatus(db, userId, provider);
+  const status = await workspaceStatus(db, owner, provider);
   const grant = status.connected
-    ? await loadWorkspaceGrant(db, userId, provider)
+    ? await loadWorkspaceGrant(db, owner, provider)
     : null;
   return { ...status, tools: workspaceToolList(provider, grant) };
 }
 
 export async function buildGoogleWorkspaceTools(
-  userId: string,
+  owner: ConnectorOwner,
   db: Db,
 ): Promise<unknown[]> {
   const tools: unknown[] = [];
@@ -72,7 +73,7 @@ export async function buildGoogleWorkspaceTools(
     // connected it before the switch; the grant stays until they delete it.
     if (!isWorkspaceProviderAvailable(provider)) continue;
     try {
-      const row = await loadWorkspaceGrant(db, userId, provider);
+      const row = await loadWorkspaceGrant(db, owner, provider);
       if (!row || row.enabled === false) continue;
       const disabled = disabledTools(row);
       const readOnlyGuidance =
@@ -170,14 +171,14 @@ function success(
 /** Checks that this connection still allows the tool, then parses its input. */
 async function resolveCall(
   db: Db,
-  userId: string,
+  owner: ConnectorOwner,
   name: string,
   input: unknown,
 ) {
   const provider = providerFor(name);
   assertWorkspaceProviderAvailable(provider);
   const { tool, args } = parseWorkspaceTool(name, input);
-  const grant = await loadWorkspaceGrant(db, userId, provider);
+  const grant = await loadWorkspaceGrant(db, owner, provider);
   if (!grant)
     throw new GoogleWorkspaceError(
       "Connect this Google service in Settings → Connectors first. Google sign-in does not connect it.",
@@ -224,13 +225,13 @@ async function runWriteAction(
 
 async function recheckWorkspaceWrite(
   db: Db,
-  userId: string,
+  owner: ConnectorOwner,
   name: string,
   input: unknown,
   grantId: string,
   approved: boolean,
 ) {
-  const { grant } = await resolveCall(db, userId, name, input);
+  const { grant } = await resolveCall(db, owner, name, input);
   if (grant.grant_id !== grantId)
     throw new GoogleWorkspaceError("The Google connection changed. Review the action again.");
   // Dev (sync-log: 2ec7cfc1): approval fails closed — only an explicit false skips it.
@@ -244,7 +245,7 @@ async function recheckWorkspaceWrite(
  * user reviews exactly what will run.
  */
 export async function planGoogleWorkspaceCall(
-  userId: string,
+  owner: ConnectorOwner,
   name: string,
   input: Record<string, unknown>,
   db: Db,
@@ -253,13 +254,13 @@ export async function planGoogleWorkspaceCall(
   try {
     const { provider, tool, args, grant } = await resolveCall(
       db,
-      userId,
+      owner,
       name,
       input,
     );
     if (!tool.write || grant.require_write_approval === false)
       return { type: "run" };
-    const token = await workspaceAccessToken(db, userId, provider);
+    const token = await workspaceAccessToken(db, owner, provider);
     const action = await prepareWorkspaceAction(provider, name, args, token);
     const item: Omit<ConnectorApprovalItem, "id"> = {
       kind: "approval",
@@ -287,7 +288,7 @@ export async function planGoogleWorkspaceCall(
 }
 
 export async function executeGoogleWorkspaceToolCall(
-  userId: string,
+  owner: ConnectorOwner,
   name: string,
   input: Record<string, unknown>,
   db: Db,
@@ -296,12 +297,12 @@ export async function executeGoogleWorkspaceToolCall(
   try {
     const { provider, tool, args, grant } = await resolveCall(
       db,
-      userId,
+      owner,
       name,
       input,
     );
     const grantId = String(grant.grant_id);
-    const token = await workspaceAccessToken(db, userId, provider);
+    const token = await workspaceAccessToken(db, owner, provider);
     if (!tool.write)
       return success(
         event,
@@ -314,7 +315,7 @@ export async function executeGoogleWorkspaceToolCall(
         provider,
         { ...action, accountEmail: String(grant.account_email) },
         token,
-        () => recheckWorkspaceWrite(db, userId, name, input, grantId, false),
+        () => recheckWorkspaceWrite(db, owner, name, input, grantId, false),
       ),
       true,
     );
@@ -329,7 +330,7 @@ export async function executeGoogleWorkspaceToolCall(
  * reviewed connection is still the current one.
  */
 export async function executeApprovedGoogleWorkspaceCall(
-  userId: string,
+  owner: ConnectorOwner,
   item: ConnectorApprovalItem,
   db: Db,
 ): Promise<{ content: string; event: McpToolEvent }> {
@@ -342,7 +343,7 @@ export async function executeApprovedGoogleWorkspaceCall(
       throw new GoogleWorkspaceError("Invalid Google action.");
     const { provider, grant } = await resolveCall(
       db,
-      userId,
+      owner,
       item.tool_name,
       item.arguments,
     );
@@ -354,7 +355,7 @@ export async function executeApprovedGoogleWorkspaceCall(
         "The Google connection changed after this action was reviewed. Ask again to review it on the current connection.",
       );
     const grantId = item.binding.grant_id;
-    const token = await workspaceAccessToken(db, userId, provider);
+    const token = await workspaceAccessToken(db, owner, provider);
     return success(
       event,
       await runWriteAction(
@@ -367,7 +368,7 @@ export async function executeApprovedGoogleWorkspaceCall(
           accountEmail: String(grant.account_email),
         },
         token,
-        () => recheckWorkspaceWrite(db, userId, item.tool_name, item.arguments, grantId, true),
+        () => recheckWorkspaceWrite(db, owner, item.tool_name, item.arguments, grantId, true),
       ),
       true,
     );

@@ -464,7 +464,6 @@ describe("user.routes", () => {
                 passwordSet: false,
                 messageCreditsUsed: 3,
                 tier: "Pro",
-                legalResearchUs: true,
                 quickActionsVisible: true,
                 mfaOnLogin: false,
                 openRouterModels: [
@@ -473,6 +472,8 @@ describe("user.routes", () => {
                 ],
                 apiKeyStatus: STATUS,
             });
+            // The CourtListener switch is per workspace now, not a profile field.
+            expect(res.body).not.toHaveProperty("legalResearchUs");
             // Presence-only key status — never plaintext.
             expect(JSON.stringify(res.body)).not.toContain("sk-");
         });
@@ -600,7 +601,6 @@ describe("user.routes", () => {
 
             expect(res.status).toBe(200);
             expect(res.body).toMatchObject({
-                legalResearchUs: false,
                 quickActionsVisible: false,
                 onboardingComplete: true,
                 onboardingVersion: 0,

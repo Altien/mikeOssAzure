@@ -15,10 +15,13 @@ import { userFacingApiError } from "@/app/lib/userFacingError";
  * Picker, and describe the outcome in one plain sentence. Picking is itself
  * the grant, so there is nothing to save afterwards.
  *
+ * `workspace` is the workspace whose Drive connection is used ("personal"
+ * or an organization id): the one the files are being added for.
+ *
  * An MFA challenge is rethrown so the page's step-up flow can retry the
  * action; every other failure becomes the status message.
  */
-export function useGoogleDrivePicker() {
+export function useGoogleDrivePicker(workspace?: string) {
   const owner = useRequestOwner();
   const { workspaceId } = useWorkspace();
   const abort = useRef<AbortController | null>(null);
@@ -27,14 +30,14 @@ export function useGoogleDrivePicker() {
 
   const addFiles = useCallback(async () => {
     const isCurrent = owner.capture();
-    if (!isCurrent() || (workspaceId !== null && workspaceId !== "personal")) return;
+    if (!isCurrent() || (workspace ?? "personal") !== (workspaceId ?? "personal")) return;
     abort.current?.abort();
     const controller = new AbortController();
     abort.current = controller;
     setMessage(null);
     try {
       const picked = await openGoogleDrivePicker(
-        await createGoogleDrivePickerSession(isCurrent),
+        await createGoogleDrivePickerSession(workspace, isCurrent),
         { isCurrent, signal: controller.signal },
       );
       if (!isCurrent() || controller.signal.aborted) return;
@@ -53,7 +56,7 @@ export function useGoogleDrivePicker() {
         ),
       );
     }
-  }, [owner.capture, workspaceId]);
+  }, [owner.capture, workspace, workspaceId]);
 
   return { addFiles, message };
 }

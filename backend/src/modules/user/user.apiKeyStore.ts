@@ -1,3 +1,4 @@
+import { type ConnectorOwner, workspaceFilter } from "../../lib/connectorOwner";
 // Per-user encrypted provider-key storage. Adapted from upstream
 // ba6f7711449de47bd25cad7ac21bdc2a53355963's `backend/src/lib/userApiKeys.ts`.
 //
@@ -354,70 +355,8 @@ function serializeAzureOpenaiBlob(settings: AzureOpenaiSettings): string {
  * `user_profiles`. The fallback is removed when `0007_drop_legacy_provider_keys.sql`
  * lands.
  */
-export async function getUserApiKeys(
-    userId: string,
-    db?: ReturnType<typeof createServerSupabase>,
-): Promise<UserApiKeys> {
-    const client = db ?? createServerSupabase();
-
-    const { data: rows, error } = await client
-        .from("user_api_keys")
-        .select("provider, encrypted_key, iv, auth_tag")
-        .eq("user_id", userId);
-    if (error) {
-        console.error("[userApiKeys] failed to read user_api_keys", {
-            userId,
-            error: error.message,
-        });
-        // Fall through to the legacy-column fallback so we don't hard-fail
-        // during transitional states.
-    }
-
-    const decrypted: Partial<Record<ApiKeyProvider, string>> = {};
-    for (const row of (rows ?? []) as StoredRow[]) {
-        try {
-            decrypted[row.provider] = await decrypt(row);
-        } catch (err) {
-            console.error("[userApiKeys] decryption failed", {
-                userId,
-                provider: row.provider,
-                err: err instanceof Error ? err.message : String(err),
-            });
-            // Skip the row — the caller will see "no key" and act
-            // accordingly. Better than crashing the whole request.
-        }
-    }
-
-    const haveAny = Object.keys(decrypted).length > 0;
-    const legacy = haveAny
-        ? null
-        : await readLegacyProviderKeys(userId, client);
-
-    // openrouter / courtlistener (44e868e): no legacy user_profiles
-    // columns to fall back to — instead fall back to the org-level
-    // secret (KV primary, env fallback: OPENROUTER_API_KEY /
-    // COURTLISTENER_API_TOKEN — same env names upstream reads directly).
-    const openrouter =
-        decrypted.openrouter ??
-        (await resolveProviderSecret("openrouter-api-key")) ??
-        null;
-    const courtlistener =
-        decrypted.courtlistener ??
-        (await resolveSecret("courtlistener-api-token")) ??
-        null;
-
-    return {
-        claude: decrypted.claude ?? legacy?.claude ?? null,
-        gemini: decrypted.gemini ?? legacy?.gemini ?? null,
-        openai: decrypted.openai ?? legacy?.openai ?? null,
-        openrouter: openrouter || null,
-        vercel: decrypted.vercel || (await resolveVercelApiKey()) || null,
-        "opencode-go": decrypted["opencode-go"] || (await resolveProviderSecret("opencode-api-key")) || null,
-        courtlistener: courtlistener || null,
-        azureOpenai: decrypted.azure_openai
-            ? parseAzureOpenaiBlob(decrypted.azure_openai)
-            : (legacy?.azureOpenai ?? null),
-    };
+export async function getUserApiKeys(userId: string, db: Db = createServerSupabase()): Promise<UserApiKeys> {
+    return getEffectiveApiKeys(userId, null, db);
 }
 
 /**
@@ -632,12 +571,130 @@ export async function getApiKeyStatusFor(owner: ApiKeyOwner, db: Db = createServ
     return status;
 }
 
-export async function getEffectiveApiKeyStatus(userId: string, orgId: string, db: Db = createServerSupabase()): Promise<ApiKeyStatus> {
-    await requireOrgKeyMembership(userId, orgId, db);
-    return getUserApiKeyStatus(userId, db);
+export async function getEffectiveApiKeyStatus(userId: string, orgId?: string | null, db: Db = createServerSupabase()): Promise<ApiKeyStatus> {
+    if (orgId) await requireOrgKeyMembership(userId, orgId, db);
+    const status = await getUserApiKeyStatus(userId, db);
+    const connection = await managedCourtListenerForOwner({ userId, orgId: orgId ?? null }, db);
+    status.courtlistener = Boolean(connection.key);
+    status.sources.courtlistener = connection.key ? "env" : null;
+    status.enabled.courtlistener = connection.enabled;
+    return status;
 }
 
 export async function getEffectiveApiKeys(userId: string, orgId?: string | null, db: Db = createServerSupabase()): Promise<UserApiKeys> {
+    // Refuse a missing/deleted membership BEFORE resolving central secrets.
     if (orgId) await requireOrgKeyMembership(userId, orgId, db);
-    return getUserExecutionApiKeys(userId, db);
+    const keys = await getUserExecutionApiKeys(userId, db);
+    const courtlistener = await managedCourtListenerForOwner({ userId, orgId: orgId ?? null }, db);
+    keys.courtlistener = courtlistener.key;
+    // CourtListener now has its own workspace switch; other provider masks remain.
+    keys.disabledProviders = (keys.disabledProviders ?? []).filter((provider) => provider !== "courtlistener");
+    return keys;
+}
+
+// Upstream divergence (sync-log: 18035cf6): workspace enable rows only; deployment credentials remain managed.
+export type CourtListenerConnection = {
+    /** The on/off switch; on until the person turns it off. */
+    enabled: boolean;
+    /** The person's own token for the workspace. */
+    token: string | null;
+};
+
+const WITHOUT_COURTLISTENER: CourtListenerConnection = {
+    enabled: true,
+    token: null,
+};
+
+type CourtListenerRow = {
+    enabled: boolean | null;
+    encrypted_key: string | null;
+    iv: string | null;
+    auth_tag: string | null;
+};
+
+/**
+ * "unmigrated" until 20261022_01 lands: the token is then still a
+ * user_api_keys row, and the overlays below leave whatever it gave alone.
+ */
+async function readCourtListenerConnection(
+    owner: ConnectorOwner,
+    db: Db,
+): Promise<CourtListenerConnection | "unmigrated"> {
+    if (owner.orgId) await requireOrgKeyMembership(owner.userId, owner.orgId, db);
+    const { data, error } = await db
+        .from("user_courtlistener_connections")
+        .select("enabled")
+        .eq("user_id", owner.userId)
+        .filter(...workspaceFilter(owner))
+        .maybeSingle();
+    if (error) {
+        throw error;
+    }
+    const row = data as CourtListenerRow | null;
+    if (!row) return WITHOUT_COURTLISTENER;
+    return {
+        enabled: row.enabled !== false,
+        // Legacy ciphertext remains for lifecycle cleanup, never effective credentials.
+        token: null,
+    };
+}
+
+export async function loadCourtListenerConnection(
+    owner: ConnectorOwner,
+    db: Db = createServerSupabase(),
+): Promise<CourtListenerConnection> {
+    const connection = await readCourtListenerConnection(owner, db);
+    return connection === "unmigrated" ? WITHOUT_COURTLISTENER : connection;
+}
+
+/**
+ * Change `owner`'s switch, token, or both, creating their connection for
+ * the workspace on first use. A null or blank token removes theirs.
+ */
+export async function saveCourtListenerConnection(
+    owner: ConnectorOwner,
+    patch: { enabled?: boolean; token?: string | null },
+    db: Db = createServerSupabase(),
+): Promise<void> {
+    const row: Record<string, unknown> = {
+        user_id: owner.userId,
+        org_id: owner.orgId,
+        updated_at: new Date().toISOString(),
+    };
+    if (typeof patch.enabled === "boolean") row.enabled = patch.enabled;
+    if (owner.orgId) await requireOrgKeyMembership(owner.userId, owner.orgId, db);
+    if (patch.token !== undefined)
+        throw Object.assign(new Error("CourtListener credentials are managed by your organization."), { status: 403, code: "managed_credentials" });
+
+    const { error } = await db
+        .from("user_courtlistener_connections")
+        .upsert(row, { onConflict: "user_id,org_id" });
+    if (error) throw error;
+}
+
+function overlayCourtListenerKey(
+    apiKeys: UserApiKeys,
+    connection: CourtListenerConnection | "unmigrated",
+): void {
+    if (connection === "unmigrated") return;
+    if (!connection.enabled) apiKeys.courtlistener = null;
+}
+
+function overlayCourtListenerStatus(
+    status: ApiKeyStatus,
+    connection: CourtListenerConnection | "unmigrated",
+): void {
+    if (connection === "unmigrated") return;
+    if (!connection.enabled) status.courtlistener = false;
+    // Preserve central env/org provenance; never label a personal credential.
+    delete status.enabled.courtlistener;
+}
+
+async function managedCourtListenerForOwner(owner: ConnectorOwner, db: Db) {
+    if (owner.orgId) await requireOrgKeyMembership(owner.userId, owner.orgId, db);
+    const connection = await loadCourtListenerConnection(owner, db);
+    const key = connection.enabled
+        ? await resolveProviderSecret("courtlistener-api-token")
+        : "";
+    return { key: key || null, enabled: connection.enabled };
 }

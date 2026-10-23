@@ -50,28 +50,39 @@ export class GoogleAuthorizationCancelledError extends Error {
 /** A failure whose message is safe and useful to show as written. */
 export class GoogleConnectorFlowError extends Error {}
 
-function connectorApi(provider: GoogleConnectorProvider, isCurrent?: () => boolean) {
+type GoogleConnectorSettings = {
+  enabled?: boolean;
+  requireWriteApproval?: boolean;
+  readOnly?: boolean;
+};
+
+/** One provider's calls, all bound to the workspace the connection is in. */
+function connectorApi(
+  provider: GoogleConnectorProvider,
+  workspace: string | undefined,
+  isCurrent?: () => boolean,
+) {
   if (provider === "google-drive")
     return {
-      status: () => getGoogleDriveStatus(isCurrent),
-      start: () => startGoogleDriveOAuth(isCurrent),
-      cancel: (state: string) => cancelGoogleDriveOAuth(state, isCurrent),
-      disconnect: () => disconnectGoogleDrive(isCurrent),
-      updateSettings: (settings: { enabled?: boolean; requireWriteApproval?: boolean; readOnly?: boolean }) => updateGoogleDriveSettings(settings, isCurrent),
-      setToolEnabled: (name: string, enabled: boolean) => setGoogleDriveToolEnabled(name, enabled, isCurrent),
+      status: () => getGoogleDriveStatus(workspace, isCurrent),
+      start: () => startGoogleDriveOAuth(workspace, isCurrent),
+      cancel: (state: string) => cancelGoogleDriveOAuth(state, workspace, isCurrent),
+      disconnect: () => disconnectGoogleDrive(workspace, isCurrent),
+      updateSettings: (settings: GoogleConnectorSettings) =>
+        updateGoogleDriveSettings(settings, workspace, isCurrent),
+      setToolEnabled: (name: string, enabled: boolean) =>
+        setGoogleDriveToolEnabled(name, enabled, workspace, isCurrent),
     };
   return {
-    status: () => getGoogleWorkspaceStatus(provider, isCurrent),
-    start: () => startGoogleWorkspaceOAuth(provider, isCurrent),
-    cancel: (state: string) => cancelGoogleWorkspaceOAuth(provider, state, isCurrent),
-    disconnect: () => disconnectGoogleWorkspace(provider, isCurrent),
-    updateSettings: (settings: {
-      enabled?: boolean;
-      requireWriteApproval?: boolean;
-      readOnly?: boolean;
-    }) => updateGoogleWorkspaceSettings(provider, settings, isCurrent),
+    status: () => getGoogleWorkspaceStatus(provider, workspace, isCurrent),
+    start: () => startGoogleWorkspaceOAuth(provider, workspace, isCurrent),
+    cancel: (state: string) =>
+      cancelGoogleWorkspaceOAuth(provider, state, workspace, isCurrent),
+    disconnect: () => disconnectGoogleWorkspace(provider, workspace, isCurrent),
+    updateSettings: (settings: GoogleConnectorSettings) =>
+      updateGoogleWorkspaceSettings(provider, settings, workspace, isCurrent),
     setToolEnabled: (name: string, enabled: boolean) =>
-      setGoogleWorkspaceToolEnabled(provider, name, enabled, isCurrent),
+      setGoogleWorkspaceToolEnabled(provider, name, enabled, workspace, isCurrent),
   };
 }
 
@@ -80,13 +91,20 @@ const AUTHORIZATION_TIMEOUT_MS = 5 * 60 * 1000;
 export type GoogleConnector = ReturnType<typeof useGoogleConnector>;
 
 /**
- * One Google connector's state and actions. Every action throws on failure
- * so the page can route errors (and MFA challenges) the same way it does for
- * MCP connectors; only a user cancel throws GoogleAuthorizationCancelledError.
+ * One Google connector's state and actions in one workspace ("personal" or
+ * an organization id; undefined is read as Personal). Every action throws on
+ * failure so the page can route errors (and MFA challenges) the same way it
+ * does for MCP connectors; only a user cancel throws
+ * GoogleAuthorizationCancelledError.
+ *
+ * An authorization finishes, or is cancelled, in the workspace it started
+ * in: the calls are bound to `workspace`, and the page remounts this hook
+ * (aborting the wait) when the workspace changes.
  */
 export function useGoogleConnector(
   provider: GoogleConnectorProvider,
   name: string,
+  workspace?: string,
 ) {
   const owner = useRequestOwner();
   const isCurrent = owner.capture();
@@ -95,20 +113,20 @@ export function useGoogleConnector(
   // "adding" covers the start request; "authorizing" the Google window.
   const [phase, setPhase] = useState<"idle" | "adding" | "authorizing">("idle");
   const abortRef = useRef<AbortController | null>(null);
-  const api = connectorApi(provider, isCurrent);
+  const api = connectorApi(provider, workspace, isCurrent);
 
   const refresh = useCallback(async () => {
-    const next = await connectorApi(provider, isCurrent).status();
+    const next = await connectorApi(provider, workspace, isCurrent).status();
     if (!isCurrent()) throw new GoogleAuthorizationCancelledError();
     setStatus(next);
     setLoadFailed(false);
     return next;
-  }, [provider, owner.key]);
+  }, [provider, workspace, owner.key]);
 
   useEffect(() => {
     let mounted = true;
     setStatus(null);
-    connectorApi(provider, isCurrent)
+    connectorApi(provider, workspace, isCurrent)
       .status()
       .then((next) => {
         if (mounted && isCurrent()) setStatus(next);
@@ -120,7 +138,7 @@ export function useGoogleConnector(
       mounted = false;
       abortRef.current?.abort();
     };
-  }, [provider]);
+  }, [provider, workspace, owner.key]);
 
   const cancel = useCallback(() => {
     abortRef.current?.abort();
@@ -204,16 +222,14 @@ export function useGoogleConnector(
     await refresh();
   };
 
-  const updateSettings = async (settings: {
-    enabled?: boolean;
-    requireWriteApproval?: boolean;
-    readOnly?: boolean;
-  }) => {
-    setStatus(await api.updateSettings(settings));
+  const updateSettings = async (settings: GoogleConnectorSettings) => {
+    const next = await api.updateSettings(settings);
+    if (isCurrent()) setStatus(next);
   };
 
   const setToolEnabled = async (toolName: string, enabled: boolean) => {
-    setStatus(await api.setToolEnabled(toolName, enabled));
+    const next = await api.setToolEnabled(toolName, enabled);
+    if (isCurrent()) setStatus(next);
   };
 
   return {

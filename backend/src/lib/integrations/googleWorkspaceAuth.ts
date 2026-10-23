@@ -1,9 +1,11 @@
+import { getOrgRole } from "../access";
 import type {
   GoogleWorkspaceProvider,
   GoogleWorkspaceStatus,
 } from "@mike/contracts";
 import crypto from "node:crypto";
 import type { Db } from "../supabase";
+import { type ConnectorOwner, workspaceFilter } from "../connectorOwner";
 import {
   base64Url,
   encryptString,
@@ -140,13 +142,15 @@ export async function workspaceRequest(
 }
 export async function loadWorkspaceGrant(
   db: Db,
-  userId: string,
+  owner: ConnectorOwner,
   provider: GoogleProvider,
 ) {
+    if (owner.orgId && !(await getOrgRole(owner.userId, owner.orgId, db))) throw new Error("Workspace not found");
   const { data, error } = await db
     .from("user_google_workspace_tokens")
     .select("*")
-    .eq("user_id", userId)
+    .eq("user_id", owner.userId)
+    .filter(...workspaceFilter(owner))
     .eq("provider", provider)
     .maybeSingle();
   if (error) throw error;
@@ -154,17 +158,18 @@ export async function loadWorkspaceGrant(
 }
 export async function workspaceStatus(
   db: Db,
-  userId: string,
+  owner: ConnectorOwner,
   provider: GoogleProvider,
 ): Promise<Omit<GoogleWorkspaceStatus, "redirectUri" | "tools">> {
   const env = await googleWorkspaceEnv();
   const configured = !!(env.clientId && env.clientSecret);
   try {
-    const row = await loadWorkspaceGrant(db, userId, provider);
+    const row = await loadWorkspaceGrant(db, owner, provider);
     const { error } = await db
       .from("google_workspace_oauth_states")
       .select("id")
-      .eq("user_id", userId)
+      .eq("user_id", owner.userId)
+      .filter(...workspaceFilter(owner))
       .eq("provider", provider)
       .limit(1);
     if (error) throw error;
@@ -199,7 +204,7 @@ export async function workspaceStatus(
 /** Settings live on the grant row, so they exist only while connected. */
 export async function updateWorkspaceSettings(
   db: Db,
-  userId: string,
+  owner: ConnectorOwner,
   provider: GoogleProvider,
   settings: NativeConnectorSettings,
 ) {
@@ -208,7 +213,8 @@ export async function updateWorkspaceSettings(
   const { data, error } = await db
     .from("user_google_workspace_tokens")
     .update(patch)
-    .eq("user_id", userId)
+    .eq("user_id", owner.userId)
+    .filter(...workspaceFilter(owner))
     .eq("provider", provider)
     .select("user_id")
     .maybeSingle();
@@ -220,12 +226,12 @@ export async function updateWorkspaceSettings(
 }
 export async function setWorkspaceToolEnabled(
   db: Db,
-  userId: string,
+  owner: ConnectorOwner,
   provider: GoogleProvider,
   toolName: string,
   enabled: boolean,
 ) {
-  const row = await loadWorkspaceGrant(db, userId, provider);
+  const row = await loadWorkspaceGrant(db, owner, provider);
   if (!row)
     throw new GoogleWorkspaceError(
       `Connect ${GOOGLE_PROVIDERS[provider].name} first.`,
@@ -238,14 +244,15 @@ export async function setWorkspaceToolEnabled(
   const { error } = await db
     .from("user_google_workspace_tokens")
     .update({ disabled_tools: next })
-    .eq("user_id", userId)
+    .eq("user_id", owner.userId)
+    .filter(...workspaceFilter(owner))
     .eq("provider", provider)
     .eq("grant_id", row.grant_id);
   if (error) throw error;
 }
 export async function startWorkspaceOAuth(
   db: Db,
-  userId: string,
+  owner: ConnectorOwner,
   provider: GoogleProvider,
   redirectUri: string,
 ) {
@@ -257,13 +264,15 @@ export async function startWorkspaceOAuth(
   const { error: cleanupError } = await db
     .from("google_workspace_oauth_states")
     .delete()
-    .eq("user_id", userId)
+    .eq("user_id", owner.userId)
+    .filter(...workspaceFilter(owner))
     .lt("expires_at", new Date().toISOString());
   if (cleanupError) throw cleanupError;
   const state = base64Url(crypto.randomBytes(24));
   const verifier = base64Url(crypto.randomBytes(32));
   const { error } = await db.from("google_workspace_oauth_states").insert({
-    user_id: userId,
+    user_id: owner.userId,
+    org_id: owner.orgId,
     provider,
     state_hash: stateHash(state),
     ...await encryptFields("state_config", JSON.stringify({ verifier, redirectUri })),
@@ -401,37 +410,39 @@ export async function completeWorkspaceOAuth(
 }
 export async function cancelWorkspaceOAuth(
   db: Db,
-  userId: string,
+  owner: ConnectorOwner,
   provider: GoogleProvider,
   state: string,
 ) {
   const { error } = await db
     .from("google_workspace_oauth_states")
     .delete()
-    .eq("user_id", userId)
+    .eq("user_id", owner.userId)
+    .filter(...workspaceFilter(owner))
     .eq("provider", provider)
     .eq("state_hash", stateHash(state));
   if (error) throw error;
 }
 export async function disconnectWorkspace(
   db: Db,
-  userId: string,
+  owner: ConnectorOwner,
   provider: GoogleProvider,
 ) {
   // Google revocation affects other grants for the same OAuth client. Remove
   // this local connection only; users can revoke all access in Google settings.
   const { error } = await db.rpc("disconnect_google_workspace", {
-    p_user_id: userId,
+    p_user_id: owner.userId,
     p_provider: provider,
+    p_org_id: owner.orgId,
   });
   if (error) throw error;
 }
 export async function workspaceAccessToken(
   db: Db,
-  userId: string,
+  owner: ConnectorOwner,
   provider: GoogleProvider,
 ): Promise<string> {
-  const row = await loadWorkspaceGrant(db, userId, provider);
+  const row = await loadWorkspaceGrant(db, owner, provider);
   if (!row)
     throw new GoogleWorkspaceError(
       "Google connection changed or is disconnected. Reconnect it in Settings → Connectors.",
@@ -459,7 +470,8 @@ export async function workspaceAccessToken(
       const { error } = await db
         .from("user_google_workspace_tokens")
         .delete()
-        .eq("user_id", userId)
+        .eq("user_id", owner.userId)
+        .filter(...workspaceFilter(owner))
         .eq("provider", provider)
         .eq("grant_id", row.grant_id);
       if (error) throw error;
@@ -471,7 +483,8 @@ export async function workspaceAccessToken(
   const { data: saved, error } = await db
     .from("user_google_workspace_tokens")
     .update(await tokenPatch(token, provider, row))
-    .eq("user_id", userId)
+    .eq("user_id", owner.userId)
+    .filter(...workspaceFilter(owner))
     .eq("provider", provider)
     .eq("grant_id", row.grant_id)
     .eq("encrypted_access_token", row.encrypted_access_token)
@@ -479,7 +492,7 @@ export async function workspaceAccessToken(
     .maybeSingle();
   if (error) throw error;
   if (!saved) {
-    const current = await loadWorkspaceGrant(db, userId, provider);
+    const current = await loadWorkspaceGrant(db, owner, provider);
     if (
       current &&
       current.grant_id === row.grant_id &&

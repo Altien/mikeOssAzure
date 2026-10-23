@@ -1,3 +1,4 @@
+import { getOrgRole } from "../access";
 import crypto from "crypto";
 import dns from "dns/promises";
 import net from "net";
@@ -696,5 +697,7 @@ export async function loadConnector(
         .eq("id", connectorId)
         .single();
     if (error) throw error;
-    return data as ConnectorRow;
+    const connector = data as ConnectorRow;
+    if (connector.org_id && !(await getOrgRole(userId, connector.org_id, db))) throw new Error("Workspace not found");
+    return connector;
 }
