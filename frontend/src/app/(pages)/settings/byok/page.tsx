@@ -113,6 +113,10 @@ export default function ByokPage() {
 
     return (
         <div className="@container space-y-8">
+            <SettingsDescription>
+                Your keys are used in your Personal workspace only. In an
+                organization, models run on the keys its admins set up.
+            </SettingsDescription>
             {PROVIDER_SECTIONS.map((section) => {
                 // While the profile loads, which providers are active is not
                 // known yet: every card waits in the second section.

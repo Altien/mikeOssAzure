@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+    deleteAllChats,
     deleteAllMemories,
     downloadUserExport,
     getUserExportStatus,
@@ -32,6 +33,21 @@ vi.mock("@/app/contexts/ChatHistoryContext", () => ({
     }),
 }));
 
+// The active workspace, which every "Delete all" is limited to. Null is the
+// default outside a provider, where the page deletes in Personal.
+const workspaceState = vi.hoisted(() => ({
+    workspaceId: null as string | null,
+    activeOrganization: null as { id: string; name: string } | null,
+    organizations: [] as { id: string; name: string }[] | null,
+}));
+
+vi.mock("@/app/contexts/WorkspaceContext", async (importOriginal) => ({
+    ...(await importOriginal<
+        typeof import("@/app/contexts/WorkspaceContext")
+    >()),
+    useWorkspace: () => workspaceState,
+}));
+
 vi.mock("@/app/components/popups/MfaVerificationPopup", () => ({
     MfaVerificationPopup: () => null,
     needsMfaVerification: async () => false,
@@ -41,9 +57,13 @@ const mockedStart = vi.mocked(startUserExport);
 const mockedStatus = vi.mocked(getUserExportStatus);
 const mockedDownload = vi.mocked(downloadUserExport);
 const mockedDeleteMemories = vi.mocked(deleteAllMemories);
+const mockedDeleteChats = vi.mocked(deleteAllChats);
 
 beforeEach(() => {
     vi.clearAllMocks();
+    workspaceState.workspaceId = null;
+    workspaceState.activeOrganization = null;
+    workspaceState.organizations = [];
     // The page shortens its poll interval to 10ms under NODE_ENV=test, so
     // these tests run on real timers (fake timers fight userEvent).
 });
@@ -150,7 +170,10 @@ describe("privacy-data async exports", () => {
             screen.getByRole("button", { name: "Delete all memory" }),
         );
 
+        // With only Personal there is no other workspace to tell it from.
         expect(screen.getByText("Delete all memory?")).toBeVisible();
+        expect(screen.queryByText(/Deletes data in/)).toBeNull();
+        expect(screen.queryByText(/other workspaces/)).toBeNull();
         expect(
             screen.getAllByText(/private projects you created/i),
         ).toHaveLength(2);
@@ -159,7 +182,58 @@ describe("privacy-data async exports", () => {
         });
         await userEvent.click(confirmButtons.at(-1)!);
 
-        await waitFor(() => expect(mockedDeleteMemories).toHaveBeenCalledOnce());
+        await waitFor(() =>
+            expect(mockedDeleteMemories).toHaveBeenCalledWith("personal"),
+        );
+    });
+
+    it("names Personal to someone who also belongs to an organization", async () => {
+        workspaceState.organizations = [{ id: "org-1", name: "Acme LLP" }];
+        mockedDeleteMemories.mockResolvedValue();
+
+        render(<PrivacyDataPage />);
+        expect(screen.getByText(/Deletes data in Personal only/)).toBeVisible();
+        await userEvent.click(
+            screen.getByRole("button", { name: "Delete all memory" }),
+        );
+        expect(screen.getByText("Delete all memory in Personal?")).toBeVisible();
+        expect(
+            screen.getByText(/This permanently deletes your Personal memory/),
+        ).toBeVisible();
+    });
+
+    it("deletes in the active organization only, and says so", async () => {
+        workspaceState.workspaceId = "org-1";
+        workspaceState.activeOrganization = { id: "org-1", name: "Acme LLP" };
+        workspaceState.organizations = [workspaceState.activeOrganization];
+        mockedDeleteChats.mockResolvedValue();
+
+        render(<PrivacyDataPage />);
+        expect(
+            screen.getByText(/Deletes data in Acme LLP only/),
+        ).toBeVisible();
+        // The rows describe what is deleted here, not Personal's private projects.
+        expect(
+            screen.getByText("Permanently delete your memory in Acme LLP."),
+        ).toBeVisible();
+        expect(
+            screen.queryByText(/private projects you created/i),
+        ).not.toBeInTheDocument();
+
+        await userEvent.click(
+            screen.getAllByRole("button", { name: "Delete" })[0],
+        );
+        expect(screen.getByText("Delete all chats in Acme LLP?")).toBeVisible();
+        expect(
+            screen.getByText(/Your other workspaces are not affected/),
+        ).toBeVisible();
+        await userEvent.click(
+            screen.getAllByRole("button", { name: "Delete" }).at(-1)!,
+        );
+
+        await waitFor(() =>
+            expect(mockedDeleteChats).toHaveBeenCalledWith("org-1"),
+        );
     });
 
     it("re-asks for confirmation when Retry follows a failed deletion", async () => {
