@@ -47,12 +47,6 @@ export type OrgApiKeySettings = {
      * each provider whose key it holds, their own for the rest.
      */
     effective_router_models: RouterModelSelections;
-    /**
-     * Whether a member's own key is used for a provider the organization has
-     * no key for. When false, work in the organization never runs on a
-     * personal key.
-     */
-    allow_personal_api_keys: boolean;
     /** Whether the caller may change any of this. */
     can_manage: boolean;
     can_manage_models?: boolean;
@@ -67,7 +61,7 @@ async function readSettings(
 ): Promise<OrgResult<{ settings: OrgApiKeySettings }>> {
     const { data, error } = await db
         .from("organizations")
-        .select("allow_personal_api_keys")
+        .select("id")
         .eq("id", orgId)
         .maybeSingle();
     if (error) return { ok: false, kind: "db_error", detail: error.message };
@@ -87,7 +81,6 @@ async function readSettings(
                 effective,
                 router_models: routerModels,
                 effective_router_models: effectiveRouterModels,
-                allow_personal_api_keys: false,
                 can_manage: false,
                 can_manage_models: canManage,
                 managed: true,
@@ -227,27 +220,4 @@ export async function saveOrgRouterModels(
         },
     });
     return readSettings(db, params.orgId, params.actorId, true);
-}
-
-/**
- * Decide whether members' own keys may be used for work in the
- * organization. Turning it off is how a firm makes sure its matters only
- * ever run on accounts it holds.
- */
-export async function setOrgPersonalApiKeysAllowed(
-    db: Db,
-    params: {
-        actorId: string;
-        actorEmail?: string | null;
-        orgId: string;
-        allowed: unknown;
-    },
-): Promise<OrgResult<{ settings: OrgApiKeySettings }>> {
-    // Upstream divergence (sync-log: db8d42c3): NOT SUPPORTED — secret
-    // edits and personal-key opt-in are deployment administrator operations.
-    const role = await getOrgRole(params.actorId, params.orgId, db);
-    if (!role) return { ok: false, kind: "not_found" };
-    if (!isOrgAdmin(role)) return { ok: false, kind: "forbidden" };
-    return { ok: false, kind: "validation", detail: "Provider credentials are managed by the deployment administrator. Personal keys cannot override them." };
-
 }
