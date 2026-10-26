@@ -55,5 +55,5 @@ Playbook import/review lifecycle reports retain bounded stage/job/UUID identifie
 Node process warnings are reported as warning events grouped by warning name
 and Node diagnostic code. The console bridge drops Node's printed warning line
 because the warning object has already been captured through the backend's
-request-scoped Sentry reporter. Operators can silence Node warning reports with
-the same --no-warnings runtime option used by Node itself.
+request-scoped Sentry reporter. Operators can silence Node warning reports
+with --no-warnings or NODE_NO_WARNINGS=1.

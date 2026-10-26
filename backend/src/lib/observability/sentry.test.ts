@@ -850,6 +850,15 @@ describe("Node process warnings", () => {
     expect(consoleEvent("Mike workflow sync failed")).not.toBeNull();
   });
 
+  it("stays silent when the operator set NODE_NO_WARNINGS=1", () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    initSentry("job", { ...dsnEnv, NODE_NO_WARNINGS: "1" });
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    process.emit("warning", warning);
+    stderr.mockRestore();
+    expect(Sentry.captureException).not.toHaveBeenCalled();
+  });
+
   it("stays silent when the operator passed --no-warnings", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     initSentry("job", { ...dsnEnv, NODE_OPTIONS: "--enable-source-maps --no-warnings" });

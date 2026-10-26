@@ -48,7 +48,7 @@ const CONFIGURATION_FIELDS = new Set('SUPABASE_URL SUPABASE_PUBLISHABLE_KEY SUPA
 const ERROR_TYPES = new Set('Error TypeError RangeError ReferenceError SyntaxError URIError EvalError AggregateError AbortError TimeoutError APIError StorageOperationError Warning DeprecationWarning ExperimentalWarning MaxListenersExceededWarning TimeoutOverflowWarning TimeoutNegativeWarning UnsupportedWarning'.split(' '));
 const LEVELS = new Set('fatal error warning info debug'.split(' '));
 /** Caller fingerprints that replace code-location grouping: one condition, one issue. */
-const PINNED_FINGERPRINTS = new Set(['upstream-unavailable', 'api-unreachable']);
+const PINNED_FINGERPRINTS = new Set(['upstream-unavailable', 'api-unreachable', 'runtime-warning']);
 
 function record(value: unknown): RecordValue {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as RecordValue : {};
@@ -64,9 +64,10 @@ export function diagnosticRoute(value: string): string {
 function codePath(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const clean = value.split(/[?#]/)[0]!.replace(/\\/g, '/');
-  // Node builtins (`node:internal/process/warning`, `node:punycode`) are code,
-  // not the installation: the only frames a process warning ever has.
-  if (/^node:\w[\w/.-]*$/.test(clean)) return clean;
+  // Node builtins (`node:internal/process/warning`, `node:fs/promises`) are
+  // code, not the installation: the only frames a process warning ever has.
+  // Their specifiers are lowercase segments; a dot or a traversal is not one.
+  if (/^node:[a-z_]+(?:\/[a-z_]+)*$/.test(clean)) return clean;
   const bundle = clean.match(/(?:^|\/)((?:taskpane|commands|oauth-dialog|\d+)(?:\.[0-9a-f]{8})?\.js)$/);
   if (bundle) return bundle[1];
   const start = clean.search(/(?:^|\/)(?:backend|frontend|word-addin|packages|src|dist|node_modules|_next)\//);
@@ -223,8 +224,12 @@ export function diagnosticEvent(value: unknown): RecordValue {
   // Group by code location and controlled operation, never arbitrary text.
   // A pinned condition (the backend is unreachable) is one issue whatever the
   // route, method or stack, split only by its controlled component and code.
-  const pinned = Array.isArray(event.fingerprint) && typeof event.fingerprint[0] === 'string' && PINNED_FINGERPRINTS.has(event.fingerprint[0]) ? event.fingerprint[0] : undefined;
-  out.fingerprint = pinned ? [pinned, String(tags.component ?? 'application'), String(tags.failure_code ?? '')] : ['{{ default }}', String(tags.component ?? 'application'), String(tags.stage ?? ''), String(tags.http_route ?? ''), String(tags.http_status ?? ''), String(tags.failure_code ?? ''), String(tags.file_type ?? ''), String(tags.provider_error ?? ''), String(tags.dependency_status ?? ''), String(tags.warning_name ?? ''), String(tags.warning_code ?? '')];
+  const pinned = Array.isArray(event.fingerprint) && typeof event.fingerprint[0] === 'string' && PINNED_FINGERPRINTS.has(event.fingerprint[0]) ? event.fingerprint[0]
+    : tags.component === 'runtime-warning' ? 'runtime-warning' : undefined;
+  // A process warning is one issue per name and code: the same deprecation
+  // raised from two modules is one thing to fix, and the stack says where.
+  out.fingerprint = pinned === 'runtime-warning' ? [pinned, String(tags.warning_name ?? ''), String(tags.warning_code ?? '')]
+    : pinned ? [pinned, String(tags.component ?? 'application'), String(tags.failure_code ?? '')] : ['{{ default }}', String(tags.component ?? 'application'), String(tags.stage ?? ''), String(tags.http_route ?? ''), String(tags.http_status ?? ''), String(tags.failure_code ?? ''), String(tags.file_type ?? ''), String(tags.provider_error ?? ''), String(tags.dependency_status ?? ''), String(tags.warning_name ?? ''), String(tags.warning_code ?? '')];
   const extra: RecordValue = {};
   for (const [key, entry] of Object.entries(record(event.extra))) {
     if (ID_KEYS.has(key) && typeof entry === 'string' && UUID.test(entry)) extra[key] = entry;
