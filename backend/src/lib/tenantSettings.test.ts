@@ -12,7 +12,7 @@ import {
   getTenantSettings, resolveTenantSecret, type TenantSettings,
 } from "./tenantSettings";
 import { resolveProviderSecret, resolveSecret } from "./envSecrets";
-import { getOrganisationApiKeys, getUserApiKeyStatus } from "../modules/user/user.apiKeyStore";
+import { getOrganisationApiKeys, getUserApiKeyStatus } from "./providerCredentials/store";
 import { apiKeyForConfiguredModel, configuredEndpointSummaries, resetModelRegistryCache } from "./llm/registry";
 import { resolveManagedProvider } from "./llm/managedProviders";
 import { completeWithProvider, streamWithProvider } from "./llm/providers";

@@ -1,3 +1,17 @@
+import type {
+    CatalogPricing,
+    CatalogModel,
+    ConfiguredCatalogModel,
+    CatalogFailure,
+    CatalogResult,
+} from "./models.types";
+export type {
+    CatalogPricing,
+    CatalogModel,
+    ConfiguredCatalogModel,
+    CatalogFailure,
+    CatalogResult,
+} from "./models.types";
 // Business logic + data-access for the models module.
 //
 // Service layer behind models.routes.ts. Each function takes an explicit
@@ -16,41 +30,7 @@ import { isSupportedOpenCodeGoModel } from "../../lib/llm/models";
 import { configuredEndpointSummaries } from "../../lib/llm/registry";
 import { managedProviderCatalog, managedProviderForModel } from "../../lib/llm/managedProviders";
 import { currentTenant } from "../../lib/tenantContext";
-import { getEffectiveApiKeys, getOrganisationApiKeys } from "../user/user.service";
-
-export type CatalogPricing = {
-    input?: string;
-    output?: string;
-    variesByProvider?: true;
-    tiered?: true;
-};
-
-export type CatalogModel = {
-    id: string;
-    label: string;
-    pricing?: CatalogPricing;
-};
-
-
-export type ConfiguredCatalogModel = {
-    id: string;
-    label: string;
-    /** "Configured", or an administrator-entered provider's own name. */
-    group: string;
-    location: "cloud" | "local";
-    source: "Configured";
-    /** Managed model priced at zero on the tenant's price version. */
-    free?: true;
-};
-
-export type CatalogFailure =
-    | { ok: false; kind: "missing_api_key"; code: string; detail: string }
-    | { ok: false; kind: "upstream"; error: Error }
-    | { ok: false; kind: "error"; error: unknown };
-
-export type CatalogResult =
-    | { ok: true; models: CatalogModel[] }
-    | CatalogFailure;
+import { getEffectiveApiKeys, getOrganisationApiKeys } from "../../lib/providerCredentials/index";
 
 // Upstream divergence (sync-log: 972cf22): no local Ollama runtime;
 // authenticated organization router catalogs remain fully supported.

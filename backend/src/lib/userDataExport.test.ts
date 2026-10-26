@@ -6,7 +6,7 @@ import {
   buildUserChatsExport,
   buildUserTabularReviewsExport,
   buildUserAccountExport,
-} from "../modules/user/user.dataExport"; // Dev drift: moved by upstream #295
+} from "../application/exports/buildJsonExport"; // Dev drift: moved by upstream #295, then 877f4598
 
 function rangeStart(call: DbCall): number | undefined {
   const r = call.filters.find(([m]) => m === "range");

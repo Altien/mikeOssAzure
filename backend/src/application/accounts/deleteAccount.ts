@@ -1,20 +1,14 @@
 // Account / data deletion (destructive â€” exact call args + ordering preserved).
 //
-// Service layer behind user.routes.ts â€” see user.shared.ts for the module's
-// contract. The userDataCleanup helpers + auth-admin deleteUser call are
+// Application service invoked by the user HTTP entrypoint. The userDataCleanup helpers + auth-admin deleteUser call are
 // invoked with identical args and ordering.
-
-import { deleteUserPrivateMemories } from "../../lib/memory/bulk";
 import { dbJobsEnabled } from "../../lib/dbq/runner";
 import {
-    deleteAllUserChats,
-    deleteAllUserTabularReviews,
-    deleteUserProjects,
     listOrgsBlockingAccountDeletion,
     type AccountDeletionOrgBlocker,
-} from "./user.dataCleanup";
+} from "./dataCleanup";
 import { withKind, type ErrorKind } from "../../lib/appError";
-import { type Db } from "./user.shared";
+import { type Db } from "../../lib/serviceData";
 
 /**
  * The failure as the route's sendInternalError should report it: its kind
@@ -48,7 +42,6 @@ export function describeAccountDeletionBlockers(
         );
     return sentences.join(" ");
 }
-
 export async function deleteUserAccount(
     db: Db,
     userId: string,
@@ -92,76 +85,6 @@ export async function deleteUserAccount(
         return {
             ok: false,
             error: deletionFailure("account.delete_failed", "account deletion failed", err),
-        };
-    }
-}
-
-export async function deleteUserChats(
-    db: Db,
-    userId: string,
-    orgId: string | null,
-): Promise<{ ok: true } | { ok: false; error: unknown }> {
-    try {
-        await deleteAllUserChats(db, userId, orgId);
-        return { ok: true };
-    } catch (err) {
-        return {
-            ok: false,
-            error: deletionFailure("db.query_failed", "chat deletion failed", err),
-        };
-    }
-}
-
-export async function deleteUserProjectsData(
-    db: Db,
-    userId: string,
-    orgId: string | null,
-): Promise<{ ok: true } | { ok: false; error: unknown }> {
-    try {
-        await deleteUserProjects(db, userId, orgId);
-        return { ok: true };
-    } catch (err) {
-        return {
-            ok: false,
-            error: deletionFailure("db.query_failed", "project deletion failed", err),
-        };
-    }
-}
-
-export async function deleteUserTabularReviews(
-    db: Db,
-    userId: string,
-    orgId: string | null,
-): Promise<{ ok: true } | { ok: false; error: unknown }> {
-    try {
-        await deleteAllUserTabularReviews(db, userId, orgId);
-        return { ok: true };
-    } catch (err) {
-        return {
-            ok: false,
-            error: deletionFailure("db.query_failed", "tabular review deletion failed", err),
-        };
-    }
-}
-
-/**
- * Wipe the user's own memory for one workspace (`orgId` null is Personal)
- * and, in Personal, the memories of private projects they created.
- * Organization and merely shared projects are intentionally outside this
- * destructive action.
- */
-export async function deletePrivateMemories(
-    db: Db,
-    userId: string,
-    orgId: string | null,
-): Promise<{ ok: true } | { ok: false; error: unknown }> {
-    try {
-        await deleteUserPrivateMemories(db, userId, orgId);
-        return { ok: true };
-    } catch (err) {
-        return {
-            ok: false,
-            error: deletionFailure("db.query_failed", "private memory deletion failed", err),
         };
     }
 }

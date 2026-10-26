@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { saveApiKeyForOwner } from "../user.apiKeys";
-import { orgKeyOwner, userKeyOwner } from "../user.apiKeyStore";
+import { orgKeyOwner, saveApiKeyForOwner, userKeyOwner } from "../../../lib/providerCredentials/index";
 import type { Db } from "../../../lib/supabase";
 
 // Upstream divergence (sync-log: db8d42c3): owner-aware interfaces are

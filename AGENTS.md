@@ -9,7 +9,11 @@ domain logic live behind exactly one named `*.service.ts` facade per module.
 Workers and other modules import that facade. `lib/` and `middleware/` never
 import modules, and `backend/src/routes/` is retired. Keep `buildApp()` free of
 startup side effects; required auth and document-lifecycle probes complete
-before the API listens or a worker claims jobs.
+before the API listens or a worker claims jobs. `backend/src/application/` owns
+cross-domain account, purge and export workflows: routes and the job registry
+may call it, domain modules never import it, and `lib/` imports neither
+modules nor `application/`. `dependencyCycles.test.ts` fails CI on any
+source import cycle.
 
 `backend/src/__tests__/architecture.test.ts` enforces these boundaries.
 Document-version mutations belong to the documents module and use its

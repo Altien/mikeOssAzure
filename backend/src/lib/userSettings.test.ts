@@ -14,7 +14,7 @@ const { readEncryptedApiKeysMock, createServerSupabaseMock } = vi.hoisted(() => 
 
 // Dev drift: upstream #295 moved userApiKeys/userSettings into modules/user;
 // upsertUserProfile lives in lib/userLookup.
-vi.mock("../modules/user/user.apiKeyStore", () => ({
+vi.mock("./providerCredentials/index", () => ({
   getOrganisationApiKeys: readEncryptedApiKeysMock,
   // Dev drift: settings load credentials and router lists for the effective workspace.
   getEffectiveApiKeys: readEncryptedApiKeysMock,

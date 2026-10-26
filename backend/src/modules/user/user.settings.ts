@@ -1,6 +1,9 @@
 import { createServerSupabase, type Db } from "../../lib/supabase";
 import { DEFAULT_TITLE_MODEL, OPENAI_LOW_MODELS, type UserApiKeys, type ReasoningLevel } from "../../lib/llm";
-import { getEffectiveApiKeys, loadCourtListenerConnection } from "./user.apiKeyStore";
+import {
+    getEffectiveApiKeys,
+    loadCourtListenerConnection,
+} from "../../lib/providerCredentials/index";
 import { courtlistenerBulkDataEnabled } from "../../lib/courtlistener";
 import { loadCustomInstructions } from "./user.customInstructions";
 import {

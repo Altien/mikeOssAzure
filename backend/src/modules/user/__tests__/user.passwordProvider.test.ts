@@ -9,7 +9,7 @@ vi.mock("../user.profile.load", () => ({
   ensureProfileRow: vi.fn(async () => null),
   loadProfile: vi.fn(async () => ({ data: { user_id: "user-one" }, error: null })),
 }));
-vi.mock("../user.apiKeyStore", () => ({ getUserApiKeyStatus: vi.fn(async () => ({})) }));
+vi.mock("../../../lib/providerCredentials/index",() => ({ getUserApiKeyStatus: vi.fn(async () => ({})) }));
 
 import { recordPasswordSet } from "../user.profile.operations";
 

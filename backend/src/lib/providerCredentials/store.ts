@@ -1,4 +1,4 @@
-import { type ConnectorOwner, workspaceFilter } from "../../lib/connectorOwner";
+import { type ConnectorOwner, workspaceFilter } from "../connectorOwner";
 // Per-user encrypted provider-key storage. Adapted from upstream
 // ba6f7711449de47bd25cad7ac21bdc2a53355963's `backend/src/lib/userApiKeys.ts`.
 //
@@ -24,61 +24,27 @@ import { type ConnectorOwner, workspaceFilter } from "../../lib/connectorOwner";
 //      lands; remove the function then.
 
 import crypto from "node:crypto";
-import { WEB_SEARCH_BACKENDS, type WebSearchBackend } from "../../lib/webSearch/settings";
-import { loadDeploymentSearchApiKeys } from "../../lib/webSearch/credentials";
-import { tenantHasProviderKey, tenantModelAllowlist } from "../../lib/tenantSettings";
-import { getTenancyMode } from "../../lib/tenancyMode";
-import { MEMBER_KEY_PROVIDERS, memberKeyModels } from "../../lib/llm/memberKeys";
-import { getConfig } from "../../lib/config";
-import { resolveSecret, resolveProviderSecret, resolveVercelApiKey } from "../../lib/envSecrets";
-import { createServerSupabase, type Db } from "../../lib/supabase";
-import { envBedrockCredentials, envAzureCredentials, envAzureFoundryCredentials, envVertexCredentials, envVertexServiceAccountKey, envCustomEndpointCredentials } from "../../lib/llm/cloudProviders";
-import { resolveManagedProvider, type ManagedProvider } from "../../lib/llm/managedProviders";
-import type { ProviderSettings, AzureOpenaiSettings, UserApiKeys } from "../../lib/llm";
+import { WEB_SEARCH_BACKENDS } from "../webSearch/settings";
+import { loadDeploymentSearchApiKeys } from "../webSearch/credentials";
+import { tenantHasProviderKey, tenantModelAllowlist } from "../tenantSettings";
+import { getTenancyMode } from "../tenancyMode";
+import { MEMBER_KEY_PROVIDERS, memberKeyModels } from "../llm/memberKeys";
+import { getConfig } from "../config";
+import { resolveSecret, resolveProviderSecret, resolveVercelApiKey } from "../envSecrets";
+import { createServerSupabase, type Db } from "../supabase";
+import { envBedrockCredentials, envAzureCredentials, envAzureFoundryCredentials, envVertexCredentials, envVertexServiceAccountKey, envCustomEndpointCredentials } from "../llm/cloudProviders";
+import { resolveManagedProvider, type ManagedProvider } from "../llm/managedProviders";
+import type { ProviderSettings, AzureOpenaiSettings, UserApiKeys } from "../llm";
 
-// `openrouter` and `courtlistener` added with upstream 44e868e
-// (CourtListener integration). Unlike upstream, their org-level
-// fallback goes through resolveSecret() (Key Vault primary, env var
-// fallback — internal design notes §2.4) instead of raw process.env.
-export type ApiKeyProvider =
-    | "claude"
-    | "gemini"
-    | "openai"
-    | "kimi"
-    | "mistral"
-    | "openrouter"
-    | "opencode-go"
-    | "vercel"
-    | "courtlistener"
-    | "bedrock"
-    | "azure"
-    | "azure-foundry"
-    | "vertex"
-    | "xai"
-    | "custom"
-    | "tokenjuice"
-    | "meta"
-    | "azure_openai"
-    | WebSearchBackend;
-
-export type ApiKeySource = "env" | "user" | "org" | null;
-export type ApiKeyStatus = Record<ApiKeyProvider, boolean> & {
-    sources: Record<ApiKeyProvider, ApiKeySource>;
-    enabled: Partial<Record<ApiKeyProvider, boolean>>;
-    settings: ProviderSettings;
-    /** Tenant-level model allowlist (multi-tenant tenant settings); absent when unrestricted. */
-    modelAllowlist?: readonly string[] | null;
-    /** Pooled mode only: per model provider, who supplies the key. */
-    pooledKeys?: Partial<Record<ApiKeyProvider, PooledKeyStatus>>;
-};
-export type PooledKeyStatus = {
-    /** Models the member may run on their own key; empty when they may not set one. */
-    memberKeyModels: string[];
-    /** The member has saved their own key. */
-    memberKeySet: boolean;
-    /** The organisation (tenant) supplies its own key for this provider. */
-    organisationKey: boolean;
-};
+import type { ApiKeyOwner, ApiKeyProvider, ApiKeyStatus, PooledKeyStatus } from "./types";
+export type {
+    ApiKeyProvider,
+    ApiKeySource,
+    ApiKeyOwner,
+    SettingsApiKeyProvider,
+    ApiKeyStatus,
+    PooledKeyStatus,
+} from "./types";
 
 const POOLED_MODEL_PROVIDERS = ["claude", "gemini", "openai", "kimi", "mistral", "openrouter", "opencode-go", "vercel", "azure_openai", "bedrock", "azure", "azure-foundry", "vertex", "xai", "custom", "tokenjuice", "meta"] as const;
 
@@ -298,7 +264,7 @@ export async function getUserExecutionApiKeys(
 
 // Upstream divergence (sync-log: 972cf22): router credentials use the same
 // organization Key Vault boundary as other providers; never env-only reads.
-export { resolveVercelApiKey } from "../../lib/envSecrets";
+export { resolveVercelApiKey } from "../envSecrets";
 
 const ENCRYPTION_SECRET_NAME = "user-api-keys-encryption-key";
 
@@ -610,7 +576,6 @@ export async function _readLegacyRowForMigration(
 // Upstream divergence (sync-log: db8d42c3): owner-aware interfaces share the
 // deployment Key Vault credentials. Personal/org DB secret writes are NOT
 // SUPPORTED by this managed deployment. Preferences still mask the caller.
-export type ApiKeyOwner = { kind: "user" | "org"; id: string };
 export const userKeyOwner = (id: string): ApiKeyOwner => ({ kind: "user", id });
 export const orgKeyOwner = (id: string): ApiKeyOwner => ({ kind: "org", id });
 

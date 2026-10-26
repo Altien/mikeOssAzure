@@ -14,7 +14,7 @@ vi.mock("../../../lib/tenantSettings", async (importOriginal) => ({
   getTenantSettings: vi.fn(async () => allowlist.memberKeyModels && { member_key_models: allowlist.memberKeyModels }),
 }));
 
-import { getApiKeyStatusFor, getUserApiKeyStatus, normalizeApiKeyProvider, orgKeyOwner } from "../user.apiKeyStore";
+import { getApiKeyStatusFor, getUserApiKeyStatus, normalizeApiKeyProvider, orgKeyOwner } from "../../../lib/providerCredentials/store";
 import { saveApiKey } from "../user.apiKeys";
 import { freezeTenancyMode, resetFrozenTenancyModeForTests } from "../../../lib/tenancyMode";
 

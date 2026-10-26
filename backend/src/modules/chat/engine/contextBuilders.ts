@@ -31,7 +31,7 @@ import {
 } from "../../../lib/userTime";
 import { ACTIVE_WORD_DOCUMENT_LIVE_FILENAME } from "./wordPrompt";
 import { parseCitations, createCitation } from "./citations";
-import type { AssistantEvent } from "./streaming";
+import type { AssistantEvent } from "@mike/contracts";
 import { catalogWorkflowId, ensureDefaultWorkflows } from "../../../lib/workflowCatalog";
 import { safeErrorLog } from "../../../lib/safeError";
 import { streamRunCluster } from "../../../lib/streamRunCluster";

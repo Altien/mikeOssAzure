@@ -51,7 +51,7 @@ import {
   flushEncryptionKey,
   _readLegacyRowForMigration,
   getOrganisationApiKeys,
-} from "../modules/user/user.apiKeyStore"; // Dev drift: moved by upstream #295
+} from "./providerCredentials/store"; // Dev drift: moved by upstream #295, then 877f4598
 
 /**
  * Build a fake supabase-style client with one method per code path the

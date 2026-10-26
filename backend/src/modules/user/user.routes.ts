@@ -33,7 +33,7 @@ import { sendInternalError } from "../../lib/httpError";
 import { sendServiceFailure } from "../../lib/serviceResult";
 import { dbJobsEnabled } from "../../lib/dbq/runner";
 import { buildContentDisposition } from "../../lib/storage";
-import { normalizeApiKeyProvider, type ApiKeyProvider } from "./user.apiKeyStore";
+import { normalizeApiKeyProvider, type ApiKeyProvider } from "../../lib/providerCredentials/index";
 import { completeUserMcpConnectorOAuth } from "../../lib/mcpConnectors";
 import { runWithOAuthStateTenant } from "../../lib/oauthStateTenant";
 import { conciseMcpErrorMessage } from "../../lib/mcp/errors";
@@ -61,33 +61,20 @@ import {
     completeUserOnboarding,
     createMcpConnector,
     deleteMcpConnector,
-    deletePrivateMemories,
-    deleteUserAccount,
-    describeAccountDeletionBlockers,
-    deleteUserChats,
-    deleteUserProjectsData,
-    deleteUserTabularReviews,
-    getApiKeyStatus,
     getCustomInstructions,
     getResponseStyle,
     getMcpConnector,
-    getUserExportStatus,
     getUserProfile,
-    loadUserExportArtifact,
     lookupUserByEmail,
     listMcpConnectors,
     readBooleanBodyField,
     recordPasswordSet,
     refreshMcpConnectorTools,
-    saveApiKey,
-    setApiKeyEnabled,
     setMcpToolEnabled,
     setMfaOnLogin,
     startMcpConnectorOAuth,
-    startUserExport,
     updateMcpConnector,
     updateUserProfile,
-    validateExportRequest,
     validateOnboardingPayload,
     validateProfilePayload,
     validateCustomInstructionsPayload,
@@ -99,8 +86,22 @@ import {
     saveWebSearchSettings,
     courtListenerConnectorStatus,
     setCourtListenerEnabled,
-    isWorkspaceExportType,
 } from "./user.service";
+import {
+    deletePrivateMemories,
+    deleteUserChats,
+    deleteUserProjectsData,
+    deleteUserTabularReviews,
+} from "../../application/accounts/clearAccountData";
+import { deleteUserAccount, describeAccountDeletionBlockers } from "../../application/accounts/deleteAccount";
+import {
+    getUserExportStatus,
+    loadUserExportArtifact,
+    startUserExport,
+    validateExportRequest,
+} from "../../application/exports/requestExport";
+import { isWorkspaceExportType } from "../../application/exports/exportContracts";
+import { getApiKeyStatus, saveApiKey, setApiKeyEnabled } from "./user.service";
 
 export const userRouter = Router();
 
@@ -1206,7 +1207,6 @@ userRouter.post(
         }
     }),
 );
-
 
 // Gmail and Calendar are explicit integrations, independent of sign-in.
 for (const provider of ["gmail", "google-calendar"] as const) {

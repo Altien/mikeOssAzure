@@ -1,5 +1,5 @@
 // user profile operations — implementation behind the module facade.
-import { getUserApiKeyStatus } from "./user.apiKeyStore";
+import { getUserApiKeyStatus } from "../../lib/providerCredentials/index";
 import { authProvider } from "../auth/auth.service";
 import { supabaseSessionConfiguration } from "../../lib/runtimeConfig";
 import { findProfileUserByEmail } from "../../lib/userLookup";

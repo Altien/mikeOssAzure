@@ -5,7 +5,7 @@
 
 import { Router } from "express";
 import { requireAuth } from "../../middleware/auth";
-import { getOrganisationApiKeys } from "../user/user.service";
+import { getOrganisationApiKeys } from "../../lib/providerCredentials/index";
 import { listAzureOpenaiDeployments } from "../../lib/llm/azureOpenaiDeployments";
 
 export const llmRouter = Router();

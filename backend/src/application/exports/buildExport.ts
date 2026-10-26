@@ -1,35 +1,35 @@
+// Re-authorize and build a durable export artifact.
+// Dev (sync-log: 877f4598): unlike upstream, each attempt writes a
+// claim-specific path and is fenced by its live claim token; the queue
+// adapter in application/jobs/exportBuild.ts wires the unpublished-result hook.
 import { enqueueDbJob } from "../../lib/dbq/enqueue";
-import type { DbJobHandler } from "../../lib/dbq/types";
+import type { DbJob } from "../../lib/dbq/types";
 import { resolveWorkspaceFilter } from "../../lib/workspace";
-// exportJobs — implementation behind the module facade.
-// Handlers for the DB queue. Every handler runs with at-least-once
-// semantics: it must be idempotent, and it signals "retry me" by throwing.
-//
-// Registered kinds:
-//   audit.chat_turn  — fan out one chat turn's audit rows (durable audit)
-//   account.delete   — full account data erasure (survives restarts)
-//   storage.cleanup  — delete storage objects/prefixes (no more swallowed
-//                      fire-and-forget deletes leaking files)
-//   export.build     — build a user data export and park it in storage
-//   mcp.refresh_token        — renew an MCP OAuth access token before it
-//                      expires, instead of on the request that needs it
-//   document.precompute_text — extract a legacy Office file's text once, so
-//                      read_document stops paying for LibreOffice per call
-//   memory.consolidate — curate scoped Markdown after chat inactivity
 import { recordAudit } from "../../lib/audit";
-import { buildUserAccountExport, buildUserChatsExport, buildUserTabularReviewsExport, userExportFilename } from "./user.dataExport";
+import {
+    buildUserAccountExport,
+    buildUserChatsExport,
+    buildUserTabularReviewsExport,
+    userExportFilename,
+} from "./buildJsonExport";
 import { AUDIT_CSV_FILENAME, buildAuditCsv, type AuditQuery } from "../../lib/auditExport";
 import { createDocumentAccessChecker } from "../../lib/access";
 import { selectInBatches } from "../../lib/batchedQuery";
 import { mapWithConcurrency } from "../../lib/concurrency";
 import { attachActiveVersionPaths, downloadFilenameForVersion } from "../../lib/documentVersions";
 import { downloadFile, uploadFile } from "../../lib/storage";
-import { type Db, type DbJob } from "../../lib/dbq/types";
+import type { Db } from "../../lib/supabase";
+import type { ExportBuildRequest } from "./exportContracts";
 import { buildMemoryArchive } from "../../lib/memory/archive";
 import { NonRetryableJobError } from "../../lib/dbq/runner";
-import { memberDataActionAllowed } from "../orgs/orgs.service";
-import { JsonExportType, MAX_ZIP_EXPORT_DOCUMENTS, ExportType, EXPORT_TYPES, isWorkspaceExportType } from "./user.exportContracts";
-
+import { memberDataActionAllowed } from "../../modules/orgs/orgs.service";
+import {
+    JsonExportType,
+    MAX_ZIP_EXPORT_DOCUMENTS,
+    ExportType,
+    EXPORT_TYPES,
+    isWorkspaceExportType,
+} from "./exportContracts";
 /** One finished artifact, ready to park in storage. */
 type ExportArtifact = {
     body: Buffer;
@@ -37,13 +37,11 @@ type ExportArtifact = {
     /** Stored on the object and replayed as the download's Content-Type. */
     contentType: string;
 };
-
 const JSON_EXPORT_AUDIT_ACTIONS: Record<JsonExportType, string> = {
     account: "export.account",
     chats: "export.chats",
     "tabular-reviews": "export.tabular",
 };
-
 async function buildJsonExport(
     db: Db,
     userId: string,
@@ -63,13 +61,7 @@ async function buildJsonExport(
         contentType: "application/json",
     };
 }
-
-async function buildAuditCsvExport(
-    db: Db,
-    job: DbJob,
-    userId: string,
-    userEmail: string | null,
-): Promise<ExportArtifact> {
+async function buildAuditCsvExport(db: Db, job: ExportBuildRequest, userId: string, userEmail: string | null): Promise<ExportArtifact> {
     // The route validated these params through parseQuery before enqueuing,
     // so a job without them is malformed rather than retryable.
     const query = job.payload.query as AuditQuery | undefined;
@@ -83,23 +75,14 @@ async function buildAuditCsvExport(
         contentType: "text/csv; charset=utf-8",
     };
 }
-
-async function buildDocumentsZipExport(
-    db: Db,
-    job: DbJob,
-    userId: string,
-    userEmail: string | null,
-): Promise<ExportArtifact> {
+async function buildDocumentsZipExport(db: Db, job: ExportBuildRequest, userId: string, userEmail: string | null): Promise<ExportArtifact> {
     const documentIds = job.payload.document_ids as unknown;
-    if (
-        !Array.isArray(documentIds) ||
+    if (!Array.isArray(documentIds) ||
         documentIds.length === 0 ||
         documentIds.length > MAX_ZIP_EXPORT_DOCUMENTS ||
-        documentIds.some((id) => typeof id !== "string" || !id)
-    ) {
+        documentIds.some((id) => typeof id !== "string" || !id)) {
         throw new Error(`[export.build] malformed payload on job ${job.id}`);
     }
-
     // org_id and workflow_id are part of the verdict, not decoration:
     // ensureDocAccess resolves a workflow asset through its workflow and an
     // org document through its org. Selecting only project_id/user_id made
@@ -154,26 +137,17 @@ async function buildDocumentsZipExport(
             source: doc.source ?? null,
         };
         const raw = await downloadFile(active.storage_path);
-        if (!raw) continue;
+        if (!raw)
+            continue;
         // Sequential, unlike the sync route's Promise.all: this path exists
         // for selections large enough that fetching every file at once is
         // what would blow the memory ceiling.
-        zip.file(
-            downloadFilenameForVersion(
-                active.filename,
-                active.version_number,
-                active.source === "assistant_edit",
-            ),
-            Buffer.from(raw),
-        );
+        zip.file(downloadFilenameForVersion(active.filename, active.version_number, active.source === "assistant_edit"), Buffer.from(raw));
         added++;
     }
     if (added === 0) {
-        throw new Error(
-            `[export.build] no accessible documents for job ${job.id}`,
-        );
+        throw new Error(`[export.build] no accessible documents for job ${job.id}`);
     }
-
     return {
         body: await zip.generateAsync({
             type: "nodebuffer",
@@ -183,7 +157,6 @@ async function buildDocumentsZipExport(
         contentType: "application/zip",
     };
 }
-
 async function buildMemoryZipExport(
     db: Db,
     userId: string,
@@ -198,11 +171,10 @@ async function buildMemoryZipExport(
         contentType: "application/zip",
     };
 }
+/** The durable request plus the queue claim that fences this attempt. */
+export type ClaimedExportBuild = ExportBuildRequest & Pick<DbJob, "attempts" | "claim_token">;
 
-async function buildClaimedExport(
-    db: Db,
-    job: DbJob,
-): Promise<Record<string, unknown>> {
+export async function buildExport(db: Db, job: ClaimedExportBuild): Promise<Record<string, unknown>> {
     const userId = job.payload.userId as string | undefined;
     const type = job.payload.type as ExportType | undefined;
     if (!userId || !type || !EXPORT_TYPES.includes(type)) {
@@ -219,8 +191,7 @@ async function buildClaimedExport(
               ? await buildDocumentsZipExport(db, job, userId, userEmail)
               : type === "memory-zip"
                 ? await buildMemoryZipExport(db, userId, userEmail, orgId)
-              : await buildJsonExport(db, userId, userEmail, type, orgId);
-
+                : await buildJsonExport(db, userId, userEmail, type, orgId);
     // Path is namespaced under the user (account erasure purges the prefix)
     // and claim-specific: a stale worker never overwrites the winning attempt.
     const storagePath = `exports/${userId}/${job.id}-${job.attempts}-${job.claim_token}-${artifact.filename}`;
@@ -248,7 +219,8 @@ async function buildClaimedExport(
             action: "export.memory",
             surface: "account",
         });
-    } else if (type !== "audit-csv" && type !== "documents-zip") {
+    }
+    else if (type !== "audit-csv" && type !== "documents-zip") {
         await recordAudit(db, {
             userId,
             userEmail,
@@ -278,7 +250,7 @@ async function buildClaimedExport(
     };
 }
 
-async function workspaceExportOrgId(db: Db, job: DbJob, userId: string, type: ExportType): Promise<string | null> {
+async function workspaceExportOrgId(db: Db, job: ExportBuildRequest, userId: string, type: ExportType): Promise<string | null> {
     if (!isWorkspaceExportType(type)) return null;
     // Legacy jobs mean Personal, never every workspace.
     const raw = job.payload.orgId;
@@ -292,7 +264,7 @@ async function workspaceExportOrgId(db: Db, job: DbJob, userId: string, type: Ex
     return orgId;
 }
 
-async function assertExportAttemptLive(db: Db, job: DbJob, userId: string): Promise<void> {
+async function assertExportAttemptLive(db: Db, job: ClaimedExportBuild, userId: string): Promise<void> {
     if (!job.claim_token) throw new NonRetryableJobError("Export job has no canonical claim token");
     const claim = await db.rpc("renew_db_job", { p_id: job.id, p_attempts: job.attempts, p_claim_token: job.claim_token, p_lease_seconds: 600 });
     if (claim.error) throw claim.error;
@@ -306,7 +278,8 @@ async function queueExportAttemptCleanup(db: Db, key: string): Promise<void> {
     await enqueueDbJob(db, { kind: "storage.cleanup", payload: { keys: [key] }, maxAttempts: 100 });
 }
 
-async function discardUnpublishedExportResult(db: Db, job: DbJob, result: Record<string, unknown>, outcome: { publicationUncertain: boolean }): Promise<void> {
+/** Queue hook: clean up an attempt's artifact when its result was not published. */
+export async function discardUnpublishedExportResult(db: Db, job: DbJob, result: Record<string, unknown>, outcome: { publicationUncertain: boolean }): Promise<void> {
     const userId = job.payload.userId;
     const key = result.storage_path;
     if (typeof userId !== "string" || typeof key !== "string" || !job.claim_token ||
@@ -324,7 +297,3 @@ async function discardUnpublishedExportResult(db: Db, job: DbJob, result: Record
     }
     await queueExportAttemptCleanup(db, key);
 }
-
-export const handleExportBuild: DbJobHandler = Object.assign(buildClaimedExport, {
-    onUnpublishedResult: discardUnpublishedExportResult,
-});

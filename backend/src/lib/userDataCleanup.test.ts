@@ -20,7 +20,7 @@ import {
   deleteAllUserChats,
   deleteAllUserTabularReviews,
   deleteUserProjects,
-} from "../modules/user/user.dataCleanup";
+} from "../application/accounts/dataCleanup";
 
 beforeEach(() => {
   deleteFileMock.mockReset();

@@ -240,7 +240,7 @@ vi.mock("../../middleware/auth", () => ({
 // (which encrypts) and never echo plaintext — getUserApiKeyStatus returns
 // presence-only booleans. getUserApiKeys must be exported too — lib/userSettings
 // imports it at module load.
-vi.mock("../../modules/user/user.apiKeyStore", () => ({
+vi.mock("../../lib/providerCredentials/store", () => ({
     getUserApiKeyStatus: (...args: unknown[]) => getUserApiKeyStatus(...args),
     saveUserApiKey: (...args: unknown[]) => saveUserApiKey(...args),
     hasEnvApiKey: (...args: unknown[]) => hasEnvApiKey(...args),
@@ -249,7 +249,7 @@ vi.mock("../../modules/user/user.apiKeyStore", () => ({
     getUserApiKeys: vi.fn(async () => ({})),
 }));
 
-vi.mock("../../modules/user/user.dataCleanup", () => ({
+vi.mock("../../application/accounts/dataCleanup", () => ({
     deleteAllUserChats: (...args: unknown[]) => deleteAllUserChats(...args),
     deleteAllUserTabularReviews: (...args: unknown[]) =>
         deleteAllUserTabularReviews(...args),
@@ -265,7 +265,7 @@ vi.mock("../../lib/memory/bulk", () => ({
         deleteUserPrivateMemories(...args),
 }));
 
-vi.mock("../../modules/user/user.dataExport", () => ({
+vi.mock("../../application/exports/buildJsonExport", () => ({
     buildUserAccountExport: (...args: unknown[]) =>
         buildUserAccountExport(...args),
     buildUserChatsExport: (...args: unknown[]) => buildUserChatsExport(...args),
