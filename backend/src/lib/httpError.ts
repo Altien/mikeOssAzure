@@ -133,8 +133,6 @@ export function sendInternalError(
       // as one issue instead of one per project.
       http_route: requestRoutePattern(res.req),
     },
-    // Path only: OAuth callback query strings carry codes and state.
-    extra: { path: res.req?.originalUrl?.split("?")[0] },
   });
 
   if (schemaCode) {
