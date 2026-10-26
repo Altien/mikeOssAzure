@@ -62,3 +62,5 @@ with --no-warnings or NODE_NO_WARNINGS=1.
 ### Operation and cause identity (46dc4b5c)
 
 Requests and isolated background jobs name their operation; typed AppError failures carry a kind and preserve their real cause; the deepest cause kind wins so wrappers cannot hide it. Diagnostic transport keeps only bounded source vocabulary/code/status and scrubbed stacks, never error text, provider bodies, credentials, or document content. Dev keeps its configured telemetry destination, Entra/local opaque sessions, /api/runtime config, canonical claims and revision-aware publication. Retried/optional work retains its existing ownership and fallback policy.
+
+Unknown database job kinds use jobs.dispatch inside the same isolated canonical claim handler. Destructive cleanup remains retry-until-success. withKind preserves an Error already carrying a named cause.

@@ -26,7 +26,7 @@ import {
     type DbJob,
     type DbJobHandlers,
 } from "./types";
-import { reportError } from "../observability/sentry";
+import { reportError, setOperation } from "../observability/sentry";
 import {
     createPollFailureGate,
     type PollFailureGate,
@@ -176,6 +176,7 @@ async function runClaimedJob(
     const retryUntilSuccess = RETRY_UNTIL_SUCCESS_KINDS.has(job.kind);
     const handler = handlers[job.kind];
     if (!handler) {
+        setOperation("jobs.dispatch");
         clearInterval(heartbeat);
         // During a rolling deploy, an older worker may claim a cleanup job
         // before it knows the handler. Keep private object cleanup retryable.

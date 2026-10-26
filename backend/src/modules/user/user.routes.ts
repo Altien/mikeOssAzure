@@ -6,7 +6,7 @@ import { workspaceConnectorStatus, workspaceToolList } from "../../lib/integrati
 // MFA for this deployment; these routes use the authenticated session.
 
 import { safeError } from "../../lib/safeError";
-import { AppError, findAppError, type ErrorKind } from "../../lib/appError";
+import { AppError, withKind, type ErrorKind } from "../../lib/appError";
 import { reportError, setOperation } from "../../lib/observability/sentry";
 import {
     cancelGoogleDriveOAuth,
@@ -241,8 +241,7 @@ function mcpOAuthPopupHeaders(nonce: string) {
  * the original kept as the cause so its code or status still extracts.
  */
 function googleFailure(error: unknown, kind: ErrorKind, message: string): Error {
-    if (findAppError(error) && error instanceof Error) return error;
-    return new AppError(kind, message, { cause: error });
+    return withKind(error, kind, message);
 }
 
 /**

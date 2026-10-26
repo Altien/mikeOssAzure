@@ -393,7 +393,7 @@ export async function completeWorkspaceOAuth(
   )
     throw new GoogleWorkspaceError(
       "Google authorization did not provide offline access. Reconnect.",
-      { kind: "google.auth_failed", cause: { status: response.status } },
+      { kind: response.status >= 500 ? "google.api_failed" : "google.auth_failed", cause: { status: response.status } },
     );
   const patch = await tokenPatch(token, provider);
   const identityResponse = await workspaceRequest(
@@ -409,7 +409,7 @@ export async function completeWorkspaceOAuth(
   )
     throw new GoogleWorkspaceError(
       "Could not verify the selected Google account. Connect again.",
-      { kind: "google.auth_failed", cause: { status: identityResponse.status } },
+      { kind: identityResponse.status >= 500 ? "google.api_failed" : "google.auth_failed", cause: { status: identityResponse.status } },
     );
   const { data: saved, error: saveError } = await db.rpc(
     "complete_google_workspace_oauth",
@@ -503,7 +503,7 @@ export async function workspaceAccessToken(
     }
     throw new GoogleWorkspaceError(
       "Google access could not be refreshed. Reconnect this integration.",
-      { kind: "google.auth_failed", cause: { status: response.status } },
+      { kind: response.status >= 500 ? "google.api_failed" : "google.auth_failed", cause: { status: response.status } },
     );
   }
   const { data: saved, error } = await db
