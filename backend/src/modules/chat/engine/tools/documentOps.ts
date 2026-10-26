@@ -1322,7 +1322,7 @@ export async function readDocumentContent(
         }
       }
       if (!raw) {
-        raw = await downloadFile(docInfo.storage_path);
+        raw = await downloadFileIfAvailable(docInfo.storage_path);
         if (raw) {
           devLog(
             `[read_document] fallback download from storage_path="${docInfo.storage_path}" (bytes=${raw.byteLength})`,
