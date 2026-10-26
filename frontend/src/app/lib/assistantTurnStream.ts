@@ -2,6 +2,7 @@
 
 import { streamChatTurn } from "@/app/lib/mikeApi";
 import { readSseFrames } from "@/app/lib/sse";
+import { isAbortError } from "@/shared/lib/userError";
 import { isPanelDocument } from "@/app/components/shared/types";
 import { handleAuthorityTraceStreamEvent } from "@/altien/authorityTrace/events";
 import type { AssistantEvent, Citation } from "@/app/components/shared/types";
@@ -102,10 +103,6 @@ export async function chatRequestError(response: Response): Promise<Error> {
       ...(requestId ? { requestId } : {}),
     },
   );
-}
-
-export function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError";
 }
 
 function readableStreamError(value: unknown, safeToDisplay: boolean): string {

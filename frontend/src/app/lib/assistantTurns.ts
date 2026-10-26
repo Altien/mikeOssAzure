@@ -9,9 +9,9 @@ import { currentAuthEpoch, subscribeAuthEpoch } from "./authEvents";
 import {
   createTurnCursor,
   createTurnEventSink,
-  isAbortError,
   readAssistantTurn,
 } from "./assistantTurnStream";
+import { isAbortError } from "@/shared/lib/userError";
 
 type TurnRecord = {
   chatId: string | undefined;
