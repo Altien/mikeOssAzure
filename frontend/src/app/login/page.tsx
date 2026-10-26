@@ -5,22 +5,22 @@ import { useRouter } from "next/navigation";
 import { login, loginLocal } from "@/app/lib/authApi";
 import { useConfig } from "@/app/contexts/ConfigContext";
 import { completeUserOnboarding, getUserProfile } from "@/app/lib/mikeApi";
-import { InputUI } from "@/shared/ui/InputUI";
-import { PillButtonUI } from "@/shared/ui/PillButtonUI";
+import {
+    InputUI,
+    PillButtonUI,
+    authGlassCardUIClassName,
+    authInputUIClassName,
+    AuthDividerUI,
+    noticeActionClassName,
+} from "@mike/ui";
 import Link from "next/link";
 import { SiteLogo } from "@/app/components/site-logo";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { cn } from "@/app/lib/utils";
-import {
-    authGlassCardUIClassName,
-    authInputUIClassName,
-} from "@/shared/ui/AuthStylesUI";
-import { AuthDividerUI } from "@/shared/ui/AuthDividerUI";
 import { SsoAuthButton } from "@/app/components/auth/SsoAuthButton";
 import { GoogleAuthButton } from "@/app/components/auth/GoogleAuthButton";
 import { FieldLabel } from "@/app/components/ui/form-field";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
-import { noticeActionClassName } from "@/shared/ui/NoticeCardUI";
 import { describeError, reportFault,
     supportMailtoFor,
     type UserFacingError,

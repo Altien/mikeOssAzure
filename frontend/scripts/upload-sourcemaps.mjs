@@ -6,7 +6,7 @@
 // Dev's static export does not use. This drives the same Sentry build-plugin
 // manager that `withSentryConfig` uses for Turbopack builds: inject debug IDs
 // into the emitted JS, upload the maps under the release the browser reports
-// (mike@<version>+<sha12>, frontend/src/shared/lib/releaseName.cjs), delete
+// (mike@<version>+<sha12>, packages/client/src/releaseName.cjs), delete
 // the maps afterwards.
 //
 // Required: SENTRY_AUTH_TOKEN, SENTRY_ORG, SENTRY_PROJECT. The image build
@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 import { createSentryBuildPluginManager } from "@sentry/bundler-plugins/core";
 
 const require = createRequire(import.meta.url);
-const { releaseName } = require("../src/shared/lib/releaseName.cjs");
+const { releaseName } = require("../../packages/client/src/releaseName.cjs");
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const out = path.resolve(here, "..", "out");

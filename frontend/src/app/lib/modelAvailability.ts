@@ -1,5 +1,5 @@
 // The web app's view of key-based model availability. The rules live in the
-// catalog shared with the Word add-in (@/shared/lib/modelCatalog); the web
+// catalog shared with the Word add-in (`@mike/client`); the web
 // app's ApiKeyState is a ProviderKeyStates.
 import {
     isModelAllowedByTenant,
@@ -8,14 +8,14 @@ import {
     type ModelOption,
     type ModelProvider,
     type ProviderKeyStates,
-} from "@/shared/lib/modelCatalog";
+} from "@mike/client";
 
 export {
     getModelProvider,
     modelGroupToProvider,
     providerLabel,
     type ModelProvider,
-} from "@/shared/lib/modelCatalog";
+} from "@mike/client";
 
 /** Provider key states that may also carry a pooled tenant's model allowlist. */
 export type TenantKeyStates = {

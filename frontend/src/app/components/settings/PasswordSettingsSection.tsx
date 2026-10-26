@@ -1,14 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { authInputUIClassName } from "@/shared/ui/AuthStylesUI";
+import { authInputUIClassName, InputUI, PillButtonUI, GlassCardUI } from "@mike/ui";
 import {
     MIN_PASSWORD_LENGTH,
     minimumPasswordMessage, isPasswordTooLong, maximumPasswordMessage,
 } from "@/app/components/auth/passwordPolicy";
 import { Modal } from "@/app/components/modals/Modal";
-import { InputUI } from "@/shared/ui/InputUI";
-import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { requestPasswordReset, requestReauthentication } from "@/app/lib/authApi";

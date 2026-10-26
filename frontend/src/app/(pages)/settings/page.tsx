@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { ProfilePhotoSettings } from "@/app/components/settings/ProfilePhotoSettings";
 import { useRouter } from "next/navigation";
 import { LogOut, Trash2 } from "lucide-react";
-import { PillButtonUI } from "@/shared/ui/PillButtonUI";
+import { PillButtonUI } from "@mike/ui";
 import { Modal } from "@/app/components/modals/Modal";
 import { FieldLabel } from "@/app/components/ui/form-field";
 import { SettingsTextInput } from "@/app/components/settings/SettingsTextInput";

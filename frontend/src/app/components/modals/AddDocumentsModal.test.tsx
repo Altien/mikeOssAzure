@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addDocumentToProject, getProject } from "@/app/lib/mikeApi";
-import { ToastViewportUI, clearToasts } from "@/shared/ui/ToastUI";
+import { ToastViewportUI, clearToasts } from "@mike/ui";
 
 const scope = vi.hoisted(() => ({ accountId: "u1", workspace: "personal" }));
 // Controlled authenticated owner for this unit harness; keep the real owner hooks.

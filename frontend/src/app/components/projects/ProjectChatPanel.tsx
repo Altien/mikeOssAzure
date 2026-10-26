@@ -40,7 +40,7 @@ import {
     type ChatInputHandle,
 } from "@/app/components/assistant/ChatInput";
 import { ChatInputPrompt } from "@/app/components/assistant/ChatInputPrompt";
-import { ResponseSelectionMenuUI } from "@/shared/ui/ResponseSelectionMenuUI";
+import { ResponseSelectionMenuUI, MikeIcon } from "@mike/ui";
 import { ChatPanelHeader } from "@/app/components/shared/ChatPanelHeader";
 import { HeaderActionsMenu } from "@/app/components/shared/HeaderActionsMenu";
 import { ApiKeyMissingPopup } from "@/app/components/popups/ApiKeyMissingPopup";
@@ -48,7 +48,6 @@ import {
     getModelProvider,
     providerLabel,
 } from "@/app/lib/modelAvailability";
-import { MikeIcon } from "@/shared/ui/MikeIconUI";
 import type {
     Chat,
     Citation,
@@ -65,7 +64,7 @@ import {
     ChatSkillUpgradeBanner,
     useChatSkillRuntime,
 } from "@/altien/skillRuntime/chatSkillRuntime";
-import type { MessageExcerpt } from "@/shared/lib/messageExcerpts";
+import type { MessageExcerpt } from "@mike/client";
 
 const ICON_SIZE = 28;
 const GAP = 14;

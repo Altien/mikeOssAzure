@@ -8,7 +8,7 @@ import {
   reasoningLevelsForModel,
   type ModelToggleNotice,
   type ReasoningLevel,
-} from "@/shared/ui/ModelToggleUI";
+} from "@mike/ui";
 import { isModelAvailable, providerKeyStates } from "@/app/lib/modelAvailability";
 import {
   MODELS, mergeConfiguredModelOptions,
@@ -18,7 +18,7 @@ import {
   type ModelOption,
   type NoModelsReason,
   type RouterSelections,
-} from "@/shared/lib/modelCatalog";
+} from "@mike/client";
 import type { ApiKeyState } from "@/app/lib/mikeApi";
 import { useAoaiDeployments } from "@/altien/models/aoaiDeployments";
 export * from "@/shared/lib/modelCatalog";

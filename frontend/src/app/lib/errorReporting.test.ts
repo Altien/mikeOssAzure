@@ -48,7 +48,7 @@ import {
     setReportingUser,
     trackPendingRequest,
 } from "./errorReporting";
-import { diagnosticEvent } from "@/shared/lib/sentryPrivacy";
+import { diagnosticEvent } from "@mike/client";
 import { MikeApiError, downloadDocumentsZip, updateWorkflow } from "./mikeApi";
 import { notifyError } from "./userFacingError";
 

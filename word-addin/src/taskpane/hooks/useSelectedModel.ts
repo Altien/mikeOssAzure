@@ -1,11 +1,11 @@
-import { ROUTER_SLUGS } from "@mike/model-catalog";
+import { ROUTER_SLUGS } from "@mike/client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApiKeyStatus } from "../api/client";
 import {
   canonicalModelId,
   isAllowedModelId,
   type RouterSelections,
-} from "@mike/model-catalog";
+} from "@mike/client";
 import { isModelAvailable } from "../lib/modelCatalog";
 
 interface SelectedModelSources {

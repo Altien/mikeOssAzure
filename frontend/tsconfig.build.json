@@ -7,8 +7,11 @@
   // complete CI typecheck still covers them through tsconfig.json.
   //
   // frontend/src/__tests__/architecture.test.ts asserts that no production
-  // source uses relative imports outside frontend/ and that these exclusions
-  // drop test-only files and nothing else.
+  // source uses relative imports outside frontend/ (except within the shared
+  // packages the root Dockerfile copies) and that these exclusions drop
+  // test-only files and nothing else. The `../packages` patterns are needed
+  // because an exclude glob is anchored at this directory: a bare
+  // `**/*.test.ts` does not match the shared packages' colocated tests.
   "extends": "./tsconfig.json",
   "exclude": [
     "node_modules",
@@ -18,6 +21,8 @@
     "**/*.spec.tsx",
     "**/__tests__/**",
     "vitest.config.mts",
-    "vitest.setup.ts"
+    "vitest.setup.ts",
+    "../packages/**/*.test.ts",
+    "../packages/**/*.test.tsx"
   ]
 }

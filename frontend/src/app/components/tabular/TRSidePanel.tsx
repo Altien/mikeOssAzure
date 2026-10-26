@@ -41,8 +41,7 @@ import {
     LIQUID_GLASS_PRESSED_CLASS,
     LIQUID_FLOAT_PANEL_SURFACE_CLASS,
 } from "@/app/components/ui/liquid-surface";
-import { CloseButton } from "@/shared/ui/CloseButton";
-import { CitationPillUI } from "@/shared/ui/CitationPillUI";
+import { CloseButton, CitationPillUI } from "@mike/ui";
 import {
     isTextDocumentFilename,
     resolveDocumentViewType,

@@ -3,9 +3,7 @@ import { useAuth } from "@/app/contexts/AuthContext";
 import { currentAuthEpoch } from "@/app/lib/authEvents";
 
 import { useEffect, useRef, useState } from "react";
-import { GlassCardUI } from "@/shared/ui/GlassCardUI";
-import { PillButtonUI } from "@/shared/ui/PillButtonUI";
-import { ToggleSwitchUI } from "@/shared/ui/ToggleSwitchUI";
+import { GlassCardUI, PillButtonUI, ToggleSwitchUI } from "@mike/ui";
 import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
 import { SettingsRow } from "@/app/components/settings/SettingsRow";
 import {

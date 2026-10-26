@@ -1,7 +1,7 @@
 import { notifyTabularReviewsChanged } from "@/app/lib/tabularReviewChanges";
-import type { RouterProfileLists } from "@/shared/lib/modelCatalog";
-import type { Operation } from "@/shared/lib/sentryPrivacy";
-import { settleWithConcurrency } from "@/shared/lib/settleWithConcurrency";
+import type { RouterProfileLists } from "@mike/client";
+import type { Operation } from "@mike/client";
+import { settleWithConcurrency } from "@mike/client";
 import type {
     TabularReviewHistoryStatus,
     AuditActor,
@@ -65,7 +65,7 @@ import {
     type UploadProgressStatus,
     type UploadSessionInput,
     type UploadSessionPurpose,
-} from "@/shared/api/uploadSessionClient";
+} from "@mike/client";
 // The role vocabulary is defined once, next to the capability matrix that
 // gives it meaning, and re-exported here so API consumers do not need two
 // imports to describe one row.

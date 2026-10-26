@@ -4,7 +4,7 @@ import {
   type GoogleOAuthDialogMessage,
 } from "../taskpane/auth/oauthProtocol";
 import { API_BASE_URL, loadRuntimeConfig } from "../taskpane/auth/runtimeConfig";
-import { describeError } from "@mike/user-error";
+import { describeError } from "@mike/client";
 import { initAddinErrorReporting } from "../taskpane/lib/errorReporting";
 
 void loadRuntimeConfig().then((config) => initAddinErrorReporting("oauth-dialog", config.wordSentryDsn)).catch(() => {});

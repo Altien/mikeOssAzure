@@ -11,7 +11,7 @@ import { useWorkspace } from "@/app/contexts/WorkspaceContext";
 import { routerSelectionsFromLists } from "@/app/hooks/useModelRouterSelections";
 import { getOrgApiKeys, saveOrgRouterModels, type ApiKeyProvider, type OrgApiKeySettings } from "@/app/lib/mikeApi";
 import { userFacingApiError } from "@/app/lib/userFacingError";
-import { PillButtonUI } from "@/shared/ui/PillButtonUI";
+import { PillButtonUI } from "@mike/ui";
 
 const LOAD_ERROR = "The organization's model providers could not be loaded.";
 

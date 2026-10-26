@@ -2,6 +2,11 @@
 // Production typechecking excludes test-only imports into sibling workspaces;
 // the full CI typecheck still covers those tests. These rules ensure the
 // production build does not silently drop application code.
+//
+// Upstream (a1c87117) ties rules 1 and 2 to `frontend/Dockerfile`. Dev builds
+// the export in the root `Dockerfile` (frontend-builder stage), which copies
+// the shared packages to /app/packages/<name> beside /app/frontend; these
+// rules read that stage's `COPY packages/<name> /app/packages/<name>` lines.
 
 import { readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -9,6 +14,7 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const FRONTEND = resolve(__dirname, "../..");
+const REPO = resolve(FRONTEND, "..");
 
 const toPosix = (p: string) => p.split(sep).join("/");
 const relToFrontend = (file: string) => toPosix(relative(FRONTEND, file));
@@ -25,6 +31,21 @@ function loadProgram(configName: string): ts.ParsedCommandLine {
     const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, FRONTEND);
     expect(parsed.fileNames.length, `${configName} must include files`).toBeGreaterThan(0);
     return parsed;
+}
+
+/**
+ * The shared package directories the root Dockerfile's frontend-builder stage
+ * copies to the same repository-relative path under /app (so `../packages/x`
+ * from /app/frontend resolves in the image exactly as it does on disk).
+ */
+function dockerCopiedPackageDirs(): string[] {
+    const dockerfile = readFileSync(join(REPO, "Dockerfile"), "utf8");
+    const stage = dockerfile.split(/^FROM /m).find((s) => /AS frontend-builder/.test(s)) ?? "";
+    const dirs: string[] = [];
+    for (const match of stage.matchAll(/^COPY\s+(packages\/[^\s]+?)\/?\s+\/app\/(packages\/[^\s]+?)\/?\s*$/gm)) {
+        if (match[1] === match[2]) dirs.push(resolve(REPO, match[1]));
+    }
+    return dirs;
 }
 
 const IMPORT_RE =
@@ -48,23 +69,50 @@ const isTestOnly = (rel: string) =>
 describe("frontend build boundaries", () => {
     const build = loadProgram("tsconfig.build.json");
     const full = loadProgram("tsconfig.json");
+    const copiedDirs = dockerCopiedPackageDirs();
 
-    it("rule 1: nothing in the production build program imports from outside frontend/", () => {
+    it("rule 1: every relative import in the production build program stays inside the image", () => {
+        // A package directory the Dockerfile copies whole keeps its internal
+        // layout, so a relative import between two files under the same copied
+        // directory resolves in the image too.
+        const sameCopiedDir = (file: string, target: string) =>
+            copiedDirs.some((dir) => isInside(dir, file) && isInside(dir, target));
         const violations: string[] = [];
         for (const file of build.fileNames) {
             for (const spec of importSpecifiers(file)) {
                 if (!spec.startsWith("./") && !spec.startsWith("../")) continue;
                 const target = resolve(dirname(file), spec);
-                if (!isInside(FRONTEND, target)) {
+                if (!isInside(FRONTEND, target) && !sameCopiedDir(file, target)) {
                     violations.push(`${relToFrontend(file)} -> ${spec}`);
                 }
             }
         }
         expect(
             violations,
-            "A production source file reaches outside frontend/ by relative import. " +
-                "Use an explicit workspace alias, or name test-only files so " +
-                "tsconfig.build.json excludes them.",
+            "A production source file reaches outside frontend/ (and outside the " +
+                "shared package it lives in) by relative import. Use an explicit " +
+                "workspace alias whose target the root Dockerfile copies, or name " +
+                "test-only files so tsconfig.build.json excludes them.",
+        ).toEqual([]);
+    });
+
+    it("rule 2: every tsconfig alias that leaves frontend/ targets a package the Dockerfile copies", () => {
+        const paths = build.options.paths ?? {};
+        const base = build.options.baseUrl ?? FRONTEND;
+        const missing: string[] = [];
+        for (const [alias, targets] of Object.entries(paths)) {
+            for (const target of targets) {
+                const abs = resolve(base, target);
+                if (isInside(FRONTEND, abs)) continue;
+                if (!copiedDirs.some((dir) => isInside(dir, abs))) {
+                    missing.push(`${alias} -> ${target}`);
+                }
+            }
+        }
+        expect(
+            missing,
+            "A tsconfig `paths` alias points outside frontend/ but the root Dockerfile's " +
+                "frontend-builder stage does not COPY its package to /app/packages/<name>.",
         ).toEqual([]);
     });
 

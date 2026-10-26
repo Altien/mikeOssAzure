@@ -45,11 +45,14 @@ explicit signatures; this deployment has no Supabase auth schema or RLS.
 
 Read `docs/design-system.md` for non-trivial UI changes. Prefer existing
 primitives in `frontend/src/app/components/ui/`, shared web/Word controls in
-`frontend/src/shared/ui/`, and shell components in
+`packages/ui/` (imported as `@mike/ui`, exported from
+`packages/ui/src/index.ts`), and shell components in
 `frontend/src/app/components/shared/` before introducing feature markup or
-dependencies. When a shared control is used by Word, keep its Tailwind `@source`
-entry in `word-addin/src/taskpane/styles.css`. Keep loading states aligned with
-the corresponding layout.
+dependencies. Framework-free behavior the Word add-in also needs (error
+classification and toasts, the model catalog, upload sessions, excerpts,
+Sentry event hygiene) lives in `packages/client/` (`@mike/client`). Both
+targets already scan `packages/ui/src` for Tailwind classes. Keep loading
+states aligned with the corresponding layout.
 
 Use plain text for informational labels unless an established interactive pill
 control is appropriate. Preserve visible focus, accessible names for icon-only

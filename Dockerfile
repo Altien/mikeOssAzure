@@ -21,7 +21,11 @@
 
 # ── Frontend build ───────────────────────────────────────────────────────────
 FROM node:22-slim AS frontend-builder
-WORKDIR /app
+# The stage mirrors the repository layout (/app/frontend beside
+# /app/packages): next.config.ts sets the Turbopack root to the parent of
+# frontend/ so the @mike/ui and @mike/client packages resolve (sync-log:
+# a1c87117).
+WORKDIR /app/frontend
 RUN corepack enable
 
 # NEXT_PUBLIC_API_BASE_URL is the only build-arg the frontend bundle
@@ -46,8 +50,11 @@ COPY frontend/package.json frontend/pnpm-lock.yaml frontend/.npmrc frontend/pnpm
 RUN pnpm install --frozen-lockfile
 
 COPY frontend/. ./
-# tsconfig maps @mike/contracts to ../packages/contracts (declarations only).
-COPY packages/contracts /packages/contracts
+# tsconfig maps @mike/contracts (declarations only), @mike/ui and
+# @mike/client to ../packages/*.
+COPY packages/contracts /app/packages/contracts
+COPY packages/ui /app/packages/ui
+COPY packages/client /app/packages/client
 # Sentry source-map upload for the web bundle (sync-log: 3bcac35a). Off by
 # default; deploy.ps1 / scripts/release-images.sh set SENTRY_UPLOAD_ENABLED=1
 # and pass the token (Key Vault first, SENTRY_AUTH_TOKEN env fallback) with
@@ -69,7 +76,7 @@ RUN case "$SENTRY_UPLOAD_ENABLED" in \
          pnpm run build && node scripts/upload-sourcemaps.mjs ;; \
       *) echo "SENTRY_UPLOAD_ENABLED must be 0 or 1" >&2; exit 1 ;; \
     esac
-# Result: /app/out — static HTML, JS, CSS, fonts.
+# Result: /app/frontend/out — static HTML, JS, CSS, fonts.
 
 # ── Backend build ────────────────────────────────────────────────────────────
 FROM node:22-slim AS backend-builder
@@ -111,7 +118,7 @@ RUN pnpm install --frozen-lockfile --prod \
 
 COPY --from=backend-builder /app/dist ./dist
 # Frontend static output is served from /app/public via express.static.
-COPY --from=frontend-builder /app/out ./public
+COPY --from=frontend-builder /app/frontend/out ./public
 # Migration files travel with the image so the migrate job uses the same artifact.
 COPY backend/migrations ./migrations
 # User-facing help guides, served by GET /api/help/articles. Only docs/help

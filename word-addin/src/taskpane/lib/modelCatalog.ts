@@ -1,6 +1,6 @@
-import { getModelProvider, providerLabel } from "@mike/model-catalog";
+import { getModelProvider, providerLabel } from "@mike/client";
 // The Word add-in's adapter onto the model catalog it shares with the web app
-// (@mike/model-catalog = frontend/src/shared/lib/modelCatalog.ts). The
+// (@mike/client, packages/client/src/modelCatalog.ts). The
 // catalog, router Model Selections, picker rows and availability rules all
 // live there; only what is specific to the add-in is here: its key status is
 // GET /user/api-keys as a flat boolean map, and an unknown status (null, the
@@ -18,7 +18,7 @@ import {
   type NoModelsReason,
   type ProviderKeyStates,
   type RouterSelections,
-} from "@mike/model-catalog";
+} from "@mike/client";
 import type { ApiKeyStatus } from "../types";
 
 /** GET /user/api-keys' flat map in the shape the shared rules read. */
@@ -91,5 +91,5 @@ export function noModelsReason(
   );
 }
 
-export * from "@mike/model-catalog";
+export * from "@mike/client";
 export function missingModelProvider(id: string): string { const provider = getModelProvider(id); return provider ? providerLabel(provider, {withProduct:false}) : "model provider"; }

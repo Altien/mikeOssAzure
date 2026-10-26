@@ -9,9 +9,9 @@ import {
     ModelProviderIcon,
     type ModelApiKeyField,
 } from "@/app/components/settings/modelProviders";
-import { PillButtonUI } from "@/shared/ui/PillButtonUI";
-import { InputUI } from "@/shared/ui/InputUI";
-import { ToggleSwitchUI } from "@/shared/ui/ToggleSwitchUI";
+import { PillButtonUI } from "@mike/ui";
+import { InputUI } from "@mike/ui";
+import { ToggleSwitchUI } from "@mike/ui";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
 import { SettingsDescription } from "@/app/components/settings/SettingsText";
