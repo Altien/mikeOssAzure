@@ -335,7 +335,6 @@ export async function getSignedUrl(
       "Object storage signed URL failed",
       { cause: error },
     );
-    return null;
   }
 }
 

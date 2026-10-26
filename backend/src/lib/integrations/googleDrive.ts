@@ -332,7 +332,7 @@ export async function completeGoogleDriveOAuth(
     const token = (await response.json()) as Record<string, unknown>;
     if (!response.ok || typeof token.access_token !== "string") {
         throw new AppError(
-            "google.auth_failed",
+            response.status >= 500 ? "google.api_failed" : "google.auth_failed",
             `Google token exchange failed (HTTP ${response.status}).`,
             { cause: { status: response.status } },
         );
@@ -701,7 +701,7 @@ async function getFreshAccessToken(
             );
         }
         throw new AppError(
-            "google.auth_failed",
+            response.status >= 500 ? "google.api_failed" : "google.auth_failed",
             `Google token refresh failed (HTTP ${response.status}).`,
             { cause: { status: response.status } },
         );
