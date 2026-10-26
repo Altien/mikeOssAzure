@@ -30,5 +30,9 @@
   {
     "ghsa": "GHSA-86w9-cpqp-85rv",
     "reason": "node-forge 1.4.0 occurs only under office-addin-dev-certs/mkcert and Teams add-in development tooling. The advisory names 1.4.1 as fixed, but npm registry currently publishes only 1.4.0. No production task-pane certificate parsing uses it. REMOVE WHEN 1.4.1 or a patched parent is published."
+  },
+  {
+    "ghsa": "GHSA-xcx6-jx8p-x3h5",
+    "reason": "@azure/msal-node 6.0.1 authorization-code parameter disclosure, present in word-addin only through the devDependency office-addin-debugging -> office-addin-dev-settings -> @microsoft/m365agentstoolkit-cli -> @azure/identity (`npm ls @azure/msal-node --omit=dev` is empty). That CLI signs a developer into Microsoft 365 for sideloading; the add-in has no MSAL code of its own and the production add-in image contains only the static bundle and server.mjs. The patched msal-node 7.1.0 needs a semver-major office-addin-debugging. REMOVE WHEN: office-addin-debugging's declared range resolves @azure/msal-node >=7.1.0."
   }
 ]
