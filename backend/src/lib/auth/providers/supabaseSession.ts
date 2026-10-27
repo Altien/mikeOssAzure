@@ -79,7 +79,7 @@ export async function startSupabaseRecovery(email: string, redirectTo: string) {
   const storage = new Map<string, string>();
   const auth = client(storage);
   const result = await auth.auth.resetPasswordForEmail(email, { redirectTo });
-  if (result.error) throw new Error("Password recovery is unavailable");
+  if (result.error) throw new Error("Password recovery is unavailable", { cause: result.error });
   return JSON.stringify(Object.fromEntries(storage));
 }
 

@@ -439,6 +439,7 @@ authRouter.get("/oauth-callback/:provider", async (req, res) => {
 });
 
 authRouter.post("/password-reset", async (req, res) => {
+  setOperation("auth.signin");
   if ((await authProvider()) !== "supabase") { res.status(404).end(); return; }
   const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 320) {
@@ -452,7 +453,10 @@ authRouter.post("/password-reset", async (req, res) => {
         returnUrl: safeReturnUrl("/reset-password"), targetOrigin: frontendOrigin().origin }, stateToken);
       res.cookie(OAUTH_NONCE_COOKIE, nonce, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/api/auth", maxAge: 10 * 60_000 });
     }
-    catch { /* Account enumeration stays impossible. */ }
+    catch (error) {
+      reportError(new AppError("auth.supabase_unavailable", "Password reset request failed", { cause: error }), { level: "warning", tags: { component: "http" } });
+      // Account enumeration stays impossible: the response remains204.
+    }
   }
   res.status(204).end();
 });
