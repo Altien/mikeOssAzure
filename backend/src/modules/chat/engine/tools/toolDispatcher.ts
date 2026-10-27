@@ -784,7 +784,7 @@ export async function runToolCalls(
         write,
         docIndex,
         db,
-        { readIdentity },
+        { readIdentity, textReadContext: { userId, userEmail: options.userEmail ?? null } },
       );
       const filename = docStore.get(docId)?.filename;
       const documentId = docIndex?.[docId]?.document_id;
@@ -998,7 +998,7 @@ export async function runToolCalls(
           write,
           docIndex,
           db,
-          { readIdentity },
+          { readIdentity, textReadContext: { userId, userEmail: options.userEmail ?? null } },
         );
         const filename = docStore.get(docId)?.filename ?? docId;
         if (readIdentity && turnReadState) {

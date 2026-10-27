@@ -11,8 +11,7 @@ vi.mock("../../../lib/spreadsheet", () => ({ spreadsheetToLLMText: mocks.sheet }
 vi.mock("../../../lib/officeText", () => ({ extractPresentationText: mocks.slides }));
 vi.mock("mammoth", () => ({ extractRawText: mocks.mammoth }));
 import { processClaimedJob } from "../../../lib/dbq/runner";
-import { DbJobDeferredError } from "../../../lib/dbq/types";
-import { ExtractionLimitError, withExtractionSlot } from "../../../lib/extraction/isolated";
+import { ExtractionLimitError, withBackgroundExtraction } from "../../../lib/extraction/isolated";
 import { extractDocumentText, handleDocumentExtractText, markDocumentTextFailed, backfillDocumentText, processDocumentTextInline } from "../documents.indexing";
 const job = { id: "job", kind: "document.extract_text", payload: { versionId: "v1", revision: "r1" }, status: "pending", attempts: 0, max_attempts: 3, run_at: "", claimed_at: null, finished_at: null, last_error: null, dedupe_key: null, result: null, created_at: "" } satisfies DbJob;
 const bytes = new TextEncoder().encode("source bytes").buffer;
@@ -23,7 +22,7 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 describe("version text extraction", () => {
   it("returns a busy claim to Postgres without download, terminal failure, or spending its last attempt", async () => {
     let release!: () => void;
-    const held = withExtractionSlot({}, () => new Promise<void>((resolve) => { release = resolve; }));
+    const held = withBackgroundExtraction({}, () => new Promise<void>((resolve) => { release = resolve; }));
     const fake = scriptedDb([{ table: "db_jobs", op: "update" }]);
     vi.useFakeTimers();
     const claimed = { ...job, status: "running" as const, attempts: 3, claimed_at: "2026-10-27T00:00:00Z" };
@@ -39,17 +38,26 @@ describe("version text extraction", () => {
       fake.done();
     } finally { release(); await held; }
   });
-  it("does not mark busy inline work permanently failed", async () => {
+  it("waits for busy inline work and publishes it without a later sweep", async () => {
     vi.stubEnv("DB_JOBS_ENABLED", "false");
     let release!: () => void;
-    const held = withExtractionSlot({}, () => new Promise<void>((resolve) => { release = resolve; }));
-    const fake = scriptedDb([{ table: "db_jobs", data: [job] }]);
+    const held = withBackgroundExtraction({}, () => new Promise<void>((resolve) => { release = resolve; }));
+    const fake = scriptedDb([
+      { table: "db_jobs", data: [job] },
+      { table: "document_versions", data: version },
+      { table: "document_version_texts", op: "update", data: { version_id: "v1" } },
+      { rpc: "publish_document_text", data: true },
+      { table: "db_jobs", op: "update" },
+    ]);
+    const processing = processDocumentTextInline(fake.db);
     try {
-      await processDocumentTextInline(fake.db);
+      await Promise.resolve();
       expect(mocks.download).not.toHaveBeenCalled();
-      fake.done();
-      await expect(handleDocumentExtractText(scriptedDb([]).db, job)).rejects.toBeInstanceOf(DbJobDeferredError);
     } finally { release(); await held; }
+    await processing;
+    expect(mocks.download).toHaveBeenCalledOnce();
+    expect(fake.calls[4].payload).toMatchObject({ status: "done" });
+    fake.done();
   });
   it("publishes complete text against the revision and source hash, removing only unsupported NUL", async () => {
     mocks.docx.mockResolvedValue("Full\0 text\n" + "x".repeat(100000));

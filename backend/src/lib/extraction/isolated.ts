@@ -11,7 +11,7 @@ import { EXTRACTION_MAX_BYTES, ExtractionBusyError, ExtractionLimitError, extrac
 export { EXTRACTION_MAX_BYTES, ExtractionBusyError, ExtractionLimitError } from "./limits";
 
 type Result<K extends ExtractionOp> = Awaited<ReturnType<ExtractionOps[K]>>;
-export type ExtractInSlot = <K extends ExtractionOp>(op: K, bytes: ArrayBuffer, options?: { fileType?: string }) => Promise<Result<K>>;
+export type ExtractInSlot = <K extends ExtractionOp>(op: K, bytes: ArrayBuffer, options?: { fileType?: string; signal?: AbortSignal }) => Promise<Result<K>>;
 type Reply = { ok: true; result: unknown } | { ok: false; limited: boolean; message: string };
 
 /** Hard OS memory boundary on Linux, including native buffers. Fail closed if
@@ -22,7 +22,7 @@ export function extractionCommand(entry: string): { command: string; args: strin
   const memoryMb = extractionMemoryMb();
   const nodeArgs = [
     "--disable-wasm-trap-handler",
-    `--max-old-space-size=${Math.max(1, Math.floor(memoryMb / 2))}`,
+    `--max-old-space-size=${memoryMb}`,
     ...(entry.endsWith(".ts") ? ["--require", require.resolve("tsx/cjs")] : []),
     entry,
   ];
@@ -115,7 +115,8 @@ async function startParser(): Promise<Parser> {
   return p;
 }
 
-async function extractInChild<K extends ExtractionOp>(op: K, bytes: ArrayBuffer, options: { fileType?: string } = {}): Promise<Result<K>> {
+async function extractInChild<K extends ExtractionOp>(op: K, bytes: ArrayBuffer, options: { fileType?: string; signal?: AbortSignal } = {}): Promise<Result<K>> {
+  options.signal?.throwIfAborted();
   if (bytes.byteLength > EXTRACTION_MAX_BYTES) throw new ExtractionLimitError("source exceeds 150 MB");
   if (process.env.EXTRACTION_ISOLATION === "off") {
     const { EXTRACTION_OPS } = await import("./ops.js");
@@ -144,6 +145,7 @@ async function extractInChild<K extends ExtractionOp>(op: K, bytes: ArrayBuffer,
       child.removeListener("close", onClose);
       child.removeListener("spawn", send);
       child.stderr?.removeListener("data", onDiagnostics);
+      options.signal?.removeEventListener("abort", onAbort);
     };
     const onMessage = (message: Reply) => {
       if (failure) return;
@@ -167,9 +169,15 @@ async function extractInChild<K extends ExtractionOp>(op: K, bytes: ArrayBuffer,
         } else reject(failure ?? new Error("extraction process exited without a result"));
       }, reject);
     };
-    const send = () => child.send({ op, bytes, fileType: options.fileType ?? "" }, (error) => {
+    const onAbort = () => {
+      failure = options.signal?.reason instanceof Error ? options.signal.reason : new DOMException("Extraction cancelled", "AbortError");
+      retire(p);
+    };
+    const send = () => { if (failure) return; child.send({ op, bytes, fileType: options.fileType ?? "" }, (error) => {
       if (error && !reply && !failure) onError(error);
-    });
+    }); };
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    if (options.signal?.aborted) onAbort();
     child.stderr?.on("data", onDiagnostics);
     child.once("message", onMessage);
     child.once("error", onError);
@@ -182,60 +190,79 @@ const MAX_WAITERS = 8;
 
 // Separate download concurrency from parser concurrency. A slow storage read
 // must not stop another already-downloaded tabular row from being parsed.
-function admission(limit: number) {
-  const queue: Array<() => void> = [];
+type AdmissionOptions = { waitMs?: number; interactive?: boolean; signal?: AbortSignal };
+
+function admission(limit: number, maxWaiters = MAX_WAITERS) {
+  const queue: Array<{ grant: () => void; interactive?: boolean }> = [];
   let active = 0;
-  return async <T>(options: { waitMs?: number }, work: () => Promise<T>): Promise<T> => {
+  return async <T>(options: AdmissionOptions, work: () => Promise<T>): Promise<T> => {
+    options.signal?.throwIfAborted();
     if (active >= limit) {
-      if (options.waitMs === 0 || queue.length >= MAX_WAITERS) throw new ExtractionBusyError();
+      if (options.waitMs === 0 || queue.length >= maxWaiters) throw new ExtractionBusyError();
       await new Promise<void>((resolve, reject) => {
         let timer: ReturnType<typeof setTimeout> | undefined;
-        const grant = () => { clearTimeout(timer); resolve(); };
-        queue.push(grant);
-        if (options.waitMs !== undefined) timer = setTimeout(() => {
-          queue.splice(queue.indexOf(grant), 1);
-          reject(new ExtractionBusyError());
-        }, options.waitMs);
+        const cleanup = () => { clearTimeout(timer); options.signal?.removeEventListener("abort", abort); };
+        const grant = () => { cleanup(); resolve(); };
+        const waiter = { grant, interactive: options.interactive };
+        const remove = () => { const index = queue.indexOf(waiter); if (index >= 0) queue.splice(index,1); };
+        const abort = () => { remove(); cleanup(); reject(options.signal?.reason ?? new DOMException("Extraction cancelled", "AbortError")); };
+        const background = options.interactive ? queue.findIndex(item => !item.interactive) : -1;
+        queue.splice(background < 0 ? queue.length : background, 0, waiter);
+        options.signal?.addEventListener("abort", abort, { once: true });
+        if (options.signal?.aborted) { abort(); return; }
+        if (options.waitMs !== undefined) timer=setTimeout(() => { remove(); cleanup(); reject(new ExtractionBusyError()); }, options.waitMs);
       });
     } else active++;
-    try { return await work(); }
-    finally {
-      const next = queue.shift();
-      if (next) next();
-      else active--;
-    }
+    try { options.signal?.throwIfAborted(); return await work(); }
+    finally { const next=queue.shift(); if (next) next.grant(); else active--; }
   };
 }
 const parserAdmission = admission(1);
 const requestAdmission = admission(3);
+// Only one background source is loaded at a time. Waiting jobs hold no buffers;
+// durable jobs time out, while inline jobs must wait because no runner retries them.
+const backgroundAdmission = admission(1, Infinity);
 
-/** Durable jobs bound their queue wait before downloading; interactive callers
- * keep the warm parser pipeline without a separate queue deadline. */
+/** Reserve only the parser; source I/O belongs outside this slot. */
 export function withExtractionSlot<T>(
-  options: { waitMs?: number },
+  options: AdmissionOptions,
   work: (extract: ExtractInSlot) => Promise<T>,
 ): Promise<T> {
   return parserAdmission(options, () => work(extractInChild));
 }
 
-function queuedExtraction<K extends ExtractionOp>(op: K, bytes: ArrayBuffer, options?: { fileType?: string }): Promise<Result<K>> {
-  return withExtractionSlot<Result<K>>({}, (extract) => extract(op, bytes, options));
+function queuedExtraction<K extends ExtractionOp>(op: K, bytes: ArrayBuffer, options?: { fileType?: string; signal?: AbortSignal }): Promise<Result<K>> {
+  return withExtractionSlot<Result<K>>({ interactive: true, signal: options?.signal }, (extract) => extract(op, bytes, options));
+}
+
+/** Background I/O cannot block interactive parsing or fill its admission queue. */
+export function withBackgroundExtraction<T>(
+  options: { waitMs?: number; signal?: AbortSignal },
+  work: (extract: ExtractInSlot) => Promise<T>,
+): Promise<T> {
+  const started = Date.now();
+  return backgroundAdmission(options, () => {
+    const waitMs = options.waitMs === undefined ? undefined : Math.max(0, options.waitMs - (Date.now() - started));
+    const extract: ExtractInSlot = (op, bytes, parseOptions) =>
+      withExtractionSlot({ waitMs, signal: options.signal ?? parseOptions?.signal }, (parse) => parse(op, bytes, { ...parseOptions, signal: options.signal ?? parseOptions?.signal }));
+    return work(extract);
+  });
 }
 
 /** Three interactive sources may download/parse concurrently, matching tabular
  * row concurrency. Only the actual parser call takes the single parser slot. */
-export function withExtractionRequest<T>(work: (extract: ExtractInSlot) => Promise<T>): Promise<T> {
-  return requestAdmission({}, () => work(queuedExtraction));
+export function withExtractionRequest<T>(work: (extract: ExtractInSlot) => Promise<T>, options: { signal?: AbortSignal } = {}): Promise<T> {
+  return requestAdmission(options, () => work((op, bytes, parseOptions) => queuedExtraction(op, bytes, { ...parseOptions, signal: options.signal ?? parseOptions?.signal })));
 }
 
 export function runIsolatedExtraction<K extends ExtractionOp>(
   op: K,
   loadSource: () => Promise<ArrayBuffer | null>,
-  options: { fileType?: string } = {},
+  options: { fileType?: string; signal?: AbortSignal } = {},
 ): Promise<Result<K>> {
   return withExtractionRequest<Result<K>>(async (extract): Promise<Result<K>> => {
     const source = await loadSource();
     if (!source) throw new Error("document_text_source_unavailable");
     return extract(op, source, options);
-  });
+  }, { signal: options.signal });
 }

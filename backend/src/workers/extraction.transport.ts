@@ -1,14 +1,15 @@
 // extraction transport — implementation behind the module facade.
-import { Worker, type Job } from "bullmq";
+import { Worker, UnrecoverableError, type Job } from "bullmq";
+import { ExtractionLimitError } from "../lib/extraction/limits";
 import { getRedisConnection } from "../lib/queue/connection";
 import { reportError } from "../lib/observability/sentry";
 import { EXTRACTION_QUEUE, type ExtractionJobData } from "../lib/queue/extractionQueue";
 import { runExtractionJob, markExtractionFailed } from "../modules/tabular/tabular.service";
 
-/** True once a job has exhausted its retries (BullMQ 'failed', no attempts left). */
-export function isPermanentFailure(job: Job<ExtractionJobData>): boolean {
+/** Terminal resource refusals and exhausted retries both need cell cleanup. */
+export function isPermanentFailure(job: Job<ExtractionJobData>, error?: Error): boolean {
     const maxAttempts = job.opts.attempts ?? 1;
-    return job.attemptsMade >= maxAttempts;
+    return error instanceof UnrecoverableError || job.attemptsMade >= maxAttempts;
 }
 
 let worker: Worker<ExtractionJobData> | null = null;
@@ -18,7 +19,12 @@ export function createExtractionWorker(): Worker<ExtractionJobData> {
     worker = new Worker<ExtractionJobData>(
         EXTRACTION_QUEUE,
         async (job: Job<ExtractionJobData>) => {
-            await runExtractionJob(job.data);
+            try {
+                await runExtractionJob(job.data);
+            } catch (error) {
+                if (error instanceof ExtractionLimitError) throw new UnrecoverableError("document_too_large");
+                throw error;
+            }
         },
         {
             connection: getRedisConnection(),
@@ -37,7 +43,7 @@ export function createExtractionWorker(): Worker<ExtractionJobData> {
         );
     });
     worker.on("failed", async (job, err) => {
-        const permanent = !!job && isPermanentFailure(job);
+        const permanent = !!job && isPermanentFailure(job, err);
         reportError(err, {
             level: permanent ? "error" : "warning",
             tags: {

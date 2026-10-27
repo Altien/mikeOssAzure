@@ -159,13 +159,15 @@ after 200 files or 60 seconds idle, matching #721's worker reuse. Failures and
 timeouts also retire it. On POSIX, retirement kills the process group, including
 LibreOffice descendants, and removes its temporary directory.
 
-Background jobs wait at most 60 seconds for a parser slot before downloading.
-This keeps small-file batches moving; longer waits defer to Postgres for 30
-seconds without spending retries. With parsing capped at five minutes, the
-queue cannot consume the ten-minute claim lease. Interactive requests
-can download three sources concurrently, matching tabular row concurrency;
-only parsing is serial. Admission queues hold at most eight waiters; the parser deadline starts when
-parsing starts, as in #721. Generic job concurrency does not create more slots.
+Background jobs share one source-loading slot and wait at most 60 seconds total
+for admission and parsing capacity; longer waits defer to Postgres for 30 seconds
+without spending retries. Parsing is capped at five minutes, below the ten-minute
+claim lease. Inline indexing waits for capacity when the queue runner is disabled.
+Interactive requests can download three sources concurrently, matching tabular
+row concurrency, and take priority over queued background parses. Background I/O
+does not occupy the parser or the interactive admission queue (eight waiters).
+Only parsing is serial; its deadline starts when parsing starts, as in #721.
+Generic job concurrency does not create more parser slots.
 
 Linux requires `prlimit` (util-linux), installed by the combined Dev Docker image and Nixpacks. Missing
 `prlimit` fails extraction. Defaults:
@@ -177,7 +179,7 @@ Linux requires `prlimit` (util-linux), installed by the combined Dev Docker imag
 | Virtual address space | Data budget + 1024 MiB for runtime reservations |
 | Source / returned text | 150 MiB / 16 MiB |
 
-The JS heap is capped at half the data budget; glibc uses two malloc arenas to
+The JS heap keeps the configured memory budget (1024 MiB by default); glibc uses two malloc arenas to
 avoid excessive virtual reservations. OS limits apply **per process**, including
 conversion children, not to their aggregate usage. Set container/cgroup limits
 for the whole service. macOS/Windows retain heap, input/output and time bounds,

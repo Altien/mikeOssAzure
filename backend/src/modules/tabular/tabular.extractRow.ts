@@ -24,6 +24,7 @@
 // used by both the sync and async entry points. See tabular.shared.ts for the
 // lease itself.
 
+import { ExtractionBusyError, ExtractionLimitError } from "../../lib/extraction/limits";
 import { type UserApiKeys } from "../../lib/llm";
 import { queryTabularAllColumns } from "./tabular.extract";
 import { loadRowDocumentText, type ReviewRow } from "./tabular.rows";
@@ -142,7 +143,15 @@ export async function extractRowColumns(args: {
     // prefixed with its source document id so citations can name it). Loaded
     // before anything is marked "generating" so a run stopped during the (slow)
     // download leaves the grid exactly as it found it.
-    const markdown = await loadRowDocumentText(db, row);
+    let markdown: string;
+    try {
+        markdown = await loadRowDocumentText(db, row);
+    } catch (error) {
+        if (!(error instanceof ExtractionLimitError || error instanceof ExtractionBusyError)) throw error;
+        if (abortSignal?.aborted) return untouched();
+        // Fail this row without asking the model to answer from an empty source.
+        return { processed, received: new Set(), missing: processed.map((col) => col.index), error };
+    }
     if (abortSignal?.aborted) return untouched();
 
     // Mark each outstanding column "generating" (insert the cell if it's new)

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ExtractionBusyError, runIsolatedExtraction, withExtractionSlot, withExtractionRequest } from "../isolated";
+import { ExtractionBusyError, runIsolatedExtraction, withExtractionSlot, withExtractionRequest, withBackgroundExtraction } from "../isolated";
 import { extractionTimeoutMs } from "../limits";
 
 vi.mock("../ops", () => ({ EXTRACTION_OPS: { spreadsheet: async () => "text" } }));
@@ -37,6 +37,52 @@ describe("parser admission", () => {
     release(); await held;
     await expect(waiting).resolves.toBe("text");
     expect(work).toHaveBeenCalledOnce();
+  });
+
+  it("prioritizes waiting interactive parses over a background parse", async () => {
+    const { held, release } = occupy();
+    const order: string[] = [];
+    const background = withBackgroundExtraction({}, async (extract) => {
+      await extract("spreadsheet", new ArrayBuffer(1));
+      order.push("background");
+    });
+    const interactive = withExtractionRequest(async (extract) => {
+      await extract("spreadsheet", new ArrayBuffer(1));
+      order.push("interactive");
+    });
+    release(); await held;
+    await Promise.all([background, interactive]);
+    expect(order).toEqual(["interactive", "background"]);
+  });
+
+  it("allows interactive parsing during background I/O without crowding its queue", async () => {
+    let release!: () => void;
+    const held = withBackgroundExtraction({}, () => new Promise<void>((resolve) => { release = resolve; }));
+    const work = vi.fn(async () => "indexed");
+    const jobs = Array.from({ length: 12 }, () => withBackgroundExtraction({}, work));
+    try {
+      await expect(runIsolatedExtraction("spreadsheet", async () => new ArrayBuffer(1))).resolves.toBe("text");
+      expect(work).not.toHaveBeenCalled();
+    } finally { release(); await held; }
+    await expect(Promise.all(jobs)).resolves.toEqual(Array(12).fill("indexed"));
+  });
+
+  it("bounds combined background admission and parser waiting to one lease budget", async () => {
+    vi.useFakeTimers();
+    let releaseBackground!: () => void;
+    const background = withBackgroundExtraction({}, () => new Promise<void>((resolve) => { releaseBackground = resolve; }));
+    const { held, release } = occupy();
+    const work = vi.fn(async (extract) => extract("spreadsheet", new ArrayBuffer(1)));
+    const waiting = withBackgroundExtraction({ waitMs: 60_000 }, work);
+    const rejected = expect(waiting).rejects.toBeInstanceOf(ExtractionBusyError);
+    try {
+      await vi.advanceTimersByTimeAsync(40_000);
+      releaseBackground(); await background;
+      expect(work).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(20_000);
+      await rejected;
+    } finally { releaseBackground(); release(); await Promise.all([background, held]); }
+    await expect(withBackgroundExtraction({ waitMs: 0 }, work)).resolves.toBe("text");
   });
 
   it("waits for interactive capacity without timing out behind a valid long parse", async () => {

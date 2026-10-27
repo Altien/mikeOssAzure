@@ -110,7 +110,9 @@ describe("runIsolatedExtraction", () => {
   });
 
   it("stops a parse that runs out of memory, then recovers on a fresh process", async () => {
-    vi.stubEnv("EXTRACTION_MAX_MEMORY_MB", "4");
+    // Linux refuses startup via its OS limit. Heap-only platforms need enough
+    // memory to start V8 and reach its OOM handler instead of crashing Node.
+    vi.stubEnv("EXTRACTION_MAX_MEMORY_MB", process.platform === "linux" ? "4" : "16");
     await expect(
       runIsolatedExtraction("spreadsheet", async () => workbook()),
     ).rejects.toBeInstanceOf(ExtractionLimitError);

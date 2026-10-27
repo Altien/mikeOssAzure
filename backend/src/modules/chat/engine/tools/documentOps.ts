@@ -11,11 +11,12 @@ import {
 export { applyTrackedEditsToDocument as runEditDocument, loadCurrentVersionBytes };
 import {
   downloadFile,
-  extractedTextKey,
+
   generatedDocKey,
   uploadFile,
 } from "../../../../lib/storage";
 import { convertedPdfKey, docxToPdf } from "../../../../lib/convert";
+import { readCurrentLegacyDocumentText } from "../../../documents/documents.service";
 import { enqueueConversion } from "../../../../lib/queue/conversionQueue";
 import { enqueueDbJob } from "../../../../lib/dbq/enqueue";
 import type { Db } from "../../../../lib/supabase";
@@ -1205,6 +1206,7 @@ export async function readDocumentContent(
   opts?: {
     emitEvents?: boolean;
     readIdentity?: Awaited<ReturnType<typeof getTurnReadIdentity>>;
+    textReadContext?: { userId: string; userEmail?: string | null };
   },
 ): Promise<string> {
   const emitEvents = opts?.emitEvents ?? true;
@@ -1392,36 +1394,22 @@ export async function readDocumentContent(
         // other type has an in-process reader above — so it is the only one
         // worth caching. The cached object is written by the
         // document.precompute_text job, keyed on the immutable version id.
-        const cacheKey =
-          versionId && requiresLibreOfficeTextExtraction(fileType)
-            ? extractedTextKey(versionId)
-            : null;
-        const cached = cacheKey ? await downloadFile(cacheKey) : null;
-        if (cached) {
-          text = Buffer.from(cached).toString("utf8");
-          devLog(
-            `[read_document] legacy Office text served from cache key="${cacheKey}" length=${text.length} for filename="${docInfo.filename}"`,
-          );
+        // The fixed version-only blob is no longer authoritative. Reuse the
+        // canonical current revision/access read, or parse these source bytes.
+        const cached = db && documentId && versionId && opts?.textReadContext
+          ? await readCurrentLegacyDocumentText(db, {
+              ...opts.textReadContext, documentId, versionId, storagePath: sourcePath,
+            }) : null;
+        if (cached !== null) {
+          text = cached;
         } else {
-          devLog(
-            `[read_document] legacy Office file_type="${fileType}" for filename="${docInfo.filename}", converting to pdf for text extraction`,
-          );
           text = await readIsolated("legacyOfficeText");
-          devLog(
-            `[read_document] legacy Office PDF extraction length=${text.length} for filename="${docInfo.filename}"`,
-          );
-          // Warm the cache for the next read of this version. Fire-and-forget
-          // and deduped: several tool calls in one turn queue one job, and a
-          // failure here must never affect the text we just produced.
-          if (cacheKey && db) {
+          if (versionId && requiresLibreOfficeTextExtraction(fileType) && db) {
             void enqueueDbJob(db, {
               kind: "document.precompute_text",
               payload: { versionId, storagePath: sourcePath, fileType },
-              dedupeKey: `precompute:${versionId}`,
-              maxAttempts: 3,
-            }).catch((err) =>
-              devLog(`[read_document] precompute enqueue failed`, err),
-            );
+              dedupeKey: `precompute:${versionId}`, maxAttempts: 3,
+            }).catch(error => devLog("[read_document] canonical text warm-up failed", error));
           }
         }
       } else {

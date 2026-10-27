@@ -18,6 +18,11 @@ async function scratch() {
 }
 
 describe("parser process limits", () => {
+  it.each([1024, 768])("retains the configured %i MiB heap on every platform", (memoryMb) => {
+    vi.stubEnv("EXTRACTION_MAX_MEMORY_MB", String(memoryMb));
+    expect(extractionCommand("process.js").args).toContain(`--max-old-space-size=${memoryMb}`);
+  });
+
   it.skipIf(process.platform !== "linux")("rejects native buffer allocations beyond the OS budget", async () => {
     const file = path.join(await scratch(), "native.cjs");
     await writeFile(file, `

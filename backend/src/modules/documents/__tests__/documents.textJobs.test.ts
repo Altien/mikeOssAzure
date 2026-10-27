@@ -3,7 +3,7 @@ import { scriptedDb } from "../../../__tests__/helpers/scriptedDb";
 import type { DbJob } from "../../../lib/dbq/types";
 import { DbJobDeferredError } from "../../../lib/dbq/types";
 import { NonRetryableJobError } from "../../../lib/dbq/runner";
-import { ExtractionLimitError, withExtractionSlot } from "../../../lib/extraction/isolated";
+import { ExtractionLimitError, withBackgroundExtraction } from "../../../lib/extraction/isolated";
 const mocks = vi.hoisted(() => ({
   downloadFile: vi.fn(),
   uploadFile: vi.fn(),
@@ -79,7 +79,7 @@ it("propagates cleanup scheduling failure so the worker retries", async () => {
 afterEach(() => vi.useRealTimers());
 it("defers busy precomputation before reading metadata or downloading", async () => {
   let release!: () => void;
-  const held = withExtractionSlot({}, () => new Promise<void>((resolve) => { release = resolve; }));
+  const held = withBackgroundExtraction({}, () => new Promise<void>((resolve) => { release = resolve; }));
   const fake = scriptedDb([]);
   vi.useFakeTimers();
   try {

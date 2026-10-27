@@ -10,6 +10,8 @@ vi.mock("../tabular.rows", () => ({
     loadRowDocumentText: (...a: unknown[]) => loadRowDocumentText(...a),
 }));
 
+import { ExtractionBusyError, ExtractionLimitError } from "../../../lib/extraction/limits";
+import { streamTabularGenerateSync } from "../tabular.generateStream";
 import { extractRowColumns } from "../tabular.extractRow";
 import type { ReviewRow } from "../tabular.rows";
 
@@ -78,6 +80,36 @@ beforeEach(() => {
 });
 
 describe("extractRowColumns", () => {
+    it.each([new ExtractionLimitError("too large"), new ExtractionBusyError()])(
+        "contains %s to its row and continues the run without querying empty text",
+        async (error) => {
+            loadRowDocumentText.mockRejectedValueOnce(error);
+            queryTabularAllColumns.mockImplementation(async (_m, _f, _t, cols, onResult) => {
+                for (const col of cols) await onResult(col.index, RESULT(col.index));
+            });
+            const db = makeDb();
+            const frames: Array<{ row_id: string; status: string }> = [];
+            const onError = vi.fn();
+            const complete = await streamTabularGenerateSync({
+                db: db as never, reviewId: "rev-1", columns: COLUMNS,
+                rows: Array.from({ length: 5 }, (_, index) => ({ ...ROW, id: `row-${index}` })),
+                cellMap: new Map(), model: "m", apiKeys: {}, generationId: "gen-1",
+                abortSignal: new AbortController().signal, onError,
+                write: (line) => { frames.push(JSON.parse(line.slice(6))); return true; },
+            });
+            expect(complete).toBe(true);
+            expect(onError).toHaveBeenCalledWith(error);
+            expect(queryTabularAllColumns).toHaveBeenCalledTimes(4);
+            expect(frames.filter((frame) => frame.status === "done")).toHaveLength(8);
+            expect(frames.filter((frame) => frame.row_id === "row-0")).toEqual([
+                expect.objectContaining({ status: "error" }), expect.objectContaining({ status: "error" }),
+            ]);
+            const failed = db.calls.filter((call) => call.payload?.status === "error");
+            expect(failed).toHaveLength(2);
+            expect(failed.every((call) => call.filters.generation_id === "gen-1")).toBe(true);
+        },
+    );
+
     it("processes all columns, persists done, and reports none missing", async () => {
         queryTabularAllColumns.mockImplementation(
             async (_m, _f, _t, cols, onResult) => {
