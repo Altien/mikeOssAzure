@@ -119,3 +119,5 @@ markStage("load-revisions");
 throw new AppError("comparison.source_read_failed", "Could not read revision", { cause });
 ```
 
+
+Each API request starts an isolated diagnostic scope before parsing/auth/routing: component=http, operation=http.request, sanitized method/route and generated request ID. Domain setOperation replaces that fallback. Repository code paths and real cause stacks remain; user URLs, query strings, messages and identity remain stripped. Dev mounts this middleware inside createApp without changing /api ingress, rate-limit lanes or runtime configuration.

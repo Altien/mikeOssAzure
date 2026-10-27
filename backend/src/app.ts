@@ -1,5 +1,4 @@
 import express from "express";
-import { randomUUID } from "node:crypto";
 import { rateLimitedBody } from "./lib/httpError";
 import cors from "cors";
 import helmet from "helmet";
@@ -46,7 +45,7 @@ import { helpRouter } from "./modules/platform/help.routes";
 import { handleUnhandledError, protectInternalErrorResponses } from "./middleware/internalErrorResponse";
 import { configuredAllowedOrigins as configuredOrigins } from "./lib/origins";
 import { envInt } from "./lib/runtimeConfig";
-import { tagCurrentRequest } from "./lib/observability/sentry";
+import { requestDiagnostics } from "./middleware/requestDiagnostics";
 
 // ── Rate-limit configuration (from upstream ba6f771) ───────────────────────
 
@@ -187,14 +186,7 @@ export function buildApp(): express.Express {
   // OAuth redirect_uri and uses the ingress-stamped client IP for rate limiting.
   app.set("trust proxy", 1);
 
-  app.use((_req, res, next) => {
-    const requestId = randomUUID();
-    res.locals.requestId = requestId;
-    res.setHeader("X-Request-ID", requestId);
-    // Same id on the Sentry event, the response body, and the access log.
-    tagCurrentRequest(requestId);
-    next();
-  });
+  app.use(requestDiagnostics);
   app.use(protectInternalErrorResponses);
 
   // helmet (security headers) — taken from upstream ba6f771; CSP and COEP

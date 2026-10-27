@@ -45,7 +45,9 @@ describe("GET /api/observability/sentry-test", () => {
       request_id: res.headers["x-request-id"],
     });
     // The id was attached to the Sentry scope by the request-id middleware…
-    expect(tagCurrentRequest).toHaveBeenCalledWith(res.headers["x-request-id"]);
+    expect(tagCurrentRequest).toHaveBeenCalledWith(res.headers["x-request-id"], expect.objectContaining({
+      method: "GET", originalUrl: "/observability/sentry-test",
+    }));
     // …and the thrown error reached the reporter through handleUnhandledError.
     expect(reportError).toHaveBeenCalledOnce();
     const [error, context] = reportError.mock.calls[0] as unknown as [
