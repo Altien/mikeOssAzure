@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { scriptedDb } from "../../../__tests__/helpers/scriptedDb";
 import type { DbJob } from "../../../lib/dbq/types";
 import { DbJobDeferredError } from "../../../lib/dbq/types";
@@ -76,12 +76,16 @@ it("propagates cleanup scheduling failure so the worker retries", async () => {
     "queue unavailable",
   );
 });
+afterEach(() => vi.useRealTimers());
 it("defers busy precomputation before reading metadata or downloading", async () => {
   let release!: () => void;
   const held = withExtractionSlot({}, () => new Promise<void>((resolve) => { release = resolve; }));
   const fake = scriptedDb([]);
+  vi.useFakeTimers();
   try {
-    await expect(handleDocumentPrecomputeText(fake.db, job)).rejects.toBeInstanceOf(DbJobDeferredError);
+    const rejected = expect(handleDocumentPrecomputeText(fake.db, job)).rejects.toBeInstanceOf(DbJobDeferredError);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await rejected;
     expect(mocks.downloadFile).not.toHaveBeenCalled();
     expect(mocks.uploadFile).not.toHaveBeenCalled();
     fake.done();

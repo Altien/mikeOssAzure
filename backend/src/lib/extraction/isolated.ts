@@ -1,6 +1,7 @@
 // One parser slot per calling thread. Queue coordination remains responsive;
-// each parse runs in a disposable child process with its own failure boundary.
+// a reusable child process keeps parsers warm behind an OS memory boundary.
 import path from "node:path";
+import type { Socket } from "node:net";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
@@ -38,63 +39,126 @@ export function extractionCommand(entry: string): { command: string; args: strin
 function killParser(child: ChildProcess): void {
   if (!child.pid) return;
   if (process.platform === "win32") {
-    execFile("taskkill", ["/pid", String(child.pid), "/T", "/F"], () => { child.kill("SIGKILL"); });
+    execFile("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true }, () => { child.kill("SIGKILL"); });
   } else {
     // Includes LibreOffice descendants, including after the parser has exited.
     try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); }
   }
 }
 
-async function extractInChild<K extends ExtractionOp>(op: K, bytes: ArrayBuffer, options: { fileType?: string } = {}): Promise<Result<K>> {
-  if (bytes.byteLength > EXTRACTION_MAX_BYTES) throw new ExtractionLimitError("source exceeds 150 MB");
-  if (process.env.EXTRACTION_ISOLATION === "off") {
-    // Explicit escape hatch, also used by suites whose parser mocks live here.
-    const { EXTRACTION_OPS } = await import("./ops.js");
-    return await EXTRACTION_OPS[op](bytes, options.fileType ?? "") as Result<K>;
+type Parser = {
+  child: ChildProcess;
+  closed: Promise<void>;
+  memoryMb: number;
+  started: boolean;
+  files: number;
+  idle?: ReturnType<typeof setTimeout>;
+};
+let parser: Parser | null = null;
+const RECYCLE_AFTER_FILES = 200;
+const IDLE_SHUTDOWN_MS = 60_000;
+
+function retire(p: Parser): void {
+  if (parser === p) parser = null;
+  clearTimeout(p.idle);
+  killParser(p.child);
+}
+
+/** Also used at test boundaries so no warm process outlives its configuration. */
+export async function stopExtractionProcess(): Promise<void> {
+  const p = parser;
+  if (p) { retire(p); await p.closed; }
+}
+
+function reference(p: Parser, active: boolean): void {
+  if (active) {
+    p.child.ref(); p.child.channel?.ref();
+    (p.child.stderr as Socket | null)?.ref();
+  } else {
+    p.child.unref(); p.child.channel?.unref();
+    (p.child.stderr as Socket | null)?.unref();
   }
+}
+
+async function startParser(): Promise<Parser> {
   const entry = path.join(__dirname, __filename.endsWith(".ts") ? "process.ts" : "process.js");
   const { command, args } = extractionCommand(entry);
   const scratch = await mkdtemp(path.join(tmpdir(), "mike-extraction-"));
+  // No application credentials or inherited NODE_OPTIONS in the parser.
+  const env: NodeJS.ProcessEnv = {};
+  // Desktop launches the bundled Electron binary as Node. Preserve this one
+  // execution-mode flag without inheriting application credentials/NODE_OPTIONS.
+  if (process.versions.electron) env.ELECTRON_RUN_AS_NODE = "1";
+  for (const name of ["PATH", "SystemRoot", "HOME", "LANG", "SOFFICE_BINARY_PATH", "LIBREOFFICE_BINARY_PATH", "LIBRE_OFFICE_EXE"]) {
+    if (process.env[name] !== undefined) env[name] = process.env[name];
+  }
+  env.TMPDIR = env.TMP = env.TEMP = scratch;
+  // Avoid glibc arena reservations exhausting RLIMIT_AS at low actual usage.
+  env.MALLOC_ARENA_MAX = "2";
+  const child = spawn(command, args, {
+    env, detached: process.platform !== "win32", windowsHide: true,
+    stdio: ["ignore", "ignore", "pipe", "ipc"], serialization: "advanced",
+  });
+  const p: Parser = { child, closed: Promise.resolve(), memoryMb: extractionMemoryMb(), started: false, files: 0 };
+  const onParentExit = () => killParser(child);
+  process.once("exit", onParentExit);
+  child.once("spawn", () => { p.started = true; });
+  // Idle child errors must still retire the process even without a parse listener.
+  child.on("error", () => retire(p));
+  p.closed = new Promise<void>((resolve, reject) => child.once("close", () => {
+    retire(p);
+    process.removeListener("exit", onParentExit);
+    void rm(scratch, { recursive: true, force: true }).then(resolve, reject);
+  }));
+  // Idle retirement has no caller awaiting cleanup; active parses do await it.
+  void p.closed.catch(() => {});
+  return p;
+}
+
+async function extractInChild<K extends ExtractionOp>(op: K, bytes: ArrayBuffer, options: { fileType?: string } = {}): Promise<Result<K>> {
+  if (bytes.byteLength > EXTRACTION_MAX_BYTES) throw new ExtractionLimitError("source exceeds 150 MB");
+  if (process.env.EXTRACTION_ISOLATION === "off") {
+    const { EXTRACTION_OPS } = await import("./ops.js");
+    return await EXTRACTION_OPS[op](bytes, options.fileType ?? "") as Result<K>;
+  }
+  if (parser && parser.memoryMb !== extractionMemoryMb()) await stopExtractionProcess();
+  const p = parser ?? (parser = await startParser());
+  clearTimeout(p.idle);
+  reference(p, true);
+  const { child } = p;
   return new Promise<Result<K>>((resolve, reject) => {
-    // Do not inherit NODE_OPTIONS: it can override limits or preload app code.
-    // Parser-only environment: no Supabase, object-store, or provider secrets.
-    const env: NodeJS.ProcessEnv = {};
-    for (const name of ["PATH", "SystemRoot", "HOME", "LANG", "SOFFICE_BINARY_PATH", "LIBREOFFICE_BINARY_PATH", "LIBRE_OFFICE_EXE"]) {
-      if (process.env[name] !== undefined) env[name] = process.env[name];
-    }
-    env.TMPDIR = env.TMP = env.TEMP = scratch;
-    // glibc's per-thread malloc arenas can reserve enough address space to
-    // exhaust RLIMIT_AS at low actual usage (especially with the TS loader).
-    // Bound arena proliferation without relaxing either OS memory limit.
-    env.MALLOC_ARENA_MAX = "2";
-    const child = spawn(command, args, {
-      env, detached: process.platform !== "win32",
-      stdio: ["ignore", "ignore", "pipe", "ipc"], serialization: "advanced",
-    });
-    const onParentExit = () => killParser(child);
-    process.once("exit", onParentExit);
     let reply: Reply | undefined;
     let failure: Error | undefined;
     let diagnostics = "";
     const timeout = setTimeout(() => {
       failure = new ExtractionLimitError("parser deadline exceeded");
-      killParser(child);
+      retire(p);
     }, extractionTimeoutMs());
-    child.stderr?.on("data", (chunk: Buffer) => {
-      // Inspect bounded diagnostics only for OOM classification. Never log them.
+    const onDiagnostics = (chunk: Buffer) => {
       diagnostics = (diagnostics + chunk.toString()).slice(-8192);
-    });
-    child.once("message", (message: Reply) => {
-      if (!failure) reply = message;
-      killParser(child);
-    });
-    child.once("error", (error) => { failure = error; killParser(child); });
-    child.once("close", (_code, signal) => {
+    };
+    const cleanup = () => {
       clearTimeout(timeout);
-      process.removeListener("exit", onParentExit);
-      killParser(child);
-      void rm(scratch, { recursive: true, force: true }).then(() => {
-        // A timed-out child must be gone before the next file gets this slot.
+      child.removeListener("message", onMessage);
+      child.removeListener("error", onError);
+      child.removeListener("close", onClose);
+      child.removeListener("spawn", send);
+      child.stderr?.removeListener("data", onDiagnostics);
+    };
+    const onMessage = (message: Reply) => {
+      if (failure) return;
+      reply = message;
+      if (!reply.ok || ++p.files >= RECYCLE_AFTER_FILES) { retire(p); return; }
+      cleanup();
+      p.idle = setTimeout(() => retire(p), IDLE_SHUTDOWN_MS);
+      p.idle.unref();
+      reference(p, false);
+      resolve(reply.result as Result<K>);
+    };
+    const onError = (error: Error) => { failure = error; retire(p); };
+    const onClose = (_code: number | null, signal: NodeJS.Signals | null) => {
+      cleanup();
+      void p.closed.then(() => {
         if (failure instanceof ExtractionLimitError) reject(failure);
         else if (reply?.ok) resolve(reply.result as Result<K>);
         else if (reply) reject(reply.limited ? new ExtractionLimitError(reply.message) : new Error(reply.message));
@@ -102,54 +166,66 @@ async function extractInChild<K extends ExtractionOp>(op: K, bytes: ArrayBuffer,
           reject(new ExtractionLimitError("parser memory budget exceeded"));
         } else reject(failure ?? new Error("extraction process exited without a result"));
       }, reject);
+    };
+    const send = () => child.send({ op, bytes, fileType: options.fileType ?? "" }, (error) => {
+      if (error && !reply && !failure) onError(error);
     });
-    child.once("spawn", () => child.send({ op, bytes, fileType: options.fileType ?? "" }, (error) => {
-      if (error && !reply && !failure) { failure = error; killParser(child); }
-    }));
+    child.stderr?.on("data", onDiagnostics);
+    child.once("message", onMessage);
+    child.once("error", onError);
+    child.once("close", onClose);
+    if (p.started) send(); else child.once("spawn", send);
   });
 }
 
-type Waiting = { grant: () => void; timer: ReturnType<typeof setTimeout> };
-const queue: Waiting[] = [];
-let occupied = false;
 const MAX_WAITERS = 8;
-const MAX_WAIT_MS = 30_000;
 
-/** Reserve BEFORE downloading. Durable jobs use wait:false and defer back to
- * Postgres; they never spend their ten-minute claim lease in this local queue.
- * Interactive requests wait in FIFO order, with bounded queue length and wait.
- * Callers must load source bytes inside the callback, after admission.
- */
-export async function withExtractionSlot<T>(
-  options: { wait?: boolean },
+// Separate download concurrency from parser concurrency. A slow storage read
+// must not stop another already-downloaded tabular row from being parsed.
+function admission(limit: number) {
+  const queue: Array<() => void> = [];
+  let active = 0;
+  return async <T>(options: { waitMs?: number }, work: () => Promise<T>): Promise<T> => {
+    if (active >= limit) {
+      if (options.waitMs === 0 || queue.length >= MAX_WAITERS) throw new ExtractionBusyError();
+      await new Promise<void>((resolve, reject) => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const grant = () => { clearTimeout(timer); resolve(); };
+        queue.push(grant);
+        if (options.waitMs !== undefined) timer = setTimeout(() => {
+          queue.splice(queue.indexOf(grant), 1);
+          reject(new ExtractionBusyError());
+        }, options.waitMs);
+      });
+    } else active++;
+    try { return await work(); }
+    finally {
+      const next = queue.shift();
+      if (next) next();
+      else active--;
+    }
+  };
+}
+const parserAdmission = admission(1);
+const requestAdmission = admission(3);
+
+/** Durable jobs bound their queue wait before downloading; interactive callers
+ * keep the warm parser pipeline without a separate queue deadline. */
+export function withExtractionSlot<T>(
+  options: { waitMs?: number },
   work: (extract: ExtractInSlot) => Promise<T>,
 ): Promise<T> {
-  if (occupied) {
-    if (options.wait === false || queue.length >= MAX_WAITERS) {
-      throw new ExtractionBusyError();
-    }
-    await new Promise<void>((resolve, reject) => {
-      const task: Waiting = {
-        grant: resolve,
-        timer: setTimeout(() => {
-          const index = queue.indexOf(task);
-          if (index < 0) return;
-          queue.splice(index, 1);
-          reject(new ExtractionBusyError());
-        }, MAX_WAIT_MS),
-      };
-      queue.push(task);
-    });
-  } else occupied = true;
-  try {
-    return await work(extractInChild);
-  } finally {
-    const next = queue.shift();
-    if (next) {
-      clearTimeout(next.timer);
-      next.grant();
-    } else occupied = false;
-  }
+  return parserAdmission(options, () => work(extractInChild));
+}
+
+function queuedExtraction<K extends ExtractionOp>(op: K, bytes: ArrayBuffer, options?: { fileType?: string }): Promise<Result<K>> {
+  return withExtractionSlot<Result<K>>({}, (extract) => extract(op, bytes, options));
+}
+
+/** Three interactive sources may download/parse concurrently, matching tabular
+ * row concurrency. Only the actual parser call takes the single parser slot. */
+export function withExtractionRequest<T>(work: (extract: ExtractInSlot) => Promise<T>): Promise<T> {
+  return requestAdmission({}, () => work(queuedExtraction));
 }
 
 export function runIsolatedExtraction<K extends ExtractionOp>(
@@ -157,7 +233,7 @@ export function runIsolatedExtraction<K extends ExtractionOp>(
   loadSource: () => Promise<ArrayBuffer | null>,
   options: { fileType?: string } = {},
 ): Promise<Result<K>> {
-  return withExtractionSlot<Result<K>>({}, async (extract): Promise<Result<K>> => {
+  return withExtractionRequest<Result<K>>(async (extract): Promise<Result<K>> => {
     const source = await loadSource();
     if (!source) throw new Error("document_text_source_unavailable");
     return extract(op, source, options);

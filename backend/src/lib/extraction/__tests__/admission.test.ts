@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ExtractionBusyError, runIsolatedExtraction, withExtractionSlot } from "../isolated";
+import { ExtractionBusyError, runIsolatedExtraction, withExtractionSlot, withExtractionRequest } from "../isolated";
 import { extractionTimeoutMs } from "../limits";
+
+vi.mock("../ops", () => ({ EXTRACTION_OPS: { spreadsheet: async () => "text" } }));
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 
@@ -15,26 +17,58 @@ describe("parser admission", () => {
     const { held, release } = occupy();
     const downloadAndParse = vi.fn(async () => "text");
     try {
-      const outcomes = await Promise.allSettled(Array.from({ length: 5 }, () => withExtractionSlot({ wait: false }, downloadAndParse)));
+      const outcomes = await Promise.allSettled(Array.from({ length: 5 }, () => withExtractionSlot({ waitMs: 0 }, downloadAndParse)));
       for (const outcome of outcomes) {
         expect(outcome.status).toBe("rejected");
         if (outcome.status === "rejected") expect(outcome.reason).toBeInstanceOf(ExtractionBusyError);
       }
       expect(downloadAndParse).not.toHaveBeenCalled();
     } finally { release(); await held; }
-    await expect(withExtractionSlot({ wait: false }, downloadAndParse)).resolves.toBe("text");
+    await expect(withExtractionSlot({ waitMs: 0 }, downloadAndParse)).resolves.toBe("text");
   });
 
-  it("expires interactive waiting after 30 seconds, without starting its download", async () => {
+  it("runs short background work without a deferral when the parser frees up", async () => {
     vi.useFakeTimers();
     const { held, release } = occupy();
-    const downloadAndParse = vi.fn(async () => new ArrayBuffer(1));
-    const waiting = runIsolatedExtraction("spreadsheet", downloadAndParse);
-    const rejected = expect(waiting).rejects.toBeInstanceOf(ExtractionBusyError);
-    await vi.advanceTimersByTimeAsync(30_000);
-    await rejected;
+    const work = vi.fn(async () => "text");
+    const waiting = withExtractionSlot({ waitMs: 60_000 }, work);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(work).not.toHaveBeenCalled();
     release(); await held;
-    expect(downloadAndParse).not.toHaveBeenCalled();
+    await expect(waiting).resolves.toBe("text");
+    expect(work).toHaveBeenCalledOnce();
+  });
+
+  it("waits for interactive capacity without timing out behind a valid long parse", async () => {
+    vi.useFakeTimers();
+    const releases: Array<() => void> = [];
+    const held = Array.from({ length: 3 }, () => withExtractionRequest(() => new Promise<void>((resolve) => { releases.push(resolve); })));
+    const download = vi.fn(async () => new ArrayBuffer(1));
+    const waiting = runIsolatedExtraction("spreadsheet", download);
+    try {
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(download).not.toHaveBeenCalled();
+    } finally { releases.forEach((release) => release()); await Promise.all(held); }
+    await expect(waiting).resolves.toBe("text");
+  });
+
+  it("overlaps three downloads with an occupied parser without starting a fourth", async () => {
+    const { held, release } = occupy();
+    const download = vi.fn(async () => new ArrayBuffer(1));
+    const requests = Array.from({ length: 4 }, () => runIsolatedExtraction("spreadsheet", download));
+    try {
+      await Promise.resolve();
+      expect(download).toHaveBeenCalledTimes(3);
+    } finally { release(); await held; }
+    await expect(Promise.all(requests)).resolves.toEqual(["text", "text", "text", "text"]);
+    expect(download).toHaveBeenCalledTimes(4);
+  });
+
+  it("releases interactive capacity after failed downloads", async () => {
+    await Promise.all(Array.from({ length: 3 }, () => expect(
+      runIsolatedExtraction("spreadsheet", async () => null),
+    ).rejects.toThrow("document_text_source_unavailable")));
+    await expect(runIsolatedExtraction("spreadsheet", async () => new ArrayBuffer(1))).resolves.toBe("text");
   });
 
   it("bounds queued requests and serves them in FIFO order", async () => {
@@ -49,7 +83,7 @@ describe("parser admission", () => {
 
   it("releases a slot after a failure and clamps execution below the stale lease", async () => {
     await expect(withExtractionSlot({}, async () => { throw new Error("broken source"); })).rejects.toThrow("broken source");
-    await expect(withExtractionSlot({ wait: false }, async () => "next")).resolves.toBe("next");
+    await expect(withExtractionSlot({ waitMs: 0 }, async () => "next")).resolves.toBe("next");
     vi.stubEnv("EXTRACTION_TIMEOUT_MS", "3600000");
     expect(extractionTimeoutMs()).toBe(300_000);
   });

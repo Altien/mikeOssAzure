@@ -3,10 +3,11 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { extractionCommand, ExtractionLimitError, runIsolatedExtraction } from "../isolated";
+import { extractionCommand, ExtractionLimitError, runIsolatedExtraction, stopExtractionProcess } from "../isolated";
 
 const directories: string[] = [];
 afterEach(async () => {
+  await stopExtractionProcess();
   vi.unstubAllEnvs();
   await Promise.all(directories.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });

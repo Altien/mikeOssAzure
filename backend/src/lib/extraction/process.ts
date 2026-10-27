@@ -1,8 +1,8 @@
-// One file per process. No database, storage credentials, or application boot.
+// Sequential requests reuse parser imports. No database or application boot.
 import { EXTRACTION_OPS, type ExtractionOp } from "./ops";
 import { EXTRACTION_MAX_TEXT_BYTES, ExtractionLimitError, isAllocationFailure } from "./limits";
 
-process.once("message", (request: { op: ExtractionOp; bytes: ArrayBuffer; fileType: string }) => {
+process.on("message", (request: { op: ExtractionOp; bytes: ArrayBuffer; fileType: string }) => {
   void (async () => {
     try {
       const result = await EXTRACTION_OPS[request.op](request.bytes, request.fileType);

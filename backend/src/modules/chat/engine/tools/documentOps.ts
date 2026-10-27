@@ -42,7 +42,7 @@ import {
 import {
   ExtractionLimitError,
   ExtractionBusyError,
-  withExtractionSlot,
+  withExtractionRequest,
 } from "../../../../lib/extraction/isolated";
 
 
@@ -1297,7 +1297,7 @@ export async function readDocumentContent(
       return notice + (stored.text ?? "");
     }
 
-    return await withExtractionSlot({}, async (extract) => {
+    return await withExtractionRequest(async (extract) => {
       // Prefer the current tracked-changes version (if any) so read_document
       // reflects accepted/pending edits rather than the original upload.
       let raw: ArrayBuffer | null = null;
@@ -1348,8 +1348,7 @@ export async function readDocumentContent(
       }
       let text: string;
       const fileType = docInfo.file_type?.toLowerCase?.() ?? "";
-      // Parsers run on their own thread so a huge file cannot stall every
-      // other request; a user is waiting, so this goes ahead of background work.
+      // Parsing runs in a bounded process, while downloads may overlap.
       const source = raw;
       const readIsolated = (
         op:

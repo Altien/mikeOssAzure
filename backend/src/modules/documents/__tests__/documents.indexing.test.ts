@@ -18,16 +18,19 @@ const job = { id: "job", kind: "document.extract_text", payload: { versionId: "v
 const bytes = new TextEncoder().encode("source bytes").buffer;
 const version = { id: "v1", storage_path: "source", file_type: "docx", text_revision: "r1" };
 beforeEach(() => { vi.resetAllMocks(); mocks.download.mockResolvedValue(bytes); mocks.docx.mockResolvedValue("Complete clause\n\nAnother clause"); });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 
 describe("version text extraction", () => {
   it("returns a busy claim to Postgres without download, terminal failure, or spending its last attempt", async () => {
     let release!: () => void;
     const held = withExtractionSlot({}, () => new Promise<void>((resolve) => { release = resolve; }));
     const fake = scriptedDb([{ table: "db_jobs", op: "update" }]);
+    vi.useFakeTimers();
     const claimed = { ...job, status: "running" as const, attempts: 3, claimed_at: "2026-10-27T00:00:00Z" };
     try {
-      await processClaimedJob(fake.db, { "document.extract_text": handleDocumentExtractText }, claimed);
+      const processing = processClaimedJob(fake.db, { "document.extract_text": handleDocumentExtractText }, claimed);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await processing;
       expect(mocks.download).not.toHaveBeenCalled();
       expect(fake.calls[0].payload).toMatchObject({ status: "pending", attempts: 2 });
       expect(fake.calls[0].filters).toEqual(expect.arrayContaining([

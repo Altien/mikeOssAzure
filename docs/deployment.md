@@ -154,15 +154,18 @@ LibreOffice must be available for DOC/DOCX conversion. See [Troubleshooting](tro
 ## Document parsing resources
 
 Indexing, chat reads, tabular sources, and legacy text precomputation share one
-parser slot per calling thread. Each file runs in a fresh child process; on
-POSIX, completion or timeout terminates its entire process group, including
-LibreOffice descendants. Temporary files are removed after exit. This adds
-startup overhead but reclaims parser memory after each file.
+parser process per calling thread. It stays warm between files and recycles
+after 200 files or 60 seconds idle, matching #721's worker reuse. Failures and
+timeouts also retire it. On POSIX, retirement kills the process group, including
+LibreOffice descendants, and removes its temporary directory.
 
-Capacity is reserved before downloading. Busy background jobs return to
-Postgres for 30 seconds without spending a retry or waiting out their claim
-lease. Interactive requests wait in FIFO order, up to eight requests and 30
-seconds. More generic job concurrency does not create more parser slots.
+Background jobs wait at most 60 seconds for a parser slot before downloading.
+This keeps small-file batches moving; longer waits defer to Postgres for 30
+seconds without spending retries. With parsing capped at five minutes, the
+queue cannot consume the ten-minute claim lease. Interactive requests
+can download three sources concurrently, matching tabular row concurrency;
+only parsing is serial. Admission queues hold at most eight waiters; the parser deadline starts when
+parsing starts, as in #721. Generic job concurrency does not create more slots.
 
 Linux requires `prlimit` (util-linux), installed by the combined Dev Docker image and Nixpacks. Missing
 `prlimit` fails extraction. Defaults:

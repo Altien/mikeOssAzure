@@ -32,6 +32,7 @@ import { initManifestSigningKey, manifestPublicKey } from "./lib/manifestSigning
 import { enforceDocumentLifecycleMigration } from "./lib/dbq/lifecycleGuard";
 import { reportError } from "./lib/observability/sentry";
 import { safeErrorLog } from "./lib/safeError";
+import { stopExtractionProcess } from "./lib/extraction/isolated";
 
 const SWEEP_INTERVAL_MS = (() => {
     const raw = Number(process.env.STALE_SWEEP_INTERVAL_MS);
@@ -186,5 +187,6 @@ export async function stopAllWorkers(): Promise<void> {
     }
     await stopWorkers();
     await stopDbJobRunner();
+    await stopExtractionProcess();
     started = false;
 }

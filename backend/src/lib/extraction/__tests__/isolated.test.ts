@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { Document, Packer, Paragraph } from "docx";
 import JSZip from "jszip";
 import * as XLSX from "xlsx";
@@ -7,18 +8,19 @@ import {
   EXTRACTION_MAX_BYTES,
   ExtractionLimitError,
   runIsolatedExtraction,
+  stopExtractionProcess,
 } from "../isolated";
 
-// These run the real parser process (vitest.config turns isolation off for
-// every other suite).
-beforeEach(() => vi.stubEnv("EXTRACTION_ISOLATION", "on"));
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { ...actual, spawn: vi.fn(actual.spawn) };
+});
 
-/** A copy of the module with no process yet, so a test sees a cold start. */
-async function freshModule() {
-  vi.resetModules();
-  return import("../isolated.js");
-}
-afterEach(() => vi.unstubAllEnvs());
+beforeEach(() => {
+  vi.mocked(spawn).mockClear();
+  vi.stubEnv("EXTRACTION_ISOLATION", "on");
+});
+afterEach(async () => { await stopExtractionProcess(); vi.unstubAllEnvs(); });
 
 function workbook(): ArrayBuffer {
   const wb = XLSX.utils.book_new();
@@ -60,6 +62,16 @@ describe("runIsolatedExtraction", () => {
     expect(text).toContain("| 2 | Rent | 1200 |");
   });
 
+  it("reuses a warm process and recycles it after 200 files", async () => {
+    const source = workbook();
+    for (let index = 0; index < 200; index++) {
+      await expect(runIsolatedExtraction("spreadsheet", async () => source)).resolves.toContain("Rent");
+    }
+    expect(spawn).toHaveBeenCalledTimes(1);
+    await expect(runIsolatedExtraction("spreadsheet", async () => source)).resolves.toContain("Rent");
+    expect(spawn).toHaveBeenCalledTimes(2);
+  });
+
   // pdfjs must load successfully inside the parser subprocess.
   it("reads a PDF on the parser process", async () => {
     await expect(runIsolatedExtraction("pdfForModel", async () => onePagePdf())).resolves.toContain("Case No. 24CV-1234");
@@ -71,8 +83,7 @@ describe("runIsolatedExtraction", () => {
   it.skipIf(!existsSync("/usr/bin/soffice"))("converts Office content using real LibreOffice inside the bounded process", async () => {
     const doc = new Document({ sections: [{ children: [new Paragraph("Synthetic lease clause 721")] }] });
     const buffer = await Packer.toBuffer(doc);
-    // Cold starts must remain reliable under the address-space limit, including
-    // the TS loader and native allocator's per-thread arena reservations.
+    // Repeated conversions must work inside the same bounded parser.
     for (let attempt = 0; attempt < 3; attempt++) {
       await expect(runIsolatedExtraction("legacyOfficeText", async () => Uint8Array.from(buffer).buffer)).resolves.toContain("Synthetic lease clause 721");
     }
@@ -88,26 +99,24 @@ describe("runIsolatedExtraction", () => {
 
   // A cold process takes far longer than 1 ms just to load the parsers.
   it("stops a parse that runs past the timeout, then recovers on a fresh process", async () => {
-    const isolated = await freshModule();
     vi.stubEnv("EXTRACTION_TIMEOUT_MS", "1");
     await expect(
-      isolated.runIsolatedExtraction("spreadsheet", async () => workbook()),
-    ).rejects.toBeInstanceOf(isolated.ExtractionLimitError);
+      runIsolatedExtraction("spreadsheet", async () => workbook()),
+    ).rejects.toBeInstanceOf(ExtractionLimitError);
     vi.stubEnv("EXTRACTION_TIMEOUT_MS", "60000");
     await expect(
-      isolated.runIsolatedExtraction("spreadsheet", async () => workbook()),
+      runIsolatedExtraction("spreadsheet", async () => workbook()),
     ).resolves.toContain("Rent");
   });
 
   it("stops a parse that runs out of memory, then recovers on a fresh process", async () => {
-    const isolated = await freshModule();
     vi.stubEnv("EXTRACTION_MAX_MEMORY_MB", "4");
     await expect(
-      isolated.runIsolatedExtraction("spreadsheet", async () => workbook()),
-    ).rejects.toBeInstanceOf(isolated.ExtractionLimitError);
+      runIsolatedExtraction("spreadsheet", async () => workbook()),
+    ).rejects.toBeInstanceOf(ExtractionLimitError);
     vi.stubEnv("EXTRACTION_MAX_MEMORY_MB", "1024");
     await expect(
-      isolated.runIsolatedExtraction("spreadsheet", async () => workbook()),
+      runIsolatedExtraction("spreadsheet", async () => workbook()),
     ).resolves.toContain("Rent");
   });
 

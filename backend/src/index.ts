@@ -20,6 +20,7 @@ import { startRoleThreads, stopRoleThreads } from "./lib/workerRoleThreads";
 import { initSentry } from "./lib/observability/sentry";
 import { getKeyVaultConfig } from "./lib/config";
 import { failBoot, listenOrFail } from "./lib/processLifecycle";
+import { stopExtractionProcess } from "./lib/extraction/isolated";
 
 const PORT = process.env.PORT ?? 3001;
 const HOST = process.env.HOST?.trim() || undefined;
@@ -116,6 +117,7 @@ async function start(): Promise<void> {
         server.close((error) => error ? reject(error) : resolve()),
       );
       if (workersMode === "inline") await stopAllWorkers();
+      await stopExtractionProcess();
       await closeStreamRunCluster();
       await stopRoleThreads(threads);
       clearTimeout(forced);

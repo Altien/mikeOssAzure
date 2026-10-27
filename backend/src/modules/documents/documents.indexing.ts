@@ -11,7 +11,7 @@ export async function handleDocumentExtractText(db: Db, job: DbJob): Promise<voi
   const { versionId, revision } = job.payload;
   if (typeof versionId !== "string" || typeof revision !== "string") return;
   try {
-    await withExtractionSlot({ wait: false }, async (extract) => {
+    await withExtractionSlot({ waitMs: 60_000 }, async (extract) => {
   const { data: version, error } = await db.from("document_versions")
     .select("id,storage_path,file_type,filename,content_sha256,text_revision,size_bytes")
     .eq("id", versionId).eq("text_revision", revision).is("deleted_at", null).maybeSingle();
