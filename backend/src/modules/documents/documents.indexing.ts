@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { downloadFile } from "../../lib/storage";
-import { EXTRACTION_MAX_BYTES, ExtractionLimitError, runIsolatedExtraction } from "../../lib/extraction/isolated";
-import type { Db, DbJob } from "../../lib/dbq/types";
+import { EXTRACTION_MAX_BYTES, ExtractionLimitError, ExtractionBusyError, withExtractionSlot } from "../../lib/extraction/isolated";
+import { DbJobDeferredError, type Db, type DbJob } from "../../lib/dbq/types";
 import { processClaimedJob, STALE_SECONDS } from "../../lib/dbq/runner";
 
 export { extractDocumentText } from "../../lib/extraction/documentText";
@@ -10,6 +10,8 @@ export { extractDocumentText } from "../../lib/extraction/documentText";
 export async function handleDocumentExtractText(db: Db, job: DbJob): Promise<void> {
   const { versionId, revision } = job.payload;
   if (typeof versionId !== "string" || typeof revision !== "string") return;
+  try {
+    await withExtractionSlot({ wait: false }, async (extract) => {
   const { data: version, error } = await db.from("document_versions")
     .select("id,storage_path,file_type,filename,content_sha256,text_revision,size_bytes")
     .eq("id", versionId).eq("text_revision", revision).is("deleted_at", null).maybeSingle();
@@ -27,7 +29,7 @@ export async function handleDocumentExtractText(db: Db, job: DbJob): Promise<voi
   const hash = createHash("sha256").update(Buffer.from(raw)).digest("hex");
   if (version.content_sha256 && version.content_sha256 !== hash) throw new Error("document_text_source_changed");
   let extracted: { text: string; textlessPageCount: number | null };
-  try { extracted = await runIsolatedExtraction("documentText", raw, { fileType: version.file_type || version.filename?.split(".").pop() || "" }); }
+  try { extracted = await extract("documentText", raw, { fileType: version.file_type || version.filename?.split(".").pop() || "" }); }
   catch (error) { if (!(error instanceof ExtractionLimitError)) throw error; await markDocumentTextFailed(db, job, "too_large", true); return; }
   const { text, textlessPageCount } = extracted;
   const { error: publishError } = await db.rpc("publish_document_text", {
@@ -36,6 +38,11 @@ export async function handleDocumentExtractText(db: Db, job: DbJob): Promise<voi
     p_text: text.replaceAll("\0", ""), p_sha256: hash, p_textless_pages: textlessPageCount,
   });
   if (publishError) throw publishError;
+    });
+  } catch (error) {
+    if (error instanceof ExtractionBusyError) throw new DbJobDeferredError(new Date(Date.now()+30_000).toISOString(), "document_extraction_busy");
+    throw error;
+  }
 }
 
 /** Mark exhausted work failed without overwriting a newer revision or ready text. */

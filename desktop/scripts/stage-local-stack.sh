@@ -5,6 +5,8 @@ cd "$(dirname "$0")/../.."
 test -x desktop/local-stack/bin/pg/bin/postgres || { echo "run local:fetch first"; exit 1; }
 test -x desktop/local-stack/bin/postgrest || { echo "run local:fetch first"; exit 1; }
 test -f backend/dist/scripts/migrationLedger.js || { echo "run local:build first"; exit 1; }
+test -f backend/dist/workerThread.js || { echo "run local:build to compile role workers"; exit 1; }
+test -f backend/dist/lib/extraction/process.js || { echo "run local:build to compile isolated parsers"; exit 1; }
 test -f backend/dist/workflow-catalog/catalog.json || { echo "run local:build to bundle offline workflows"; exit 1; }
 test -f frontend/out/index.html || { echo "run local:build first"; exit 1; }
 APP="desktop/local-stack/app"

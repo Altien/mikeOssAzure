@@ -151,6 +151,14 @@ User credential settings are read-only. Model and router selections remain user 
 
 LibreOffice must be available for DOC/DOCX conversion. See [Troubleshooting](troubleshooting.md), [Safe local testing](safe-local-testing.md), and the [security policy](../SECURITY.md).
 
+## Document parsing resources
+
+Document text extraction runs in supervised child processes. Linux deployments
+must have `prlimit` from util-linux; the combined Dev Docker image and Nixpacks setup
+install it. A missing limiter fails extraction rather than silently running
+without the OS memory boundary. See [Document extraction](document-extraction.md)
+for the limits, worker modes, memory sizing, and verification commands.
+
 ## Durable background work
 
 Azure runs `QUEUE_DRIVER=postgres` against the private PostgREST service. The

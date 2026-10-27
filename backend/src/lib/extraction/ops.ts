@@ -1,6 +1,6 @@
-// The parsers the isolated extraction worker may run, by name. Everything here
-// does CPU-bound work on the whole file, so it runs off the calling thread (see
-// isolated.ts). Keep imports parser-only: this module is all the worker loads.
+// The parsers the isolated extraction process may run, by name. Everything here
+// does CPU-bound work on the whole file, so it runs outside the calling process (see
+// isolated.ts). Keep imports parser-only: this module is all the parser process loads.
 
 import { extractDocxBodyText } from "../docxTrackedChanges";
 import { extractPresentationText } from "../officeText";

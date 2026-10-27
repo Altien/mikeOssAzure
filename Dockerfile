@@ -75,7 +75,7 @@ RUN npm install --global npm@12.0.2
 # libnss3 is named explicitly so the bookworm security update lands
 # (CVE-2026-16389, fixed in 2:3.87.1-1+deb12u4) rather than whatever the
 # base image froze at.
-RUN apt-get update && apt-get install -y --no-install-recommends libreoffice libnss3 \
+RUN apt-get update && apt-get install -y --no-install-recommends libreoffice libnss3 util-linux \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

@@ -6,6 +6,7 @@
 // text a row's extraction runs over. The synchronous SSE route and the async
 // extraction worker share this one copy.
 
+import { ExtractionBusyError, ExtractionLimitError } from "../../lib/extraction/isolated";
 import { downloadFile } from "../../lib/storage";
 import { attachActiveVersionPaths } from "../../lib/documentVersions";
 import { filterAccessibleDocumentIds } from "../../lib/access";
@@ -154,19 +155,18 @@ export async function loadRowDocumentText(
             .storage_path;
         let markdown = "";
         if (storagePath) {
-            const buf = await downloadFile(storagePath);
-            if (buf) {
-                try {
-                    markdown = await extractDocumentMarkdown(
-                        buf,
-                        doc.file_type,
-                    );
-                } catch (error) {
-                    console.error(
-                        `[tabular] extraction error doc=${doc.id}`,
-                        error,
-                    );
-                }
+            try {
+                markdown = await extractDocumentMarkdown(
+                    () => downloadFile(storagePath),
+                    doc.file_type,
+                );
+            } catch (error) {
+                // Do not ask the model to fill cells from a source we refused.
+                if (error instanceof ExtractionBusyError || error instanceof ExtractionLimitError) throw error;
+                console.error(
+                    `[tabular] extraction error doc=${doc.id}`,
+                    error,
+                );
             }
         }
         sections.push(
