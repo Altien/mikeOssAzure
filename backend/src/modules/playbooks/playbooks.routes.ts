@@ -68,6 +68,13 @@ playbooksRouter.param("playbookId", (_req, res, next, value: string) => {
 
 const UPLOAD_URL_TTL_SECONDS = 900;
 
+// An optional body id that is present must be a string. Coercing null, a
+// number or an object to "not supplied" would let it skip the uuid check below
+// and change what the request does. Only an omitted id means not supplied.
+function isWrongTypeBodyId(value: unknown): boolean {
+  return value !== undefined && typeof value !== "string";
+}
+
 function sendError(res: Response, error: unknown): void {
   if (error instanceof PlaybookImportError) {
     return void res.status(400).json({
@@ -315,6 +322,12 @@ playbooksRouter.post("/import", async (req, res) => {
   const userId = res.locals.userId as string;
   // A playbookId replaces that playbook's content instead of adding a new
   // playbook. Ownership is checked inside the import.
+  if (isWrongTypeBodyId(req.body?.playbookId)) {
+    return void res.status(400).json({ detail: "playbookId must be a UUID" });
+  }
+  if (isWrongTypeBodyId(req.body?.documentId)) {
+    return void res.status(400).json({ detail: "documentId must be a UUID" });
+  }
   const playbookId =
     typeof req.body?.playbookId === "string" && req.body.playbookId.trim()
       ? req.body.playbookId.trim()
@@ -744,6 +757,9 @@ playbooksRouter.post("/:playbookId/review", async (req, res) => {
       req.body?.reviewScope === "issues"
         ? ("issues" as const)
         : ("full" as const);
+    if (isWrongTypeBodyId(req.body?.documentId)) {
+      return void res.status(400).json({ detail: "documentId must be a UUID" });
+    }
     const documentId =
       typeof req.body?.documentId === "string" && req.body.documentId
         ? req.body.documentId

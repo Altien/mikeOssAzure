@@ -1096,4 +1096,69 @@ describe("malformed playbook ids", () => {
     expect(response.body).toEqual({ detail: "documentId must be a UUID" });
     expect(from).not.toHaveBeenCalled();
   });
+
+  // A present id of the wrong type, null included, must not be read as "not
+  // supplied", or it would skip the uuid check: a playbookId of 123 would
+  // create a new playbook, and a documentId of 123 would fall through to the
+  // staged file.
+  const WRONG_TYPE_IDS = [
+    ["null", null],
+    ["a number", 123],
+    ["a boolean", true],
+    ["an object", { id: PLAYBOOK_ID }],
+    ["an array", [PLAYBOOK_ID]],
+  ] as const;
+
+  it.each(WRONG_TYPE_IDS)(
+    "answers 400 when an import names a playbook id that is %s",
+    async (_label, playbookId) => {
+      const response = await request(app).post("/playbooks/import").send({
+        storageKey: STAGED_IMPORT_KEY,
+        filename: "new.docx",
+        model: "gpt-5.4",
+        playbookId,
+      });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toEqual({ detail: "playbookId must be a UUID" });
+      expect(queuePlaybookImport).not.toHaveBeenCalled();
+      expect(headFile).not.toHaveBeenCalled();
+      expect(from).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(WRONG_TYPE_IDS)(
+    "answers 400 when an import names a document id that is %s",
+    async (_label, documentId) => {
+      const response = await request(app).post("/playbooks/import").send({
+        documentId,
+        storageKey: STAGED_IMPORT_KEY,
+        filename: "new.docx",
+        model: "gpt-5.4",
+      });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toEqual({ detail: "documentId must be a UUID" });
+      expect(queuePlaybookImport).not.toHaveBeenCalled();
+      expect(headFile).not.toHaveBeenCalled();
+      expect(from).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(WRONG_TYPE_IDS)(
+    "answers 400 when a review names a document id that is %s",
+    async (_label, documentId) => {
+      const response = await request(app)
+        .post(`/playbooks/${PLAYBOOK_ID}/review`)
+        .send({
+          documentText: "A contract.",
+          documentId,
+          model: "gpt-5.4",
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toEqual({ detail: "documentId must be a UUID" });
+      expect(from).not.toHaveBeenCalled();
+    },
+  );
 });
