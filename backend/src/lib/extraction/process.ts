@@ -1,14 +1,16 @@
 // One file per process. No database, storage credentials, or application boot.
 import { EXTRACTION_OPS, type ExtractionOp } from "./ops";
-import { ExtractionLimitError, isAllocationFailure } from "./limits";
-import { validateExtractionInput, validateExtractionResult } from "./validate";
+import { EXTRACTION_MAX_TEXT_BYTES, ExtractionLimitError, isAllocationFailure } from "./limits";
 
 process.once("message", (request: { op: ExtractionOp; bytes: ArrayBuffer; fileType: string }) => {
   void (async () => {
     try {
-      await validateExtractionInput(request.bytes);
       const result = await EXTRACTION_OPS[request.op](request.bytes, request.fileType);
-      validateExtractionResult(result);
+      const text = typeof result === "string" ? result : result.text;
+      // Bound IPC output before it can allocate a large string in the parent.
+      if (Buffer.byteLength(text) > EXTRACTION_MAX_TEXT_BYTES) {
+        throw new ExtractionLimitError("extracted text exceeds 16 MB");
+      }
       process.send?.({ ok: true, result });
     } catch (error) {
       const limited = error instanceof ExtractionLimitError || isAllocationFailure(error);

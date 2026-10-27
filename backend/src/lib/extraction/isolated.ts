@@ -14,7 +14,7 @@ export type ExtractInSlot = <K extends ExtractionOp>(op: K, bytes: ArrayBuffer, 
 type Reply = { ok: true; result: unknown } | { ok: false; limited: boolean; message: string };
 
 /** Hard OS memory boundary on Linux, including native buffers. Fail closed if
- * prlimit is unavailable. Other platforms retain process/heap and archive
+ * prlimit is unavailable. Other platforms retain process/heap and input/output
  * bounds, but do not claim the Linux OS-memory guarantee.
  */
 export function extractionCommand(entry: string): { command: string; args: string[] } {
@@ -59,7 +59,7 @@ async function extractInChild<K extends ExtractionOp>(op: K, bytes: ArrayBuffer,
     // Do not inherit NODE_OPTIONS: it can override limits or preload app code.
     // Parser-only environment: no Supabase, object-store, or provider secrets.
     const env: NodeJS.ProcessEnv = {};
-    for (const name of ["PATH", "SystemRoot", "HOME", "TMPDIR", "TEMP", "TMP", "LANG", "SOFFICE_BINARY_PATH", "LIBREOFFICE_BINARY_PATH", "LIBRE_OFFICE_EXE", "EXTRACTION_MAX_MEMORY_MB", "EXTRACTION_MAX_EXPANDED_MB"]) {
+    for (const name of ["PATH", "SystemRoot", "HOME", "LANG", "SOFFICE_BINARY_PATH", "LIBREOFFICE_BINARY_PATH", "LIBRE_OFFICE_EXE"]) {
       if (process.env[name] !== undefined) env[name] = process.env[name];
     }
     env.TMPDIR = env.TMP = env.TEMP = scratch;
@@ -109,40 +109,36 @@ async function extractInChild<K extends ExtractionOp>(op: K, bytes: ArrayBuffer,
   });
 }
 
-type Waiting = { interactive: boolean; bytes: number; grant: () => void; timer: ReturnType<typeof setTimeout> };
+type Waiting = { grant: () => void; timer: ReturnType<typeof setTimeout> };
 const queue: Waiting[] = [];
 let occupied = false;
-let queuedBytes = 0;
 const MAX_WAITERS = 8;
 const MAX_WAIT_MS = 30_000;
 
 /** Reserve BEFORE downloading. Durable jobs use wait:false and defer back to
  * Postgres; they never spend their ten-minute claim lease in this local queue.
- * Interactive requests have bounded queue length, retained bytes, and wait.
+ * Interactive requests wait in FIFO order, with bounded queue length and wait.
+ * Callers must load source bytes inside the callback, after admission.
  */
 export async function withExtractionSlot<T>(
-  options: { wait?: boolean; interactive?: boolean; retainedBytes?: number },
+  options: { wait?: boolean },
   work: (extract: ExtractInSlot) => Promise<T>,
 ): Promise<T> {
   if (occupied) {
-    const bytes = options.retainedBytes ?? 0;
-    if (options.wait === false || queue.length >= MAX_WAITERS || queuedBytes + bytes > EXTRACTION_MAX_BYTES) {
+    if (options.wait === false || queue.length >= MAX_WAITERS) {
       throw new ExtractionBusyError();
     }
     await new Promise<void>((resolve, reject) => {
       const task: Waiting = {
-        interactive: options.interactive === true, bytes, grant: resolve,
+        grant: resolve,
         timer: setTimeout(() => {
           const index = queue.indexOf(task);
           if (index < 0) return;
           queue.splice(index, 1);
-          queuedBytes -= bytes;
           reject(new ExtractionBusyError());
         }, MAX_WAIT_MS),
       };
-      queuedBytes += bytes;
-      const before = task.interactive ? queue.findIndex((item) => !item.interactive) : -1;
-      if (before < 0) queue.push(task); else queue.splice(before, 0, task);
+      queue.push(task);
     });
   } else occupied = true;
   try {
@@ -151,7 +147,6 @@ export async function withExtractionSlot<T>(
     const next = queue.shift();
     if (next) {
       clearTimeout(next.timer);
-      queuedBytes -= next.bytes;
       next.grant();
     } else occupied = false;
   }
@@ -159,14 +154,11 @@ export async function withExtractionSlot<T>(
 
 export function runIsolatedExtraction<K extends ExtractionOp>(
   op: K,
-  bytes: ArrayBuffer | (() => Promise<ArrayBuffer | null>),
-  options: { fileType?: string; interactive?: boolean } = {},
+  loadSource: () => Promise<ArrayBuffer | null>,
+  options: { fileType?: string } = {},
 ): Promise<Result<K>> {
-  if (typeof bytes !== "function" && bytes.byteLength > EXTRACTION_MAX_BYTES) {
-    return Promise.reject(new ExtractionLimitError("source exceeds 150 MB"));
-  }
-  return withExtractionSlot<Result<K>>({ interactive: options.interactive, retainedBytes: typeof bytes === "function" ? 0 : bytes.byteLength }, async (extract): Promise<Result<K>> => {
-    const source = typeof bytes === "function" ? await bytes() : bytes;
+  return withExtractionSlot<Result<K>>({}, async (extract): Promise<Result<K>> => {
+    const source = await loadSource();
     if (!source) throw new Error("document_text_source_unavailable");
     return extract(op, source, options);
   });

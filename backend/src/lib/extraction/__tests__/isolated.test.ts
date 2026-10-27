@@ -55,16 +55,16 @@ function onePagePdf(): ArrayBuffer {
 
 describe("runIsolatedExtraction", () => {
   it("parses on the parser process and returns the parser's result", async () => {
-    const text = await runIsolatedExtraction("spreadsheet", workbook());
+    const text = await runIsolatedExtraction("spreadsheet", async () => workbook());
     expect(text).toContain("## Sheet: Budget");
     expect(text).toContain("| 2 | Rent | 1200 |");
   });
 
   // pdfjs must load successfully inside the parser subprocess.
   it("reads a PDF on the parser process", async () => {
-    await expect(runIsolatedExtraction("pdfForModel", onePagePdf())).resolves.toContain("Case No. 24CV-1234");
+    await expect(runIsolatedExtraction("pdfForModel", async () => onePagePdf())).resolves.toContain("Case No. 24CV-1234");
     await expect(
-      runIsolatedExtraction("documentText", onePagePdf(), { fileType: "pdf" }),
+      runIsolatedExtraction("documentText", async () => onePagePdf(), { fileType: "pdf" }),
     ).resolves.toMatchObject({ text: expect.stringContaining("24CV-1234"), textlessPageCount: 0 });
   });
 
@@ -74,12 +74,12 @@ describe("runIsolatedExtraction", () => {
     // Cold starts must remain reliable under the address-space limit, including
     // the TS loader and native allocator's per-thread arena reservations.
     for (let attempt = 0; attempt < 3; attempt++) {
-      await expect(runIsolatedExtraction("legacyOfficeText", Uint8Array.from(buffer).buffer)).resolves.toContain("Synthetic lease clause 721");
+      await expect(runIsolatedExtraction("legacyOfficeText", async () => Uint8Array.from(buffer).buffer)).resolves.toContain("Synthetic lease clause 721");
     }
   });
 
   it("passes a parser's own failure through as an ordinary error", async () => {
-    const failure = runIsolatedExtraction("documentText", workbook(), {
+    const failure = runIsolatedExtraction("documentText", async () => workbook(), {
       fileType: "exe",
     });
     await expect(failure).rejects.toThrow("document_text_unsupported_format");
@@ -91,11 +91,11 @@ describe("runIsolatedExtraction", () => {
     const isolated = await freshModule();
     vi.stubEnv("EXTRACTION_TIMEOUT_MS", "1");
     await expect(
-      isolated.runIsolatedExtraction("spreadsheet", workbook()),
+      isolated.runIsolatedExtraction("spreadsheet", async () => workbook()),
     ).rejects.toBeInstanceOf(isolated.ExtractionLimitError);
     vi.stubEnv("EXTRACTION_TIMEOUT_MS", "60000");
     await expect(
-      isolated.runIsolatedExtraction("spreadsheet", workbook()),
+      isolated.runIsolatedExtraction("spreadsheet", async () => workbook()),
     ).resolves.toContain("Rent");
   });
 
@@ -103,45 +103,29 @@ describe("runIsolatedExtraction", () => {
     const isolated = await freshModule();
     vi.stubEnv("EXTRACTION_MAX_MEMORY_MB", "4");
     await expect(
-      isolated.runIsolatedExtraction("spreadsheet", workbook()),
+      isolated.runIsolatedExtraction("spreadsheet", async () => workbook()),
     ).rejects.toBeInstanceOf(isolated.ExtractionLimitError);
     vi.stubEnv("EXTRACTION_MAX_MEMORY_MB", "1024");
     await expect(
-      isolated.runIsolatedExtraction("spreadsheet", workbook()),
+      isolated.runIsolatedExtraction("spreadsheet", async () => workbook()),
     ).resolves.toContain("Rent");
   });
 
-  it("serves an interactive read ahead of queued background work", async () => {
-    const order: string[] = [];
-    const track = (label: string, run: Promise<unknown>) =>
-      run.then(() => void order.push(label));
-    await Promise.all([
-      track("first", runIsolatedExtraction("spreadsheet", workbook())),
-      track("background", runIsolatedExtraction("spreadsheet", workbook())),
-      track(
-        "interactive",
-        runIsolatedExtraction("spreadsheet", workbook(), { interactive: true }),
-      ),
-    ]);
-    expect(order).toEqual(["first", "interactive", "background"]);
-  });
-
-
-  it("rejects a small ZIP with excessive expanded contents and recovers", async () => {
-    vi.stubEnv("EXTRACTION_MAX_EXPANDED_MB", "2");
-    const zip = await JSZip.loadAsync(workbook());
-    zip.file("xl/media/unused.bin", Buffer.alloc(4 * 1024 * 1024));
+  it("rejects excessive UTF-8 output from a small compressed file and recovers", async () => {
+    const zip = new JSZip();
+    // Six million characters, but eighteen MiB of UTF-8 output.
+    zip.file("ppt/slides/slide1.xml", `<a:t>${"€".repeat(6 * 1024 * 1024)}</a:t>`);
     const compressed = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
     expect(compressed.byteLength).toBeLessThan(100_000);
-    await expect(runIsolatedExtraction("spreadsheet", Uint8Array.from(compressed).buffer)).rejects.toBeInstanceOf(ExtractionLimitError);
-    await expect(runIsolatedExtraction("spreadsheet", workbook())).resolves.toContain("Rent");
+    await expect(runIsolatedExtraction("presentation", async () => Uint8Array.from(compressed).buffer)).rejects.toBeInstanceOf(ExtractionLimitError);
+    await expect(runIsolatedExtraction("spreadsheet", async () => workbook())).resolves.toContain("Rent");
   });
 
   it("refuses a file over the size backstop without starting a parse", async () => {
     await expect(
       runIsolatedExtraction(
         "spreadsheet",
-        new ArrayBuffer(EXTRACTION_MAX_BYTES + 1),
+        async () => new ArrayBuffer(EXTRACTION_MAX_BYTES + 1),
       ),
     ).rejects.toBeInstanceOf(ExtractionLimitError);
   });

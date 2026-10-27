@@ -153,11 +153,37 @@ LibreOffice must be available for DOC/DOCX conversion. See [Troubleshooting](tro
 
 ## Document parsing resources
 
-Document text extraction runs in supervised child processes. Linux deployments
-must have `prlimit` from util-linux; the combined Dev Docker image and Nixpacks setup
-install it. A missing limiter fails extraction rather than silently running
-without the OS memory boundary. See [Document extraction](document-extraction.md)
-for the limits, worker modes, memory sizing, and verification commands.
+Indexing, chat reads, tabular sources, and legacy text precomputation share one
+parser slot per calling thread. Each file runs in a fresh child process; on
+POSIX, completion or timeout terminates its entire process group, including
+LibreOffice descendants. Temporary files are removed after exit. This adds
+startup overhead but reclaims parser memory after each file.
+
+Capacity is reserved before downloading. Busy background jobs return to
+Postgres for 30 seconds without spending a retry or waiting out their claim
+lease. Interactive requests wait in FIFO order, up to eight requests and 30
+seconds. More generic job concurrency does not create more parser slots.
+
+Linux requires `prlimit` (util-linux), installed by the combined Dev Docker image and Nixpacks. Missing
+`prlimit` fails extraction. Defaults:
+
+| Limit | Setting |
+| --- | --- |
+| Parser time | `EXTRACTION_TIMEOUT_MS=180000`, capped at 300000 |
+| Writable data, including native buffers | `EXTRACTION_MAX_MEMORY_MB=1024` MiB |
+| Virtual address space | Data budget + 1024 MiB for runtime reservations |
+| Source / returned text | 150 MiB / 16 MiB |
+
+The JS heap is capped at half the data budget; glibc uses two malloc arenas to
+avoid excessive virtual reservations. OS limits apply **per process**, including
+conversion children, not to their aggregate usage. Set container/cgroup limits
+for the whole service. macOS/Windows retain heap, input/output and time bounds,
+but lack the Linux OS-memory guarantee. Decompression is covered by parser
+memory/time limits; there is no separate ZIP preflight.
+
+The deadline covers parsing, not storage/database I/O. No new migration is
+needed beyond #721's `0173_document_text_failed_jobs.sql`.
+`EXTRACTION_ISOLATION=off` bypasses subprocess protection for tests/emergencies.
 
 ## Durable background work
 

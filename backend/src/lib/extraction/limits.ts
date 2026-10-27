@@ -10,9 +10,6 @@ function positiveNumber(name: string, fallback: number): number {
 // A DB claim becomes stale after ten minutes. Reserve time for I/O too.
 export const extractionTimeoutMs = () => Math.min(positiveNumber("EXTRACTION_TIMEOUT_MS", 180_000), 300_000);
 export const extractionMemoryMb = () => Math.min(65_536, Math.max(1, Math.floor(positiveNumber("EXTRACTION_MAX_MEMORY_MB", 1024))));
-export const extractionExpandedBytes = () => Math.floor(
-  Math.min(positiveNumber("EXTRACTION_MAX_EXPANDED_MB", 256), extractionMemoryMb() / 4) * 1024 * 1024,
-);
 
 export class ExtractionLimitError extends Error {
   constructor(reason: string) {

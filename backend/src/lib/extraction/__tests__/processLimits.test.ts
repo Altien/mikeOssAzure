@@ -48,7 +48,7 @@ setInterval(() => {}, 1000);
     vi.stubEnv("SOFFICE_BINARY_PATH", binary);
     vi.stubEnv("EXTRACTION_ISOLATION", "on");
     vi.stubEnv("EXTRACTION_TIMEOUT_MS", "2500");
-    const outcome = runIsolatedExtraction("legacyOfficeText", new TextEncoder().encode("synthetic legacy file").buffer).catch((error: unknown) => error);
+    const outcome = runIsolatedExtraction("legacyOfficeText", async () => new TextEncoder().encode("synthetic legacy file").buffer).catch((error: unknown) => error);
     let pids: number[] = [];
     const until = Date.now() + 2200;
     while (Date.now() < until) {

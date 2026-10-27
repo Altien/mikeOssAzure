@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ExtractionBusyError, withExtractionSlot } from "../isolated";
+import { ExtractionBusyError, runIsolatedExtraction, withExtractionSlot } from "../isolated";
 import { extractionTimeoutMs } from "../limits";
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
@@ -28,8 +28,8 @@ describe("parser admission", () => {
   it("expires interactive waiting after 30 seconds, without starting its download", async () => {
     vi.useFakeTimers();
     const { held, release } = occupy();
-    const downloadAndParse = vi.fn(async () => "text");
-    const waiting = withExtractionSlot({ interactive: true }, downloadAndParse);
+    const downloadAndParse = vi.fn(async () => new ArrayBuffer(1));
+    const waiting = runIsolatedExtraction("spreadsheet", downloadAndParse);
     const rejected = expect(waiting).rejects.toBeInstanceOf(ExtractionBusyError);
     await vi.advanceTimersByTimeAsync(30_000);
     await rejected;
@@ -37,23 +37,14 @@ describe("parser admission", () => {
     expect(downloadAndParse).not.toHaveBeenCalled();
   });
 
-  it("bounds queued requests and gives interactive requests priority", async () => {
+  it("bounds queued requests and serves them in FIFO order", async () => {
     const { held, release } = occupy();
     const order: number[] = [];
-    const waiting = Array.from({ length: 8 }, (_, index) => withExtractionSlot({ interactive: index === 7 }, async () => { order.push(index); }));
+    const waiting = Array.from({ length: 8 }, (_, index) => withExtractionSlot({}, async () => { order.push(index); }));
     try {
       await expect(withExtractionSlot({}, async () => {})).rejects.toBeInstanceOf(ExtractionBusyError);
     } finally { release(); await held; await Promise.all(waiting); }
-    expect(order).toEqual([7, 0, 1, 2, 3, 4, 5, 6]);
-  });
-
-  it("bounds retained queued buffers independently of request count", async () => {
-    const { held, release } = occupy();
-    const waiting = withExtractionSlot({ retainedBytes: 100 * 1024 * 1024 }, async () => {});
-    try {
-      await expect(withExtractionSlot({ retainedBytes: 51 * 1024 * 1024 }, async () => {})).rejects.toBeInstanceOf(ExtractionBusyError);
-    } finally { release(); await held; await waiting; }
-    await expect(withExtractionSlot({ retainedBytes: 150 * 1024 * 1024 }, async () => "free")).resolves.toBe("free");
+    expect(order).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
   });
 
   it("releases a slot after a failure and clamps execution below the stale lease", async () => {

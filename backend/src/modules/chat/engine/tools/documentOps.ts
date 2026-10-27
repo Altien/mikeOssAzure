@@ -1297,7 +1297,7 @@ export async function readDocumentContent(
       return notice + (stored.text ?? "");
     }
 
-    return await withExtractionSlot({ interactive: true }, async (extract) => {
+    return await withExtractionSlot({}, async (extract) => {
       // Prefer the current tracked-changes version (if any) so read_document
       // reflects accepted/pending edits rather than the original upload.
       let raw: ArrayBuffer | null = null;

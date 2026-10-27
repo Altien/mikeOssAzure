@@ -227,11 +227,10 @@ export {
  * a huge file times out on its own instead of stalling this thread.
  */
 export function extractDocumentMarkdown(
-    buf: ArrayBuffer | (() => Promise<ArrayBuffer | null>),
+    loadSource: () => Promise<ArrayBuffer | null>,
     fileType: string | null | undefined,
 ): Promise<string> {
-    return runIsolatedExtraction("documentMarkdown", buf, {
+    return runIsolatedExtraction("documentMarkdown", loadSource, {
         fileType: fileType ?? "",
-        interactive: true,
     });
 }
