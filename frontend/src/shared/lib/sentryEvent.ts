@@ -673,9 +673,7 @@ export function createEventScrubber(options?: {
         const original = hint.originalException;
         if (
             automatic &&
-            original &&
-            typeof original === "object" &&
-            reported.has(original)
+            isReported(original)
         ) {
             return null;
         }
@@ -688,7 +686,7 @@ export function createEventScrubber(options?: {
         const args =
             event.logger === "console" ? consoleArguments(hint) : null;
         if (args) {
-            if (args.some((arg) => findNested(arg, (c) => reported.has(c)))) {
+            if (args.some((arg) => findNested(arg, isReported))) {
                 return null;
             }
             // Only the first argument is the logging label. Other strings
@@ -789,8 +787,21 @@ export function createEventScrubber(options?: {
         return event;
     };
 
-    const isReported = (error: unknown): boolean =>
-        error !== null && typeof error === "object" && reported.has(error);
+    const isReported = (error: unknown): boolean => {
+        const seen = new Set<object>();
+        let current = error;
+        for (let depth = 0; depth < 8; depth++) {
+            if (!current || typeof current !== "object" || seen.has(current)) return false;
+            if (reported.has(current)) return true;
+            seen.add(current);
+            try {
+                current = (current as { cause?: unknown }).cause;
+            } catch {
+                return false;
+            }
+        }
+        return false;
+    };
     return { markReported, isReported, scrubEvent };
 }
 
