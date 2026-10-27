@@ -9,12 +9,14 @@ import "dotenv/config";
 import "./telemetry";
 import { installProcessGuards } from "./lib/processGuards";
 installProcessGuards();
-import { parentPort } from "node:worker_threads";
-import { startAllWorkers, stopAllWorkers } from "./workerRuntime";
+import { parentPort, workerData } from "node:worker_threads";
+import { startAllWorkers, stopAllWorkers, WORKER_ROLES, type WorkerRole } from "./workerRuntime";
 import { initSentry } from "./lib/observability/sentry";
 
 initSentry("worker-thread");
-void startAllWorkers().then(() => {
+const role = (workerData as { role?: unknown } | null)?.role;
+if (role !== undefined && !WORKER_ROLES.includes(role as WorkerRole)) throw new Error("Invalid background worker role");
+void startAllWorkers(role === undefined ? WORKER_ROLES : [role as WorkerRole]).then(() => {
     parentPort?.postMessage("ready");
     console.log("[worker-thread] background workers started");
 }).catch((error) => {

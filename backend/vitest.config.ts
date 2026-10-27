@@ -24,6 +24,8 @@ export default defineConfig({
   plugins: [tsconfigPaths()],
   test: {
     environment: "node",
+    // Parser worker mocks remain request-local; isolation tests opt back in.
+    env: { EXTRACTION_ISOLATION: "off" },
     maxWorkers: process.env.CI ? undefined : localMaxWorkers,
     globals: false,
     include: ["src/**/*.{test,spec}.ts"],
