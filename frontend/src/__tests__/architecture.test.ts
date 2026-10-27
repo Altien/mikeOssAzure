@@ -7,6 +7,12 @@
 // the export in the root `Dockerfile` (frontend-builder stage), which copies
 // the shared packages to /app/packages/<name> beside /app/frontend; these
 // rules read that stage's `COPY packages/<name> /app/packages/<name>` lines.
+//
+// Rule 4 (upstream f9a79d69): no `paths` alias targets a declaration file
+// unless every import of it is type-only. Turbopack resolves runtime imports
+// through these aliases too, and a `.d.ts` has no runtime exports: a
+// `react/jsx-runtime` alias to @types once compiled every JSX call to
+// `(void 0)(...)`, and the built app rendered only its error page.
 
 import { readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -130,5 +136,24 @@ describe("frontend build boundaries", () => {
 
         const testsInBuild = build.fileNames.map(relToFrontend).filter(isTestOnly);
         expect(testsInBuild, "tsconfig.build.json must exclude every test-only file").toEqual([]);
+    });
+
+    it("rule 4: no tsconfig alias a runtime import can reach targets a declaration file", () => {
+        // @mike/contracts is declarations only and is imported with `import type`
+        // (AGENTS.md), which the bundler erases before resolving anything.
+        const TYPE_ONLY_ALIASES = new Set(["@mike/contracts"]);
+        const paths = build.options.paths ?? {};
+        const declarationTargets = Object.entries(paths)
+            .filter(([alias]) => !TYPE_ONLY_ALIASES.has(alias))
+            .flatMap(([alias, targets]) =>
+                targets.filter((t) => /\.d\.[cm]?ts$/.test(t)).map((t) => `${alias} -> ${t}`),
+            );
+        expect(
+            declarationTargets,
+            "A tsconfig `paths` alias maps a module to a declaration file. Turbopack " +
+                "applies these aliases to runtime imports, so the bundle gets a module " +
+                "with no exports. Point it at the runtime package (types come from " +
+                "`typeRoots`), or drop it.",
+        ).toEqual([]);
     });
 });
