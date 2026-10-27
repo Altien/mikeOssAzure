@@ -189,6 +189,7 @@ function apiUrl(path: string): string {
 async function sendRequest(
   url: string,
   init: RequestInit & { method?: string },
+  operation?: AddinOperation,
 ): Promise<Response> {
   const isCurrent = clientConfig.captureOwner();
   assertRequestOwner(isCurrent);
@@ -208,7 +209,7 @@ async function sendRequest(
     ) {
       throw error;
     }
-    reportNetworkFailure(error, { method: init.method ?? "GET", url });
+    reportNetworkFailure(error, { method: init.method ?? "GET", url, operation });
     throw networkFailure(error, { method: init.method ?? "GET", url });
   }
 }
@@ -264,7 +265,7 @@ export async function responseError(
   return apiError;
 }
 
-async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+async function apiRequest<T>(operation: AddinOperation, path: string, init?: RequestInit): Promise<T> {
   const isCurrent = clientConfig.captureOwner();
   assertRequestOwner(isCurrent);
   const authHeaders = await getAuthHeaders();
@@ -278,10 +279,10 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
       ...authHeaders,
       ...(initHeaders as Record<string, string> | undefined),
     },
-  });
+  }, operation);
 
   if (!response.ok) {
-    throw await responseError(response, path, restInit.method ?? "GET");
+    throw await responseError(response, path, restInit.method ?? "GET", operation);
   }
   if (
     response.status === 204 ||
@@ -320,7 +321,7 @@ async function uploadSessionFiles<T>(args: {
     onProgress: args.onProgress,
     signal: args.signal,
     transport: {
-      apiRequest,
+      apiRequest: <R>(path: string, init?: RequestInit) => apiRequest<R>("upload_session.control", path, init),
       fetchStorage: (...fetchArgs) => clientConfig.fetchImpl(...fetchArgs),
       shouldRetryControlRequest: createControlRequestRetryPolicy((error) =>
         error instanceof MikeApiError
@@ -342,7 +343,7 @@ export async function listProjects(pagination?: {
   if (pagination?.offset != null) {
     params.set("offset", String(pagination.offset));
   }
-  return apiRequest<Project[]>(`/projects?${params.toString()}`);
+  return apiRequest<Project[]>("projects.manage", `/projects?${params.toString()}`);
 }
 
 /** GET /user/profile; each router's Model Selections may be absent on an older API. */
@@ -362,13 +363,13 @@ interface UserProfile extends Partial<RouterProfileLists> {
 }
 
 export async function getUserProfile(): Promise<UserProfile> {
-  return apiRequest<UserProfile>("/user/profile");
+  return apiRequest<UserProfile>("settings.profile", "/user/profile");
 }
 
 export async function updateLastSelectedChatModel(
   model: string,
 ): Promise<UserProfile> {
-  return apiRequest<UserProfile>("/user/profile", {
+  return apiRequest<UserProfile>("chat.turn", "/user/profile", {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ lastSelectedChatModel: model }),
@@ -379,7 +380,7 @@ export async function updateLastSelectedChatModel(
 export async function updateLastSelectedReasoningLevel(
   reasoningLevel: ReasoningLevel,
 ): Promise<UserProfile> {
-  return apiRequest<UserProfile>("/user/profile", {
+  return apiRequest<UserProfile>("settings.profile", "/user/profile", {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ lastSelectedReasoningLevel: reasoningLevel }),
@@ -388,7 +389,7 @@ export async function updateLastSelectedReasoningLevel(
 }
 
 export async function getApiKeyStatus(): Promise<ApiKeyStatus> {
-  return apiRequest<ApiKeyStatus>("/user/api-keys");
+  return apiRequest<ApiKeyStatus>("settings.keys", "/user/api-keys");
 }
 
 export async function uploadStandaloneDocument(
@@ -432,7 +433,7 @@ export async function getLibrary(
   }
   const query = params.toString();
   return apiRequest<LibraryCollection>(
-    `/library/${kind}${query ? `?${query}` : ""}`,
+    "documents.directory", `/library/${kind}${query ? `?${query}` : ""}`,
   );
 }
 
@@ -448,7 +449,7 @@ export async function getLibraryFolderChildren(
   if (pagination?.offset != null) {
     params.set("offset", String(pagination.offset));
   }
-  return apiRequest<LibraryCollection>(`/library/${kind}?${params.toString()}`);
+  return apiRequest<LibraryCollection>("documents.directory", `/library/${kind}?${params.toString()}`);
 }
 
 export async function getProjectDirectoryLevel(
@@ -466,7 +467,7 @@ export async function getProjectDirectoryLevel(
   if (options?.limit != null) params.set("limit", String(options.limit));
   if (options?.offset != null) params.set("offset", String(options.offset));
   return apiRequest<LibraryCollection>(
-    `/projects/${projectId}/directory?${params.toString()}`,
+    "projects.manage", `/projects/${projectId}/directory?${params.toString()}`,
   );
 }
 
@@ -516,7 +517,7 @@ export async function streamWordChat(payload: {
     },
     body: JSON.stringify({ ...body, time_zone: browserTimeZone() }),
     signal,
-  });
+  }, "word_chat.turn");
 }
 
 /**
@@ -531,7 +532,7 @@ export async function postWordChatToolResult(payload: {
   signal?: AbortSignal;
 }): Promise<void> {
   const { signal, ...body } = payload;
-  await apiRequest<void>("/word-chat/tool-result", {
+  await apiRequest<void>("word_chat.turn", "/word-chat/tool-result", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -569,7 +570,7 @@ export async function streamWordChatTurn(payload: {
       method: "GET",
       headers: { Accept: "text/event-stream", ...authHeaders },
       signal: payload.signal,
-    },
+    }, "word_chat.turn",
   );
 }
 
@@ -584,7 +585,7 @@ export async function stopWordChatTurn(payload: {
 }): Promise<{ stopped: boolean; finished: boolean }> {
   const params = new URLSearchParams({ document_id: payload.documentId });
   return apiRequest<{ stopped: boolean; finished: boolean }>(
-    `/word-chat/${encodeURIComponent(payload.chatId)}/turn/` +
+    "word_chat.turn", `/word-chat/${encodeURIComponent(payload.chatId)}/turn/` +
       `${encodeURIComponent(payload.turnId)}/stop?${params}`,
     { method: "POST" },
   );
@@ -683,7 +684,7 @@ export async function listQuickActions(): Promise<
   import("../types").QuickAction[]
 > {
   return apiRequest<import("../types").QuickAction[]>(
-    "/quick-actions?surface=word&workspace=personal",
+    "quick_actions.run", "/quick-actions?surface=word&workspace=personal",
   );
 }
 
@@ -700,7 +701,7 @@ export async function updateQuickAction(
   },
 ): Promise<import("../types").QuickAction> {
   return apiRequest<import("../types").QuickAction>(
-    `/quick-actions/${quickActionId}`,
+    "quick_actions.run", `/quick-actions/${quickActionId}`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -718,7 +719,7 @@ export async function createQuickAction(payload: {
   enabled?: boolean;
   sort_order?: number;
 }): Promise<import("../types").QuickAction> {
-  return apiRequest<import("../types").QuickAction>("/quick-actions", {
+  return apiRequest<import("../types").QuickAction>("quick_actions.run", "/quick-actions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -728,7 +729,7 @@ export async function createQuickAction(payload: {
 export async function listWorkflowAssets(
   workflowId: string,
 ): Promise<Document[]> {
-  return apiRequest<Document[]>(`/workflows/${workflowId}/assets`);
+  return apiRequest<Document[]>("workflows.run", `/workflows/${workflowId}/assets`);
 }
 
 export async function uploadWorkflowAsset(
@@ -775,7 +776,7 @@ export async function getWorkflowAssetUrl(
   assetId: string,
 ): Promise<{ url: string; filename: string }> {
   return apiRequest<{ url: string; filename: string }>(
-    `/single-documents/${assetId}/url`,
+    "workflows.run", `/single-documents/${assetId}/url`,
   );
 }
 
@@ -783,18 +784,18 @@ export async function deleteWorkflowAsset(
   workflowId: string,
   assetId: string,
 ): Promise<void> {
-  await apiRequest(`/workflows/${workflowId}/assets/${assetId}`, {
+  await apiRequest("workflows.run", `/workflows/${workflowId}/assets/${assetId}`, {
     method: "DELETE",
   });
 }
 
 export async function listWorkflows(type: WorkflowType): Promise<Workflow[]> {
-  return apiRequest<Workflow[]>(`/workflows?type=${type}&workspace=personal`);
+  return apiRequest<Workflow[]>("workflows.run", `/workflows?type=${type}&workspace=personal`);
 }
 
 /** Playbooks the user can run; Word chats are Personal, like its workflows. */
 export async function listPlaybooks(): Promise<Playbook[]> {
-  return apiRequest<Playbook[]>("/playbooks?workspace=personal");
+  return apiRequest<Playbook[]>("playbooks.save", "/playbooks?workspace=personal");
 }
 
 export async function createWorkflow(payload: {
@@ -808,7 +809,7 @@ export async function createWorkflow(payload: {
   skill_md?: string;
   columns_config?: { index: number; name: string; prompt: string }[];
 }): Promise<Workflow> {
-  return apiRequest<Workflow>("/workflows", {
+  return apiRequest<Workflow>("workflows.run", "/workflows", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -828,7 +829,7 @@ export async function updateWorkflow(
     columns_config?: { index: number; name: string; prompt: string }[];
   },
 ): Promise<Workflow> {
-  return apiRequest<Workflow>(`/workflows/${workflowId}`, {
+  return apiRequest<Workflow>("workflows.run", `/workflows/${workflowId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -836,7 +837,7 @@ export async function updateWorkflow(
 }
 
 export async function deleteWorkflow(workflowId: string): Promise<void> {
-  await apiRequest(`/workflows/${workflowId}`, {
+  await apiRequest("workflows.run", `/workflows/${workflowId}`, {
     method: "DELETE",
   });
 }

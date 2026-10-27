@@ -36,7 +36,6 @@ import {
 import { captureSessionOwner } from "../auth/session";
 import { openExternalUrl } from "./openExternalUrl";
 import {
-  claimApiFailure,
   isReported,
   reportError,
   type AddinOperation,
@@ -90,13 +89,11 @@ function reportRealFault(
   operation: AddinOperation | undefined,
 ): void {
   if (described.kind !== "unknown" && described.kind !== "server") return;
-  if (operation && claimApiFailure(error, operation)) return;
   if (isReported(error)) return;
   const cause =
     error && typeof error === "object"
       ? (error as { cause?: unknown }).cause
       : undefined;
-  if (operation && claimApiFailure(cause, operation)) return;
   if (cause !== undefined && isReported(cause)) return;
   reportError(error, {
     tags: {
