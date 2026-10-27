@@ -56,6 +56,7 @@ export type TurnStreamHooks = {
     code: string | null;
     /** The id of the request that produced the frame, when it carried one. */
     requestId: string | null;
+    reportingOwner?: "backend";
   }) => void;
 };
 
@@ -492,6 +493,7 @@ export async function consumeAssistantTurnStream(
           hooks.onErrorFrame?.({
             message,
             safeToDisplay,
+            ...(data.reporting_owner === "backend" ? { reportingOwner: "backend" as const } : {}),
             code: typeof data.code === "string" ? data.code : null,
             requestId:
               typeof data.request_id === "string" ? data.request_id : null,
