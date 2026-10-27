@@ -58,7 +58,7 @@ import {
   noModelsReason,
   unavailableModelMessage,
 } from "../../lib/modelCatalog";
-import { notifyError, userMessage } from "../../lib/notify";
+import { reportFault, notifyError } from "../../lib/notify";
 import { loadWithRetry } from "../../lib/composerPreflight";
 import {
   slashCommandQueryFromValue,
@@ -442,10 +442,10 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
           );
         } else {
           setDocumentUploadError(
-            userMessage(reason, {
+            reportFault(reason, {
               fallback: "Documents could not be uploaded. Try again.",
               operation: "documents.upload",
-            }),
+            }).message,
           );
         }
       } finally {

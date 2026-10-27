@@ -21,8 +21,7 @@ import { GoogleAuthButton } from "@/app/components/auth/GoogleAuthButton";
 import { FieldLabel } from "@/app/components/ui/form-field";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { noticeActionClassName } from "@/shared/ui/NoticeCardUI";
-import {
-    describeError,
+import { reportFault,
     supportMailtoFor,
     type UserFacingError,
 } from "@/app/lib/userFacingError";
@@ -55,7 +54,7 @@ const SESSION_WARNING_TITLE = "Couldn't check your session";
 
 /** Classify a login failure into text a person can act on. */
 function describeLoginError(error: unknown): UserFacingError {
-    const described = describeError(error, {
+    const described = reportFault(error, {
         action: "log in",
         codeMessages: LOGIN_ERROR_MESSAGES,
         fallback: "Unable to log in right now. Try again.",
@@ -169,7 +168,7 @@ export default function LoginPage() {
             // The Retry button failing silently is what made the original
             // session error look permanent; say so instead.
             setSessionError(
-                describeError(caught, {
+                reportFault(caught, {
                     action: "restore your session",
                     fallback: "Unable to restore your session. Try again.",
                     operation: "auth.session",

@@ -9,7 +9,7 @@ import { pillButtonUIClassName } from "@/shared/ui/PillButtonUI.styles";
 import { authGlassCardUIClassName } from "@/shared/ui/AuthStylesUI";
 import { authErrorDescription, safeAuthNext } from "@/app/lib/authRedirects";
 import { getAuthSession } from "@/app/lib/authApi";
-import {
+import { reportFault,
     UserVisibleError,
     describeError,
     supportMailtoFor,
@@ -32,7 +32,7 @@ function describeCallbackError(
     error: unknown,
     action: string,
 ): UserFacingError {
-    const described = describeError(error, {
+    const described = reportFault(error, {
         action,
         codeMessages: CALLBACK_ERROR_MESSAGES,
         fallback: LINK_SPENT_MESSAGE,
