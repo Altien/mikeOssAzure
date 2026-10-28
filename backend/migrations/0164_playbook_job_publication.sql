@@ -58,6 +58,7 @@ begin
       insert into public.audit_events(user_id,user_email,org_id,action,status,title,surface,model,document_id,detail)
         values(actor,email,snapshot_org,action,outcome_status,title,'playbooks',coalesce(attempt.model,review.model),review.document_id,detail);
     end if;
+    if not p_terminal and job.lease_expires_at<=clock_timestamp() then raise exception 'playbook_claim_lost' using errcode='40001'; end if;
     return jsonb_build_object('result','updated');
   end if;
   -- Freeze the existing role inputs while validating publication. These are the
@@ -107,6 +108,7 @@ begin
       else document.user_id=actor and public.org_is_active(document.org_id) and
         (not public.org_is_team(document.org_id) or exists(select 1 from public.active_org_members m where m.org_id=document.org_id and m.user_id::text=actor)) end)
       then return jsonb_build_object('result','forbidden'); end if;
+    if job.lease_expires_at<=clock_timestamp() then return jsonb_build_object('result','stale'); end if;
     return jsonb_build_object('result','current');
   end if;
   if p_operation='import_publish' and job.kind='playbook.import' then
@@ -144,6 +146,7 @@ begin
     insert into public.audit_events(user_id,user_email,org_id,action,status,title,surface,model,detail)
       values(actor,email,snapshot_org,case when job.payload->>'replacePlaybookId' is null then 'playbook.imported' else 'playbook.replaced' end,
         'completed',p_values->>'name','playbooks',attempt.model,jsonb_build_object('import_id',attempt.id,'playbook_id',book_id));
+    if job.lease_expires_at<=clock_timestamp() then raise exception 'playbook_claim_lost' using errcode='40001'; end if;
     return jsonb_build_object('result','published','id',book_id);
   elsif p_operation='review_publish' and job.kind='playbook.review' then
     if review.document_id is not null then
@@ -153,19 +156,20 @@ begin
         when document.workflow_id is not null then (select org_id from public.workflows where id=document.workflow_id) else document.org_id end;
       current_org:=case when public.org_is_team(current_org) then current_org else null end;
       if current_org is distinct from snapshot_org then return jsonb_build_object('result','forbidden'); end if;
-      expected_id:=coalesce((p_values->>'edited_version_id')::uuid,(job.payload->'expectedVersion'->>'id')::uuid);
+      expected_id:=coalesce((p_values->>'edited_version_id')::uuid,review.edited_version_id,(job.payload->'expectedVersion'->>'id')::uuid);
       if expected_id is not null and (document.current_version_id is distinct from expected_id or not exists(
         select 1 from public.document_versions v where v.id=expected_id and v.document_id=document.id and v.deleted_at is null))
         then return jsonb_build_object('result','conflict'); end if;
     end if;
     update public.playbook_runs set status='completed',summary=p_values->>'summary',findings_json=p_values->'findings_json',
-      edited_version_id=(p_values->>'edited_version_id')::uuid,error=null,completed_at=clock_timestamp(),updated_at=clock_timestamp() where id=review.id;
+      edited_version_id=coalesce((p_values->>'edited_version_id')::uuid,review.edited_version_id),error=null,completed_at=clock_timestamp(),updated_at=clock_timestamp() where id=review.id;
     select coalesce(jsonb_object_agg(status,count),'{}'::jsonb) into outcomes from (
       select value->>'status' status,count(*) count from jsonb_array_elements(p_values->'findings_json') group by value->>'status'
     ) counts;
     insert into public.audit_events(user_id,user_email,org_id,action,status,title,surface,model,document_id,detail)
       values(actor,email,snapshot_org,'playbook.run','completed',coalesce(review.content_json->>'name',book.name),'playbooks',review.model,review.document_id,
         jsonb_build_object('playbook_id',book.id,'run_id',review.id,'scope',review.review_scope,'posture',review.review_mode,'outcomes',outcomes));
+    if job.lease_expires_at<=clock_timestamp() then raise exception 'playbook_claim_lost' using errcode='40001'; end if;
     return jsonb_build_object('result','published');
   end if;
   return jsonb_build_object('result','stale');

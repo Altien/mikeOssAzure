@@ -64,6 +64,13 @@ begin
       from jsonb_array_elements(p_edits) item;
     select coalesce(jsonb_agg(to_jsonb(e)),'[]'::jsonb) into v_edits from public.document_edits e where e.version_id=v_id;
   end if;
+  if p_job_identity is not null then
+    if v_job.lease_expires_at<=clock_timestamp() then raise exception 'playbook_claim_lost' using errcode='40001'; end if;
+    -- A retry can observe the revision already applied by this domain run,
+    -- without applying it twice after an ambiguous transport/crash.
+    update public.playbook_runs set edited_version_id=v_id,updated_at=clock_timestamp()
+      where id=(v_job.payload->>'runId')::uuid and status='running';
+  end if;
   if p_activate then
     update public.documents set current_version_id = v_id, updated_at = now()
       where id = p_document_id;

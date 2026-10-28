@@ -17,7 +17,7 @@ export async function mutatePlaybookJob(db: Db, identity: PlaybookJobIdentity,
     p_job_id: identity.id, p_attempt: identity.attempt, p_token: identity.token,
     p_operation: operation, p_domain_id: domainId, p_values: values, p_terminal: terminal,
   });
-  if (error) throw error;
+  if (error) { if (error.code === "40001") throw new PlaybookClaimLostError(); throw error; }
   if (!data || data.result === "stale") throw new PlaybookClaimLostError();
   if (data.result === "conflict") throw Object.assign(new Error("The playbook changed. Import it again."), { code: "PLAYBOOK_REPLACEMENT_CONFLICT" });
   if (data.result === "forbidden") throw Object.assign(new Error("Playbook access changed. Run the operation again."), { code: "PLAYBOOK_ACCESS_CHANGED" });
