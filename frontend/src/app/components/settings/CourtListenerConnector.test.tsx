@@ -206,7 +206,7 @@ describe("CourtListenerTokenModal", () => {
         expect(screen.getByTestId("courtlistener-key-state")).toHaveAttribute("data-managed", "true");
         expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
         expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
-        await user.click(screen.getByRole("button", { name: "Close" }));
+        await user.click(screen.getByText("Close", { exact: true }));
         expect(onClose).toHaveBeenCalledOnce();
         expect(api.saveToken).not.toHaveBeenCalled(); expect(api.deleteToken).not.toHaveBeenCalled();
     });

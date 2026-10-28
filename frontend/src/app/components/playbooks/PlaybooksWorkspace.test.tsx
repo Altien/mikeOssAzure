@@ -181,10 +181,21 @@ vi.mock("@/app/contexts/UserProfileContext", () => ({
   useUserProfile: () => ({ profile: null }),
 }));
 
-const workspace = vi.hoisted(() => ({
-  workspaceId: "personal",
-  activeOrganization: null as { name: string } | null,
-}));
+const workspace = vi.hoisted(() => {
+  const state = {
+    accountId: "u1",
+    workspaceId: "personal",
+    activeOrganization: null as { name: string } | null,
+    live: true,
+  };
+  return Object.assign(state, {
+    captureWorkspace: () => {
+      const captured = JSON.stringify([state.accountId, state.workspaceId]);
+      return () => state.live && Boolean(state.accountId)
+        && JSON.stringify([state.accountId, state.workspaceId]) === captured;
+    },
+  });
+});
 vi.mock("@/app/contexts/WorkspaceContext", () => ({
   PERSONAL_WORKSPACE: "personal",
   useWorkspace: () => workspace,
@@ -344,6 +355,7 @@ describe("playbooks page", () => {
     );
     navigation.params = {};
     navigation.search = "";
+    workspace.accountId = "u1"; workspace.live = true;
     workspace.workspaceId = "personal";
     workspace.activeOrganization = null;
     window.matchMedia = vi.fn().mockImplementation((query: string) => ({

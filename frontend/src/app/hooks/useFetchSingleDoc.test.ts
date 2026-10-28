@@ -1,14 +1,19 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 const reporting = vi.hoisted(() => ({ reportError: vi.fn(), reportNetworkFailure: vi.fn() }));
 vi.mock("@/app/lib/authEvents", () => ({ authenticatedFetch: vi.fn(), currentAuthEpoch: vi.fn(() => 0) }));
-vi.mock("@/app/lib/errorReporting", () => ({ reportError: reporting.reportError, reportNetworkFailure: reporting.reportNetworkFailure, reportApiFailure: vi.fn(), markErrorHandled: vi.fn(), trackPendingRequest: vi.fn(() => () => {}) }));
+vi.mock("@/app/lib/errorReporting", async original => ({ ...await original<typeof import("@/app/lib/errorReporting")>(), reportError: reporting.reportError, reportNetworkFailure: reporting.reportNetworkFailure, reportApiFailure: vi.fn(), markErrorHandled: vi.fn(), trackPendingRequest: vi.fn(() => () => {}) }));
 import { authenticatedFetch } from "@/app/lib/authEvents";
 import * as errorReporting from "@/app/lib/errorReporting";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw-server";
 
 import { useFetchSingleDoc } from "./useFetchSingleDoc";
+import { API_BASE } from "@/app/lib/mikeApi";
+
+// File-local auth transport defaults to the existing MSW network harness.
+// Reporting mocks retain the real handled-error ownership helpers.
+beforeEach(() => { vi.mocked(authenticatedFetch).mockImplementation((url, init) => fetch(url, init)); });
 
 describe("useFetchSingleDoc: disabled when documentId is missing", () => {
     it("does not fetch when documentId is null", () => {
@@ -242,7 +247,7 @@ it("hands a request that never got a response to the network reporter", async ()
     await waitFor(() => expect(result.current.error).toBe("Failed to load document."));
     expect(reporting.reportNetworkFailure).toHaveBeenCalledWith(failure, {
         method: "GET",
-        url: "/api/single-documents/d1/display?version_id=v1",
+        url: `${API_BASE}/single-documents/d1/display?version_id=v1`,
     });
     expect(reporting.reportError).not.toHaveBeenCalled();
 });
