@@ -399,6 +399,12 @@ const ORGANISATION_CREDENTIALS: Record<
         label: "CourtListener",
         secretNames: ["courtlistener-api-token"],
     },
+    bedrock: { label: "Amazon Bedrock", secretNames: ["aws-bearer-token-bedrock", "bedrock-aws-region"] },
+    azure: { label: "Azure OpenAI", secretNames: ["azure-openai-api-key", "azure-openai-endpoint"] },
+    "azure-foundry": { label: "Azure AI Foundry", secretNames: ["azure-foundry-api-key", "azure-foundry-endpoint"] },
+    vertex: { label: "Google Vertex AI", secretNames: ["google-vertex-credentials-json", "google-vertex-location"] },
+    xai: { label: "xAI", secretNames: ["xai-api-key"] },
+    custom: { label: "OpenAI-compatible endpoint", secretNames: ["custom-api-key", "custom-base-url"] },
     azure_openai: {
         label: "Azure OpenAI",
         secretNames: ["azure-openai-endpoint", "azure-openai-api-key"],
@@ -429,10 +435,6 @@ userRouter.put(
 
         const apiKey =
             typeof req.body?.api_key === "string" ? req.body.api_key : null;
-        const settings =
-            req.body && typeof req.body === "object"
-                ? (req.body as { settings?: unknown }).settings
-                : undefined;
         const db = createServerSupabase();
         const result = await saveApiKey(db, {
             userId,

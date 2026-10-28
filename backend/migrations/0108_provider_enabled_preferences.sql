@@ -14,7 +14,7 @@ create or replace function public.set_user_provider_enabled(
 ) returns boolean language plpgsql security definer set search_path = public, pg_temp as $$
 declare affected integer;
 begin
-  if p_user_id is null or p_user_id = '' or p_enabled is null or p_provider not in (
+  if p_user_id is null or p_user_id = '' or p_enabled is null or p_provider is null or p_provider not in (
     'claude','gemini','openai','kimi','mistral','openrouter','vercel','opencode-go',
     'azure_openai','bedrock','azure','azure-foundry','vertex','xai','custom','courtlistener'
   ) then raise exception 'invalid_provider_preference'; end if;

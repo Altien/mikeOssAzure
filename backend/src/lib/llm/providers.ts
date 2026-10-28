@@ -49,7 +49,7 @@ import type {
 import { resolveSecret, resolveProviderSecret, resolveVercelApiKey } from "../envSecrets";
 import { REASONING_LEVELS } from "./types";
 import { vertexAuthClient } from "./vertexAuth";
-import { UserFacingError } from "../userFacingError";
+import { UserFacingError } from "../safeError";
 
 const OPENROUTER_BASE_URL =
   process.env.OPENROUTER_BASE_URL?.trim().replace(/\/+$/, "") ||

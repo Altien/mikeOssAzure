@@ -868,17 +868,14 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 if (!current()) return false;
                 const status = await setApiKeyEnabled(provider, enabled, current);
                 if (!current()) return false;
-                setProfile((prev) => prev ? {
+                setProfile((prev) => prev && current() ? {
                     ...prev,
-                    apiKeys: {
-                        ...prev.apiKeys,
-                        [provider]: {
-                            configured: status[provider],
-                            source: status.sources?.[provider] ?? null,
-                            enabled: status.enabled?.[provider] !== false,
-                        },
-                    },
-                } : null);
+                    apiKeys: Object.fromEntries(API_KEY_PROVIDERS.map((slug) => [slug, {
+                        configured: !!status[slug],
+                        source: status.sources?.[slug] ?? null,
+                        enabled: status.enabled?.[slug] !== false,
+                    }])) as ApiKeyState,
+                } : prev);
                 void refreshConfiguredModels();
                 return true;
             } catch (error) {

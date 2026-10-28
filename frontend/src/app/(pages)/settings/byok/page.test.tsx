@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { screen, within } from "@testing-library/react";
+import { screen, within, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw-server";
@@ -60,7 +60,7 @@ describe("organisation model providers", () => {
         const toggle = await screen.findByRole("switch", { name: "Anthropic (Claude) provider" });
         await user.click(toggle);
         expect(body).toEqual({ enabled: false });
-        expect(toggle).toHaveAttribute("aria-checked", "false");
+        await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "false"));
         expect(within(screen.getByRole("region", { name: "Configured Providers" }))
             .getByRole("button", { name: "Manage Anthropic (Claude)" })).toBeInTheDocument();
     });

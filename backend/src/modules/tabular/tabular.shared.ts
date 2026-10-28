@@ -1,3 +1,6 @@
+import { isProviderDisabled } from "../../lib/llm/providerPreferences";
+import { bedrockCredentials, azureCredentials, azureFoundryCredentials, vertexCredentials, customEndpointCredentials } from "../../lib/llm/cloudProviders";
+import { resolveProviderSecret } from "../../lib/envSecrets";
 // Shared types + helpers used across the tabular extraction files.
 //
 // These are module-internal: they are exported here so sibling files
@@ -133,6 +136,12 @@ const SERVER_KEY_SECRETS: Record<Exclude<Provider, "azureOpenai" | "openai-compa
     openrouter: "openrouter-api-key",
     vercel: "ai-gateway-api-key",
     "opencode-go": "opencode-api-key",
+    bedrock: "aws-bearer-token-bedrock",
+    azure: "azure-openai-api-key",
+    "azure-foundry": "azure-foundry-api-key",
+    vertex: "google-vertex-credentials-json",
+    xai: "xai-api-key",
+    custom: "custom-api-key",
 };
 
 export type MissingApiKey = {
@@ -146,6 +155,9 @@ export async function missingModelApiKey(
     apiKeys: UserApiKeys,
 ): Promise<MissingApiKey | null> {
     const provider = providerForModel(model);
+    if (isProviderDisabled(provider, apiKeys)) {
+        return { provider, model, detail: "This model provider is turned off. Turn it on in Model Providers or select another model." };
+    }
     if (provider === "openai-compatible") {
         const configured = getConfiguredModel(model);
         if (!configured || !configuredModelRequiresApiKey(configured) ||
@@ -157,8 +169,15 @@ export async function missingModelApiKey(
         if (configured?.endpoint?.trim() && configured.apiKey?.trim() && configured.deployment?.trim()) return null;
         return { provider, model, detail: "Azure OpenAI is not configured for this organisation. Ask an administrator to configure its endpoint, API key and deployment on /install." };
     }
-    if (apiKeys[provider]?.trim()) return null;
-    if ((await resolveSecret(SERVER_KEY_SECRETS[provider])).length > 0) return null;
+    const cloud = provider === "bedrock" ? await bedrockCredentials(apiKeys)
+        : provider === "azure" ? await azureCredentials(apiKeys)
+        : provider === "azure-foundry" ? await azureFoundryCredentials(apiKeys)
+        : provider === "vertex" ? await vertexCredentials(apiKeys)
+        : provider === "custom" ? await customEndpointCredentials(apiKeys) : undefined;
+    if (cloud) return null;
+    if (cloud === undefined && apiKeys[provider]?.trim()) return null;
+    if (cloud === undefined && provider === "xai" && await resolveProviderSecret("xai-api-key")) return null;
+    if (cloud === undefined && provider !== "xai" && (await resolveSecret(SERVER_KEY_SECRETS[provider])).length > 0) return null;
     return {
         provider,
         model,
