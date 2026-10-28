@@ -132,7 +132,7 @@ describe("MyActivitySettingsPage", () => {
       expect(mockedGetAuditHistory).toHaveBeenCalledWith(
         expect.objectContaining({ orgId: "org-a", page: 1 }),
         expect.anything(),
-      , expect.any(Function)),
+      expect.any(Function)),
     );
     expect(
       screen.getByRole("button", { name: "Audit log actions" }),
@@ -280,7 +280,7 @@ describe("MyActivitySettingsPage", () => {
         page: 1,
       }),
       expect.any(AbortSignal),
-    , expect.any(Function));
+    expect.any(Function));
 
     await user.click(
       screen.getByRole("button", { name: "Filter by application" }),
@@ -292,7 +292,7 @@ describe("MyActivitySettingsPage", () => {
       expect(mockedGetAuditHistory).toHaveBeenLastCalledWith(
         expect.objectContaining({ surface: "word", page: 1 }),
         expect.any(AbortSignal),
-      , expect.any(Function)),
+      expect.any(Function)),
     );
     await user.click(
       screen.getByRole("button", { name: "Filter by application" }),
@@ -302,7 +302,7 @@ describe("MyActivitySettingsPage", () => {
       expect(mockedGetAuditHistory).toHaveBeenLastCalledWith(
         expect.objectContaining({ surface: undefined, page: 1 }),
         expect.any(AbortSignal),
-      , expect.any(Function)),
+      expect.any(Function)),
     );
 
     await user.click(screen.getByRole("button", { name: "Filter by status" }));
@@ -311,7 +311,7 @@ describe("MyActivitySettingsPage", () => {
       expect(mockedGetAuditHistory).toHaveBeenLastCalledWith(
         expect.objectContaining({ status: "completed", page: 1 }),
         expect.any(AbortSignal),
-      , expect.any(Function)),
+      expect.any(Function)),
     );
 
     await user.click(
@@ -326,7 +326,7 @@ describe("MyActivitySettingsPage", () => {
           sortDirection: "asc",
         }),
         expect.any(AbortSignal),
-      , expect.any(Function)),
+      expect.any(Function)),
     );
 
     expect(mockedGetAuditHistory).toHaveBeenLastCalledWith(
@@ -337,7 +337,7 @@ describe("MyActivitySettingsPage", () => {
         ...expectedDefaultDateRange(),
       }),
       expect.any(AbortSignal),
-    , expect.any(Function));
+    expect.any(Function));
   });
 
   it("filters an exact organization actor on the server and carries the filter into exports", async () => {
@@ -367,7 +367,7 @@ describe("MyActivitySettingsPage", () => {
       expect(mockedGetAuditHistory).toHaveBeenLastCalledWith(
         expect.objectContaining({ orgId: "org-a", actorUserId: "actor-1", page: 1 }),
         expect.any(AbortSignal),
-      , expect.any(Function)),
+      expect.any(Function)),
     );
     expect(
       screen.getByRole("checkbox", { name: `Select ${EVENT.title}` }),
@@ -386,7 +386,7 @@ describe("MyActivitySettingsPage", () => {
       expect(mockedStartUserExport).toHaveBeenCalledWith(
         "audit-csv",
         expect.objectContaining({ org_id: "org-a", actor_user_id: "actor-1" }),
-      , expect.any(Function)),
+      expect.any(Function)),
     );
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
@@ -400,7 +400,7 @@ describe("MyActivitySettingsPage", () => {
       expect(mockedGetAuditHistory).toHaveBeenLastCalledWith(
         expect.objectContaining({ actorUserId: undefined, page: 1 }),
         expect.any(AbortSignal),
-      , expect.any(Function)),
+      expect.any(Function)),
     );
   });
 
@@ -570,7 +570,7 @@ describe("MyActivitySettingsPage", () => {
           page: 1,
         }),
         expect.any(AbortSignal),
-      , expect.any(Function)),
+      expect.any(Function)),
     );
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
@@ -589,7 +589,7 @@ describe("MyActivitySettingsPage", () => {
       expect(mockedStartUserExport).toHaveBeenCalledWith(
         "audit-csv",
         expect.objectContaining({ from: "2026-05-20", to: "2026-06-14" }),
-      , expect.any(Function)),
+      expect.any(Function)),
     );
     await waitFor(() =>
       expect(mockedDownloadUserExport).toHaveBeenCalledWith("export-1", expect.any(Function)),
@@ -621,7 +621,7 @@ describe("MyActivitySettingsPage", () => {
       expect(mockedGetAuditHistory).toHaveBeenLastCalledWith(
         expect.objectContaining({ from, to, page: 1 }),
         expect.any(AbortSignal),
-      , expect.any(Function));
+      expect.any(Function));
       await user.click(
         screen.getByRole("button", { name: "My Activity actions" }),
       );
@@ -635,7 +635,7 @@ describe("MyActivitySettingsPage", () => {
         expect(mockedStartUserExport).toHaveBeenCalledWith(
           "audit-csv",
           expect.objectContaining({ from, to }),
-        , expect.any(Function)),
+        expect.any(Function)),
       );
     },
   );
@@ -661,7 +661,7 @@ describe("MyActivitySettingsPage", () => {
         expect(mockedStartUserExport).toHaveBeenCalledWith(
           "audit-csv",
           expect.objectContaining({ from, to }),
-        , expect.any(Function)),
+        expect.any(Function)),
       );
     },
   );
@@ -785,7 +785,7 @@ describe("MyActivitySettingsPage", () => {
     expect(mockedGetAuditHistory).toHaveBeenLastCalledWith(
       expect.objectContaining({ page: 2 }),
       expect.any(AbortSignal),
-    , expect.any(Function));
+    expect.any(Function));
     expect(screen.getByText(EVENT.title!)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Loading…" })).toBeDisabled();
 
@@ -907,7 +907,7 @@ describe("MyActivitySettingsPage", () => {
     expect(mockedGetAuditHistory).toHaveBeenLastCalledWith(
       expect.objectContaining({ status: "failed", page: 2 }),
       expect.any(AbortSignal),
-    , expect.any(Function));
+    expect.any(Function));
   });
 
   it("opens full event details from a row and restores focus on close", async () => {
@@ -1009,7 +1009,7 @@ describe("MyActivitySettingsPage", () => {
       expect(mockedGetAuditHistory).toHaveBeenLastCalledWith(
         expect.objectContaining({ q: "agreement" }),
         expect.any(AbortSignal),
-      , expect.any(Function)),
+      expect.any(Function)),
     );
     const tableCalls = mockedGetAuditHistory.mock.calls.length;
     await user.click(
@@ -1042,7 +1042,7 @@ describe("MyActivitySettingsPage", () => {
           sort_by: "title",
           sort_dir: "asc",
         }),
-      , expect.any(Function)),
+      expect.any(Function)),
     );
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
@@ -1051,7 +1051,7 @@ describe("MyActivitySettingsPage", () => {
     expect(mockedGetAuditHistory).toHaveBeenLastCalledWith(
       expect.objectContaining(expectedDefaultDateRange()),
       expect.any(AbortSignal),
-    , expect.any(Function));
+    expect.any(Function));
   });
 
   it.each([
@@ -1095,7 +1095,7 @@ describe("MyActivitySettingsPage", () => {
         expect(mockedStartUserExport).toHaveBeenCalledWith(
           "audit-csv",
           expect.objectContaining({ from: "2026-06-15", to: "2026-06-15" }),
-        , expect.any(Function)),
+        expect.any(Function)),
       );
     },
   );
@@ -1247,7 +1247,7 @@ describe("MyActivitySettingsPage", () => {
         from: "2026-06-09",
         to: "2026-06-15",
       }),
-    , expect.any(Function));
+    expect.any(Function));
     expect(screen.getByRole("button", { name: /^Date range:/ })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Exporting…" })).toBeDisabled();
     await act(async () => finishExport({ export_id: "export-1" }));
