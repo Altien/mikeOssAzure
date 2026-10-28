@@ -2405,9 +2405,10 @@ export function useWordDoc() {
           try {
             appliedEditIds = listAppliedWordEditIds();
           } catch (error) {
-            // No registry means no idempotency, not a failed edit.
+            // Upstream divergence (sync-log: 1bdacc59): an unreadable registry
+            // cannot prove an edit is new. Stop before queuing Word mutations.
             console.warn("[tracked-edit/apply] applied-id read failed", error);
-            appliedEditIds = new Set<string>();
+            throw new Error("Word could not check whether these changes were already applied. Reopen the document before trying again.");
           }
           const newlyAppliedEditIds: string[] = [];
 
@@ -3007,12 +3008,13 @@ export function useWordDoc() {
           }
           // Record what is now in the document, so a replayed edit frame
           // does not apply it a second time. Failing to persist the marker
-          // costs idempotency on a later replay, never this edit, so it is
-          // logged rather than reported.
+          // costs idempotency on a later replay, never this edit. Report that
+          // limitation without inviting the user to apply the edit again.
           for (const stableEditId of newlyAppliedEditIds) {
             try {
               await markWordEditApplied(stableEditId);
             } catch (error) {
+              report.warning = [report.warning, "The changes were applied, but Word could not save replay protection. Save the document before reopening this answer."].filter(Boolean).join(" ");
               console.warn(
                 "[tracked-edit/apply] applied-id write failed",
                 logErrorMessage(error),
