@@ -210,7 +210,8 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     }
     const accountGuard = useCallback((owner: string) => {
         const epoch = authEpochRef.current;
-        return () => identityRef.current === owner && authEpochRef.current === epoch;
+        const globalEpoch = currentAuthEpoch();
+        return () => identityRef.current === owner && authEpochRef.current === epoch && currentAuthEpoch() === globalEpoch;
     }, []);
 
     // Every mutator below keeps its `boolean` contract so callers need no
@@ -247,9 +248,10 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
 
     const loadProfile = useCallback(async () => {
         const owner = identity;
+        const globalEpoch = currentAuthEpoch();
         const writeEpoch = writeEpochRef.current;
         const loadEpoch = ++loadEpochRef.current;
-        const isCurrent = () => identityRef.current === owner &&
+        const isCurrent = () => identityRef.current === owner && currentAuthEpoch() === globalEpoch &&
             writeEpochRef.current === writeEpoch && loadEpochRef.current === loadEpoch;
         try {
             let profileData: ApiUserProfile;
