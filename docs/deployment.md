@@ -167,6 +167,9 @@ Interactive requests can download three sources concurrently, matching tabular
 row concurrency, and take priority over queued background parses. Background I/O
 does not occupy the parser or the interactive admission queue (eight waiters).
 Only parsing is serial; its deadline starts when parsing starts, as in #721.
+Source downloads from S3-compatible storage abort after
+`STORAGE_DOWNLOAD_TIMEOUT_MS` (default 120000), so a stalled read releases its
+admission slot instead of holding it indefinitely.
 Generic job concurrency does not create more parser slots.
 
 Linux requires `prlimit` (util-linux), installed by the combined Dev Docker image and Nixpacks. Missing

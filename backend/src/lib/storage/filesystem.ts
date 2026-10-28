@@ -22,6 +22,7 @@ import { pipeline } from "node:stream/promises";
 import { signBlobToken, signBlobUploadToken } from "../downloadTokens";
 import { StorageCopyInvariantError, type StorageAdapter } from "./adapter";
 import { normalizeDownloadFilename } from "./filenames";
+import { collectStorageDownload, storageDownloadSignal } from "./downloadDeadline";
 
 export class BlobUploadSizeError extends Error {
   constructor() {
@@ -213,13 +214,13 @@ export function createFilesystemStorageAdapter(): StorageAdapter {
       return `${backendPublicUrl()}/api/download/signed/${token}`;
     },
 
-    async downloadFile(key) {
+    async downloadFile(key, signal) {
+      const abortSignal = storageDownloadSignal(signal);
+      abortSignal.throwIfAborted();
       try {
-        const bytes = await fs.readFile(fsPathFor(key));
-        return bytes.buffer.slice(
-          bytes.byteOffset,
-          bytes.byteOffset + bytes.byteLength,
-        ) as ArrayBuffer;
+        // Same contained key mapping; cancellation destroys the read handle.
+        const body = createReadStream(fsPathFor(key), { signal: abortSignal });
+        return await collectStorageDownload(body, abortSignal);
       } catch (error) {
         // A missing file is an answer (null), not a failure worth logging.
         if (isMissingFile(error)) return null;

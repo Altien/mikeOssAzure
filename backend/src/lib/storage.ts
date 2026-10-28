@@ -168,10 +168,10 @@ export async function copyFile(
 // Download
 // ---------------------------------------------------------------------------
 
-export async function downloadFile(key: string): Promise<ArrayBuffer | null> {
+export async function downloadFile(key: string, signal?: AbortSignal): Promise<ArrayBuffer | null> {
   if (!adapter.enabled) return null;
   try {
-    return await adapter.downloadFile(key);
+    return signal ? await adapter.downloadFile(key, signal) : await adapter.downloadFile(key);
   } catch (error) {
     console.error("[storage] downloadFile failed", {
       key,

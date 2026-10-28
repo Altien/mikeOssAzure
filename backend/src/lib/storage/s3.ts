@@ -24,6 +24,7 @@ import { getSignedUrl as awsGetSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import type { StorageAdapter } from "./adapter";
+import { storageDownloadSignal } from "./downloadDeadline";
 
 const GetObjectCommand = (S3Commands as any).GetObjectCommand;
 
@@ -153,13 +154,23 @@ export function createS3StorageAdapter(options: S3StorageOptions = {}): StorageA
       );
     },
 
-    async downloadFile(key) {
+    async downloadFile(key, signal) {
+      const abortSignal = storageDownloadSignal(signal);
+      abortSignal.throwIfAborted();
       const response = (await client().send(
         new GetObjectCommand({ Bucket: bucket, Key: key }),
+        { abortSignal },
       )) as any;
       if (!response.Body) return null;
-      const bytes = await response.Body.transformToByteArray();
-      return bytes.buffer as ArrayBuffer;
+      const stop = () => response.Body.destroy?.(abortSignal.reason);
+      abortSignal.addEventListener("abort", stop, { once: true });
+      if (abortSignal.aborted) stop();
+      try {
+        const bytes = await response.Body.transformToByteArray();
+        return bytes.buffer as ArrayBuffer;
+      } finally {
+        abortSignal.removeEventListener("abort", stop);
+      }
     },
 
     async openReadStream(key) {

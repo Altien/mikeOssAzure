@@ -7,6 +7,7 @@
 import { BlobServiceClient, type ContainerClient } from "@azure/storage-blob";
 import { DefaultAzureCredential } from "@azure/identity";
 import type { Readable } from "node:stream";
+import { collectStorageDownload, storageDownloadSignal } from "./downloadDeadline";
 import { StorageCopyInvariantError, type StorageAdapter } from "./adapter";
 
 export type AzureStorageOptions = {
@@ -63,10 +64,13 @@ export function createAzureBlobStorageAdapter(options: AzureStorageOptions): Sto
       return null;
     },
 
-    async downloadFile(key) {
+    async downloadFile(key, signal) {
+      const abortSignal = storageDownloadSignal(signal);
+      abortSignal.throwIfAborted();
       try {
-        const bytes = await container().getBlobClient(key).downloadToBuffer();
-        return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+        const response = await container().getBlobClient(key).download(0, undefined, { abortSignal });
+        const body = response.readableStreamBody as Readable | undefined;
+        return body ? await collectStorageDownload(body, abortSignal) : null;
       } catch (error) {
         if (isMissingBlob(error)) return null;
         throw error;

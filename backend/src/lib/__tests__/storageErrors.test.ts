@@ -144,6 +144,27 @@ describe("storage error logging", () => {
     log.mockRestore();
   });
 
+  it("aborts a stalled download so it releases whoever awaits it", async () => {
+    process.env.STORAGE_DOWNLOAD_TIMEOUT_MS = "20";
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let fail: (error: unknown) => void = () => undefined;
+    const destroy = vi.fn((error: unknown) => fail(error));
+    mocks.send.mockResolvedValue({
+      Body: {
+        destroy,
+        transformToByteArray: () => new Promise((_, reject) => { fail = reject; }),
+      },
+    });
+    try {
+      await expect(downloadFile("documents/u1/d1/source.pdf")).resolves.toBeNull();
+      expect(mocks.send.mock.calls[0][1].abortSignal.aborted).toBe(true);
+      expect(destroy).toHaveBeenCalledOnce();
+    } finally {
+      delete process.env.STORAGE_DOWNLOAD_TIMEOUT_MS;
+      log.mockRestore();
+    }
+  });
+
   it("logs signed-URL failures with the object key and a safe error", async () => {
     const failure = new Error("signing failed");
     mocks.getSignedUrl.mockRejectedValue(failure);

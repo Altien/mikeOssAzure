@@ -58,7 +58,7 @@ export type StorageAdapter = {
     expiresIn: number,
   ): Promise<string | null>;
 
-  downloadFile(key: string): Promise<ArrayBuffer | null>;
+  downloadFile(key: string, signal?: AbortSignal): Promise<ArrayBuffer | null>;
   /**
    * Open an object for streaming reads, or resolve null when it has no body.
    * Returns the raw byte iterable; the facade wraps it in a Node stream and
