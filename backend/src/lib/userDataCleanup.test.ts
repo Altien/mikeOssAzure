@@ -1,3 +1,4 @@
+// Dev drift: destructive settings actions take one workspace and resolve tabular placement through their parent review.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { makeFakeDb, type DbCall } from "../test/helpers/fakeDb";
 
@@ -36,26 +37,32 @@ function filterValue(call: DbCall, method: string, column: string) {
 
 describe("deleteAllUserChats", () => {
   it("deletes assistant + tabular chats scoped to the user", async () => {
-    const { db, callsFor } = makeFakeDb();
+    const { db, callsFor } = makeFakeDb(call => call.table === "tabular_review_chats" && call.op === "select" ? { data: [{ id: "tc1", review_id: "r1" }] } : call.table === "tabular_reviews" ? { data: [{ id: "r1" }] } : {});
 
-    await deleteAllUserChats(db as never, "u1");
+    await deleteAllUserChats(db as never, "u1", null);
 
     for (const table of ["chats", "tabular_review_chats"]) {
       const del = callsFor(table, "delete");
       expect(del).toHaveLength(1);
-      expect(filterValue(del[0], "eq", "user_id")).toBe("u1");
+      if (table === "chats") {
+        expect(filterValue(del[0], "eq", "user_id")).toBe("u1");
+        expect(filterValue(del[0], "is", "org_id")).toBeNull();
+      } else {
+        expect(filterValue(callsFor(table, "select")[0], "eq", "user_id")).toBe("u1");
+        expect(filterValue(del[0], "in", "id")).toEqual(["tc1"]);
+      }
     }
   });
 
   it("throws with context when one delete fails", async () => {
     const { db } = makeFakeDb((call) =>
-      call.table === "tabular_review_chats"
+      call.table === "tabular_review_chats" && call.op === "select"
         ? { error: { message: "deadlock" } }
         : {},
     );
 
-    await expect(deleteAllUserChats(db as never, "u1")).rejects.toThrow(
-      "Failed to delete tabular chats: deadlock",
+    await expect(deleteAllUserChats(db as never, "u1", null)).rejects.toThrow(
+      "Failed to load tabular chats: deadlock",
     );
   });
 });
@@ -70,7 +77,7 @@ describe("deleteAllUserTabularReviews", () => {
       return {};
     });
 
-    const count = await deleteAllUserTabularReviews(db as never, "u1");
+    const count = await deleteAllUserTabularReviews(db as never, "u1", null);
 
     expect(count).toBe(2);
     const deletes = calls
@@ -90,7 +97,7 @@ describe("deleteAllUserTabularReviews", () => {
         : {},
     );
 
-    expect(await deleteAllUserTabularReviews(db as never, "u1")).toBe(501);
+    expect(await deleteAllUserTabularReviews(db as never, "u1", null)).toBe(501);
 
     const reviewDeletes = callsFor("tabular_reviews", "delete");
     expect(reviewDeletes).toHaveLength(2);
@@ -101,7 +108,7 @@ describe("deleteAllUserTabularReviews", () => {
   it("short-circuits to 0 with no deletes when the user has no reviews", async () => {
     const { db, calls } = makeFakeDb();
 
-    const count = await deleteAllUserTabularReviews(db as never, "u1");
+    const count = await deleteAllUserTabularReviews(db as never, "u1", null);
 
     expect(count).toBe(0);
     expect(calls.filter((c) => c.op === "delete")).toEqual([]);
@@ -109,11 +116,11 @@ describe("deleteAllUserTabularReviews", () => {
 });
 
 describe("deleteUserProjects", () => {
-  it("returns 0 untouched when an explicit project list is empty", async () => {
+  it("returns 0 without deleting when the workspace has no owned projects", async () => {
     const { db, calls } = makeFakeDb();
 
-    expect(await deleteUserProjects(db as never, "u1", [])).toBe(0);
-    expect(calls).toEqual([]);
+    expect(await deleteUserProjects(db as never, "u1", null)).toBe(0);
+    expect(calls.filter(c => c.op === "delete")).toEqual([]);
   });
 
   // Dev drift: upstream #295 moved storage cleanup to the documents module's
@@ -137,7 +144,7 @@ describe("deleteUserProjects", () => {
       return {};
     });
 
-    const count = await deleteUserProjects(db as never, "u1", ["p1", "p-not-mine"]);
+    const count = await deleteUserProjects(db as never, "u1", null);
 
     expect(count).toBe(1);
     // Ownership filter: the project select carries BOTH user_id eq and id in.
@@ -145,7 +152,7 @@ describe("deleteUserProjects", () => {
       (c) => c.table === "projects" && c.op === "select",
     )!;
     expect(filterValue(projectSelect, "eq", "user_id")).toBe("u1");
-    expect(filterValue(projectSelect, "in", "id")).toEqual(["p1", "p-not-mine"]);
+    expect(filterValue(projectSelect, "is", "org_id")).toBeNull();
     // Projects themselves deleted last.
     const deletes = calls.filter((c) => c.op === "delete").map((c) => c.table);
     expect(deletes[deletes.length - 1]).toBe("projects");

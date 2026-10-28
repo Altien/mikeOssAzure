@@ -215,6 +215,8 @@ describe("exports enforce current read access", () => {
             ...fields,
         });
         const { db } = makeExportDb({
+            // Dev drift: active-organization checks need the real parent row.
+            organizations: [{ id: "current-org", kind: "team" }, { id: "old-org", kind: "team" }],
             org_members: [{ org_id: "current-org", user_id: userId, role: "member" }],
             playbooks: [
                 playbook("playbook-personal"),

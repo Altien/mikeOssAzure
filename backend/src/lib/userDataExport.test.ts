@@ -1,3 +1,4 @@
+// Dev drift: candidates carry real creator/parent metadata before current access checks.
 import { describe, it, expect } from "vitest";
 import { makeFakeDb, type DbCall } from "../test/helpers/fakeDb";
 import {
@@ -28,11 +29,12 @@ describe("userExportFilename", () => {
 describe("buildUserChatsExport", () => {
   it("exports assistant + tabular chats with their messages, keyed to the user", async () => {
     const { db } = makeFakeDb((call) => {
-      if (call.table === "chats") return { data: [{ id: "c1", title: "T" }] };
+      if (call.table === "chats") return { data: [{ id: "c1", user_id: "u1", title: "T" }] };
       if (call.table === "chat_messages")
         return { data: [{ id: "m1", chat_id: "c1" }] };
+      if (call.table === "tabular_reviews") return { data: [{ id: "r1", user_id: "u1" }] };
       if (call.table === "tabular_review_chats")
-        return { data: [{ id: "tc1" }] };
+        return { data: [{ id: "tc1", review_id: "r1" }] };
       if (call.table === "tabular_review_chat_messages")
         return { data: [{ id: "tm1", chat_id: "tc1" }] };
       return {};
@@ -42,11 +44,11 @@ describe("buildUserChatsExport", () => {
 
     expect(out.user).toEqual({ id: "u1", email: "u@x.com" });
     expect(out.assistant_chats).toEqual({
-      chats: [{ id: "c1", title: "T" }],
+      chats: [{ id: "c1", user_id: "u1", title: "T" }],
       messages: [{ id: "m1", chat_id: "c1" }],
     });
     expect(out.tabular_review_chats).toEqual({
-      chats: [{ id: "tc1" }],
+      chats: [{ id: "tc1", review_id: "r1" }],
       messages: [{ id: "tm1", chat_id: "tc1" }],
     });
     expect(typeof out.exported_at).toBe("string");
@@ -63,12 +65,12 @@ describe("buildUserChatsExport", () => {
   });
 
   it("pages through results 1000 at a time until a short page arrives", async () => {
-    const fullPage = Array.from({ length: 1000 }, (_, i) => ({ id: `c${i}` }));
+    const fullPage = Array.from({ length: 1000 }, (_, i) => ({ id: `c${i}`, user_id: "u1" }));
     const { db, callsFor } = makeFakeDb((call) => {
       if (call.table === "chats") {
         return rangeStart(call) === 0
           ? { data: fullPage }
-          : { data: [{ id: "c-last" }] };
+          : { data: [{ id: "c-last", user_id: "u1" }] };
       }
       if (call.table === "chat_messages") return { data: [] };
       return {};
@@ -85,7 +87,7 @@ describe("buildUserChatsExport", () => {
 describe("buildUserTabularReviewsExport", () => {
   it("exports reviews with cells, chats, and messages", async () => {
     const { db } = makeFakeDb((call) => {
-      if (call.table === "tabular_reviews") return { data: [{ id: "r1" }] };
+      if (call.table === "tabular_reviews") return { data: [{ id: "r1", user_id: "u1" }] };
       if (call.table === "tabular_cells")
         return { data: [{ id: "cell1", review_id: "r1" }] };
       if (call.table === "tabular_review_chats")
@@ -97,7 +99,7 @@ describe("buildUserTabularReviewsExport", () => {
 
     const out = await buildUserTabularReviewsExport(db as never, "u1", "u@x.com");
 
-    expect(out.tabular_reviews).toEqual([{ id: "r1" }]);
+    expect(out.tabular_reviews).toEqual([{ id: "r1", user_id: "u1" }]);
     expect(out.tabular_cells).toEqual([{ id: "cell1", review_id: "r1" }]);
     expect(out.tabular_review_chats).toEqual({
       chats: [{ id: "tc1", review_id: "r1" }],
@@ -202,10 +204,10 @@ describe("buildUserAccountExport", () => {
     const out = await buildUserAccountExport(db as never, "u1", null);
 
     expect(out.api_keys).toEqual([
-      { provider: "claude", has_key: true, created_at: "c", updated_at: "u" },
+      { provider: "claude", has_key: true, settings: null, enabled: true, created_at: "c", updated_at: "u" },
     ]);
     const keySelect = callsFor("user_api_keys", "select")[0];
-    expect(keySelect.columns).toBe("provider, created_at, updated_at");
+    expect(keySelect.columns).toBe("provider, settings, enabled, created_at, updated_at");
     expect(keySelect.columns).not.toContain("encrypted");
   });
 });
