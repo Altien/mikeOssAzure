@@ -5,6 +5,8 @@ const { streamTextMock } = vi.hoisted(() => ({
 }));
 vi.mock("ai", () => ({
     streamText: streamTextMock,
+    // Dev drift: the real provider model is wrapped with deadline middleware.
+    wrapLanguageModel: ({ model }: { model: unknown }) => model,
     stepCountIs: (count: number) => ({ count }),
     jsonSchema: (schema: unknown) => schema,
     tool: (definition: unknown) => definition,

@@ -1,3 +1,4 @@
+import { resetModelRegistryCache } from "../../../lib/llm/registry";
 import express from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

@@ -4,6 +4,10 @@ const bytes = new TextEncoder().encode("# notes\n\nfirst write\n");
 
 // Dev drift: #295 moved this file into modules/chat/engine/tools; path re-rooted.
 vi.mock("../../../../lib/storage", () => ({
+  // Dev drift: optional document reads use the typed optional storage boundary.
+  downloadFileIfAvailable: vi.fn(async () =>
+    bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
+  ),
   downloadFile: vi.fn(async () =>
     bytes.buffer.slice(
       bytes.byteOffset,
