@@ -513,6 +513,7 @@ type ModelAvailability =
   { available: true } | { available: false; reason: string };
 
 const PROVIDER_DISPLAY_NAMES: Record<Provider, string> = {
+  kimi: "Kimi",
   claude: "Anthropic (Claude)",
   gemini: "Google (Gemini)",
   openai: "OpenAI",
