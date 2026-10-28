@@ -452,7 +452,7 @@ export async function runToolCalls(
   const courtlistenerEvents: CourtlistenerToolEvent[] = [];
   const caseCitationEvents: CaseCitationEvent[] = [];
   const mcpEvents: McpToolEvent[] = [];
-  const approvalItems: AskInputItem[] = [];
+  const approvalItems: ConnectorApprovalItem[] = [];
   const authorityTraceEvents: AuthorityTraceEvent[] = [];
   const courtState: CourtlistenerTurnState =
     courtlistenerState ??
