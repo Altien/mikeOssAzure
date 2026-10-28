@@ -268,9 +268,22 @@ begin
     select d.id document_id,d.library_kind,v.id version_id,v.version_number,v.filename,v.file_type,
       v.storage_path,v.text_revision
     from public.documents d join public.document_versions v on v.document_id=d.id
+    left join public.projects placement_project on placement_project.id=d.project_id
+    left join public.workflows placement_workflow on placement_workflow.id=d.workflow_id
     where d.archived_at is null and v.deleted_at is null
       and (case when p_version_id is null then v.id=d.current_version_id else v.id=p_version_id end)
-      and public.workspace_matches(coalesce(p_workspace,'personal'),d.org_id)
+      -- Match source152 authoritative parent placement. Parent NULL means
+      -- Personal; missing parents fail closed and never fall back to d.org_id.
+      and case
+        when d.project_id is not null then placement_project.id is not null
+        when d.workflow_id is not null then placement_workflow.id is not null
+        else true
+      end
+      and public.workspace_matches(coalesce(p_workspace,'personal'),case
+        when d.project_id is not null then placement_project.org_id
+        when d.workflow_id is not null then placement_workflow.org_id
+        else d.org_id
+      end)
       and case p_scope
         when 'project' then d.project_id=p_project_id
         when 'library' then d.project_id is null and d.workflow_id is null and d.library_kind='file' and d.user_id::text=p_user_id

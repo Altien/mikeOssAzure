@@ -21,7 +21,7 @@ export type DocStore = Map<
      */
     inline_text?: string;
     /** Search handles pin the source revision and reauthorize every subsequent read. */
-    search_source?: { revision: string; userId: string; userEmail?: string | null };
+    search_source?: { revision: string; userId: string; userEmail?: string | null; workspace: string };
   }
 >;
 

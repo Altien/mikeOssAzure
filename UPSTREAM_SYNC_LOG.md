@@ -18,3 +18,5 @@
 - Source153 58b2687b: document text search →0137; updated sort →0138; History status →0139; creator filter →0140; generation activity →0141. Canonical TEXT/UUID access and private service-role history; preserve0061 stale-cell reset. Parent placement/read original-workspace corrections follow as separate fix. needs_review.
 
   Dev queue translation:0137 processing/publication/terminal failure RPCs retain canonical job→version→text lock order, claim token/attempt/payload/revision checks and retry/cancel guards. Disabled-runner inline work uses the same claim_db_job/processClaimedJob facade.
+
+  Separate153 fix: server-resolved search_source.workspace stays request-scoped and is rechecked before read/revision. No cross-turn persistence added. Find parent joins/CASE fail closed for dangling parents and preserve parentNULL Personal; original actor retained.

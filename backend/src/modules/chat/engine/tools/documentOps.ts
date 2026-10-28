@@ -1,3 +1,4 @@
+import { findDocumentsOutsideWorkspace } from "../../../../lib/documentWorkspace";
 import { readStoredDocumentText, createDocumentVersion, activateDocumentVersion, updateDocumentVersion } from "../../../documents/documents.service";
 import {
   downloadFile,
@@ -1537,6 +1538,15 @@ export async function readDocumentContent(
     // version id. Recheck access before serving persisted text or any bytes.
     if (docInfo.search_source) {
       if (!db || !documentId || !versionId) {
+        emitDocRead();
+        return "Document could not be read.";
+      }
+      const workspace = docInfo.search_source.workspace;
+      // References are request-scoped server state. A legacy/unknown scope
+      // cannot be rebound to the current UI or model-selected workspace.
+      if (typeof workspace !== "string" || !workspace ||
+        (await findDocumentsOutsideWorkspace(db,[documentId],
+          workspace === "personal" ? null : workspace,{ includeWorkflowAssets: true })).length) {
         emitDocRead();
         return "Document could not be read.";
       }

@@ -786,8 +786,10 @@ export async function runToolCalls(
       };
       const rawDocId = typeof args.doc_id === "string" ? args.doc_id : undefined;
       const label = rawDocId ? resolveDocLabel(rawDocId, docStore, docIndex) : null;
+      // Server-resolved conversation scope is fixed for this tool call.
+      const searchWorkspace = (await teamOrgIdOf(db, options.orgId)) ?? "personal";
       const result = await findDocumentText(db, {
-        userId, userEmail: options.userEmail, workspace: options.orgId ?? "personal",
+        userId, userEmail: options.userEmail, workspace: searchWorkspace,
         scope: typeof args.scope === "string" ? args.scope : "",
         query: typeof args.query === "string" ? args.query : "",
         projectId: args.scope === "project" ? projectId : null,
@@ -814,7 +816,7 @@ export async function runToolCalls(
         docStore.set(docId, {
           filename: match.filename, file_type: match.file_type, storage_path: match.storage_path,
           source_kind: match.library_kind === "template" ? "library_template" : "document",
-          search_source: { revision: match.revision, userId, userEmail: options.userEmail },
+          search_source: { revision: match.revision, userId, userEmail: options.userEmail, workspace: searchWorkspace },
         });
         if (docIndex) docIndex[docId] = {
           document_id: match.document_id, filename: match.filename,
