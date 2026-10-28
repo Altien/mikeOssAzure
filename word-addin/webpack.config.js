@@ -27,9 +27,9 @@ module.exports = async (_env, options) => {
   }
 
   if (!isDev) {
-    const required = [
-      "REACT_APP_WEB_APP_URL",
-    ];
+    // Dev fork: no Supabase URL/key — sign-in is Entra (MSAL) and its tenant /
+    // client / scope come from the backend's GET /config at runtime.
+    const required = ["REACT_APP_API_BASE_URL"];
     const missing = required.filter((name) => !process.env[name]?.trim());
     if (missing.length > 0) {
       throw new Error(
@@ -89,9 +89,16 @@ module.exports = async (_env, options) => {
     }
 
     // Word loads the task pane over HTTPS, and its WebView blocks "mixed content"
-    // (HTTP requests from an HTTPS page). Proxy the local Mike API through this
-    // HTTPS dev server so authentication and API calls stay same-origin and the
-    // HttpOnly session cookie works consistently across Word hosts.
+    // (HTTP requests from an HTTPS page). The local Mike API only serves HTTP,
+    // so calling it directly fails with "Load failed". Proxy it through this
+    // HTTPS dev server instead, so the pane makes only same-origin HTTPS calls
+    // (REACT_APP_API_BASE_URL=https://localhost:3000) that webpack forwards to
+    // the local HTTP backend server-side. The target is overridable so the
+    // proxy tracks whatever port the backend is actually on.
+    // Dev fork: the backend mounts its routers under /api and serves the
+    // runtime auth config at /config, so both are forwarded unchanged (no
+    // path rewrite); there is no Supabase proxy (sign-in is Entra / MSAL,
+    // which talks to login.microsoftonline.com directly).
     const apiTarget = process.env.API_PROXY_TARGET || "http://localhost:3001";
     const objectStorageTarget =
       process.env.OBJECT_STORAGE_PROXY_TARGET || "http://localhost:9000";
@@ -102,11 +109,10 @@ module.exports = async (_env, options) => {
     }
     devServerConfig.proxy = [
       {
-        context: ["/api"],
+        context: ["/api", "/config"],
         target: apiTarget,
         changeOrigin: true,
         secure: false,
-        pathRewrite: { "^/api": "" },
       },
       {
         // A local signed URL can use https://localhost:3200 as its public
@@ -120,45 +126,15 @@ module.exports = async (_env, options) => {
     ];
   }
 
-  // Optional source-map upload so Sentry shows readable stack traces for
-  // the minified production bundle. Only when the three upload settings are
-  // present: maps are generated as hidden (no sourceMappingURL comment),
-  // sent to Sentry, then deleted so they never ship in dist/.
-  const sentryUploadConfigured =
-    !isDev &&
-    !!process.env.SENTRY_AUTH_TOKEN &&
-    !!process.env.SENTRY_ORG &&
-    !!process.env.SENTRY_PROJECT;
-  const sentryPlugins = sentryUploadConfigured
-    ? [
-        require("@sentry/webpack-plugin").sentryWebpackPlugin({
-          org: process.env.SENTRY_ORG,
-          project: process.env.SENTRY_PROJECT,
-          authToken: process.env.SENTRY_AUTH_TOKEN,
-          release: process.env.REACT_APP_SENTRY_RELEASE
-            ? { name: process.env.REACT_APP_SENTRY_RELEASE }
-            : undefined,
-          telemetry: false,
-          sourcemaps: {
-            filesToDeleteAfterUpload: ["dist/**/*.map"],
-          },
-        }),
-      ]
-    : [];
-
   /** @type {import('webpack').Configuration} */
   const config = {
     // Keep readable stack traces locally without publishing application source
     // and embedded source content in production artifacts.
-    devtool: isDev
-      ? "source-map"
-      : sentryUploadConfigured
-        ? "hidden-source-map"
-        : false,
+    devtool: isDev ? "source-map" : false,
     entry: {
       taskpane: "./src/taskpane/index.tsx",
       commands: "./src/commands/commands.ts",
-      oauthDialog: "./src/oauth-dialog/index.ts",
+      "oauth-dialog": "./src/oauth-dialog/index.ts",
     },
     output: {
       path: path.resolve(__dirname, "dist"),
@@ -168,9 +144,13 @@ module.exports = async (_env, options) => {
     },
     resolve: {
       extensions: [".ts", ".tsx", ".js", ".jsx"],
-      // Resolve each package's nested dependencies before the add-in fallback.
-      // Sentry's build plugin and runtime SDK can require different versions.
-      modules: ["node_modules", path.resolve(__dirname, "node_modules")],
+      // Upstream divergence (sync-log: 54b6b3a1): upstream searches the
+      // nearest node_modules first so its npm-hoisted Sentry build plugin and
+      // runtime SDK can use different versions. Dev has no Sentry webpack
+      // plugin, and pnpm keeps each package's own deps nested, so the add-in's
+      // node_modules stays first: shared frontend sources then bundle the
+      // add-in's single copy of clsx, Radix, Sentry, etc.
+      modules: [path.resolve(__dirname, "node_modules"), "node_modules"],
       alias: {
         // Cross-app source files must use the add-in's React runtime so the
         // bundle never picks up a second copy from frontend/node_modules.
@@ -182,6 +162,7 @@ module.exports = async (_env, options) => {
         // same SVGs and emits content-hashed copies for the add-in bundle.
         "@icons": path.resolve(__dirname, "..", "frontend", "public", "icons"),
         "@mike/edit-card-ui": frontendSharedUi("EditCardUI.tsx"),
+        "@mike/sentry-event": frontendShared("lib", "sentryEvent.ts"),
         "@mike/edit-cards-section-ui": frontendSharedUi(
           "EditCardsSectionUI.tsx",
         ),
@@ -223,11 +204,7 @@ module.exports = async (_env, options) => {
           "uploadSessionClient.ts",
         ),
         "@mike/secure-uuid": frontendShared("lib", "secureUuid.ts"),
-        // Sentry event hygiene (PII scrub + console-bridge dedupe) is one
-        // policy for the web app and the add-in.
-        "@mike/sentry-event": frontendShared("lib", "sentryEvent.ts"),
-        // Error presentation: one classifier and one toast stack for both
-        // clients, so a failure reads the same in Word as it does on the web.
+        // Error presentation is shared across the web app and add-in.
         "@mike/toast-store": frontendShared("lib", "toastStore.ts"),
         "@mike/toast-ui": frontendSharedUi("ToastUI.tsx"),
         "@mike/user-error": frontendShared("lib", "userError.ts"),
@@ -271,39 +248,26 @@ module.exports = async (_env, options) => {
       new HtmlWebpackPlugin({
         filename: "oauth-dialog.html",
         template: "./src/oauth-dialog/index.html",
-        chunks: ["oauthDialog"],
+        chunks: ["oauth-dialog"],
       }),
       // Expose env vars to the bundle so TypeScript process.env calls compile
       new webpack.EnvironmentPlugin({
-        // Development defaults stay on the HTTPS dev-server origin, whose
-        // proxies reach the HTTP backends without mixed-content failures.
-        // Production hosting must reverse-proxy this same-origin path to the
-        // Mike backend so HttpOnly auth cookies are never third-party cookies.
-        REACT_APP_API_BASE_URL:
-          process.env.REACT_APP_API_BASE_URL || "/api",
-        // Deployment override only. Leaving it empty makes DEFAULT_MODEL_ID in
-        // src/taskpane/lib/modelCatalog.ts the single source of the default
-        // model — this config file cannot import that TypeScript constant, so
-        // repeating its value here would be a second copy that silently drifts.
-        REACT_APP_DEFAULT_MODEL: process.env.REACT_APP_DEFAULT_MODEL || "",
+        // Backend ORIGIN (no /api suffix) — same meaning as the web
+        // frontend's NEXT_PUBLIC_API_BASE_URL.
+        // Upstream divergence (sync-log: 148635e3): same-origin /api and
+        // /config retain the Entra runtime configuration boundary.
+        REACT_APP_API_BASE_URL: isDev ? "" : undefined,
+        // Public Supabase values are only used when runtime /config selects
+        // the Supabase provider. Entra/local paths never construct this client.
+        REACT_APP_SUPABASE_URL: "",
+        REACT_APP_SUPABASE_ANON_KEY: "",
+        REACT_APP_DEFAULT_MODEL: "gemini-3-flash-preview",
         // The Mike web app origin — the task pane links here (e.g. the
         // account/api-keys page); it never fetches from it.
         REACT_APP_WEB_APP_URL: isDev
-          ? process.env.REACT_APP_WEB_APP_URL || "https://app.mikeoss.com"
-          : undefined,
-        // Sentry is off unless a DSN is baked in at build time (the pane is
-        // a static bundle; there is no runtime environment to read).
-        REACT_APP_SENTRY_DISABLED: process.env.REACT_APP_SENTRY_DISABLED || "",
-        REACT_APP_SENTRY_DSN: process.env.REACT_APP_SENTRY_DSN || "",
-        REACT_APP_SENTRY_INSTALL: process.env.REACT_APP_SENTRY_INSTALL || "",
-        REACT_APP_SENTRY_ENVIRONMENT:
-          process.env.REACT_APP_SENTRY_ENVIRONMENT || "",
-        REACT_APP_SENTRY_RELEASE: process.env.REACT_APP_SENTRY_RELEASE || "",
-        REACT_APP_GIT_SHA: process.env.REACT_APP_GIT_SHA || "",
-        REACT_APP_SENTRY_TRACES_SAMPLE_RATE:
-          process.env.REACT_APP_SENTRY_TRACES_SAMPLE_RATE || "",
+          ? process.env.REACT_APP_WEB_APP_URL || "http://localhost:3000"
+          : "",
       }),
-      ...sentryPlugins,
     ],
     devServer: devServerConfig,
   };
