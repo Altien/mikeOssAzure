@@ -934,6 +934,7 @@ export function ProjectChatPanel({
                                         activeCitation={activeCitation}
                                         onCitationClick={onCitationClick}
                                         onCaseClick={onCaseClick}
+                                        onAuthorityTraceOpen={onAuthorityTraceOpen}
                                         onOpenCitationSource={(citation) => {
                                             void onCitationClick(
                                                 citation,
