@@ -1,4 +1,5 @@
 "use client";
+import { useRequestOwner } from "@/app/hooks/useRequestOwner";
 
 import {
   useCallback,
@@ -186,13 +187,19 @@ function formatStatus(value: string): string {
     .replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
-export function AuditHistory({
+export function AuditHistory(props: { orgId?: string; onBack?: () => void }) {
+  const { key } = useRequestOwner(props.orgId);
+  return <AuditHistoryOwned key={key} {...props} />;
+}
+
+function AuditHistoryOwned({
   orgId,
   onBack,
 }: {
   orgId?: string;
   onBack?: () => void;
 }) {
+  const { capture } = useRequestOwner(orgId);
   const title = orgId ? "Audit log" : "My Activity";
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -232,6 +239,8 @@ export function AuditHistory({
 
   const load = useCallback(
     async (nextPage: number, append: boolean) => {
+      const isCurrent = capture();
+      if (!isCurrent()) return;
       // Observer callbacks and manual retries may arrive before React renders.
       if (append && controllerRef.current) return;
       controllerRef.current?.abort();
@@ -263,8 +272,9 @@ export function AuditHistory({
             page: nextPage,
           },
           controller.signal,
+          isCurrent,
         );
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || !isCurrent()) return;
         setError(false);
         setEvents((current) =>
           append ? appendUniqueRows(current, out.events) : out.events,
@@ -274,21 +284,21 @@ export function AuditHistory({
         );
         setPage(nextPage);
       } catch {
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || !isCurrent()) return;
         if (!append) {
           setEvents([]);
           setHasMore(false);
         }
         setError(true);
       } finally {
-        if (controllerRef.current === controller) {
+        if (isCurrent() && controllerRef.current === controller) {
           controllerRef.current = null;
           setLoading(false);
           setLoadingMore(false);
         }
       }
     },
-    [orgId, username, action, debouncedSearch, from, sort, status, surface, to],
+    [capture, orgId, username, action, debouncedSearch, from, sort, status, surface, to],
   );
 
   useEffect(() => {
@@ -299,7 +309,8 @@ export function AuditHistory({
   // The CSV is built by a background job rather than in the request: a wide
   // filter can sweep thousands of events, and the artifact outlives the tab.
   const handleExport = async (range: HistoryDateRange, eventIds?: string[]) => {
-    if (exportingRef.current) return;
+    const isCurrent = capture();
+    if (!isCurrent() || exportingRef.current) return;
     if (eventIds && eventIds.length > 2000) {
       setActionError("Select up to 2,000 entries to export at once.");
       return;
@@ -324,7 +335,8 @@ export function AuditHistory({
             }),
         sort_by: sort?.key,
         sort_dir: sort?.direction,
-      });
+      }, isCurrent);
+      if (!isCurrent()) return;
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
@@ -334,12 +346,12 @@ export function AuditHistory({
       URL.revokeObjectURL(url);
       if (!eventIds) setExportOpen(false);
     } catch {
+      if (!isCurrent()) return;
       if (eventIds)
         setActionError("Your export could not be created. Please try again.");
       else setExportError(true);
     } finally {
-      exportingRef.current = false;
-      setExporting(false);
+      if (isCurrent()) { exportingRef.current = false; setExporting(false); }
     }
   };
 

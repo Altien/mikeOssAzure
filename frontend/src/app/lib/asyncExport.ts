@@ -17,14 +17,15 @@ const POLL_LIMIT = 150; // ~5 minutes
 export async function runUserExport(
     type: UserExportType,
     params?: Record<string, unknown>,
+    isCurrentAccount?: () => boolean,
 ): Promise<{ blob: Blob; filename: string | null }> {
-    const { export_id } = await startUserExport(type, params);
+    const { export_id } = await startUserExport(type, params, isCurrentAccount);
     for (let i = 0; i < POLL_LIMIT; i++) {
         await new Promise((resolve) => setTimeout(resolve, POLL_MS));
-        const status = await getUserExportStatus(export_id);
+        const status = await getUserExportStatus(export_id, isCurrentAccount);
         if (status.status === "failed") throw new Error("Export build failed");
         if (status.status === "done") {
-            const { blob, filename } = await downloadUserExport(export_id);
+            const { blob, filename } = await downloadUserExport(export_id, isCurrentAccount);
             return { blob, filename: filename ?? status.filename };
         }
     }

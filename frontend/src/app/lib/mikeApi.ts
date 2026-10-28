@@ -31,7 +31,7 @@ import {
     bounceIfUnauthorized,
 } from "@/app/lib/auth-token";
 import { isPanelDocument } from "@/app/components/shared/types";
-import { authenticatedFetch } from "@/app/lib/authEvents";
+import { authenticatedFetch, currentAuthEpoch } from "@/app/lib/authEvents";
 import { markErrorHandled, reportApiFailure, reportNetworkFailure, trackPendingRequest } from "@/app/lib/errorReporting";
 const apiFetch: typeof fetch = async (input, init) => {
     const release = trackPendingRequest();
@@ -229,7 +229,13 @@ export async function apiRequest<T>(
     init?: RequestInit,
     isCurrentAccount?: () => boolean,
 ): Promise<T> {
+    const requestEpoch = currentAuthEpoch();
+    const assertOwner = () => {
+        if (currentAuthEpoch() !== requestEpoch || (isCurrentAccount && !isCurrentAccount())) throw new Error("Request owner changed");
+    };
+    assertOwner();
     const authHeaders = await getAuthHeader();
+    assertOwner();
     // Auth token acquisition can await a refresh. A settings save started by
     // the previous account must not then use the next account's credential.
     if (isCurrentAccount && !isCurrentAccount()) {
@@ -245,6 +251,7 @@ export async function apiRequest<T>(
         },
     });
 
+    assertOwner();
     bounceIfUnauthorized(response);
 
     if (!response.ok) {
@@ -258,7 +265,9 @@ export async function apiRequest<T>(
         return undefined as T;
     }
 
-    return (await response.json()) as T;
+    const result = (await response.json()) as T;
+    assertOwner();
+    return result;
 }
 
 /**
@@ -293,10 +302,13 @@ export async function uploadFilesWithSession<T>(args: {
     });
 }
 
-async function apiBlobRequest(path: string): Promise<{
+async function apiBlobRequest(path: string, isCurrentAccount?: () => boolean): Promise<{
     blob: Blob;
     filename: string | null;
 }> {
+    const epoch = currentAuthEpoch();
+    const assertOwner = () => { if (epoch !== currentAuthEpoch() || (isCurrentAccount && !isCurrentAccount())) throw new Error("Request owner changed"); };
+    assertOwner();
     const response = await apiFetch(`${API_BASE}${path}`, {
         cache: "no-store",
         headers: {
@@ -304,6 +316,7 @@ async function apiBlobRequest(path: string): Promise<{
         },
     });
 
+    assertOwner();
     bounceIfUnauthorized(response);
 
     if (!response.ok) {
@@ -312,8 +325,10 @@ async function apiBlobRequest(path: string): Promise<{
 
     const disposition = response.headers.get("content-disposition") ?? "";
     const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+    const blob = await response.blob();
+    assertOwner();
     return {
-        blob: await response.blob(),
+        blob,
         filename: filenameMatch?.[1] ?? null,
     };
 }
@@ -791,29 +806,30 @@ export type UserExportStatus =
  */
 export async function startUserExport(
     type: UserExportType,
-    params?: Record<string, unknown>,
+    params?: Record<string, unknown>, isCurrentAccount?: () => boolean,
 ): Promise<{ export_id: string }> {
     return apiRequest<{ export_id: string }>("/user/exports", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(params ? { type, params } : { type }),
-    });
+    }, isCurrentAccount);
 }
 
 export async function getUserExportStatus(
-    exportId: string,
+    exportId: string, isCurrentAccount?: () => boolean,
 ): Promise<UserExportStatus> {
     return apiRequest<UserExportStatus>(
-        `/user/exports/${encodeURIComponent(exportId)}`,
+        `/user/exports/${encodeURIComponent(exportId)}`, undefined, isCurrentAccount,
     );
 }
 
-export async function downloadUserExport(exportId: string): Promise<{
+export async function downloadUserExport(exportId: string, isCurrentAccount?: () => boolean,
+): Promise<{
     blob: Blob;
     filename: string | null;
 }> {
     return apiBlobRequest(
-        `/user/exports/${encodeURIComponent(exportId)}/download`,
+        `/user/exports/${encodeURIComponent(exportId)}/download`, isCurrentAccount,
     );
 }
 
@@ -917,7 +933,7 @@ export async function getAuditHistory(
         sortDirection?: "asc" | "desc";
         page?: number;
     },
-    signal?: AbortSignal,
+    signal?: AbortSignal, isCurrentAccount?: () => boolean,
 ): Promise<{
     events: AuditEvent[];
     total: number;
@@ -936,7 +952,7 @@ export async function getAuditHistory(
     if (params.sortBy) qs.set("sort_by", params.sortBy);
     if (params.sortDirection) qs.set("sort_dir", params.sortDirection);
     if (params.page) qs.set("page", String(params.page));
-    return apiRequest(`/audit?${qs.toString()}`, { signal });
+    return apiRequest(`/audit?${qs.toString()}`, { signal }, isCurrentAccount);
 }
 
 export async function getUserProfile(): Promise<UserProfile> {
@@ -1688,12 +1704,14 @@ export async function listOrgs(): Promise<Org[]> {
 
 export type { DeletedOrganization } from "@mike/contracts";
 
-export async function listDeletedOrganizations(): Promise<import("@mike/contracts").DeletedOrganization[]> {
-    return apiRequest("/orgs/deleted");
+export async function listDeletedOrganizations( isCurrentAccount?: () => boolean,
+): Promise<import("@mike/contracts").DeletedOrganization[]> {
+    return apiRequest("/orgs/deleted", undefined, isCurrentAccount);
 }
 
-export async function restoreOrganization(orgId: string): Promise<void> {
-    await apiRequest(`/orgs/${orgId}/restore`, { method: "POST" });
+export async function restoreOrganization(orgId: string, isCurrentAccount?: () => boolean,
+): Promise<void> {
+    await apiRequest(`/orgs/${orgId}/restore`, { method: "POST" }, isCurrentAccount);
 }
 
 export async function createOrg(name: string): Promise<Org> {
@@ -1704,8 +1722,9 @@ export async function createOrg(name: string): Promise<Org> {
     });
 }
 
-export async function getOrg(orgId: string): Promise<Org> {
-    return apiRequest<Org>(`/orgs/${orgId}`);
+export async function getOrg(orgId: string, isCurrentAccount?: () => boolean,
+): Promise<Org> {
+    return apiRequest<Org>(`/orgs/${orgId}`, undefined, isCurrentAccount);
 }
 
 export async function updateOrg(orgId: string, name: string): Promise<Org> {
@@ -1872,12 +1891,14 @@ export async function setOrgPrivateContentPermission(orgId: string, userId: stri
     });
 }
 
-export async function openOrgPrivateContent(orgId: string, kind: import("@mike/contracts").OrgPrivateContentKind, itemId: string): Promise<void> {
-    await apiRequest(`/orgs/${orgId}/private-content/${kind}/${itemId}/open`, { method: "POST" });
+export async function openOrgPrivateContent(orgId: string, kind: import("@mike/contracts").OrgPrivateContentKind, itemId: string, isCurrentAccount?: () => boolean,
+): Promise<void> {
+    await apiRequest(`/orgs/${orgId}/private-content/${kind}/${itemId}/open`, { method: "POST" }, isCurrentAccount);
 }
 
-export async function closeOrgPrivateContent(orgId: string, kind: import("@mike/contracts").OrgPrivateContentKind, itemId: string): Promise<void> {
-    await apiRequest(`/orgs/${orgId}/private-content/${kind}/${itemId}`, { method: "DELETE" });
+export async function closeOrgPrivateContent(orgId: string, kind: import("@mike/contracts").OrgPrivateContentKind, itemId: string, isCurrentAccount?: () => boolean,
+): Promise<void> {
+    await apiRequest(`/orgs/${orgId}/private-content/${kind}/${itemId}`, { method: "DELETE" }, isCurrentAccount);
 }
 
 export async function updateOrgMember(
@@ -2637,8 +2658,9 @@ export async function uploadStandaloneDocuments(
     });
 }
 
-export async function getDocument(documentId: string): Promise<Document> {
-    return apiRequest<Document>(`/single-documents/${documentId}`);
+export async function getDocument(documentId: string, isCurrentAccount?: () => boolean,
+): Promise<Document> {
+    return apiRequest<Document>(`/single-documents/${documentId}`, undefined, isCurrentAccount);
 }
 
 export async function deleteDocument(documentId: string): Promise<void> {
@@ -3691,8 +3713,9 @@ export async function getWorkflowFilterOptions(options?: {
     );
 }
 
-export async function getWorkflow(workflowId: string): Promise<Workflow> {
-    return apiRequest<Workflow>(`/workflows/${workflowId}`);
+export async function getWorkflow(workflowId: string, isCurrentAccount?: () => boolean,
+): Promise<Workflow> {
+    return apiRequest<Workflow>(`/workflows/${workflowId}`, undefined, isCurrentAccount);
 }
 
 export async function createWorkflow(payload: {

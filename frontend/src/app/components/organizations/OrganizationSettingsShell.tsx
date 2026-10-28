@@ -1,4 +1,5 @@
 "use client";
+import { useRequestOwner } from "@/app/hooks/useRequestOwner";
 
 import {
   createContext,
@@ -86,6 +87,7 @@ export function OrganizationSettingsProvider({
   children: ReactNode;
 }) {
   const router = useRouter();
+  const { capture } = useRequestOwner(orgId);
   const { workspaceId, organizations } = useWorkspace();
   const [org, setOrg] = useState<Org | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -97,16 +99,20 @@ export function OrganizationSettingsProvider({
 
   const reload = useCallback(async () => {
     // Another workspace's settings are not read at all.
-    if (!inWorkspace) return;
+    const isCurrent = capture();
+    if (!inWorkspace || !isCurrent()) return;
     try {
-      setOrg(await getOrg(orgId));
+      const result = await getOrg(orgId, isCurrent);
+      if (!isCurrent()) return;
+      setOrg(result);
       setLoadError(null);
     } catch (error) {
+      if (!isCurrent()) return;
       setLoadError(
         userFacingApiError(error, "Could not load this organization."),
       );
     }
-  }, [inWorkspace, orgId]);
+  }, [capture, inWorkspace, orgId]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- start the organization request once its id is known

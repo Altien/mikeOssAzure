@@ -1,4 +1,5 @@
 "use client";
+import { useRequestOwner } from "@/app/hooks/useRequestOwner";
 
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -59,6 +60,8 @@ export function HistoryEventModal({
   onAccessChange?: (hasAccess: boolean) => void;
 }) {
   const router = useRouter();
+  const { capture } = useRequestOwner(event.org_id ?? undefined);
+  const isCurrent = capture();
   const privateAccess = personal ? null : auditPrivateAccess(event);
   const documentId =
     event.document_id ??
@@ -83,11 +86,11 @@ export function HistoryEventModal({
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
-    if (!preview || !documentId) return;
+    if (!preview || !documentId || !isCurrent()) return;
     let current = true;
-    void getDocument(documentId)
+    void getDocument(documentId, isCurrent)
       .then((loaded) => {
-        if (current)
+        if (current && isCurrent())
           setDocument({
             document_id: loaded.id,
             title: loaded.filename,
@@ -102,7 +105,7 @@ export function HistoryEventModal({
           });
       })
       .catch((cause: unknown) => {
-        if (!current) return;
+        if (!current || !isCurrent()) return;
         setError(
           cause instanceof MikeApiError && cause.status === 403
             ? "You do not have access to this document."
@@ -118,9 +121,9 @@ export function HistoryEventModal({
     return () => {
       current = false;
     };
-  }, [documentId, preview, attempt]);
+  }, [documentId, preview, attempt, capture]);
   async function withAccess(action: () => void | Promise<void>) {
-    if (pending.current) return;
+    if (pending.current || !isCurrent()) return;
     pending.current = true;
     setBusy(true);
     setActionError(null);
@@ -131,18 +134,19 @@ export function HistoryEventModal({
           event.org_id,
           privateAccess.kind,
           privateAccess.item_id,
+          isCurrent,
         );
-        if (!mounted.current) return;
+        if (!mounted.current || !isCurrent()) return;
         setHasAccess(true);
         onAccessChange?.(true);
       }
-      if (mounted.current) await action();
+      if (mounted.current && isCurrent()) await action();
     } catch (cause) {
-      if (mounted.current)
+      if (mounted.current && isCurrent())
         setActionError(privateAccessError(cause, "Could not open this item."));
     } finally {
       pending.current = false;
-      if (mounted.current) setBusy(false);
+      if (mounted.current && isCurrent()) setBusy(false);
     }
   }
   const openPreview = () =>
@@ -152,7 +156,7 @@ export function HistoryEventModal({
       setPreview(true);
     });
   async function endAccess() {
-    if (!privateAccess || !event.org_id || pending.current) return;
+    if (!privateAccess || !event.org_id || pending.current || !isCurrent()) return;
     pending.current = true;
     setBusy(true);
     setActionError(null);
@@ -161,17 +165,18 @@ export function HistoryEventModal({
         event.org_id,
         privateAccess.kind,
         privateAccess.item_id,
+        isCurrent,
       );
-      if (!mounted.current) return;
+      if (!mounted.current || !isCurrent()) return;
       setHasAccess(false);
       setDocument(null);
       onAccessChange?.(false);
     } catch (cause) {
-      if (mounted.current)
+      if (mounted.current && isCurrent())
         setActionError(privateAccessError(cause, "Could not end access."));
     } finally {
       pending.current = false;
-      if (mounted.current) setBusy(false);
+      if (mounted.current && isCurrent()) setBusy(false);
     }
   }
   const retryPreview = () => {
@@ -291,9 +296,9 @@ export function HistoryEventModal({
                     const href =
                       destination?.href ??
                       workflowDetailPath(
-                        await getWorkflow(privateAccess.item_id),
+                        await getWorkflow(privateAccess.item_id, isCurrent),
                       );
-                    if (mounted.current) router.push(href);
+                    if (mounted.current && isCurrent()) router.push(href);
                   })
                 }
               >

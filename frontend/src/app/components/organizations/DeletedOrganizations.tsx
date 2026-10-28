@@ -1,4 +1,5 @@
 "use client";
+import { useRequestOwner } from "@/app/hooks/useRequestOwner";
 
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -23,11 +24,17 @@ import { SettingsRow } from "@/app/components/settings/SettingsRow";
 import { GlassCardUI } from "@/shared/ui/GlassCardUI";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 
-export function DeletedOrganizations({
+export function DeletedOrganizations(props: { onRestored: () => Promise<void> }) {
+  const { key } = useRequestOwner();
+  return <DeletedOrganizationsOwned key={key} {...props} />;
+}
+
+function DeletedOrganizationsOwned({
   onRestored,
 }: {
   onRestored: () => Promise<void>;
 }) {
+  const { capture } = useRequestOwner();
   const { refreshOrganizations } = useWorkspace();
   const [orgs, setOrgs] = useState<DeletedOrganization[] | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -35,28 +42,36 @@ export function DeletedOrganizations({
   const [busy, setBusy] = useState<string | null>(null);
   const [mfaOrg, setMfaOrg] = useState<string | null>(null);
   const load = useCallback(async () => {
+    const isCurrent = capture();
+    if (!isCurrent()) return;
     try {
-      setOrgs(await listDeletedOrganizations());
+      const result = await listDeletedOrganizations(isCurrent);
+      if (!isCurrent()) return;
+      setOrgs(result);
       setLoadError(false);
     } catch {
-      setLoadError(true);
+      if (isCurrent()) setLoadError(true);
     }
-  }, []);
+  }, [capture]);
   useEffect(() => {
     void load();
   }, [load]);
 
   async function restore(id: string) {
-    if (busy) return;
+    const isCurrent = capture();
+    if (!isCurrent() || busy) return;
     setBusy(id);
     try {
       if (await needsMfaVerification()) {
-        setMfaOrg(id);
+        if (isCurrent()) setMfaOrg(id);
         return;
       }
-      await restoreOrganization(id);
+      if (!isCurrent()) return;
+      await restoreOrganization(id, isCurrent);
+      if (!isCurrent()) return;
       setOrgs((current) => current?.filter((org) => org.id !== id) ?? []);
     } catch (err) {
+      if (!isCurrent()) return;
       if (isMfaRequiredError(err)) setMfaOrg(id);
       else
         setError(
@@ -64,10 +79,10 @@ export function DeletedOrganizations({
         );
       return;
     } finally {
-      setBusy(null);
+      if (isCurrent()) setBusy(null);
     }
     // A refresh failure must not report a successful restore as a failed one.
-    await Promise.allSettled([load(), onRestored(), refreshOrganizations()]);
+    if (isCurrent()) await Promise.allSettled([load(), onRestored(), refreshOrganizations()]);
   }
 
   if (orgs?.length === 0 && !loadError) return null;
