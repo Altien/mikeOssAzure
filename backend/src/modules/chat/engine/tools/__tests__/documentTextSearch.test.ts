@@ -33,7 +33,7 @@ it("registers a fenced search result as a pinned template handle and keeps inter
   expect(content).not.toContain("private/source"); expect(content).toContain("pending_versions");
   expect(content).toContain(spotlight("", "nonce").split("\n")[0]);
   const label = [...store.keys()][0];
-  expect(store.get(label)).toMatchObject({ source_kind: "library_template", search_source: { revision: "revision", userId: "actor", workspace: "personal" } });
+  expect(store.get(label)).toMatchObject({ source_kind: "library_template", search_source: { revision: "revision", userId: "actor", workspace: "organization" } });
   expect(index[label]).toMatchObject({ document_id: "document", version_id: "history" });
   const identity = await getTurnReadIdentity({ docLabel: label, docStore: store, docIndex: index, db: searchDb.db });
   expect(identity).toMatchObject({ versionId: "history", key: "document:history:revision" });
