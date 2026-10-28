@@ -44,7 +44,7 @@ describe("runUserExport", () => {
 
         expect(startUserExportMock).toHaveBeenCalledWith("audit-csv", {
             q: "agreement",
-        });
+        }, undefined);
         expect(getUserExportStatusMock).toHaveBeenCalledTimes(2);
         expect(getUserExportStatusMock).toHaveBeenLastCalledWith("exp-1");
         expect(downloadUserExportMock).toHaveBeenCalledWith("exp-1");

@@ -135,8 +135,9 @@ describe("withItemParent", () => {
 });
 
 describe("moveProjectItemOptimistically without a known starting place", () => {
-    it("rethrows without reverting when the item was not in the loaded project", async () => {
+    it("does not issue a move when the project is not loaded", async () => {
         const s = store(project);
+        const request = vi.fn();
         await expect(
             moveProjectItemOptimistically({
                 project: null,
@@ -144,14 +145,12 @@ describe("moveProjectItemOptimistically without a known starting place", () => {
                 kind: "doc",
                 id: "d1",
                 targetFolderId: null,
-            isCurrent: () => true,
-                request: async () => {
-                    throw new Error("boom");
-                },
+                isCurrent: () => true,
+                request,
             }),
-        ).rejects.toThrow("boom");
-        // Only the optimistic write: there was no previous place to restore.
-        expect(s.set).toHaveBeenCalledTimes(1);
+        ).resolves.toBeUndefined();
+        expect(request).not.toHaveBeenCalled();
+        expect(s.set).not.toHaveBeenCalled();
     });
 });
 

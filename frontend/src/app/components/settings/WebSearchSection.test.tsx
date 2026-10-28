@@ -82,8 +82,11 @@ describe("WebSearchSection", () => {
     });
     render(<WebSearchSection />);
 
-    expect(await screen.findByLabelText("Brave Search API Key")).toBeInTheDocument();
-    expect(screen.getByLabelText("Tavily API Key")).toBeInTheDocument();
+    expect(await screen.findByText("Brave Search API Key")).toBeInTheDocument();
+    expect(screen.getByText("Tavily API Key")).toBeInTheDocument();
+    expect(screen.getAllByText("Managed by your organization.")).toHaveLength(2);
+    expect(screen.queryByLabelText("Brave Search API Key")).toBeNull();
+    expect(screen.queryByLabelText("Tavily API Key")).toBeNull();
     expect(screen.queryByLabelText("DeepSeek API Key")).toBeNull();
     expect(trigger("Other models")).toHaveTextContent("Tavily");
   });
