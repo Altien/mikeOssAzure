@@ -1,3 +1,4 @@
+// Dev drift: export attempts renew a canonical claim, check account status, and return an attempt-specific pointer.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Db } from "../../lib/supabase";
 import type { AuditEventInput } from "../../lib/audit";
@@ -147,7 +148,7 @@ const JOB = (kind: string, payload: Record<string, unknown>): DbJob => ({
     max_attempts: 3,
     run_at: "",
     claimed_at: null,
-    claim_token: null,
+    claim_token: "claim-1",
     lease_expires_at: null,
     finished_at: null,
     last_error: null,
@@ -174,7 +175,7 @@ function makeDb(selectData: unknown[] = []) {
             return { error: null };
         },
     );
-    function from() {
+    function from(table?: string) {
         const state: { op: string; filters: Record<string, unknown> } = {
             op: "select",
             filters: {},
@@ -192,6 +193,8 @@ function makeDb(selectData: unknown[] = []) {
                 state.filters[c] = v;
                 return b;
             },
+            is(c: string, v: unknown) { state.filters[c] = v; return b; },
+            maybeSingle() { return Promise.resolve({ data: table === "org_members" ? { role: "member" } : table === "organizations" ? { kind: "team" } : null, error: null }); },
             neq(c: string, v: unknown) {
                 state.filters[`neq:${c}`] = v;
                 return b;
@@ -223,6 +226,7 @@ function makeDb(selectData: unknown[] = []) {
         trace,
         from,
         rpc: vi.fn(async (name: string) => {
+            if (name === "renew_db_job") return { data: true, error: null };
             if (name === "complete_account_erasure") {
                 trace.push("account.complete");
                 return { data: true, error: null };
@@ -461,7 +465,7 @@ describe("handleStorageCleanup", () => {
 });
 
 describe("handleExportBuild", () => {
-    it("builds, uploads under the user's exports/ prefix, and returns the signed link", async () => {
+    it("builds, uploads under the user's exports/ prefix, and returns its claim-specific artifact pointer", async () => {
         const out = await handleExportBuild(
             makeDb() as never,
             JOB("export.build", { userId: "u1", type: "account" }),
@@ -508,7 +512,7 @@ describe("handleExportBuild", () => {
         );
         const [path, , contentType] = uploadFile.mock.calls[0];
         expect(path).toBe(
-            "exports/u1/job-1-mike-memory-export.zip",
+            "exports/u1/job-1-1-claim-1-mike-memory-export.zip",
         );
         expect(contentType).toBe("application/zip");
         expect(out.filename).toBe("mike-memory-export.zip");
@@ -527,13 +531,13 @@ describe("handleExportBuild", () => {
                 userId: "u1",
                 userEmail: "u@x.test",
                 type: "memory-zip",
-                orgId: "org-1",
+                orgId: "11111111-1111-4111-8111-111111111111",
             }),
         );
 
-        expect(memberDataActionAllowed).toHaveBeenCalledWith(db, "u1", "org-1", "export");
-        expect(buildMemoryArchive).toHaveBeenCalledWith(db, "u1", "u@x.test", "org-1");
-        expect(out.filename).toBe("mike-memory-export-org-1.zip");
+        expect(memberDataActionAllowed).toHaveBeenCalledWith(db, "u1", "11111111-1111-4111-8111-111111111111", "export");
+        expect(buildMemoryArchive).toHaveBeenCalledWith(db, "u1", "u@x.test", "11111111-1111-4111-8111-111111111111");
+        expect(out.filename).toBe("mike-memory-export-11111111.zip");
     });
 
     it("fails an organization's export, without retrying, once its owners turn exports off", async () => {
@@ -543,7 +547,7 @@ describe("handleExportBuild", () => {
         await expect(
             handleExportBuild(
                 makeDb() as never,
-                JOB("export.build", { userId: "u1", type: "account", orgId: "org-1" }),
+                JOB("export.build", { userId: "u1", type: "account", orgId: "11111111-1111-4111-8111-111111111111" }),
             ),
         ).rejects.toMatchObject({ name: "NonRetryableJobError" });
         expect(buildUserAccountExport).not.toHaveBeenCalled();
@@ -568,7 +572,7 @@ describe("handleExportBuild", () => {
             query,
         );
         const [path, , contentType] = uploadFile.mock.calls[0];
-        expect(path).toBe("exports/u1/job-1-my-activity.csv");
+        expect(path).toBe("exports/u1/job-1-1-claim-1-my-activity.csv");
         expect(contentType).toMatch(/^text\/csv/);
         expect(out.filename).toBe("my-activity.csv");
         expect(out.content_type).toMatch(/^text\/csv/);
@@ -608,7 +612,7 @@ describe("handleExportBuild", () => {
         expect(ensureDocAccess).toHaveBeenCalledTimes(2);
         expect(loadActiveVersion.mock.calls.map((c) => c[0])).toEqual(["d1"]);
         const [path, , contentType] = uploadFile.mock.calls[0];
-        expect(path).toBe("exports/u1/job-1-documents.zip");
+        expect(path).toBe("exports/u1/job-1-1-claim-1-documents.zip");
         expect(contentType).toBe("application/zip");
         expect(out.filename).toBe("documents.zip");
         expect(out.content_type).toBe("application/zip");

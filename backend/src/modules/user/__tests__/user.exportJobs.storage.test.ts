@@ -18,11 +18,15 @@ const upload = vi.fn<(key: string, bytes: ArrayBuffer, contentType: string) => P
 const job: DbJob = {
   id: "export-1", kind: "export.build",
   payload: { userId: "u1", type: "documents-zip", document_ids: ["d1", "d2"] },
-  status: "running", attempts: 1, max_attempts: 3, run_at: "", claimed_at: null,
+  status: "running", attempts: 1, max_attempts: 3, claim_token: "claim-1", lease_expires_at: null, run_at: "", claimed_at: null,
   finished_at: null, last_error: null, dedupe_key: null, result: null, created_at: "",
 };
 const db = {
-  from: () => ({ select: () => ({ in: async () => ({ data: ["d1", "d2"].map(id => ({ id, user_id: "u1", project_id: null })), error: null }) }) }),
+  // Dev drift: the selected-document read runs only for a live, non-erased claim.
+  rpc: vi.fn(async (name: string) => { expect(name).toBe("renew_db_job"); return { data: true, error: null }; }),
+  from: (table: string) => table === "account_erasure_requests"
+    ? { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }) }
+    : { select: () => ({ in: async () => ({ data: ["d1", "d2"].map(id => ({ id, user_id: "u1", project_id: null })), error: null }) }) },
 };
 
 beforeEach(() => {
