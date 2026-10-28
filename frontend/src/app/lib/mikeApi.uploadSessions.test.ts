@@ -1039,7 +1039,7 @@ describe("direct upload sessions", () => {
     it.each([true, false])("Word reports only exhausted storage retries (recovers: %s)", async recovers => {
         let attempts = 0;
         installSuccessfulSessionServer({ storageUpload: async () => new Response(null, { status: ++attempts > 1 && recovers ? 200 : 503 }) });
-        configureMikeApiClient({ baseUrl: "https://word-api.test", getAuthHeaders: async () => ({}), fetchImpl: (input, init) => { const url = new URL(String(input)); const apiBase = new URL(API_URL); return fetchMock(apiBase.origin + apiBase.pathname + url.pathname + url.search, init); } });
+        configureMikeApiClient({ baseUrl: "https://word-api.test", getAuthHeaders: async () => ({}), captureOwner: () => () => true, fetchImpl: (input, init) => { const url = new URL(String(input)); const apiBase = new URL(API_URL); return fetchMock(apiBase.origin + apiBase.pathname + url.pathname + url.search, init); } });
         const outcomes = await uploadWordDocuments([new File(["a"], "contract.pdf")]);
         expect(outcomes).toMatchObject([{ status: recovers ? "completed" : "error" }]);
         expect(attempts).toBe(recovers ? 2 : 3);

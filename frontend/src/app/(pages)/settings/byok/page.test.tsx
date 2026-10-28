@@ -55,7 +55,7 @@ describe("organisation model providers", () => {
             http.get("*/api/user/profile", () => HttpResponse.json(profileWith(STATUS))),
             http.patch("*/api/user/api-keys/claude", async ({ request }) => {
                 body = await request.json();
-                return HttpResponse.json({ ...STATUS, claude: false, enabled: { claude: false } });
+                return HttpResponse.json({ ...STATUS, enabled: { claude: false } });
             }),
         );
         const user = userEvent.setup();
@@ -64,7 +64,7 @@ describe("organisation model providers", () => {
         await user.click(toggle);
         expect(body).toEqual({ enabled: false });
         await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "false"));
-        expect(within(screen.getByRole("region", { name: "Saved Providers" }))
+        expect(within(screen.getByRole("region", { name: "Available Providers" }))
             .getByRole("button", { name: "Manage Anthropic (Claude)" })).toBeInTheDocument();
     });
 });
