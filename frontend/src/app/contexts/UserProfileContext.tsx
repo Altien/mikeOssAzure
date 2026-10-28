@@ -37,7 +37,7 @@ import {
     updateLastSelectedChatSettings,
     parseTabularChatSelectionKey,
 } from "@/app/lib/mikeApi";
-import { apiKeyStateFromStatus } from "@/app/lib/apiKeyState";
+import { API_KEY_PROVIDERS, apiKeyStateFromStatus } from "@/app/lib/apiKeyState";
 import type { Message } from "@/app/components/shared/types";
 import { applyDarkMode } from "@/app/lib/theme";
 import { notifyError } from "@/app/lib/userFacingError";
@@ -55,6 +55,7 @@ import {
 } from "@/app/hooks/useConfiguredModels";
 
 interface UserProfile extends RouterProfileLists {
+    profilePhoto: string | null;
     displayName: string | null;
     organisation: string | null;
     jurisdiction: string | null;
@@ -111,6 +112,7 @@ interface UserProfileContextType {
      * selection that is absent from the router lists) must not run at all.
      */
     apiKeysDegraded: boolean;
+    updateProfilePhoto: (photo: string | null) => Promise<void>;
     updateDisplayName: (name: string) => Promise<boolean>;
     updateOrganisation: (organisation: string) => Promise<boolean>;
     completeOnboarding: (details?: PersonalisationDetails) => Promise<boolean>;
@@ -185,6 +187,7 @@ function toProfile(data: ApiUserProfile): UserProfile {
 
     return {
         ...profile,
+        profilePhoto: profile.profilePhoto ?? null,
         jurisdiction: profile.jurisdiction ?? null,
         practiceSetting: profile.practiceSetting ?? null,
         professionalTitle: profile.professionalTitle ?? null,
@@ -312,6 +315,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
 
             // Set fallback profile data on exception
             setProfile({
+                profilePhoto: null,
                 displayName: null,
                 organisation: null,
                 jurisdiction: null,
@@ -488,17 +492,21 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
 
     const syncPasswordSet = useCallback(async (): Promise<boolean> => {
         if (!user) return false;
+        const current = accountGuard(user.id);
+        if (!current()) return false;
         try {
-            const updated = await getUserProfile(isCurrent);
+            const updated = await getUserProfile(current);
+            if (!current()) return false;
             setProfile(toProfile(updated));
             return true;
         } catch (error) {
+            if (!current()) return false;
             reportFailure(error, "refresh your password status", () => {
                 void retryRef.current?.syncPasswordSet();
             });
             return false;
         }
-    }, [reportFailure, user]);
+    }, [reportFailure, user, accountGuard]);
 
     const updateModelPreference = useCallback(
         async (

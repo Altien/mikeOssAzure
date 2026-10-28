@@ -39,7 +39,7 @@ const PROFILE_FIXTURE = {
     titleModel: "aoai:title-deploy",
     tabularModel: "gemini-3-flash-preview",
     mfaOnLogin: false,
-    legalResearchUs: true,
+    quickActionsVisible: true,
     darkMode: false,
     apiKeyStatus: {
         claude: false,
@@ -123,9 +123,9 @@ function Probe() {
                 set-tabular
             </button>
             <button
-                onClick={async () => result(await ctx.updateLegalResearchUs(false))}
+                onClick={async () => result(await ctx.updateQuickActionsVisible(false))}
             >
-                legal-off
+                quick-off
             </button>
             <button
                 onClick={async () => result(await ctx.updateApiKey("claude", "  sk-x  "))}
@@ -209,21 +209,30 @@ describe("UserProfileContext: bootstrap fetch on mount", () => {
             titleModel: "aoai:title-deploy",
             tabularModel: "gemini-3-flash-preview",
             mfaOnLogin: false,
-            legalResearchUs: true,
+            quickActionsVisible: true,
         });
         expect(profile.apiKeyStatus).toBeUndefined();
         expect(profile.apiKeys).toEqual({
-            claude: { configured: false, source: null },
-            gemini: { configured: true, source: "env" },
-            openai: { configured: false, source: null },
-            mistral: { configured: false, source: null },
-            openrouter: { configured: false, source: null },
-            vercel: { configured: false, source: null },
-            "opencode-go": { configured: false, source: null },
-            courtlistener: { configured: false, source: null },
+            bedrock: { configured: false, source: null, enabled: true },
+            azure: { configured: false, source: null, enabled: true },
+            "azure-foundry": { configured: false, source: null, enabled: true },
+            vertex: { configured: false, source: null, enabled: true },
+            xai: { configured: false, source: null, enabled: true },
+            custom: { configured: false, source: null, enabled: true },
+            brave: { configured: false, source: null, enabled: true },
+            tavily: { configured: false, source: null, enabled: true },
+            deepseek: { configured: false, source: null, enabled: true },
+            claude: { configured: false, source: null, enabled: true },
+            gemini: { configured: true, source: "env", enabled: true },
+            openai: { configured: false, source: null, enabled: true },
+            mistral: { configured: false, source: null, enabled: true },
+            openrouter: { configured: false, source: null, enabled: true },
+            vercel: { configured: false, source: null, enabled: true },
+            "opencode-go": { configured: false, source: null, enabled: true },
+            courtlistener: { configured: false, source: null, enabled: true },
             // Dev (OSS-6 §2.3 item 3): organisation Kimi + Azure OpenAI.
-            kimi: { configured: true, source: "env" },
-            azure_openai: { configured: true, source: "env" },
+            kimi: { configured: true, source: "env", enabled: true },
+            azure_openai: { configured: true, source: "env", enabled: true },
         });
     });
 
@@ -240,6 +249,7 @@ describe("UserProfileContext: bootstrap fetch on mount", () => {
         expect(readProfile().apiKeys.gemini).toEqual({
             configured: true,
             source: "user",
+            enabled: true,
         });
     });
 
@@ -259,7 +269,7 @@ describe("UserProfileContext: bootstrap fetch on mount", () => {
             tier: "Free",
             messageCreditsUsed: 0,
             creditsRemaining: 999999,
-            legalResearchUs: true,
+            quickActionsVisible: true,
         });
         const reset = new Date(profile.creditsResetDate).getTime();
         expect(reset).toBeGreaterThan(Date.now() + 29 * 86_400_000);
@@ -330,17 +340,18 @@ describe("UserProfileContext: profile updates", () => {
         ]);
     });
 
-    it("updateLegalResearchUs PATCHes { legalResearchUs }", async () => {
+    // Dev drift: CourtListener switches are workspace-owned; the global preference case uses quick actions.
+    it("updateQuickActionsVisible PATCHes { quickActionsVisible }", async () => {
         authedFor(TEST_USER);
         const captured = serveProfile();
         renderProbe();
         await waitReady();
 
-        await userEvent.click(screen.getByText("legal-off"));
+        await userEvent.click(screen.getByText("quick-off"));
 
-        await waitFor(() => expect(readProfile().legalResearchUs).toBe(false));
+        await waitFor(() => expect(readProfile().quickActionsVisible).toBe(false));
         expect(captured.find((c) => c.method === "PATCH")?.body).toEqual({
-            legalResearchUs: false,
+            quickActionsVisible: false,
         });
     });
 
@@ -385,6 +396,7 @@ describe("UserProfileContext: profile updates", () => {
         expect(readProfile().apiKeys.claude).toEqual({
             configured: false,
             source: null,
+            enabled: true,
         });
     });
 
