@@ -10,15 +10,10 @@ import type { Db } from "../../lib/supabase";
 import { MAX_PROFILE_IMAGE_BYTES, parseProfileImageDataUrl } from "../../lib/profileImage";
 
 export const MAX_ORG_LOGO_BYTES = MAX_PROFILE_IMAGE_BYTES;
-<<<<<<< HEAD
+/** Applies shared raster size, encoding, and signature validation with logo-specific error messages. */
 export function parseOrgLogoDataUrl(value: unknown): {ok:true; contentType:"image/png"|"image/jpeg"|"image/webp"; bytes:Buffer}|{ok:false;detail:string} {
     const parsed = parseProfileImageDataUrl(value, "logo");
     return parsed.ok ? { ok:true, contentType:parsed.contentType, bytes:Buffer.from(parsed.base64,"base64") } : parsed;
-=======
-/** Applies shared raster size, encoding, and signature validation with logo-specific error messages. */
-export function parseOrgLogoDataUrl(value: unknown) {
-    return parseProfileImageDataUrl(value, "logo");
->>>>>>> 5ed055e3 (docs: document profile photo and roster contracts)
 }
 
 
