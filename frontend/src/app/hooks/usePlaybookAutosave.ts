@@ -19,6 +19,7 @@ type Change = {
 export function usePlaybookAutosave(onSaved: (playbook: Playbook) => void) {
   const owner = useRequestOwner();
   const isCurrent = useRef(owner.capture()).current;
+  const canSave = useRef(owner.captureRequest()).current;
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">(
     "idle",
   );
@@ -42,27 +43,28 @@ export function usePlaybookAutosave(onSaved: (playbook: Playbook) => void) {
 
   const flush = useCallback(function flush(): Promise<boolean> {
     if (timer.current) clearTimeout(timer.current);
-    if (!isCurrent()) { pending.current.clear(); return Promise.resolve(false); }
+    if (!canSave()) { pending.current.clear(); return Promise.resolve(false); }
     if (running.current) return running.current;
     if (!pending.current.size) return Promise.resolve(true);
-    setStatus("saving");
+    if (isCurrent()) setStatus("saving");
     running.current = (async () => {
       try {
         while (pending.current.size) {
+          if (!canSave()) { pending.current.clear(); return false; }
           const change = pending.current.values().next().value!;
           const saved = await updatePlaybook(
             change.id,
             change.content,
             change.access,
-            isCurrent,
+            canSave,
           );
-          if (!isCurrent()) return false;
+          if (!canSave()) return false;
           if (pending.current.get(change.id) === change) {
             pending.current.delete(change.id);
-            savedCallback.current(saved);
+            if (isCurrent()) savedCallback.current(saved);
           }
         }
-        setStatus("saved");
+        if (isCurrent()) setStatus("saved");
         return true;
       } catch (error) {
         if (!isCurrent()) return false;

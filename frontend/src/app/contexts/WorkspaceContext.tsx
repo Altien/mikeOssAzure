@@ -15,6 +15,7 @@ import {
     useContext,
     useEffect,
     useMemo,
+    useRef,
     useState,
     type ReactNode,
 } from "react";
@@ -55,6 +56,8 @@ interface WorkspaceContextValue {
     refreshOrganizations: () => Promise<void>;
     /** Re-read `orgApiKeys`, after they were changed in settings. */
     refreshOrgApiKeys: () => Promise<void>;
+    /** A captured workspace guard owned by this provider, independent of a child's mount. */
+    captureWorkspace: () => () => boolean;
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue>({
@@ -65,6 +68,8 @@ const WorkspaceContext = createContext<WorkspaceContextValue>({
     setWorkspace: () => {},
     refreshOrganizations: async () => {},
     refreshOrgApiKeys: async () => {},
+    // Detached writes need an actual provider to prove their workspace.
+    captureWorkspace: () => () => false,
 });
 
 // A convenience remembered per account and per browser: it can come back
@@ -95,6 +100,7 @@ export function storeWorkspace(userId: string | undefined, workspaceId: string) 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
     const { user } = useAuth();
     const userId = user?.id;
+    const workspaceOwner = useRef<string | null>(null);
     const [selection, setSelection] = useState(() => ({
         userId,
         workspaceId: readStoredWorkspace(userId),
@@ -165,6 +171,17 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             ? PERSONAL_WORKSPACE
             : storedWorkspaceId;
 
+    const workspaceOwnerKey = JSON.stringify([userId, workspaceId]);
+    workspaceOwner.current = workspaceOwnerKey;
+    useEffect(() => {
+        workspaceOwner.current = workspaceOwnerKey;
+        return () => { if (workspaceOwner.current === workspaceOwnerKey) workspaceOwner.current = null; };
+    }, [workspaceOwnerKey]);
+    const captureWorkspace = useCallback(() => {
+        const captured = workspaceOwnerKey;
+        return () => Boolean(userId) && workspaceOwner.current === captured;
+    }, [workspaceOwnerKey, userId]);
+
     useEffect(() => {
         storeWorkspace(userId, workspaceId);
     }, [userId, workspaceId]);
@@ -205,6 +222,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
                 next === PERSONAL_WORKSPACE ||
                 (organizations ?? []).some((org) => org.id === next);
             if (known) {
+                workspaceOwner.current = JSON.stringify([userId, next]);
                 setSelection({ userId, workspaceId: next });
                 return;
             }
@@ -241,6 +259,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             setWorkspace,
             refreshOrganizations,
             refreshOrgApiKeys,
+            captureWorkspace,
         }),
         [
             userId,
@@ -251,6 +270,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             setWorkspace,
             refreshOrganizations,
             refreshOrgApiKeys,
+            captureWorkspace,
         ],
     );
 
