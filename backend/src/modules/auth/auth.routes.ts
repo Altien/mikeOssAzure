@@ -454,7 +454,7 @@ authRouter.post("/password-reset", async (req, res) => {
       res.cookie(OAUTH_NONCE_COOKIE, nonce, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/api/auth", maxAge: 10 * 60_000 });
     }
     catch (error) {
-      reportError(new AppError("auth.supabase_unavailable", "Password reset request failed", { cause: error }), { level: "warning", tags: { component: "http" } });
+      reportError(new AppError("auth.password_reset_failed", "Password reset request failed", { cause: error }), { level: "warning", tags: { component: "http" } });
       // Account enumeration stays impossible: the response remains204.
     }
   }
