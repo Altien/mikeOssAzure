@@ -48,7 +48,10 @@ describe("CODE_KINDS", () => {
     it("only lists codes a server actually emits", () => {
         const unknown = Object.keys(CODE_KINDS).filter((code) => {
             const literal = `"${code}"`;
-            return !sources.some((source) => source.includes(literal));
+            return !sources.some((source) => {
+                if (source.includes(literal)) return true;
+                return source.split(/\r?\n/).filter((line) => line.includes("error_code:")).some((line) => line.split(String.fromCharCode(39))[1]?.split(/\s+/).includes(code));
+            });
         });
         expect(unknown).toEqual([]);
     });
