@@ -1,3 +1,4 @@
+// Dev drift: the shared document lock is in options after the three Dev-specific dispatcher slots.
 import { expect, it, vi } from "vitest";
 import type { Db } from "../../../../lib/supabase";
 
@@ -50,6 +51,9 @@ it("lands two concurrent edits to one document, the second on top of the first",
       undefined,
       docIndex,
       turnEditState,
+      undefined,
+      undefined,
+      undefined,
       undefined,
       undefined,
       undefined,

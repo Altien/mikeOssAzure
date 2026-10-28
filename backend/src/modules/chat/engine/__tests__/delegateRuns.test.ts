@@ -7,8 +7,11 @@ vi.mock("../../../../lib/observability/sentry", async (importOriginal) => ({
 }));
 vi.mock("../../../../lib/access", () => ({
   filterAccessibleDocumentIds: vi.fn(async () => ["doc-a"]),
+  ensureChatAccess: vi.fn(async () => ({ ok: true })),
 }));
 
+// Dev drift: resumed document content also checks the initiating workspace.
+vi.mock("../../../../lib/documentWorkspace", () => ({ findDocumentsOutsideWorkspace: vi.fn(async () => []) }));
 import {
   REMOVED_RESULT,
   createSubagentRunStore,
@@ -43,21 +46,24 @@ function db(row: Record<string, unknown> = { transcript }, messageContent: unkno
   const filters: unknown[][] = [];
   const query = (result: unknown) => {
     const chain: Record<string, unknown> = {};
-    for (const method of ["select", "eq", "gt", "in"]) {
+    for (const method of ["select", "eq", "gt", "in", "is"]) {
       chain[method] = vi.fn((...args: unknown[]) => {
         filters.push([method, ...args]);
-        return method === "in" ? Promise.resolve(result) : chain;
+        return chain;
       });
     }
     chain.maybeSingle = vi.fn(async () => result);
+    chain.then = (done: (value: unknown) => unknown) => Promise.resolve(result).then(done);
     return chain;
   };
   return {
     filters,
     client: {
       from: (table: string) =>
-        table === "document_versions"
-          ? query({ data: [{ id: "v1" }, { id: "v2" }], error: null })
+        table === "chats"
+          ? query({ data: { id: "chat-1", user_id: "user-1", project_id: null, org_id: null }, error: null })
+          : table === "document_versions"
+          ? query({ data: [{ id: "v1", document_id: "doc-a" }, { id: "v2", document_id: "doc-b" }], error: null })
           : table === "chat_messages"
             ? query({ data: { content: messageContent }, error: null })
             : query({ data: row, error: null }),
@@ -73,6 +79,7 @@ describe("subagent run store", () => {
       userId: "user-1",
       chatId: "chat-1",
       messageId: "message-1",
+      orgId: null, signal: new AbortController().signal, commitRows: async () => {},
     });
 
     const loaded = await store.load("delegation-1");
@@ -128,6 +135,7 @@ describe("subagent run store", () => {
       userId: "user-1",
       chatId: "chat-1",
       messageId: "message-2",
+      orgId: null, signal: new AbortController().signal, commitRows: async () => {},
     });
 
     const loaded = await store.load("delegation-1");
@@ -162,14 +170,13 @@ describe("subagent run store failures", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const dbError = { code: "23505", message: "duplicate key value" };
-    const client = {
-      from: () => ({ insert: vi.fn(async () => ({ error: dbError })) }),
-    } as never;
+    const { client } = db();
     const store = createSubagentRunStore({
       db: client,
       userId: "user-1",
       chatId: "chat-1",
       messageId: "message-1",
+      orgId: null, signal: new AbortController().signal, commitRows: async () => { throw dbError; },
     });
 
     await store.save("delegation-1", "completed", transcript);

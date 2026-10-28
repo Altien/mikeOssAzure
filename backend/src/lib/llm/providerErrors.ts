@@ -1,3 +1,4 @@
+import { types as nodeTypes } from "node:util";
 import { UserFacingError } from "../safeError";
 import type { ErrorKind } from "../appError";
 import { asInvalidApiKeyError, InvalidApiKeyError } from "./apiKeyErrors";
@@ -18,7 +19,8 @@ function findApiCallError(error: unknown): ApiCallErrorLike | null {
     seen.add(current);
     // AI SDK APICallError and Azure RestError expose numeric statusCode.
     const item = current as { statusCode?: unknown; responseBody?: unknown; cause?: unknown; lastError?: unknown };
-    if (current instanceof Error && typeof item.statusCode === "number" && Number.isInteger(item.statusCode) && item.statusCode >= 100 && item.statusCode <= 599) return current as ApiCallErrorLike;
+    // AI SDK errors can cross the ESM/VM boundary; keep native Errors, not arbitrary status-shaped objects.
+    if (nodeTypes.isNativeError(current) && typeof item.statusCode === "number" && Number.isInteger(item.statusCode) && item.statusCode >= 100 && item.statusCode <= 599) return current as ApiCallErrorLike;
     if (item.cause) pending.push(item.cause);
     if (item.lastError) pending.push(item.lastError);
   }
