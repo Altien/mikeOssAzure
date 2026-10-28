@@ -10,6 +10,8 @@ allowBuilds:
   '@sentry/cli': false
   keytar: false
 overrides:
+  # Source177 npm lock security delta, retained in Dev pnpm resolution.
+  markdown-it: ^14.3.3
   # Development-only MCP SDK (office-addin-debugging -> teamsfx-core): hold
   # the advisory-patched line (upstream's npm override, 54b6b3a1/57009979).
   '@modelcontextprotocol/sdk': ^1.32.0

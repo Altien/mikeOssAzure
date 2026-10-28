@@ -7,6 +7,8 @@ allowBuilds:
   unrs-resolver: true
   workerd: true
 overrides:
+  # Source177 npm lock security delta, retained in Dev pnpm resolution.
+  markdown-it: ^14.3.3
   '@node-minify/core>glob': ^10.5.0
   eslint-plugin-react-hooks: ~7.0.1
   # GHSA-wq5f-xc86-pv6w (librsvg in sharp's prebuilt binary): Next and
