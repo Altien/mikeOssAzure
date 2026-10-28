@@ -2353,7 +2353,7 @@ export async function beginPlaybookReview(args: PlaybookReviewRequest) {
     args.userEmail,
   );
   const scope = await resolveWorkspaceFilter(db, args.userId, (await teamOrgIdOf(db, playbook.orgId)) ?? "personal");
-  if (!scope.ok || (args.documentId && (await findDocumentsOutsideWorkspace(db, [args.documentId], scope.workspace, { includeWorkflowAssets: true })).length))
+  if (!scope.ok || (args.documentId && (await findDocumentsOutsideWorkspace(db, [args.documentId], scope.workspace === "personal" ? null : scope.workspace, { includeWorkflowAssets: true })).length))
     throw new PlaybookRequestError("Document not found in this workspace.", 404);
   const stored = args.documentId
     ? await loadReviewDocument(db, args.userId, args.userEmail, args.documentId)
