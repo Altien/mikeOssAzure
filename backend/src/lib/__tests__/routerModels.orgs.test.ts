@@ -1,3 +1,4 @@
+// Dev drift: central managed credentials never hand organization work to a member's personal model list.
 import { describe, expect, it, vi } from "vitest";
 import {
     getAllOrgRouterModels,
@@ -138,14 +139,14 @@ describe("getEffectiveRouterModels", () => {
         expect(lists.vercel).toEqual(["mine/vercel-model"]);
     });
 
-    it("uses the organization's list for a router whose key it holds, and the member's for the rest", async () => {
+    it("uses the organization's managed model lists for every router", async () => {
         const { db } = firm();
 
         const lists = await getEffectiveRouterModels(USER, ORG, db);
 
         expect(lists.openrouter).toEqual(["firm/or-model"]);
-        // No Vercel key at the firm, so its Vercel list governs nothing.
-        expect(lists.vercel).toEqual(["mine/vercel-model"]);
+        // Dev drift: all provider credentials are deployment-managed; organization model selections remain independent.
+        expect(lists.vercel).toEqual(["firm/vercel-model"]);
     });
 
     it("lets an organization's empty list stand: its key runs nothing until models are added", async () => {
@@ -158,18 +159,17 @@ describe("getEffectiveRouterModels", () => {
 
     it("does not put a non-member under an organization's lists", async () => {
         const { db } = firm({ org_members: [] });
-        const lists = await getEffectiveRouterModels(USER, ORG, db);
-        expect(lists.openrouter).toEqual(["mine/or-model"]);
+        await expect(getEffectiveRouterModels(USER, ORG, db)).rejects.toThrow("workspace_not_found");
     });
 
-    it("keeps members on their own lists while the migration has not run", async () => {
+    it("does not consult retired organization secret rows when selecting managed model lists", async () => {
         const { db, errors } = firm();
         errors.org_api_keys = {
             code: "42P01",
             message: 'relation "public.org_api_keys" does not exist',
         };
         const lists = await getEffectiveRouterModels(USER, ORG, db);
-        expect(lists.openrouter).toEqual(["mine/or-model"]);
+        expect(lists.openrouter).toEqual(["firm/or-model"]);
     });
 });
 
@@ -202,28 +202,10 @@ describe("resolveRequestedModel inside an organization", () => {
         ).rejects.toThrow(/organization's saved OpenRouter models.*admin/);
     });
 
-    it("still judges a router the organization has no key for against the member's list", async () => {
+    it("keeps every organization router on its organization model list", async () => {
         const { db } = firm();
-        await expect(
-            resolveRequestedModel(
-                "vercel/mine/vercel-model",
-                "",
-                USER,
-                db,
-                "throw",
-                ORG,
-            ),
-        ).resolves.toBe("vercel/mine/vercel-model");
-        await expect(
-            resolveRequestedModel(
-                "vercel/firm/vercel-model",
-                "",
-                USER,
-                db,
-                "throw",
-                ORG,
-            ),
-        ).rejects.toThrow(/your saved Vercel AI Gateway models/);
+        await expect(resolveRequestedModel("vercel/firm/vercel-model", "", USER, db, "throw", ORG)).resolves.toBe("vercel/firm/vercel-model");
+        await expect(resolveRequestedModel("vercel/mine/vercel-model", "", USER, db, "throw", ORG)).rejects.toThrow(/organization's saved Vercel AI Gateway models/);
     });
 
     it("leaves personal work on the member's own list", async () => {
