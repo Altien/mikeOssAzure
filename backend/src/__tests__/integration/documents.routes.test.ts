@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
+import { AppError } from "../../lib/appError";
+import { diagnosticErrorTags } from "../../lib/observability/sentryPrivacy";
+const versionCopy = vi.hoisted(() => ({ override: null as null | ((...args: any[]) => any) }));
+vi.mock("../../modules/documents/documents.service", async load => {
+    const actual = await load<typeof import("../../modules/documents/documents.service")>();
+    return { ...actual, createVersionFromDocument: (...args: Parameters<typeof actual.createVersionFromDocument>) =>
+        versionCopy.override ? versionCopy.override(...args) : actual.createVersionFromDocument(...args) };
+});
 const sentry = vi.hoisted(() => ({ setOperation: vi.fn(), reportError: vi.fn(() => null) }));
 vi.mock("../../lib/observability/sentry", async load => ({ ...await load<typeof import("../../lib/observability/sentry")>(), ...sentry }));
 
