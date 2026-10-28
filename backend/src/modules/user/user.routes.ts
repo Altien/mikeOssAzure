@@ -97,7 +97,6 @@ import {
     saveWebSearchSettings,
     courtListenerConnectorStatus,
     setCourtListenerEnabled,
-    setCourtListenerToken,
     isWorkspaceExportType,
 } from "./user.service";
 

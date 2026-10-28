@@ -290,26 +290,8 @@ async function encrypt(plaintext: string): Promise<EncryptedPayload> {
     };
 }
 
-async function decrypt(payload: EncryptedPayload): Promise<string> {
-    const key = await getEncryptionKey();
-    const iv = Buffer.from(payload.iv, "base64");
-    const ciphertext = Buffer.from(payload.encrypted_key, "base64");
-    const authTag = Buffer.from(payload.auth_tag, "base64");
-    const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
-    decipher.setAuthTag(authTag);
-    const plaintext = Buffer.concat([
-        decipher.update(ciphertext),
-        decipher.final(),
-    ]);
-    return plaintext.toString("utf8");
-}
 
-type StoredRow = {
-    provider: ApiKeyProvider;
-    encrypted_key: string;
-    iv: string;
-    auth_tag: string;
-};
+
 
 type AzureOpenaiBlob = {
     endpoint: string;
@@ -318,21 +300,7 @@ type AzureOpenaiBlob = {
     deployment: string;
 };
 
-function parseAzureOpenaiBlob(plaintext: string): AzureOpenaiSettings | null {
-    try {
-        const parsed = JSON.parse(plaintext) as Partial<AzureOpenaiBlob>;
-        if (!parsed.endpoint || !parsed.deployment) return null;
-        return {
-            endpoint: parsed.endpoint,
-            deployment: parsed.deployment,
-            apiKey: parsed.key ?? null,
-            apiVersion: parsed.version ?? null,
-        };
-    } catch (err) {
-        console.error("[userApiKeys] failed to parse azure_openai blob", err);
-        return null;
-    }
-}
+
 
 function serializeAzureOpenaiBlob(settings: AzureOpenaiSettings): string {
     const blob: AzureOpenaiBlob = {
@@ -672,23 +640,9 @@ export async function saveCourtListenerConnection(
     if (error) throw error;
 }
 
-function overlayCourtListenerKey(
-    apiKeys: UserApiKeys,
-    connection: CourtListenerConnection | "unmigrated",
-): void {
-    if (connection === "unmigrated") return;
-    if (!connection.enabled) apiKeys.courtlistener = null;
-}
 
-function overlayCourtListenerStatus(
-    status: ApiKeyStatus,
-    connection: CourtListenerConnection | "unmigrated",
-): void {
-    if (connection === "unmigrated") return;
-    if (!connection.enabled) status.courtlistener = false;
-    // Preserve central env/org provenance; never label a personal credential.
-    delete status.enabled.courtlistener;
-}
+
+
 
 async function managedCourtListenerForOwner(owner: ConnectorOwner, db: Db) {
     if (owner.orgId) await requireOrgKeyMembership(owner.userId, owner.orgId, db);

@@ -58,6 +58,7 @@ export type ConnectorCallPlan =
 export type ConnectorRow = {
     id: string;
     user_id: string;
+    org_id?: string | null;
     name: string;
     transport: McpTransport;
     server_url: string;
