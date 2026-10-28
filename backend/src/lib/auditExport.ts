@@ -5,7 +5,7 @@
 // worker where importing an Express router would drag in the whole HTTP
 // surface.
 
-import { getOrgRole, isOrgAdmin } from "./access";
+import { getOrgRole, isOrgAdmin, listAccessibleProjectIds } from "./access";
 import { normalizeDisplayName, normalizeEmail } from "./userLookup";
 import type { Db } from "./supabase";
 
