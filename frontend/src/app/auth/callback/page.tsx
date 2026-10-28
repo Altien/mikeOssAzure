@@ -107,7 +107,7 @@ function AuthCallbackContent() {
         return () => {
             cancelled = true;
         };
-    }, [isErrorPreview, refreshSession, router, searchParams]);
+    }, [isErrorPreview, router, searchParams]);
 
     return (
         <div className="relative flex min-h-dvh items-center justify-center bg-gray-50/80 px-6 py-10">
