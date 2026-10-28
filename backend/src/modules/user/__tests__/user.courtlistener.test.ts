@@ -7,9 +7,9 @@ const mocks = vi.hoisted(() => ({
   loadCourtListenerConnection: vi.fn(),
   saveCourtListenerConnection: vi.fn(),
 }));
-vi.mock("../../lib/access", () => ({ getOrgRole: mocks.getOrgRole }));
-vi.mock("../../lib/envSecrets", () => ({ resolveProviderSecret: mocks.resolveProviderSecret }));
-vi.mock("../../lib/courtlistener", () => ({ courtlistenerBulkDataEnabled: mocks.courtlistenerBulkDataEnabled }));
+vi.mock("../../../lib/access", () => ({ getOrgRole: mocks.getOrgRole }));
+vi.mock("../../../lib/envSecrets", () => ({ resolveProviderSecret: mocks.resolveProviderSecret }));
+vi.mock("../../../lib/courtlistener", () => ({ courtlistenerBulkDataEnabled: mocks.courtlistenerBulkDataEnabled }));
 vi.mock("../user.apiKeyStore", () => ({
   loadCourtListenerConnection: mocks.loadCourtListenerConnection,
   saveCourtListenerConnection: mocks.saveCourtListenerConnection,
@@ -31,7 +31,7 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("CourtListener connector status", () => {
-  it.each([personal, inFirm])("uses only central credentials for workspace %i", async (owner) => {
+  it.each([personal, inFirm])("uses only central credentials for workspace %j", async (owner) => {
     mocks.resolveProviderSecret.mockResolvedValue("central-token");
     expect(await courtListenerConnectorStatus(db, owner)).toEqual({
       enabled: true, installed: true, ownToken: false, tokenSource: "org", bulkData: false,

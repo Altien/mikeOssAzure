@@ -36,7 +36,11 @@ function authError(res: Response, error: unknown, fallback: string) {
 export const authRouter = Router();
 // Dev auth uses Entra/local opaque sessions and backend PKCE; only diagnostic identity is adopted.
 authRouter.use((req, _res, next) => {
-  setOperation(req.path.startsWith("/mfa/") ? "auth.mfa" : req.path.includes("handoff") ? "auth.handoff" : req.path === "/signup" ? "auth.signup" : ["/login", "/oauth", "/exchange", "/entra", "/callback"].includes(req.path) ? "auth.signin" : "auth.session");
+  if (req.path.startsWith("/mfa/")) setOperation("auth.mfa");
+  else if (req.path.includes("handoff")) setOperation("auth.handoff");
+  else if (req.path === "/signup") setOperation("auth.signup");
+  else if (["/login", "/oauth", "/exchange", "/entra", "/callback"].includes(req.path)) setOperation("auth.signin");
+  else setOperation("auth.session");
   next();
 });
 authRouter.use(requireTrustedOrigin);

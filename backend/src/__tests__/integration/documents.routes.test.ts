@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
+const sentry = vi.hoisted(() => ({ setOperation: vi.fn(), reportError: vi.fn(() => null) }));
+vi.mock("../../lib/observability/sentry", async load => ({ ...await load<typeof import("../../lib/observability/sentry")>(), ...sentry }));
 
 // ---------------------------------------------------------------------------
 // DELETE /single-documents/:documentId — the container's rule, not `user_id`.

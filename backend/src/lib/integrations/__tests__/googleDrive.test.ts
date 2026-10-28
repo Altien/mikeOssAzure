@@ -135,7 +135,7 @@ describe("createGoogleDrivePickerSession", () => {
         vi.stubEnv("GOOGLE_DRIVE_PICKER_API_KEY", "picker-key");
         vi.stubEnv("GOOGLE_DRIVE_PICKER_APP_ID", "123456789");
         const db = makeDb({
-            tokenRow: encryptedTokenRow({
+            tokenRow: await encryptedTokenRow({
                 grant_id: "grant-1",
                 // Inside the refresh leeway: the Picker must not get a token
                 // that dies while the user is still choosing files.
@@ -174,7 +174,7 @@ describe("createGoogleDrivePickerSession", () => {
         vi.stubGlobal("fetch", fetchSpy);
         for (const scope of [GOOGLE_DRIVE_FULL_SCOPE, GOOGLE_DRIVE_READONLY_SCOPE]) {
             const db = makeDb({
-                tokenRow: encryptedTokenRow({
+                tokenRow: await encryptedTokenRow({
                     grant_id: "grant-1",
                     scope: `openid email ${scope}`,
                     // Near expiry: the refusal must come before any refresh.
@@ -204,10 +204,10 @@ describe("getGoogleDriveStatus", () => {
     it("offers the Picker to a drive.file connection but not to a legacy whole-Drive one", async () => {
         vi.stubEnv("GOOGLE_DRIVE_PICKER_API_KEY", "picker-key");
         vi.stubEnv("GOOGLE_DRIVE_PICKER_APP_ID", "123456789");
-        const statusFor = (scope: string) =>
+        const statusFor = async (scope: string) =>
             getGoogleDriveStatus(
                 personalConnectorOwner("user-1"),
-                makeDb({ tokenRow: encryptedTokenRow({ scope: `openid email ${scope}` }) }),
+                makeDb({ tokenRow: await encryptedTokenRow({ scope: `openid email ${scope}` }) }),
             );
         expect((await statusFor(GOOGLE_DRIVE_SCOPE)).pickerAvailable).toBe(true);
         expect((await statusFor(GOOGLE_DRIVE_FULL_SCOPE)).pickerAvailable).toBe(false);

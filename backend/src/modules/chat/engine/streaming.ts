@@ -1194,7 +1194,9 @@ export async function runLLMStream(params: {
         },
         ...(safeToDisplay ? { level: "warning" as const } : {}),
       });
-      console.error("[chat/stream] model stream failed", safeErrorLog(failure));
+      // The sanitized copy has no object identity for console deduplication.
+      // The original failure was explicitly reported above.
+      console.warn("[chat/stream] model stream failed", safeErrorLog(failure));
       const message = safeToDisplay ? err.message : ASSISTANT_ERROR_MESSAGE;
       events.push({
         type: "error",

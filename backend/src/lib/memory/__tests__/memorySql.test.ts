@@ -122,12 +122,10 @@ describe("per-workspace memory SQL", () => {
     expect(workspaceMigration).toContain(
       "drop index if exists public.memory_files_user_unique;",
     );
-    // ... nor leans on it: an upsert naming (user_id) needs that index.
-    for (const name of ["initialize_new_user_memory", "delete_user_private_memories"]) {
-      expect(functionBody(schemaSql, name)).not.toContain(
-        "on conflict (user_id)",
-      );
-    }
+    // Dev drift: immutable0122 is corrected by forward0175; infer its existing partial Personal key.
+    const initializer = readFileSync(resolve(root, "migrations/0175_personal_memory_initializer_conflict.sql"), "utf8");
+    expect(functionBody(initializer, "initialize_new_user_memory")).toContain("on conflict (user_id) where org_id is null do nothing");
+    expect(functionBody(schemaSql, "delete_user_private_memories")).not.toContain("on conflict (user_id)");
   });
 
   it.each([
