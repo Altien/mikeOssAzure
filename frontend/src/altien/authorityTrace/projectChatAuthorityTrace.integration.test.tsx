@@ -61,8 +61,10 @@ vi.mock("@/app/contexts/SidebarContext", () => ({
     useSidebar: () => ({ setSidebarOpen: vi.fn() }),
 }));
 
+const profileFixture = vi.hoisted(() => ({ profile: { displayName: "Tester" } }));
 vi.mock("@/app/contexts/UserProfileContext", () => ({
-    useUserProfile: () => ({ profile: { displayName: "Tester" } }),
+    useUserProfile: () => profileFixture,
+    useOptionalUserProfile: () => profileFixture,
 }));
 
 vi.mock("@/app/lib/mikeApi", () => ({

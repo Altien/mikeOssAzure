@@ -905,12 +905,12 @@ describe("Google Drive connection lifecycle", () => {
             fireEvent.click(dialog.getByRole("switch", { name: "Ask for permission for write actions" }));
             await flushMicrotasks();
         });
-        expect(updateGoogleDriveSettings).toHaveBeenCalledWith({ requireWriteApproval: true }, "personal");
+        expect(updateGoogleDriveSettings).toHaveBeenCalledWith({ requireWriteApproval: true }, "personal", expect.any(Function));
         await act(async () => {
             fireEvent.click(dialog.getByRole("switch", { name: "Move to Trash enabled" }));
             await flushMicrotasks();
         });
-        expect(setGoogleDriveToolEnabled).toHaveBeenCalledWith("google_drive_trash_file", false, "personal");
+        expect(setGoogleDriveToolEnabled).toHaveBeenCalledWith("google_drive_trash_file", false, "personal", expect.any(Function));
     });
 
     it("offers Add files from Google Drive only when the server can open the Picker", async () => {
@@ -1097,7 +1097,7 @@ describe("Google Drive connection lifecycle", () => {
             await vi.advanceTimersByTimeAsync(0);
             await flushMicrotasks();
         });
-        expect(cancelGoogleDriveOAuth).toHaveBeenCalledWith(state, "personal");
+        expect(cancelGoogleDriveOAuth).toHaveBeenCalledWith(state, "personal", expect.any(Function));
         expect(screen.queryByText("Could not add connector")).toBeNull();
         const count = vi.mocked(getGoogleDriveStatus).mock.calls.length;
         await act(async () => {
@@ -1175,7 +1175,7 @@ describe("Google Drive connection lifecycle", () => {
         expect(updateGoogleDriveSettings).toHaveBeenCalledWith(
             { enabled: false },
             "personal",
-        );
+        expect.any(Function),);
         expect(
             installed().getByRole("switch", { name: "Google Drive connector" }),
         ).toHaveAttribute("aria-checked", "false");
@@ -1275,7 +1275,7 @@ describe("Connector write approval settings", () => {
             "gmail",
             { requireWriteApproval: true },
             "personal",
-        );
+        expect.any(Function),);
         expect(approval).toHaveAttribute("aria-checked", "true");
 
         await act(async () => {
@@ -1289,7 +1289,7 @@ describe("Connector write approval settings", () => {
             "gmail_send",
             false,
             "personal",
-        );
+        expect.any(Function),);
     });
 
     it("sets an MCP connector's approval setting and lets write tools be switched", async () => {
@@ -1432,8 +1432,8 @@ describe("Connector read-only mode", () => {
         expect(read).toBeEnabled();
         expect(read).toHaveAttribute("aria-checked", "true");
         if (provider === "mcp") expect(updateMcpConnector).toHaveBeenCalledWith(mcp.id, { readOnly: true });
-        else if (provider === "google-drive") expect(updateGoogleDriveSettings).toHaveBeenCalledWith({ readOnly: true }, "personal");
-        else expect(updateGoogleWorkspaceSettings).toHaveBeenCalledWith(provider, { readOnly: true }, "personal");
+        else if (provider === "google-drive") expect(updateGoogleDriveSettings).toHaveBeenCalledWith({ readOnly: true }, "personal", expect.any(Function));
+        else expect(updateGoogleWorkspaceSettings).toHaveBeenCalledWith(provider, { readOnly: true }, "personal", expect.any(Function));
         await act(async () => { fireEvent.click(toggle); await flushMicrotasks(); });
         expect(toggle).toHaveAttribute("aria-checked", "false");
         expect(write).toBeEnabled();
@@ -1742,9 +1742,9 @@ describe("ConnectorsPage workspaces", () => {
         await act(flushMicrotasks);
 
         expect(listMcpConnectors).toHaveBeenCalledWith("org-1");
-        expect(getGoogleDriveStatus).toHaveBeenCalledWith("org-1");
-        expect(getGoogleWorkspaceStatus).toHaveBeenCalledWith("gmail", "org-1");
-        expect(getGoogleWorkspaceStatus).toHaveBeenCalledWith("google-calendar", "org-1");
+        expect(getGoogleDriveStatus).toHaveBeenCalledWith("org-1", expect.any(Function));
+        expect(getGoogleWorkspaceStatus).toHaveBeenCalledWith("gmail", "org-1", expect.any(Function));
+        expect(getGoogleWorkspaceStatus).toHaveBeenCalledWith("google-calendar", "org-1", expect.any(Function));
         expect(courtListener.workspaces).toContain("org-1");
         expect(courtListener.workspaces).not.toContain("personal");
 
@@ -1788,7 +1788,7 @@ describe("ConnectorsPage workspaces", () => {
         await act(flushMicrotasks);
 
         expect(listMcpConnectors).toHaveBeenLastCalledWith("org-2");
-        expect(getGoogleDriveStatus).toHaveBeenLastCalledWith("org-2");
+        expect(getGoogleDriveStatus).toHaveBeenLastCalledWith("org-2", expect.any(Function));
         expect(courtListener.workspaces.at(-1)).toBe("org-2");
         expect(installed().queryByRole("button", { name: "Manage Slack" })).toBeNull();
         expect(screen.getByText("No connectors yet.")).toBeTruthy();

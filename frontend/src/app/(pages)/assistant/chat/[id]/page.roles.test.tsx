@@ -4,6 +4,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { captureRequestOwner } = vi.hoisted(() => ({ captureRequestOwner: vi.fn(() => () => true) }));
 vi.mock("@/app/hooks/useRequestOwner", () => ({ useRequestOwner: () => ({ capture: captureRequestOwner}) }));
 
+// The role fixtures exercise authenticated server standing without session bootstrap.
+const roleAuth = vi.hoisted(() => ({
+    user: { id: "user-1", email: "member@example.com", pendingEmail: null, createdWithGoogle: false },
+    isAuthenticated: true, authLoading: false, authError: null,
+}));
+vi.mock("@/app/contexts/AuthContext", async (original) => ({
+    ...(await original<typeof import("@/app/contexts/AuthContext")>()),
+    useAuth: () => roleAuth,
+}));
+
 // Grant-reachable chats appear in the global sidebar since the parity
 // change, so a project viewer can land on this page. GET /chat/:id serves
 // the caller's standing; this file pins that the page actually consumes it
