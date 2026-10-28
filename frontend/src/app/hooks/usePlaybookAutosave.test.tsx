@@ -6,7 +6,27 @@ import {
   type Playbook,
   type PlaybookContent,
 } from "@/app/lib/mikeApi";
+import { advanceAuthEpoch } from "@/app/lib/authEvents";
 import { notifyError } from "@/app/lib/userFacingError";
+// Authenticated provider-owned workspace fixture; keep the real ownership hook.
+const autosaveScope = vi.hoisted(() => ({ accountId: "u1", workspaceId: "personal", live: true }));
+vi.mock("@/app/contexts/AuthContext", async (original) => ({
+  ...(await original<typeof import("@/app/contexts/AuthContext")>()),
+  useAuth: () => ({ user: { id: autosaveScope.accountId, email: "owner@example.com" } }),
+}));
+vi.mock("@/app/contexts/WorkspaceContext", async (original) => ({
+  ...(await original<typeof import("@/app/contexts/WorkspaceContext")>()),
+  useWorkspace: () => ({
+    accountId: autosaveScope.accountId,
+    workspaceId: autosaveScope.workspaceId,
+    captureWorkspace: () => {
+      const captured = JSON.stringify([autosaveScope.accountId, autosaveScope.workspaceId]);
+      return () => autosaveScope.live && Boolean(autosaveScope.accountId)
+        && JSON.stringify([autosaveScope.accountId, autosaveScope.workspaceId]) === captured;
+    },
+  }),
+}));
+
 vi.mock("@/app/lib/mikeApi", () => ({ updatePlaybook: vi.fn() }));
 vi.mock("@/app/lib/userFacingError", () => ({ notifyError: vi.fn() }));
 const change = (name: string) => ({
@@ -23,6 +43,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 beforeEach(() => {
+  autosaveScope.accountId = "u1"; autosaveScope.workspaceId = "personal"; autosaveScope.live = true;
   vi.useFakeTimers();
   vi.clearAllMocks();
 });
@@ -41,8 +62,8 @@ describe("playbook autosave", () => {
     });
     await act(async () => { await result.current.flush(); });
     expect(vi.mocked(updatePlaybook).mock.calls).toEqual([
-      ["book", { name: "Latest first playbook" }, change("").access],
-      ["other", { name: "Other playbook" }, change("").access],
+      ["book", { name: "Latest first playbook" }, change("").access, expect.any(Function)],
+      ["other", { name: "Other playbook" }, change("").access, expect.any(Function)],
     ]);
     expect(onSaved).toHaveBeenCalledTimes(2);
   });
@@ -137,7 +158,7 @@ describe("playbook autosave", () => {
       "book",
       { name: "Newest" },
       change("").access,
-    );
+    expect.any(Function),);
     expect(onSaved).toHaveBeenCalledExactlyOnceWith(saved("Newest"));
     expect(result.current.status).toBe("saved");
   });
@@ -160,7 +181,7 @@ describe("playbook autosave", () => {
       "book",
       { name: "Current" },
       change("").access,
-    );
+    expect.any(Function),);
     expect(result.current.status).toBe("saved");
   });
   it("drops a cancelled playbook's waiting edit and keeps the others", async () => {
@@ -178,13 +199,14 @@ describe("playbook autosave", () => {
       await vi.advanceTimersByTimeAsync(800);
     });
     expect(vi.mocked(updatePlaybook).mock.calls).toEqual([
-      ["other", { name: "Other playbook" }, change("").access],
+      ["other", { name: "Other playbook" }, change("").access, expect.any(Function)],
     ]);
     unmount();
   });
   it("flushes the trailing edit when navigation unmounts the editor", async () => {
     vi.mocked(updatePlaybook).mockResolvedValue(saved("Last edit"));
-    const { result, unmount } = renderHook(() => usePlaybookAutosave(vi.fn()));
+    const onSaved = vi.fn();
+    const { result, unmount } = renderHook(() => usePlaybookAutosave(onSaved));
     act(() => result.current.schedule(change("Last edit")));
     unmount();
     await act(async () => {});
@@ -192,6 +214,26 @@ describe("playbook autosave", () => {
       "book",
       { name: "Last edit" },
       change("").access,
-    );
+    expect.any(Function),);
   });
+  it("does not issue a trailing save after the active workspace changes", async () => {
+    vi.mocked(updatePlaybook).mockResolvedValue(saved("Unsaved here"));
+    const { result, unmount } = renderHook(() => usePlaybookAutosave(vi.fn()));
+    act(() => result.current.schedule(change("Unsaved here")));
+    autosaveScope.workspaceId = "another-workspace";
+    unmount();
+    await act(async () => {});
+    expect(updatePlaybook).not.toHaveBeenCalled();
+  });
+
+  it("does not issue a trailing save after the auth session epoch changes", async () => {
+    vi.mocked(updatePlaybook).mockResolvedValue(saved("Previous session"));
+    const { result, unmount } = renderHook(() => usePlaybookAutosave(vi.fn()));
+    act(() => result.current.schedule(change("Previous session")));
+    act(() => { advanceAuthEpoch(); });
+    unmount();
+    await act(async () => {});
+    expect(updatePlaybook).not.toHaveBeenCalled();
+  });
+
 });
