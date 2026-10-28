@@ -139,7 +139,7 @@ test("fails without auditing when the workspace has no pnpm lock", async () => {
 test("fails without auditing when the pnpm lock is empty", async () => {
     const result = await runGate({ lock: "", report: { advisories: {} } });
     assertRefused(result);
-    strictEqual(result.stderr.includes("missing or empty"), true);
+    strictEqual(result.stderr.includes("must be a mapping"), true);
     strictEqual(result.argv, null);
 });
 

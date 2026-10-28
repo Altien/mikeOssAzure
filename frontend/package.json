@@ -86,7 +86,8 @@
     "vitest": "^5.0.0",
     "wrangler": "^4.151.1",
     "@types/office-js": "^1.0.612",
-    "@types/office-runtime": "^1.0.40"
+    "@types/office-runtime": "^1.0.40",
+    "yaml": "2.9.1"
   },
   "license": "AGPL-3.0-only",
   "packageManager": "pnpm@11.1.2",
