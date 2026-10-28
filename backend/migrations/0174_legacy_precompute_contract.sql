@@ -36,7 +36,7 @@ begin
   end if;
   return true;
 end;
-$;
+$$;
 drop function if exists public.read_document_text(text,text,uuid,uuid);
 create or replace function public.read_document_text(p_user_id text,p_user_email text,p_document_id uuid,p_version_id uuid,p_expected_storage_path text default null)
 returns jsonb language sql stable security invoker set search_path=public,pg_temp as $$

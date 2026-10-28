@@ -28,7 +28,7 @@ begin
   if p_running and j.lease_expires_at<=clock_timestamp() then raise exception 'document_text_claim_lost' using errcode='40001'; end if;
   return found;
 end;
-$;
+$$;
 create or replace function public.document_text_job_failed()
 returns trigger language plpgsql security definer set search_path=public,pg_temp as $$
 declare version_id uuid; revision uuid;
