@@ -10,27 +10,6 @@ import type { Db } from "../../lib/supabase";
 import { MAX_PROFILE_IMAGE_BYTES, parseProfileImageDataUrl } from "../../lib/profileImage";
 
 export const MAX_ORG_LOGO_BYTES = MAX_PROFILE_IMAGE_BYTES;
-type LogoContentType = "image/png" | "image/jpeg" | "image/webp";
-
-// What each accepted format begins with. The declared type is the client's
-// word; these are the file's. SVG is deliberately absent: it is a document
-// that can carry script, not a picture.
-function hasLogoSignature(contentType: LogoContentType, bytes: Buffer): boolean {
-    switch (contentType) {
-        case "image/png":
-            return bytes.subarray(0, 8).equals(
-                Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-            );
-        case "image/jpeg":
-            return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
-        case "image/webp":
-            return bytes.subarray(0, 4).toString("latin1") === "RIFF" &&
-                bytes.subarray(8, 12).toString("latin1") === "WEBP";
-    }
-}
-
-const DATA_URL = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/;
-const UNSUPPORTED = "The logo must be a PNG, JPEG or WebP image.";
 /** Applies shared raster size, encoding, and signature validation with logo-specific error messages. */
 export function parseOrgLogoDataUrl(value: unknown): {ok:true; contentType:"image/png"|"image/jpeg"|"image/webp"; bytes:Buffer}|{ok:false;detail:string} {
     const parsed = parseProfileImageDataUrl(value, "logo");
