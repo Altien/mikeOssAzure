@@ -12,7 +12,7 @@ import { mutatePlaybookJob, playbookJobIdentity, PlaybookClaimLostError } from "
 
 import { deleteFile, downloadFile } from "../../lib/storage";
 import { safeError } from "../../lib/safeError";
-import { reportError, setOperation } from "../../lib/observability/sentry";
+import { setOperation } from "../../lib/observability/sentry";
 import { enqueueDbJob } from "../../lib/dbq/enqueue";
 import { dbJobsEnabled, processClaimedJob, STALE_SECONDS } from "../../lib/dbq/runner";
 import {
