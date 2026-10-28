@@ -427,27 +427,6 @@ async function collectDocumentVersionPaths(
             }
         }
 
-        // A public playbook handed to the organization keeps its files under
-        // the departed creator's prefix.
-        const [playbooks, playbookSources] = await Promise.all([
-            db
-                .from("playbooks")
-                .select("source_storage_key")
-                .in("source_storage_key", batch),
-            db
-                .from("playbook_sources")
-                .select("storage_key")
-                .in("storage_key", batch),
-        ]);
-        await throwIfError(playbooks.error, "Failed to classify playbook files");
-        await throwIfError(
-            playbookSources.error,
-            "Failed to classify playbook source files",
-        );
-        for (const row of (playbooks.data ?? []) as Record<string, unknown>[])
-            claim(row.source_storage_key);
-        for (const row of (playbookSources.data ?? []) as Record<string, unknown>[])
-            claim(row.storage_key);
     }
 
     return [...paths];

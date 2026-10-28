@@ -69,7 +69,7 @@ import {
   recordPlaybookRunAudit,
   recordPlaybookRunDeletedAudit,
 } from "./playbooks.audit";
-import { UserFacingError } from "../../lib/userFacingError";
+import { UserFacingError } from "../../lib/safeError";
 import {
   importReportStage,
   reportPlaybookFailure,

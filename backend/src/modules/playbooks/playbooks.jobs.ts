@@ -42,11 +42,7 @@ import {
   type PlaybookReviewRequest,
 } from "./playbooks.operations";
 import { isStagedPlaybookImportKey } from "./playbooks.staging";
-import { reportPlaybookFailure, type PlaybookJobKind } from "./playbooks.reporting";
-import {
-  recordPlaybookImportAudit,
-  recordPlaybookRunAudit,
-} from "./playbooks.audit";
+import { reportPlaybookFailure } from "./playbooks.reporting";
 
 export const PLAYBOOK_REVIEW_JOB = "playbook.review";
 export const PLAYBOOK_IMPORT_JOB = "playbook.import";
@@ -136,27 +132,6 @@ async function untilRecorded(
  * row when this call is the one that failed it, so its outcome is audited by
  * exactly one caller.
  */
-async function markFailed(
-  db: Db,
-  table: Table,
-  id: string,
-  message: string,
-): Promise<Record<string, unknown> | null> {
-  const completedAt = new Date().toISOString();
-  const { data, error } = await db
-    .from(table)
-    .update({
-      status: "failed",
-      error: message,
-      completed_at: completedAt,
-      updated_at: completedAt,
-    })
-    .eq("id", id)
-    .eq("status", "running")
-    .select("*");
-  if (error) throw error;
-  return ((data as Record<string, unknown>[] | null) ?? [])[0] ?? null;
-}
 
 export async function handlePlaybookReview(db: Db, job: DbJob): Promise<void> {
   const input = job.payload as unknown as PlaybookReviewInput;
