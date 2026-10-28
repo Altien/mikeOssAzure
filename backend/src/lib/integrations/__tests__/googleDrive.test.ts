@@ -72,7 +72,7 @@ describe("startGoogleDriveOAuth", () => {
         const db = makeDb({});
         await expect(
             startGoogleDriveOAuth(personalConnectorOwner("user-1"), "https://app.test/cb", db),
-        ).rejects.toThrow(/GOOGLE_DRIVE_OAUTH_CLIENT_ID/);
+        ).rejects.toThrow(/google-drive-oauth-client-id.*Key Vault/);
         await expect(
             startGoogleDriveOAuth(personalConnectorOwner("user-1"), "https://app.test/cb", db),
         ).rejects.toThrow(/https:\/\/app\.test\/cb/);

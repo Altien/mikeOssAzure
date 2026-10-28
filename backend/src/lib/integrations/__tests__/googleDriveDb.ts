@@ -5,6 +5,7 @@ type Row = Record<string, unknown>;
 export function driveDb(
     options: {
         tokenRow?: Row | null;
+        memberships?: Row[];
         states?: Row[];
         onInsert?: (table: string, row: Row) => void;
         onDelete?: (table: string) => void;
@@ -16,7 +17,7 @@ export function driveDb(
     const failures = new Map<string, unknown>();
     const db = {
         from(table: string) {
-            const rows = table === "user_google_drive_tokens" ? tokens : states;
+            const rows = table === "org_members" ? options.memberships ?? [] : table === "user_google_drive_tokens" ? tokens : states;
             let action = "select";
             let patch: Row = {};
             let single = false;
@@ -30,6 +31,8 @@ export function driveDb(
                     filters.push((r) => r[key] === value);
                     return query;
                 },
+                // Active-org membership guards use a joined deleted_at null filter.
+                is(key: string, value: unknown) { filters.push(r => (r[key] ?? null) === value); return query; },
                 // Only the workspace filter (`org_id` eq/is) is used.
                 filter(key: string, op: string, value: unknown) {
                     filters.push((r) =>

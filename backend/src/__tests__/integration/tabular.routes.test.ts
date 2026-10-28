@@ -297,7 +297,7 @@ describe("tabular.routes", () => {
                 error: null,
             };
             const res = await request(app)
-                .get("/tabular-review/creators?project_id=p1")
+                .get("/api/tabular-review/creators?project_id=p1")
                 .set(...AUTH);
             expect(res.status).toBe(200);
             // Names and photos only: the review list does not expose emails.
@@ -310,14 +310,14 @@ describe("tabular.routes", () => {
         it("refuses a project the caller cannot open", async () => {
             checkProjectAccess.mockResolvedValue({ ok: false });
             const res = await request(app)
-                .get("/tabular-review/creators?project_id=p1")
+                .get("/api/tabular-review/creators?project_id=p1")
                 .set(...AUTH);
             expect(res.status).toBe(404);
             expect(supabaseState.operations).not.toContain("from:tabular_reviews");
         });
 
         it("requires a project", async () => {
-            const res = await request(app).get("/tabular-review/creators").set(...AUTH);
+            const res = await request(app).get("/api/tabular-review/creators").set(...AUTH);
             expect(res.status).toBe(400);
         });
     });
@@ -326,7 +326,7 @@ describe("tabular.routes", () => {
     describe("GET /tabular-review", () => {
         it("requests all workspace reviews by update time for History", async () => {
             const res = await request(app)
-                .get("/tabular-review?workspace=personal&sort_key=updated&sort_direction=desc&limit=31")
+                .get("/api/tabular-review?workspace=personal&sort_key=updated&sort_direction=desc&limit=31")
                 .set(...AUTH);
             expect(res.status).toBe(200);
             expect(supabaseState.rpcCalls).toContainEqual({
@@ -361,7 +361,7 @@ describe("tabular.routes", () => {
                 error: null,
             };
             const res = await request(app)
-                .get("/tabular-review?project_id=p1")
+                .get("/api/tabular-review?project_id=p1")
                 .set(...AUTH);
             expect(res.status).toBe(200);
             expect(res.body).toEqual([
@@ -372,10 +372,10 @@ describe("tabular.routes", () => {
 
         it("filters the list and select-all ids by creator", async () => {
             await request(app)
-                .get("/tabular-review?project_id=p1&owner_user_id=u2")
+                .get("/api/tabular-review?project_id=p1&owner_user_id=u2")
                 .set(...AUTH);
             await request(app)
-                .get("/tabular-review/ids?project_id=p1&owner_user_id=u2")
+                .get("/api/tabular-review/ids?project_id=p1&owner_user_id=u2")
                 .set(...AUTH);
             expect(supabaseState.rpcCalls).toContainEqual({
                 fn: "get_tabular_reviews_overview",
@@ -388,7 +388,7 @@ describe("tabular.routes", () => {
         });
 
         it("omits the creator argument when unfiltered", async () => {
-            await request(app).get("/tabular-review?project_id=p1").set(...AUTH);
+            await request(app).get("/api/tabular-review?project_id=p1").set(...AUTH);
             expect(supabaseState.rpcCalls[0].args).not.toHaveProperty("p_owner_user_id");
         });
 
@@ -399,7 +399,7 @@ describe("tabular.routes", () => {
                 error: null,
             };
             const res = await request(app)
-                .get("/tabular-review")
+                .get("/api/tabular-review")
                 .set(...AUTH);
             expect(res.status).toBe(200);
             expect(res.body).toEqual([
@@ -423,7 +423,7 @@ describe("tabular.routes", () => {
         const id = "11111111-1111-4111-8111-111111111111";
         it("uses the authenticated identity and only returns authorized status snapshots", async () => {
             supabaseState.rpc = { data: [{ id, is_running: true, is_complete: false }], error: null };
-            const res = await request(app).get(`/tabular-review/history-status?ids=${id}`).set(...AUTH);
+            const res = await request(app).get(`/api/tabular-review/history-status?ids=${id}`).set(...AUTH);
             expect(res.status).toBe(200);
             expect(res.body).toEqual([{ id, is_running: true, is_complete: false }]);
             expect(supabaseState.rpcCalls).toContainEqual({
@@ -432,7 +432,7 @@ describe("tabular.routes", () => {
             });
         });
         it.each(["", "invalid", Array(101).fill(id).join(",")])("rejects invalid or oversized id lists", async (ids) => {
-            const res = await request(app).get(`/tabular-review/history-status?ids=${ids}`).set(...AUTH);
+            const res = await request(app).get(`/api/tabular-review/history-status?ids=${ids}`).set(...AUTH);
             expect(res.status).toBe(400);
             expect(supabaseState.rpcCalls).toEqual([]);
         });
@@ -488,7 +488,7 @@ describe("tabular.routes", () => {
                 orgId: "org-1",
             });
             await request(app)
-                .post("/tabular-review")
+                .post("/api/tabular-review")
                 .set(...AUTH)
                 .send({
                     title: "Firm review",

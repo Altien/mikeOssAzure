@@ -124,7 +124,8 @@ describe("Google Drive OAuth lifecycle", () => {
         );
     });
     it("keeps a separate connection for each workspace", async () => {
-        const store = driveDb();
+        // Dev drift: effective connection reads require actual active membership.
+        const store = driveDb({ memberships: [{ user_id: "u1", org_id: "org-1", role: "member" }] });
         const firm = { userId: "u1", orgId: "org-1" };
         const { authorizationUrl } = await startGoogleDriveOAuth(
             firm,

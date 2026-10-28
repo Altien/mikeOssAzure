@@ -349,7 +349,7 @@ describe("POST /projects/:projectId/chat", () => {
         const userSettings = await import("../../modules/user/user.settings.js");
 
         await request(app)
-            .post("/projects/p1/chat")
+            .post("/api/projects/p1/chat")
             .set("Authorization", "Bearer test")
             .send(VALID_BODY);
 
@@ -371,7 +371,7 @@ describe("POST /projects/:projectId/chat", () => {
         });
 
         const res = await request(app)
-            .post("/projects/p1/chat")
+            .post("/api/projects/p1/chat")
             .set("Authorization", "Bearer test")
             .send(VALID_BODY);
 
@@ -418,7 +418,7 @@ describe("POST /projects/:projectId/chat", () => {
         });
 
         await request(app)
-            .post("/projects/p1/chat")
+            .post("/api/projects/p1/chat")
             .set("Authorization", "Bearer test")
             .send(VALID_BODY);
 

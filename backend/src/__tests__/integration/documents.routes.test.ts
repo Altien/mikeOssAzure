@@ -182,14 +182,14 @@ describe("GET /single-documents/:documentId", () => {
     });
 
     it("returns the file metadata with read-only permissions for a viewer", async () => {
-        const res = await request(app).get(`/single-documents/${DOC}`).set(...AUTH);
+        const res = await request(app).get(`/api/single-documents/${DOC}`).set(...AUTH);
         expect(res.status).toBe(200);
         expect(res.body).toMatchObject({ id: DOC, can_edit: false, can_delete: false });
     });
 
     it("distinguishes denied access from a missing document without exposing metadata", async () => {
         ensureDocAccess.mockResolvedValue({ ok: false });
-        const res = await request(app).get(`/single-documents/${DOC}`).set(...AUTH);
+        const res = await request(app).get(`/api/single-documents/${DOC}`).set(...AUTH);
         expect(res.status).toBe(403);
         expect(res.body).toEqual({ detail: "You do not have access to this document." });
     });
@@ -197,14 +197,14 @@ describe("GET /single-documents/:documentId", () => {
     it.each(["missing", "archived"])("returns 404 for a %s document", async (state) => {
         if (state === "missing") rows.documents = [];
         else rows.documents[0].archived_at = "2026-10-14T00:00:00Z";
-        const res = await request(app).get(`/single-documents/${DOC}`).set(...AUTH);
+        const res = await request(app).get(`/api/single-documents/${DOC}`).set(...AUTH);
         expect(res.status).toBe(404);
         expect(res.body).toEqual({ detail: "Document not found" });
     });
 
     it("does not describe a database failure as a missing document", async () => {
         errors.documents = { message: "private database failure" };
-        const res = await request(app).get(`/single-documents/${DOC}`).set(...AUTH);
+        const res = await request(app).get(`/api/single-documents/${DOC}`).set(...AUTH);
         expect(res.status).toBe(500);
         expect(JSON.stringify(res.body)).not.toContain("private database failure");
     });
@@ -524,7 +524,7 @@ describe("POST /single-documents/:documentId/versions/from-document", () => {
         const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
         try {
             const res = await request(app)
-                .post(`/single-documents/${DOC}/versions/from-document`)
+                .post(`/api/single-documents/${DOC}/versions/from-document`)
                 .set(...AUTH)
                 .send({ source_document_id: SOURCE });
 

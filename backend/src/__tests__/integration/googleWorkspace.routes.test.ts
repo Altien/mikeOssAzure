@@ -52,7 +52,9 @@ const app = express();
 app.use(express.json());
 app.use("/user", userRouter);
 import { ConnectorSetupError } from "../../lib/mcp/errors";
-import { encryptString } from "../../lib/mcp/client";
+import { encryptString, flushMcpEncryptionKey } from "../../lib/mcp/client";
+// Dev drift: KV-first helpers are awaited; fixture secrets use canonical local fallback.
+vi.mock("../../lib/config", async load => ({ ...await load<typeof import("../../lib/config")>(), getKeyVaultConfig: vi.fn(async () => "") }));
 import { driveDb } from "../../lib/integrations/__tests__/googleDriveDb";
 
 // Connector routes act on the caller's Personal connections unless
@@ -83,6 +85,7 @@ function membershipDb(member: boolean) {
   };
 }
 beforeEach(() => {
+  flushMcpEncryptionKey();
   vi.clearAllMocks();
   mocks.db = {};
   mocks.auth = true;
@@ -288,10 +291,10 @@ describe("Google read-only settings validation", () => {
 describe("Google Drive picker session", () => {
   const pickerSession = () =>
     request(app).post("/user/integrations/google-drive/picker-session");
-  const connected = (overrides: Record<string, unknown> = {}) => {
-    vi.stubEnv("MCP_CONNECTORS_ENCRYPTION_SECRET", "test-encryption-secret");
-    const access = encryptString("access-token-1");
-    const refresh = encryptString("refresh-token-1");
+  const connected = async (overrides: Record<string, unknown> = {}) => {
+    vi.stubEnv("MCP_CONNECTORS_ENCRYPTION_KEY", "test-encryption-secret");
+    const access = await encryptString("access-token-1");
+    const refresh = await encryptString("refresh-token-1");
     mocks.db = driveDb({
       tokenRow: {
         user_id: "owner",
@@ -319,7 +322,7 @@ describe("Google Drive picker session", () => {
   });
 
   it("answers 404 when the server has no Picker key or app id", async () => {
-    connected();
+    await connected();
     vi.stubEnv("GOOGLE_DRIVE_PICKER_APP_ID", "");
     const res = await pickerSession();
     expect(res.status).toBe(404);
@@ -327,7 +330,7 @@ describe("Google Drive picker session", () => {
   });
 
   it("answers 404 when the operator switched Drive off, without a token", async () => {
-    connected();
+    await connected();
     vi.stubEnv("GOOGLE_WORKSPACE_DISABLED_PROVIDERS", "google-drive");
     const res = await pickerSession();
     expect(res.status).toBe(404);
@@ -342,12 +345,12 @@ describe("Google Drive picker session", () => {
     const missing = await pickerSession();
     expect(missing.status).toBe(409);
     expect(missing.body.code).toBe("google_drive_auth_required");
-    connected({ enabled: false });
+    await connected({ enabled: false });
     expect((await pickerSession()).status).toBe(409);
   });
 
   it("answers 409 for a connection made with whole-Drive access, without a token", async () => {
-    connected({ scope: "openid email https://www.googleapis.com/auth/drive" });
+    await connected({ scope: "openid email https://www.googleapis.com/auth/drive" });
     const res = await pickerSession();
     expect(res.status).toBe(409);
     expect(res.body.code).toBe("google_drive_picker_reconnect");
@@ -355,7 +358,7 @@ describe("Google Drive picker session", () => {
   });
 
   it("returns a short-lived token for the Picker and never the refresh token", async () => {
-    connected();
+    await connected();
     const res = await pickerSession();
     expect(res.status).toBe(200);
     expect(res.headers["cache-control"]).toBe("no-store");

@@ -319,7 +319,7 @@ describe("xAI adapter", () => {
     vi.stubEnv("XAI_API_KEY", "");
     await expect(
       completeWithProvider({ model: "xai/grok-4.3", user: "x" }),
-    ).rejects.toThrow(/xAI API key is not configured/);
+    ).rejects.toThrow(/xAI is not configured for this organisation.*xai-api-key/);
   });
 });
 
