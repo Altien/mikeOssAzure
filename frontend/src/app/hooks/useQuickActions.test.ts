@@ -14,7 +14,7 @@ const authenticatedOwner = vi.hoisted(() => ({
 }));
 vi.mock("@/app/contexts/AuthContext", async (original) => ({
   ...(await original<typeof import("@/app/contexts/AuthContext")>()),
-  useAuth: () => { ...authenticatedOwner, user: { ...authenticatedOwner.user, id: scope.accountId } },
+  useAuth: () => ({ ...authenticatedOwner, user: { ...authenticatedOwner.user, id: scope.accountId } }),
 }));
 
 vi.mock("@/app/contexts/WorkspaceContext", async importOriginal => ({
