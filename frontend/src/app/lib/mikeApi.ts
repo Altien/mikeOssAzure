@@ -1588,13 +1588,6 @@ export async function startGoogleDriveOAuth(workspace?: string, isCurrentAccount
         { method: "POST" },
         isCurrentAccount,
     );
-}> {
-    return apiRequest<{ authorizationUrl: string }>(
-        connectorPath("/user/integrations/google-drive/oauth/start", workspace),
-        { method: "POST" },
-        isCurrentAccount,
-    );
-}
 
 export async function cancelGoogleDriveOAuth(
     state: string,

@@ -477,7 +477,7 @@ export async function signOut(): Promise<void> {
       fallback: "Mike couldn't sign you out. Try again.",
       dedupeKey: "sign-out",
       operation: "word.session",
-      onRetry: () => { if (generation === _sessionGeneration) return signOut(); },
+      onRetry: async () => { if (generation === _sessionGeneration) await signOut(); },
     });
   }
   broadcast();

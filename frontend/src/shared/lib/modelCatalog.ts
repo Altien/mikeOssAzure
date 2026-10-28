@@ -549,7 +549,6 @@ export function unavailableModelMessage(
   if (provider && keys[provider]?.enabled === false) {
     return `${label} is turned off. Turn it back on in Bring Your Own Keys before using this model.`;
   }
-  const article = /^[aeiou]/i.test(label) ? "an" : "a";
   return `${label} is unavailable. Ask an administrator to check the organisation credential.`;
 }
 

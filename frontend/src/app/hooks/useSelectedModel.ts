@@ -5,7 +5,6 @@ import type { ReasoningLevel } from "../components/assistant/ModelToggle";
 import {
     canonicalModelId,
     isAllowedModelId,
-    isRouterModelSelected,
     type RouterSelections,
 } from "@/shared/lib/modelCatalog";
 import { isModelAvailable } from "../lib/modelAvailability";
