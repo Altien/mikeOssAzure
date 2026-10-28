@@ -488,8 +488,6 @@ export async function buildProjectExportManifest(db: Db, projectId: string) {
                 .order("id", { ascending: true }),
         "id, project_id, status, current_version_id, created_at",
     );
-    const outside = new Set(await findDocumentsOutsideWorkspace(db, idsFrom(readableDocuments), orgId, { includeWorkflowAssets: true }));
-    const documents = readableDocuments.filter((row) => !outside.has(String(row.id)));
     const documentIds = idsFrom(documents);
 
     const [versions, edits] = await Promise.all([
@@ -828,6 +826,8 @@ export async function buildUserAccountExport(
         [...standaloneDocuments, ...projectDocuments],
         (row) => ensureDocAccess(row, userId, userEmail, db),
     );
+    const outside = new Set(await findDocumentsOutsideWorkspace(db, idsFrom(readableDocuments), orgId, { includeWorkflowAssets: true }));
+    const documents = readableDocuments.filter((row) => !outside.has(String(row.id)));
     const documentIds = idsFrom(documents);
     const reviewIds = idsFrom(tabularReviews);
 

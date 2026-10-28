@@ -468,7 +468,6 @@ orgsRouter.get("/:orgId/api-keys", requireOrgAuth, asyncRoute(async (req, res) =
 orgsRouter.put(
     "/:orgId/member-data-policy",
     requireOrgAuth,
-    requireMfaIfEnrolled,
     asyncRoute(async (req, res) => {
         const db = createServerSupabase();
         const result = await setOrgMemberDataPolicy(db, {
