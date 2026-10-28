@@ -11,6 +11,11 @@ vi.mock("../../../../documents/documents.service", async (load) => ({
 vi.mock("../../../../../lib/storage", async (load) => ({
   ...await load<typeof import("../../../../../lib/storage")>(), downloadFile: mocks.download,
 }));
+// Dev drift: a stored search reference rechecks its server-resolved workspace before reading.
+vi.mock("../../../../../lib/documentWorkspace", async (load) => ({
+  ...await load<typeof import("../../../../../lib/documentWorkspace")>(),
+  findDocumentsOutsideWorkspace: vi.fn(async () => []),
+}));
 import { runToolCalls } from "../toolDispatcher";
 import { getTurnReadIdentity, readDocumentContent } from "../documentOps";
 import { spotlight } from "../../contextBuilders";
@@ -21,7 +26,7 @@ beforeEach(() => vi.resetAllMocks());
 it("registers a fenced search result as a pinned template handle and keeps internal paths private", async () => {
   mocks.find.mockResolvedValue({ ok: true, data: { matches: [match], next_offset: 10, coverage: { pending_versions: 2 } } });
   const store: DocStore = new Map(); const index: DocIndex = {};
-  const result = await runToolCalls([{ id: "call", function: { name: "find_documents", arguments: JSON.stringify({ scope: "templates", query: "clause", userId: "spoofed", workspace: "spoofed" }) } }], store, "actor", {} as Db, () => {}, undefined, undefined, index, undefined, undefined, "project", undefined, undefined, "nonce", { userEmail: "actor@example.test", orgId: "organization" });
+  const result = await runToolCalls([{ id: "call", function: { name: "find_documents", arguments: JSON.stringify({ scope: "templates", query: "clause", userId: "spoofed", workspace: "spoofed" }) } }], store, "actor", {} as Db, () => {}, undefined, undefined, index, undefined, undefined, "project", undefined, undefined, undefined, undefined, undefined, "nonce", { userEmail: "actor@example.test", orgId: "organization" });
   expect(mocks.find).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ userId: "actor", userEmail: "actor@example.test", workspace: "organization" }));
   const content = (result.toolResults[0] as { content: string }).content;
   expect(content).not.toContain("private/source"); expect(content).toContain("pending_versions");

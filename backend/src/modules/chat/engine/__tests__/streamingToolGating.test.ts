@@ -1,3 +1,4 @@
+// Dev drift: dispatcher batches include Authority Trace; Google advertisement is an explicit surface option.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // The tool loop is the second door into a project's documents. Standing in a
@@ -266,7 +267,7 @@ it.each([
   runToolCalls.mockResolvedValueOnce({
     toolResults: [], docsRead: [], docsFound: [], docsCreated: [], docsReplicated: [],
     workflowsApplied: [], docsEdited: [], askInputsEvents: [], courtlistenerEvents: [],
-    caseCitationEvents: [], mcpEvents: [],
+    caseCitationEvents: [], mcpEvents: [], authorityTraceEvents: [],
     documentSearchEvents: [details.error ? { ...search, error: "private database details" } : search],
   } as never);
   streamChatWithTools.mockImplementationOnce(async (params) => {
@@ -303,7 +304,7 @@ it("assembles the person's connectors for the organization a conversation is in"
     { type: "function", function: { name: "mcp_firm_search", description: "", parameters: { type: "object", properties: {} } } },
   ]);
   const fake = scriptedDb([{ table: "organizations", data: { kind: "team" } }]);
-  await runLLMStream({ ...baseParams(), db: fake.db, orgId: "firm" });
+  await runLLMStream({ ...baseParams(), db: fake.db, orgId: "firm", includeGoogleConnectors: true });
   const owner = { userId: baseParams().userId, orgId: "firm" };
   expect(buildUserMcpTools).toHaveBeenCalledWith(owner, fake.db);
   expect(buildGoogleDriveTools).toHaveBeenCalledWith(owner, fake.db);

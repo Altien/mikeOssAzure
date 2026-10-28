@@ -1,3 +1,4 @@
+// Dev drift: dispatcher batches include Authority Trace; Google advertisement is an explicit surface option.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 type DispatchedCall = { id: string; function: { name: string } };
@@ -14,7 +15,7 @@ function toolBatch(calls: DispatchedCall[], askInputsEvents: unknown[] = []) {
     askInputsEvents,
     courtlistenerEvents: [],
     caseCitationEvents: [],
-    mcpEvents: [],
+    mcpEvents: [], authorityTraceEvents: [],
   };
 }
 

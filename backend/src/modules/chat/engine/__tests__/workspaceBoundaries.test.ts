@@ -1,3 +1,4 @@
+// Dev drift: retain Dev external-source, Authority Trace and skill-resource argument slots before nonce/options.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { scriptedDb } from "../../../../__tests__/helpers/scriptedDb";
 
@@ -74,7 +75,7 @@ describe("assistant workspace boundaries", () => {
     ["gmail_search", "google"],
   ] as const)("runs %s on the person's connections for the conversation's organization", async (name, family) => {
     const fake = scriptedDb([{ table: "organizations", data: { kind: "team" } }]);
-    await runToolCalls([{ id: "call", function: { name, arguments: "{}" } }], new Map(), "u", fake.db, vi.fn(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, { orgId: "firm" });
+    await runToolCalls([{ id: "call", function: { name, arguments: "{}" } }], new Map(), "u", fake.db, vi.fn(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, { orgId: "firm" });
     const owner = { userId: "u", orgId: "firm" };
     expect(connectors[family].plan).toHaveBeenCalledWith(owner, name, {}, fake.db);
     expect(connectors[family].execute).toHaveBeenCalledWith(owner, name, {}, fake.db);
@@ -83,7 +84,7 @@ describe("assistant workspace boundaries", () => {
 
   it("runs connector tools on Personal connections in a person's own organization", async () => {
     const fake = scriptedDb([{ table: "organizations", data: { kind: "personal" } }]);
-    await runToolCalls([{ id: "call", function: { name: "mcp_search", arguments: "{}" } }], new Map(), "u", fake.db, vi.fn(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, { orgId: "mine" });
+    await runToolCalls([{ id: "call", function: { name: "mcp_search", arguments: "{}" } }], new Map(), "u", fake.db, vi.fn(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, { orgId: "mine" });
     expect(connectors.mcp.execute).toHaveBeenCalledWith({ userId: "u", orgId: null }, "mcp_search", {}, fake.db);
     fake.done();
   });

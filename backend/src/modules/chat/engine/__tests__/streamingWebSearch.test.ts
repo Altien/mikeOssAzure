@@ -1,3 +1,4 @@
+// Dev drift: dispatcher batches include Authority Trace; Google advertisement is an explicit surface option.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { streamChatWithTools, runToolCalls, searchWeb } = vi.hoisted(() => ({
@@ -15,7 +16,7 @@ const { streamChatWithTools, runToolCalls, searchWeb } = vi.hoisted(() => ({
     askInputsEvents: [],
     courtlistenerEvents: [],
     caseCitationEvents: [],
-    mcpEvents: [],
+    mcpEvents: [], authorityTraceEvents: [],
   })),
   searchWeb: vi.fn(),
 }));

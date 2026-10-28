@@ -1,3 +1,4 @@
+// Dev drift: nonce/options follow Dev external-source, Authority Trace and skill-resource slots.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { getTurnReadIdentity, readDocumentContent } = vi.hoisted(() => ({
@@ -108,6 +109,9 @@ it("refuses a scoped subagent's search across the project", async () => {
         undefined,
         undefined,
         "project-1",
+        undefined,
+        undefined,
+        undefined,
         undefined,
         undefined,
         NONCE,
