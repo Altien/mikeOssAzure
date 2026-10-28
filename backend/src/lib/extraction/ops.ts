@@ -32,6 +32,8 @@ export const EXTRACTION_OPS = {
   presentation: (bytes: ArrayBuffer) =>
     extractPresentationText(Buffer.from(bytes)),
   legacyOfficeText: (bytes: ArrayBuffer) => extractLegacyOfficeText(bytes),
+  // Dev text documents retain direct UTF-8 decoding inside the same bounded child.
+  plainText: (bytes: ArrayBuffer) => new TextDecoder().decode(bytes),
   rawText: (bytes: ArrayBuffer) => mammothRawText(bytes),
 };
 

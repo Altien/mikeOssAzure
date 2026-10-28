@@ -1359,7 +1359,8 @@ export async function readDocumentContent(
           | "spreadsheet"
           | "presentation"
           | "legacyOfficeText"
-          | "rawText",
+          | "rawText"
+          | "plainText",
       ) => extract(op, source);
       if (fileType === "pdf") {
         text = await readIsolated("pdfForModel");
@@ -1386,14 +1387,16 @@ export async function readDocumentContent(
         devLog(
           `[read_document] presentation extracted length=${text.length} for filename="${docInfo.filename}"`,
         );
+      } else if (isTextDocumentType(fileType)) {
+        // Dev generated/plain-text files share the subprocess byte/text/time bounds.
+        text = await readIsolated("plainText");
       } else if (
         isPresentationDocumentType(fileType) ||
         isWordDocumentType(fileType)
       ) {
         // This branch is the only one that shells out to LibreOffice — every
         // other type has an in-process reader above — so it is the only one
-        // worth caching. The cached object is written by the
-        // document.precompute_text job, keyed on the immutable version id.
+        // worth retaining through canonical revision-aware text publication.
         // The fixed version-only blob is no longer authoritative. Reuse the
         // canonical current revision/access read, or parse these source bytes.
         const cached = db && documentId && versionId && opts?.textReadContext
