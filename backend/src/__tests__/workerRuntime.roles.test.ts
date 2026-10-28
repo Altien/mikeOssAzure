@@ -27,7 +27,16 @@ vi.mock("../jobs/maintenance", () => ({ runStaleWorkSweep: vi.fn() }));
 vi.mock("../modules/uploads/uploads.service", () => ({
   startUploadProcessingWorkers: mocks.startUploads,
 }));
-vi.mock("../lib/supabase", () => ({ createServerSupabase: vi.fn() }));
+// Dev drift: role selection runs only after the asynchronous canonical readiness/secret probes.
+vi.mock("../lib/dbq/lifecycleGuard", () => ({ enforceDocumentLifecycleMigration: vi.fn(async () => {}) }));
+vi.mock("../lib/serverSession", () => ({ initServerSessionKeys: vi.fn(async () => {}) }));
+vi.mock("../lib/downloadTokens", () => ({ initDownloadSigningSecret: vi.fn(async () => {}) }));
+vi.mock("../lib/storage", () => ({ initStorage: vi.fn(async () => {}) }));
+vi.mock("../lib/manifestSigning", () => ({ initManifestSigningKey: vi.fn(async () => {}), manifestPublicKey: vi.fn() }));
+vi.mock("../lib/supabase", () => ({ createServerSupabase: () => ({
+  from: () => ({ select: () => ({ limit: async () => ({ data: [], error: null }) }) }),
+  rpc: vi.fn(async () => ({ data: false, error: null })),
+}) }));
 vi.mock("../lib/observability/sentry", () => ({ reportError: vi.fn() }));
 
 import { startAllWorkers, stopAllWorkers } from "../workerRuntime";
@@ -40,22 +49,22 @@ afterEach(async () => {
 });
 
 describe("worker roles", () => {
-  it("starts only upload processing on the uploads thread", () => {
-    startAllWorkers(["uploads"]);
+  it("starts only upload processing on the uploads thread", async () => {
+    await startAllWorkers(["uploads"]);
     expect(mocks.startUploads).toHaveBeenCalledOnce();
     expect(mocks.startDbJobRunner).not.toHaveBeenCalled();
     expect(mocks.startWorkers).not.toHaveBeenCalled();
   });
 
-  it("starts everything except upload processing on the jobs thread", () => {
-    startAllWorkers(["jobs"]);
+  it("starts everything except upload processing on the jobs thread", async () => {
+    await startAllWorkers(["jobs"]);
     expect(mocks.startUploads).not.toHaveBeenCalled();
     expect(mocks.startDbJobRunner).toHaveBeenCalledOnce();
     expect(mocks.startWorkers).toHaveBeenCalledOnce();
   });
 
-  it("starts both roles inline or in a standalone worker process", () => {
-    startAllWorkers();
+  it("starts both roles inline or in a standalone worker process", async () => {
+    await startAllWorkers();
     expect(mocks.startUploads).toHaveBeenCalledOnce();
     expect(mocks.startDbJobRunner).toHaveBeenCalledOnce();
   });

@@ -835,12 +835,13 @@ describe("operation and stage trail", () => {
   it("announces the release at boot and warns when a production build has none", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    initSentry("api", { ...dsnEnv, SENTRY_DSN: undefined, GIT_SHA: "0123456789abcdef0123" } as NodeJS.ProcessEnv);
+    initSentry("api", { ...dsnEnv, GIT_SHA: "0123456789abcdef0123" } as NodeJS.ProcessEnv);
     expect(log).toHaveBeenCalledWith(expect.stringContaining("release mike@0123456789ab"));
     expect(warn).not.toHaveBeenCalled();
     resetSentryForTests();
-    initSentry("api", { ...dsnEnv, SENTRY_DSN: undefined, NODE_ENV: "production" } as NodeJS.ProcessEnv);
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("release unset"));
+    initSentry("api", { ...dsnEnv, NODE_ENV: "production" } as NodeJS.ProcessEnv);
+    // Dev drift: no hosted fallback DSN; boot logging uses explicit destination.
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("[sentry] enabled for api"));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("no release"));
   });
 });

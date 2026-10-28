@@ -781,13 +781,10 @@ describe("deleteUserAccountData", () => {
 
     it("removes the user's rows, files, and share references everywhere", async () => {
         const { db, tables } = fixture();
-        listFilesMock.mockImplementation(async (prefix: string) =>
-            prefix === "documents/u1/"
-                ? ["documents/u1/orphan.bin"]
-                : prefix === "exports/u1/"
-                  ? ["exports/u1/e1-account.json"]
-                  : [],
-        );
+        // Dev drift: repeated prefix scans must observe earlier successful deletes.
+        const orphanObjects = new Set(["documents/u1/orphan.bin", "exports/u1/e1-account.json"]);
+        listFilesMock.mockImplementation(async (prefix: string) => [...orphanObjects].filter(key => key.startsWith(prefix)));
+        deleteFileMock.mockImplementation(async (key: string) => { orphanObjects.delete(key); });
 
         await deleteUserAccountData(db, "u1", " U1@Example.COM ");
 
