@@ -11,12 +11,11 @@ import {
 } from "@/app/components/settings/modelProviders";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { ToggleSwitchUI } from "@/shared/ui/ToggleSwitchUI";
-import { MfaVerificationPopup } from "@/app/components/popups/MfaVerificationPopup";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
 import { SettingsDescription } from "@/app/components/settings/SettingsText";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
-import { isMfaRequiredError, type ApiKeyProvider } from "@/app/lib/mikeApi";
+import { type ApiKeyProvider } from "@/app/lib/mikeApi";
 import { reportFault } from "@/app/lib/userFacingError";
 /**
  * A provider is listed as saved once the user has saved their own key for it. It
@@ -42,7 +41,6 @@ export default function ByokPage() {
     const { profile, loading, updateApiKeyEnabled } = useUserProfile();
     const [busyProvider, setBusyProvider] = useState<ApiKeyProvider | null>(null);
     const [toggleError, setToggleError] = useState<string | null>(null);
-    const [pendingToggle, setPendingToggle] = useState<{ provider: ApiKeyProvider; enabled: boolean } | null>(null);
     const [selectedProvider, setSelectedProvider] = useState<string | null>(
         null,
     );
@@ -57,12 +55,9 @@ export default function ByokPage() {
             const saved = await updateApiKeyEnabled(provider, enabled);
             if (!saved) setToggleError("The provider could not be updated. Please try again.");
         } catch (error) {
-            if (isMfaRequiredError(error)) setPendingToggle({ provider, enabled });
-            else {
-                // The message is fixed; the report keeps the fault's identity.
-                reportFault(error, { operation: "settings.keys" });
-                setToggleError("The provider could not be updated. Please try again.");
-            }
+            // The message is fixed; the report keeps the fault's identity.
+            reportFault(error, { operation: "settings.keys" });
+            setToggleError("The provider could not be updated. Please try again.");
         } finally {
             setBusyProvider(null);
         }
@@ -71,7 +66,7 @@ export default function ByokPage() {
     const renderToggle = (field: ModelApiKeyField, label: string) => (
         <ToggleSwitchUI
             checked={profile?.apiKeys[field.provider]?.enabled !== false}
-            disabled={busyProvider !== null || pendingToggle !== null}
+            disabled={busyProvider !== null}
             aria-busy={busyProvider === field.provider}
             aria-label={label}
             onCheckedChange={(enabled) =>
@@ -167,16 +162,6 @@ export default function ByokPage() {
                         : undefined
                 }
                 onClose={() => setSelectedProvider(null)}
-            />
-            <MfaVerificationPopup
-                open={pendingToggle !== null}
-                onCancel={() => setPendingToggle(null)}
-                onVerified={() => {
-                    if (!pendingToggle) return;
-                    const action = pendingToggle;
-                    setPendingToggle(null);
-                    void toggleProvider(action.provider, action.enabled);
-                }}
             />
             <WarningPopup
                 open={toggleError !== null}

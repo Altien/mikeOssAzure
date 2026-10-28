@@ -1530,7 +1530,6 @@ describe("Google services the operator switched off", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.useFakeTimers();
-        vi.mocked(needsMfaVerification).mockResolvedValue(false);
         vi.mocked(listMcpConnectors).mockResolvedValue([]);
         vi.mocked(getGoogleDriveStatus).mockResolvedValue(driveStatus);
     });
@@ -1686,7 +1685,6 @@ describe("ConnectorsPage workspaces", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.useRealTimers();
-        vi.mocked(needsMfaVerification).mockResolvedValue(false);
         vi.mocked(listMcpConnectors).mockResolvedValue([]);
         vi.mocked(getGoogleWorkspaceStatus).mockResolvedValue({
             configured: true, available: true, schemaReady: true, connected: false,

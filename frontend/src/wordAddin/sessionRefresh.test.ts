@@ -105,6 +105,7 @@ describe("createRefreshingFetch", () => {
             refreshSession,
             onExpired: vi.fn(),
             onUnreachable: vi.fn(),
+            captureOwner: () => () => true,
         });
 
         const response = await fetchWithRefresh("/api/workflows");
@@ -154,6 +155,7 @@ describe("createRefreshingFetch", () => {
             refreshSession: vi.fn().mockResolvedValue({ id: "u1" }),
             onExpired: vi.fn(),
             onUnreachable: vi.fn(),
+            captureOwner: () => () => true,
         });
 
         const response = await fetchWithRefresh("/api/workflows");
@@ -170,6 +172,7 @@ describe("createRefreshingFetch", () => {
             refreshSession,
             onExpired: vi.fn(),
             onUnreachable: vi.fn(),
+            captureOwner: () => () => true,
         });
 
         const response = await fetchWithRefresh("/api/upload", {
@@ -194,6 +197,7 @@ describe("createRefreshingFetch", () => {
             refreshSession: vi.fn().mockResolvedValue({ id: "u1" }),
             onExpired: vi.fn(),
             onUnreachable: vi.fn(),
+            captureOwner: () => () => true,
         });
 
         const response = await fetchWithRefresh("/storage/put", {

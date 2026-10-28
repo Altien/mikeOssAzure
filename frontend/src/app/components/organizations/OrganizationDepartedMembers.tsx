@@ -19,7 +19,6 @@ import {
 import { Modal } from "@/app/components/modals/Modal";
 import { ModalSelect } from "@/app/components/modals/ModalSelect";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
-import { MfaVerificationPopup } from "@/app/components/popups/MfaVerificationPopup";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import {
   ChatSkeuoIcon,
@@ -53,7 +52,6 @@ import { EmptyState } from "@/app/components/ui/empty-state";
 import { LIQUID_GLASS_HOVER_CLASS } from "@/app/components/ui/liquid-surface";
 import {
   deleteOrgDepartureArchives,
-  isMfaRequiredError,
   listOrgDepartures,
   reassignOrgDepartureArchives,
   type OrgDeparture,
@@ -225,7 +223,6 @@ export function OrganizationDepartedMembers({
   const [reassigning, setReassigning] = useState<Target | null>(null);
   const [successor, setSuccessor] = useState("");
   const [deleting, setDeleting] = useState<Target | null>(null);
-  const [mfaTarget, setMfaTarget] = useState<Target | null>(null);
   const [working, setWorking] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   // Fixed for the visit, so a row's "in 12 days" does not change under it.
@@ -368,8 +365,7 @@ export function OrganizationDepartedMembers({
       await load();
     } catch (error) {
       setDeleting(null);
-      if (isMfaRequiredError(error)) setMfaTarget(target);
-      else setFailure(userFacingApiError(error, "Could not delete this work."));
+      setFailure(userFacingApiError(error, "Could not delete this work."));
     } finally {
       setWorking(false);
     }
@@ -837,15 +833,6 @@ export function OrganizationDepartedMembers({
         }}
         onConfirm={() => {
           if (deleting) void remove(deleting);
-        }}
-      />
-      <MfaVerificationPopup
-        open={mfaTarget !== null}
-        onCancel={() => setMfaTarget(null)}
-        onVerified={() => {
-          const target = mfaTarget;
-          setMfaTarget(null);
-          if (target) void remove(target);
         }}
       />
       <WarningPopup

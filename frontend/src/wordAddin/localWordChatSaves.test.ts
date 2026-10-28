@@ -23,6 +23,8 @@ describe("saveWordMessageOrNotify", () => {
         await saveWordMessageOrNotify({
             storage: "local",
             chatId: "chat-1",
+        ownerKey: "test-owner",
+        isCurrentOwner: () => true,
             save,
             notify,
         });
@@ -37,6 +39,8 @@ describe("saveWordMessageOrNotify", () => {
         await saveWordMessageOrNotify({
             storage: "cloud",
             chatId: "chat-1",
+        ownerKey: "test-owner",
+        isCurrentOwner: () => true,
             save: vi.fn().mockRejectedValue(new Error("QuotaExceededError")),
             notify,
         });
@@ -50,6 +54,8 @@ describe("saveWordMessageOrNotify", () => {
         await saveWordMessageOrNotify({
             storage: "local",
             chatId: "chat-1",
+        ownerKey: "test-owner",
+        isCurrentOwner: () => true,
             save: vi.fn().mockRejectedValue(new Error("QuotaExceededError")),
             notify,
         });
@@ -78,12 +84,16 @@ describe("saveWordMessageOrNotify", () => {
         await saveWordMessageOrNotify({
             storage: "local",
             chatId: "chat-1",
+        ownerKey: "test-owner",
+        isCurrentOwner: () => true,
             save: fail,
             notify,
         });
         await saveWordMessageOrNotify({
             storage: "local",
             chatId: "chat-2",
+        ownerKey: "test-owner",
+        isCurrentOwner: () => true,
             save: fail,
             notify,
         });
@@ -107,6 +117,8 @@ describe("saveWordMessageOrNotify", () => {
         await saveWordMessageOrNotify({
             storage: "local",
             chatId: "chat-1",
+        ownerKey: "test-owner",
+        isCurrentOwner: () => true,
             save,
             notify,
         });
@@ -128,6 +140,8 @@ describe("saveWordMessageOrNotify", () => {
         await saveWordMessageOrNotify({
             storage: "local",
             chatId: "chat-1",
+        ownerKey: "test-owner",
+        isCurrentOwner: () => true,
             save,
             notify,
         });

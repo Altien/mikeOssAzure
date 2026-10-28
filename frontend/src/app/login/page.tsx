@@ -21,7 +21,7 @@ import { GoogleAuthButton } from "@/app/components/auth/GoogleAuthButton";
 import { FieldLabel } from "@/app/components/ui/form-field";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { noticeActionClassName } from "@/shared/ui/NoticeCardUI";
-import { reportFault,
+import { describeError, reportFault,
     supportMailtoFor,
     type UserFacingError,
 } from "@/app/lib/userFacingError";

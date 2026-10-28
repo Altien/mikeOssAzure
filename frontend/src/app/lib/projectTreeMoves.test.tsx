@@ -37,6 +37,7 @@ describe("moveProjectItemOptimistically", () => {
             kind: "doc",
             id: "d1",
             targetFolderId: null,
+            isCurrent: () => true,
             request: async () => undefined,
         });
         expect(s.get()?.documents?.[0]?.folder_id).toBeNull();
@@ -52,6 +53,7 @@ describe("moveProjectItemOptimistically", () => {
                 kind: "doc",
                 id: "d1",
                 targetFolderId: null,
+            isCurrent: () => true,
                 request: async () => {
                     throw failure;
                 },
@@ -69,6 +71,7 @@ describe("moveProjectItemOptimistically", () => {
             kind: "folder",
             id: "f2",
             targetFolderId: null,
+            isCurrent: () => true,
             request: () =>
                 new Promise((_, rej) => {
                     reject = rej;
@@ -141,6 +144,7 @@ describe("moveProjectItemOptimistically without a known starting place", () => {
                 kind: "doc",
                 id: "d1",
                 targetFolderId: null,
+            isCurrent: () => true,
                 request: async () => {
                     throw new Error("boom");
                 },
@@ -161,7 +165,7 @@ describe("notifyMoveFailure", () => {
         render(<ToastViewportUI />);
         const retry = vi.fn();
         act(() => {
-            notifyMoveFailure(kind, "x1", new TypeError("Failed to fetch"), retry);
+            notifyMoveFailure(kind, "x1", new TypeError("Failed to fetch"), retry, () => true);
         });
         expect(screen.getByRole("alert")).toHaveTextContent(title);
         act(() => {

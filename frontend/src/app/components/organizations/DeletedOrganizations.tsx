@@ -5,15 +5,10 @@ import { useCallback, useEffect, useState } from "react";
 import {
   listDeletedOrganizations,
   restoreOrganization,
-  isMfaRequiredError,
   type DeletedOrganization,
 } from "@/app/lib/mikeApi";
 import { userFacingApiError } from "@/app/lib/userFacingError";
 import { useWorkspace } from "@/app/contexts/WorkspaceContext";
-import {
-  MfaVerificationPopup,
-  needsMfaVerification,
-} from "@/app/components/popups/MfaVerificationPopup";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
 import {
@@ -40,7 +35,6 @@ function DeletedOrganizationsOwned({
   const [loadError, setLoadError] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [mfaOrg, setMfaOrg] = useState<string | null>(null);
   const load = useCallback(async () => {
     const isCurrent = capture();
     if (!isCurrent()) return;
@@ -62,21 +56,13 @@ function DeletedOrganizationsOwned({
     if (!isCurrent() || busy) return;
     setBusy(id);
     try {
-      if (await needsMfaVerification()) {
-        if (isCurrent()) setMfaOrg(id);
-        return;
-      }
       if (!isCurrent()) return;
       await restoreOrganization(id, isCurrent);
       if (!isCurrent()) return;
       setOrgs((current) => current?.filter((org) => org.id !== id) ?? []);
     } catch (err) {
       if (!isCurrent()) return;
-      if (isMfaRequiredError(err)) setMfaOrg(id);
-      else
-        setError(
-          userFacingApiError(err, "Could not restore the organization."),
-        );
+      setError(userFacingApiError(err, "Could not restore the organization."));
       return;
     } finally {
       if (isCurrent()) setBusy(null);
@@ -131,15 +117,6 @@ function DeletedOrganizationsOwned({
           ))}
         </GlassCardUI>
       )}
-      <MfaVerificationPopup
-        open={mfaOrg !== null}
-        onCancel={() => setMfaOrg(null)}
-        onVerified={() => {
-          const id = mfaOrg;
-          setMfaOrg(null);
-          if (id) void restore(id);
-        }}
-      />
       <WarningPopup
         open={error !== null}
         title="Restore failed"

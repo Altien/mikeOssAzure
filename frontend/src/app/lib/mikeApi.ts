@@ -2068,6 +2068,7 @@ export interface OrgApiKeySettings {
     effective_router_models: Record<string, string[]>;
     /** Whether the caller may change any of this (owners and admins). */
     can_manage: boolean;
+    can_manage_models: boolean;
 }
 
 export async function getOrgApiKeys(orgId: string): Promise<OrgApiKeySettings> {
@@ -3361,7 +3362,7 @@ export async function streamProjectChat(payload: {
 }): Promise<Response> {
     const { projectId, signal, ...body } = payload;
     const authHeaders = await getAuthHeader();
-    const response = await fetch(`${API_BASE}/projects/${projectId}/chat`, {
+    const response = await apiFetch(`${API_BASE}/projects/${projectId}/chat`, {
         method: "POST",
         credentials: "include",
         headers: {

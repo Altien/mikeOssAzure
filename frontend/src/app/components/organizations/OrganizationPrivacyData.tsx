@@ -4,10 +4,6 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Trash2 } from "lucide-react";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
-import {
-  MfaVerificationPopup,
-  needsMfaVerification,
-} from "@/app/components/popups/MfaVerificationPopup";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
 import { SettingsRow } from "@/app/components/settings/SettingsRow";
@@ -21,7 +17,6 @@ import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { useWorkspace } from "@/app/contexts/WorkspaceContext";
 import {
   deleteOrgData,
-  isMfaRequiredError,
   setOrgMemberDataPolicy,
   type OrgDataKind,
   type OrgMemberDataPolicy,
@@ -125,11 +120,6 @@ function MemberDataPolicySection() {
   const [savingKey, setSavingKey] = useState<keyof OrgMemberDataPolicy | null>(
     null,
   );
-  // A change the server asked a second factor for, to send again after it.
-  const [pendingMfa, setPendingMfa] = useState<{
-    next: OrgMemberDataPolicy;
-    key: keyof OrgMemberDataPolicy;
-  } | null>(null);
   const policy: OrgMemberDataPolicy = {
     allow_member_exports: org?.allow_member_exports === true,
     allow_member_deletes: org?.allow_member_deletes === true,
@@ -143,12 +133,10 @@ function MemberDataPolicySection() {
       // Members' own Settings follow the organization list.
       void refreshOrganizations();
     } catch (error) {
-      if (isMfaRequiredError(error)) setPendingMfa({ next, key });
-      else
-        notifyError(error, {
-          action: "change what members can do with their data",
-          onRetry: () => void save(next, key),
-        });
+      notifyError(error, {
+        action: "change what members can do with their data",
+        onRetry: () => void save(next, key),
+      });
     } finally {
       setSavingKey(null);
     }
@@ -178,18 +166,7 @@ function MemberDataPolicySection() {
           </SettingsRow>
         ))}
       </GlassCardUI>
-      <MfaVerificationPopup
-        open={pendingMfa !== null}
-        onCancel={() => setPendingMfa(null)}
-        onVerified={() => {
-          const pending = pendingMfa;
-          setPendingMfa(null);
-          if (pending) void save(pending.next, pending.key);
-        }}
-        title="Two-factor verification required"
-        message="This setting is sensitive. Enter a code from your authenticator app to continue."
-      />
-    </section>
+</section>
   );
 }
 
@@ -199,7 +176,6 @@ export function OrganizationPrivacyData() {
   const { loadChats, setCurrentChatId } = useChatHistoryContext();
   const [pendingKind, setPendingKind] = useState<OrgDataKind | null>(null);
   const [deletingKind, setDeletingKind] = useState<OrgDataKind | null>(null);
-  const [mfaKind, setMfaKind] = useState<OrgDataKind | null>(null);
   const [warningMessage, setWarningMessage] = useState<string | null>(null);
 
   if (org && !isOrgOwner(org.role))
@@ -223,12 +199,7 @@ export function OrganizationPrivacyData() {
   const deleteData = async (kind: OrgDataKind) => {
     setDeletingKind(kind);
     try {
-      if (await needsMfaVerification()) {
-        setPendingKind(null);
-        setMfaKind(kind);
-        return;
-      }
-      await deleteOrgData(orgId, kind);
+await deleteOrgData(orgId, kind);
       if (kind === "chats" || kind === "projects") {
         // The chat this tab had open may be one of those just deleted.
         setCurrentChatId(null);
@@ -237,11 +208,7 @@ export function OrganizationPrivacyData() {
       setPendingKind(null);
     } catch (error) {
       setPendingKind(null);
-      if (isMfaRequiredError(error)) {
-        setMfaKind(kind);
-        return;
-      }
-      setWarningMessage("Failed to delete data. Please try again.");
+setWarningMessage("Failed to delete data. Please try again.");
     } finally {
       setDeletingKind(null);
     }
@@ -329,18 +296,7 @@ export function OrganizationPrivacyData() {
           void deleteData(pendingKind);
         }}
       />
-      <MfaVerificationPopup
-        open={mfaKind !== null}
-        onCancel={() => setMfaKind(null)}
-        onVerified={() => {
-          const kind = mfaKind;
-          setMfaKind(null);
-          if (kind) void deleteData(kind);
-        }}
-        title="Two-factor verification required"
-        message="This action is sensitive. Enter a code from your authenticator app to continue."
-      />
-      <WarningPopup
+<WarningPopup
         open={!!warningMessage}
         title="Action failed"
         message={warningMessage}

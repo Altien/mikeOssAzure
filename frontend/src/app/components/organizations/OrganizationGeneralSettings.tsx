@@ -8,10 +8,6 @@ import {
   MemberDepartureDialog,
   type MemberDepartureResult,
 } from "./MemberDepartureDialog";
-import {
-  MfaVerificationPopup,
-  needsMfaVerification,
-} from "@/app/components/popups/MfaVerificationPopup";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
 import { SettingsRow } from "@/app/components/settings/SettingsRow";
@@ -27,7 +23,6 @@ import { useOrganizationLogo } from "@/app/hooks/useOrganizationLogo";
 import {
   deleteOrg,
   deleteOrgLogo,
-  isMfaRequiredError,
   saveOrgLogo,
   updateOrg,
 } from "@/app/lib/mikeApi";
@@ -68,7 +63,6 @@ export function OrganizationGeneralSettings() {
   >("idle");
   const [pending, setPending] = useState<Pending | null>(null);
   const [working, setWorking] = useState<Pending | null>(null);
-  const [mfaPending, setMfaPending] = useState(false);
   const [failure, setFailure] = useState<{
     title: string;
     message: string;
@@ -204,22 +198,10 @@ export function OrganizationGeneralSettings() {
     if (!org || action !== "delete" || working) return;
     setWorking(action);
     try {
-      // Deleting an organization destroys everything in it, so it asks
-      // for a second factor like the other destructive data actions.
-      if (await needsMfaVerification()) {
-        setPending(null);
-        setWorking(null);
-        setMfaPending(true);
-        return;
-      }
       await deleteOrg(org.id);
     } catch (error) {
       setPending(null);
       setWorking(null);
-      if (isMfaRequiredError(error)) {
-        setMfaPending(true);
-        return;
-      }
       setFailure({
         title: "Organization not deleted",
         message: userFacingApiError(
@@ -459,16 +441,6 @@ export function OrganizationGeneralSettings() {
           setPending(null);
         }}
         onConfirm={() => void confirm()}
-      />
-      <MfaVerificationPopup
-        open={mfaPending}
-        onCancel={() => setMfaPending(false)}
-        onVerified={() => {
-          setMfaPending(false);
-          void confirm("delete");
-        }}
-        title="Two-factor verification required"
-        message="This action is sensitive. Enter a code from your authenticator app to continue."
       />
       <WarningPopup
         open={failure !== null}

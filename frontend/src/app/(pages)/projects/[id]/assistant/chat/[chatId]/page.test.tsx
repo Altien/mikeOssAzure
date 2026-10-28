@@ -633,9 +633,7 @@ describe("explorer uploads", () => {
         const { container } = await act(async () =>
             render(
                 <Suspense fallback="Loading">
-                    <ProjectAssistantChatPage
-                        params={Promise.resolve({ id: "p1" })}
-                    />
+                    <ProjectAssistantChatPage />
                 </Suspense>,
             ),
         );
