@@ -364,9 +364,9 @@ select
   keys.iv,
   keys.auth_tag
 from (
-  select user_id from public.user_api_keys where provider = 'courtlistener'
+  select user_id::text as user_id from public.user_api_keys where provider = 'courtlistener'
   union
-  select user_id::text from public.user_profiles where legal_research_us = false
+  select user_id::text as user_id from public.user_profiles where legal_research_us = false
 ) people
 cross join lateral (
   select null::uuid as org_id
@@ -380,7 +380,7 @@ cross join lateral (
 ) workspaces
 left join public.user_profiles profiles on profiles.user_id::text = people.user_id
 left join public.user_api_keys keys
-  on keys.user_id = people.user_id
+  on keys.user_id::text = people.user_id
   and keys.provider = 'courtlistener'
   and keys.enabled
 where exists (select 1 from public.user_profiles u where u.user_id::text = people.user_id)
