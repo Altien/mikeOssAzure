@@ -11,6 +11,7 @@ const {
   releaseMemoryConversationTurn,
   scheduleMemoryConsolidation,
   dbInserts,
+  dbRpcCalls,
 } = vi.hoisted(() => ({
     runLLMStream: vi.fn(),
     checkProjectAccess: vi.fn(),
@@ -26,6 +27,7 @@ const {
     generation: 1,
   }),
   dbInserts: [] as { table: string; value: unknown }[],
+  dbRpcCalls: [] as { name: string; args: Record<string, unknown> }[],
 }));
 
 function makeQuery(table: string) {
@@ -71,12 +73,10 @@ function makeQuery(table: string) {
 function mockSupabase() {
   return {
     from: vi.fn((table: string) => makeQuery(table)),
-    rpc: vi.fn((name: string) =>
-      Promise.resolve({
-        data: name.startsWith("append_chat_") ? "appended" : null,
-        error: null,
-      }),
-    ),
+    rpc: vi.fn((name: string, args: Record<string, unknown>) => {
+      dbRpcCalls.push({ name, args });
+      return Promise.resolve({ data: name.startsWith("append_chat_") ? "appended" : null, error: null });
+    }),
     auth: {
       getUser: () =>
         Promise.resolve({ data: { user: { id: "u1" } }, error: null }),
@@ -224,6 +224,11 @@ vi.mock("../../lib/access", () => ({
 // and mounts this router at /api/projects/:projectId/chat (paths below carry /api).
 import { buildApp } from "../../app";
 const app = buildApp();
+// Dev drift: unit facade supplies the canonical owner identity; real claim/CAS is tested by the SQL gate.
+vi.mock("../../lib/streamRuns", async load => ({
+  ...await load<typeof import("../../lib/streamRuns")>(),
+  streamRunFenceArgs: (runId: string) => ({ p_run_id: runId, p_owner_token: "test-owner-token", p_fence: "1" }),
+}));
 import { resetAssistantTurnRunsForTests } from "../../lib/assistantTurnRuns";
 import { spotlight } from "../../modules/chat/engine/index";
 import { createServerSupabase } from "../../lib/supabase";
@@ -239,6 +244,7 @@ describe("POST /projects/:projectId/chat", () => {
         resetAssistantTurnRunsForTests();
         vi.clearAllMocks();
     dbInserts.length = 0;
+    dbRpcCalls.length = 0;
         buildMessages.mockReturnValue([]);
         buildProjectDocContext.mockResolvedValue({
             docIndex: {},
@@ -426,14 +432,16 @@ describe("POST /projects/:projectId/chat", () => {
             ({ table, value }) =>
                 table === "chat_messages" && (value as { role?: string }).role === "assistant",
         );
-        const run = dbInserts.findIndex(({ table }) => table === "chat_subagent_runs");
+        const committed = dbRpcCalls.find(call => Array.isArray(call.args.p_subagent_runs));
         expect(assistant).toBeGreaterThanOrEqual(0);
-        expect(run).toBeGreaterThan(assistant);
-        expect(dbInserts[run].value).toEqual([
-            expect.objectContaining({
-                message_id: (dbInserts[assistant].value as { id: string }).id,
-            }),
-        ]);
+        expect(committed?.name).toBe("append_chat_assistant_events");
+        expect(committed?.args).toMatchObject({
+            p_message_id: (dbInserts[assistant].value as { id: string }).id,
+            p_chat_id: "chat-1", p_author_user_id: "u1", p_org_id: null,
+            p_owner_token: "test-owner-token", p_fence: "1",
+            p_subagent_runs: [expect.objectContaining({ chat_id: "chat-1", user_id: "u1", message_id: (dbInserts[assistant].value as { id: string }).id })],
+        });
+        expect(dbInserts.filter(({ table }) => table === "chat_subagent_runs")).toEqual([]);
     });
 
     it("normalizes validated request fields before using them", async () => {

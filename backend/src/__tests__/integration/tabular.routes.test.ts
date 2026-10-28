@@ -1,5 +1,7 @@
 import { afterEach, describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
+// Dev drift: this101-case router fixture is not the rate-limit suite.
+vi.hoisted(() => { process.env.RATE_LIMIT_CHAT_MAX = "1000"; });
 
 // ---------------------------------------------------------------------------
 // Hoisted mock fns reconfigured per-test. Access helpers + model settings are
@@ -2912,7 +2914,7 @@ describe("tabular.routes", () => {
             const held = heldGeneration();
             const first = send();
             const firstDone = first.then((res) => res);
-            await held.started;
+            await Promise.race([held.started, firstDone.then(res => { throw new Error(`Turn refused before generation: HTTP ${res.status} ${res.text}`); })]);
             const turnId = await activeTurnId();
 
             // A caller who cannot see the review cannot watch its answers.
