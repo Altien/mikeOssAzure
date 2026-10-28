@@ -30,6 +30,7 @@ import {
 } from "@/app/lib/projectDragTypes";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { useAuth } from "@/app/contexts/AuthContext";
+import { useRequestOwner } from "@/app/hooks/useRequestOwner";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { UserMessage } from "@/app/components/assistant/UserMessage";
 import { AssistantMessage } from "@/app/components/assistant/AssistantMessage";
@@ -253,6 +254,7 @@ export function ProjectChatPanel({
 }: Props) {
     const router = useRouter();
     const { user, authLoading } = useAuth();
+    const requestOwner = useRequestOwner();
     const { profile } = useUserProfile();
     const username =
         profile?.displayName?.trim() || user?.email?.split("@")[0] || "there";
@@ -434,6 +436,8 @@ export function ProjectChatPanel({
     }, [activeChatId, isSideChat, setCurrentChatId]);
 
     useEffect(() => {
+        const isCurrent = requestOwner.capture();
+        skillRuntime.setBinding(null);
         if (claimCreated(activeChatId)) {
             const firstUserMessage = messages.find(
                 (message) => message.role === "user",
@@ -457,9 +461,12 @@ export function ProjectChatPanel({
             };
         }
 
+        if (!isCurrent()) return () => { cancelled = true; };
+
         loadAssistantChat(activeChatId)
-            .then(({ chat, messages: loaded }) => {
-                if (cancelled) return;
+            .then(({ chat, messages: loaded, skillBinding }) => {
+                if (cancelled || !isCurrent()) return;
+                skillRuntime.setBinding(skillBinding ?? null);
                 setChatTitle(chat.title);
                 setChatModel(chat.model ?? null);
                 setChatReasoningLevel(chat.reasoning_level ?? null);
@@ -475,20 +482,20 @@ export function ProjectChatPanel({
                 });
             })
             .catch(() => {
-                if (cancelled) return;
+                if (cancelled || !isCurrent()) return;
                 // A chat that cannot be shown gives way: the side chat to a
                 // new one in place, the primary to the project's chat list.
                 if (isSideChat) openChat("");
                 else router.replace(`/projects/${projectId}/assistant`);
             })
             .finally(() => {
-                if (!cancelled) setChatLoaded(true);
+                if (!cancelled && isCurrent()) setChatLoaded(true);
             });
 
         return () => {
             cancelled = true;
         };
-    }, [activeChatId]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [activeChatId, projectId, requestOwner.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         const match = chats.find((chat) => chat.id === activeChatId);
