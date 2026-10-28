@@ -66,27 +66,29 @@ vi.mock("@/app/components/site-logo", () => ({
     SiteLogo: () => <div>Mike</div>,
 }));
 
+beforeEach(() => {
+    authState.error = null;
+    retrySession.mockReset();
+    login.mockReset();
+    loginLocal.mockReset().mockResolvedValue({ user: { id: "local" } });
+    config.authProvider = "supabase";
+    signup.mockReset();
+    startGoogleOAuth.mockReset();
+    delete (window as { mikeDesktop?: unknown }).mikeDesktop;
+    refreshSession.mockReset();
+    refreshSession.mockResolvedValue(null);
+    replace.mockReset();
+    push.mockReset();
+    getUserProfile
+        .mockReset()
+        .mockResolvedValue({ onboardingComplete: true });
+    completeUserOnboarding
+        .mockReset()
+        .mockResolvedValue({ onboardingComplete: true });
+});
+
 describe("LoginPage", () => {
-    beforeEach(() => {
-        authState.error = null;
-        retrySession.mockReset();
-        login.mockReset();
-        loginLocal.mockReset().mockResolvedValue({ user: { id: "local" } });
-        config.authProvider = "supabase";
-        signup.mockReset();
-        startGoogleOAuth.mockReset();
-        delete (window as { mikeDesktop?: unknown }).mikeDesktop;
-        refreshSession.mockReset();
-        refreshSession.mockResolvedValue(null);
-        replace.mockReset();
-        push.mockReset();
-        getUserProfile
-            .mockReset()
-            .mockResolvedValue({ onboardingComplete: true });
-        completeUserOnboarding
-            .mockReset()
-            .mockResolvedValue({ onboardingComplete: true });
-    });
+
 
     it("allows an existing account to submit a password shorter than the new minimum", async () => {
         login.mockResolvedValue({ user: { id: "user-1" } });

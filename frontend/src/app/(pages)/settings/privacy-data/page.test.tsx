@@ -106,11 +106,11 @@ describe("privacy-data async exports", () => {
         await userEvent.click(exportButtons[2]);
 
         await waitFor(() =>
-            expect(mockedDownload).toHaveBeenCalledWith("job-9"),
+            expect(mockedDownload).toHaveBeenCalledWith("job-9", expect.any(Function)),
         );
         expect(mockedStart).toHaveBeenCalledWith("account", {
             workspace: "personal",
-        });
+        }, expect.any(Function));
         expect(mockedStatus).toHaveBeenCalledTimes(2);
     });
 
@@ -137,7 +137,7 @@ describe("privacy-data async exports", () => {
         const toast = await screen.findByRole("alert");
         expect(toast).toHaveTextContent("Couldn't export your chats");
         expect(toast).toHaveTextContent(
-            "Mike couldn't build the export. Try again, and contact support if it keeps happening.",
+            "Mike could not build the export. Try again, and contact support if it keeps happening.",
         );
         expect(
             screen.getByRole("button", { name: "Retry" }),
@@ -145,7 +145,7 @@ describe("privacy-data async exports", () => {
         expect(alertSpy).not.toHaveBeenCalled();
         expect(mockedStart).toHaveBeenCalledWith("chats", {
             workspace: "personal",
-        });
+        }, expect.any(Function));
         expect(mockedDownload).not.toHaveBeenCalled();
         clearToasts();
     });
@@ -169,11 +169,11 @@ describe("privacy-data async exports", () => {
         );
 
         await waitFor(() =>
-            expect(mockedDownload).toHaveBeenCalledWith("job-memory"),
+            expect(mockedDownload).toHaveBeenCalledWith("job-memory", expect.any(Function)),
         );
         expect(mockedStart).toHaveBeenCalledWith("memory-zip", {
             workspace: "personal",
-        });
+        }, expect.any(Function));
     });
 
     it("confirms and deletes app and private-project memory", async () => {
@@ -197,7 +197,7 @@ describe("privacy-data async exports", () => {
         await userEvent.click(confirmButtons.at(-1)!);
 
         await waitFor(() =>
-            expect(mockedDeleteMemories).toHaveBeenCalledWith("personal"),
+            expect(mockedDeleteMemories).toHaveBeenCalledWith("personal", expect.any(Function)),
         );
     });
 
@@ -251,7 +251,7 @@ describe("privacy-data async exports", () => {
         );
 
         await waitFor(() =>
-            expect(mockedDeleteChats).toHaveBeenCalledWith("org-1"),
+            expect(mockedDeleteChats).toHaveBeenCalledWith("org-1", expect.any(Function)),
         );
     });
 
@@ -310,7 +310,7 @@ describe("privacy-data async exports", () => {
         await waitFor(() =>
             expect(mockedStart).toHaveBeenCalledWith("chats", {
                 workspace: "org-1",
-            }),
+            }, expect.any(Function)),
         );
     });
 

@@ -189,7 +189,7 @@ describe("HistoryEventModal", () => {
       "data-editable",
       "false",
     );
-    expect(getDocument).toHaveBeenCalledWith("document-id");
+    expect(getDocument).toHaveBeenCalledWith("document-id", expect.any(Function));
     const back = screen.getByRole("button", { name: "Back" });
     expect(back.closest("footer")).not.toBeNull();
     expect(back).toHaveClass("rounded-full");
@@ -281,7 +281,7 @@ describe("private content from audit events", () => {
       "org-id",
       "document",
       "document-id",
-    );
+    expect.any(Function),);
     expect(getDocument).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Opening…" })).toBeDisabled();
     grant();
@@ -296,7 +296,7 @@ describe("private content from audit events", () => {
       "org-id",
       "document",
       "document-id",
-    );
+    expect.any(Function),);
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: "End access" })).toBeNull(),
     );
@@ -368,7 +368,7 @@ describe("private content from audit events", () => {
         "org-id",
         kind,
         "private-id",
-      );
+      expect.any(Function),);
       expect(
         vi.mocked(openOrgPrivateContent).mock.invocationCallOrder[0],
       ).toBeLessThan(navigation.push.mock.invocationCallOrder[0]);
