@@ -98,8 +98,13 @@ Unknown database job kinds use jobs.dispatch inside the same isolated canonical 
   the request begins. API 5xx reports are captured immediately with that
   operation; there is no pending-report timer or later screen claim. A
   delayed screen handler cannot change or lose the operation on the event.
-- Reporting callers and automatic captures consult the same error registry.
-  Reformatting an already-reported failure does not create another event.
+- Reporting callers and automatic captures consult the same error registry,
+  including a bounded, cycle-safe walk of wrapped causes. Reformatting an
+  already-reported failure does not create another event.
+- Storage PUT retries report only after the final attempt fails. A recovered
+  5xx or network interruption stays quiet; cancellation is not a failure.
+  Both clients receive only the terminal error/status from the upload core,
+  never the signed URL or file as diagnostic metadata.
 - Terminal stream frames use `reporting_owner: "backend"` when the backend
   owns reporting. This does not promise delivery to Sentry. Clients preserve
   that ownership and avoid duplicate reports. A request ID is only for
@@ -121,3 +126,7 @@ throw new AppError("comparison.source_read_failed", "Could not read revision", {
 
 
 Each API request starts an isolated diagnostic scope before parsing/auth/routing: component=http, operation=http.request, sanitized method/route and generated request ID. Domain setOperation replaces that fallback. Repository code paths and real cause stacks remain; user URLs, query strings, messages and identity remain stripped. Dev mounts this middleware inside createApp without changing /api ingress, rate-limit lanes or runtime configuration.
+
+Row extraction leaves queue retry reporting to the runner; inline streams report at their query boundary. Required export reads propagate storage failures rather than silently omitting files. Optional reads retain their fallback and diagnostic code/kind grouping.
+
+Wrapped client errors share bounded, cycle-safe report ownership across causes. Storage PUT retries report only terminal failures; recovered interruptions and cancellations stay quiet, and signed URLs/files never become diagnostics. Backend-owned terminal frames retain reporting_owner independently of request IDs or delivery.
