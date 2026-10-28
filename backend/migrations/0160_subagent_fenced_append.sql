@@ -95,6 +95,9 @@ begin
             or saved.org_id is distinct from scope_org)) then return 'forbidden'; end if;
     end loop;
   end if;
+  -- Acquire the canonical parent lock before the final time fence, so a
+  -- wait on another appender cannot consume the lease after validation.
+  perform 1 from public.chat_messages where id=p_message_id and chat_id=p_chat_id for update;
   if claimed.lease_expires_at<=clock_timestamp() or claimed.lifetime_expires_at<=clock_timestamp()
     then return 'stale'; end if;
   -- Parent row author/chat/role lock is acquired by the existing canonical append.
