@@ -314,9 +314,10 @@ describe("playbook model availability", () => {
     });
   });
 
-  it("accepts local Ollama models without any key", async () => {
-    expect(await playbookModelAvailability("ollama/qwen3.6", {})).toEqual({
-      available: true,
+  it("rejects the deliberately unsupported Ollama namespace", async () => {
+    expect(await playbookModelAvailability("ollama/qwen3.6", {})).toMatchObject({
+      available: false,
+      reason: expect.stringMatching(/unknown model id: ollama\/qwen3\.6/i),
     });
   });
 

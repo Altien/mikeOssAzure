@@ -1131,7 +1131,18 @@ function keepPlaybookWorkAttended(
   const heartbeat = setInterval(() => {
     if (job) {
       void mutatePlaybookJob(db, job, "heartbeat", id).catch((error) => {
-        if (!(error instanceof PlaybookClaimLostError)) console.warn("[playbooks] fenced heartbeat failed", safeError(error));
+        if (error instanceof PlaybookClaimLostError) return;
+        if (!reported) {
+          reported = true;
+          const review = table === "playbook_runs";
+          reportPlaybookFailure(error, {
+            stage: "heartbeat",
+            level: "warning",
+            jobKind: review ? "playbook.review" : "playbook.import",
+            ids: review ? { run_id: id } : { import_id: id },
+          });
+        }
+        console.warn("[playbooks] fenced heartbeat failed", safeError(error));
       });
       return;
     }
