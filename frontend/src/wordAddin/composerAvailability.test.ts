@@ -59,12 +59,12 @@ describe("isModelAvailable fail-open", () => {
 });
 
 describe("unavailableModelMessage", () => {
-    it("names the PR #608 provider whose key is missing", () => {
+    it("names the unavailable centrally managed provider", () => {
         expect(
             unavailableModelMessage("bedrock/us.anthropic.claude-opus-5-5", NO_KEYS),
-        ).toBe("Add an Amazon Bedrock API key before using this model.");
+        ).toBe("Amazon Bedrock is unavailable. Ask an administrator to check the organisation credential.");
         expect(unavailableModelMessage("gemini-3.8-flash", NO_KEYS)).toBe(
-            "Add a Google API key before using this model.",
+            "Google is unavailable. Ask an administrator to check the organisation credential.",
         );
     });
 

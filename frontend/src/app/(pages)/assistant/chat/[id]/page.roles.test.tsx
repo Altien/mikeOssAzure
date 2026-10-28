@@ -1,6 +1,8 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/app/lib/useRequestOwner", () => ({ useRequestOwner: () => ({ capture: () => () => true }) }));
+
 // Grant-reachable chats appear in the global sidebar since the parity
 // change, so a project viewer can land on this page. GET /chat/:id serves
 // the caller's standing; this file pins that the page actually consumes it

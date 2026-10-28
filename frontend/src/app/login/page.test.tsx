@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AuthApiError } from "@/app/lib/authApi";
 import LoginPage from "./page";
 
 const {
@@ -45,7 +46,8 @@ vi.mock("@/app/lib/authApi", async (importOriginal) => ({
 
 vi.mock("@/app/contexts/ConfigContext", () => ({ useConfig: () => config }));
 
-vi.mock("@/app/lib/mikeApi", () => ({
+vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("@/app/lib/mikeApi")>()),
     getUserProfile,
     completeUserOnboarding,
 }));

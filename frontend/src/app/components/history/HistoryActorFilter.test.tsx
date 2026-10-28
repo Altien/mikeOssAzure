@@ -1,4 +1,5 @@
 import {
+vi.mock("@/app/hooks/useRequestOwner", () => ({ useRequestOwner: () => ({ key: "test-owner", capture: () => () => true }) }));
   fireEvent,
   render,
   screen,

@@ -21,6 +21,20 @@ const api = vi.hoisted(() => ({
     deleteToken: vi.fn(),
 }));
 
+// This harness renders authenticated work without booting the session provider.
+// Keep the real owner/generation hooks; only supply their controlled auth input.
+const authenticatedOwner = vi.hoisted(() => ({
+  user: { id: "u1", email: "owner@example.com", pendingEmail: null, createdWithGoogle: false },
+  isAuthenticated: true, authLoading: false, authError: null,
+  signOut: vi.fn(async () => {}), signInLocal: vi.fn(async () => {}),
+  getAccessToken: vi.fn(async () => "test-token"), updateEmail: vi.fn(), setPassword: vi.fn(async () => {}),
+  refreshSession: vi.fn(async () => null), retrySession: vi.fn(async () => null),
+}));
+vi.mock("@/app/contexts/AuthContext", async (original) => ({
+  ...(await original<typeof import("@/app/contexts/AuthContext")>()),
+  useAuth: () => authenticatedOwner,
+}));
+
 vi.mock("@/app/lib/mikeApi", async (original) => ({
     ...(await original<typeof import("@/app/lib/mikeApi")>()),
     getCourtListenerConnector: api.get,
@@ -34,12 +48,14 @@ vi.mock("@/app/lib/mikeApi", async (original) => ({
 vi.mock("./ApiKeyField", () => ({
     ApiKeyField: ({
         hasSavedKey,
+        isServerConfigured,
         keyLabel,
         onSave,
         onRemove,
         render,
     }: {
         hasSavedKey: boolean;
+        isServerConfigured?: boolean;
         keyLabel: string;
         onSave: (value: string) => Promise<boolean>;
         onRemove: () => Promise<boolean>;
@@ -52,7 +68,7 @@ vi.mock("./ApiKeyField", () => ({
         ) => ReactNode;
     }) =>
         render(
-            <div data-testid="courtlistener-key-state" data-key-label={keyLabel}>
+            <div data-testid="courtlistener-key-state" data-key-label={keyLabel} data-managed={isServerConfigured}>
                 {hasSavedKey ? "own" : "none"}
             </div>,
             {
@@ -106,7 +122,7 @@ describe("useCourtListenerConnector", () => {
         const { result } = renderHook(() => useCourtListenerConnector("org-1"));
         expect(result.current.loading).toBe(true);
         await waitFor(() => expect(result.current.loading).toBe(false));
-        expect(api.get).toHaveBeenCalledWith("org-1");
+        expect(api.get).toHaveBeenCalledWith("org-1", expect.any(Function));
         expect(result.current).toMatchObject({ installed: true, enabled: false });
     });
 
@@ -117,7 +133,7 @@ describe("useCourtListenerConnector", () => {
         );
         await waitFor(() => expect(result.current.loading).toBe(false));
         rerender({ workspace: "org-2" });
-        await waitFor(() => expect(api.get).toHaveBeenLastCalledWith("org-2"));
+        await waitFor(() => expect(api.get).toHaveBeenLastCalledWith("org-2", expect.any(Function)));
     });
 
     it("is not installed and stops loading when the status cannot be read", async () => {
@@ -132,7 +148,7 @@ describe("useCourtListenerConnector", () => {
         const { result } = renderHook(() => useCourtListenerConnector("org-1"));
         await waitFor(() => expect(result.current.loading).toBe(false));
         await act(() => result.current.setEnabled(false));
-        expect(api.setEnabled).toHaveBeenCalledWith(false, "org-1");
+        expect(api.setEnabled).toHaveBeenCalledWith(false, "org-1", expect.any(Function));
         expect(result.current.enabled).toBe(false);
     });
 
@@ -182,45 +198,39 @@ async function renderModal(props: Parameters<typeof Harness>[0]) {
 }
 
 describe("CourtListenerTokenModal", () => {
-    it("saves a trimmed token in its workspace and closes", async () => {
+    it("offers Close instead of browser token writes for managed credentials", async () => {
         const onClose = vi.fn();
         const user = userEvent.setup();
         await renderModal({ workspace: "org-1", onClose });
-
         expect(screen.getByTestId("courtlistener-key-state")).toHaveTextContent("none");
+        expect(screen.getByTestId("courtlistener-key-state")).toHaveAttribute("data-managed", "true");
+        expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
         expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
-        await user.click(screen.getByRole("button", { name: "Save" }));
-
-        expect(api.saveToken).toHaveBeenCalledWith("new-token", "org-1");
-        await waitFor(() => expect(onClose).toHaveBeenCalled());
+        await user.click(screen.getByRole("button", { name: "Close" }));
+        expect(onClose).toHaveBeenCalledOnce();
+        expect(api.saveToken).not.toHaveBeenCalled(); expect(api.deleteToken).not.toHaveBeenCalled();
     });
 
-    it("stays open when the token is not saved", async () => {
-        api.saveToken.mockRejectedValue(new Error("nope"));
-        const onClose = vi.fn();
-        const user = userEvent.setup();
-        await renderModal({ onClose });
-
-        await user.click(screen.getByRole("button", { name: "Save" }));
-        expect(api.saveToken).toHaveBeenCalled();
-        expect(onClose).not.toHaveBeenCalled();
+    it("rejects programmatic user token writes without calling a browser credential API", async () => {
+        const { result } = renderHook(() => useCourtListenerConnector("personal"));
+        await waitFor(() => expect(result.current.loading).toBe(false));
+        await expect(result.current.saveToken(" new-token ")).rejects.toThrow(/credentials are managed/);
+        expect(api.saveToken).not.toHaveBeenCalled();
     });
 
-    it("deletes the user's own token in its workspace", async () => {
-        api.get.mockResolvedValue(
-            status({ installed: true, ownToken: true, tokenSource: "user" }),
-        );
+    it("does not expose deletion of a legacy own token in a managed deployment", async () => {
+        api.get.mockResolvedValue(status({ installed: true, ownToken: true, tokenSource: "user" }));
         const onClose = vi.fn();
-        const user = userEvent.setup();
         await renderModal({ workspace: "org-1", onClose });
-
-        expect(screen.getByTestId("courtlistener-key-state")).toHaveTextContent("own");
-        await user.click(screen.getByRole("button", { name: "Delete" }));
-        expect(api.deleteToken).toHaveBeenCalledWith("org-1");
-        await waitFor(() => expect(onClose).toHaveBeenCalled());
+        expect(screen.getByTestId("courtlistener-key-state")).toHaveTextContent("none");
+        expect(screen.getByTestId("courtlistener-key-state")).toHaveAttribute("data-managed", "true");
+        expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+        const { result } = renderHook(() => useCourtListenerConnector("org-1"));
+        await expect(result.current.deleteToken()).rejects.toThrow(/credentials are managed/);
+        expect(api.deleteToken).not.toHaveBeenCalled();
     });
 
-    it("says the organization provides a token and the user's own is optional", async () => {
+    it("explains that the organization token is managed through Key Vault", async () => {
         api.get.mockResolvedValue(status({ installed: true, tokenSource: "org" }));
         await renderModal({
             workspace: "org-1",
@@ -229,13 +239,10 @@ describe("CourtListenerTokenModal", () => {
         });
         expect(
             screen.getByText(
-                "Acme LLP provides a CourtListener token, so your own token is optional.",
+                "Acme LLP provides a CourtListener token. Credentials are managed through Key Vault.",
             ),
         ).toBeTruthy();
-        expect(screen.getByTestId("courtlistener-key-state")).toHaveAttribute(
-            "data-key-label",
-            "Your API token (optional)",
-        );
+        expect(screen.getByTestId("courtlistener-key-state")).toHaveAttribute("data-managed", "true");
         // Nothing of the user's own to delete.
         expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
     });

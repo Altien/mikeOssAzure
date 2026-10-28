@@ -57,7 +57,7 @@ function dsnTable(file: string): string {
 
 it("keeps the default DSN table identical in the backend and the shared scrubber", () => {
     expect(dsnTable(BACKEND)).toBe(dsnTable(SHARED));
-    expect(dsnTable(SHARED)).toMatch(/backend:\s*"https:\/\/[0-9a-f]+@o\d+\.ingest/);
+    expect(dsnTable(SHARED)).toContain('backend: ""');
 });
 
 

@@ -7,6 +7,20 @@ const { listWorkflowsMock } = vi.hoisted(() => ({
     listWorkflowsMock: vi.fn().mockResolvedValue([]),
 }));
 
+// This harness renders authenticated work without booting the session provider.
+// Keep the real owner/generation hooks; only supply their controlled auth input.
+const authenticatedOwner = vi.hoisted(() => ({
+  user: { id: "user-1", email: "owner@example.com", pendingEmail: null, createdWithGoogle: false },
+  isAuthenticated: true, authLoading: false, authError: null,
+  signOut: vi.fn(async () => {}), signInLocal: vi.fn(async () => {}),
+  getAccessToken: vi.fn(async () => "test-token"), updateEmail: vi.fn(), setPassword: vi.fn(async () => {}),
+  refreshSession: vi.fn(async () => null), retrySession: vi.fn(async () => null),
+}));
+vi.mock("@/app/contexts/AuthContext", async (original) => ({
+  ...(await original<typeof import("@/app/contexts/AuthContext")>()),
+  useAuth: () => authenticatedOwner,
+}));
+
 vi.mock("@/app/lib/mikeApi", () => ({
     listWorkflows: listWorkflowsMock,
 }));

@@ -18,7 +18,7 @@ const catalog: ModelOption[] = [
 ];
 
 const configuration: PlaybookConfiguration = {
-    availableModelIds: ["custom-reviewer"],
+    availableModelIds: ["openrouter/anthropic/claude-sonnet-4", "ollama/qwen3.6", "custom-reviewer"],
     defaultModel: "custom-reviewer",
 };
 

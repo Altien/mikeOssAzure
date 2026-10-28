@@ -24,6 +24,12 @@ import {
     userMessage,
 } from "../../../word-addin/src/taskpane/lib/notify";
 
+// Dev drift: these unit cases exercise a stable signed-in host owner;
+// session/document lifetime changes remain covered by the real hook's own guards.
+vi.mock("../../../word-addin/src/taskpane/auth/session", () => ({
+    captureSessionOwner: () => () => true,
+}));
+
 describe("parseApiErrorBody", () => {
     it("keeps the backend's 4xx detail, code and request id", () => {
         expect(

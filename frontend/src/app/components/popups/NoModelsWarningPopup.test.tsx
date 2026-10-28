@@ -76,7 +76,7 @@ describe("NoModelsWarningPopup", () => {
             ],
             [
                 "org-api-keys",
-                "Your organization has not set up a model provider yet. Ask an organization admin to add one in Organization.",
+                "No managed model provider is available. Ask the deployment administrator to check provider configuration.",
             ],
         ] as const)(
             "says who can fix %s and takes an admin to the organization's settings",

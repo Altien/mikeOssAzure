@@ -9,6 +9,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  API_BASE,
   getDocumentFile,
   getPlaybookPeople,
   listPlaybookShares,
@@ -615,7 +616,7 @@ describe("playbooks page", () => {
           ],
         }),
         { visibility: "private" },
-      ),
+      expect.any(Function),),
     );
     await waitFor(() => expect(update).toBeDisabled());
     await userEvent.keyboard("{Escape}");
@@ -655,7 +656,7 @@ describe("playbooks page", () => {
           topics: playbook("pb-a", "Playbook A").content.topics,
         }),
         { visibility: "private" },
-      ),
+      expect.any(Function),),
     );
   });
 
@@ -794,7 +795,7 @@ describe("playbooks page", () => {
           description: "Supply terms",
         }),
         { visibility: "private" },
-      ),
+      expect.any(Function),),
     );
     expect(screen.getByRole("link", { name: "Playbook B" })).toBeVisible();
   });
@@ -1482,7 +1483,7 @@ describe("playbooks page", () => {
         ],
       }),
       expect.any(Object),
-    );
+    expect.any(Function),);
     const row = (
       await screen.findByRole("link", { name: "Untitled playbook" })
     ).closest('[role="row"]')!;
@@ -2087,7 +2088,7 @@ describe("playbooks page", () => {
     ).toHaveAttribute("aria-pressed", "true");
     expect(
       screen.getByRole("document", { name: "Viewing Negotiation guide.docx" }),
-    ).toHaveAttribute("data-url", "/api/playbooks/imported/source");
+    ).toHaveAttribute("data-url", `${API_BASE}/playbooks/imported/source`);
     expect(
       await screen.findByRole("button", { name: "Data policy.pdf" }),
     ).toBeInTheDocument();
@@ -2459,7 +2460,7 @@ describe("playbooks page", () => {
     await waitFor(() =>
       expect(updatePlaybook).toHaveBeenCalledWith("pb-a", expect.any(Object), {
         visibility: "private",
-      }),
+      }, expect.any(Function)),
     );
     expect(reviewDocumentWithPlaybook).not.toHaveBeenCalled();
     finishSave(playbook("pb-a", "Playbook A"));

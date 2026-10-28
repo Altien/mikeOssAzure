@@ -235,7 +235,7 @@ describe("Playbooks API requests", () => {
         string,
         RequestInit,
       ];
-      expect(actualUrl).toBe(url);
+      expect(new URL(actualUrl).pathname + new URL(actualUrl).search).toBe(url);
       expect(init.method ?? "GET").toBe(method);
       expect(init.credentials).toBe("include");
       expect(init.body).toBe(

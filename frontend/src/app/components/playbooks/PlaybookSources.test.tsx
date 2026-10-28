@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearToasts } from "@/app/components/ui/toast";
-import type { PlaybookSupplementarySource } from "@/app/lib/mikeApi";
+import { API_BASE, type PlaybookSupplementarySource } from "@/app/lib/mikeApi";
 import { PlaybookSources } from "./PlaybookSources";
 
 const api = vi.hoisted(() => ({
@@ -80,7 +80,7 @@ describe("playbook sources", () => {
     ).toHaveAttribute("aria-pressed", "true");
     expect(viewers.docx).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        displayUrl: "/api/playbooks/guide%2Fone/source",
+        displayUrl: `${API_BASE}/playbooks/guide%2Fone/source`,
         canEdit: false,
         toolbarVisible: false,
       }),
@@ -90,7 +90,7 @@ describe("playbook sources", () => {
     );
     expect(viewers.pdf).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        displayUrl: "/api/playbooks/guide%2Fone/sources/src-1/file",
+        displayUrl: `${API_BASE}/playbooks/guide%2Fone/sources/src-1/file`,
       }),
     );
     expect(

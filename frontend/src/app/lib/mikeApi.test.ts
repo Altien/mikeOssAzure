@@ -311,7 +311,7 @@ it("does not send a profile save with a new account's token after async refresh"
     const save = updateUserProfile({ professionalTitle: "Partner" }, () => currentAccount);
     currentAccount = false;
     releaseToken("new-account-token");
-    await expect(save).rejects.toThrow("Account changed before the request was sent");
+    await expect(save).rejects.toThrow("Request owner changed");
     expect(fetchMock).not.toHaveBeenCalled();
 });
 
@@ -755,24 +755,24 @@ describe("audit history", () => {
         const result = { users: [], nextOffset: null };
         fetchMock.mockResolvedValueOnce(jsonResponse(result));
         expect(await getAuditActors({ orgId: "org-1", search: "Alex & Pat", offset: 20 })).toEqual(result);
-        expect(lastFetchCall().url).toBe("/api/audit/actors?org_id=org-1&q=Alex+%26+Pat&offset=20");
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/audit/actors?org_id=org-1&q=Alex+%26+Pat&offset=20");
         fetchMock.mockResolvedValueOnce(jsonResponse(result));
         expect(await getAuditActors({ orgId: "org-1" })).toEqual(result);
-        expect(lastFetchCall().url).toBe("/api/audit/actors?org_id=org-1");
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/audit/actors?org_id=org-1");
         fetchMock.mockResolvedValueOnce(jsonResponse({ events: [], total: 0, page: 1, pageSize: 50 }));
         await getAuditHistory({ orgId: "org-1", actorUserId: "actor-1" });
-        expect(lastFetchCall().url).toBe("/api/audit?org_id=org-1&actor_user_id=actor-1");
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/audit?org_id=org-1&actor_user_id=actor-1");
     });
 
     it("encodes the organization username filter", async () => {
         fetchMock.mockResolvedValueOnce(jsonResponse({ events: [], total: 0, page: 1, pageSize: 50 }));
         await getAuditHistory({ orgId: "org-1", username: "Alex & Pat" });
-        expect(lastFetchCall().url).toBe("/api/audit?org_id=org-1&username=Alex+%26+Pat");
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/audit?org_id=org-1&username=Alex+%26+Pat");
     });
     it("includes the organization scope in audit requests", async () => {
         fetchMock.mockResolvedValueOnce(jsonResponse({ events: [], total: 0, page: 1, pageSize: 50 }));
         await getAuditHistory({ orgId: "org-1" });
-        expect(lastFetchCall().url).toBe("/api/audit?org_id=org-1");
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/audit?org_id=org-1");
     });
     it("serializes server-side filters, sorting, pagination, and the abort signal", async () => {
         fetchMock.mockResolvedValue(
@@ -1461,15 +1461,15 @@ describe("listTabularReviews", () => {
 
         await listTabularReviews("p1", { ownerUserId: "u2" });
         expect(lastFetchCall().url).toBe(
-            "/api/tabular-review?project_id=p1&owner_user_id=u2",
+            "http://localhost:3001/api/tabular-review?project_id=p1&owner_user_id=u2",
         );
         await listTabularReviewIds("p1", { ownerUserId: "u2" });
         expect(lastFetchCall().url).toBe(
-            "/api/tabular-review/ids?project_id=p1&owner_user_id=u2",
+            "http://localhost:3001/api/tabular-review/ids?project_id=p1&owner_user_id=u2",
         );
         await listProjectReviewCreators("p1");
         expect(lastFetchCall().url).toBe(
-            "/api/tabular-review/creators?project_id=p1",
+            "http://localhost:3001/api/tabular-review/creators?project_id=p1",
         );
     });
 });
@@ -2028,7 +2028,7 @@ describe("tabular review CRUD", () => {
         expect(url.searchParams.get("sort_key")).toBe("updated");
         const controller = new AbortController();
         await getTabularReviewHistoryStatuses(["r1", "r2"], controller.signal);
-        expect(lastFetchCall().url).toBe("/api/tabular-review/history-status?ids=r1%2Cr2");
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/tabular-review/history-status?ids=r1%2Cr2");
         expect(lastFetchCall().init.signal).toBe(controller.signal);
     });
 
@@ -3532,12 +3532,12 @@ describe("unwrapping and blob wrappers", () => {
     });
 
     it.each([
-        ["OpenRouter", getOpenRouterModels, "/api/models/openrouter"],
-        ["Vercel AI Gateway", getVercelModels, "/api/models/vercel"],
-        ["OpenCode Go", getOpenCodeGoModels, "/api/models/opencode-go"],
-        ["Amazon Bedrock", getBedrockModels, "/api/models/bedrock"],
-        ["xAI", getXaiModels, "/api/models/xai"],
-        ["custom endpoint", getCustomEndpointModels, "/api/models/custom"],
+        ["OpenRouter", getOpenRouterModels, "http://localhost:3001/api/models/openrouter"],
+        ["Vercel AI Gateway", getVercelModels, "http://localhost:3001/api/models/vercel"],
+        ["OpenCode Go", getOpenCodeGoModels, "http://localhost:3001/api/models/opencode-go"],
+        ["Amazon Bedrock", getBedrockModels, "http://localhost:3001/api/models/bedrock"],
+        ["xAI", getXaiModels, "http://localhost:3001/api/models/xai"],
+        ["custom endpoint", getCustomEndpointModels, "http://localhost:3001/api/models/custom"],
     ])("loads the %s model catalog", async (_label, load, path) => {
         const models = [{ id: "openai/gpt-5.4", label: "GPT-5.4" }];
         fetchMock.mockResolvedValue(jsonResponse({ models }));
@@ -3605,8 +3605,8 @@ describe("unwrapping and blob wrappers", () => {
         ]);
         const urls = fetchMock.mock.calls.map((call) => call[0]);
         expect(urls).toEqual([
-            "/api/documents/case%3A789?workspace=org-1",
-            "/api/documents/case%3A789?workspace=personal",
+            "http://localhost:3001/api/documents/case%3A789?workspace=org-1",
+            "http://localhost:3001/api/documents/case%3A789?workspace=personal",
         ]);
     });
 
@@ -3806,39 +3806,39 @@ describe("dev divergences", () => {
 describe("workspace parameter on list requests", () => {
     const ORG = "7b1d9d0e-3c5a-4f6e-9a51-0c2f7d3e8a11";
     const requests: [string, (workspace?: string) => Promise<unknown>, string][] = [
-        ["searchProjectDirectory", (workspace) => searchProjectDirectory({ search: "matter", workspace }), "/api/projects"],
-        ["listProjects (IDE)", (workspace) => listProjects({ participatingOnly: true, workspace }), "/api/projects"],
-        ["listProjectsPage", (workspace) => listProjectsPage({ workspace }), "/api/projects"],
+        ["searchProjectDirectory", (workspace) => searchProjectDirectory({ search: "matter", workspace }), "http://localhost:3001/api/projects"],
+        ["listProjects (IDE)", (workspace) => listProjects({ participatingOnly: true, workspace }), "http://localhost:3001/api/projects"],
+        ["listProjectsPage", (workspace) => listProjectsPage({ workspace }), "http://localhost:3001/api/projects"],
         [
             "listProjectSummaries",
             (workspace) => listProjectSummaries({ workspace }),
-            "/api/projects",
+            "http://localhost:3001/api/projects",
         ],
-        ["listProjectIds", (workspace) => listProjectIds({ workspace }), "/api/projects/ids"],
+        ["listProjectIds", (workspace) => listProjectIds({ workspace }), "http://localhost:3001/api/projects/ids"],
         [
             "getProjectFilterOptions",
             (workspace) => getProjectFilterOptions(undefined, workspace),
-            "/api/projects/filter-options",
+            "http://localhost:3001/api/projects/filter-options",
         ],
-        ["listChats", (workspace) => listChats({ workspace }), "/api/chat"],
+        ["listChats", (workspace) => listChats({ workspace }), "http://localhost:3001/api/chat"],
         [
             "listTabularReviews",
             (workspace) => listTabularReviews(undefined, { workspace }),
-            "/api/tabular-review",
+            "http://localhost:3001/api/tabular-review",
         ],
         [
             "listTabularReviewIds",
             (workspace) => listTabularReviewIds(undefined, { workspace }),
-            "/api/tabular-review/ids",
+            "http://localhost:3001/api/tabular-review/ids",
         ],
-        ["listWorkflows", (workspace) => listWorkflows("assistant", workspace), "/api/workflows"],
-        ["listQuickActions", (workspace) => listQuickActions("app", workspace), "/api/quick-actions"],
-        ["listWorkflowsPage", (workspace) => listWorkflowsPage({ workspace }), "/api/workflows"],
-        ["listWorkflowIds", (workspace) => listWorkflowIds({ workspace }), "/api/workflows/ids"],
+        ["listWorkflows", (workspace) => listWorkflows("assistant", workspace), "http://localhost:3001/api/workflows"],
+        ["listQuickActions", (workspace) => listQuickActions("app", workspace), "http://localhost:3001/api/quick-actions"],
+        ["listWorkflowsPage", (workspace) => listWorkflowsPage({ workspace }), "http://localhost:3001/api/workflows"],
+        ["listWorkflowIds", (workspace) => listWorkflowIds({ workspace }), "http://localhost:3001/api/workflows/ids"],
         [
             "getWorkflowFilterOptions",
             (workspace) => getWorkflowFilterOptions({ workspace }),
-            "/api/workflows/filter-options",
+            "http://localhost:3001/api/workflows/filter-options",
         ],
     ];
 
@@ -3873,14 +3873,14 @@ describe("organization archives", () => {
     it("lists the archive by departure", async () => {
         fetchMock.mockResolvedValue(jsonResponse({ departures: [], truncated: false }));
         expect(await listOrgDepartures("org")).toEqual({ departures: [], truncated: false });
-        expect(lastFetchCall().url).toBe("/api/orgs/org/departures");
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/orgs/org/departures");
     });
     it("sends the new owner and permanent deletion for several items at once", async () => {
         fetchMock.mockImplementation(async () => jsonResponse({ resolved: 2, unresolved: 0 }));
         expect(await reassignOrgDepartureArchives("org", ["a", "b"], "member")).toEqual({ resolved: 2, unresolved: 0 });
-        expect(lastFetchCall()).toMatchObject({ url: "/api/orgs/org/archives/recover", init: { method: "POST", body: JSON.stringify({ archive_ids: ["a", "b"], assign_to: "member" }) } });
+        expect(lastFetchCall()).toMatchObject({ url: "http://localhost:3001/api/orgs/org/archives/recover", init: { method: "POST", body: JSON.stringify({ archive_ids: ["a", "b"], assign_to: "member" }) } });
         await deleteOrgDepartureArchives("org", ["a", "b"]);
-        expect(lastFetchCall()).toMatchObject({ url: "/api/orgs/org/archives/delete", init: { method: "POST", body: JSON.stringify({ archive_ids: ["a", "b"] }) } });
+        expect(lastFetchCall()).toMatchObject({ url: "http://localhost:3001/api/orgs/org/archives/delete", init: { method: "POST", body: JSON.stringify({ archive_ids: ["a", "b"] }) } });
     });
 });
 
@@ -3889,7 +3889,7 @@ describe("organization logos", () => {
     it.each(["data:image/png;base64,test", ""])("reads the saved logo or an empty logo (%s)", async (dataUrl) => {
         fetchMock.mockResolvedValue(jsonResponse({ data_url: dataUrl }));
         expect(await getOrgLogo("org-1")).toBe(dataUrl || null);
-        expect(lastFetchCall().url).toBe("/api/orgs/org-1/logo");
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/orgs/org-1/logo");
     });
 
     it("treats a missing logo as empty without hiding server or network errors", async () => {
@@ -3931,22 +3931,22 @@ describe("organization private content", () => {
         const page = { items: [], total: 0 };
         fetchMock.mockImplementation(async () => jsonResponse(page));
         expect(await listOrgPrivateContent("org-1")).toEqual(page);
-        expect(lastFetchCall().url).toBe("/api/orgs/org-1/private-content?limit=50&offset=0&search=");
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/orgs/org-1/private-content?limit=50&offset=0&search=");
         await listOrgPrivateContent("org-1", 50, "Alex & Pat");
-        expect(lastFetchCall().url).toBe("/api/orgs/org-1/private-content?limit=50&offset=50&search=Alex+%26+Pat");
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/orgs/org-1/private-content?limit=50&offset=50&search=Alex+%26+Pat");
     });
     it.each([true, false])("sets private-content permission to %s", async (enabled) => {
         fetchMock.mockResolvedValue(jsonResponse({}));
         await setOrgPrivateContentPermission("org-1", "member-1", enabled);
-        expect(lastFetchCall()).toMatchObject({ url: "/api/orgs/org-1/members/member-1/private-content-permission", init: {
+        expect(lastFetchCall()).toMatchObject({ url: "http://localhost:3001/api/orgs/org-1/members/member-1/private-content-permission", init: {
             method: "PUT", body: JSON.stringify({ enabled }),
         } });
     });
     it("opens and closes explicit read access to the requested item", async () => {
         fetchMock.mockImplementation(async () => jsonResponse({}));
         await openOrgPrivateContent("org-1", "document", "doc-1");
-        expect(lastFetchCall()).toMatchObject({ url: "/api/orgs/org-1/private-content/document/doc-1/open", init: { method: "POST" } });
+        expect(lastFetchCall()).toMatchObject({ url: "http://localhost:3001/api/orgs/org-1/private-content/document/doc-1/open", init: { method: "POST" } });
         await closeOrgPrivateContent("org-1", "document", "doc-1");
-        expect(lastFetchCall()).toMatchObject({ url: "/api/orgs/org-1/private-content/document/doc-1", init: { method: "DELETE" } });
+        expect(lastFetchCall()).toMatchObject({ url: "http://localhost:3001/api/orgs/org-1/private-content/document/doc-1", init: { method: "DELETE" } });
     });
 });

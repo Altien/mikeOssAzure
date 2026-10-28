@@ -1388,6 +1388,7 @@ describe("project explorer root drop", () => {
             "p1",
             "doc1",
             null,
+            expect.any(Function),
         );
         expect(await screen.findByRole("alert")).toHaveTextContent(
             "Couldn't move this document",

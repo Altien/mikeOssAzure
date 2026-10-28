@@ -20,7 +20,7 @@ import { CODE_KINDS } from "@/shared/lib/userError";
 const ROOT = path.resolve(__dirname, "../../../..");
 const SOURCE_TREES = [
     path.join(ROOT, "backend", "src"),
-    path.join(ROOT, "frontend", "src", "app", "api"),
+    // Dev uses the backend /api boundary; this static-export frontend has no Next API route tree.
 ];
 
 function collectSources(dir: string, out: string[] = []): string[] {
@@ -41,7 +41,7 @@ function collectSources(dir: string, out: string[] = []): string[] {
 describe("CODE_KINDS", () => {
     const sources = SOURCE_TREES.flatMap((tree) => collectSources(tree));
 
-    it("reads more than one file per tree", () => {
+    it("reads the backend response sources", () => {
         expect(sources.length).toBeGreaterThan(100);
     });
 

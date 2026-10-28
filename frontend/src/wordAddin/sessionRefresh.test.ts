@@ -21,6 +21,12 @@ import { responseError } from "../../../word-addin/src/taskpane/api/client";
 import { notifyError, userMessage } from "../../../word-addin/src/taskpane/lib/notify";
 import { clearToasts, getSnapshot } from "@/shared/lib/toastStore";
 
+// Dev drift: these unit cases exercise a stable signed-in host owner;
+// session/document lifetime changes remain covered by the real hook's own guards.
+vi.mock("../../../word-addin/src/taskpane/auth/session", () => ({
+    captureSessionOwner: () => () => true,
+}));
+
 class StatusError extends Error {
     constructor(readonly status: number) {
         super(`HTTP ${status}`);
@@ -101,11 +107,11 @@ describe("createRefreshingFetch", () => {
         const refreshSession = vi.fn();
         const fetchImpl = vi.fn().mockResolvedValue(ok());
         const fetchWithRefresh = createRefreshingFetch({
+            captureOwner: () => () => true,
             fetchImpl: fetchImpl as unknown as typeof fetch,
             refreshSession,
             onExpired: vi.fn(),
             onUnreachable: vi.fn(),
-            captureOwner: () => () => true,
         });
 
         const response = await fetchWithRefresh("/api/workflows");
@@ -123,6 +129,7 @@ describe("createRefreshingFetch", () => {
         const onExpired = vi.fn();
         const onUnreachable = vi.fn();
         const fetchWithRefresh = createRefreshingFetch({
+            captureOwner: () => () => true,
             fetchImpl: fetchImpl as unknown as typeof fetch,
             refreshSession: vi.fn().mockResolvedValue({ id: "u1" }),
             onExpired,
@@ -151,11 +158,11 @@ describe("createRefreshingFetch", () => {
     it("retries exactly once, never looping on a backend that 401s everything", async () => {
         const fetchImpl = vi.fn().mockResolvedValue(unauthorized());
         const fetchWithRefresh = createRefreshingFetch({
+            captureOwner: () => () => true,
             fetchImpl: fetchImpl as unknown as typeof fetch,
             refreshSession: vi.fn().mockResolvedValue({ id: "u1" }),
             onExpired: vi.fn(),
             onUnreachable: vi.fn(),
-            captureOwner: () => () => true,
         });
 
         const response = await fetchWithRefresh("/api/workflows");
@@ -168,11 +175,11 @@ describe("createRefreshingFetch", () => {
         const fetchImpl = vi.fn().mockResolvedValue(unauthorized());
         const refreshSession = vi.fn().mockResolvedValue({ id: "u1" });
         const fetchWithRefresh = createRefreshingFetch({
+            captureOwner: () => () => true,
             fetchImpl: fetchImpl as unknown as typeof fetch,
             refreshSession,
             onExpired: vi.fn(),
             onUnreachable: vi.fn(),
-            captureOwner: () => () => true,
         });
 
         const response = await fetchWithRefresh("/api/upload", {
@@ -193,11 +200,11 @@ describe("createRefreshingFetch", () => {
             .mockResolvedValueOnce(unauthorized())
             .mockResolvedValueOnce(ok());
         const fetchWithRefresh = createRefreshingFetch({
+            captureOwner: () => () => true,
             fetchImpl: fetchImpl as unknown as typeof fetch,
             refreshSession: vi.fn().mockResolvedValue({ id: "u1" }),
             onExpired: vi.fn(),
             onUnreachable: vi.fn(),
-            captureOwner: () => () => true,
         });
 
         const response = await fetchWithRefresh("/storage/put", {
@@ -214,6 +221,7 @@ describe("createRefreshingFetch", () => {
         const onUnreachable = vi.fn();
         const fetchImpl = vi.fn().mockResolvedValue(unauthorized());
         const fetchWithRefresh = createRefreshingFetch({
+            captureOwner: () => () => true,
             fetchImpl: fetchImpl as unknown as typeof fetch,
             refreshSession: vi.fn().mockResolvedValue(null),
             onExpired,
@@ -233,6 +241,7 @@ describe("createRefreshingFetch", () => {
         const onUnreachable = vi.fn();
         const fetchImpl = vi.fn().mockResolvedValue(unauthorized());
         const fetchWithRefresh = createRefreshingFetch({
+            captureOwner: () => () => true,
             fetchImpl: fetchImpl as unknown as typeof fetch,
             refreshSession: vi
                 .fn()
@@ -264,6 +273,7 @@ describe("a 401 the session layer handled", () => {
         const onExpired = vi.fn();
         const onUnreachable = vi.fn();
         const fetchWithRefresh = createRefreshingFetch({
+            captureOwner: () => () => true,
             fetchImpl: vi.fn(async () =>
                 new Response(JSON.stringify({ detail: "Not authenticated" }), {
                     status: 401,

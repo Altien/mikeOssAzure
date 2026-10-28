@@ -1,4 +1,5 @@
 import { AuditHistory } from "@/app/components/history/AuditHistory";
+vi.mock("@/app/hooks/useRequestOwner", () => ({ useRequestOwner: () => ({ key: "test-owner", capture: () => () => true }) }));
 import {
   act,
   fireEvent,

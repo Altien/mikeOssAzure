@@ -1,9 +1,29 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const pickerWorkspace = vi.hoisted(() => ({ id: "personal" }));
+vi.mock("@/app/contexts/WorkspaceContext", async (original) => ({
+  ...(await original<typeof import("@/app/contexts/WorkspaceContext")>()),
+  useWorkspace: () => ({ accountId: authenticatedOwner.user.id, workspaceId: pickerWorkspace.id }),
+}));
+
 const mocks = vi.hoisted(() => ({
   session: vi.fn(),
   open: vi.fn(),
+}));
+
+// This harness renders authenticated work without booting the session provider.
+// Keep the real owner/generation hooks; only supply their controlled auth input.
+const authenticatedOwner = vi.hoisted(() => ({
+  user: { id: "u1", email: "owner@example.com", pendingEmail: null, createdWithGoogle: false },
+  isAuthenticated: true, authLoading: false, authError: null,
+  signOut: vi.fn(async () => {}), signInLocal: vi.fn(async () => {}),
+  getAccessToken: vi.fn(async () => "test-token"), updateEmail: vi.fn(), setPassword: vi.fn(async () => {}),
+  refreshSession: vi.fn(async () => null), retrySession: vi.fn(async () => null),
+}));
+vi.mock("@/app/contexts/AuthContext", async (original) => ({
+  ...(await original<typeof import("@/app/contexts/AuthContext")>()),
+  useAuth: () => authenticatedOwner,
 }));
 
 vi.mock("@/app/lib/mikeApi", async (original) => ({
@@ -25,6 +45,7 @@ const session = {
 };
 
 async function addFiles(workspace?: string) {
+  pickerWorkspace.id = workspace ?? "personal";
   const { result } = renderHook(() => useGoogleDrivePicker(workspace));
   await act(() => result.current.addFiles());
   return result.current.message;
@@ -32,6 +53,7 @@ async function addFiles(workspace?: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  pickerWorkspace.id = "personal";
   mocks.session.mockResolvedValue(session);
 });
 
@@ -45,13 +67,13 @@ describe("useGoogleDrivePicker", () => {
     expect(await addFiles()).toBe(
       "Added 3 files. Mike can now search and read them.",
     );
-    expect(mocks.open).toHaveBeenCalledWith(session);
+    expect(mocks.open).toHaveBeenCalledWith(session, { isCurrent: expect.any(Function), signal: expect.any(AbortSignal) });
   });
 
   it("opens the Drive connection of the workspace it is given", async () => {
     mocks.open.mockResolvedValue([]);
     await addFiles("org-1");
-    expect(mocks.session).toHaveBeenCalledWith("org-1");
+    expect(mocks.session).toHaveBeenCalledWith("org-1", expect.any(Function));
   });
 
   it("says nothing was added when the Picker is closed", async () => {

@@ -15,6 +15,12 @@ vi.mock('../../../word-addin/src/taskpane/lib/wordDocumentIdentity', () => ({ re
 vi.mock('../../../word-addin/src/taskpane/lib/notify', async () => ({ ...(await import('@/shared/lib/userError')), notifyError: mocks.notify, notifyInfo: mocks.info }));
 import { useWordAssistantChat } from '../../../word-addin/src/taskpane/hooks/useWordAssistantChat';
 import { WordChatStreamInterrupted, WordChatTerminalError } from '../../../word-addin/src/taskpane/api/stream';
+// Dev drift: these unit cases exercise a stable signed-in host owner;
+// session/document lifetime changes remain covered by the real hook's own guards.
+vi.mock("../../../word-addin/src/taskpane/auth/session", () => ({
+    captureSessionOwner: () => () => true,
+}));
+
 const submission = (content: string) => ({ content, model: 'gpt-5.4', reasoning: 'none' as const });
 function setup() {
     return renderHook(({ sessionKey, documentId }) => useWordAssistantChat({ sessionKey, chatId: 'chat-1', initialMessages: [], onChatIdChange: vi.fn(), onChatStarted: vi.fn(), wordDocumentId: documentId, wordChatStorage: 'cloud', wordChatOwnerId: 'user-1', editApplyMode: 'direct', editController: { applyToolEdits: vi.fn().mockResolvedValue([]), processLiveRedlines: vi.fn(), markIncompleteRedlines: vi.fn(), waitForMessageEdits: vi.fn().mockResolvedValue(undefined) } }), { initialProps: { sessionKey: 1, documentId: "doc-1" } });

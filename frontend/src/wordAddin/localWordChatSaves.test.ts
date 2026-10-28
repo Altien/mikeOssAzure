@@ -66,7 +66,7 @@ describe("saveWordMessageOrNotify", () => {
             Record<string, unknown>,
         ];
         expect(options.action).toBe("save this conversation on this device");
-        expect(options.dedupeKey).toBe("local-word-chat-save:chat-1");
+        expect(options.dedupeKey).toBe("local-word-chat-save:test-owner:chat-1");
         // The storage layer's own wording never reaches the screen.
         expect(error.message).toBe(LOCAL_SAVE_FAILED_MESSAGE);
         expect(error.message).not.toContain("QuotaExceededError");
@@ -102,8 +102,8 @@ describe("saveWordMessageOrNotify", () => {
             (call) => (call[1] as { dedupeKey?: string }).dedupeKey,
         );
         expect(keys).toEqual([
-            "local-word-chat-save:chat-1",
-            "local-word-chat-save:chat-2",
+            "local-word-chat-save:test-owner:chat-1",
+            "local-word-chat-save:test-owner:chat-2",
         ]);
     });
 

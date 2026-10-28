@@ -7,6 +7,8 @@ import { ApiKeyField } from "./ApiKeyField";
 
 afterEach(clearToasts);
 
+vi.mock("@/app/hooks/useRequestOwner", () => ({ useRequestOwner: () => ({ capture: () => () => true }) }));
+
 vi.mock("@/app/components/popups/MfaVerificationPopup", () => ({
   MfaVerificationPopup: () => null,
   needsMfaVerification: vi.fn().mockResolvedValue(false),

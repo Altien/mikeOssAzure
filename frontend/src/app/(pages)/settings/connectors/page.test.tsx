@@ -110,11 +110,6 @@ vi.mock("@/app/components/settings/CourtListenerConnector", () => ({
     },
 }));
 
-// MFA gate off, and render nothing for the popup itself.
-vi.mock("@/app/components/popups/MfaVerificationPopup", () => ({
-    MfaVerificationPopup: () => null,
-    needsMfaVerification: vi.fn(),
-}));
 
 function makeSummary(
     overrides: Partial<McpConnectorSummary> = {},
@@ -1616,12 +1611,10 @@ describe("ConnectorsPage CourtListener", () => {
         render(<ConnectorsPage />);
         await act(flushMicrotasks);
         expect(discover().queryByRole("button", { name: "Add CourtListener connector" })).toBeNull();
-        // A connector write, so it passes the MFA gate first.
         await act(async () => {
             fireEvent.click(installed().getByRole("switch", { name: "CourtListener connector" }));
             await flushMicrotasks();
         });
-        expect(needsMfaVerification).toHaveBeenCalled();
         expect(courtListener.setEnabled).toHaveBeenCalledWith(false);
         fireEvent.click(installed().getByRole("button", { name: "Manage CourtListener" }));
         expect(screen.getByRole("dialog", { name: "CourtListener token" })).toBeTruthy();

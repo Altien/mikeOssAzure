@@ -67,7 +67,7 @@ describe("runUserExport", () => {
         await expect(runUserExport("account")).resolves.toMatchObject({
             filename: "status.csv",
         });
-        expect(startUserExportMock).toHaveBeenCalledWith("account", undefined);
+        expect(startUserExportMock).toHaveBeenCalledWith("account", undefined, undefined);
     });
 
     it("keeps a null filename when neither half of the flow supplies one", async () => {

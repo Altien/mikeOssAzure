@@ -13,6 +13,8 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
   updateWebSearchSettings: vi.fn(),
 }));
 
+vi.mock("@/app/contexts/AuthContext", () => ({ useAuth: () => ({ user: { id: "test-user" } }) }));
+
 vi.mock("@/app/lib/userFacingError", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/app/lib/userFacingError")>()),
   notifyError: vi.fn(),
