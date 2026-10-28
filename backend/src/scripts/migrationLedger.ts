@@ -10,6 +10,16 @@ import type { ClientBase } from "pg";
 const MIGRATION_LOCK_ID = "7241865325823964";
 const FILE_PATTERN = /^\d{4}_[a-z0-9_]+\.sql$/i;
 
+// Both full filenames shipped together in immutable Dev baseline
+//795f5cac7f53b6ccfb457eb4bdc018d065351d61. History is keyed by full name,
+// not this legacy numeric slot. No other filename may join this exception.
+const LEGACY_DUPLICATE_SLOT_FILES: Readonly<Record<string, readonly string[]>> = {
+  "0022": [
+    "0022_chat_message_workflow.sql",
+    "0022_citation_verification_extractions.sql",
+  ],
+};
+
 export function migrationLockWaitSeconds(value = process.env.MIGRATE_LOCK_WAIT ?? "900"): number {
   if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value) * 1000)) {
     throw new Error("MIGRATE_LOCK_WAIT must be a whole number of seconds");
@@ -103,13 +113,23 @@ export type AppliedMigration = { name: string; checksum: string | null };
 
 export async function migrationFiles(directory: string): Promise<MigrationFile[]> {
   const names = (await readdir(directory)).filter((name) => name.endsWith(".sql")).sort();
-  const slots = new Set<string>();
-  return Promise.all(names.map(async (filename) => {
-    const slot = filename.slice(0, 4);
-    if (!FILE_PATTERN.test(filename) || slots.has(slot)) {
+  const slots = new Map<string, string[]>();
+  for (const filename of names) {
+    if (!FILE_PATTERN.test(filename)) {
       throw new Error(`Invalid or duplicate numbered migration: ${filename}`);
     }
-    slots.add(slot);
+    const slot = filename.slice(0, 4);
+    slots.set(slot, [...(slots.get(slot) ?? []), filename]);
+  }
+  for (const [slot, filenames] of slots) {
+    if (filenames.length < 2) continue;
+    const legacy = LEGACY_DUPLICATE_SLOT_FILES[slot];
+    if (!legacy || filenames.length !== legacy.length ||
+        filenames.some((filename, index) => filename !== legacy[index])) {
+      throw new Error(`Invalid or duplicate numbered migration: ${filenames[filenames.length - 1]}`);
+    }
+  }
+  return Promise.all(names.map(async (filename) => {
     // Git checkouts on Windows can use CRLF. Hash the same UTF-8 SQL on every
     // host; whitespace/content changes beyond line-ending conversion still count.
     const sql = (await readFile(path.join(directory, filename), "utf8")).replace(/\r\n/g, "\n");
