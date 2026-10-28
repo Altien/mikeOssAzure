@@ -7,6 +7,7 @@ allowBuilds:
   '@azure/msal-node-extensions': false
   '@microsoft/m365agentstoolkit-cli': false
   '@microsoft/teamsapp-cli': false
+  '@sentry/cli': false
   keytar: false
 overrides:
   # Development-only MCP SDK (office-addin-debugging -> teamsfx-core): hold
