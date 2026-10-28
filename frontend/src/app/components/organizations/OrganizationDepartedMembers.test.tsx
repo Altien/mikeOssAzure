@@ -33,21 +33,6 @@ vi.mock("@/app/lib/userFacingError", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/app/lib/userFacingError")>()),
   notifySuccess: mocks.notifySuccess,
 }));
-vi.mock("@/app/components/popups/MfaVerificationPopup", () => ({
-  MfaVerificationPopup: ({
-    open,
-    onVerified,
-  }: {
-    open: boolean;
-    onVerified: () => void;
-  }) =>
-    open ? (
-      <button type="button" onClick={onVerified}>
-        Verify MFA
-      </button>
-    ) : null,
-}));
-
 const DAY = 24 * 60 * 60 * 1000;
 const inDays = (days: number) =>
   new Date(Date.now() + days * DAY - 60_000).toISOString();
@@ -471,35 +456,17 @@ describe("deleting", () => {
     );
   });
 
-  it("asks for a second factor when the server requires one, then deletes", async () => {
-    mocks.deleteOrgDepartureArchives.mockRejectedValueOnce(
-      new MikeApiError({
-        message: "MFA verification required",
-        status: 403,
-        code: "mfa_verification_required",
-      }),
-    );
+  it("does not retry a confirmed delete after an IdP authorization failure", async () => {
+    mocks.deleteOrgDepartureArchives.mockRejectedValueOnce(new MikeApiError({ message: "Authorization required", status: 403 }));
     const user = userEvent.setup();
     renderView();
     await screen.findByText("Former member");
-
-    await user.click(
-      screen.getByRole("button", { name: "Actions for Former member" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Actions for Former member" }));
     await user.click(screen.getByRole("menuitem", { name: "Delete" }));
-    await user.click(
-      within(screen.getByRole("dialog")).getByRole("button", {
-        name: "Delete",
-      }),
-    );
-    await user.click(await screen.findByRole("button", { name: "Verify MFA" }));
-
-    await waitFor(() =>
-      expect(mocks.deleteOrgDepartureArchives).toHaveBeenCalledTimes(2),
-    );
-    expect(mocks.notifySuccess).toHaveBeenCalledWith("Archived work deleted.");
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(mocks.deleteOrgDepartureArchives).toHaveBeenCalledTimes(1));
+    expect(mocks.notifySuccess).not.toHaveBeenCalled();
   });
-
   it("reports a failed delete without the server's wording", async () => {
     mocks.deleteOrgDepartureArchives.mockRejectedValueOnce(
       new MikeApiError({ message: "relation boom", status: 500 }),

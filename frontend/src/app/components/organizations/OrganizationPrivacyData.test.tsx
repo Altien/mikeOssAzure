@@ -18,7 +18,6 @@ const mocks = vi.hoisted(() => ({
   push: vi.fn(),
   org: null as Org | null,
   deleteOrgData: vi.fn(),
-  needsMfaVerification: vi.fn(async () => false),
   loadChats: vi.fn(async () => {}),
   setCurrentChatId: vi.fn(),
   setOrg: vi.fn(),
@@ -52,22 +51,6 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
   deleteOrgData: mocks.deleteOrgData,
   setOrgMemberDataPolicy: mocks.setOrgMemberDataPolicy,
 }));
-vi.mock("@/app/components/popups/MfaVerificationPopup", () => ({
-  MfaVerificationPopup: ({
-    open,
-    onVerified,
-  }: {
-    open: boolean;
-    onVerified: () => void;
-  }) =>
-    open ? (
-      <button type="button" onClick={onVerified}>
-        Verify MFA
-      </button>
-    ) : null,
-  needsMfaVerification: mocks.needsMfaVerification,
-}));
-
 const orgAs = (role: Org["role"]): Org =>
   ({
     id: "org-1",
@@ -198,24 +181,15 @@ describe("deleting organization data", () => {
     expect(mocks.setCurrentChatId).toHaveBeenCalledWith(null);
   });
 
-  it("asks for a second factor first, then deletes", async () => {
+  it("deletes selected organization data only after confirmation", async () => {
     const user = userEvent.setup();
-    mocks.needsMfaVerification.mockResolvedValueOnce(true);
     render(<OrganizationPrivacyData />);
-
     await confirmDelete(user, "Delete all projects");
-    expect(mocks.deleteOrgData).not.toHaveBeenCalled();
-
-    await user.click(await screen.findByRole("button", { name: "Verify MFA" }));
-    await waitFor(() =>
-      expect(mocks.deleteOrgData).toHaveBeenCalledExactlyOnceWith(
-        "org-1",
-        "projects",
-      ),
-    );
+    await waitFor(() => expect(mocks.deleteOrgData).toHaveBeenCalledWith("org-1", "projects"));
+    expect(mocks.deleteOrgData).toHaveBeenCalledTimes(1);
   });
 
-  it("reports a failed delete without the server's wording", async () => {
+    it("reports a failed delete without the server's wording", async () => {
     const user = userEvent.setup();
     mocks.deleteOrgData.mockRejectedValue(
       new MikeApiError({ message: "relation boom", status: 500 }),
@@ -270,37 +244,15 @@ describe("OrganizationPrivacyData member data policy", () => {
     expect(mocks.refreshOrganizations).toHaveBeenCalled();
   });
 
-  it("asks for a second factor and then sends the same change again", async () => {
+  it("does not retry a policy change after an IdP authorization failure", async () => {
     const user = userEvent.setup();
-    mocks.setOrgMemberDataPolicy
-      .mockRejectedValueOnce(
-        new MikeApiError({
-          message: "MFA required",
-          status: 403,
-          code: "mfa_verification_required",
-        }),
-      )
-      .mockResolvedValueOnce({
-        allow_member_exports: false,
-        allow_member_deletes: true,
-      });
+    mocks.setOrgMemberDataPolicy.mockRejectedValueOnce(new MikeApiError({ message: "Authorization required", status: 403 }));
     render(<OrganizationPrivacyData />);
-
-    await user.click(
-      screen.getByRole("switch", { name: "Let members delete their data in bulk" }),
-    );
-    await user.click(await screen.findByRole("button", { name: "Verify MFA" }));
-
-    await waitFor(() =>
-      expect(mocks.setOrgMemberDataPolicy).toHaveBeenCalledTimes(2),
-    );
-    expect(mocks.setOrgMemberDataPolicy).toHaveBeenLastCalledWith("org-1", {
-      allow_member_exports: false,
-      allow_member_deletes: true,
-    });
+    await user.click(screen.getByRole("switch", { name: "Let members delete their data in bulk" }));
+    await waitFor(() => expect(mocks.setOrgMemberDataPolicy).toHaveBeenCalledTimes(1));
   });
 
-  it("is not shown to an admin", () => {
+    it("is not shown to an admin", () => {
     mocks.org = orgAs("admin");
     render(<OrganizationPrivacyData />);
     expect(screen.queryByRole("switch")).toBeNull();

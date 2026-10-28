@@ -3532,12 +3532,12 @@ describe("unwrapping and blob wrappers", () => {
     });
 
     it.each([
-        ["OpenRouter", getOpenRouterModels, "http://localhost:3001/api/models/openrouter"],
-        ["Vercel AI Gateway", getVercelModels, "http://localhost:3001/api/models/vercel"],
-        ["OpenCode Go", getOpenCodeGoModels, "http://localhost:3001/api/models/opencode-go"],
-        ["Amazon Bedrock", getBedrockModels, "http://localhost:3001/api/models/bedrock"],
-        ["xAI", getXaiModels, "http://localhost:3001/api/models/xai"],
-        ["custom endpoint", getCustomEndpointModels, "http://localhost:3001/api/models/custom"],
+        ["OpenRouter", getOpenRouterModels, "/api/models/openrouter"],
+        ["Vercel AI Gateway", getVercelModels, "/api/models/vercel"],
+        ["OpenCode Go", getOpenCodeGoModels, "/api/models/opencode-go"],
+        ["Amazon Bedrock", getBedrockModels, "/api/models/bedrock"],
+        ["xAI", getXaiModels, "/api/models/xai"],
+        ["custom endpoint", getCustomEndpointModels, "/api/models/custom"],
     ])("loads the %s model catalog", async (_label, load, path) => {
         const models = [{ id: "openai/gpt-5.4", label: "GPT-5.4" }];
         fetchMock.mockResolvedValue(jsonResponse({ models }));
@@ -3806,39 +3806,39 @@ describe("dev divergences", () => {
 describe("workspace parameter on list requests", () => {
     const ORG = "7b1d9d0e-3c5a-4f6e-9a51-0c2f7d3e8a11";
     const requests: [string, (workspace?: string) => Promise<unknown>, string][] = [
-        ["searchProjectDirectory", (workspace) => searchProjectDirectory({ search: "matter", workspace }), "http://localhost:3001/api/projects"],
-        ["listProjects (IDE)", (workspace) => listProjects({ participatingOnly: true, workspace }), "http://localhost:3001/api/projects"],
-        ["listProjectsPage", (workspace) => listProjectsPage({ workspace }), "http://localhost:3001/api/projects"],
+        ["searchProjectDirectory", (workspace) => searchProjectDirectory({ search: "matter", workspace }), "/api/projects"],
+        ["listProjects (IDE)", (workspace) => listProjects({ participatingOnly: true, workspace }), "/api/projects"],
+        ["listProjectsPage", (workspace) => listProjectsPage({ workspace }), "/api/projects"],
         [
             "listProjectSummaries",
             (workspace) => listProjectSummaries({ workspace }),
-            "http://localhost:3001/api/projects",
+            "/api/projects",
         ],
-        ["listProjectIds", (workspace) => listProjectIds({ workspace }), "http://localhost:3001/api/projects/ids"],
+        ["listProjectIds", (workspace) => listProjectIds({ workspace }), "/api/projects/ids"],
         [
             "getProjectFilterOptions",
             (workspace) => getProjectFilterOptions(undefined, workspace),
-            "http://localhost:3001/api/projects/filter-options",
+            "/api/projects/filter-options",
         ],
-        ["listChats", (workspace) => listChats({ workspace }), "http://localhost:3001/api/chat"],
+        ["listChats", (workspace) => listChats({ workspace }), "/api/chat"],
         [
             "listTabularReviews",
             (workspace) => listTabularReviews(undefined, { workspace }),
-            "http://localhost:3001/api/tabular-review",
+            "/api/tabular-review",
         ],
         [
             "listTabularReviewIds",
             (workspace) => listTabularReviewIds(undefined, { workspace }),
-            "http://localhost:3001/api/tabular-review/ids",
+            "/api/tabular-review/ids",
         ],
-        ["listWorkflows", (workspace) => listWorkflows("assistant", workspace), "http://localhost:3001/api/workflows"],
-        ["listQuickActions", (workspace) => listQuickActions("app", workspace), "http://localhost:3001/api/quick-actions"],
-        ["listWorkflowsPage", (workspace) => listWorkflowsPage({ workspace }), "http://localhost:3001/api/workflows"],
-        ["listWorkflowIds", (workspace) => listWorkflowIds({ workspace }), "http://localhost:3001/api/workflows/ids"],
+        ["listWorkflows", (workspace) => listWorkflows("assistant", workspace), "/api/workflows"],
+        ["listQuickActions", (workspace) => listQuickActions("app", workspace), "/api/quick-actions"],
+        ["listWorkflowsPage", (workspace) => listWorkflowsPage({ workspace }), "/api/workflows"],
+        ["listWorkflowIds", (workspace) => listWorkflowIds({ workspace }), "/api/workflows/ids"],
         [
             "getWorkflowFilterOptions",
             (workspace) => getWorkflowFilterOptions({ workspace }),
-            "http://localhost:3001/api/workflows/filter-options",
+            "/api/workflows/filter-options",
         ],
     ];
 

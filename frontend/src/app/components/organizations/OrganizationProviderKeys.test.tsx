@@ -52,8 +52,7 @@ describe("organization provider credentials", () => {
   it("lets the separately authorized manager save a router model list", async () => {
     mocks.getOrgApiKeys.mockResolvedValue(settings(true, true));
     renderTab(true, true);
-    const card = await within(savedSection()).findByText("OpenRouter");
-    fireEvent.click(card);
+    fireEvent.click(await within(savedSection()).findByRole("button", { name: /OpenRouter/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Save models" }));
     expect(mocks.saveOrgRouterModels).toHaveBeenCalledWith("org-1", "openrouter", ["vendor/new"]);
     expect(mocks.refreshOrgApiKeys).toHaveBeenCalledTimes(1);

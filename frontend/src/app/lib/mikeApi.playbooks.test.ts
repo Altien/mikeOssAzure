@@ -30,7 +30,7 @@ import {
 
 const fetchMock = vi.fn();
 const id = "guide/one?view";
-const path = "/api/playbooks/guide%2Fone%3Fview";
+const path = "http://localhost:3001/api/playbooks/guide%2Fone%3Fview";
 const content: PlaybookContent = {
   name: "Guide",
   description: "",
@@ -65,21 +65,21 @@ describe("Playbooks API requests", () => {
     {
       name: "configuration",
       call: getPlaybookConfiguration,
-      url: "/api/playbooks/configuration",
+      url: "http://localhost:3001/api/playbooks/configuration",
       method: "GET",
       body: undefined,
     },
     {
       name: "workspace configuration",
       call: () => getPlaybookConfiguration("org/a?b"),
-      url: "/api/playbooks/configuration?workspace=org%2Fa%3Fb",
+      url: "http://localhost:3001/api/playbooks/configuration?workspace=org%2Fa%3Fb",
       method: "GET",
       body: undefined,
     },
     {
       name: "list",
       call: listPlaybooks,
-      url: "/api/playbooks",
+      url: "http://localhost:3001/api/playbooks",
       method: "GET",
       body: undefined,
     },
@@ -100,35 +100,35 @@ describe("Playbooks API requests", () => {
     {
       name: "workspace list",
       call: () => listPlaybooks("personal"),
-      url: "/api/playbooks?workspace=personal",
+      url: "http://localhost:3001/api/playbooks?workspace=personal",
       method: "GET",
       body: undefined,
     },
     {
       name: "runs across playbooks",
       call: () => listAllPlaybookRuns("personal"),
-      url: "/api/playbooks/runs?workspace=personal",
+      url: "http://localhost:3001/api/playbooks/runs?workspace=personal",
       method: "GET",
       body: undefined,
     },
     {
       name: "all runs without a workspace filter",
       call: () => listAllPlaybookRuns(),
-      url: "/api/playbooks/runs",
+      url: "http://localhost:3001/api/playbooks/runs",
       method: "GET",
       body: undefined,
     },
     {
       name: "run deletion",
       call: () => deletePlaybookRun("run/one?two"),
-      url: "/api/playbooks/runs/run%2Fone%3Ftwo",
+      url: "http://localhost:3001/api/playbooks/runs/run%2Fone%3Ftwo",
       method: "DELETE",
       body: undefined,
     },
     {
       name: "run history",
       call: () => listPlaybookRunHistory({}),
-      url: "/api/playbooks/runs/history",
+      url: "http://localhost:3001/api/playbooks/runs/history",
       method: "GET",
       body: undefined,
     },
@@ -140,35 +140,35 @@ describe("Playbooks API requests", () => {
           before: "2026-10-19T00:00:00Z",
           limit: 20,
         }),
-      url: "/api/playbooks/runs/history?workspace=org%2Fa&before=2026-10-19T00%3A00%3A00Z&limit=20",
+      url: "http://localhost:3001/api/playbooks/runs/history?workspace=org%2Fa&before=2026-10-19T00%3A00%3A00Z&limit=20",
       method: "GET",
       body: undefined,
     },
     {
       name: "run statuses",
       call: () => getPlaybookRunStatuses(["run-1", "run-2"]),
-      url: "/api/playbooks/runs/status?ids=run-1%2Crun-2",
+      url: "http://localhost:3001/api/playbooks/runs/status?ids=run-1%2Crun-2",
       method: "GET",
       body: undefined,
     },
     {
       name: "import status",
       call: () => getPlaybookImport("import/one?two"),
-      url: "/api/playbooks/imports/import%2Fone%3Ftwo",
+      url: "http://localhost:3001/api/playbooks/imports/import%2Fone%3Ftwo",
       method: "GET",
       body: undefined,
     },
     {
       name: "running imports",
       call: () => listRunningPlaybookImports(),
-      url: "/api/playbooks/imports",
+      url: "http://localhost:3001/api/playbooks/imports",
       method: "GET",
       body: undefined,
     },
     {
       name: "running imports in a workspace",
       call: () => listRunningPlaybookImports("org/a"),
-      url: "/api/playbooks/imports?workspace=org%2Fa",
+      url: "http://localhost:3001/api/playbooks/imports?workspace=org%2Fa",
       method: "GET",
       body: undefined,
     },
@@ -235,7 +235,7 @@ describe("Playbooks API requests", () => {
         string,
         RequestInit,
       ];
-      expect(new URL(actualUrl).pathname + new URL(actualUrl).search).toBe(url);
+      expect(new URL(actualUrl).pathname + new URL(actualUrl).search).toBe(new URL(url).pathname + new URL(url).search);
       expect(init.method ?? "GET").toBe(method);
       expect(init.credentials).toBe("include");
       expect(init.body).toBe(
@@ -298,7 +298,7 @@ describe("Creating a playbook with no Word source", () => {
 
     await expect(createPlaybook(details)).resolves.toEqual(result);
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/playbooks",
+      "http://localhost:3001/api/playbooks",
       expect.objectContaining({
         method: "POST",
         credentials: "include",
@@ -332,7 +332,7 @@ describe("Playbook direct upload", () => {
       expect(fetchMock).toHaveBeenCalledTimes(3);
       expect(fetchMock).toHaveBeenNthCalledWith(
         1,
-        "/api/playbooks/import/upload-url",
+        "http://localhost:3001/api/playbooks/import/upload-url",
         expect.objectContaining({
           method: "POST",
           credentials: "include",
@@ -350,7 +350,7 @@ describe("Playbook direct upload", () => {
       });
       expect(fetchMock).toHaveBeenNthCalledWith(
         3,
-        "/api/playbooks/import",
+        "http://localhost:3001/api/playbooks/import",
         expect.objectContaining({
           method: "POST",
           credentials: "include",
@@ -382,7 +382,7 @@ describe("Playbook direct upload", () => {
 
       expect(fetchMock).toHaveBeenNthCalledWith(
         3,
-        "/api/playbooks/import",
+        "http://localhost:3001/api/playbooks/import",
         expect.objectContaining({
           body: JSON.stringify({
             storageKey: staged.storageKey,

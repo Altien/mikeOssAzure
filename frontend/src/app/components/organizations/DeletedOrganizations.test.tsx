@@ -8,7 +8,6 @@ const mocks = vi.hoisted(() => ({
   list: vi.fn(),
   restore: vi.fn(),
   refresh: vi.fn(),
-  mfa: vi.fn(),
 }));
 vi.mock("@/app/lib/mikeApi", async (original) => ({
   ...(await original<typeof import("@/app/lib/mikeApi")>()),
@@ -17,10 +16,6 @@ vi.mock("@/app/lib/mikeApi", async (original) => ({
 }));
 vi.mock("@/app/contexts/WorkspaceContext", () => ({
   useWorkspace: () => ({ refreshOrganizations: mocks.refresh }),
-}));
-vi.mock("@/app/components/popups/MfaVerificationPopup", () => ({
-  needsMfaVerification: mocks.mfa,
-  MfaVerificationPopup: () => null,
 }));
 const org = {
   id: "org",
@@ -33,7 +28,6 @@ beforeEach(() => {
   mocks.list.mockResolvedValue([org]);
   mocks.restore.mockResolvedValue(undefined);
   mocks.refresh.mockResolvedValue(undefined);
-  mocks.mfa.mockResolvedValue(false);
 });
 describe("organization recovery", () => {
   it("shows the deadline and restores from Settings without switching into a deleted workspace", async () => {

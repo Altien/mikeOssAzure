@@ -36,7 +36,6 @@ const mocks = vi.hoisted(() => ({
   getOrgLogo: vi.fn(),
   saveOrgLogo: vi.fn(),
   deleteOrgLogo: vi.fn(),
-  needsMfaVerification: vi.fn(async () => false),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -66,21 +65,6 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
   getOrgLogo: mocks.getOrgLogo,
   saveOrgLogo: mocks.saveOrgLogo,
   deleteOrgLogo: mocks.deleteOrgLogo,
-}));
-vi.mock("@/app/components/popups/MfaVerificationPopup", () => ({
-  MfaVerificationPopup: ({
-    open,
-    onVerified,
-  }: {
-    open: boolean;
-    onVerified: () => void;
-  }) =>
-    open ? (
-      <button type="button" onClick={onVerified}>
-        Verify MFA
-      </button>
-    ) : null,
-  needsMfaVerification: mocks.needsMfaVerification,
 }));
 // The framing dialog has its own tests. This stand-in shows what it was
 // handed and lets a test save or cancel through it.
@@ -397,24 +381,17 @@ describe("deleting", () => {
     expect(mocks.deleteOrg).not.toHaveBeenCalled();
   });
 
-  it("asks for a second factor before deleting, then deletes", async () => {
+  it("deletes only after the owner confirms", async () => {
     const user = userEvent.setup();
-    mocks.needsMfaVerification.mockResolvedValueOnce(true);
     mocks.deleteOrg.mockResolvedValue(undefined);
     render(<OrganizationGeneralSettings />);
-
     await confirmDelete(user);
-
-    await user.click(await screen.findByRole("button", { name: "Verify MFA" }));
-    await waitFor(() =>
-      expect(mocks.deleteOrg).toHaveBeenCalledExactlyOnceWith("org-1"),
-    );
-    await waitFor(() =>
-      expect(mocks.push).toHaveBeenCalledWith("/settings/organizations"),
-    );
+    await waitFor(() => expect(mocks.deleteOrg).toHaveBeenCalledWith("org-1"));
+    expect(mocks.deleteOrg).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(mocks.push).toHaveBeenCalledWith("/settings/organizations"));
   });
 
-  it("names the failure a failed delete, with the server's reason", async () => {
+    it("names the failure a failed delete, with the server's reason", async () => {
     const user = userEvent.setup();
     mocks.deleteOrg.mockRejectedValue(
       new MikeApiError({
