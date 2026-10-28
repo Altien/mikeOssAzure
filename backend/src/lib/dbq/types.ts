@@ -40,7 +40,7 @@ export class DbJobDeferredError extends Error {
 export type DbJobHandler = {
     (db: Db, job: DbJob): Promise<Record<string, unknown> | void>;
     /** Cleanup only this attempt's unpublished result after fenced completion fails. */
-    onUnpublishedResult?: (db: Db, job: DbJob, result: Record<string, unknown>) => Promise<void>;
+    onUnpublishedResult?: (db: Db, job: DbJob, result: Record<string, unknown>, outcome: { publicationUncertain: boolean }) => Promise<void>;
 };
 
 export type DbJobHandlers = Record<string, DbJobHandler>;

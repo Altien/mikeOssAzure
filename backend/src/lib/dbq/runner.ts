@@ -200,10 +200,11 @@ export async function processClaimedJob(
     }
 
     let unpublishedResult: Record<string, unknown> | void;
+    let publicationUncertain = false;
     const discardUnpublished = async () => {
         if (!unpublishedResult || !handler.onUnpublishedResult) return;
         try {
-            await handler.onUnpublishedResult(db, job, unpublishedResult);
+            await handler.onUnpublishedResult(db, job, unpublishedResult, { publicationUncertain });
             unpublishedResult = undefined;
         } catch (cleanupError) {
             // An unknown publication outcome is not permission to delete.
@@ -215,7 +216,10 @@ export async function processClaimedJob(
         const result = await handler(db, job);
         unpublishedResult = result;
         clearInterval(heartbeat);
-        if (!await finish("done", null, result ?? null)) {
+        publicationUncertain = true;
+        const published = await finish("done", null, result ?? null);
+        publicationUncertain = false;
+        if (!published) {
             console.warn("[dbq] claim lost before completion", { id: job.id });
             await discardUnpublished();
         } else {
@@ -253,6 +257,7 @@ export async function processClaimedJob(
             : await finish(spent ? "failed" : "pending", message, null, spent ? null : runAt);
         // This follows the fenced retry/terminal transition: a lost response
         // from finish(done) is reconciled by the handler before cleanup.
+        if (owned) publicationUncertain = false;
         await discardUnpublished();
         if (!owned) {
             console.warn("[dbq] claim lost before retry transition", { id: job.id });

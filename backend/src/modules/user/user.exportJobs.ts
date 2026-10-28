@@ -282,7 +282,7 @@ async function queueExportAttemptCleanup(db: Db, key: string): Promise<void> {
     await enqueueDbJob(db, { kind: "storage.cleanup", payload: { keys: [key] }, maxAttempts: 100 });
 }
 
-async function discardUnpublishedExportResult(db: Db, job: DbJob, result: Record<string, unknown>): Promise<void> {
+async function discardUnpublishedExportResult(db: Db, job: DbJob, result: Record<string, unknown>, outcome: { publicationUncertain: boolean }): Promise<void> {
     const userId = job.payload.userId;
     const key = result.storage_path;
     if (typeof userId !== "string" || typeof key !== "string" || !job.claim_token ||
@@ -295,7 +295,7 @@ async function discardUnpublishedExportResult(db: Db, job: DbJob, result: Record
     if (current?.result?.storage_path === key) return;
     // A completion transport error can hide a successful commit. A still-live
     // identical claim is unresolved; never delete its possible publication.
-    if (current?.status === "running" && current.attempts === job.attempts && current.claim_token === job.claim_token) {
+    if (outcome.publicationUncertain && current?.status === "running" && current.attempts === job.attempts && current.claim_token === job.claim_token) {
         throw new Error("Export publication outcome is unresolved; preserving its artifact");
     }
     await queueExportAttemptCleanup(db, key);
