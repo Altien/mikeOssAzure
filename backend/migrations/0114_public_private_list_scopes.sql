@@ -51,7 +51,7 @@ returns table (
 language sql
 stable
 set search_path = public, pg_temp
-as $
+as $$
   with visible_projects as (
     select p.*
     from public.projects p
@@ -197,7 +197,7 @@ returns table (
 language sql
 stable
 set search_path = public, pg_temp
-as $
+as $$
   select p.id, p.user_id::text as user_id
   from public.projects p
   where public.project_access_role(
@@ -290,7 +290,7 @@ returns table (
 language sql
 stable
 set search_path = public, pg_temp
-as $
+as $$
   with owned as (
     select
       w.id, w.user_id::text as user_id, w.org_id,
@@ -440,7 +440,7 @@ returns table (
 language sql
 stable
 set search_path = public, pg_temp
-as $
+as $$
   with owned as (
     select
       w.id, w.user_id::text as user_id,

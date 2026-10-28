@@ -22,7 +22,7 @@ returns table (
 language sql
 stable
 set search_path = public, pg_temp
-as $
+as $$
   select
     p.id,
     p.user_id::text as user_id,
