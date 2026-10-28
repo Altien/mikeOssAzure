@@ -501,6 +501,7 @@ export async function getConfiguredProviders(
         .select("provider")
         .eq("user_id", userId);
     const configured: Record<ApiKeyProvider, boolean> = {
+        brave: false, deepseek: false, tavily: false,
         claude: false,
         gemini: false,
         openai: false,

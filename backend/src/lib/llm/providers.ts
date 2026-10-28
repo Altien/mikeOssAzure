@@ -152,7 +152,6 @@ async function createRouterAdapter(
   provider: RouterProvider,
   model: string,
   apiKeys?: UserApiKeys,
-  nativeWebSearch = false,
 ): Promise<AiSdkAdapterConfig> {
   if (provider === "opencode-go" && !isOpenCodeGoChatCompletionsModel(model)) {
     throw unsupportedOpenCodeGoModel(model);
@@ -553,6 +552,7 @@ async function createLegacyAzureAdapter(model: string, apiKeys?: UserApiKeys): P
 async function createProviderAdapter(
   model: string,
   apiKeys?: UserApiKeys,
+  nativeWebSearch = false,
 ): Promise<AiSdkAdapterConfig> {
   const provider = providerForModel(model);
   if (isProviderDisabled(provider, apiKeys)) {
@@ -601,7 +601,7 @@ async function createProviderAdapter(
       model: nativeWebSearch || process.env.OPENAI_API_MODE?.trim().toLowerCase() === "responses" ? openai.responses(model) : openai.chat(model),
       modelId: model,
       courtlistenerCitationReminder: true,
-      webSearchTool: () => openai.tools.webSearch({}),
+      webSearchTool: () => openai.tools.webSearch({}) as unknown as ReturnType<NonNullable<AiSdkAdapterConfig["webSearchTool"]>>,
     };
   }
 

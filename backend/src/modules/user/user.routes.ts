@@ -457,6 +457,9 @@ const ORGANISATION_CREDENTIALS: Record<
     ApiKeyProvider,
     { label: string; secretNames: readonly string[] }
 > = {
+    brave: { label: "Brave Search", secretNames: ["brave-search-api-key"] },
+    deepseek: { label: "DeepSeek Search", secretNames: ["deepseek-search-api-key"] },
+    tavily: { label: "Tavily", secretNames: ["tavily-api-key"] },
     claude: { label: "Anthropic", secretNames: ["anthropic-api-key"] },
     gemini: { label: "Gemini", secretNames: ["gemini-api-key"] },
     openai: { label: "OpenAI", secretNames: ["openai-api-key"] },
