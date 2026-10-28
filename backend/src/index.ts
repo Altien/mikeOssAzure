@@ -30,6 +30,7 @@ let shuttingDown = false;
 
 async function startThread(role: WorkerRole): Promise<ThreadWorker> {
   const isTs = __filename.endsWith(".ts");
+  // Compiled threads inherit source-map/V8 flags; retain Dev readiness handshake.
   const entry = path.join(__dirname, isTs ? "workerThread.ts" : "workerThread.js");
   const thread = new ThreadWorker(entry, { ...(isTs ? { execArgv: ["--require", "tsx/cjs"] } : {}), workerData: { role } });
   try {
