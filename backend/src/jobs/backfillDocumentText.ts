@@ -1,4 +1,7 @@
-import "../instrument";
+import "dotenv/config";
+import "../telemetry";
+import { installProcessGuards } from "../lib/processGuards";
+installProcessGuards();
 import { createServerSupabase } from "../lib/supabase";
 import { backfillDocumentText } from "../modules/documents/documents.service";
 import { safeError } from "../lib/safeError";
