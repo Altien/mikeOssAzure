@@ -1,5 +1,4 @@
 import {
-vi.mock("@/app/hooks/useRequestOwner", () => ({ useRequestOwner: () => ({ key: "test-owner", capture: () => () => true }) }));
   fireEvent,
   render,
   screen,
@@ -10,6 +9,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getAuditActors, type AuditActor } from "@/app/lib/mikeApi";
 import { HistoryActorFilter } from "./HistoryActorFilter";
+
+vi.mock("@/app/hooks/useRequestOwner", () => ({ useRequestOwner: () => ({ key: "test-owner", capture: () => () => true }) }));
 
 vi.mock("@/app/lib/mikeApi", () => ({ getAuditActors: vi.fn() }));
 const getActors = vi.mocked(getAuditActors);
