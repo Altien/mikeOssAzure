@@ -486,7 +486,7 @@ authRouter.patch("/email", requireAuth, async (req, res) => {
   try {
     const auth = await supabaseCurrent(req, res); if (!auth) return;
     const { data, error } = await auth.auth.updateUser({ email }, { emailRedirectTo: safeReturnUrl("/settings?emailChange=processed") });
-    if (error || !data.user) { authError(res, error, "Unable to update email"); return; }
+    if (error || !data.user || data.user.id !== res.locals.userId) { authError(res, error, "Unable to update email"); return; }
     res.json({ user: publicSupabaseUser(data.user) });
   } catch { res.status(503).json({ detail: "Unable to update email" }); }
 });
@@ -500,7 +500,7 @@ authRouter.patch("/password", requireAuth, async (req, res) => {
   try {
     const auth = await supabaseCurrent(req, res); if (!auth) return;
     const { data, error } = await auth.auth.updateUser({ password, ...(nonce ? { nonce } : {}) });
-    if (error || !data.user) { authError(res, error, "Unable to update password"); return; }
+    if (error || !data.user || data.user.id !== res.locals.userId) { authError(res, error, "Unable to update password"); return; }
     if (req.body?.signOut === true) {
       const signedOut = await auth.auth.signOut({ scope: "global" });
       if (signedOut.error) { res.status(503).json({ detail: "Password changed, but other sessions could not be revoked" }); return; }
