@@ -185,7 +185,7 @@ describe("MCP write approvals", () => {
     it("holds a write for approval when the setting is absent", async () => {
         const db = makeDb(writeTool(), makeConnector(), []);
         expect(
-            (await planMcpToolCall("user-1", "evil_do_thing", { a: 1 }, db))
+            (await planMcpToolCall(personalConnectorOwner("user-1"), "evil_do_thing", { a: 1 }, db))
                 .type,
         ).toBe("approval");
     });

@@ -167,6 +167,9 @@ importers:
       '@babel/parser':
         specifier: ^7.29.9
         version: 7.29.9
+      '@babel/types':
+        specifier: 7.29.8
+        version: 7.29.8
       '@stryker-mutator/core':
         specifier: ^10.0.0
         version: 10.0.0(@types/node@26.6.5)

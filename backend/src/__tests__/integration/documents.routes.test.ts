@@ -8,7 +8,7 @@ vi.mock("../../modules/documents/documents.service", async load => {
     return { ...actual, createVersionFromDocument: (...args: Parameters<typeof actual.createVersionFromDocument>) =>
         versionCopy.override ? versionCopy.override(...args) : actual.createVersionFromDocument(...args) };
 });
-const sentry = vi.hoisted(() => ({ setOperation: vi.fn(), reportError: vi.fn(() => null) }));
+const sentry = vi.hoisted(() => ({ setOperation: vi.fn(), reportError: vi.fn((_error: unknown, _context?: unknown) => null) }));
 vi.mock("../../lib/observability/sentry", async load => ({ ...await load<typeof import("../../lib/observability/sentry")>(), ...sentry }));
 
 // ---------------------------------------------------------------------------

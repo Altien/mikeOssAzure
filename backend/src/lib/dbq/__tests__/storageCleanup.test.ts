@@ -33,6 +33,8 @@ const JOB = (payload: Record<string, unknown>): DbJob => ({
     max_attempts: 8,
     run_at: "",
     claimed_at: null,
+    claim_token: "claim",
+    lease_expires_at: "2099-01-01T00:00:00Z",
     finished_at: null,
     last_error: null,
     dedupe_key: null,

@@ -48,7 +48,7 @@ vi.mock("./routerModels", async () => ({
     ...await getAllUserRouterModels(...args as Parameters<typeof getAllUserRouterModels>),
   }),
 }));
-import { getAllUserRouterModels, ROUTER_SLUGS } from "./routerModels";
+import { getAllUserRouterModels, ROUTER_SLUGS, type RouterModelSelections } from "./routerModels";
 
 /**
  * Tiny chainable fake for the two-phase upsertUserProfile flow and the
@@ -128,6 +128,8 @@ const emptyKeys = {
   azureOpenai: null,
 };
 
+const emptyRouterSelections = (): RouterModelSelections => Object.fromEntries(ROUTER_SLUGS.map(slug => [slug, []])) as RouterModelSelections;
+
 const envSnapshot = {} as Record<string, string | undefined>;
 
 beforeEach(() => {
@@ -135,7 +137,7 @@ beforeEach(() => {
   delete process.env.AZURE_OPENAI_DEPLOYMENT;
   readEncryptedApiKeysMock.mockReset();
   createServerSupabaseMock.mockReset();
-  vi.mocked(getAllUserRouterModels).mockReset().mockResolvedValue({ openrouter: [], vercel: [], "opencode-go": [] });
+  vi.mocked(getAllUserRouterModels).mockReset().mockResolvedValue(emptyRouterSelections());
 });
 
 afterEach(() => {
@@ -149,7 +151,7 @@ afterEach(() => {
 describe("getUserModelSettings — fast model resolution chain", () => {
   it.each(["openrouter", "vercel"])("uses the first selected %s model for router-only accounts", async (provider) => {
     readEncryptedApiKeysMock.mockResolvedValue({ ...emptyKeys, [provider]: "org-key" });
-    vi.mocked(getAllUserRouterModels).mockImplementation(async () => ({ openrouter: [], vercel: [], "opencode-go": [], [provider]: ["openai/gpt-5.4", "anthropic/claude-sonnet-4.6"] }),
+    vi.mocked(getAllUserRouterModels).mockImplementation(async () => ({ ...emptyRouterSelections(), [provider]: ["openai/gpt-5.4", "anthropic/claude-sonnet-4.6"] }),
     );
     const { client } = makeClient({ selectSingle: { data: { fast_model: null } } });
     expect((await getUserModelSettings("u1", client as never)).fast_model)

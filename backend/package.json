@@ -83,6 +83,7 @@
   "devDependencies": {
     "@ai-sdk/provider": "4.0.21",
     "@babel/parser": "^7.29.9",
+    "@babel/types": "7.29.8",
     "@stryker-mutator/core": "^10.0.0",
     "@stryker-mutator/vitest-runner": "^10.0.0",
     "@types/cookie-parser": "^1.4.10",

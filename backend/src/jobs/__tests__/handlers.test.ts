@@ -470,6 +470,7 @@ describe("handleExportBuild", () => {
             makeDb() as never,
             JOB("export.build", { userId: "u1", type: "account" }),
         );
+        if (!out) throw new Error("Expected published export artifact");
         expect(buildUserAccountExport).toHaveBeenCalled();
         const [path, , contentType] = uploadFile.mock.calls[0];
         expect(path).toMatch(/^exports\/u1\/job-1-/);
@@ -502,6 +503,7 @@ describe("handleExportBuild", () => {
                 type: "memory-zip",
             }),
         );
+        if (!out) throw new Error("Expected published export artifact");
 
         // No workspace in the payload is Personal, never every workspace.
         expect(buildMemoryArchive).toHaveBeenCalledWith(
@@ -534,6 +536,7 @@ describe("handleExportBuild", () => {
                 orgId: "11111111-1111-4111-8111-111111111111",
             }),
         );
+        if (!out) throw new Error("Expected published export artifact");
 
         expect(memberDataActionAllowed).toHaveBeenCalledWith(db, "u1", "11111111-1111-4111-8111-111111111111", "export");
         expect(buildMemoryArchive).toHaveBeenCalledWith(db, "u1", "u@x.test", "11111111-1111-4111-8111-111111111111");
@@ -565,6 +568,7 @@ describe("handleExportBuild", () => {
                 query,
             }),
         );
+        if (!out) throw new Error("Expected published export artifact");
         expect(buildAuditCsv).toHaveBeenCalledWith(
             expect.anything(),
             "u1",
@@ -608,6 +612,7 @@ describe("handleExportBuild", () => {
                 document_ids: ["d1", "d2"],
             }),
         );
+        if (!out) throw new Error("Expected published export artifact");
 
         expect(ensureDocAccess).toHaveBeenCalledTimes(2);
         expect(loadActiveVersion.mock.calls.map((c) => c[0])).toEqual(["d1"]);

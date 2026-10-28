@@ -33,7 +33,7 @@ it("registers a fenced search result as a pinned template handle and keeps inter
   expect(content).not.toContain("private/source"); expect(content).toContain("pending_versions");
   expect(content).toContain(spotlight("", "nonce").split("\n")[0]);
   const label = [...store.keys()][0];
-  expect(store.get(label)).toMatchObject({ source_kind: "library_template", search_source: { revision: "revision", userId: "actor" } });
+  expect(store.get(label)).toMatchObject({ source_kind: "library_template", search_source: { revision: "revision", userId: "actor", workspace: "personal" } });
   expect(index[label]).toMatchObject({ document_id: "document", version_id: "history" });
   const identity = await getTurnReadIdentity({ docLabel: label, docStore: store, docIndex: index, db: searchDb.db });
   expect(identity).toMatchObject({ versionId: "history", key: "document:history:revision" });
@@ -44,7 +44,7 @@ it("registers a fenced search result as a pinned template handle and keeps inter
 });
 it.each([null, { revision: "new-revision", status: "ready", text: "New text" }, { revision: "revision", status: "pending", text: null }])("never falls back to stale bytes after denial, edit or pending extraction: %j", async (stored) => {
   mocks.read.mockResolvedValue(stored);
-  const store: DocStore = new Map([["found", { filename: "contract.docx", file_type: "docx", storage_path: "obsolete", search_source: { revision: "revision", userId: "actor" } }]]);
+  const store: DocStore = new Map([["found", { filename: "contract.docx", file_type: "docx", storage_path: "obsolete", search_source: { revision: "revision", userId: "actor", workspace: "personal" } }]]);
   const index: DocIndex = { found: { document_id: "document", version_id: "history", filename: "contract.docx" } };
   expect(await readDocumentContent("found", store, () => {}, index, {} as Db)).toBe("Document could not be read.");
   expect(mocks.download).not.toHaveBeenCalled();
@@ -141,7 +141,7 @@ it("classifies a rejected database call through its cause without losing the rea
   expect(mocks.logError).toHaveBeenCalledWith("find_documents", { category: "schema_out_of_date", failure_code: "PGRST202" });
 });
 it("completes reads when stored text cannot be read, including missing context and exceptions", async () => {
-  const doc = { filename: "contract.docx", file_type: "docx", storage_path: "obsolete", search_source: { revision: "revision", userId: "actor" } };
+  const doc = { filename: "contract.docx", file_type: "docx", storage_path: "obsolete", search_source: { revision: "revision", userId: "actor", workspace: "personal" } };
   const store: DocStore = new Map([["found", doc]]);
   const index: DocIndex = { found: { document_id: "document", version_id: "history", filename: "contract.docx" } };
   for (const missing of ["db", "document", "version", "stored", "stale", "pending", "exception"]) {
