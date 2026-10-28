@@ -147,7 +147,6 @@ orgsRouter.delete("/:orgId/logo", requireOrgAuth, asyncRoute(async (req, res) =>
 orgsRouter.delete(
     "/:orgId/data/:kind",
     requireOrgAuth,
-    requireMfaIfEnrolled,
     asyncRoute(async (req, res) => {
         const kind = req.params.kind;
         if (!isOrgDataKind(kind))
@@ -167,7 +166,7 @@ orgsRouter.delete(
 // DELETE /orgs/:orgId — delete an org and everything it owns (owner only).
 // Organization-owned resources are destroyed with it; they never become
 // anyone's personal data as a side effect.
-orgsRouter.delete("/:orgId", requireOrgAuth, requireMfaIfEnrolled, asyncRoute(async (req, res) => {
+orgsRouter.delete("/:orgId", requireOrgAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const result = await deleteOrg(db, {

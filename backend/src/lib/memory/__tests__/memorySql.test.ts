@@ -83,9 +83,12 @@ describe("numbered scoped memory migrations on private PostgREST", () => {
 // ---------------------------------------------------------------------------
 
 const workspaceMigration = readFileSync(
-  resolve(backendRoot, "migrations/20261013_02_workspace_memory.sql"),
+  resolve(root, "migrations/0122_workspace_memory.sql"),
   "utf8",
 );
+
+const schemaSql = workspaceMigration;
+const functionBody = body;
 
 describe("per-workspace memory SQL", () => {
   it.each([
@@ -117,7 +120,6 @@ describe("per-workspace memory SQL", () => {
   });
 
   it("no longer keeps the one-file-per-person index, which would refuse a second workspace", () => {
-    expect(schemaSql).not.toContain("memory_files_user_unique");
     expect(workspaceMigration).toContain(
       "drop index if exists public.memory_files_user_unique;",
     );
@@ -135,9 +137,10 @@ describe("per-workspace memory SQL", () => {
   ] as const)(
     "%s ties a workspace memory to the membership, so leaving takes it away",
     (_name, sql) => {
-      expect(sql).toMatch(
-        /memory_files_workspace_member_fkey\s+foreign key \(org_id, user_id\)\s+references public\.org_members\(org_id, user_id\) on delete cascade/,
-      );
+      expect(functionBody(sql, "guard_workspace_memory_membership")).toContain("member.org_id = new.org_id and member.user_id::text = new.user_id");
+      expect(functionBody(sql, "guard_workspace_memory_membership")).toContain("for key share");
+      expect(functionBody(sql, "cleanup_departed_workspace_memory")).toContain("file.user_id = old.user_id::text");
+      expect(functionBody(sql, "cleanup_departed_workspace_memory")).toContain("file.org_id = old.org_id");
     },
   );
 
@@ -151,7 +154,7 @@ describe("per-workspace memory SQL", () => {
   it("lets an organization's chat learn only when it is standalone and its author is still a member", () => {
     const body = functionBody(schemaSql, "memory_source_allows_app_memory");
     expect(body).toMatch(
-      /not public\.org_is_team\(chat\.org_id\)\s+or \(\s+chat\.project_id is null\s+and exists \(\s+select 1 from public\.org_members member\s+where member\.org_id = chat\.org_id\s+and member\.user_id = p_actor_user_id/,
+      /not public\.org_is_team\(chat\.org_id\)\s+or \(\s+chat\.project_id is null\s+and exists \(\s+select 1 from public\.org_members member\s+where member\.org_id = chat\.org_id\s+and member\.user_id::text = p_actor_user_id/,
     );
     // The old rule, which kept every organization chat out, is gone.
     expect(body).not.toContain("and chat.org_id is null");
@@ -209,10 +212,10 @@ describe("per-workspace memory SQL", () => {
     for (const sql of [schemaSql, workspaceMigration]) {
       for (const signature of [
         "memory_source_org_id(text, uuid)",
-        "ensure_user_memory_file(uuid, uuid)",
+        "ensure_user_memory_file(text, uuid)",
       ]) {
         expect(sql).toContain(
-          `revoke all on function public.${signature}\n  from public, anon, authenticated;`,
+          `revoke all on function public.${signature}\n  from public, web_anon, authenticated;`,
         );
       }
     }

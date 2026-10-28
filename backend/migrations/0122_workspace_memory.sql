@@ -40,6 +40,13 @@ alter table public.memory_files
         and org_id is null)
   );
 
+-- UUID organization ownership retains its direct lifecycle constraint.
+alter table public.memory_files
+  drop constraint if exists memory_files_workspace_org_fkey;
+alter table public.memory_files
+  add constraint memory_files_workspace_org_fkey
+  foreign key (org_id) references public.organizations(id) on delete cascade;
+
 -- Upstream divergence (sync-log: b4146ed9): memory owners remain TEXT,
 -- while supported membership principals remain UUID. Preserve the composite
 -- membership lifecycle with a locked guard and same-transaction cascade.
