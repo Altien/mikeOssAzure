@@ -2,7 +2,6 @@ import type { Db } from "../../lib/supabase";
 import {
     bedrockCredentials,
     bedrockServiceUrl,
-    envBedrockCredentials,
 } from "../../lib/llm/cloudProviders";
 import { getEffectiveApiKeys } from "../user/user.service";
 import { catalogFailureReason } from "./models.compatible";

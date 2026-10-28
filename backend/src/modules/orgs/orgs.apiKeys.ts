@@ -24,8 +24,6 @@ import {
     getEffectiveApiKeyStatus,
     normalizeRouterModels,
     orgKeyOwner,
-    saveApiKeyForOwner,
-    setApiKeyEnabledFor,
     type ApiKeyProvider,
     type ApiKeyStatus,
 } from "../user/user.service";

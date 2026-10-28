@@ -11,7 +11,9 @@
 // material without them agreeing to it.
 
 import { Router } from "express";
-import { requireAuth, requireMfaIfEnrolled } from "../../middleware/auth";
+// Upstream divergence (sync-log: db8d42c3): Entra handles MFA; local mode
+// uses its existing provider policy. Personal/org secret writes are refused.
+import { requireAuth } from "../../middleware/auth";
 import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import { sendOrgFailure } from "../../lib/orgFailure";
@@ -228,7 +230,7 @@ orgsRouter.post(
 // Provider keys and the personal-key setting
 // ---------------------------------------------------------------------------
 //
-// Writes carry requireMfaIfEnrolled, as the personal key routes do: saving a
+// Writes carry as the personal key routes do: saving a
 // key decides where the organization's work is sent.
 
 // GET /orgs/:orgId/api-keys — which providers are set up (any member).
@@ -249,8 +251,7 @@ orgsRouter.get("/:orgId/api-keys", requireAuth, asyncRoute(async (req, res) => {
 orgsRouter.put(
     "/:orgId/api-keys/policy",
     requireAuth,
-    requireMfaIfEnrolled,
-    asyncRoute(async (req, res) => {
+        asyncRoute(async (req, res) => {
         const db = createServerSupabase();
         const result = await setOrgPersonalApiKeysAllowed(db, {
             actorId: res.locals.userId as string,
@@ -269,8 +270,7 @@ orgsRouter.put(
 orgsRouter.put(
     "/:orgId/api-keys/:provider/models",
     requireAuth,
-    requireMfaIfEnrolled,
-    asyncRoute(async (req, res) => {
+        asyncRoute(async (req, res) => {
         const provider = normalizeOrgRouterSlug(req.params.provider);
         if (!provider)
             return void res.status(400).json({
@@ -294,8 +294,7 @@ orgsRouter.put(
 orgsRouter.put(
     "/:orgId/api-keys/:provider",
     requireAuth,
-    requireMfaIfEnrolled,
-    asyncRoute(async (req, res) => {
+        asyncRoute(async (req, res) => {
         const provider = normalizeApiKeyProvider(req.params.provider);
         if (!provider)
             return void res.status(400).json({ detail: "Unsupported provider" });
@@ -322,8 +321,7 @@ orgsRouter.put(
 orgsRouter.patch(
     "/:orgId/api-keys/:provider",
     requireAuth,
-    requireMfaIfEnrolled,
-    asyncRoute(async (req, res) => {
+        asyncRoute(async (req, res) => {
         const provider = normalizeApiKeyProvider(req.params.provider);
         if (!provider || typeof req.body?.enabled !== "boolean")
             return void res.status(400).json({
