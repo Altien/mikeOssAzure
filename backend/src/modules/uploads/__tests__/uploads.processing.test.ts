@@ -13,6 +13,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { diagnosticErrorTags } from "../../../lib/observability/sentryPrivacy";
 
 const mocks = vi.hoisted(() => ({
+  setOperation: vi.fn(),
+  markStage: vi.fn(),
   deleteFile: vi.fn(),
   createFileReadStream: vi.fn(),
   copyFile: vi.fn(),
@@ -149,6 +151,7 @@ function scriptedDb(results: QueryResult[]) {
     table: string;
     operation?: string;
     payload?: unknown;
+    filters: unknown[][];
   }> = [];
   const next = () =>
     Promise.resolve(results.shift() ?? { data: null, error: null });
@@ -156,7 +159,7 @@ function scriptedDb(results: QueryResult[]) {
   class Query {
     private readonly call: (typeof calls)[number];
     constructor(table: string) {
-      this.call = { table };
+      this.call = { table, filters: [] };
       calls.push(this.call);
     }
     select() {
@@ -182,7 +185,8 @@ function scriptedDb(results: QueryResult[]) {
       this.call.operation = "delete";
       return this;
     }
-    eq() {
+    eq(key: string, value: unknown) {
+      this.call.filters.push(["eq", key, value]);
       return this;
     }
     is() {
@@ -632,55 +636,39 @@ describe("upload processing", () => {
     expect(db.remaining).toHaveLength(0);
   });
 
-  // A document uploaded on its own is filed under the workspace its session
-  // named; inside a project or a workflow, that decides.
-  describe("the organization a new document is filed under", () => {
+
+  // Workspace assignment belongs to the locked session in the finish RPC,
+  // never to a JavaScript upsert or an override in the prepared payload.
+  describe("workspace publication through the session claim", () => {
     const ORG = "66666666-6666-4666-8666-666666666666";
-    /** The row written to `documents` while one file is processed. */
-    async function documentRowFor(destination: Record<string, unknown>) {
-      const document = {
-        id: baseFile.resource_id,
-        user_id: baseSession.user_id,
-        folder_id: null,
-        library_folder_id: null,
-      };
-      const db = fakeDb({ documents: [{ data: document, error: null }] });
-      const rows: Record<string, unknown>[] = [];
-      const from = db.from;
-      db.from = vi.fn((table: string) => {
-        const query = from(table);
-        if (table === "documents") {
-          const upsert = query.upsert.bind(query);
-          query.upsert = (...args: unknown[]) => {
-            rows.push(args[0] as Record<string, unknown>);
-            return (upsert as (...a: unknown[]) => typeof query)(...args);
-          };
-        }
-        return query;
-      }) as typeof db.from;
-      await processUploadFile(
-        db as never,
-        { ...baseSession, destination } as never,
-        baseFile,
-      );
-      expect(rows).toHaveLength(1);
-      return rows[0];
-    }
-
     it.each([
-      ["a standalone upload", { scope: "standalone", org_id: ORG }],
-      ["a library upload", { scope: "library", library_kind: "file", org_id: ORG }],
-    ])("is the workspace named by %s", async (_label, destination) => {
-      expect(await documentRowFor(destination)).toMatchObject({
-        org_id: ORG,
-        project_id: null,
-      });
-    });
-
-    it("is none — Personal — when the upload names no organization", async () => {
-      expect(await documentRowFor({ scope: "standalone" })).toMatchObject({
-        org_id: null,
-      });
+      ["standalone team", { scope: "standalone", org_id: ORG }],
+      ["library team", { scope: "library", library_kind: "file", org_id: ORG }],
+      ["Personal", { scope: "standalone" }],
+    ])("publishes %s using the exact locked session and no client workspace override", async (_label, destination) => {
+      const claimToken = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+      const db = scriptedDb([
+        { data: { id: "job-1", session_id: baseSession.id, file_id: baseFile.id,
+          attempts: 1, locked_by: "worker-1", claim_token: claimToken }, error: null },
+        { data: { ...baseSession, destination }, error: null },
+        { data: baseFile, error: null },
+      ]);
+      db.rpc.mockImplementation(async (name: string) => ({
+        data: name === "renew_upload_processing_job" ? true : { status: "completed" }, error: null,
+      }));
+      await processUploadJob(db as never, "job-1", "worker-1");
+      expect(db.calls.map((call) => call.table)).toEqual([
+        "upload_processing_jobs", "upload_sessions", "upload_session_files",
+      ]);
+      expect(db.calls[1].filters).toContainEqual(["eq", "id", baseSession.id]);
+      expect(db.rpc).toHaveBeenCalledWith("finish_upload_processing_job", expect.objectContaining({
+        p_job_id: "job-1", p_worker_id: "worker-1", p_attempt: 1, p_token: claimToken,
+        p_failure: null, p_payload: expect.objectContaining({ kind: "document_create", project_id: null }),
+      }));
+      const payload = (db.rpc.mock.calls.find(([name]) => name === "finish_upload_processing_job")![1] as unknown as { p_payload: Record<string, unknown> }).p_payload;
+      expect(payload).not.toHaveProperty("org_id");
+      expect(payload).not.toHaveProperty("user_id");
+      expect(db.remaining).toHaveLength(0);
     });
   });
 });

@@ -104,6 +104,7 @@ function importRow(): Row {
 }
 
 const reviewPayload = {
+  userId: "owner", orgId: null,
   runId: RUN,
   documentText: "Contract",
   instructions: null,
@@ -125,9 +126,9 @@ const importPayload = {
   storageKey: STAGED_KEY,
 };
 
-function job(kind: string, payload: Record<string, unknown>): DbJob {
+function job(tables: Record<string, Row[]>, kind: string, payload: Record<string, unknown>): DbJob {
   const now = new Date().toISOString();
-  return {
+  const claimed: DbJob = {
     id: "job-1",
     kind,
     payload,
@@ -141,7 +142,11 @@ function job(kind: string, payload: Record<string, unknown>): DbJob {
     dedupe_key: null,
     result: null,
     created_at: now,
+    claim_token: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    lease_expires_at: new Date(Date.now() + 300_000).toISOString(),
   };
+  tables.db_jobs = [claimed as unknown as Row];
+  return claimed;
 }
 
 async function sourceDocx(): Promise<ArrayBuffer> {
@@ -163,9 +168,24 @@ function failing(
 ): Db {
   const refused = { data: null, error: { code: "57014", message: "canceled" } };
   return {
+    rpc: async (name: string, args: Row) => {
+      if (name === "mutate_playbook_job") {
+        const importing = String(args.p_domain_id) === IMPORT;
+        const table = importing ? "playbook_imports" : "playbook_runs";
+        const values = args.p_operation === "heartbeat" ? { updated_at: new Date().toISOString() }
+          : args.p_operation === "failure" ? { ...(args.p_values as Row), status: "failed" } : args.p_values as Row;
+        if (args.p_operation !== "check" && fails(table, "update", values)) return refused;
+      }
+      return base.rpc(name, args);
+    },
     from: (table: string) => {
       const query = base.from(table) as unknown as Record<string, unknown>;
       const update = query.update as (values: Row) => unknown;
+      if (table === "db_jobs") {
+        const insert = query.insert as (values: Row) => unknown;
+        // The terminal-hook cases deliberately exhaust their one attempt.
+        query.insert = (values: Row) => insert({ ...values, max_attempts: 1 });
+      }
       const maybeSingle = query.maybeSingle as () => Promise<unknown>;
       query.update = (values: Row) => {
         if (fails(table, "update", values))
@@ -185,7 +205,7 @@ const reportsAt = (stage: string) =>
   reportError.mock.calls.filter(([, context]) => context?.tags?.stage === stage);
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   getUserApiKeys.mockResolvedValue({ claude: "test-key" });
   storage.deleteFile.mockResolvedValue(undefined);
   storage.uploadFile.mockResolvedValue(undefined);
@@ -204,7 +224,7 @@ describe("reporting playbook job failures", () => {
     const crash = new Error("provider socket hang up");
     completeText.mockRejectedValueOnce(crash);
 
-    await handlePlaybookReview(db, job("playbook.review", reviewPayload));
+    await handlePlaybookReview(db, job(tables, "playbook.review", reviewPayload));
 
     expect(reportsAt("review.model")).toEqual([
       [
@@ -228,7 +248,7 @@ describe("reporting playbook job failures", () => {
     storage.downloadFile.mockResolvedValue(await sourceDocx());
     completeText.mockResolvedValue("not json at all");
 
-    await handlePlaybookImport(db, job("playbook.import", importPayload));
+    await handlePlaybookImport(db, job(tables, "playbook.import", importPayload));
 
     // Compiled, then recompiled once with the validation error, then reported.
     expect(completeText).toHaveBeenCalledTimes(2);
@@ -255,7 +275,7 @@ describe("reporting playbook job failures", () => {
     storage.downloadFile.mockResolvedValue(null);
     const error = vi.spyOn(console, "error");
 
-    await handlePlaybookImport(db, job("playbook.import", importPayload));
+    await handlePlaybookImport(db, job(tables, "playbook.import", importPayload));
 
     expect(tables.playbook_imports[0]).toMatchObject({
       status: "failed",
@@ -279,7 +299,7 @@ describe("reporting playbook job failures", () => {
     );
 
     await expect(
-      handlePlaybookImport(db, job("playbook.import", importPayload)),
+      handlePlaybookImport(db, job(tables, "playbook.import", importPayload)),
     ).rejects.toThrow();
 
     // The refusal itself is not reported; losing its record is.
@@ -308,7 +328,7 @@ describe("reporting playbook job failures", () => {
       }),
     );
 
-    const running = handlePlaybookReview(db, job("playbook.review", reviewPayload));
+    const running = handlePlaybookReview(db, job(tables, "playbook.review", reviewPayload));
     await vi.waitFor(() => expect(completeText).toHaveBeenCalled());
     await vi.advanceTimersByTimeAsync(90_000);
     answer(JSON.stringify({ summary: "Reviewed", findings: [] }));
@@ -331,7 +351,7 @@ describe("reporting playbook job failures", () => {
     expect(tables.playbook_runs[0]).toMatchObject({ status: "completed" });
   });
 
-  it("reports an in-process job that ended without recording its outcome", async () => {
+  it("reports an awaited inline job through the canonical terminal runner and failure hook", async () => {
     vi.stubEnv("DB_JOBS_ENABLED", "false");
     const { db: base, tables } = database([book()]);
     // The job cannot read its run back, so it ends with the row running.
@@ -349,19 +369,13 @@ describe("reporting playbook job failures", () => {
       db,
     });
 
-    await vi.waitFor(() => expect(reportsAt("job.terminal")).toHaveLength(1));
-    expect(reportsAt("job.terminal")[0][1]).toMatchObject({
-      tags: {
-        component: "playbooks",
-        stage: "job.terminal",
-        job_kind: "playbook.review",
-      },
-      extra: { run_id: run.id },
-    });
-    // The failure hook still ends the run for the user.
-    await vi.waitFor(() =>
-      expect(tables.playbook_runs[0]).toMatchObject({ status: "failed" }),
-    );
+    const attempts = reportError.mock.calls.filter(([, context]) => context?.tags?.component === "dbq" && context?.tags?.terminal === true);
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0][1]).toMatchObject({ tags: { component: "dbq", job_kind: "playbook.review", terminal: true },
+      extra: { job_id: tables.db_jobs[0].id } });
+    expect(tables.db_jobs[0]).toMatchObject({ status: "failed", lease_expires_at: null });
+    expect(tables.playbook_runs[0]).toMatchObject({ status: "failed" });
+    expect(run.status).toBe("running");
   });
 
   it("reports a staged upload that could not be removed", async () => {
@@ -370,7 +384,7 @@ describe("reporting playbook job failures", () => {
     storage.downloadFile.mockResolvedValue(null);
     storage.deleteFile.mockRejectedValue(new Error("storage unavailable"));
 
-    await handlePlaybookImport(db, job("playbook.import", importPayload));
+    await handlePlaybookImport(db, job(tables, "playbook.import", importPayload));
 
     expect(reportsAt("import.cleanup")[0][1]).toMatchObject({
       level: "warning",
@@ -439,21 +453,12 @@ describe("the failure hook of an in-process job", () => {
       db,
     });
 
-    await vi.waitFor(() => expect(reportsAt("failure-hook")).toHaveLength(1));
+    expect(reportsAt("failure-hook")).toHaveLength(1);
     const [reported, context] = reportsAt("failure-hook")[0];
-    expect(reported).toBeInstanceOf(AppError);
-    expect((reported as AppError).kind).toBe("dbq.failure_hook_crashed");
-    // The refused statement is the cause; its SQLSTATE is the failure_code.
-    expect((reported as AppError).cause).toMatchObject({ code: "57014" });
-    expect(context).toEqual({
-      tags: {
-        component: "playbooks",
-        stage: "failure-hook",
-        job_kind: "playbook.review",
-      },
-    });
-    // The job's own failure is still its own report.
-    expect(reportsAt("job.terminal")).toHaveLength(1);
+    expect(reported).toMatchObject({ code: "57014" });
+    expect(context).toMatchObject({ tags: { component: "dbq", stage: "failure-hook", job_kind: "playbook.review" },
+      extra: { job_id: expect.any(String) } });
+    expect(reportError.mock.calls.filter(([, details]) => details?.tags?.terminal === true)).toHaveLength(1);
     expect(run.status).toBe("running");
   });
 });

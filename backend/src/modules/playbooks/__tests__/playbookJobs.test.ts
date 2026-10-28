@@ -25,10 +25,8 @@ vi.mock("../../../lib/storage", async (original) => ({
 import { DbJobDeferredError, type DbJob } from "../../../lib/dbq/types";
 import {
   blankPlaybookContent,
-  compilePlaybookImport,
   INTERRUPTED_IMPORT_ERROR,
   INTERRUPTED_RUN_ERROR,
-  PLAYBOOK_EDITED_DURING_REPLACEMENT_ERROR,
 } from "../playbooks.operations";
 import {
   handlePlaybookImport,
@@ -91,6 +89,7 @@ function runRow(overrides: Row = {}): Row {
 }
 
 const reviewPayload = {
+  userId: "owner", orgId: null,
   runId: "run-1",
   documentText: "Contract",
   instructions: null,
@@ -99,12 +98,13 @@ const reviewPayload = {
 };
 
 function job(
+  tables: Record<string, Row[]>,
   kind: string,
   payload: Record<string, unknown>,
   attempts = 1,
 ): DbJob {
   const now = new Date().toISOString();
-  return {
+  const claimed: DbJob = {
     id: "job-1",
     kind,
     payload,
@@ -118,13 +118,22 @@ function job(
     dedupe_key: null,
     result: null,
     created_at: now,
+    claim_token: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    lease_expires_at: new Date(Date.now() + 300_000).toISOString(),
   };
+  tables.db_jobs = [claimed as unknown as Row];
+  return claimed;
+}
+function terminalJob(tables: Record<string, Row[]>, kind: string, payload: Record<string, unknown>) {
+  const claimed = job(tables, kind, payload);
+  Object.assign(tables.db_jobs[0], { status: "failed", lease_expires_at: null });
+  return claimed;
 }
 
 const silent = () => new Date(Date.now() - 10 * 60_000).toISOString();
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   getUserApiKeys.mockResolvedValue({ claude: "test-key" });
   completeText.mockResolvedValue(reviewed("Reviewed"));
   storage.deleteFile.mockResolvedValue(undefined);
@@ -133,10 +142,10 @@ beforeEach(() => {
 });
 
 /** The audit rows recorded for one action. */
-const audited = (action: string) =>
-  recordAudit.mock.calls
-    .map(([, event]) => event)
-    .filter((event) => event.action === action);
+const audited = (tables: Record<string, Row[]>, action: string) =>
+  (tables.audit_events ?? []).filter((event) => event.action === action).map((event) => ({
+    ...event, userId: event.user_id, documentId: event.document_id,
+  }));
 afterEach(() => vi.unstubAllEnvs());
 
 describe("queueing a playbook review", () => {
@@ -182,7 +191,7 @@ describe("queueing a playbook review", () => {
       db,
     });
 
-    expect(tables.db_jobs ?? []).toEqual([]);
+    expect(tables.db_jobs).toEqual([expect.objectContaining({ status: "done", attempts: 1, claim_token: expect.any(String) })]);
     await vi.waitFor(() =>
       expect(tables.playbook_runs[0]).toMatchObject({ status: "completed" }),
     );
@@ -194,7 +203,7 @@ describe("the playbook.review job", () => {
     const { db, tables } = database([book()]);
     tables.playbook_runs.push(runRow());
 
-    await handlePlaybookReview(db, job("playbook.review", reviewPayload));
+    await handlePlaybookReview(db, job(tables, "playbook.review", reviewPayload));
 
     // The snapshot on the run, not the book's current (blank) rules.
     expect(completeText.mock.lastCall?.[0].user).toContain("Snapshot cap rule");
@@ -207,6 +216,7 @@ describe("the playbook.review job", () => {
   it("records the completed review in the audit log with its outcome counts", async () => {
     const { db, tables } = database([book()]);
     tables.playbook_runs.push(runRow({ document_id: "doc-1" }));
+    tables.documents = [{ id: "doc-1", user_id: "owner", org_id: null, archived_at: null }];
     completeText.mockResolvedValue(
       JSON.stringify({
         summary: "Reviewed",
@@ -222,9 +232,9 @@ describe("the playbook.review job", () => {
       }),
     );
 
-    await handlePlaybookReview(db, job("playbook.review", reviewPayload));
+    await handlePlaybookReview(db, job(tables, "playbook.review", reviewPayload));
 
-    expect(audited("playbook.run")).toEqual([
+    expect(audited(tables, "playbook.run")).toEqual([
       expect.objectContaining({
         userId: "owner",
         status: "completed",
@@ -241,7 +251,7 @@ describe("the playbook.review job", () => {
       }),
     ]);
     // Counts only: what the finding said stays out of the audit row.
-    expect(JSON.stringify(recordAudit.mock.calls)).not.toContain(
+    expect(JSON.stringify(tables.audit_events)).not.toContain(
       "Uncapped liability",
     );
   });
@@ -250,14 +260,14 @@ describe("the playbook.review job", () => {
     const { db, tables } = database([book({ user_id: "someone-else" })]);
     tables.playbook_runs.push(runRow());
 
-    await handlePlaybookReview(db, job("playbook.review", reviewPayload));
+    await handlePlaybookReview(db, job(tables, "playbook.review", reviewPayload));
 
     expect(completeText).not.toHaveBeenCalled();
     expect(tables.playbook_runs[0]).toMatchObject({
       status: "failed",
       error: "Playbook not found.",
     });
-    expect(audited("playbook.run")).toEqual([
+    expect(audited(tables, "playbook.run")).toEqual([
       expect.objectContaining({ status: "failed" }),
     ]);
   });
@@ -266,7 +276,7 @@ describe("the playbook.review job", () => {
     const { db, tables } = database([book()]);
     tables.playbook_runs.push(runRow({ status: "completed", summary: "Done" }));
 
-    await handlePlaybookReview(db, job("playbook.review", reviewPayload, 2));
+    await handlePlaybookReview(db, job(tables, "playbook.review", reviewPayload, 2));
 
     expect(completeText).not.toHaveBeenCalled();
     expect(tables.playbook_runs[0]).toMatchObject({
@@ -287,11 +297,11 @@ describe("the playbook.review job", () => {
       return reviewed("Second claim");
     });
 
-    await handlePlaybookReview(db, job("playbook.review", reviewPayload));
+    await handlePlaybookReview(db, job(tables, "playbook.review", reviewPayload));
 
     expect(tables.playbook_runs[0]).toMatchObject({ summary: "First claim" });
     // The claim that recorded the outcome audits it; this one does not.
-    expect(audited("playbook.run")).toEqual([]);
+    expect(audited(tables, "playbook.run")).toEqual([]);
   });
 
   it("defers a re-claimed job while an earlier claim still heartbeats the run", async () => {
@@ -299,13 +309,13 @@ describe("the playbook.review job", () => {
     tables.playbook_runs.push(runRow());
 
     await expect(
-      handlePlaybookReview(db, job("playbook.review", reviewPayload, 2)),
+      handlePlaybookReview(db, job(tables, "playbook.review", reviewPayload, 2)),
     ).rejects.toBeInstanceOf(DbJobDeferredError);
     expect(completeText).not.toHaveBeenCalled();
 
     // Once the earlier claim falls silent, the re-claim runs the review.
     Object.assign(tables.playbook_runs[0], { updated_at: silent() });
-    await handlePlaybookReview(db, job("playbook.review", reviewPayload, 2));
+    await handlePlaybookReview(db, job(tables, "playbook.review", reviewPayload, 2));
     expect(tables.playbook_runs[0]).toMatchObject({ status: "completed" });
   });
 
@@ -315,14 +325,14 @@ describe("the playbook.review job", () => {
     completeText.mockRejectedValueOnce(new Error("provider secret sk-ant-123"));
 
     await expect(
-      handlePlaybookReview(db, job("playbook.review", reviewPayload)),
+      handlePlaybookReview(db, job(tables, "playbook.review", reviewPayload)),
     ).resolves.toBeUndefined();
 
     expect(tables.playbook_runs[0]).toMatchObject({
       status: "failed",
-      error: "The review failed. Try again.",
+      error: "The review could not be completed. Run it again.",
     });
-    expect(audited("playbook.run")).toEqual([
+    expect(audited(tables, "playbook.run")).toEqual([
       expect.objectContaining({
         status: "failed",
         surface: "playbooks",
@@ -410,7 +420,7 @@ describe("the playbook.import job", () => {
     storage.downloadFile.mockResolvedValue(await sourceDocx());
     completeText.mockResolvedValue(compiled("Standards"));
 
-    await handlePlaybookImport(db, job("playbook.import", importPayload));
+    await handlePlaybookImport(db, job(tables, "playbook.import", importPayload));
 
     expect(storage.downloadFile).toHaveBeenCalledWith(STAGED_KEY);
     expect(tables.playbooks.map((row) => row.id)).toEqual(["new-book"]);
@@ -419,7 +429,7 @@ describe("the playbook.import job", () => {
       playbook_id: "new-book",
     });
     expect(storage.deleteFile).toHaveBeenCalledWith(STAGED_KEY);
-    expect(audited("playbook.imported")).toEqual([
+    expect(audited(tables, "playbook.imported")).toEqual([
       expect.objectContaining({
         status: "completed",
         surface: "playbooks",
@@ -431,24 +441,24 @@ describe("the playbook.import job", () => {
 
   it("records a replacement as playbook.replaced", async () => {
     const { db, tables } = database([book()]);
-    tables.playbook_imports = [importRow({ playbook_id: "book" })];
+    tables.playbook_imports = [importRow({ playbook_id: "book", target_updated_at: "2026-10-17" })];
     storage.downloadFile.mockResolvedValue(await sourceDocx());
     completeText.mockResolvedValue(compiled("Guide v2"));
 
     await handlePlaybookImport(
       db,
-      job("playbook.import", { ...importPayload, replacePlaybookId: "book" }),
+      job(tables, "playbook.import", { ...importPayload, replacePlaybookId: "book", targetUpdatedAt: "2026-10-17" }),
     );
 
     expect(tables.playbook_imports[0]).toMatchObject({ status: "completed" });
-    expect(audited("playbook.replaced")).toEqual([
+    expect(audited(tables, "playbook.replaced")).toEqual([
       expect.objectContaining({
         status: "completed",
         surface: "playbooks",
         detail: { import_id: "imp-1", playbook_id: "book" },
       }),
     ]);
-    expect(audited("playbook.imported")).toEqual([]);
+    expect(audited(tables, "playbook.imported")).toEqual([]);
   });
 
   it("records nothing when another claim finished the attempt first", async () => {
@@ -459,9 +469,10 @@ describe("the playbook.import job", () => {
     storage.downloadFile.mockResolvedValue(await sourceDocx());
     completeText.mockResolvedValue(compiled("Standards"));
 
-    await compilePlaybookImport(db, importPayload, Buffer.from(await sourceDocx()));
+    await handlePlaybookImport(db, job(tables, "playbook.import", importPayload));
+    expect(completeText).not.toHaveBeenCalled();
 
-    expect(audited("playbook.imported")).toEqual([]);
+    expect(audited(tables, "playbook.imported")).toEqual([]);
   });
 
   it("records a failed import with the stage it stopped at", async () => {
@@ -469,10 +480,10 @@ describe("the playbook.import job", () => {
     tables.playbook_imports = [importRow()];
     storage.downloadFile.mockResolvedValue(null);
 
-    await handlePlaybookImport(db, job("playbook.import", importPayload));
+    await handlePlaybookImport(db, job(tables, "playbook.import", importPayload));
 
     expect(tables.playbook_imports[0]).toMatchObject({ status: "failed" });
-    expect(audited("playbook.imported")).toEqual([
+    expect(audited(tables, "playbook.imported")).toEqual([
       expect.objectContaining({
         status: "failed",
         surface: "playbooks",
@@ -528,12 +539,12 @@ describe("a replacement import racing an edit", () => {
 
     await handlePlaybookImport(
       db,
-      job("playbook.import", { ...replacement, targetUpdatedAt: VERSION }),
+      job(tables, "playbook.import", { ...replacement, targetUpdatedAt: VERSION }),
     );
 
     expect(tables.playbook_imports[0]).toMatchObject({
       status: "failed",
-      error: PLAYBOOK_EDITED_DURING_REPLACEMENT_ERROR,
+      error: "The playbook changed. Import it again.",
     });
     expect(tables.playbooks[0]).toMatchObject({
       content_json: edited,
@@ -558,7 +569,7 @@ describe("a replacement import racing an edit", () => {
 
     await handlePlaybookImport(
       db,
-      job("playbook.import", { ...replacement, targetUpdatedAt: VERSION }),
+      job(tables, "playbook.import", { ...replacement, targetUpdatedAt: VERSION }),
     );
 
     expect(tables.playbook_imports[0]).toMatchObject({
@@ -569,7 +580,7 @@ describe("a replacement import racing an edit", () => {
     expect(tables.playbooks[0].updated_at).not.toBe(VERSION);
   });
 
-  it("completes a re-run whose earlier run already saved the replacement", async () => {
+  it("keeps existing content when a legacy source key cannot prove atomic publication", async () => {
     // Run one saved (moving updated_at) but died before recording it.
     const saved = "playbooks/owner/book/source-imp-1.docx";
     const { db, tables } = database([
@@ -588,10 +599,10 @@ describe("a replacement import racing an edit", () => {
 
     await handlePlaybookImport(
       db,
-      job("playbook.import", { ...replacement, targetUpdatedAt: VERSION }, 2),
+      job(tables, "playbook.import", { ...replacement, targetUpdatedAt: VERSION }, 2),
     );
 
-    expect(tables.playbook_imports[0]).toMatchObject({ status: "completed" });
+    expect(tables.playbook_imports[0]).toMatchObject({ status: "failed", error: "The playbook changed. Import it again." });
     expect(tables.playbooks[0].source_storage_key).toBe(saved);
     expect(storage.deleteFile).not.toHaveBeenCalledWith(saved);
   });
@@ -603,12 +614,12 @@ describe("a playbook job that runs out of attempts", () => {
     tables.playbook_runs.push(runRow(), runRow({ id: "run-2", status: "completed" }));
     tables.playbook_imports = [importRow()];
 
-    await markPlaybookReviewJobFailed(db, job("playbook.review", reviewPayload));
+    await markPlaybookReviewJobFailed(db, terminalJob(tables, "playbook.review", reviewPayload));
     await markPlaybookReviewJobFailed(
       db,
-      job("playbook.review", { ...reviewPayload, runId: "run-2" }),
+      terminalJob(tables, "playbook.review", { ...reviewPayload, runId: "run-2" }),
     );
-    await markPlaybookImportJobFailed(db, job("playbook.import", importPayload));
+    await markPlaybookImportJobFailed(db, terminalJob(tables, "playbook.import", importPayload));
 
     expect(tables.playbook_runs[0]).toMatchObject({
       status: "failed",
@@ -622,13 +633,13 @@ describe("a playbook job that runs out of attempts", () => {
     // Nothing will read the staged upload again.
     expect(storage.deleteFile).toHaveBeenCalledWith(STAGED_KEY);
     // Only the rows this hook failed are audited, each once.
-    expect(audited("playbook.run")).toEqual([
+    expect(audited(tables, "playbook.run")).toEqual([
       expect.objectContaining({
         status: "failed",
         detail: expect.objectContaining({ run_id: "run-1" }),
       }),
     ]);
-    expect(audited("playbook.imported")).toEqual([
+    expect(audited(tables, "playbook.imported")).toEqual([
       expect.objectContaining({
         status: "failed",
         detail: expect.objectContaining({ stage: "checking_model" }),

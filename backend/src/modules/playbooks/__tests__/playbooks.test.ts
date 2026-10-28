@@ -290,38 +290,38 @@ describe("playbook compilation", () => {
 });
 
 describe("playbook model availability", () => {
-  it("accepts a built-in model once its provider key is saved", () => {
+  it("accepts a built-in model once its provider key is saved", async () => {
     expect(
-      playbookModelAvailability("claude-haiku-4-5", { claude: "sk-ant" }),
+      await playbookModelAvailability("claude-haiku-4-5", { claude: "sk-ant" }),
     ).toEqual({ available: true });
-    expect(playbookModelAvailability("claude-haiku-4-5", {})).toMatchObject({
+    expect(await playbookModelAvailability("claude-haiku-4-5", {})).toMatchObject({
       available: false,
       reason: expect.stringMatching(/Anthropic \(Claude\) API key/i),
     });
   });
 
-  it("accepts dynamic OpenRouter models when the router key is saved", () => {
+  it("accepts dynamic OpenRouter models when the router key is saved", async () => {
     expect(
-      playbookModelAvailability("openrouter/anthropic/claude-sonnet-4", {
+      await playbookModelAvailability("openrouter/anthropic/claude-sonnet-4", {
         openrouter: "sk-or-user",
       }),
     ).toEqual({ available: true });
     expect(
-      playbookModelAvailability("openrouter/anthropic/claude-sonnet-4", {}),
+      await playbookModelAvailability("openrouter/anthropic/claude-sonnet-4", {}),
     ).toMatchObject({
       available: false,
       reason: expect.stringMatching(/OpenRouter API key/i),
     });
   });
 
-  it("accepts local Ollama models without any key", () => {
-    expect(playbookModelAvailability("ollama/qwen3.6", {})).toEqual({
+  it("accepts local Ollama models without any key", async () => {
+    expect(await playbookModelAvailability("ollama/qwen3.6", {})).toEqual({
       available: true,
     });
   });
 
-  it("reports an unknown model id instead of throwing", () => {
-    expect(playbookModelAvailability("not-a-model", {})).toMatchObject({
+  it("reports an unknown model id instead of throwing", async () => {
+    expect(await playbookModelAvailability("not-a-model", {})).toMatchObject({
       available: false,
       reason: expect.stringMatching(/unknown model id/i),
     });
