@@ -40,7 +40,7 @@ describe("buildUserChatsExport", () => {
       return {};
     });
 
-    const out = await buildUserChatsExport(db as never, "u1", "u@x.com");
+    const out = await buildUserChatsExport(db as never, "u1", "u@x.com", null);
 
     expect(out.user).toEqual({ id: "u1", email: "u@x.com" });
     expect(out.assistant_chats).toEqual({
@@ -57,7 +57,7 @@ describe("buildUserChatsExport", () => {
   it("skips the message query entirely when the user has no chats", async () => {
     const { db, callsFor } = makeFakeDb();
 
-    const out = await buildUserChatsExport(db as never, "u1");
+    const out = await buildUserChatsExport(db as never, "u1", undefined, null);
 
     expect(out.user.email).toBeNull();
     expect(out.assistant_chats).toEqual({ chats: [], messages: [] });
@@ -76,7 +76,7 @@ describe("buildUserChatsExport", () => {
       return {};
     });
 
-    const out = await buildUserChatsExport(db as never, "u1");
+    const out = await buildUserChatsExport(db as never, "u1", undefined, null);
 
     expect(out.assistant_chats.chats).toHaveLength(1001);
     const chatSelects = callsFor("chats", "select");
@@ -97,7 +97,7 @@ describe("buildUserTabularReviewsExport", () => {
       return {};
     });
 
-    const out = await buildUserTabularReviewsExport(db as never, "u1", "u@x.com");
+    const out = await buildUserTabularReviewsExport(db as never, "u1", "u@x.com", null);
 
     expect(out.tabular_reviews).toEqual([{ id: "r1", user_id: "u1" }]);
     expect(out.tabular_cells).toEqual([{ id: "cell1", review_id: "r1" }]);
@@ -125,7 +125,7 @@ describe("buildUserAccountExport", () => {
         : {},
     );
 
-    const out = await buildUserAccountExport(db as never, "u1", null);
+    const out = await buildUserAccountExport(db as never, "u1", null, null);
 
     expect(out.library_folders).toEqual([
       {
@@ -146,7 +146,7 @@ describe("buildUserAccountExport", () => {
 
   it("includes shares-with-me and shared-with-me scans only when an email is present", async () => {
     const { db: withEmailDb, calls: withEmailCalls } = makeFakeDb();
-    await buildUserAccountExport(withEmailDb as never, "u1", "u@x.com");
+    await buildUserAccountExport(withEmailDb as never, "u1", "u@x.com", null);
 
     const recipientShareScan = withEmailCalls.filter(
       (c) =>
@@ -167,7 +167,7 @@ describe("buildUserAccountExport", () => {
     ]);
 
     const { db: noEmailDb, calls: noEmailCalls } = makeFakeDb();
-    await buildUserAccountExport(noEmailDb as never, "u1", null);
+    await buildUserAccountExport(noEmailDb as never, "u1", null, null);
 
     expect(
       noEmailCalls.filter((c) =>
@@ -201,7 +201,7 @@ describe("buildUserAccountExport", () => {
         : {},
     );
 
-    const out = await buildUserAccountExport(db as never, "u1", null);
+    const out = await buildUserAccountExport(db as never, "u1", null, null);
 
     expect(out.api_keys).toEqual([
       { provider: "claude", has_key: true, settings: null, enabled: true, created_at: "c", updated_at: "u" },

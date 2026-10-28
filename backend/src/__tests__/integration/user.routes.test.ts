@@ -387,7 +387,8 @@ describe("user.routes", () => {
             "subagent_model", "memory_curator_model", "project_memory_default",
             "last_selected_reasoning_level", "last_selected_chat_model",
             "dark_mode", "password_set_at", "onboarding_version",
-            "quick_actions_visible", "legal_research_us", "mfa_on_login", "title_model",
+            // Dev drift: title override is stored as fast_model, not title_model.
+            "quick_actions_visible", "legal_research_us", "mfa_on_login", "fast_model",
         ])("keeps the saved photo on profile reload when %s is absent", async (column) => {
             supabaseState.missingColumns = [column];
             supabaseState.tables.user_profiles = {

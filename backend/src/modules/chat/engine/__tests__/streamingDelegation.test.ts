@@ -267,7 +267,7 @@ describe("runLLMStream delegation", () => {
     const result = await runLLMStream(params);
 
     const subagentDispatch = runToolCalls.mock.calls.find(([calls]) => isSend(calls));
-    expect(subagentDispatch?.[14]).toMatchObject({ connectorApprovals: true });
+    expect(subagentDispatch?.[17]).toMatchObject({ connectorApprovals: true });
     const [delegation] = delegationsIn(result.events);
     expect(delegation).toMatchObject({ status: "needs_input", approval_ids: ["approval-1"] });
     expect(delegation.events.map((e) => e.type)).not.toContain("ask_inputs");

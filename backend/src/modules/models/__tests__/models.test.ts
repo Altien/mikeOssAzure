@@ -295,7 +295,7 @@ describe("GET /models/openrouter", () => {
         ]);
         expect(fetchMock).toHaveBeenCalledWith(
             expect.stringContaining("https://openrouter.ai/api/v1/models?"),
-            { headers: { Authorization: "Bearer or-organisation-key" } },
+            { headers: { Authorization: "Bearer or-user-key" } },
         );
     });
 

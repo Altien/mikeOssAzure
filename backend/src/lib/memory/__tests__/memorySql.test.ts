@@ -256,9 +256,9 @@ describe("per-workspace memory SQL", () => {
 
 // Dev drift: canonical numbered history replaces schema.sql and dated duplicates.
 const backendRoot = root;
-const schemaSql = readdirSync(resolve(root, "migrations")).filter(name => /^\d{4}_.*\.sql$/.test(name)).sort()
+const scopedSchemaSql = readdirSync(resolve(root, "migrations")).filter(name => /^\d{4}_.*\.sql$/.test(name)).sort()
   .map(name => readFileSync(resolve(root, "migrations", name), "utf8")).join("\n");
-const functionBody = (sql: string, name: string) => body(sql.slice(sql.lastIndexOf(`create or replace function public.${name}`)), name);
+const scopedFunctionBody = (sql: string, name: string) => body(sql.slice(sql.lastIndexOf(`create or replace function public.${name}`)), name);
 const scopedDeletionMigration = readFileSync(
   resolve(backendRoot, "migrations/0170_workspace_scoped_data_deletion.sql"),
   "utf8",
@@ -266,16 +266,16 @@ const scopedDeletionMigration = readFileSync(
 
 describe("workspace-scoped memory deletion SQL", () => {
   it("a fresh install defines delete_user_private_memories exactly as the migration does", () => {
-    expect(functionBody(schemaSql, "delete_user_private_memories")).toBe(
-      functionBody(scopedDeletionMigration, "delete_user_private_memories"),
+    expect(scopedFunctionBody(scopedSchemaSql, "delete_user_private_memories")).toBe(
+      scopedFunctionBody(scopedDeletionMigration, "delete_user_private_memories"),
     );
   });
 
   it.each([
-    ["schema", schemaSql],
+    ["schema", scopedSchemaSql],
     ["migration", scopedDeletionMigration],
   ] as const)("%s wipes one workspace's memory, never every workspace's", (_name, sql) => {
-    const body = functionBody(sql, "delete_user_private_memories");
+    const body = scopedFunctionBody(sql, "delete_user_private_memories");
     expect(body).toContain("p_org_id uuid default null");
     // An organization: only the person's own file there.
     expect(body).toMatch(

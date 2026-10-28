@@ -26,7 +26,8 @@ beforeEach(() => vi.resetAllMocks());
 it("registers a fenced search result as a pinned template handle and keeps internal paths private", async () => {
   mocks.find.mockResolvedValue({ ok: true, data: { matches: [match], next_offset: 10, coverage: { pending_versions: 2 } } });
   const store: DocStore = new Map(); const index: DocIndex = {};
-  const result = await runToolCalls([{ id: "call", function: { name: "find_documents", arguments: JSON.stringify({ scope: "templates", query: "clause", userId: "spoofed", workspace: "spoofed" }) } }], store, "actor", {} as Db, () => {}, undefined, undefined, index, undefined, undefined, "project", undefined, undefined, undefined, undefined, undefined, "nonce", { userEmail: "actor@example.test", orgId: "organization" });
+  const searchDb = scriptedDb([{ table: "organizations", data: { kind: "team" } }]);
+  const result = await runToolCalls([{ id: "call", function: { name: "find_documents", arguments: JSON.stringify({ scope: "templates", query: "clause", userId: "spoofed", workspace: "spoofed" }) } }], store, "actor", searchDb.db, () => {}, undefined, undefined, index, undefined, undefined, "project", undefined, undefined, undefined, undefined, undefined, "nonce", { userEmail: "actor@example.test", orgId: "organization" });
   expect(mocks.find).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ userId: "actor", userEmail: "actor@example.test", workspace: "organization" }));
   const content = (result.toolResults[0] as { content: string }).content;
   expect(content).not.toContain("private/source"); expect(content).toContain("pending_versions");
@@ -34,10 +35,10 @@ it("registers a fenced search result as a pinned template handle and keeps inter
   const label = [...store.keys()][0];
   expect(store.get(label)).toMatchObject({ source_kind: "library_template", search_source: { revision: "revision", userId: "actor" } });
   expect(index[label]).toMatchObject({ document_id: "document", version_id: "history" });
-  const identity = await getTurnReadIdentity({ docLabel: label, docStore: store, docIndex: index, db: {} as Db });
+  const identity = await getTurnReadIdentity({ docLabel: label, docStore: store, docIndex: index, db: searchDb.db });
   expect(identity).toMatchObject({ versionId: "history", key: "document:history:revision" });
   mocks.read.mockResolvedValue({ revision: "revision", status: "ready", text: "Stored historical clause", textless_page_count: 0 });
-  expect(await readDocumentContent(label, store, () => {}, index, {} as Db)).toBe("Stored historical clause");
+  expect(await readDocumentContent(label, store, () => {}, index, searchDb.db)).toBe("Stored historical clause");
   expect(mocks.read).toHaveBeenCalledWith(expect.anything(), { userId: "actor", userEmail: "actor@example.test", documentId: "document", versionId: "history" });
   expect(mocks.download).not.toHaveBeenCalled();
 });
