@@ -4,7 +4,6 @@ import type { ApiKeyStatus } from "../api/client";
 import {
   canonicalModelId,
   isAllowedModelId,
-  isRouterModelSelected,
   type RouterSelections,
 } from "@mike/model-catalog";
 import { isModelAvailable } from "../lib/modelCatalog";

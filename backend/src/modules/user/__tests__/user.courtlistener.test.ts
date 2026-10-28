@@ -1,134 +1,88 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const store = vi.hoisted(() => ({
-    getEffectiveApiKeyStatus: vi.fn(),
-    getUserApiKeyStatus: vi.fn(),
-    loadCourtListenerConnection: vi.fn(),
-    saveCourtListenerConnection: vi.fn(),
+const mocks = vi.hoisted(() => ({
+  getOrgRole: vi.fn(),
+  resolveProviderSecret: vi.fn(),
+  courtlistenerBulkDataEnabled: vi.fn(),
+  loadCourtListenerConnection: vi.fn(),
+  saveCourtListenerConnection: vi.fn(),
 }));
-vi.mock("../user.apiKeyStore", () => store);
+vi.mock("../../lib/access", () => ({ getOrgRole: mocks.getOrgRole }));
+vi.mock("../../lib/envSecrets", () => ({ resolveProviderSecret: mocks.resolveProviderSecret }));
+vi.mock("../../lib/courtlistener", () => ({ courtlistenerBulkDataEnabled: mocks.courtlistenerBulkDataEnabled }));
+vi.mock("../user.apiKeyStore", () => ({
+  loadCourtListenerConnection: mocks.loadCourtListenerConnection,
+  saveCourtListenerConnection: mocks.saveCourtListenerConnection,
+}));
 
-import {
-    courtListenerConnectorStatus,
-    setCourtListenerEnabled,
-    setCourtListenerToken,
-} from "../user.courtlistener";
+import { courtListenerConnectorStatus, setCourtListenerEnabled, setCourtListenerToken } from "../user.courtlistener";
 
 const db = {} as never;
 const personal = { userId: "u1", orgId: null };
 const inFirm = { userId: "u1", orgId: "org-1" };
 
-const keyStatus = (source: "user" | "org" | null) => ({
-    courtlistener: source !== null,
-    sources: { courtlistener: source },
-});
-
 beforeEach(() => {
-    vi.clearAllMocks();
-    store.loadCourtListenerConnection.mockResolvedValue({ enabled: true, token: null });
-    store.getUserApiKeyStatus.mockResolvedValue(keyStatus(null));
-    store.getEffectiveApiKeyStatus.mockResolvedValue(keyStatus(null));
+  vi.clearAllMocks();
+  mocks.getOrgRole.mockResolvedValue("member");
+  mocks.resolveProviderSecret.mockResolvedValue("");
+  mocks.courtlistenerBulkDataEnabled.mockReturnValue(false);
+  mocks.loadCourtListenerConnection.mockResolvedValue({ enabled: true, token: null });
 });
-
-afterEach(() => {
-    vi.unstubAllEnvs();
-});
+afterEach(() => vi.unstubAllEnvs());
 
 describe("CourtListener connector status", () => {
-    it("reads Personal from the person's own keys", async () => {
-        store.loadCourtListenerConnection.mockResolvedValue({ enabled: false, token: "t" });
-        store.getUserApiKeyStatus.mockResolvedValue(keyStatus("user"));
-
-        expect(await courtListenerConnectorStatus(db, personal)).toEqual({
-            enabled: false,
-            installed: true,
-            ownToken: true,
-            tokenSource: "user",
-            bulkData: false,
-        });
-        expect(store.loadCourtListenerConnection).toHaveBeenCalledWith(personal, db);
-        expect(store.getEffectiveApiKeyStatus).not.toHaveBeenCalled();
+  it.each([personal, inFirm])("uses only central credentials for workspace %i", async (owner) => {
+    mocks.resolveProviderSecret.mockResolvedValue("central-token");
+    expect(await courtListenerConnectorStatus(db, owner)).toEqual({
+      enabled: true, installed: true, ownToken: false, tokenSource: "org", bulkData: false,
     });
+    expect(mocks.resolveProviderSecret).toHaveBeenCalledWith("courtlistener-api-token");
+    expect(mocks.loadCourtListenerConnection).toHaveBeenCalledWith(owner, db);
+    expect(mocks.saveCourtListenerConnection).not.toHaveBeenCalled();
+  });
 
-    it("reads an organization through its keys, which may be the organization's own", async () => {
-        store.getEffectiveApiKeyStatus.mockResolvedValue(keyStatus("org"));
-
-        expect(await courtListenerConnectorStatus(db, inFirm)).toMatchObject({
-            installed: true,
-            ownToken: false,
-            tokenSource: "org",
-        });
-        expect(store.getEffectiveApiKeyStatus).toHaveBeenCalledWith("u1", "org-1", db);
+  it("is installed by the bulk index alone when no central token is configured", async () => {
+    mocks.courtlistenerBulkDataEnabled.mockReturnValue(true);
+    expect(await courtListenerConnectorStatus(db, personal)).toMatchObject({
+      enabled: true, installed: true, ownToken: false, tokenSource: null, bulkData: true,
     });
+  });
 
-    it("is installed by the bulk index alone", async () => {
-        vi.stubEnv("COURTLISTENER_BULK_DATA_ENABLED", "true");
-        expect(await courtListenerConnectorStatus(db, inFirm)).toMatchObject({
-            installed: true,
-            tokenSource: null,
-            bulkData: true,
-        });
+  it("is not installed when enabled but neither central token nor bulk data is available", async () => {
+    expect(await courtListenerConnectorStatus(db, personal)).toMatchObject({
+      enabled: true, installed: false, ownToken: false, tokenSource: null, bulkData: false,
     });
+  });
 
-    it("goes back to Discover when switched off with nothing of the user's saved", async () => {
-        vi.stubEnv("COURTLISTENER_BULK_DATA_ENABLED", "true");
-        store.loadCourtListenerConnection.mockResolvedValue({ enabled: false, token: null });
-        expect(await courtListenerConnectorStatus(db, personal)).toMatchObject({
-            enabled: false,
-            installed: false,
-            bulkData: true,
-        });
-
-        vi.unstubAllEnvs();
-        store.getEffectiveApiKeyStatus.mockResolvedValue(keyStatus("org"));
-        expect(await courtListenerConnectorStatus(db, inFirm)).toMatchObject({
-            enabled: false,
-            installed: false,
-            tokenSource: "org",
-        });
+  it("preserves per-workspace enabled preference when centrally provisioned token is absent", async () => {
+    mocks.loadCourtListenerConnection.mockResolvedValue({ enabled: false, token: null });
+    mocks.resolveProviderSecret.mockResolvedValue("central-token");
+    expect(await courtListenerConnectorStatus(db, inFirm)).toMatchObject({
+      enabled: false, installed: false, ownToken: false, tokenSource: "org",
     });
+  });
 
-    it("stays installed while switched off when the user saved a token here", async () => {
-        store.loadCourtListenerConnection.mockResolvedValue({ enabled: false, token: "t" });
-        // Even where the organization keeps personal tokens out of play.
-        store.getEffectiveApiKeyStatus.mockResolvedValue(keyStatus(null));
-        expect(await courtListenerConnectorStatus(db, inFirm)).toMatchObject({
-            installed: true,
-            ownToken: true,
-            tokenSource: null,
-        });
-    });
-
-    it("is not installed when switched on with nothing to answer lookups", async () => {
-        expect(await courtListenerConnectorStatus(db, personal)).toMatchObject({
-            enabled: true,
-            installed: false,
-        });
-    });
+  it("rejects an organization role lookup failure", async () => {
+    mocks.getOrgRole.mockResolvedValue(null);
+    await expect(courtListenerConnectorStatus(db, inFirm)).rejects.toMatchObject({ status: 404 });
+    expect(mocks.loadCourtListenerConnection).not.toHaveBeenCalled();
+    expect(mocks.resolveProviderSecret).not.toHaveBeenCalled();
+  });
 });
 
 describe("CourtListener connector changes", () => {
-    it("saves the switch for the workspace", async () => {
-        await setCourtListenerEnabled(db, inFirm, false);
-        expect(store.saveCourtListenerConnection).toHaveBeenCalledWith(
-            inFirm,
-            { enabled: false },
-            db,
-        );
-    });
+  it("saves only the workspace enabled preference", async () => {
+    await setCourtListenerEnabled(db, inFirm, false);
+    expect(mocks.saveCourtListenerConnection).toHaveBeenCalledWith(inFirm, { enabled: false }, db);
+  });
 
-    it("turns the connector on when a token is saved, and leaves the switch when one is removed", async () => {
-        await setCourtListenerToken(db, inFirm, "  token  ");
-        expect(store.saveCourtListenerConnection).toHaveBeenLastCalledWith(
-            inFirm,
-            { token: "token", enabled: true },
-            db,
-        );
-        await setCourtListenerToken(db, inFirm, null);
-        expect(store.saveCourtListenerConnection).toHaveBeenLastCalledWith(
-            inFirm,
-            { token: null },
-            db,
-        );
+  it("refuses token writes with the managed credentials response and never saves", async () => {
+    await expect(setCourtListenerToken(db, inFirm, " token ")).rejects.toMatchObject({
+      status: 403, code: "managed_credentials",
     });
+    await expect(setCourtListenerToken(db, inFirm, null)).rejects.toMatchObject({
+      status: 403, code: "managed_credentials",
+    });
+    expect(mocks.saveCourtListenerConnection).not.toHaveBeenCalled();
+  });
 });
