@@ -208,7 +208,7 @@ export default function SettingsPage() {
                     <div className="space-y-8 p-4">
                         <div>
                             <div className="flex items-start justify-between gap-3">
-                                <FieldLabel>Display Name</FieldLabel>
+                                <FieldLabel htmlFor="profile-display-name">Display Name</FieldLabel>
                                 <span
                                     className="text-xs text-gray-400"
                                     aria-live="polite"
@@ -222,6 +222,7 @@ export default function SettingsPage() {
                             </div>
                             <div className="space-y-2">
                                 <SettingsTextInput
+                                    id="profile-display-name"
                                     type="text"
                                     value={displayName}
                                     onChange={(e) => {
