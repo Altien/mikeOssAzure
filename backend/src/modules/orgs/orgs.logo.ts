@@ -10,12 +10,45 @@ import type { Db } from "../../lib/supabase";
 import { MAX_PROFILE_IMAGE_BYTES, parseProfileImageDataUrl } from "../../lib/profileImage";
 
 export const MAX_ORG_LOGO_BYTES = MAX_PROFILE_IMAGE_BYTES;
+type LogoContentType = "image/png" | "image/jpeg" | "image/webp";
+
+// What each accepted format begins with. The declared type is the client's
+// word; these are the file's. SVG is deliberately absent: it is a document
+// that can carry script, not a picture.
+function hasLogoSignature(contentType: LogoContentType, bytes: Buffer): boolean {
+    switch (contentType) {
+        case "image/png":
+            return bytes.subarray(0, 8).equals(
+                Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+            );
+        case "image/jpeg":
+            return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+        case "image/webp":
+            return bytes.subarray(0, 4).toString("latin1") === "RIFF" &&
+                bytes.subarray(8, 12).toString("latin1") === "WEBP";
+    }
+}
+
+const DATA_URL = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/;
+const UNSUPPORTED = "The logo must be a PNG, JPEG or WebP image.";
 /** Applies shared raster size, encoding, and signature validation with logo-specific error messages. */
 export function parseOrgLogoDataUrl(value: unknown): {ok:true; contentType:"image/png"|"image/jpeg"|"image/webp"; bytes:Buffer}|{ok:false;detail:string} {
     const parsed = parseProfileImageDataUrl(value, "logo");
     return parsed.ok ? { ok:true, contentType:parsed.contentType, bytes:Buffer.from(parsed.base64,"base64") } : parsed;
 }
+function logoKey(orgId:string, objectId:string) { return `orgs/${orgId}/logos/${objectId}`; }
 
+/** Members may read; each request rechecks membership before touching private storage. */
+export async function getOrgLogo(db:Db, params:{userId:string;orgId:string}):Promise<OrgResult<{logo:{data_url:string;updated_at:string}}>> {
+  if (!await getOrgRole(params.userId,params.orgId,db)) return {ok:false,kind:"not_found"};
+  const {data,error}=await db.from("org_logos").select("object_key,content_type,updated_at").eq("org_id",params.orgId).maybeSingle();
+  if(error) return {ok:false,kind:"db_error",detail:error.message};
+  const row=data as {object_key?:string;content_type?:string;updated_at?:string}|null;
+  if(!row?.object_key || !row.content_type) return {ok:false,kind:"not_found"};
+  const bytes=await downloadFile(row.object_key);
+  if(!bytes) return {ok:false,kind:"db_error",detail:"Organization logo storage object is unavailable"};
+  return {ok:true,logo:{data_url:`data:${row.content_type};base64,${Buffer.from(bytes).toString("base64")}`,updated_at:row.updated_at??""}};
+}
 
 export async function saveOrgLogo(db:Db, params:{actorId:string;actorEmail?:string|null;orgId:string;dataUrl:unknown}):Promise<OrgResult<{logo_updated_at:string}>> {
   const role=await getOrgRole(params.actorId,params.orgId,db); if(!role) return {ok:false,kind:"not_found"}; if(!isOrgAdmin(role)) return {ok:false,kind:"forbidden"};
