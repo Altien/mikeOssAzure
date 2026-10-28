@@ -46,8 +46,8 @@ describe("runUserExport", () => {
             q: "agreement",
         }, undefined);
         expect(getUserExportStatusMock).toHaveBeenCalledTimes(2);
-        expect(getUserExportStatusMock).toHaveBeenLastCalledWith("exp-1");
-        expect(downloadUserExportMock).toHaveBeenCalledWith("exp-1");
+        expect(getUserExportStatusMock).toHaveBeenLastCalledWith("exp-1", undefined);
+        expect(downloadUserExportMock).toHaveBeenCalledWith("exp-1", undefined);
         // The download's own content-disposition wins over the status record.
         expect(filename).toBe("download.csv");
         expect(blob).toBe(downloaded);

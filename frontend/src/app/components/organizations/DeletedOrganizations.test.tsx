@@ -41,7 +41,7 @@ describe("organization recovery", () => {
     mocks.list.mockResolvedValue([]);
     await user.click(restore);
     await waitFor(() => expect(changed).toHaveBeenCalled());
-    expect(mocks.restore).toHaveBeenCalledWith("org");
+    expect(mocks.restore).toHaveBeenCalledWith("org", expect.any(Function));
     expect(mocks.refresh).toHaveBeenCalled();
     await waitFor(() =>
       expect(

@@ -52,6 +52,7 @@ describe("HistoryActorFilter", () => {
     expect(getActors).toHaveBeenLastCalledWith(
       { orgId: "org", search: "jamie", offset: 0 },
       expect.any(AbortSignal),
+      expect.any(Function),
     );
     expect(onChange).toHaveBeenCalledExactlyOnceWith(
       person("2", "Jamie Morgan"),

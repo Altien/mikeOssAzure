@@ -64,7 +64,7 @@ describe("organisation model providers", () => {
         await user.click(toggle);
         expect(body).toEqual({ enabled: false });
         await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "false"));
-        expect(within(screen.getByRole("region", { name: "Configured Providers" }))
+        expect(within(screen.getByRole("region", { name: "Saved Providers" }))
             .getByRole("button", { name: "Manage Anthropic (Claude)" })).toBeInTheDocument();
     });
 });

@@ -305,7 +305,7 @@ describe("an organization's settings belong to its workspace", () => {
     const view = renderShell();
 
     // The switch is asked for, with a notice, and nothing is shown or read.
-    expect(mocks.setWorkspace).toHaveBeenCalledExactlyOnceWith("org-1", expect.any(Function));
+    expect(mocks.setWorkspace).toHaveBeenCalledExactlyOnceWith("org-1");
     expect(mocks.showToast).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ title: "Switched to Elite Law LLP" }),
     );
@@ -333,7 +333,7 @@ describe("an organization's settings belong to its workspace", () => {
         <Section />
       </OrganizationSettingsProvider>,
     );
-    expect(mocks.setWorkspace).toHaveBeenCalledExactlyOnceWith("org-1", expect.any(Function));
+    expect(mocks.setWorkspace).toHaveBeenCalledExactlyOnceWith("org-1");
     expect(screen.queryByText(/section for/)).not.toBeInTheDocument();
     expect(mocks.getOrg).not.toHaveBeenCalled();
   });

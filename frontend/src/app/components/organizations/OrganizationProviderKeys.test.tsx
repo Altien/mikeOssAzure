@@ -55,7 +55,7 @@ describe("organization provider credentials", () => {
     fireEvent.click(await within(savedSection()).findByRole("button", { name: /OpenRouter/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Save models" }));
     expect(mocks.saveOrgRouterModels).toHaveBeenCalledWith("org-1", "openrouter", ["vendor/new"]);
-    expect(mocks.refreshOrgApiKeys).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(mocks.refreshOrgApiKeys).toHaveBeenCalledTimes(1));
   });
 
   it("explains when no central provider is configured", async () => {
