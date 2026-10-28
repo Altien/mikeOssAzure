@@ -1041,7 +1041,7 @@ describe("direct upload sessions", () => {
         installSuccessfulSessionServer({ storageUpload: async () => new Response(null, { status: ++attempts > 1 && recovers ? 200 : 503 }) });
         configureMikeApiClient({ baseUrl: "https://word-api.test", getAuthHeaders: async () => ({}), captureOwner: () => () => true, fetchImpl: (input, init) => { const url = new URL(String(input)); const apiBase = new URL(API_URL); return fetchMock(apiBase.origin + apiBase.pathname + url.pathname + url.search, init); } });
         const outcomes = await uploadWordDocuments([new File(["a"], "contract.pdf")]);
-        expect(outcomes).toMatchObject([{ status: recovers ? "completed" : "error" }]);
+        expect(outcomes, JSON.stringify(outcomes)).toMatchObject([{ status: recovers ? "completed" : "error" }]);
         expect(attempts).toBe(recovers ? 2 : 3);
         expect(reporting.reportError).toHaveBeenCalledTimes(recovers ? 0 : 1);
     });
