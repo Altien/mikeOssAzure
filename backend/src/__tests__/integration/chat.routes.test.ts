@@ -1,3 +1,4 @@
+// Dev drift: imported request cases use the canonical /api router mount.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 import { streamAiSdk } from "../../lib/llm/aiSdk";
@@ -2381,7 +2382,7 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
         mockedCreate.mockImplementation(() => db as never);
 
         const res = await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send({ ...VALID_BODY, org_id: "org-1" });
 
@@ -2399,7 +2400,7 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
         mockedCreate.mockImplementation(() => db as never);
 
         await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send({ ...VALID_BODY, model: "gpt-6-luna", org_id: "org-1" });
 
@@ -2422,7 +2423,7 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
         mockedCreate.mockImplementation(() => db as never);
 
         await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send({ ...VALID_BODY, model: "gpt-6-luna" });
 
@@ -2442,7 +2443,7 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
         mockedCreate.mockImplementation(() => db as never);
 
         await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send({ ...VALID_BODY, model: "gpt-6-luna", chat_id: "chat-1" });
 
@@ -2460,7 +2461,7 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
         mockedCreate.mockImplementation(() => db as never);
 
         await request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send({ ...VALID_BODY, model: "gpt-6-luna", chat_id: "chat-1" });
 
@@ -2643,7 +2644,7 @@ describe("chat grants, deletion and roster", () => {
             chat: { project_id: null, org_id: null }, chatGrantRole: role,
         }) as never);
         for (const body of [{ title: "Changed" }, { title: "Changed", model: "gpt-6-luna" }]) {
-            const res = await request(app).patch("/chat/chat-1").set("Authorization", "Bearer test").send(body);
+            const res = await request(app).patch("/api/chat/chat-1").set("Authorization", "Bearer test").send(body);
             expect(res.status).toBe(403);
         }
         expect(chatWrites("update")).toEqual([]);
@@ -2651,7 +2652,7 @@ describe("chat grants, deletion and roster", () => {
 
     it("refuses a project editor rename even when they created the chat", async () => {
         mockedCreate.mockImplementation(() => makeRbacDb("member", "u1") as never);
-        const res = await request(app).patch("/chat/chat-1").set("Authorization", "Bearer test").send({ title: "Changed" });
+        const res = await request(app).patch("/api/chat/chat-1").set("Authorization", "Bearer test").send({ title: "Changed" });
         expect(res.status).toBe(403);
         expect(chatWrites("update")).toEqual([]);
     });
@@ -2660,7 +2661,7 @@ describe("chat grants, deletion and roster", () => {
         mockedCreate.mockImplementation(() => makeRbacDb(null, "colleague-1", {
             chat: { project_id: null, org_id: null }, chatGrantRole: role,
         }) as never);
-        const res = await request(app).post("/chat/chat-1/leave").set("Authorization", "Bearer test")
+        const res = await request(app).post("/api/chat/chat-1/leave").set("Authorization", "Bearer test")
             .send({ email: "victim@example.com", userId: "someone-else" });
         expect(res.status).toBe(204);
         expect(rbacWrites).toEqual([expect.objectContaining({
@@ -2679,19 +2680,19 @@ describe("chat grants, deletion and roster", () => {
             { id: "project-chat", project_id: "p1", access_role: "editor" },
         ], error: null } as never);
         mockedCreate.mockImplementation(() => db as never);
-        const list = await request(app).get("/chat").set("Authorization", "Bearer test");
+        const list = await request(app).get("/api/chat").set("Authorization", "Bearer test");
         expect(list.status).toBe(200);
         expect(list.body).toMatchObject([
             { id: "chat-1", can_leave: true }, { id: "project-chat", can_leave: false },
         ]);
-        const detail = await request(app).get("/chat/chat-1").set("Authorization", "Bearer test");
+        const detail = await request(app).get("/api/chat/chat-1").set("Authorization", "Bearer test");
         expect(detail.status).toBe(200);
         expect(detail.body.chat.can_leave).toBe(true);
     });
 
     it("refuses leaving a project chat without removing membership or grants", async () => {
         mockedCreate.mockImplementation(() => makeRbacDb("member") as never);
-        const res = await request(app).post("/chat/chat-1/leave").set("Authorization", "Bearer test");
+        const res = await request(app).post("/api/chat/chat-1/leave").set("Authorization", "Bearer test");
         expect(res.status).toBe(409);
         expect(res.body.code).toBe("access_inherited");
         expect(rbacWrites).toEqual([]);
@@ -2701,14 +2702,14 @@ describe("chat grants, deletion and roster", () => {
         mockedCreate.mockImplementation(() => makeRbacDb(null, isCreator ? "u1" : "colleague-1", {
             chat: { project_id: null, org_id: null }, chatGrantRole: "owner",
         }) as never);
-        const res = await request(app).post("/chat/chat-1/leave").set("Authorization", "Bearer test");
+        const res = await request(app).post("/api/chat/chat-1/leave").set("Authorization", "Bearer test");
         expect(res.status).toBe(403);
         expect(rbacWrites).toEqual([]);
     });
 
     it("does not disclose an inaccessible chat when leaving", async () => {
         mockedCreate.mockImplementation(() => makeRbacDb(null, "colleague-1", { chat: { project_id: null, org_id: null } }) as never);
-        const res = await request(app).post("/chat/chat-1/leave").set("Authorization", "Bearer test");
+        const res = await request(app).post("/api/chat/chat-1/leave").set("Authorization", "Bearer test");
         expect(res.status).toBe(404);
         expect(rbacWrites).toEqual([]);
     });
@@ -3149,7 +3150,7 @@ describe("chat grants, deletion and roster", () => {
 
     it("lets an editor delete their own project chat", async () => {
         mockedCreate.mockImplementation(() => makeRbacDb("member", "u1") as never);
-        const res = await request(app).delete("/chat/chat-1").set("Authorization", "Bearer test");
+        const res = await request(app).delete("/api/chat/chat-1").set("Authorization", "Bearer test");
         expect(res.status).toBe(204);
     });
 
@@ -3193,7 +3194,7 @@ describe("chat grants, deletion and roster", () => {
         mockedCreate.mockImplementation(() => makeRbacDb("admin") as never);
 
         const res = await request(app)
-            .delete("/chat/chat-1")
+            .delete("/api/chat/chat-1")
             .set("Authorization", "Bearer test");
 
         expect(res.status).toBe(403);
@@ -3211,7 +3212,7 @@ describe("chat grants, deletion and roster", () => {
                     }) as never,
             );
             const res = await request(app)
-                .get("/chat/chat-1")
+                .get("/api/chat/chat-1")
                 .set("Authorization", "Bearer test");
             expect(res.status).toBe(404);
         }
@@ -3628,7 +3629,7 @@ describe("server-owned turns: resume, stop, concurrency", () => {
                 });
             });
             const firstDone = request(app)
-                .post("/chat")
+                .post("/api/chat")
                 .set("Authorization", "Bearer test")
                 .send(VALID_BODY)
                 .then((res) => res);
@@ -3687,7 +3688,7 @@ describe("server-owned turns: resume, stop, concurrency", () => {
             });
         });
         const response = request(app)
-            .post("/chat")
+            .post("/api/chat")
             .set("Authorization", "Bearer test")
             .send(VALID_BODY)
             .then((r) => r);

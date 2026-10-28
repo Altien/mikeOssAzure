@@ -1,3 +1,4 @@
+// Dev drift: imported request cases use the canonical /api router mount.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 
@@ -63,7 +64,9 @@ vi.mock("../../lib/dbq/runner", async (importOriginal) => ({
     dbJobsEnabled: () => true,
 }));
 
-import { app } from "../../app";
+// Dev drift: canonical application factory and /api router mount.
+import { buildApp } from "../../app";
+const app = buildApp();
 
 const AUTH = ["Authorization", "Bearer test"] as const;
 const lastJob = () => state.insertedJobs.at(-1) as {
@@ -81,7 +84,7 @@ describe("workspace exports", () => {
     it.each(["account", "chats", "tabular-reviews", "memory-zip"])(
         "%s covers Personal when no workspace is named",
         async (type) => {
-            const res = await request(app).post("/user/exports").set(...AUTH).send({ type });
+            const res = await request(app).post("/api/user/exports").set(...AUTH).send({ type });
 
             expect(res.status).toBe(202);
             expect(lastJob().payload.orgId).toBeNull();
@@ -94,7 +97,7 @@ describe("workspace exports", () => {
         state.organization = { kind: "team", allow_member_exports: true };
 
         const res = await request(app)
-            .post("/user/exports")
+            .post("/api/user/exports")
             .set(...AUTH)
             .send({ type: "chats", params: { workspace: ORG_ID } });
 
@@ -108,7 +111,7 @@ describe("workspace exports", () => {
         state.membership = { org_id: ORG_ID, role: "admin" };
 
         const res = await request(app)
-            .post("/user/exports")
+            .post("/api/user/exports")
             .set(...AUTH)
             .send({ type: "account", params: { workspace: ORG_ID } });
 
@@ -121,7 +124,7 @@ describe("workspace exports", () => {
         state.membership = { org_id: ORG_ID, role: "owner" };
 
         const res = await request(app)
-            .post("/user/exports")
+            .post("/api/user/exports")
             .set(...AUTH)
             .send({ type: "memory-zip", params: { workspace: ORG_ID } });
 
@@ -131,7 +134,7 @@ describe("workspace exports", () => {
 
     it("answers a workspace the caller is not in as not found", async () => {
         const res = await request(app)
-            .post("/user/exports")
+            .post("/api/user/exports")
             .set(...AUTH)
             .send({ type: "account", params: { workspace: ORG_ID } });
 
@@ -142,7 +145,7 @@ describe("workspace exports", () => {
 
     it("leaves the document and audit exports as they were", async () => {
         const res = await request(app)
-            .post("/user/exports")
+            .post("/api/user/exports")
             .set(...AUTH)
             .send({ type: "documents-zip", params: { document_ids: ["d1"], workspace: ORG_ID } });
 

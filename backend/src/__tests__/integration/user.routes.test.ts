@@ -1,3 +1,4 @@
+// Dev drift: imported request cases use the canonical /api router mount.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // The data-deletion limiter counts every DELETE in this file, and the
@@ -371,13 +372,13 @@ describe("user.routes", () => {
         const photo = "data:image/png;base64,iVBORw0KGgo=";
         it("saves, serializes and removes the caller's photo", async () => {
             supabaseState.tables.user_profiles = { data: { ...profileRow(), profile_photo: photo }, error: null };
-            const saved = await request(app).put("/user/profile/photo").set(...AUTH).send({ data_url: photo, user_id: "another-user" });
+            const saved = await request(app).put("/api/user/profile/photo").set(...AUTH).send({ data_url: photo, user_id: "another-user" });
             expect(saved.status).toBe(200);
             expect(saved.body).toEqual({ profilePhoto: photo });
             expect(saved.headers["cache-control"]).toBe("private, no-store");
-            const loaded = await request(app).get("/user/profile").set(...AUTH);
+            const loaded = await request(app).get("/api/user/profile").set(...AUTH);
             expect(loaded.body.profilePhoto).toBe(photo);
-            const removed = await request(app).delete("/user/profile/photo").set(...AUTH);
+            const removed = await request(app).delete("/api/user/profile/photo").set(...AUTH);
             expect(removed.status).toBe(200);
             expect(removed.body).toEqual({ profilePhoto: null });
         });
@@ -392,7 +393,7 @@ describe("user.routes", () => {
             supabaseState.tables.user_profiles = {
                 data: { ...profileRow(), profile_photo: photo }, error: null,
             };
-            const res = await request(app).get("/user/profile").set(...AUTH);
+            const res = await request(app).get("/api/user/profile").set(...AUTH);
             expect(res.status).toBe(200);
             expect(res.body.profilePhoto).toBe(photo);
             // The mock returns the seeded row; also assert the successful query
@@ -404,7 +405,7 @@ describe("user.routes", () => {
         it("keeps profiles readable when both a preference and the photo column are absent", async () => {
             supabaseState.missingColumns = ["memory_curator_model", "profile_photo"];
             supabaseState.tables.user_profiles = { data: profileRow(), error: null };
-            const res = await request(app).get("/user/profile").set(...AUTH);
+            const res = await request(app).get("/api/user/profile").set(...AUTH);
             expect(res.status).toBe(200);
             expect(res.body).toMatchObject({ displayName: "Ada", profilePhoto: null });
             const columns = supabaseState.selects.user_profiles.at(-1)?.split(/,\s*/);
@@ -413,7 +414,7 @@ describe("user.routes", () => {
         });
         it("rejects non-raster and missing data", async () => {
             for (const data_url of [undefined, "data:image/svg+xml;base64,PHN2Zy8+", "data:image/png;base64,PHN2Zy8+"]) {
-                const res = await request(app).put("/user/profile/photo").set(...AUTH).send({ data_url });
+                const res = await request(app).put("/api/user/profile/photo").set(...AUTH).send({ data_url });
                 expect(res.status).toBe(400);
             }
             expect(supabaseState.updates.user_profiles).toBeUndefined();
@@ -421,7 +422,7 @@ describe("user.routes", () => {
         it("keeps older profiles readable before the migration", async () => {
             supabaseState.missingColumns = ["profile_photo"];
             supabaseState.tables.user_profiles = { data: profileRow(), error: null };
-            const res = await request(app).get("/user/profile").set(...AUTH);
+            const res = await request(app).get("/api/user/profile").set(...AUTH);
             expect(res.status).toBe(200);
             expect(res.body).toMatchObject({ displayName: "Ada", profilePhoto: null });
         });
@@ -440,7 +441,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .get("/user/lookup")
+                .get("/api/user/lookup")
                 .query({ email: "ALICE@example.com" })
                 .set(...AUTH);
 
@@ -716,7 +717,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .patch("/user/profile")
+                .patch("/api/user/profile")
                 .set(...AUTH)
                 .send({ responseDetailsVisible: true });
 
@@ -729,7 +730,7 @@ describe("user.routes", () => {
 
         it("rejects a non-boolean response details preference", async () => {
             const res = await request(app)
-                .patch("/user/profile")
+                .patch("/api/user/profile")
                 .set(...AUTH)
                 .send({ responseDetailsVisible: "yes" });
 
@@ -750,7 +751,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .get("/user/profile")
+                .get("/api/user/profile")
                 .set(...AUTH);
 
             expect(res.status).toBe(200);
@@ -1429,7 +1430,7 @@ describe("user.routes", () => {
             supabaseState.tables.db_jobs = { data: null, error: cause };
 
             const res = await request(app)
-                .post("/user/exports")
+                .post("/api/user/exports")
                 .set(...AUTH)
                 .send({ type: "account" });
 
@@ -1461,7 +1462,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .get("/user/integrations/google-drive")
+                .get("/api/user/integrations/google-drive")
                 .set(...AUTH);
 
             expect(res.status).toBe(500);
@@ -1590,7 +1591,7 @@ describe("user.routes", () => {
             };
 
             const res = await request(app)
-                .delete(`/user/chats?workspace=${ORG_ID}`)
+                .delete(`/api/user/chats?workspace=${ORG_ID}`)
                 .set(...AUTH);
 
             expect(res.status).toBe(204);
@@ -1616,7 +1617,7 @@ describe("user.routes", () => {
 
         it("DELETE /user/chats refuses a malformed workspace", async () => {
             const res = await request(app)
-                .delete("/user/chats?workspace=everything")
+                .delete("/api/user/chats?workspace=everything")
                 .set(...AUTH);
 
             expect(res.status).toBe(400);

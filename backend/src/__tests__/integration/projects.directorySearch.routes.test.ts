@@ -1,3 +1,4 @@
+// Dev drift: imported request cases use the canonical /api router mount.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
 
@@ -315,7 +316,7 @@ describe("GET /projects?view=directory-search", () => {
         const searchIn = (workspace: string) =>
             request(app)
                 .get(
-                    `/projects?view=directory-search&search=Matter&workspace=${workspace}`,
+                    `/api/projects?view=directory-search&search=Matter&workspace=${workspace}`,
                 )
                 .set(...AUTH);
         const ids = (res: { body: { id: string }[] }) =>

@@ -1,3 +1,4 @@
+// Dev drift: imported request cases use the canonical /api router mount.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
 import {
@@ -322,7 +323,7 @@ describe("workflows.routes", () => {
             db.rpc = vi.fn((name: string, args: Record<string, unknown>) => name === "get_workflows_overview" ? overview(name, args) : Promise.resolve({ data: null, error: null })) as typeof db.rpc;
             return db as unknown as Db;
         });
-        const res = await request(app).get("/workflows?workspace=personal&type=tabular").set(...AUTH);
+        const res = await request(app).get("/api/workflows?workspace=personal&type=tabular").set(...AUTH);
         expect(res.status).toBe(200);
         expect(res.body).toEqual([expect.objectContaining({ skill_md: workflow.prompt_md, columns_config: workflow.columns_config })]);
         expect(overview.mock.calls[0][1]).toMatchObject({ p_workspace: "personal", p_type: "tabular" });
@@ -1058,7 +1059,7 @@ describe("workflows.routes", () => {
       vi.mocked(createServerSupabase).mockImplementationOnce(() => db);
 
       const res = await request(app)
-        .post("/workflows/w-org/assets/from-documents")
+        .post("/api/workflows/w-org/assets/from-documents")
         .set(...AUTH)
         .send({ document_ids: [DOC_ID] });
 

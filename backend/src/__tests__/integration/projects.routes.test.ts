@@ -1,3 +1,4 @@
+// Dev drift: imported request cases use the canonical /api router mount.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
 import {
@@ -238,14 +239,14 @@ describe("projects.routes", () => {
                 data: ["shared-private", ...(orgRole === "admin" ? ["shared-public"] : [])].map(project_id => ({ project_id })),
                 error: null,
             };
-            const picker = await request(app).get(`/projects?participating=true&workspace=${orgId}`).set(...AUTH);
+            const picker = await request(app).get(`/api/projects?participating=true&workspace=${orgId}`).set(...AUTH);
             expect(picker.status).toBe(200);
             expect(picker.body.map((p: { id: string }) => p.id)).toEqual([
                 "created-public", "created-private", "shared-private",
                 ...(orgRole === "admin" ? ["shared-public"] : []),
             ]);
             expect(supabaseState.rpcCalls[0]).toEqual({ fn: "get_projects_overview", args: { p_user_id: "u1", p_user_email: "u1@test.local" } });
-            const overview = await request(app).get("/projects").set(...AUTH);
+            const overview = await request(app).get("/api/projects").set(...AUTH);
             expect(overview.status).toBe(200);
             expect(overview.body.map((p: { id: string }) => p.id)).toEqual([...projects, otherWorkspace, personal].map(p => p.id));
         });
@@ -290,11 +291,11 @@ describe("projects.routes", () => {
                 data: [{ user_id: "u2", display_name: "Ada", profile_photo: "data:image/png;base64,AAAA" }],
                 error: null,
             };
-            const overview = await request(app).get("/projects?limit=20").set(...AUTH);
+            const overview = await request(app).get("/api/projects?limit=20").set(...AUTH);
             expect(overview.status).toBe(200);
             expect(overview.body[0].owner_profile_photo).toBe("data:image/png;base64,AAAA");
 
-            const picker = await request(app).get("/projects").set(...AUTH);
+            const picker = await request(app).get("/api/projects").set(...AUTH);
             expect(picker.status).toBe(200);
             expect(picker.body[0]).not.toHaveProperty("owner_profile_photo");
         });
@@ -647,7 +648,7 @@ describe("projects.routes", () => {
       );
 
       const res = await request(app)
-        .get("/projects?view=directory-search&search=Matter")
+        .get("/api/projects?view=directory-search&search=Matter")
         .set(...AUTH);
 
       expect(res.status).toBe(200);
@@ -669,7 +670,7 @@ describe("projects.routes", () => {
         );
 
         const res = await request(app)
-          .get("/projects?view=directory-search&search=Matter")
+          .get("/api/projects?view=directory-search&search=Matter")
           .set(...AUTH);
 
         expect(res.status).toBe(200);
@@ -689,7 +690,7 @@ describe("projects.routes", () => {
       );
 
       const res = await request(app)
-        .get("/projects?view=directory-search&search=Matter")
+        .get("/api/projects?view=directory-search&search=Matter")
         .set(...AUTH);
 
       expect(res.status).toBe(200);
@@ -708,7 +709,7 @@ describe("projects.routes", () => {
       );
 
       const res = await request(app)
-        .get("/projects?view=directory-search&search=Matter")
+        .get("/api/projects?view=directory-search&search=Matter")
         .set(...AUTH);
 
       expect(res.status).toBe(200);
@@ -729,7 +730,7 @@ describe("projects.routes", () => {
         );
 
         const res = await request(app)
-          .get("/projects?view=directory-search&search=Matter")
+          .get("/api/projects?view=directory-search&search=Matter")
           .set(...AUTH);
 
         expect(res.status).toBe(200);
@@ -800,7 +801,7 @@ describe("projects.routes", () => {
       };
       supabaseState.tables.project_org_access_overrides = { data: [], error: null };
       const res = await request(app)
-        .get(`/projects?participating=true&workspace=${workspace}`)
+        .get(`/api/projects?participating=true&workspace=${workspace}`)
         .set(...AUTH);
       expect(res.status).toBe(200);
       expect(res.body.map((p: { id: string }) => p.id)).toEqual(
@@ -853,7 +854,7 @@ describe("projects.routes", () => {
       };
       const captured = captureRpcArgs();
       const res = await request(app)
-        .get(`/projects?limit=20&workspace=${ORG}`)
+        .get(`/api/projects?limit=20&workspace=${ORG}`)
         .set(...AUTH);
       expect(res.status).toBe(200);
       expect(captured.args).toMatchObject({ p_workspace: ORG });
@@ -865,7 +866,7 @@ describe("projects.routes", () => {
       // every workspace's projects.
       const captured = captureRpcArgs();
       const res = await request(app)
-        .get("/projects?workspace=personal")
+        .get("/api/projects?workspace=personal")
         .set(...AUTH);
       expect(res.status).toBe(200);
       expect(captured.args).toMatchObject({
@@ -900,7 +901,7 @@ describe("projects.routes", () => {
     it("400s a workspace that is neither 'personal' nor an id", async () => {
       const captured = captureRpcArgs();
       const res = await request(app)
-        .get("/projects?limit=20&workspace=everything")
+        .get("/api/projects?limit=20&workspace=everything")
         .set(...AUTH);
       expect(res.status).toBe(400);
       expect(res.body.detail).toBe(
@@ -1498,7 +1499,7 @@ describe("projects.routes", () => {
             };
 
             const res = await request(app)
-                .get("/projects/p1")
+                .get("/api/projects/p1")
                 .set(...AUTH);
 
             const creator = { owner_display_name: "Ada", owner_profile_photo: "data:image/png;base64,AAAA" };
@@ -1771,7 +1772,7 @@ describe("projects.routes", () => {
             });
 
             const res = await request(app)
-                .get("/projects/p1/chats")
+                .get("/api/projects/p1/chats")
                 .set(...AUTH);
 
             expect(

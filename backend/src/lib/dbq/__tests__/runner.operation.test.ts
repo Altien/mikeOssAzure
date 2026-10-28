@@ -20,14 +20,19 @@ it.each(["future.kind", "storage.cleanup"])("isolates an unknown %s job's dispat
   resetSentryForTests("official", { initialized: true });
   vi.spyOn(console, "error").mockImplementation(() => {});
   const updates: Array<Record<string, unknown>> = [];
-  const query = { eq: () => query, then: (done: (result: unknown) => unknown) => Promise.resolve({ error: null }).then(done) };
-  const db = { from: () => ({ update: (payload: Record<string, unknown>) => { updates.push(payload); return query; } }) };
-  const job = { id: "job-1", kind, attempts: 1, max_attempts: 3, claimed_at: "2026-10-26T00:00:00Z" } as DbJob;
+  // Dev drift: terminal state publication uses the canonical live-claim RPC.
+  const db = { rpc: vi.fn(async (name: string, payload: Record<string, unknown>) => {
+    expect(name).toBe("finish_db_job");
+    expect(payload).toMatchObject({ p_id: "job-1", p_attempts: 1, p_claim_token: "claim-1" });
+    updates.push(payload);
+    return { data: true, error: null };
+  }) };
+  const job = { id: "job-1", kind, attempts: 1, max_attempts: 3, claim_token: "claim-1", claimed_at: "2026-10-26T00:00:00Z" } as DbJob;
   await Sentry.withIsolationScope(async () => {
     Sentry.getIsolationScope().setTag("operation", "chat.turn");
     await processClaimedJob(db as never, {}, job);
     expect(captured).toEqual([{ operation: "jobs.dispatch" }]);
     expect(Sentry.getIsolationScope().getScopeData().tags.operation).toBe("chat.turn");
   });
-  expect(updates[0]?.status).toBe(kind === "storage.cleanup" ? "pending" : "failed");
+  expect(updates[0]?.p_status).toBe(kind === "storage.cleanup" ? "pending" : "failed");
 });

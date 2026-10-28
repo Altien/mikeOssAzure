@@ -16,6 +16,9 @@ const { readEncryptedApiKeysMock, createServerSupabaseMock } = vi.hoisted(() => 
 // upsertUserProfile lives in lib/userLookup.
 vi.mock("../modules/user/user.apiKeyStore", () => ({
   getOrganisationApiKeys: readEncryptedApiKeysMock,
+  // Dev drift: settings load credentials and router lists for the effective workspace.
+  getEffectiveApiKeys: readEncryptedApiKeysMock,
+  loadCourtListenerConnection: vi.fn(async () => ({ enabled: true, token: null })),
 }));
 
 vi.mock("./supabase", () => ({
@@ -40,6 +43,7 @@ import { upsertUserProfile } from "./userLookup";
 vi.mock("./routerModels", async () => ({
   ...(await vi.importActual<typeof import("./routerModels")>("./routerModels")),
   getAllUserRouterModels: vi.fn(async () => ({ openrouter: [], vercel: [], "opencode-go": [] })),
+  getEffectiveRouterModels: (...args: unknown[]) => getAllUserRouterModels(...args as Parameters<typeof getAllUserRouterModels>),
 }));
 import { getAllUserRouterModels } from "./routerModels";
 
