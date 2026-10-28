@@ -69,6 +69,8 @@ const app = express();
 app.use("/api/models", modelsRouter);
 
 describe("GET /api/models/openrouter", () => {
+    // Dev drift: restore the configured-model environment after each case.
+    const originalConfig = process.env.MIKE_MODEL_CONFIG_JSON;
     beforeEach(() => {
         getUserApiKeys.mockResolvedValue({ openai: "user-openai-key" });
         process.env.MIKE_MODEL_CONFIG_JSON = JSON.stringify({
@@ -111,7 +113,7 @@ describe("GET /api/models/openrouter", () => {
     });
 
     it("returns only usable models without exposing endpoint credentials", async () => {
-        const response = await request(app).get("/models/configured");
+        const response = await request(app).get("/api/models/configured");
 
         expect(response.status).toBe(200);
         expect(response.body.models).toEqual([
@@ -166,7 +168,7 @@ describe("catalogs for an organization workspace", () => {
         const fetchMock = stubCatalog();
 
         const response = await request(app).get(
-            `/models/openrouter?workspace=${ORG}`,
+            `/api/models/openrouter?workspace=${ORG}`,
         );
 
         expect(response.status).toBe(200);
@@ -181,7 +183,7 @@ describe("catalogs for an organization workspace", () => {
         for (const query of ["", "?workspace=personal"]) {
             fetchMock.mockClear();
             const response = await request(app).get(
-                `/models/openrouter${query}`,
+                `/api/models/openrouter${query}`,
             );
             expect(response.status).toBe(200);
             expect(sentKey(fetchMock)).toContain("or-user-key");
@@ -194,7 +196,7 @@ describe("catalogs for an organization workspace", () => {
         memberOf.ids = [];
 
         const response = await request(app).get(
-            `/models/openrouter?workspace=${ORG}`,
+            `/api/models/openrouter?workspace=${ORG}`,
         );
 
         expect(response.status).toBe(404);
@@ -207,7 +209,7 @@ describe("catalogs for an organization workspace", () => {
         const fetchMock = stubCatalog();
 
         const response = await request(app).get(
-            "/models/openrouter?workspace=not-an-id",
+            "/api/models/openrouter?workspace=not-an-id",
         );
 
         expect(response.status).toBe(400);
@@ -549,7 +551,7 @@ describe("GET /models/bedrock", () => {
         ], nextToken: "next+page" })).mockResolvedValueOnce(Response.json({ inferenceProfileSummaries: [
             { inferenceProfileId: "us.chat", inferenceProfileName: "Cross-region Chat", status: "ACTIVE", models: [{ modelArn: arn }] },
         ] }));
-        const response = await request(app).get("/models/bedrock");
+        const response = await request(app).get("/api/models/bedrock");
         expect(response.status).toBe(200);
         expect(response.body.models).toEqual([{ id: "test.chat-v1", label: "Chat" }, { id: "us.chat", label: "Cross-region Chat" }]);
         expect(fetchMock.mock.calls[0][0]).toBe("https://bedrock.us-east-1.amazonaws.com/foundation-models?byOutputModality=TEXT");
@@ -561,14 +563,14 @@ describe("GET /models/bedrock", () => {
 
     it("requires a saved region and never sends an invalid region upstream", async () => {
         getUserApiKeys.mockResolvedValue({ bedrock: "private-key", providerSettings: { bedrock: { region: "evil.example/path" } } });
-        const response = await request(app).get("/models/bedrock");
+        const response = await request(app).get("/api/models/bedrock");
         expect(response.status).toBe(422);
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it("returns a safe failure for provider permission errors", async () => {
         fetchMock.mockResolvedValue(new Response("private-key internal detail", { status: 403 }));
-        const response = await request(app).get("/models/bedrock");
+        const response = await request(app).get("/api/models/bedrock");
         expect(response.status).toBe(502);
         expect(JSON.stringify(response.body)).not.toContain("private-key");
     });
@@ -588,7 +590,7 @@ describe("GET /models/bedrock", () => {
             { inferenceProfileId: "a1b2c3d4e5f6", inferenceProfileArn: operatorArn, inferenceProfileName: "Acme litigation team", type: "APPLICATION", status: "ACTIVE", models: [{ modelArn: arn }] },
             { inferenceProfileId: operatorArn, inferenceProfileName: "Acme by ARN", status: "ACTIVE", models: [{ modelArn: arn }] },
         ] }));
-        const response = await request(app).get("/models/bedrock");
+        const response = await request(app).get("/api/models/bedrock");
         vi.unstubAllEnvs();
         expect(response.status).toBe(200);
         expect(response.body.models).toEqual([{ id: "test.chat-v1", label: "Chat" }, { id: "us.chat", label: "Cross-region Chat" }]);
@@ -602,14 +604,14 @@ describe("GET /models/bedrock", () => {
         ] })).mockResolvedValueOnce(Response.json({ inferenceProfileSummaries: [
             { inferenceProfileId: "own", inferenceProfileArn: ownArn, inferenceProfileName: "My profile", type: "APPLICATION", status: "ACTIVE", models: [{ modelArn: arn }] },
         ] }));
-        const response = await request(app).get("/models/bedrock");
+        const response = await request(app).get("/api/models/bedrock");
         expect(response.body.models).toContainEqual({ id: "own", label: "My profile" });
     });
 
     it("rejects repeated pagination tokens instead of hanging", async () => {
         fetchMock.mockResolvedValueOnce(Response.json({ modelSummaries: [] }))
             .mockResolvedValue(Response.json({ inferenceProfileSummaries: [], nextToken: "repeat" }));
-        const response = await request(app).get("/models/bedrock");
+        const response = await request(app).get("/api/models/bedrock");
         expect(response.status).toBe(502);
         expect(fetchMock).toHaveBeenCalledTimes(3);
     });
@@ -634,7 +636,7 @@ describe("GET /models/xai", () => {
             { id: 7 },
             { id: "grok-4.3" },
         ] }));
-        const response = await request(app).get("/models/xai");
+        const response = await request(app).get("/api/models/xai");
         expect(response.status).toBe(200);
         expect(response.body.models).toEqual([
             { id: "grok-4.20-0309-reasoning", label: "grok-4.20-0309-reasoning" },
@@ -647,11 +649,11 @@ describe("GET /models/xai", () => {
 
     it("answers 422 without a key and a safe 502 when xAI fails", async () => {
         getUserApiKeys.mockResolvedValueOnce({});
-        expect((await request(app).get("/models/xai")).status).toBe(422);
+        expect((await request(app).get("/api/models/xai")).status).toBe(422);
         expect(fetchMock).not.toHaveBeenCalled();
 
         fetchMock.mockResolvedValue(new Response("private-key internal detail", { status: 401 }));
-        const failed = await request(app).get("/models/xai");
+        const failed = await request(app).get("/api/models/xai");
         expect(failed.status).toBe(502);
         expect(JSON.stringify(failed.body)).not.toContain("private-key");
     });
@@ -670,7 +672,7 @@ describe("GET /models/custom", () => {
 
     it("reads the endpoint's model list through the guarded fetch only", async () => {
         guardedFetch.mockResolvedValue(Response.json({ data: [{ id: "llama-4-70b" }, { id: "deepseek/deepseek-v4" }] }));
-        const response = await request(app).get("/models/custom");
+        const response = await request(app).get("/api/models/custom");
         expect(response.status).toBe(200);
         expect(response.body.models).toEqual([
             { id: "deepseek/deepseek-v4", label: "deepseek/deepseek-v4" },
@@ -683,19 +685,19 @@ describe("GET /models/custom", () => {
 
     it("never calls a saved base URL that is not public https", async () => {
         getUserApiKeys.mockResolvedValue({ custom: "private-key", providerSettings: { custom: { baseUrl: "https://169.254.169.254/latest" } } });
-        const response = await request(app).get("/models/custom");
+        const response = await request(app).get("/api/models/custom");
         expect(response.status).toBe(422);
         expect(guardedFetch).not.toHaveBeenCalled();
     });
 
     it("returns a safe failure when the endpoint has no model list or is blocked", async () => {
         guardedFetch.mockResolvedValueOnce(new Response("private-key <html>not found</html>", { status: 404 }));
-        const missing = await request(app).get("/models/custom");
+        const missing = await request(app).get("/api/models/custom");
         expect(missing.status).toBe(502);
         expect(JSON.stringify(missing.body)).not.toContain("private-key");
 
         guardedFetch.mockRejectedValueOnce(new Error("MCP server URL resolves to a blocked network address."));
-        const blocked = await request(app).get("/models/custom");
+        const blocked = await request(app).get("/api/models/custom");
         expect(blocked.status).toBe(502);
         expect(JSON.stringify(blocked.body)).not.toContain("blocked network");
     });

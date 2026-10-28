@@ -43,9 +43,12 @@ import { upsertUserProfile } from "./userLookup";
 vi.mock("./routerModels", async () => ({
   ...(await vi.importActual<typeof import("./routerModels")>("./routerModels")),
   getAllUserRouterModels: vi.fn(async () => ({ openrouter: [], vercel: [], "opencode-go": [] })),
-  getEffectiveRouterModels: (...args: unknown[]) => getAllUserRouterModels(...args as Parameters<typeof getAllUserRouterModels>),
+  getEffectiveRouterModels: async (...args: unknown[]) => ({
+    ...Object.fromEntries(ROUTER_SLUGS.map(slug => [slug, []])),
+    ...await getAllUserRouterModels(...args as Parameters<typeof getAllUserRouterModels>),
+  }),
 }));
-import { getAllUserRouterModels } from "./routerModels";
+import { getAllUserRouterModels, ROUTER_SLUGS } from "./routerModels";
 
 /**
  * Tiny chainable fake for the two-phase upsertUserProfile flow and the

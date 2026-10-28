@@ -815,10 +815,10 @@ describe("projects.routes", () => {
     });
 
     it.each([
-      ["/projects?limit=20", "get_projects_overview"],
-      ["/projects?view=summary", "get_project_summaries"],
-      ["/projects/ids", "get_project_ids_overview"],
-      ["/projects/filter-options", "get_project_filter_options"],
+      ["/api/projects?limit=20", "get_projects_overview"],
+      ["/api/projects?view=summary", "get_project_summaries"],
+      ["/api/projects/ids", "get_project_ids_overview"],
+      ["/api/projects/filter-options", "get_project_filter_options"],
     ])("calls %s without a workspace exactly as before", async (path, rpc) => {
       const captured = captureRpcArgs();
       const res = await request(app)
@@ -830,11 +830,11 @@ describe("projects.routes", () => {
     });
 
     it.each([
-      ["/projects?limit=20&workspace=personal", "get_projects_overview"],
-      ["/projects?view=summary&workspace=personal", "get_project_summaries"],
-      ["/projects/ids?workspace=personal", "get_project_ids_overview"],
+      ["/api/projects?limit=20&workspace=personal", "get_projects_overview"],
+      ["/api/projects?view=summary&workspace=personal", "get_project_summaries"],
+      ["/api/projects/ids?workspace=personal", "get_project_ids_overview"],
       [
-        "/projects/filter-options?workspace=personal",
+        "/api/projects/filter-options?workspace=personal",
         "get_project_filter_options",
       ],
     ])("narrows %s to personal content", async (path, rpc) => {
@@ -876,11 +876,11 @@ describe("projects.routes", () => {
     });
 
     it.each([
-      "/projects?limit=20",
-      "/projects?participating=true",
-      "/projects?view=summary",
-      "/projects/ids",
-      "/projects/filter-options",
+      "/api/projects?limit=20",
+      "/api/projects?participating=true",
+      "/api/projects?view=summary",
+      "/api/projects/ids",
+      "/api/projects/filter-options",
     ])(
       "404s %s for an organization the caller is not in, without listing anything",
       async (path) => {

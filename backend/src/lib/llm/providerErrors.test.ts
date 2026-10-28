@@ -1,3 +1,4 @@
+import { diagnosticErrorTags } from "../observability/sentryPrivacy";
 import { AppError } from "../appError";
 import { describe, expect, it } from "vitest";
 import { UserFacingError } from "../safeError";

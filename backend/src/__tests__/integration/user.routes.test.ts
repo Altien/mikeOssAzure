@@ -1448,7 +1448,7 @@ describe("user.routes", () => {
             expect((failure.cause as AppError).kind).toBe("dbq.enqueue_failed");
             expect((failure.cause as AppError).cause).toBe(cause);
             expect(reportError.mock.calls[0]?.[1]).toMatchObject({
-                tags: { http_route: "/user/exports", http_status: 500 },
+                tags: { http_route: "/api/user/exports", http_status: 500 },
             });
         });
     });
@@ -1472,7 +1472,7 @@ describe("user.routes", () => {
             expect(failure.kind).toBe("db.query_failed");
             expect(failure.cause).toBe(cause);
             expect(reportError.mock.calls[0]?.[1]).toMatchObject({
-                tags: { http_route: "/user/integrations/google-drive", http_status: 500 },
+                tags: { http_route: "/api/user/integrations/google-drive", http_status: 500 },
             });
         });
     });
@@ -1533,10 +1533,10 @@ describe("user.routes", () => {
         });
 
         it.each([
-            ["/user/chats", () => deleteAllUserChats],
-            ["/user/projects", () => deleteUserProjects],
-            ["/user/tabular-reviews", () => deleteAllUserTabularReviews],
-            ["/user/memories", () => deleteUserPrivateMemories],
+            ["/api/user/chats", () => deleteAllUserChats],
+            ["/api/user/projects", () => deleteUserProjects],
+            ["/api/user/tabular-reviews", () => deleteAllUserTabularReviews],
+            ["/api/user/memories", () => deleteUserPrivateMemories],
         ] as const)("DELETE %s deletes in the organization workspace named", async (path, helper) => {
             // A member, in an organization whose owners allow bulk deletes.
             supabaseState.tables.org_members = {
@@ -1557,10 +1557,10 @@ describe("user.routes", () => {
         });
 
         it.each([
-            ["/user/chats", () => deleteAllUserChats],
-            ["/user/projects", () => deleteUserProjects],
-            ["/user/tabular-reviews", () => deleteAllUserTabularReviews],
-            ["/user/memories", () => deleteUserPrivateMemories],
+            ["/api/user/chats", () => deleteAllUserChats],
+            ["/api/user/projects", () => deleteUserProjects],
+            ["/api/user/tabular-reviews", () => deleteAllUserTabularReviews],
+            ["/api/user/memories", () => deleteUserPrivateMemories],
         ] as const)("DELETE %s refuses a member when the organization has not allowed it", async (path, helper) => {
             supabaseState.tables.org_members = {
                 data: { org_id: ORG_ID, role: "admin" },
@@ -1599,10 +1599,10 @@ describe("user.routes", () => {
         });
 
         it.each([
-            ["/user/chats", () => deleteAllUserChats],
-            ["/user/projects", () => deleteUserProjects],
-            ["/user/tabular-reviews", () => deleteAllUserTabularReviews],
-            ["/user/memories", () => deleteUserPrivateMemories],
+            ["/api/user/chats", () => deleteAllUserChats],
+            ["/api/user/projects", () => deleteUserProjects],
+            ["/api/user/tabular-reviews", () => deleteAllUserTabularReviews],
+            ["/api/user/memories", () => deleteUserPrivateMemories],
         ] as const)("DELETE %s deletes nothing in a workspace the caller is not in", async (path, helper) => {
             supabaseState.tables.org_members = { data: null, error: null };
 
