@@ -11,6 +11,19 @@ import {
     LibraryWorkspaceLayout,
 } from "./LibraryWorkspace";
 
+// Controlled authenticated owner for this unit harness; keep the real owner hooks.
+const authenticatedOwner = vi.hoisted(() => ({
+  user: { id: "u1", email: "owner@example.com", pendingEmail: null, createdWithGoogle: false },
+  isAuthenticated: true, authLoading: false, authError: null,
+  signOut: vi.fn(async () => {}), signInLocal: vi.fn(async () => {}),
+  getAccessToken: vi.fn(async () => "test-token"), updateEmail: vi.fn(), setPassword: vi.fn(async () => {}),
+  refreshSession: vi.fn(async () => null), retrySession: vi.fn(async () => null),
+}));
+vi.mock("@/app/contexts/AuthContext", async (original) => ({
+  ...(await original<typeof import("@/app/contexts/AuthContext")>()),
+  useAuth: () => authenticatedOwner,
+}));
+
 vi.mock("next/navigation", () => ({
     useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));

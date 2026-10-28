@@ -15,6 +15,19 @@ import type {
 } from "@/app/components/shared/types";
 import { ProjectExplorer, type ProjectExplorerHandle } from "./ProjectExplorer";
 
+// Controlled authenticated owner for this unit harness; keep the real owner hooks.
+const authenticatedOwner = vi.hoisted(() => ({
+  user: { id: "u1", email: "owner@example.com", pendingEmail: null, createdWithGoogle: false },
+  isAuthenticated: true, authLoading: false, authError: null,
+  signOut: vi.fn(async () => {}), signInLocal: vi.fn(async () => {}),
+  getAccessToken: vi.fn(async () => "test-token"), updateEmail: vi.fn(), setPassword: vi.fn(async () => {}),
+  refreshSession: vi.fn(async () => null), retrySession: vi.fn(async () => null),
+}));
+vi.mock("@/app/contexts/AuthContext", async (original) => ({
+  ...(await original<typeof import("@/app/contexts/AuthContext")>()),
+  useAuth: () => authenticatedOwner,
+}));
+
 afterEach(() => {
     if (vi.isFakeTimers()) vi.runOnlyPendingTimers();
     vi.useRealTimers();

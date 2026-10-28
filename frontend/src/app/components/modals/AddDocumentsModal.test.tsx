@@ -4,6 +4,19 @@ import { addDocumentToProject, getProject } from "@/app/lib/mikeApi";
 import { ToastViewportUI, clearToasts } from "@/shared/ui/ToastUI";
 
 const scope = vi.hoisted(() => ({ accountId: "u1", workspace: "personal" }));
+// Controlled authenticated owner for this unit harness; keep the real owner hooks.
+const authenticatedOwner = vi.hoisted(() => ({
+  user: { id: "u1", email: "owner@example.com", pendingEmail: null, createdWithGoogle: false },
+  isAuthenticated: true, authLoading: false, authError: null,
+  signOut: vi.fn(async () => {}), signInLocal: vi.fn(async () => {}),
+  getAccessToken: vi.fn(async () => "test-token"), updateEmail: vi.fn(), setPassword: vi.fn(async () => {}),
+  refreshSession: vi.fn(async () => null), retrySession: vi.fn(async () => null),
+}));
+vi.mock("@/app/contexts/AuthContext", async (original) => ({
+  ...(await original<typeof import("@/app/contexts/AuthContext")>()),
+  useAuth: () => ({ ...authenticatedOwner, user: { ...authenticatedOwner.user, id: scope.accountId } }),
+}));
+
 vi.mock("@/app/contexts/WorkspaceContext", async importOriginal => ({
     ...await importOriginal<typeof import("@/app/contexts/WorkspaceContext")>(),
     useWorkspace: () => ({ accountId: scope.accountId }),
