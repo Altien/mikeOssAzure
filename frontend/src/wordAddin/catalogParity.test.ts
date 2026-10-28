@@ -28,6 +28,7 @@ import {
     CLAUDE_MAIN_MODELS,
     GEMINI_MAIN_MODELS,
     OPENAI_MAIN_MODELS,
+    KIMI_MAIN_MODELS,
     MISTRAL_MAIN_MODELS,
     LEGACY_MODEL_IDS as BACKEND_LEGACY_MODEL_IDS,
     reasoningLevelsForModel as backendReasoningLevels,
@@ -71,6 +72,8 @@ describe("word add-in model catalog", () => {
             ...CLAUDE_MAIN_MODELS,
             ...GEMINI_MAIN_MODELS,
             ...OPENAI_MAIN_MODELS,
+            // Dev managed Kimi remains first-class in the shared catalog.
+            ...KIMI_MAIN_MODELS,
             ...MISTRAL_MAIN_MODELS,
         ]);
         expect(LEGACY_MODEL_IDS).toEqual(BACKEND_LEGACY_MODEL_IDS);

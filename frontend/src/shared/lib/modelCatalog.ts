@@ -27,8 +27,6 @@ const direct = (option: Omit<ModelOption, "source">): ModelOption => ({
 
 /** The direct-provider models every picker offers. */
 export const MODELS: readonly ModelOption[] = [
-  // Dev divergence (sync-log: 1da19c20): managed Kimi is shared by both clients.
-  direct({ id: "kimi-k3", label: "Kimi K3", group: "Kimi" }),
   direct({ id: "claude-fable-5-1", label: "Claude Fable 5.1", group: "Anthropic" }),
   direct({ id: "claude-opus-5-5", label: "Claude Opus 5.5", group: "Anthropic" }),
   direct({ id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5", group: "Anthropic" }),
@@ -37,6 +35,8 @@ export const MODELS: readonly ModelOption[] = [
   direct({ id: "gpt-6-astra", label: "GPT-6 Astra", group: "OpenAI" }),
   direct({ id: "gpt-6.1-sol", label: "GPT-6.1 Sol", group: "OpenAI" }),
   direct({ id: "gpt-6-luna", label: "GPT-6 Luna", group: "OpenAI" }),
+  // Dev divergence (sync-log: 1da19c20): managed Kimi is shared by both clients.
+  direct({ id: "kimi-k3", label: "Kimi K3", group: "Kimi" }),
   direct({ id: "mistral-large-4", label: "Mistral Large 4 (Preview)", group: "Mistral AI" }),
   direct({ id: "mistral-medium-3-5", label: "Mistral Medium 3.5", group: "Mistral AI" }),
   direct({ id: "mistral-small-2603", label: "Mistral Small 4", group: "Mistral AI" }),
