@@ -16,7 +16,6 @@ const SIGNATURES: Record<LogoContentType, (bytes: Buffer) => boolean> = {
 };
 const DATA_URL = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/;
 const UNSUPPORTED = "The logo must be a PNG, JPEG or WebP image.";
-type Parsed = { contentType: LogoContentType; bytes: Buffer };
 export function parseOrgLogoDataUrl(value: unknown): {ok:true; contentType:LogoContentType; bytes:Buffer}|{ok:false;detail:string} {
   if (typeof value !== "string" || !value) return {ok:false,detail:"data_url is required"};
   if (value.length > Math.ceil(MAX_ORG_LOGO_BYTES / 3) * 4 + 64) return {ok:false,detail:"The logo is too large. Use an image under 512 KB."};
@@ -46,7 +45,7 @@ export async function saveOrgLogo(db:Db, params:{actorId:string;actorEmail?:stri
   const {data:old,error:readError}=await db.from("org_logos").select("object_key").eq("org_id",params.orgId).maybeSingle();
   if(readError) return {ok:false,kind:"db_error",detail:readError.message};
   const key=logoKey(params.orgId,randomUUID());
-  try { await uploadFile(key,parsed.bytes.buffer.slice(parsed.bytes.byteOffset,parsed.bytes.byteOffset+parsed.bytes.byteLength),parsed.contentType); }
+  try { const image=parsed.bytes; await uploadFile(key,image.buffer.slice(image.byteOffset,image.byteOffset+image.byteLength) as ArrayBuffer,parsed.contentType); }
   catch { return {ok:false,kind:"db_error",detail:"Could not store organization logo"}; }
   const updatedAt=new Date().toISOString();
   const {error}=await db.from("org_logos").upsert({org_id:params.orgId,object_key:key,content_type:parsed.contentType,updated_by:params.actorId,updated_at:updatedAt},{onConflict:"org_id"});
