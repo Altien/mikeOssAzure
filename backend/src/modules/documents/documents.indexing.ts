@@ -1,4 +1,3 @@
-import { AppError } from "../../lib/appError";
 import { setOperation } from "../../lib/observability/sentry";
 import { createHash } from "node:crypto";
 import { downloadFile } from "../../lib/storage";

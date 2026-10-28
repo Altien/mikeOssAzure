@@ -12,7 +12,6 @@ import { mutatePlaybookJob, playbookJobIdentity, PlaybookClaimLostError } from "
 
 import { deleteFile, downloadFile } from "../../lib/storage";
 import { safeError } from "../../lib/safeError";
-import { AppError } from "../../lib/appError";
 import { reportError, setOperation } from "../../lib/observability/sentry";
 import { enqueueDbJob } from "../../lib/dbq/enqueue";
 import { dbJobsEnabled, processClaimedJob, STALE_SECONDS } from "../../lib/dbq/runner";
@@ -262,22 +261,7 @@ async function dispatch(
  * already reported (or rethrown) by the caller, so this names the second,
  * independent fault the runner would otherwise have been the only one to see.
  */
-function reportFailureHookCrash(hookError: unknown, kind: string): void {
-  reportError(
-    new AppError(
-      "dbq.failure_hook_crashed",
-      "Playbook job failure hook crashed",
-      { cause: hookError },
-    ),
-    {
-      tags: { component: "playbooks", stage: "failure-hook", job_kind: kind },
-    },
-  );
-  console.warn("[playbooks] job failure hook crashed", {
-    kind,
-    error: safeError(hookError),
-  });
-}
+
 
 /**
  * Checks and records a review, then queues it: the run is returned as soon as

@@ -10,7 +10,7 @@ import {
 // keeps calling it by its tool-facing name.
 export { applyTrackedEditsToDocument as runEditDocument, loadCurrentVersionBytes };
 import {
-  downloadFile,
+  downloadFileIfAvailable,
 
   generatedDocKey,
   uploadFile,

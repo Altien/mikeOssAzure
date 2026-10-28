@@ -1,3 +1,4 @@
+import { deleteFile } from "../../lib/storage";
 import { mutatePlaybookJob, PlaybookClaimLostError, type PlaybookJobIdentity } from "./playbooks.jobOwnership";
 import crypto from "node:crypto";
 import { AppError } from "../../lib/appError";

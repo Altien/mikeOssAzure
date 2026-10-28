@@ -14,7 +14,6 @@
 
 import { AppError, type ErrorKind } from "./appError";
 import { bestEffort } from "./observability/sentry";
-import { safeErrorLog } from "./safeError";
 import { createConfiguredStorageAdapter } from "./storage/configured";
 import { StorageCopyInvariantError } from "./storage/adapter";
 import { Readable } from "node:stream";
@@ -68,6 +67,11 @@ const STORAGE_FAILURE_KIND = {
   "source changed": "storage.copy_failed",
   "copy verification": "storage.copy_failed",
   upload: "storage.upload_failed",
+  "stage part transport": "storage.upload_failed",
+  "stage part": "storage.upload_failed",
+  "seal parts transport": "storage.upload_failed",
+  "commit parts": "storage.upload_failed",
+  "missing staging ETag": "storage.copy_failed",
   download: "storage.download_failed",
   delete: "storage.delete_failed",
 } as const satisfies Record<string, ErrorKind>;

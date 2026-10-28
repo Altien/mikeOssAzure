@@ -1,3 +1,4 @@
+import { reportError } from "../observability/sentry";
 import { AppError } from "../appError";
 import { enqueueAppJobDelivery } from "../queue/appJobsQueue";
 import { redisEnabled } from "./driver";
