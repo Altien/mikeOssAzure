@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/app/lib/useRequestOwner", () => ({ useRequestOwner: () => ({ capture: () => () => true }) }));
+const { captureRequestOwner } = vi.hoisted(() => ({ captureRequestOwner: vi.fn(() => () => true) }));
+vi.mock("@/app/hooks/useRequestOwner", () => ({ useRequestOwner: () => ({ capture: captureRequestOwner}) }));
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MikeApiError } from "@/app/lib/mikeApi";

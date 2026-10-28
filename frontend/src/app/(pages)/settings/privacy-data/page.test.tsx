@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
-vi.mock("@/app/hooks/useRequestOwner", () => ({ useRequestOwner: () => ({ key: "test-owner", capture: () => () => true }) }));
+const { captureRequestOwner } = vi.hoisted(() => ({ captureRequestOwner: vi.fn(() => () => true) }));
+vi.mock("@/app/hooks/useRequestOwner", () => ({ useRequestOwner: () => ({ key: "test-owner", capture: captureRequestOwner}) }));
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {

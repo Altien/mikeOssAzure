@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiKeyField } from "./ApiKeyField";
 import { ToastViewportUI, clearToasts } from "@/shared/ui/ToastUI";
 
-vi.mock("@/app/lib/useRequestOwner", () => ({ useRequestOwner: () => ({ capture: () => () => true }) }));
+const { captureRequestOwner } = vi.hoisted(() => ({ captureRequestOwner: vi.fn(() => () => true) }));
+vi.mock("@/app/hooks/useRequestOwner", () => ({ useRequestOwner: () => ({ capture: captureRequestOwner}) }));
 
 const { needsMfaVerification } = vi.hoisted(() => ({
     needsMfaVerification: vi.fn(),

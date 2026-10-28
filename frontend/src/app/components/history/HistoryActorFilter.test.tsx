@@ -10,7 +10,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getAuditActors, type AuditActor } from "@/app/lib/mikeApi";
 import { HistoryActorFilter } from "./HistoryActorFilter";
 
-vi.mock("@/app/hooks/useRequestOwner", () => ({ useRequestOwner: () => ({ key: "test-owner", capture: () => () => true }) }));
+const { captureRequestOwner } = vi.hoisted(() => ({ captureRequestOwner: vi.fn(() => () => true) }));
+vi.mock("@/app/hooks/useRequestOwner", () => ({ useRequestOwner: () => ({ key: "test-owner", capture: captureRequestOwner}) }));
 
 vi.mock("@/app/lib/mikeApi", () => ({ getAuditActors: vi.fn() }));
 const getActors = vi.mocked(getAuditActors);

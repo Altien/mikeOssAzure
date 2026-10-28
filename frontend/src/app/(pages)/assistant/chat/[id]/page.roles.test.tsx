@@ -1,7 +1,8 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/app/lib/useRequestOwner", () => ({ useRequestOwner: () => ({ capture: () => () => true }) }));
+const { captureRequestOwner } = vi.hoisted(() => ({ captureRequestOwner: vi.fn(() => () => true) }));
+vi.mock("@/app/hooks/useRequestOwner", () => ({ useRequestOwner: () => ({ capture: captureRequestOwner}) }));
 
 // Grant-reachable chats appear in the global sidebar since the parity
 // change, so a project viewer can land on this page. GET /chat/:id serves

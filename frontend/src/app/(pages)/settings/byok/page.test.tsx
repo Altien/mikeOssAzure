@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-vi.mock("@/app/lib/useRequestOwner", () => ({ useRequestOwner: () => ({ capture: () => () => true }) }));
+const { captureRequestOwner } = vi.hoisted(() => ({ captureRequestOwner: vi.fn(() => () => true) }));
+vi.mock("@/app/hooks/useRequestOwner", () => ({ useRequestOwner: () => ({ capture: captureRequestOwner}) }));
 import { screen, within, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
