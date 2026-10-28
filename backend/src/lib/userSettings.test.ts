@@ -128,7 +128,7 @@ const emptyKeys = {
   azureOpenai: null,
 };
 
-const emptyRouterSelections = (): RouterModelSelections => Object.fromEntries(ROUTER_SLUGS.map(slug => [slug, []])) as RouterModelSelections;
+const emptyRouterSelections = (): RouterModelSelections => Object.fromEntries(ROUTER_SLUGS.map(slug => [slug, [] as string[]])) as RouterModelSelections;
 
 const envSnapshot = {} as Record<string, string | undefined>;
 
