@@ -572,7 +572,9 @@ describe("affected audit identities", () => {
 describe("exact actor filtering", () => {
     it("validates IDs and disallows narrowing personal activity to another person", () => {
         expect(parseQuery({ actor_user_id: eventId(1) }, 50).ok).toBe(false);
-        expect(parseQuery({ org_id: orgId, actor_user_id: "bad" }, 50).ok).toBe(false);
+        // Dev drift: audit actor RPCs are canonical TEXT identities; empty IDs remain invalid.
+        expect(parseQuery({ org_id: orgId, actor_user_id: "" }, 50).ok).toBe(false);
+        expect(parseQuery({ org_id: orgId, actor_user_id: "opaque-actor" }, 50).ok).toBe(true);
         expect(parseQuery({ org_id: orgId, actor_user_id: eventId(1) }, 50)).toMatchObject({ ok: true, query: { actorUserId: eventId(1) } });
     });
     it("matches only the selected ID even when two people share a name, including exports", async () => {

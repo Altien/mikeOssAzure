@@ -45,25 +45,22 @@ type SqlFunction = { name: string; at: number; line: number; body: string };
 /** Every `language sql` function in the file, with its body. */
 function sqlLanguageFunctions(sql: string): SqlFunction[] {
     const found: SqlFunction[] = [];
-    for (const match of sql.matchAll(
-        /create or replace function public\.(\w+)\s*\(/g,
-    )) {
-        const bodyStart = sql.indexOf("as $$", match.index);
-        const bodyEnd = sql.indexOf("\n$$;", bodyStart);
-        if (bodyStart < 0 || bodyEnd < 0) continue;
-        const header = sql.slice(match.index, bodyStart);
-        if (!/\blanguage sql\b/.test(header)) continue;
-        found.push({
-            name: match[1],
-            at: match.index,
-            line: sql.slice(0, match.index).split("\n").length,
-            body: sql.slice(bodyStart, bodyEnd),
-        });
+    for (const match of sql.matchAll(/create or replace function public\.(\w+)\s*\(/g)) {
+        // Dev drift: numbered migrations use named dollar tags as well as $$.
+        // Bound the header to this function instead of consuming a later body.
+        const next = sql.indexOf("create or replace function public.", match.index! + match[0].length);
+        const definition = sql.slice(match.index, next < 0 ? undefined : next);
+        const delimiter = /\bas\s+(\$[a-z_0-9]*\$)/.exec(definition);
+        if (!delimiter || !/\blanguage sql\b/.test(definition.slice(0, delimiter.index))) continue;
+        const bodyStart = delimiter.index + delimiter[0].length;
+        const bodyEnd = definition.indexOf(delimiter[1], bodyStart);
+        if (bodyEnd < 0) continue;
+        found.push({ name: match[1], at: match.index!, line: sql.slice(0, match.index).split("\n").length, body: definition.slice(bodyStart, bodyEnd) });
     }
     return found;
 }
 
-describe("schema.sql can be installed top to bottom", () => {
+describe("canonical numbered history can be installed top to bottom", () => {
     const defined = firstDefinitions(schema);
     const functions = sqlLanguageFunctions(schema);
 

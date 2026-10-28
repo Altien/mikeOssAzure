@@ -330,13 +330,10 @@ describe("list services hand the workspace to their RPC", () => {
 // ---------------------------------------------------------------------------
 describe("workspace filter SQL", () => {
     const ROOT = resolve(__dirname, "../../..");
-    const SOURCES = {
-        "schema.sql": readFileSync(resolve(ROOT, "schema.sql"), "utf8"),
-        migration: readFileSync(
-            resolve(ROOT, "migrations/20261011_02_workspace_list_filter.sql"),
-            "utf8",
-        ),
-    };
+    // Dev drift: fresh installs and upgrades execute one immutable numbered history.
+    const SOURCES = { numberedHistory: ["0111_workspace_list_filter.sql", "0112_workspace_project_summaries.sql"]
+      .map(name => readFileSync(resolve(ROOT, "migrations", name), "utf8")).join("\n") };
+
     // Each list RPC, the org_id it must filter on, and how many source arms
     // carry the filter (the workflow RPCs build three and union them).
     const RPCS: [string, string, number][] = [

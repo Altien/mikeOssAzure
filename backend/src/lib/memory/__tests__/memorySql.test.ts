@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -254,8 +254,13 @@ describe("per-workspace memory SQL", () => {
   });
 });
 
+// Dev drift: canonical numbered history replaces schema.sql and dated duplicates.
+const backendRoot = root;
+const schemaSql = readdirSync(resolve(root, "migrations")).filter(name => /^\d{4}_.*\.sql$/.test(name)).sort()
+  .map(name => readFileSync(resolve(root, "migrations", name), "utf8")).join("\n");
+const functionBody = (sql: string, name: string) => body(sql.slice(sql.lastIndexOf(`create or replace function public.${name}`)), name);
 const scopedDeletionMigration = readFileSync(
-  resolve(backendRoot, "migrations/20261024_02_workspace_scoped_data_deletion.sql"),
+  resolve(backendRoot, "migrations/0170_workspace_scoped_data_deletion.sql"),
   "utf8",
 );
 
@@ -283,13 +288,13 @@ describe("workspace-scoped memory deletion SQL", () => {
     // The one-argument form is replaced, not left beside it to make a
     // one-argument call ambiguous.
     expect(sql).toContain(
-      "drop function if exists public.delete_user_private_memories(uuid);",
+      "drop function if exists public.delete_user_private_memories(text);",
     );
     expect(sql).toContain(
-      "revoke all on function public.delete_user_private_memories(uuid, uuid)\n  from public, anon, authenticated;",
+      "revoke all on function public.delete_user_private_memories(text, uuid)\n  from public, web_anon, authenticated;",
     );
     expect(sql).toMatch(
-      /grant execute\s+on function public\.delete_user_private_memories\(uuid, uuid\)\s+to service_role;/,
+      /grant execute\s+on function public\.delete_user_private_memories\(text, uuid\)\s+to service_role;/,
     );
   });
 });
