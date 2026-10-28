@@ -1,3 +1,5 @@
+import { enqueueDbJob } from "../../lib/dbq/enqueue";
+import type { DbJobHandler } from "../../lib/dbq/types";
 import { resolveWorkspaceFilter } from "../../lib/workspace";
 // exportJobs — implementation behind the module facade.
 // Handlers for the DB queue. Every handler runs with at-least-once
@@ -173,7 +175,7 @@ async function buildMemoryZipExport(
     };
 }
 
-export async function handleExportBuild(
+async function buildClaimedExport(
     db: Db,
     job: DbJob,
 ): Promise<Record<string, unknown>> {
@@ -183,6 +185,7 @@ export async function handleExportBuild(
         throw new Error(`[export.build] malformed payload on job ${job.id}`);
     }
     const userEmail = (job.payload.userEmail as string | undefined) ?? null;
+    await assertExportAttemptLive(db, job, userId);
     const orgId = await workspaceExportOrgId(db, job, userId, type);
 
     const artifact =
@@ -195,10 +198,12 @@ export async function handleExportBuild(
               : await buildJsonExport(db, userId, userEmail, type, orgId);
 
     // Path is namespaced under the user (account erasure purges the prefix)
-    // and keyed by job id (a re-run overwrites its own artifact — idempotent).
-    const storagePath = `exports/${userId}/${job.id}-${artifact.filename}`;
+    // and claim-specific: a stale worker never overwrites the winning attempt.
+    const storagePath = `exports/${userId}/${job.id}-${job.attempts}-${job.claim_token}-${artifact.filename}`;
     const body = artifact.body;
+    await assertExportAttemptLive(db, job, userId);
     await workspaceExportOrgId(db, job, userId, type);
+    try {
     await uploadFile(
         storagePath,
         body.buffer.slice(
@@ -229,6 +234,15 @@ export async function handleExportBuild(
         });
     }
 
+    await assertExportAttemptLive(db, job, userId);
+    await workspaceExportOrgId(db, job, userId, type);
+    } catch (error) {
+        // This handler has not returned a result, so this attempt's key
+        // cannot yet be the canonical published pointer.
+        await queueExportAttemptCleanup(db, storagePath);
+        throw error;
+    }
+
     // No signed /download token here: that route only serves paths backed by
     // a live document_versions row, which an export artifact is not. The
     // client downloads through GET /user/exports/:id/download instead, which
@@ -253,3 +267,40 @@ async function workspaceExportOrgId(db: Db, job: DbJob, userId: string, type: Ex
         throw new NonRetryableJobError("Exports are not allowed in this workspace");
     return orgId;
 }
+
+async function assertExportAttemptLive(db: Db, job: DbJob, userId: string): Promise<void> {
+    if (!job.claim_token) throw new NonRetryableJobError("Export job has no canonical claim token");
+    const claim = await db.rpc("renew_db_job", { p_id: job.id, p_attempts: job.attempts, p_claim_token: job.claim_token, p_lease_seconds: 600 });
+    if (claim.error) throw claim.error;
+    if (claim.data !== true) throw new NonRetryableJobError("Export job claim is no longer live");
+    const erasure = await db.from("account_erasure_requests").select("user_id").eq("user_id", userId).maybeSingle();
+    if (erasure.error) throw erasure.error;
+    if (erasure.data) throw new NonRetryableJobError("Account has been closed");
+}
+
+async function queueExportAttemptCleanup(db: Db, key: string): Promise<void> {
+    await enqueueDbJob(db, { kind: "storage.cleanup", payload: { keys: [key] }, maxAttempts: 100 });
+}
+
+async function discardUnpublishedExportResult(db: Db, job: DbJob, result: Record<string, unknown>): Promise<void> {
+    const userId = job.payload.userId;
+    const key = result.storage_path;
+    if (typeof userId !== "string" || typeof key !== "string" || !job.claim_token ||
+        !key.startsWith(`exports/${userId}/${job.id}-${job.attempts}-${job.claim_token}-`)) {
+        throw new Error("Unpublished export key does not belong to this claim");
+    }
+    const { data: current, error } = await db.from("db_jobs")
+        .select("status, attempts, claim_token, result").eq("id", job.id).maybeSingle();
+    if (error) throw error;
+    if (current?.result?.storage_path === key) return;
+    // A completion transport error can hide a successful commit. A still-live
+    // identical claim is unresolved; never delete its possible publication.
+    if (current?.status === "running" && current.attempts === job.attempts && current.claim_token === job.claim_token) {
+        throw new Error("Export publication outcome is unresolved; preserving its artifact");
+    }
+    await queueExportAttemptCleanup(db, key);
+}
+
+export const handleExportBuild: DbJobHandler = Object.assign(buildClaimedExport, {
+    onUnpublishedResult: discardUnpublishedExportResult,
+});

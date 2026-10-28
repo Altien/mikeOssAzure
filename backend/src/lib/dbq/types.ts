@@ -37,9 +37,10 @@ export class DbJobDeferredError extends Error {
  * retryable failure by THROWING — returning normally marks the job done.
  * The optional return value is persisted into db_jobs.result for pollers.
  */
-export type DbJobHandler = (
-    db: Db,
-    job: DbJob,
-) => Promise<Record<string, unknown> | void>;
+export type DbJobHandler = {
+    (db: Db, job: DbJob): Promise<Record<string, unknown> | void>;
+    /** Cleanup only this attempt's unpublished result after fenced completion fails. */
+    onUnpublishedResult?: (db: Db, job: DbJob, result: Record<string, unknown>) => Promise<void>;
+};
 
 export type DbJobHandlers = Record<string, DbJobHandler>;
