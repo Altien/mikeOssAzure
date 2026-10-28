@@ -97,7 +97,7 @@ orgsRouter.post("/:orgId/archives/recover", requireOrgAuth, asyncRoute(async (re
     res.json(result.data);
 }));
 
-orgsRouter.post("/:orgId/archives/delete", requireOrgAuth, requireMfaIfEnrolled, asyncRoute(async (req, res) => {
+orgsRouter.post("/:orgId/archives/delete", requireOrgAuth, asyncRoute(async (req, res) => {
     const result = await resolveDepartureArchives(createServerSupabase(), {
         orgId: req.params.orgId, userId: res.locals.userId,
         archiveIds: req.body?.archive_ids, delete: true,
@@ -115,7 +115,7 @@ orgsRouter.post("/:orgId/archives/:archiveId/recover", requireOrgAuth, asyncRout
     res.status(204).send();
 }));
 
-orgsRouter.delete("/:orgId/archives/:archiveId", requireOrgAuth, requireMfaIfEnrolled, asyncRoute(async (req, res) => {
+orgsRouter.delete("/:orgId/archives/:archiveId", requireOrgAuth, asyncRoute(async (req, res) => {
     const result = await resolveDepartureArchive(createServerSupabase(), {
         orgId: req.params.orgId, archiveId: req.params.archiveId,
         userId: res.locals.userId, delete: true,
