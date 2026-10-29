@@ -69,6 +69,8 @@ const ROUTE_PARTS = new Set(('word-chat orgs single-documents tabular-review qui
 for (const part of "authority-trace altien skills help llm admin diagnostics install config".split(" ")) ROUTE_PARTS.add(part);
 // Dev divergence: fixed vocabulary of Dev-only Express mounts (authority trace, Altien skills, help, LLM, admin diagnostics, /install, /config).
 for (const part of 'authority-trace altien skills help llm admin diagnostics install config'.split(' ')) ROUTE_PARTS.add(part);
+// OSS divergence: the /diag operator diagnostic mount.
+ROUTE_PARTS.add('diag');
 const ID_KEYS = new Set(('request_id requestId document_id documentId file_id fileId job_id jobId review_id reviewId row_id rowId session_id sessionId version_id versionId run_id import_id playbook_id').split(' '));
 const CONFIGURATION_FIELDS = new Set('SUPABASE_URL SUPABASE_PUBLISHABLE_KEY SUPABASE_SECRET_KEY AUTH_HANDOFF_ENCRYPTION_SECRET FRONTEND_URL API_PUBLIC_URL WORD_ADDIN_URL'.split(' '));
 for (const field of "AUTH_PROVIDER AZURE_STORAGE_CONNECTION_STRING AZURE_STORAGE_ACCOUNT AZURE_STORAGE_CONTAINER AZURE_KEY_VAULT_URL ENTRA_TENANT_ID ENTRA_CLIENT_ID ENTRA_CLIENT_SECRET".split(" ")) CONFIGURATION_FIELDS.add(field);
