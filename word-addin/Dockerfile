@@ -15,6 +15,11 @@ COPY frontend/src/shared/ /app/frontend/src/shared/
 COPY frontend/public/icons/ /app/frontend/public/icons/
 COPY packages/contracts/ /app/packages/contracts/
 ENV REACT_APP_API_BASE_URL=/api REACT_APP_WEB_APP_URL=""
+# Upstream divergence (sync-log: 71cd0286, 95f2711c): upstream passes
+# SENTRY_ORG/SENTRY_PROJECT build args and a SENTRY_AUTH_TOKEN BuildKit secret
+# here for its webpack source-map upload. Dev's add-in has no Sentry webpack
+# plugin (see webpack.config.js, sync-log 54b6b3a1), so nothing would consume
+# them; add the plumbing only together with an adopted upload step.
 RUN pnpm build
 
 FROM node:22-slim
