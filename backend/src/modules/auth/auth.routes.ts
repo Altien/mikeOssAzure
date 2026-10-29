@@ -1,3 +1,5 @@
+import { AppError } from "../../lib/appError";
+import { reportError, setOperation } from "../../lib/observability/sentry";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import { getConfig } from "../../lib/config";
@@ -21,9 +23,26 @@ import {
 } from "../../lib/auth/providers/supabaseSession";
 import { ssoConfiguration, ssoDomainSchema } from "../../lib/ssoConfig";
 import { readServerSession } from "../../lib/serverSession";
-import { authProvider } from "./auth.service";
+import { authProvider, credentialsSchema, signupSchema, passwordSchema } from "./auth.service";
+
+import { describeAuthProviderError, describeAuthValidationIssues } from "./auth.messages";
+
+function authError(res: Response, error: unknown, fallback: string) {
+  const wire = describeAuthProviderError(error, fallback);
+  if (wire.status >= 500) reportError(new AppError("auth.session_lookup_failed", "Authentication provider failed", { cause: error }), { tags: { component: "http", http_status: wire.status } });
+  res.status(wire.status).json({ code: wire.code, detail: wire.detail });
+}
 
 export const authRouter = Router();
+// Dev auth uses Entra/local opaque sessions and backend PKCE; only diagnostic identity is adopted.
+authRouter.use((req, _res, next) => {
+  if (req.path.startsWith("/mfa/")) setOperation("auth.mfa");
+  else if (req.path.includes("handoff")) setOperation("auth.handoff");
+  else if (req.path === "/signup") setOperation("auth.signup");
+  else if (["/login", "/oauth", "/exchange", "/entra", "/callback"].includes(req.path)) setOperation("auth.signin");
+  else setOperation("auth.session");
+  next();
+});
 authRouter.use(requireTrustedOrigin);
 const OAUTH_NONCE_COOKIE = "mike-oauth-browser";
 
@@ -317,22 +336,14 @@ authRouter.post("/refresh", requireAuth, (_req, res) => {
   res.json({ user: publicUser(res) });
 });
 
-function validEmailPassword(body: unknown): { email: string; password: string } | null {
-  if (!body || typeof body !== "object") return null;
-  const value = body as Record<string, unknown>;
-  const email = typeof value.email === "string" ? value.email.trim().toLowerCase() : "";
-  const password = value.password;
-  return email.length <= 320 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && typeof password === "string" && password.length >= 8 && password.length <= 1024
-    ? { email, password } : null;
-}
-
 authRouter.post("/login", async (req, res) => {
   if ((await authProvider()) !== "supabase") { res.status(404).end(); return; }
-  const input = validEmailPassword(req.body);
-  if (!input) { res.status(400).json({ code: "invalid_request", detail: "The authentication request is invalid." }); return; }
+  const parsed = credentialsSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ code: "invalid_request", detail: "Enter your email address and password." }); return; }
+  const input = parsed.data;
   try {
     const { data, error } = await createSupabaseAuthClient().auth.signInWithPassword(input);
-    if (error || !data.session || !data.user) { res.status(401).json({ detail: "Invalid email or password" }); return; }
+    if (error || !data.session || !data.user) { authError(res, error, "Unable to sign in."); return; }
     const credential = supabaseCredential(data.session);
     if (!(await admit(req, res, credential))) return;
     await createServerSession(req, res, credential, supabaseExpiresAt(data.session));
@@ -342,13 +353,14 @@ authRouter.post("/login", async (req, res) => {
 
 authRouter.post("/signup", async (req, res) => {
   if ((await authProvider()) !== "supabase") { res.status(404).end(); return; }
-  const input = validEmailPassword(req.body);
-  if (!input) { res.status(400).json({ code: "invalid_request", detail: "The authentication request is invalid." }); return; }
+  const parsed = signupSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json(describeAuthValidationIssues(parsed.error.issues)); return; }
+  const input = parsed.data;
   try {
     const { data, error } = await createSupabaseAuthClient().auth.signUp({
       ...input, options: { emailRedirectTo: safeReturnUrl("/login?confirmed=1") },
     });
-    if (error || !data.user) { res.status(400).json({ detail: error?.message || "Unable to create account" }); return; }
+    if (error || !data.user) { authError(res, error, "Unable to create account"); return; }
     if (data.session) {
       const credential = supabaseCredential(data.session);
       if (!(await admit(req, res, credential))) return;
@@ -431,6 +443,7 @@ authRouter.get("/oauth-callback/:provider", async (req, res) => {
 });
 
 authRouter.post("/password-reset", async (req, res) => {
+  setOperation("auth.signin");
   if ((await authProvider()) !== "supabase") { res.status(404).end(); return; }
   const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 320) {
@@ -444,7 +457,10 @@ authRouter.post("/password-reset", async (req, res) => {
         returnUrl: safeReturnUrl("/reset-password"), targetOrigin: frontendOrigin().origin }, stateToken);
       res.cookie(OAUTH_NONCE_COOKIE, nonce, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/api/auth", maxAge: 10 * 60_000 });
     }
-    catch { /* Account enumeration stays impossible. */ }
+    catch (error) {
+      reportError(new AppError("auth.password_reset_failed", "Password reset request failed", { cause: error }), { level: "warning", tags: { component: "http" } });
+      // Account enumeration stays impossible: the response remains204.
+    }
   }
   res.status(204).end();
 });
@@ -485,21 +501,21 @@ authRouter.patch("/email", requireAuth, async (req, res) => {
   try {
     const auth = await supabaseCurrent(req, res); if (!auth) return;
     const { data, error } = await auth.auth.updateUser({ email }, { emailRedirectTo: safeReturnUrl("/settings?emailChange=processed") });
-    if (error || !data.user) { res.status(400).json({ detail: error?.message || "Unable to update email" }); return; }
+    if (error || !data.user || data.user.id !== res.locals.userId) { authError(res, error, "Unable to update email"); return; }
     res.json({ user: publicSupabaseUser(data.user) });
   } catch { res.status(503).json({ detail: "Unable to update email" }); }
 });
 
 authRouter.patch("/password", requireAuth, async (req, res) => {
-  const password = req.body?.password;
-  const nonce = req.body?.nonce;
-  if (typeof password !== "string" || password.length < 8 || password.length > 1024 || (nonce != null && typeof nonce !== "string")) {
-    res.status(400).json({ detail: "Invalid password request" }); return;
-  }
+  // Upstream divergence (sync-log: c94052d7): Entra/local credentials stay provider-managed.
+  if ((await authProvider()) !== "supabase") { res.status(404).end(); return; }
+  const parsed = passwordSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json(describeAuthValidationIssues(parsed.error.issues)); return; }
+  const { password, nonce } = parsed.data;
   try {
     const auth = await supabaseCurrent(req, res); if (!auth) return;
     const { data, error } = await auth.auth.updateUser({ password, ...(nonce ? { nonce } : {}) });
-    if (error || !data.user) { res.status(400).json({ detail: error?.message || "Unable to update password" }); return; }
+    if (error || !data.user || data.user.id !== res.locals.userId) { authError(res, error, "Unable to update password"); return; }
     if (req.body?.signOut === true) {
       const signedOut = await auth.auth.signOut({ scope: "global" });
       if (signedOut.error) { res.status(503).json({ detail: "Password changed, but other sessions could not be revoked" }); return; }
@@ -514,7 +530,7 @@ authRouter.post("/reauthenticate", requireAuth, async (req, res) => {
   try {
     const auth = await supabaseCurrent(req, res); if (!auth) return;
     const { error } = await auth.auth.reauthenticate();
-    if (error) { res.status(400).json({ detail: error.message }); return; }
+    if (error) { authError(res, error, "Authentication could not be completed."); return; }
     res.status(204).end();
   } catch { res.status(503).json({ detail: "Unable to request reauthentication" }); }
 });
@@ -523,7 +539,7 @@ authRouter.get("/mfa/factors", requireAuth, async (req, res) => {
   try {
     const auth = await supabaseCurrent(req, res); if (!auth) return;
     const { data, error } = await auth.auth.mfa.listFactors();
-    if (error) { res.status(400).json({ detail: error.message }); return; }
+    if (error) { authError(res, error, "Authentication could not be completed."); return; }
     res.json(data);
   } catch { res.status(503).json({ detail: "MFA is unavailable" }); }
 });
@@ -532,7 +548,7 @@ authRouter.get("/mfa/assurance", requireAuth, async (req, res) => {
   try {
     const auth = await supabaseCurrent(req, res); if (!auth) return;
     const { data, error } = await auth.auth.mfa.getAuthenticatorAssuranceLevel();
-    if (error) { res.status(400).json({ detail: error.message }); return; }
+    if (error) { authError(res, error, "Authentication could not be completed."); return; }
     res.json(data);
   } catch { res.status(503).json({ detail: "MFA is unavailable" }); }
 });
@@ -543,7 +559,7 @@ authRouter.post("/mfa/enroll", requireAuth, async (req, res) => {
   try {
     const auth = await supabaseCurrent(req, res); if (!auth) return;
     const { data, error } = await auth.auth.mfa.enroll({ factorType: "totp", friendlyName });
-    if (error) { res.status(400).json({ detail: error.message }); return; }
+    if (error) { authError(res, error, "Authentication could not be completed."); return; }
     res.status(201).json(data);
   } catch { res.status(503).json({ detail: "MFA is unavailable" }); }
 });
@@ -554,7 +570,7 @@ authRouter.post("/mfa/challenge", requireAuth, async (req, res) => {
   try {
     const auth = await supabaseCurrent(req, res); if (!auth) return;
     const { data, error } = await auth.auth.mfa.challenge({ factorId });
-    if (error) { res.status(400).json({ detail: error.message }); return; }
+    if (error) { authError(res, error, "Authentication could not be completed."); return; }
     res.json(data);
   } catch { res.status(503).json({ detail: "MFA is unavailable" }); }
 });
@@ -567,7 +583,7 @@ authRouter.post("/mfa/verify", requireAuth, async (req, res) => {
   try {
     const auth = await supabaseCurrent(req, res); if (!auth) return;
     const { data, error } = await auth.auth.mfa.verify({ factorId, challengeId, code });
-    if (error || !data.access_token || !data.refresh_token || !data.user || data.user.id !== res.locals.userId) { res.status(401).json({ detail: error?.message || "MFA verification failed" }); return; }
+    if (error || !data.access_token || !data.refresh_token || !data.user || data.user.id !== res.locals.userId) { authError(res, error, "MFA verification failed"); return; }
     await replaceServerSession(req, res, { provider: "supabase", userId: data.user.id, accessToken: data.access_token, refreshToken: data.refresh_token }, new Date(Date.now() + data.expires_in * 1000));
     res.json({ user: publicSupabaseUser(data.user) });
   } catch { res.status(503).json({ detail: "MFA is unavailable" }); }
@@ -581,7 +597,7 @@ authRouter.post("/mfa/challenge-and-verify", requireAuth, async (req, res) => {
   try {
     const auth = await supabaseCurrent(req, res); if (!auth) return;
     const { data, error } = await auth.auth.mfa.challengeAndVerify({ factorId, code });
-    if (error || !data.access_token || !data.refresh_token || !data.user || data.user.id !== res.locals.userId) { res.status(401).json({ detail: error?.message || "MFA verification failed" }); return; }
+    if (error || !data.access_token || !data.refresh_token || !data.user || data.user.id !== res.locals.userId) { authError(res, error, "MFA verification failed"); return; }
     await replaceServerSession(req, res, { provider: "supabase", userId: data.user.id, accessToken: data.access_token, refreshToken: data.refresh_token }, new Date(Date.now() + data.expires_in * 1000));
     res.json({ user: publicSupabaseUser(data.user) });
   } catch { res.status(503).json({ detail: "MFA is unavailable" }); }
@@ -593,7 +609,7 @@ authRouter.delete("/mfa/factors/:factorId", requireAuth, async (req, res) => {
   try {
     const auth = await supabaseCurrent(req, res); if (!auth) return;
     const { data, error } = await auth.auth.mfa.unenroll({ factorId });
-    if (error) { res.status(400).json({ detail: error.message }); return; }
+    if (error) { authError(res, error, "Authentication could not be completed."); return; }
     res.json(data);
   } catch { res.status(503).json({ detail: "MFA is unavailable" }); }
 });

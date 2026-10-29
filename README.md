@@ -63,7 +63,7 @@ credentials.
 - [Documentation index](docs/README.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [MCP connectors](docs/connectors.md)
-- [Google Drive integration](docs/google-drive.md)
+- [Google Workspace: Drive, Gmail, and Calendar](docs/google-workspace.md)
 - [Preset contract templates and publisher credits](docs/preset-templates.md)
 - [CourtListener integration](docs/courtlistener.md)
 - [Microsoft Word add-in](word-addin/README.md)
@@ -154,7 +154,7 @@ The application is derived from
 [`willchen96/mike`](https://github.com/willchen96/mike). The Azure adaptation
 is maintained by Altien.
 
-## Microsoft Word add-in (Beta)
+## Microsoft Word add-in
 
 The Mike Word add-in brings Mike into a Word task pane for document chat, quick actions, workflows, supporting files, and tracked edits. See [the Word add-in guide](word-addin/README.md) for setup and Entra sign-in.
 

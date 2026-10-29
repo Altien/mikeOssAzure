@@ -49,3 +49,84 @@ once-a-minute `console.warn` count, back off, and log recovery. A PostgREST
 `console.warn` naming the numbered migrations. Upstream's Next `/api` gateway
 grouping (`upstream-unavailable`) does not apply: the static export has no
 gateway.
+
+Playbook import/review lifecycle reports retain bounded stage/job/UUID identifiers only. Rule, finding, source and contract text remain excluded.
+
+Node process warnings are reported as warning events grouped by warning name
+and Node diagnostic code. The console bridge drops Node's printed warning line
+because the warning object has already been captured through the backend's
+request-scoped Sentry reporter. Operators can silence Node warning reports
+with --no-warnings or NODE_NO_WARNINGS=1.
+
+
+### Operation and cause identity (46dc4b5c)
+
+Requests and isolated background jobs name their operation; typed AppError failures carry a kind and preserve their real cause; the deepest cause kind wins so wrappers cannot hide it. Diagnostic transport keeps only source-authored diagnostic labels and bounded technical codes/status and scrubbed stacks, never error text, provider bodies, credentials, or document content. Dev keeps its configured telemetry destination, Entra/local opaque sessions, /api/runtime config, canonical claims and revision-aware publication. Retried/optional work retains its existing ownership and fallback policy.
+
+Unknown database job kinds use jobs.dispatch inside the same isolated canonical claim handler. Destructive cleanup remains retry-until-success. withKind preserves an Error already carrying a named cause.
+
+
+### Source contract for diagnostic identity
+
+- Give errors static class names. Do not derive `Error.name`, class names or
+  function names from a customer, document, request or upstream response.
+- Write operation, kind, stage, component and job labels in code. A fixed map
+  selected by runtime state is fine; interpolating runtime data into a label
+  is not. New labels and application error subclasses need no registration.
+- Wrap upstream failures with `new AppError("feature.step_failed",
+  "Step failed", { cause })`. Preserve the cause for technical classification;
+  never copy its prose into diagnostic labels or extras. The message remains
+  local and is not treated as safe to transmit merely because it is an AppError.
+- `backend/src/__tests__/diagnosticVocabulary.test.ts` parses production
+  TypeScript/TSX across all three applications. It rejects common dynamic-name
+  and label mistakes. This is a coding contract backed by CI and review, not
+  whole-program taint analysis: helper parameters and fixed mappings still
+  need review for their origin.
+- Real-SDK transport tests cover both install modes, including new unregistered
+  labels, dependency-provided names/kinds, cause payloads and automatic captures.
+
+### Client reporting contract
+
+- `describeError`, `userFacingApiError` and the add-in's `userMessage` only
+  classify or format a failure. They never capture an event. For an inline
+  error, call `reportFault(error, { operation, ...descriptionOptions })`;
+  it reports eligible faults and returns the description to render.
+- `notifyError` reports and presents an eligible failure. Partial-failure
+  notices can report their underlying cause, while their user-facing summary
+  stays out of telemetry.
+- Typed API wrappers pass their static operation into `apiRequest` before
+  the request begins. API 5xx reports are captured immediately with that
+  operation; there is no pending-report timer or later screen claim. A
+  delayed screen handler cannot change or lose the operation on the event.
+- Reporting callers and automatic captures consult the same error registry,
+  including a bounded, cycle-safe walk of wrapped causes. Reformatting an
+  already-reported failure does not create another event.
+- Storage PUT retries report only after the final attempt fails. A recovered
+  5xx or network interruption stays quiet; cancellation is not a failure.
+  Both clients receive only the terminal error/status from the upload core,
+  never the signed URL or file as diagnostic metadata.
+- Terminal stream frames use `reporting_owner: "backend"` when the backend
+  owns reporting. This does not promise delivery to Sentry. Clients preserve
+  that ownership and avoid duplicate reports. A request ID is only for
+  correlation: older frames without an ownership field retain client-side
+  fallback reporting, even when they have a request ID.
+
+Use `withKind` to wrap a failure only when its cause chain has no application
+kind. Domain helpers may build result objects or apply domain-specific policy,
+but delegate kind preservation to that helper. `ConversionError` derives its
+legacy consumer code from its diagnostic kind; callers do not supply both.
+
+Example (no registry update):
+
+```ts
+setOperation("documents.compare");
+markStage("load-revisions");
+throw new AppError("comparison.source_read_failed", "Could not read revision", { cause });
+```
+
+
+Each API request starts an isolated diagnostic scope before parsing/auth/routing: component=http, operation=http.request, sanitized method/route and generated request ID. Domain setOperation replaces that fallback. Repository code paths and real cause stacks remain; user URLs, query strings, messages and identity remain stripped. Dev mounts this middleware inside createApp without changing /api ingress, rate-limit lanes or runtime configuration.
+
+Row extraction leaves queue retry reporting to the runner; inline streams report at their query boundary. Required export reads propagate storage failures rather than silently omitting files. Optional reads retain their fallback and diagnostic code/kind grouping.
+
+Wrapped client errors share bounded, cycle-safe report ownership across causes. Storage PUT retries report only terminal failures; recovered interruptions and cancellations stay quiet, and signed URLs/files never become diagnostics. Backend-owned terminal frames retain reporting_owner independently of request IDs or delivery.

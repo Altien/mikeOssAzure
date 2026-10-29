@@ -19,11 +19,12 @@ import {
   ensureDocAccess,
   resolveContentOrgId,
 } from "../../lib/access";
+import { findDocumentsOutsideWorkspace } from "../../lib/documentWorkspace";
 import { can, DOCS_ORGANIZE_FORBIDDEN } from "../../lib/permissions";
 import {
   type Db,
   type RoleForbidden,
-  attachDocumentOwnerLabels,
+  attachDirectoryCreatorLabels,
 } from "./projects.shared";
 
 export async function listProjectDocuments(
@@ -115,7 +116,7 @@ export async function getProjectDirectoryLevel(
   }[];
   await attachLatestVersionNumbers(db, page);
   await attachActiveVersionPaths(db, page);
-  await attachDocumentOwnerLabels(db, page);
+  await attachDirectoryCreatorLabels(db, page, folders ?? []);
   return {
     ok: true,
     body: {
@@ -131,12 +132,18 @@ export type AssignOrCopyResult =
   | { ok: false; kind: "forbidden" }
   | RoleForbidden
   | { ok: false; kind: "doc_not_found" }
+  | { ok: false; kind: "workspace_mismatch" }
   | { ok: false; kind: "update_failed" }
   | { ok: false; kind: "no_active_version" }
-  | { ok: false; kind: "read_failed" }
+  | { ok: false; kind: "read_failed"; error?: unknown }
   | { ok: false; kind: "copy_failed" }
   | { ok: false; kind: "db_error"; error: unknown };
 
+/**
+ * Add an owned, readable document to an authorized destination project.
+ * Assign standalone uploads; copy project, workflow and template sources so
+ * their existing containers retain the original document.
+ */
 export async function assignOrCopyDocument(
   db: Db,
   args: {
@@ -188,7 +195,21 @@ export async function assignOrCopyDocument(
   // Already in this project — idempotent
   if (doc.project_id === projectId) return { ok: true, status: 200, doc };
 
-  if (doc.project_id === null) {
+  // A project takes documents from its own workspace: a personal file does
+  // not go into an organization's project by id, nor an organization's into
+  // a personal one.
+  try {
+    const outside = await findDocumentsOutsideWorkspace(
+      db,
+      [documentId],
+      access.project.org_id ?? null,
+    );
+    if (outside.length > 0) return { ok: false, kind: "workspace_mismatch" };
+  } catch (error) {
+    return { ok: false, kind: "db_error", error };
+  }
+
+  if (doc.project_id === null && !doc.workflow_id && doc.library_kind !== "template") {
     // Standalone → assign project_id (and inherit the project's org).
     const targetOrg = await resolveContentOrgId(db, { projectId });
     if (!targetOrg.ok) return { ok: false, kind: "db_error", error: targetOrg.detail };
@@ -231,7 +252,12 @@ export async function assignOrCopyDocument(
 
     const activeVersionFilename =
       (srcV.filename as string | null)?.trim() || "Untitled document";
-    const srcBytes = await downloadFile(srcV.storage_path);
+    let srcBytes: ArrayBuffer | null;
+    try {
+      srcBytes = await downloadFile(srcV.storage_path);
+    } catch (error) {
+      return { ok: false, kind: "read_failed", error };
+    }
     if (!srcBytes) {
       return { ok: false, kind: "read_failed" };
     }

@@ -20,10 +20,33 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
+const repoRoot = dirname(scriptsDir);
 const gatePath = join(scriptsDir, "pnpm-audit-gate.mjs");
 const allowlist = JSON.parse(readFileSync(join(scriptsDir, "audit-allowlist.json"), "utf8"));
 
-const LOCKFILE = "lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n";
+const LOCKFILE = [
+    "lockfileVersion: '9.0'",
+    "importers:",
+    "  .:",
+    "    devDependencies:",
+    "      braces:",
+    "        specifier: 3.0.3",
+    "        version: 3.0.3",
+    "packages:",
+    "  braces@3.0.3: {}",
+    "  micromatch@4.0.8: {}",
+    "snapshots:",
+    "  braces@3.0.3: {}",
+    "  micromatch@4.0.8:",
+    "    dependencies:",
+    "      braces: 3.0.3",
+    "",
+].join("\n");
+const PACKAGE_JSON = JSON.stringify({
+    name: "audit-gate-fixture",
+    packageManager: "pnpm@11.1.2",
+    devDependencies: { yaml: "2.9.1" },
+});
 
 // The fake: prints FAKE_PNPM_STDOUT, exits FAKE_PNPM_STATUS and records its
 // argv so a test can prove what the gate asked for (or that it never asked).
@@ -54,14 +77,17 @@ function envWithFakeCorepack(extra) {
  * Runs the gate in a fresh workspace. `lock` is the pnpm-lock.yaml content
  * (null = no lock file); `report` is what the fake `pnpm audit` prints.
  */
-function runGate({ lock = LOCKFILE, report, status = 0 }) {
-    const dir = mkdtempSync(join(tmpdir(), "audit-gate-"));
-    if (lock !== null) writeFileSync(join(dir, "pnpm-lock.yaml"), lock);
+function runGate({ lock = LOCKFILE, report, status = 0, workspace = null }) {
+    const dir = mkdtempSync(join(repoRoot, "backend", "audit-gate-"));
+    if (workspace === null) {
+        writeFileSync(join(dir, "package.json"), PACKAGE_JSON);
+        if (lock !== null) writeFileSync(join(dir, "pnpm-lock.yaml"), lock);
+    }
     const record = join(dir, "pnpm-argv.json");
     const stdoutText = typeof report === "string" ? report : JSON.stringify(report ?? {});
     // spawn, never spawnSync: keeps the runner responsive while the gate runs.
     const child = spawn(process.execPath, [gatePath], {
-        cwd: dir,
+        cwd: workspace ?? dir,
         env: envWithFakeCorepack({
             FAKE_PNPM_STDOUT: stdoutText,
             FAKE_PNPM_STATUS: String(status),
@@ -113,7 +139,7 @@ test("fails without auditing when the workspace has no pnpm lock", async () => {
 test("fails without auditing when the pnpm lock is empty", async () => {
     const result = await runGate({ lock: "", report: { advisories: {} } });
     assertRefused(result);
-    strictEqual(result.stderr.includes("missing or empty"), true);
+    strictEqual(result.stderr.includes("must be a mapping"), true);
     strictEqual(result.argv, null);
 });
 
@@ -185,9 +211,40 @@ test("ignores moderate and low advisories", async () => {
 });
 
 test("passes an allowlisted advisory and prints its reason", { skip: allowlist.length === 0 }, async () => {
-    const [entry] = allowlist;
-    const result = await runGate({ report: { advisories: { 1: advisory(entry.ghsa) } }, status: 1 });
+    const entry = allowlist.find((candidate) => candidate.ghsa === "GHSA-vfj7-8cjw-p6xm");
+    const result = await runGate({
+        workspace: join(repoRoot, "frontend"),
+        report: {
+            advisories: {
+                1: {
+                    ...advisory(entry.ghsa),
+                    module_name: "braces",
+                    findings: [{ version: "3.0.3", paths: ["fixture>micromatch>braces"] }],
+                },
+            },
+        },
+        status: 1,
+    });
     strictEqual(result.status, 0, result.stderr);
     strictEqual(result.stdout.includes(`ALLOWLISTED high: ${entry.ghsa}`), true);
     strictEqual(result.stdout.includes("audit gate passed (1 high/critical advisories)"), true);
+});
+
+test("blocks an allowlisted GHSA when package version is outside its exact scope", async () => {
+    const ghsa = "GHSA-vfj7-8cjw-p6xm";
+    const result = await runGate({
+        workspace: join(repoRoot, "frontend"),
+        report: {
+            advisories: {
+                1: {
+                    ...advisory(ghsa),
+                    module_name: "braces",
+                    findings: [{ version: "3.0.4", paths: ["fixture>micromatch>braces"] }],
+                },
+            },
+        },
+        status: 1,
+    });
+    strictEqual(result.status, 1, result.stderr);
+    strictEqual(result.stderr.includes("outside the approved dependency scope"), true);
 });

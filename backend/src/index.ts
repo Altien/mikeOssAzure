@@ -7,6 +7,7 @@ import { installProcessGuards } from "./lib/processGuards";
 installProcessGuards();
 import { buildApp } from "./app";
 import { initDownloadSigningSecret } from "./lib/downloadTokens";
+import { initStorage } from "./lib/storage";
 import { initManifestSigningKey, manifestPublicKey } from "./lib/manifestSigning";
 import { checkSchemaVersion } from "./lib/schemaCheck";
 import { initServerSessionKeys } from "./lib/serverSession";
@@ -14,20 +15,24 @@ import { closeStreamRunCluster, initStreamRunCluster, streamRunCluster } from ".
 import { installStreamRunRelayHandler } from "./lib/streamRuns";
 import { submitClientToolResult } from "./modules/chat/chat.service";
 import { enforceDocumentLifecycleMigration } from "./lib/dbq/lifecycleGuard";
-import { startAllWorkers, stopAllWorkers } from "./workerRuntime";
+import { startAllWorkers, stopAllWorkers, WORKER_ROLES, type WorkerRole } from "./workerRuntime";
+import { startRoleThreads, stopRoleThreads } from "./lib/workerRoleThreads";
 import { initSentry } from "./lib/observability/sentry";
 import { getKeyVaultConfig } from "./lib/config";
 import { failBoot, listenOrFail } from "./lib/processLifecycle";
+import { stopExtractionProcess } from "./lib/extraction/isolated";
 
 const PORT = process.env.PORT ?? 3001;
+const HOST = process.env.HOST?.trim() || undefined;
 const workersMode = process.env.WORKERS_MODE === "inline" || process.env.WORKERS_MODE === "none"
   ? process.env.WORKERS_MODE : "thread";
 let shuttingDown = false;
 
-async function startThread(): Promise<ThreadWorker> {
+async function startThread(role: WorkerRole): Promise<ThreadWorker> {
   const isTs = __filename.endsWith(".ts");
+  // Compiled threads inherit source-map/V8 flags; retain Dev readiness handshake.
   const entry = path.join(__dirname, isTs ? "workerThread.ts" : "workerThread.js");
-  const thread = new ThreadWorker(entry, { execArgv: isTs ? ["--require", "tsx/cjs"] : [] });
+  const thread = new ThreadWorker(entry, { ...(isTs ? { execArgv: ["--require", "tsx/cjs"] } : {}), workerData: { role } });
   try {
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error("Worker thread startup timed out")), 30_000);
@@ -90,18 +95,18 @@ async function start(): Promise<void> {
     return delivered;
   });
   await initDownloadSigningSecret();
+  await initStorage();
   await initManifestSigningKey();
   const signingKey = manifestPublicKey();
   if (signingKey) console.log(`Export manifests signed with key ${signingKey.key_id}`);
 
-  let thread: ThreadWorker | null = null;
-  if (workersMode === "thread") thread = await startThread();
+  const threads = workersMode === "thread" ? await startRoleThreads(WORKER_ROLES, startThread) : [];
   if (workersMode === "inline") await startAllWorkers();
 
   const server = listenOrFail(buildApp(), PORT, () => {
     console.log(`Mike backend running on port ${PORT} (workers: ${workersMode})`);
     void checkSchemaVersion().catch(() => {});
-  });
+  }, undefined, HOST);
 
   async function shutdown(signal: string): Promise<void> {
     if (shuttingDown) return;
@@ -113,14 +118,9 @@ async function start(): Promise<void> {
         server.close((error) => error ? reject(error) : resolve()),
       );
       if (workersMode === "inline") await stopAllWorkers();
+      await stopExtractionProcess();
       await closeStreamRunCluster();
-      if (thread) {
-        const active = thread;
-        const exit = new Promise<void>((resolve) => active.once("exit", () => resolve()));
-        active.postMessage("shutdown");
-        await Promise.race([exit, new Promise<void>((resolve) => setTimeout(resolve, 10_000))]);
-        if (active.threadId !== -1) await active.terminate();
-      }
+      await stopRoleThreads(threads);
       clearTimeout(forced);
       console.log(`Graceful shutdown complete (${signal})`);
       process.exit(0);

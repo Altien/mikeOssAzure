@@ -10,6 +10,19 @@ vi.mock("../../../lib/envSecrets", () => ({
 import { getUserApiKeyStatus, normalizeApiKeyProvider } from "../user.apiKeyStore";
 import { saveApiKey } from "../user.apiKeys";
 
+function profilePreferenceDb() {
+  const from = vi.fn((table: string) => {
+    if (table !== "user_profiles") throw new Error(`secret-row lookup forbidden: ${table}`);
+    const query: Record<string, ReturnType<typeof vi.fn>> = {};
+    query.select = vi.fn(() => query);
+    query.eq = vi.fn(() => query);
+    query.maybeSingle = vi.fn(async () => ({ data: { provider_enabled: {} }, error: null }));
+    query.single = vi.fn(async () => ({ data: { provider_enabled: {} }, error: null }));
+    return query;
+  });
+  return { from };
+}
+
 describe("organisation provider credentials", () => {
   beforeEach(() => secrets.values.clear());
 
@@ -19,26 +32,30 @@ describe("organisation provider credentials", () => {
     expect(normalizeApiKeyProvider("unknown")).toBeNull();
   });
 
-  it("reports only organisation-backed sources and never reads a personal key row", async () => {
+  it("reports centrally sourced providers while permitting only profile preference reads", async () => {
     secrets.values.set("openai-api-key", "organisation-openai");
     secrets.values.set("azure-openai-endpoint", "https://example.openai.azure.com/");
     secrets.values.set("azure-openai-api-key", "organisation-azure");
-    const db = { from: vi.fn(() => { throw new Error("personal key lookup forbidden"); }) };
+    const db = profilePreferenceDb();
     const status = await getUserApiKeyStatus("entra|tenant|user", db as never);
     expect(status.openai).toBe(true);
     expect(status.azure_openai).toBe(true);
     expect(status.mistral).toBe(false);
     expect(status.sources).toMatchObject({ openai: "env", azure_openai: "env", claude: null, mistral: null });
-    expect(db.from).not.toHaveBeenCalled();
+    const tables = db.from.mock.calls.map(([table]) => table);
+    expect(tables).not.toContain("user_api_keys");
+    expect(tables).not.toContain("org_api_keys");
   });
 
-  it("reads the direct Mistral credential from the organisation Key Vault secret", async () => {
+  it("reads direct Mistral credentials centrally without accessing secret rows", async () => {
     secrets.values.set("mistral-api-key", "organisation-mistral");
-    const db = { from: vi.fn(() => { throw new Error("personal key lookup forbidden"); }) };
+    const db = profilePreferenceDb();
     const status = await getUserApiKeyStatus("entra|tenant|user", db as never);
     expect(status.mistral).toBe(true);
     expect(status.sources).toMatchObject({ mistral: "env" });
-    expect(db.from).not.toHaveBeenCalled();
+    const tables = db.from.mock.calls.map(([table]) => table);
+    expect(tables).not.toContain("user_api_keys");
+    expect(tables).not.toContain("org_api_keys");
   });
 
   it("refuses a personal provider key without writing any database row", async () => {

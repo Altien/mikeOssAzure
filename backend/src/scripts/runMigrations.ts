@@ -1,53 +1,13 @@
 import { DefaultAzureCredential } from "@azure/identity";
 import { SecretClient } from "@azure/keyvault-secrets";
 import { randomBytes } from "node:crypto";
-import { spawn } from "node:child_process";
 import { Client } from "pg";
 import { createServerSupabase } from "../lib/supabase";
 import { syncWorkflowCatalog } from "../lib/workflowCatalogSync";
 import { resolveProviderSecret } from "../lib/envSecrets";
+import { assertDirectMigrationConnection, parseMigrationCommand, runMigrationCommand } from "./migrationLedger";
 
 const AAD_SCOPE = "https://ossrdbms-aad.database.windows.net/.default";
-
-function runNodePgMigrate(databaseUrl: string): Promise<number> {
-  return new Promise((resolve, reject) => {
-    // node-pg-migrate ships as an npm bin. On Windows the resolver is
-    // `npx.cmd`; spawn() doesn't auto-suffix `.cmd` on win32, AND Node
-    // 18+ blocks spawning `.cmd` directly without `shell: true` (CVE
-    // mitigation). So on Windows we both pick the right binary name
-    // and route through a shell.
-    const isWin = process.platform === "win32";
-    const child = spawn(
-      isWin ? "npx.cmd" : "npx",
-      [
-        "node-pg-migrate",
-        "up",
-        "--migrations-dir",
-        "migrations",
-        "--migration-file-language",
-        "sql",
-        // The migrations dir also carries UPSTREAM_SYNC_LOG.md (sync provenance,
-        // written by the migration tooling). Without this, node-pg-migrate tries
-        // to load the .md as a migration module and crashes ("Invalid or
-        // unexpected token"), failing the whole migration job. Ignore non-SQL
-        // docs. Caught by the local-stack test before OSS promotion.
-        "--ignore-pattern",
-        ".*\\.md",
-      ],
-      {
-        env: {
-          ...process.env,
-          DATABASE_URL: databaseUrl,
-        },
-        stdio: "inherit",
-        shell: isWin,
-      },
-    );
-
-    child.on("error", reject);
-    child.on("close", (code) => resolve(code ?? 1));
-  });
-}
 
 // Tell PostgREST to rebuild its schema cache from pg_catalog.
 //
@@ -239,12 +199,19 @@ async function provisionAuthSecrets(databaseUrl: string): Promise<void> {
 }
 
 async function main() {
+  const command = parseMigrationCommand(process.argv.slice(2));
   const databaseUrl = await getDatabaseUrl();
-  const exitCode = await runNodePgMigrate(databaseUrl);
-
-  if (exitCode !== 0) {
-    throw new Error(`node-pg-migrate exited with code ${exitCode}`);
+  assertDirectMigrationConnection(databaseUrl);
+  const client = new Client({ connectionString: databaseUrl, application_name: "mike-migrate" });
+  try {
+    await client.connect();
+    process.exitCode = await runMigrationCommand(client, command);
+  } finally {
+    await client.end().catch(() => {});
   }
+  // Status/recovery commands inspect or record schema only. Deployment and
+  // local upgrade entrypoints keep their existing provisioning sequence.
+  if (command.kind !== "up" || process.exitCode) return;
 
   await ensureAuthenticatorRole(databaseUrl);
   await provisionAuthSecrets(databaseUrl);

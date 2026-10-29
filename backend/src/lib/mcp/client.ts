@@ -1,3 +1,4 @@
+import { getOrgRole } from "../access";
 import crypto from "crypto";
 import dns from "dns/promises";
 import net from "net";
@@ -5,13 +6,20 @@ import { getKeyVaultConfig } from "../config";
 import { readSecretEnv } from "../envSecrets";
 import { promisify } from "node:util";
 import { Agent, fetch as undiciFetch } from "undici";
+import { AppError } from "../appError";
+import {
+    BlockedDestinationError,
+    isBlockedDestinationError,
+} from "../blockedDestination";
+import { reportError } from "../observability/sentry";
 import { isBlockedIp } from "../privateIp";
 import { configuredApiPublicUrl } from "../runtimeConfig";
 import {
-    BLOCKED_METADATA_HOSTS,
     HEADER_NAME_RE,
     MAX_CUSTOM_HEADER_VALUE_LENGTH,
     MAX_CUSTOM_HEADERS,
+    canonicalHostname,
+    isBlockedHostname,
     type ConnectorRow,
     type Db,
     type McpConnectorAuthConfig,
@@ -147,8 +155,18 @@ export async function decryptString(
         ]);
         return decrypted.toString("utf8");
     } catch (err) {
+        // A secret that no longer decrypts (rotated key, corrupt row) is a
+        // deployment problem nobody sees from "the connector stopped working".
+        // The Error object goes to Sentry with its kind; the log line
+        // carries the same object so the bridge does not file it twice.
+        const failure = new AppError(
+            "mcp.decrypt_failed",
+            "Failed to decrypt a connector secret",
+            { cause: err },
+        );
+        reportError(failure);
         console.error("[mcp-connectors] failed to decrypt string secret", {
-            error: err instanceof Error ? err.message : String(err),
+            error: failure,
         });
         return null;
     }
@@ -181,9 +199,15 @@ export async function decryptAuthConfig(
             ? (parsed as McpConnectorAuthConfig)
             : {};
     } catch (err) {
+        const failure = new AppError(
+            "mcp.decrypt_failed",
+            "Failed to decrypt a connector's auth config",
+            { cause: err },
+        );
+        reportError(failure);
         console.error("[mcp-connectors] failed to decrypt auth config", {
             connectorId: row.id,
-            error: err instanceof Error ? err.message : String(err),
+            error: failure,
         });
         return {};
     }
@@ -331,27 +355,35 @@ export async function toConnectorSummary(
 // Private/reserved IP classification lives in lib/privateIp.ts so every
 // guarded egress check reuses the exact same ranges.
 
-export async function validateRemoteMcpUrl(rawUrl: string): Promise<string> {
+/** How guard errors name the URL when the caller does not say. */
+const DEFAULT_GUARD_LABEL = "MCP server URL";
+
+export async function validateRemoteMcpUrl(
+    rawUrl: string,
+    label: string = DEFAULT_GUARD_LABEL,
+    options: { allowHttp?: boolean } = {},
+): Promise<string> {
     let url: URL;
     try {
         url = new URL(rawUrl);
     } catch {
-        throw new Error("MCP server URL must be a valid URL.");
+        throw new Error(`${label} must be a valid URL.`);
     }
-    if (url.protocol !== "https:") {
-        throw new Error("MCP server URL must use HTTPS.");
+    const allowed =
+        url.protocol === "https:" ||
+        (options.allowHttp === true && url.protocol === "http:");
+    if (!allowed) {
+        throw new Error(
+            `${label} must use ${options.allowHttp ? "HTTP or HTTPS" : "HTTPS"}.`,
+        );
     }
     url.username = "";
     url.password = "";
     url.hash = "";
 
-    const hostname = url.hostname.toLowerCase();
-    if (
-        hostname === "localhost" ||
-        hostname.endsWith(".localhost") ||
-        BLOCKED_METADATA_HOSTS.has(hostname)
-    ) {
-        throw new Error("MCP server URL points to a blocked host.");
+    const hostname = canonicalHostname(url);
+    if (isBlockedHostname(hostname)) {
+        throw new BlockedDestinationError(`${label} points to a blocked host.`);
     }
 
     // URL.hostname wraps IPv6 literals in brackets ("[::1]"), which net.isIP
@@ -367,7 +399,9 @@ export async function validateRemoteMcpUrl(rawUrl: string): Promise<string> {
         ? [{ address: literalHost }]
         : await dns.lookup(hostname, { all: true, verbatim: true });
     if (!addresses.length || addresses.some(({ address }) => isBlockedIp(address))) {
-        throw new Error("MCP server URL resolves to a blocked network address.");
+        throw new BlockedDestinationError(
+            `${label} resolves to a blocked network address.`,
+        );
     }
 
     return url.toString();
@@ -450,9 +484,11 @@ const guardedAgent = new Agent({
                         !addresses.length ||
                         addresses.some(({ address }) => isBlockedIp(address))
                     ) {
+                        // Shared by every caller; guardedFetch re-labels it
+                        // with the caller's own wording.
                         callback(
-                            new Error(
-                                "MCP server URL resolves to a blocked network address.",
+                            new BlockedDestinationError(
+                                "Destination resolves to a blocked network address.",
                             ),
                             [],
                         );
@@ -484,10 +520,53 @@ const guardedAgent = new Agent({
 // aborts discovery even when a later candidate URL would have worked.
 const MAX_MCP_REDIRECTS = 5;
 
+type GuardedFetchOptions = {
+    /**
+     * What the URL is, as guard errors should call it ("Model endpoint
+     * URL"). Defaults to the MCP wording this guard was written for.
+     */
+    label?: string;
+    /** Also allow plain http: URLs (public web pages). */
+    allowHttp?: boolean;
+};
+
 export async function guardedFetch(
     input: Parameters<typeof fetch>[0],
     init?: Parameters<typeof fetch>[1],
+    options: GuardedFetchOptions = {},
 ): Promise<Response> {
+    const label = options.label ?? DEFAULT_GUARD_LABEL;
+    try {
+        return await guardedFetchUnlabelled(input, init, {
+            ...options,
+            label,
+        });
+    } catch (error) {
+        // A connect-time rejection surfaces from undici as "fetch failed"
+        // with the shared agent's caller-neutral error as its cause.
+        if (
+            isBlockedDestinationError(error) &&
+            !(
+                error instanceof BlockedDestinationError &&
+                error.message.startsWith(label)
+            )
+        ) {
+            throw new BlockedDestinationError(
+                `${label} resolves to a blocked network address.`,
+                { cause: error },
+            );
+        }
+        throw error;
+    }
+}
+
+async function guardedFetchUnlabelled(
+    input: Parameters<typeof fetch>[0],
+    init: Parameters<typeof fetch>[1] | undefined,
+    options: GuardedFetchOptions & { label: string },
+): Promise<Response> {
+    const { label } = options;
+    const urlOptions = { allowHttp: options.allowHttp };
     const isRequest = typeof input === "object" && input instanceof Request;
     let url =
         typeof input === "string"
@@ -495,7 +574,7 @@ export async function guardedFetch(
             : input instanceof URL
               ? input.toString()
               : input.url;
-    await validateRemoteMcpUrl(url);
+    await validateRemoteMcpUrl(url, label, urlOptions);
     // The request MUST go through the `undici` package's own `fetch`, not the
     // global one. Node's built-in fetch is a copy of undici frozen at the
     // version Node was built with (6.x on Node 22), while `guardedAgent` comes
@@ -551,15 +630,16 @@ export async function guardedFetch(
         }
         await response.body?.cancel().catch(() => undefined);
 
-        const validated = await validateRemoteMcpUrl(target);
+        const validated = await validateRemoteMcpUrl(target, label, urlOptions);
         // Header names configured for connector authentication are arbitrary,
         // so there is no complete denylist for secrets. On a cross-origin hop,
-        // retain only the small set needed for GET/HEAD content negotiation.
+        // retain only content negotiation and the user agent, none of which
+        // carries a secret.
         // Mutate the active set permanently so a later same-origin hop cannot
         // restore credentials from the original request.
         if (new URL(validated).origin !== new URL(url).origin) {
             const safeHeaders = new Headers();
-            for (const name of ["accept", "accept-language"]) {
+            for (const name of ["accept", "accept-language", "user-agent"]) {
                 const value = headers.get(name);
                 if (value !== null) safeHeaders.set(name, value);
             }
@@ -635,5 +715,7 @@ export async function loadConnector(
         .eq("id", connectorId)
         .single();
     if (error) throw error;
-    return data as ConnectorRow;
+    const connector = data as ConnectorRow;
+    if (connector.org_id && !(await getOrgRole(userId, connector.org_id, db))) throw new Error("Workspace not found");
+    return connector;
 }

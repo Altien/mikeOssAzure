@@ -19,6 +19,18 @@ in `backend/src/jobs/registry.ts`. Shared API/event types live in
 credential precedence, private Blob transport, text user IDs, and claim-token
 fences while applying this structure.
 
+Migration history stays in public.pgmigrations. Use the standard migration
+runner for upgrades and status; never edit or rename shipped SQL. Explicit
+baseline/mark recovery requires the last verified applied filename and
+--confirm-applied; ordinary upgrades never infer a baseline.
+
+Ordinary numbered SQL runs in one native transaction per file with its history row.
+Do not add transaction controls to new files. Historical BEGIN/COMMIT SQL remains
+unchanged and may leave partial changes on failure. The current SQL loader does
+not support CONCURRENTLY or -- migrate:no-transaction; the runner rejects them
+explicitly. Any future nontransactional migration needs an approved runner change.
+Use a direct/session connection, never a transaction pooler.
+
 Database changes use the next numbered `backend/migrations/NNNN_*.sql` file.
 The same numbered history initializes fresh and existing private PostgreSQL
 databases. Use `web_anon`, `authenticated`, and `service_role` grants with
@@ -42,6 +54,19 @@ go through `mikeApi.ts` so runtime auth and `/api` routing remain consistent.
 Never display raw backend, provider, or database errors; use the established
 generic user-facing fallback while retaining intentional 4xx messages.
 
+## Diagnostic identity
+
+Sentry operation, error-kind, component, stage and job labels are static
+source-authored identifiers; adding one needs no central registration. Never
+interpolate user or dependency data into a diagnostic label, error name or
+computed function name. Preserve upstream errors as causes, not as labels.
+Raw messages, request payloads and arbitrary extras remain filtered centrally.
+The backend diagnostic source-contract test scans all three applications;
+review forwarded helper parameters and mappings as well. See
+`docs/observability.md` for the trust model and examples.
+
+## Verification
+
 ## Upstream Compatibility
 
 This project is based on an upstream open-source repository. Prefer the smallest practical changes that achieve the local/Azure migration goals so future upstream changes remain easy to merge.
@@ -51,6 +76,30 @@ This project is based on an upstream open-source repository. Prefer the smallest
 - Prefer adapter layers, environment switches, and thin local overrides over changing shared application logic.
 - When removing Supabase, AWS, or other upstream dependencies, do it incrementally and preserve upstream-shaped interfaces where practical.
 - Document intentional divergence from upstream so future merges can evaluate conflicts quickly.
+
+## Storage Adapter Boundary
+
+`backend/src/lib/storage.ts` is the policy facade for the upstream-shaped
+`storage/adapter.ts` seam. Transports live only under `lib/storage/`.
+API, worker and storage CLI bootstraps await `initStorage()` before serving or
+claiming work; this resolves credentials through the existing Key Vault-first
+boundary. Desktop uses the same API/worker bootstrap with the filesystem driver.
+`setStorageAdapter()` supports explicit boot-time injection and updates the live
+`storageEnabled` binding. Callers continue importing only the facade.
+
+Mutations (upload, copy, delete, part staging/sealing, streamed write and discard)
+MUST call `requireStorageConfig()` before adapter delegation. Never turn a missing
+adapter into optional success: that can orphan DB rows or finalize durable cleanup
+without deleting bytes (`efdb687` / `2dbce7c` precedent). Signing/download reads
+may return null and list reads may return empty; HEAD retains an explicit
+configuration check so misconfiguration is not evidence a staging object is gone.
+
+Copy must forward the optional source ETag. Azure retains authenticated backend
+block uploads and download proxy fallback (no browser SAS); filesystem retains
+bounded atomic signed PUTs and `/api/download/signed` capabilities. SDK errors
+are translated at the facade, and transport-specific missing-object handling
+must not swallow bucket/container/proxy/auth failures. Preserve claim, actor and
+workspace fences at callers when changing the transport.
 
 ## Environment Variables and Secrets
 

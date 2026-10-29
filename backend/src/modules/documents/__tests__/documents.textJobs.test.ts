@@ -1,22 +1,13 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { scriptedDb } from "../../../__tests__/helpers/scriptedDb";
-import type { DbJob } from "../../../lib/dbq/types";
-const mocks = vi.hoisted(() => ({
-  downloadFile: vi.fn(),
-  uploadFile: vi.fn(),
-  extractLegacyOfficeText: vi.fn(),
-  enqueueDbJob: vi.fn(),
+import { DbJobDeferredError, type DbJob } from "../../../lib/dbq/types";
+const mocks = vi.hoisted(() => ({ inline: vi.fn(), downloadFile: vi.fn(), uploadFile: vi.fn(), setOperation: vi.fn() }));
+vi.mock("../documents.indexing", async (original) => ({
+  ...(await original<typeof import("../documents.indexing")>()), processDocumentTextInline: mocks.inline,
 }));
-vi.mock("../../../lib/storage", () => ({
-  downloadFile: mocks.downloadFile,
-  uploadFile: mocks.uploadFile,
-  extractedTextKey: (id: string) => `extracted-text/${id}.txt`,
-}));
-vi.mock("../../../lib/pdfText", () => ({
-  extractLegacyOfficeText: mocks.extractLegacyOfficeText,
-}));
-vi.mock("../../../lib/dbq/enqueue", () => ({
-  enqueueDbJob: mocks.enqueueDbJob,
+vi.mock("../../../lib/storage", () => ({ downloadFile: mocks.downloadFile, uploadFile: mocks.uploadFile }));
+vi.mock("../../../lib/observability/sentry", async (original) => ({
+  ...(await original<typeof import("../../../lib/observability/sentry")>()), setOperation: mocks.setOperation,
 }));
 import { handleDocumentPrecomputeText } from "../documents.textJobs";
 const job = {
@@ -24,52 +15,49 @@ const job = {
   id: "text-job", kind: "document.precompute_text", status: "running", attempts: 1,
   max_attempts: 3, run_at: "", claimed_at: null, finished_at: null, last_error: null,
   dedupe_key: null, result: null, created_at: "",
-  // Dev drift: Dev's DbJob carries claim-token lease fences.
-  claim_token: null, lease_expires_at: null,
+  claim_token: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", lease_expires_at: new Date(Date.now() + 300_000).toISOString(),
 } satisfies DbJob;
-beforeEach(() => {
-  vi.resetAllMocks();
-  mocks.downloadFile.mockResolvedValue(new ArrayBuffer(1));
-  mocks.extractLegacyOfficeText.mockResolvedValue("extracted text");
-});
-it("does not write a deleted or replaced version's cache", async () => {
-  const fake = scriptedDb([{ table: "document_versions", data: null }]);
+const enqueue = { p_version_id: "v", p_retry_failed: false,
+  p_precompute_job: { id: job.id, attempt: job.attempts, token: job.claim_token } };
+beforeEach(() => { vi.resetAllMocks(); mocks.inline.mockResolvedValue(undefined); });
+it("leaves deleted or replaced version eligibility to the canonical guarded queue", async () => {
+  const fake = scriptedDb([{ rpc: "queue_document_text", data: false }]);
   await handleDocumentPrecomputeText(fake.db, job);
-  expect(mocks.downloadFile).not.toHaveBeenCalled();
-  expect(mocks.uploadFile).not.toHaveBeenCalled();
-  expect(mocks.enqueueDbJob).toHaveBeenCalledWith(fake.db, {
-    kind: "document.cleanup",
-    payload: { versionId: "v", keys: ["extracted-text/v.txt"] },
-  });
-  expect(fake.calls[0].filters).toEqual([
-    ["eq", "id", "v"],
-    ["eq", "storage_path", "old-source"],
-    ["is", "deleted_at", null],
-  ]);
-  fake.done();
+  expect(fake.calls[0].args).toEqual(enqueue);
+  expect(mocks.downloadFile).not.toHaveBeenCalled(); expect(mocks.uploadFile).not.toHaveBeenCalled(); fake.done();
 });
-it("retires output if the version was deleted or replaced during extraction", async () => {
-  const fake = scriptedDb([
-    { table: "document_versions", data: { id: "v" } },
-    { table: "document_versions", data: null },
-  ]);
+it("never creates a fixed-key output that can outlive a source revision", async () => {
+  const fake = scriptedDb([{ rpc: "queue_document_text", data: true }]);
   await handleDocumentPrecomputeText(fake.db, job);
-  expect(mocks.uploadFile).toHaveBeenCalledOnce();
-  expect(mocks.enqueueDbJob).toHaveBeenCalledOnce();
-  fake.done();
+  expect(mocks.inline).toHaveBeenCalledWith(fake.db, ["v"]);
+  expect(mocks.uploadFile).not.toHaveBeenCalled(); fake.done();
 });
-it("does not write when it cannot establish version liveness", async () => {
+it("names its operation before guarded enqueueing", async () => {
+  const fake = scriptedDb([{ rpc: "queue_document_text", data: true }]);
+  await handleDocumentPrecomputeText(fake.db, job);
+  expect(mocks.setOperation).toHaveBeenCalledWith("documents.precompute_text"); fake.done();
+});
+it("does not start extraction when guarded enqueue cannot establish current access", async () => {
   const error = new Error("database unavailable");
-  const fake = scriptedDb([{ table: "document_versions", error }]);
+  const fake = scriptedDb([{ rpc: "queue_document_text", error }]);
   await expect(handleDocumentPrecomputeText(fake.db, job)).rejects.toBe(error);
-  expect(mocks.uploadFile).not.toHaveBeenCalled();
-  expect(mocks.enqueueDbJob).not.toHaveBeenCalled();
-  fake.done();
+  expect(mocks.inline).not.toHaveBeenCalled(); expect(mocks.uploadFile).not.toHaveBeenCalled(); fake.done();
 });
-it("propagates cleanup scheduling failure so the worker retries", async () => {
-  const fake = scriptedDb([{ table: "document_versions", data: null }]);
-  mocks.enqueueDbJob.mockRejectedValue(new Error("queue unavailable"));
-  await expect(handleDocumentPrecomputeText(fake.db, job)).rejects.toThrow(
-    "queue unavailable",
-  );
+it("rejects an unfenced legacy job before any queue or storage mutation", async () => {
+  const fake = scriptedDb([]);
+  await expect(handleDocumentPrecomputeText(fake.db, { ...job, claim_token: null })).rejects.toThrow("no claim fence");
+  expect(mocks.inline).not.toHaveBeenCalled(); expect(mocks.uploadFile).not.toHaveBeenCalled(); fake.done();
+});
+it("propagates canonical resource-busy deferral without creating a cache", async () => {
+  const fake = scriptedDb([{ rpc: "queue_document_text", data: true }]);
+  const deferred = new DbJobDeferredError(new Date(Date.now() + 30_000).toISOString(), "document_extraction_busy");
+  mocks.inline.mockRejectedValue(deferred);
+  await expect(handleDocumentPrecomputeText(fake.db, job)).rejects.toBe(deferred);
+  expect(mocks.uploadFile).not.toHaveBeenCalled(); fake.done();
+});
+it("delegates parser limits and terminal revision publication to the canonical extractor", async () => {
+  const fake = scriptedDb([{ rpc: "queue_document_text", data: true }]);
+  await handleDocumentPrecomputeText(fake.db, job);
+  expect(fake.calls[0].args).toEqual(enqueue);
+  expect(mocks.inline).toHaveBeenCalledOnce(); expect(mocks.uploadFile).not.toHaveBeenCalled(); fake.done();
 });

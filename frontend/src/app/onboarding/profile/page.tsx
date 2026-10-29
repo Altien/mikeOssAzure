@@ -11,6 +11,7 @@ import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { updateUserProfile } from "@/app/lib/mikeApi";
 import { FieldLabel } from "@/app/components/ui/form-field";
+import { describeError } from "@/app/lib/userFacingError";
 
 export default function OnboardingProfilePage() {
     const router = useRouter();
@@ -50,6 +51,7 @@ function ProfileDetailsForm({
 
     const handleSubmit = async (event: React.FormEvent) => {
         event.preventDefault();
+        if (submitting) return;
         const displayName = name.trim();
 
         setSubmitting(true);
@@ -63,9 +65,10 @@ function ProfileDetailsForm({
             router.push("/onboarding/practice");
         } catch (submitError) {
             setError(
-                submitError instanceof Error
-                    ? submitError.message
-                    : "Unable to save your details",
+                describeError(submitError, {
+                    action: "save your details",
+                    fallback: "Unable to save your details. Try again.",
+                }).message,
             );
         } finally {
             setSubmitting(false);
@@ -74,7 +77,7 @@ function ProfileDetailsForm({
 
     return (
         <OnboardingShell
-            step="Step 1 of 2"
+            step="Step 1 of 3"
             title="Tell us about you"
             description="Add the details we should use across Mike."
         >

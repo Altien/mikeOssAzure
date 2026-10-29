@@ -7,8 +7,16 @@ allowBuilds:
   '@azure/msal-node-extensions': false
   '@microsoft/m365agentstoolkit-cli': false
   '@microsoft/teamsapp-cli': false
+  '@sentry/cli': false
   keytar: false
 overrides:
+  'body-parser@1.20.8': 1.20.9
+  'body-parser@2.3.0': 2.4.0
+  'zod@4.6.5': 4.6.7
+  # Source180 npm lock-only editor launcher update.
+  launch-editor: 2.14.2
+  # Source177 npm lock security delta, retained in Dev pnpm resolution.
+  markdown-it: ^14.3.3
   # Development-only MCP SDK (office-addin-debugging -> teamsfx-core): hold
   # the advisory-patched line (upstream's npm override, 54b6b3a1/57009979).
   '@modelcontextprotocol/sdk': ^1.32.0

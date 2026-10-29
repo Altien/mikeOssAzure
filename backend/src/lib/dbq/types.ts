@@ -1,3 +1,4 @@
+import { AppError } from "../appError";
 import type { Db } from "../supabase";
 export type { Db };
 
@@ -21,13 +22,14 @@ export interface DbJob {
 }
 
 /** A domain handler can defer a claimed job without consuming retry budget. */
-export class DbJobDeferredError extends Error {
+export class DbJobDeferredError extends AppError {
     readonly runAt: string;
+    readonly code: string;
 
     constructor(runAt: string, code = "job_deferred") {
-        super(code);
-        this.name = "DbJobDeferredError";
+        super("dbq.deferred", code);
         this.runAt = runAt;
+        this.code = code;
     }
 }
 
@@ -37,9 +39,10 @@ export class DbJobDeferredError extends Error {
  * retryable failure by THROWING — returning normally marks the job done.
  * The optional return value is persisted into db_jobs.result for pollers.
  */
-export type DbJobHandler = (
-    db: Db,
-    job: DbJob,
-) => Promise<Record<string, unknown> | void>;
+export type DbJobHandler = {
+    (db: Db, job: DbJob): Promise<Record<string, unknown> | void>;
+    /** Cleanup only this attempt's unpublished result after fenced completion fails. */
+    onUnpublishedResult?: (db: Db, job: DbJob, result: Record<string, unknown>, outcome: { publicationUncertain: boolean }) => Promise<void>;
+};
 
 export type DbJobHandlers = Record<string, DbJobHandler>;

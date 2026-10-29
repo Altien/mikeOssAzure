@@ -9,10 +9,14 @@ import {
     executeGoogleDriveToolCall,
     getGoogleDriveStatus,
     startGoogleDriveOAuth,
+    createGoogleDrivePickerSession,
+    planGoogleDriveCall,
     GOOGLE_DRIVE_SCOPE,
 } from "../googleDrive";
 import { decryptString } from "../../mcp/client";
 import { driveDb } from "./googleDriveDb";
+import { personalConnectorOwner } from "../../connectorOwner";
+import * as sentry from "../../observability/sentry";
 
 beforeEach(() => {
     vi.stubEnv("GOOGLE_DRIVE_OAUTH_CLIENT_ID", "test-client");
@@ -20,6 +24,7 @@ beforeEach(() => {
     vi.stubEnv("MCP_CONNECTORS_ENCRYPTION_KEY", "test-encryption-key");
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(sentry, "reportError").mockReturnValue(null);
 });
 afterEach(() => {
     vi.unstubAllEnvs();
@@ -36,7 +41,7 @@ const json = (value: unknown, status = 200) =>
     new Response(JSON.stringify(value), { status });
 async function begin(store: ReturnType<typeof driveDb>, user = "u1") {
     const result = await startGoogleDriveOAuth(
-        user,
+        personalConnectorOwner(user),
         "https://mike.test/api/callback",
         store.db,
     );
@@ -58,7 +63,7 @@ describe("Google Drive OAuth lifecycle", () => {
         vi.stubEnv("GOOGLE_DRIVE_OAUTH_CLIENT_SECRET", "");
         vi.stubEnv("GOOGLE_MCP_OAUTH_CLIENT_SECRET", "other-client-secret");
         const store = driveDb();
-        expect((await getGoogleDriveStatus("u1", store.db)).configured).toBe(
+        expect((await getGoogleDriveStatus(personalConnectorOwner("u1"), store.db)).configured).toBe(
             false,
         );
         await expect(begin(store)).rejects.toThrow(/needs an OAuth client/);
@@ -97,7 +102,7 @@ describe("Google Drive OAuth lifecycle", () => {
         expect(store.states).toHaveLength(0);
         const row = store.tokens[0];
         expect(row.user_id).toBe("u1");
-        expect((await getGoogleDriveStatus("u1", store.db)).accountEmail).toBe(
+        expect((await getGoogleDriveStatus(personalConnectorOwner("u1"), store.db)).accountEmail).toBe(
             "drive@example.com",
         );
         expect(JSON.stringify(row)).not.toContain("access-secret");
@@ -114,9 +119,45 @@ describe("Google Drive OAuth lifecycle", () => {
         ).rejects.toThrow(/invalid or expired/);
         // The token exchange and the account lookup; the replay made neither.
         expect(fetchMock).toHaveBeenCalledTimes(2);
-        expect((await getGoogleDriveStatus("u2", store.db)).connected).toBe(
+        expect((await getGoogleDriveStatus(personalConnectorOwner("u2"), store.db)).connected).toBe(
             false,
         );
+    });
+    it("keeps a separate connection for each workspace", async () => {
+        // Dev drift: effective connection reads require actual active membership.
+        const store = driveDb({ memberships: [{ user_id: "u1", org_id: "org-1", role: "member" }] });
+        const firm = { userId: "u1", orgId: "org-1" };
+        const { authorizationUrl } = await startGoogleDriveOAuth(
+            firm,
+            "https://mike.test/api/callback",
+            store.db,
+        );
+        expect(store.states[0]).toMatchObject({ user_id: "u1", org_id: "org-1" });
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => json(tokens)),
+        );
+        await completeGoogleDriveOAuth(
+            "u1",
+            new URL(authorizationUrl).searchParams.get("state")!,
+            "code",
+            store.db,
+        );
+
+        expect((await getGoogleDriveStatus(firm, store.db)).connected).toBe(true);
+        expect(
+            (await getGoogleDriveStatus(personalConnectorOwner("u1"), store.db))
+                .connected,
+        ).toBe(false);
+        expect(
+            await buildGoogleDriveTools(personalConnectorOwner("u1"), store.db),
+        ).toEqual([]);
+
+        // Disconnecting Personal leaves the organization's connection.
+        await disconnectGoogleDrive(personalConnectorOwner("u1"), store.db);
+        expect((await getGoogleDriveStatus(firm, store.db)).connected).toBe(true);
+        await disconnectGoogleDrive(firm, store.db);
+        expect(store.tokens).toHaveLength(0);
     });
     it("still connects when the account lookup fails", async () => {
         const store = driveDb();
@@ -130,7 +171,7 @@ describe("Google Drive OAuth lifecycle", () => {
             ),
         );
         await completeGoogleDriveOAuth("u1", state, "code", store.db);
-        const status = await getGoogleDriveStatus("u1", store.db);
+        const status = await getGoogleDriveStatus(personalConnectorOwner("u1"), store.db);
         expect(status.connected).toBe(true);
         expect(status.accountEmail).toBeUndefined();
     });
@@ -208,12 +249,12 @@ describe("Google Drive OAuth lifecycle", () => {
     it("cancel is scoped to its caller and blocks an in-flight callback from saving", async () => {
         const store = driveDb();
         const state = await begin(store);
-        await cancelGoogleDriveOAuth("u2", state, store.db);
+        await cancelGoogleDriveOAuth(personalConnectorOwner("u2"), state, store.db);
         expect(store.states).toHaveLength(1);
         vi.stubGlobal(
             "fetch",
             vi.fn(async () => {
-                await cancelGoogleDriveOAuth("u1", state, store.db);
+                await cancelGoogleDriveOAuth(personalConnectorOwner("u1"), state, store.db);
                 return json(tokens);
             }),
         );
@@ -228,7 +269,7 @@ describe("Google Drive OAuth lifecycle", () => {
         vi.stubGlobal(
             "fetch",
             vi.fn(async () => {
-                await disconnectGoogleDrive("u1", store.db);
+                await disconnectGoogleDrive(personalConnectorOwner("u1"), store.db);
                 return json(tokens);
             }),
         );
@@ -255,7 +296,7 @@ describe("Google Drive OAuth lifecycle", () => {
         });
         vi.stubGlobal("fetch", fetchMock);
         const result = await executeGoogleDriveToolCall(
-            "u1",
+            personalConnectorOwner("u1"),
             "google_drive_list_recent",
             {},
             store.db,
@@ -274,7 +315,7 @@ describe("Google Drive OAuth lifecycle", () => {
             "fetch",
             vi.fn(async (input) => {
                 if (String(input).includes("/token")) {
-                    await disconnectGoogleDrive("u1", store.db);
+                    await disconnectGoogleDrive(personalConnectorOwner("u1"), store.db);
                     return json({
                         access_token: "new-access",
                         expires_in: 3600,
@@ -284,7 +325,7 @@ describe("Google Drive OAuth lifecycle", () => {
             }),
         );
         const result = await executeGoogleDriveToolCall(
-            "u1",
+            personalConnectorOwner("u1"),
             "google_drive_list_recent",
             {},
             store.db,
@@ -302,7 +343,7 @@ describe("Google Drive OAuth lifecycle", () => {
                 throw new Error("provider-secret");
             }),
         );
-        await disconnectGoogleDrive("u1", store.db);
+        await disconnectGoogleDrive(personalConnectorOwner("u1"), store.db);
         expect(store.tokens).toHaveLength(0);
         expect(store.states.map((s) => s.user_id)).toEqual(["u2"]);
         expect(fetch).not.toHaveBeenCalled();
@@ -310,7 +351,7 @@ describe("Google Drive OAuth lifecycle", () => {
     it("disconnect still works when ciphertext cannot be decrypted", async () => {
         const store = await connected();
         store.tokens[0].refresh_token_tag = "corrupt";
-        await disconnectGoogleDrive("u1", store.db);
+        await disconnectGoogleDrive(personalConnectorOwner("u1"), store.db);
         expect(store.tokens).toHaveLength(0);
     });
     it("does not leak database/crypto/provider exceptions through events, tool content or logs", async () => {
@@ -320,7 +361,7 @@ describe("Google Drive OAuth lifecycle", () => {
             new Error("secret-internal-sentinel"),
         );
         const result = await executeGoogleDriveToolCall(
-            "u1",
+            personalConnectorOwner("u1"),
             "google_drive_list_recent",
             {},
             store.db,
@@ -340,7 +381,7 @@ describe("Google Drive OAuth lifecycle", () => {
         store.failures.set("google_workspace_oauth_states:select", {
             code: "PGRST205",
         });
-        expect((await getGoogleDriveStatus("u1", store.db)).schemaReady).toBe(
+        expect((await getGoogleDriveStatus(personalConnectorOwner("u1"), store.db)).schemaReady).toBe(
             false,
         );
     });
@@ -358,7 +399,7 @@ describe("Google Drive OAuth lifecycle", () => {
             ),
         );
         const result = await executeGoogleDriveToolCall(
-            "u1",
+            personalConnectorOwner("u1"),
             "google_drive_read_file",
             { file_id: "f1" },
             store.db,
@@ -375,7 +416,7 @@ describe("Google Drive OAuth lifecycle", () => {
         );
         vi.stubGlobal("fetch", fetchMock);
         const result = await executeGoogleDriveToolCall(
-            "u1",
+            personalConnectorOwner("u1"),
             "google_drive_read_file",
             { file_id: "f1" },
             store.db,
@@ -392,7 +433,7 @@ describe("Google Drive OAuth lifecycle", () => {
             ),
         );
         const result = await executeGoogleDriveToolCall(
-            "u1",
+            personalConnectorOwner("u1"),
             "google_drive_list_recent",
             {},
             store.db,
@@ -402,18 +443,51 @@ describe("Google Drive OAuth lifecycle", () => {
         );
         expect(result.event.error).toMatch(/not permitted/);
     });
+    it.each([undefined, 403, 429, 503])(
+        "logs an unreported read error at warning level (status %s)",
+        async (status) => {
+            const store = await connected();
+            vi.stubGlobal("fetch", vi.fn(async () => json({}, status)));
+            const result = await executeGoogleDriveToolCall(
+                personalConnectorOwner("u1"),
+                status === undefined ? "google_drive_search" : "google_drive_list_recent",
+                {},
+                store.db,
+            );
+            expect(result.event.status).toBe("error");
+            if (status === 503) {
+                expect(sentry.reportError).toHaveBeenCalledExactlyOnceWith(
+                    expect.objectContaining({ status: 503 }),
+                    { level: "warning" },
+                );
+                const [error] = vi.mocked(sentry.reportError).mock.calls[0];
+                expect(console.error).toHaveBeenCalledWith(
+                    "[google-drive] tool call failed",
+                    expect.objectContaining({ error }),
+                );
+                expect(console.warn).not.toHaveBeenCalled();
+            } else {
+                expect(sentry.reportError).not.toHaveBeenCalled();
+                expect(console.error).not.toHaveBeenCalled();
+                expect(console.warn).toHaveBeenCalledWith(
+                    "[google-drive] tool call failed",
+                    expect.objectContaining({ error: expect.any(Error) }),
+                );
+            }
+        },
+    );
     it("hides and refuses a turned-off connection or tool, and keeps settings per user", async () => {
         const store = await connected();
         const fetchMock = vi.fn(async () => json({ files: [] }));
         vi.stubGlobal("fetch", fetchMock);
         await setGoogleDriveToolEnabled(
-            "u1",
+            personalConnectorOwner("u1"),
             "google_drive_read_file",
             false,
             store.db,
         );
         const names = (
-            (await buildGoogleDriveTools("u1", store.db)) as {
+            (await buildGoogleDriveTools(personalConnectorOwner("u1"), store.db)) as {
                 function: { name: string };
             }[]
         ).map((tool) => tool.function.name);
@@ -423,24 +497,24 @@ describe("Google Drive OAuth lifecycle", () => {
         expect(names).toContain("google_drive_create_file");
         expect(
             (
-                await getGoogleDriveStatus("u1", store.db)
+                await getGoogleDriveStatus(personalConnectorOwner("u1"), store.db)
             ).tools.find((tool) => tool.name === "google_drive_read_file")
                 ?.enabled,
         ).toBe(false);
         const refused = await executeGoogleDriveToolCall(
-            "u1",
+            personalConnectorOwner("u1"),
             "google_drive_read_file",
             { file_id: "f" },
             store.db,
         );
         expect(refused.event.status).toBe("error");
         expect(refused.event.error).toContain("turned off");
-        await updateGoogleDriveSettings("u1", { enabled: false }, store.db);
-        expect(await buildGoogleDriveTools("u1", store.db)).toEqual([]);
+        await updateGoogleDriveSettings(personalConnectorOwner("u1"), { enabled: false }, store.db);
+        expect(await buildGoogleDriveTools(personalConnectorOwner("u1"), store.db)).toEqual([]);
         expect(
             (
                 await executeGoogleDriveToolCall(
-                    "u1",
+                    personalConnectorOwner("u1"),
                     "google_drive_search",
                     { query: "x" },
                     store.db,
@@ -449,10 +523,10 @@ describe("Google Drive OAuth lifecycle", () => {
         ).toBe("error");
         expect(fetchMock).not.toHaveBeenCalled();
         await expect(
-            updateGoogleDriveSettings("u2", { enabled: false }, store.db),
+            updateGoogleDriveSettings(personalConnectorOwner("u2"), { enabled: false }, store.db),
         ).rejects.toThrow("Connect Google Drive first");
         await expect(
-            setGoogleDriveToolEnabled("u1", "google_drive_delete", false, store.db),
+            setGoogleDriveToolEnabled(personalConnectorOwner("u1"), "google_drive_delete", false, store.db),
         ).rejects.toThrow("Unknown");
     });
     it("keeps a connection made with the earlier read-only permission working", async () => {
@@ -468,7 +542,7 @@ describe("Google Drive OAuth lifecycle", () => {
             ),
         );
         await completeGoogleDriveOAuth("u1", state, "code", store.db);
-        expect((await getGoogleDriveStatus("u1", store.db)).connected).toBe(
+        expect((await getGoogleDriveStatus(personalConnectorOwner("u1"), store.db)).connected).toBe(
             true,
         );
     });
@@ -483,5 +557,42 @@ describe("Google Drive OAuth lifecycle", () => {
             completeGoogleDriveOAuth("u1", state, "code", store.db),
         ).rejects.toThrow();
         expect(store.tokens).toHaveLength(0);
+    });
+    it("switches Drive off for the deployment but keeps an existing connection deletable", async () => {
+        const store = await connected();
+        vi.stubEnv("GOOGLE_DRIVE_PICKER_API_KEY", "picker-key");
+        vi.stubEnv("GOOGLE_DRIVE_PICKER_APP_ID", "123456789");
+        expect(await buildGoogleDriveTools(personalConnectorOwner("u1"), store.db)).not.toEqual([]);
+        vi.stubEnv("GOOGLE_WORKSPACE_DISABLED_PROVIDERS", "gmail, google-drive");
+        const fetchMock = vi.fn();
+        vi.stubGlobal("fetch", fetchMock);
+        expect(await buildGoogleDriveTools(personalConnectorOwner("u1"), store.db)).toEqual([]);
+        await expect(begin(store)).rejects.toMatchObject({
+            code: "connector_unavailable",
+            message: "Google Drive is not offered on this Mike server.",
+        });
+        await expect(
+            createGoogleDrivePickerSession(personalConnectorOwner("u1"), store.db),
+        ).rejects.toMatchObject({ code: "connector_unavailable" });
+        for (const [name, args] of [
+            ["google_drive_search", { query: "x" }],
+            ["google_drive_create_folder", { name: "x" }],
+        ] as const) {
+            const refused = await executeGoogleDriveToolCall(personalConnectorOwner("u1"), name, args, store.db);
+            expect(refused.event.status).toBe("error");
+            expect(refused.content).toContain("not offered on this Mike server");
+        }
+        expect(
+            (await planGoogleDriveCall(personalConnectorOwner("u1"), "google_drive_create_folder", { name: "x" }, store.db)).type,
+        ).toBe("result");
+        expect(fetchMock).not.toHaveBeenCalled();
+        // Status still describes the grant so Settings can show and delete it.
+        expect(await getGoogleDriveStatus(personalConnectorOwner("u1"), store.db)).toMatchObject({
+            available: false,
+            connected: true,
+            pickerAvailable: false,
+        });
+        await disconnectGoogleDrive(personalConnectorOwner("u1"), store.db);
+        expect((await getGoogleDriveStatus(personalConnectorOwner("u1"), store.db)).connected).toBe(false);
     });
 });

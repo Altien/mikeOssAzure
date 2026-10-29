@@ -22,10 +22,13 @@ import { DocxView } from "@/app/components/shared/views/DocxView";
 import { SpreadsheetView } from "@/app/components/shared/views/SpreadsheetView";
 import { CloseButton } from "@/shared/ui/CloseButton";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
-import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import type { Document } from "@/app/components/shared/types";
 import type { DocumentVersion } from "@/app/lib/mikeApi";
 import { cn } from "@/app/lib/utils";
+import { reportFault,
+    UserVisibleError,
+    notifyError,
+} from "@/app/lib/userFacingError";
 import { resolveDocumentViewType } from "@/app/lib/documentViewType";
 import { textLayerWarning } from "@/app/lib/textLayerWarning";
 import {
@@ -115,7 +118,6 @@ export function DocumentSidePanel({
     const [nameDraft, setNameDraft] = useState("");
     const [savingName, setSavingName] = useState(false);
     const [nameError, setNameError] = useState<string | null>(null);
-    const [extensionWarningOpen, setExtensionWarningOpen] = useState(false);
     const [deletingVersionId, setDeletingVersionId] = useState<string | null>(
         null,
     );
@@ -180,7 +182,6 @@ export function DocumentSidePanel({
         setEditingName(false);
         setNameDraft("");
         setNameError(null);
-        setExtensionWarningOpen(false);
         setReplaceTargetVersion(null);
         setReplaceFile(null);
         setReplaceConfirmOpen(false);
@@ -212,11 +213,16 @@ export function DocumentSidePanel({
                 return;
             }
 
+            // A failure notice for this panel (Retry, Contact support) renders
+            // outside it; clicking one must not close the panel underneath.
             if (
-                extensionWarningOpen ||
-                replaceConfirmOpen ||
-                confirmDeleteDocumentOpen
+                target instanceof Element &&
+                target.closest('[aria-label="Notifications"]')
             ) {
+                return;
+            }
+
+            if (replaceConfirmOpen || confirmDeleteDocumentOpen) {
                 return;
             }
 
@@ -232,7 +238,6 @@ export function DocumentSidePanel({
     }, [
         confirmDeleteDocumentOpen,
         doc,
-        extensionWarningOpen,
         mounted,
         onClose,
         replaceConfirmOpen,
@@ -302,7 +307,15 @@ export function DocumentSidePanel({
             return;
         }
         if (hasExtensionChange(selectedFilename, trimmed)) {
-            setExtensionWarningOpen(true);
+            notifyError(
+                new UserVisibleError(
+                    selectedExtension
+                        ? `File extensions cannot be changed here. Keep ${selectedExtension} at the end of the name.`
+                        : "File extensions cannot be changed here.",
+                    { kind: "validation" },
+                ),
+                { action: "rename this version" },
+            );
             return;
         }
         if (trimmed === selectedFilename) {
@@ -317,8 +330,13 @@ export function DocumentSidePanel({
             await onRenameVersion(documentId, selectedVersionId, trimmed);
             setEditingName(false);
         } catch (err) {
-            console.error("rename version failed", err);
-            setNameError("Could not save name.");
+            setNameError(
+                reportFault(err, {
+                    action: "rename this version",
+                    fallback: "Could not save the new name. Try again.",
+                    operation: "documents.edit",
+                }).message,
+            );
         } finally {
             setSavingName(false);
         }
@@ -333,8 +351,14 @@ export function DocumentSidePanel({
         try {
             await onUploadNewVersion(doc, file, file.name);
         } catch (err) {
-            console.error("upload new version failed", err);
-            setUploadError("Could not upload the new version.");
+            setUploadError(
+                reportFault(err, {
+                    action: "upload a new version",
+                    fallback:
+                        "The new version could not be uploaded. Try again.",
+                    operation: "documents.upload",
+                }).message,
+            );
         } finally {
             setUploading(false);
         }
@@ -349,7 +373,12 @@ export function DocumentSidePanel({
         try {
             await onDeleteVersion(documentId, versionIdToDelete);
         } catch (err) {
-            console.error("delete version failed", err);
+            notifyError(err, {
+                action: "delete this version",
+                operation: "documents.edit",
+                onRetry: () => void handleDeleteVersion(versionIdToDelete),
+                supportNote: `Document: ${selectedFilename}`,
+            });
         } finally {
             setDeletingVersionId(null);
         }
@@ -388,8 +417,13 @@ export function DocumentSidePanel({
             setReplaceTargetVersion(null);
             setReplaceFile(null);
         } catch (err) {
-            console.error("replace version failed", err);
-            setUploadError("Could not replace this version.");
+            setUploadError(
+                reportFault(err, {
+                    action: "replace this version",
+                    fallback: "This version could not be replaced. Try again.",
+                    operation: "documents.upload",
+                }).message,
+            );
         } finally {
             setReplacingVersionId(null);
         }
@@ -408,8 +442,13 @@ export function DocumentSidePanel({
                 onClose();
             }, 650);
         } catch (err) {
-            console.error("delete document failed", err);
             setDeleteDocumentStatus("idle");
+            notifyError(err, {
+                action: "delete this document",
+                operation: "documents.edit",
+                onRetry: requestDeleteDocument,
+                supportNote: `Document: ${selectedFilename}`,
+            });
         } finally {
             setDeletingDocument(false);
         }
@@ -504,7 +543,7 @@ export function DocumentSidePanel({
         >
             <div
                 onMouseDown={handlePanelResizeMouseDown}
-                className="absolute inset-y-0 left-0 z-20 hidden w-1 cursor-col-resize bg-transparent transition-colors hover:bg-blue-400/60 md:block"
+                className="absolute inset-y-0 left-0 z-20 hidden w-1 cursor-col-resize bg-transparent transition-colors hover:bg-blue-600/60 active:bg-blue-600 md:block"
                 title="Resize document view"
             />
             <div className="flex shrink-0 justify-end px-3 py-2 md:absolute md:right-3 md:top-3 md:z-20 md:p-0">
@@ -596,7 +635,7 @@ export function DocumentSidePanel({
                     onMouseDown={handleResizeMouseDown}
                     className={cn(
                         "relative z-10 hidden w-1.5 -translate-x-1/2 cursor-col-resize transition-colors md:block",
-                        "bg-transparent hover:bg-blue-400/60",
+                        "bg-transparent hover:bg-blue-600/60 active:bg-blue-600",
                     )}
                     title="Resize document panel"
                 />
@@ -1038,15 +1077,6 @@ export function DocumentSidePanel({
                     </div>
                 </aside>
             </div>
-            <WarningPopup
-                open={extensionWarningOpen}
-                onClose={() => setExtensionWarningOpen(false)}
-                message={
-                    selectedExtension
-                        ? `File extensions cannot be changed here. Keep ${selectedExtension} at the end of the name.`
-                        : "File extensions cannot be changed here."
-                }
-            />
             <ConfirmPopup
                 open={replaceConfirmOpen}
                 title="Replace version?"

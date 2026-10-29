@@ -86,6 +86,11 @@ export type WordDocumentReadEvent = {
   key?: string;
 };
 
+export type WordTextCardEvent = Extract<
+  WireAssistantEvent,
+  { type: "text_card" }
+> & { key?: string };
+
 export type WordErrorEvent = Extract<WireAssistantEvent, { type: "error" }> & {
   key?: string;
 };
@@ -134,6 +139,7 @@ export type WordAssistantEvent =
   | WordThinkingEvent
   | WordReasoningEvent
   | WordContentEvent
+  | WordTextCardEvent
   | WordDocumentReadEvent
   | WordErrorEvent
   | WordEditReferenceEvent
@@ -161,6 +167,8 @@ export interface Message {
   content: string;
   files?: { filename: string; document_id?: string }[];
   workflow?: { id: string; title: string };
+  /** The playbook the user attached to this message, shown as a pill. */
+  playbook?: { id: string; title: string };
   /** Assistant turns preserve their content and activity in event order. */
   events?: WordAssistantEvent[];
   /** Canonical normalized edits for this assistant message. */
@@ -185,6 +193,17 @@ export interface Workflow {
   allow_edit?: boolean;
 }
 
+/**
+ * The fields of GET /playbooks the composer's picker reads. The full shape
+ * is frontend/src/app/lib/mikeApi.ts `Playbook`.
+ */
+export interface Playbook {
+  id: string;
+  name: string;
+  description: string;
+  content: { documentTypes: string[] };
+}
+
 export interface QuickAction {
   id: string;
   workflow_id: string;
@@ -204,7 +223,9 @@ export interface QuickAction {
  * must not drag the API client's runtime dependencies into the web app's
  * type-check.
  */
+export type ApiKeyProvider = "claude" | "gemini" | "openai" | "mistral" | "kimi" | "azure_openai" | "openrouter" | "vercel" | "opencode-go" | "bedrock" | "azure" | "azure-foundry" | "vertex" | "xai" | "custom" | "courtlistener" | "brave" | "tavily" | "deepseek";
 export interface ApiKeyStatus {
+  enabled?: Partial<Record<ApiKeyProvider, boolean>>;
   azure_openai?: boolean;
   kimi?: boolean;
   claude: boolean;
@@ -214,6 +235,13 @@ export interface ApiKeyStatus {
   openrouter: boolean;
   vercel: boolean;
   "opencode-go": boolean;
+  // Absent from a backend that predates these providers.
+  bedrock?: boolean;
+  azure?: boolean;
+  "azure-foundry"?: boolean;
+  vertex?: boolean;
+  xai?: boolean;
+  custom?: boolean;
   courtlistener: boolean;
   sources?: Partial<
     Record<
@@ -224,6 +252,12 @@ export interface ApiKeyStatus {
       | "openrouter"
       | "vercel"
       | "opencode-go"
+      | "bedrock"
+      | "azure"
+      | "azure-foundry"
+      | "vertex"
+      | "xai"
+      | "custom"
       | "courtlistener",
       "user" | "env" | null
     >

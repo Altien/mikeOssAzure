@@ -1,10 +1,13 @@
+import { memberDataActionAllowed } from "../orgs/orgs.service";
+import { resolveWorkspaceFilter } from "../../lib/workspace";
+import { isWorkspaceExportType } from "./user.exportContracts";
 // Data export: scheduling the durable export jobs, polling their status and
 // loading the finished artifact.
 //
 // Service layer behind user.routes.ts — see user.shared.ts for the module's
 // contract.
 
-import { AUDIT_EXPORT_LIMIT, parseQuery } from "../../lib/auditExport";
+import { AUDIT_EXPORT_LIMIT, canReadOrgAudit, parseQuery, type AuditQuery } from "../../lib/auditExport";
 import { enqueueDbJob } from "../../lib/dbq/enqueue";
 import {
     EXPORT_TYPES,
@@ -13,6 +16,7 @@ import {
 } from "./user.exportContracts";
 import type { DbJob } from "../../lib/dbq/types";
 import { downloadFile } from "../../lib/storage";
+import { AppError } from "../../lib/appError";
 import { type Db, errorMessage } from "./user.shared";
 
 // ---------------------------------------------------------------------------
@@ -82,7 +86,9 @@ export function validateExportRequest(input: {
 
 export type StartUserExportResult =
     | { ok: true; exportId: string }
-    | { ok: false; detail: string };
+    | { ok: false; detail: string; forbidden: true }
+    /** The enqueue failed; `error` is what the route hands sendInternalError. */
+    | { ok: false; detail: string; forbidden?: undefined; error: AppError };
 
 /** Enqueues the durable build job for an already-validated export request. */
 export async function startUserExport(
@@ -94,30 +100,40 @@ export async function startUserExport(
     },
 ): Promise<StartUserExportResult> {
     const { userId, type, payload } = input;
+    const orgId = (payload.query as AuditQuery | undefined)?.orgId;
+    if (orgId && !(await canReadOrgAudit(db, userId, orgId)))
+        return { ok: false, forbidden: true, detail: "Only organization owners and admins can export its audit log." };
     try {
-        // Deduped per (user, type) for the whole-account exports: double
+        // Deduped per (user, type, workspace) for the Settings exports: double
         // clicks and impatient retries collapse into the already-running
         // build. The filtered exports opt out — two requests differing
         // only in their filters or selection are different artifacts.
+        // Each workspace's export is its own artifact.
         const dedupeKey =
             type === "audit-csv" || type === "documents-zip"
                 ? undefined
-                : `export:${userId}:${type}`;
+                : `export:${userId}:${type}:${typeof payload.orgId === "string" ? payload.orgId : "personal"}`;
         const out = await enqueueDbJob(db, {
             kind: "export.build",
             payload,
             dedupeKey,
             maxAttempts: 3,
         });
-        if (!out.id) return { ok: false, detail: "Failed to schedule export" };
+        if (!out.id)
+            return {
+                ok: false,
+                detail: "Failed to schedule export",
+                error: new AppError("export.failed", "export enqueue returned no job id"),
+            };
         return { ok: true, exportId: out.id };
     } catch (err) {
-        const detail = errorMessage(err);
-        console.error("[user/exports] enqueue failed", {
-            userId,
-            error: detail,
-        });
-        return { ok: false, detail };
+        // One event, from the route's sendInternalError: the kind names the
+        // flow, the cause keeps the enqueue error's own code.
+        return {
+            ok: false,
+            detail: errorMessage(err),
+            error: new AppError("export.failed", "export enqueue failed", { cause: err }),
+        };
     }
 }
 
@@ -137,6 +153,17 @@ async function loadOwnExportJob(
         .maybeSingle();
     if (!job || (job.payload as { userId?: string })?.userId !== userId)
         return null;
+    const orgId = (job.payload as { query?: AuditQuery })?.query?.orgId;
+    if (orgId && !(await canReadOrgAudit(db, userId, orgId))) return null;
+    const payload = job.payload as { type?: ExportType; orgId?: unknown };
+    if (!payload.type || !EXPORT_TYPES.includes(payload.type)) return null;
+    if (isWorkspaceExportType(payload.type)) {
+        if (payload.orgId !== undefined && payload.orgId !== null && typeof payload.orgId !== "string") return null;
+        const scope = await resolveWorkspaceFilter(db, userId, payload.orgId ?? "personal");
+        if (!scope.ok) return null;
+        const workspaceOrg = scope.workspace === "personal" ? null : scope.workspace;
+        if (workspaceOrg && !(await memberDataActionAllowed(db, userId, workspaceOrg, "export"))) return null;
+    }
     return job as Pick<DbJob, "id" | "status" | "result">;
 }
 
@@ -189,6 +216,7 @@ export async function loadUserExportArtifact(
     if (!storagePath) return { ok: false, kind: "not_found" };
     const raw = await downloadFile(storagePath);
     if (!raw) return { ok: false, kind: "expired" };
+    if (!(await loadOwnExportJob(db, exportId, userId))) return { ok: false, kind: "not_found" };
     // Artifacts are no longer all JSON (CSV, zip). The builder records the
     // type it produced; the default covers jobs finished before it did.
     return {

@@ -11,6 +11,7 @@ import { captureInlineDocumentCleanup, completeInlineDocumentCleanup, createDocu
 import { randomUUID } from "node:crypto";
 import { type Db } from "../../lib/supabase";
 import { ensureDocAccess } from "../../lib/access";
+import { findDocumentsOutsideWorkspace } from "../../lib/documentWorkspace";
 import { convertedPdfKey } from "../../lib/convert";
 import { storageKey } from "../../lib/storage";
 import { enqueueStorageCleanup } from "../../lib/dbq/enqueue";
@@ -32,6 +33,7 @@ export type WorkflowAssetFailure =
   | { ok: false; kind: "tabular_unsupported" }
   | { ok: false; kind: "asset_not_found" }
   | { ok: false; kind: "documents_not_found" }
+  | { ok: false; kind: "documents_workspace_mismatch" }
   | { ok: false; kind: "documents_not_ready" }
   | { ok: false; kind: "db_error"; error: unknown };
 
@@ -134,6 +136,20 @@ export async function copyDocumentsToWorkflowAssets(
   );
   if (accessResults.some((result) => !result.ok)) {
     return { ok: false, kind: "documents_not_found" };
+  }
+
+  // A workflow's files come from its own workspace.
+  try {
+    const outside = await findDocumentsOutsideWorkspace(
+      db,
+      documentIds,
+      access.workflow.org_id ?? null,
+    );
+    if (outside.length > 0) {
+      return { ok: false, kind: "documents_workspace_mismatch" };
+    }
+  } catch (error) {
+    return { ok: false, kind: "db_error", error };
   }
 
   const versionIds = sourceDocuments.flatMap((document) =>

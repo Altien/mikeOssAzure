@@ -2,11 +2,27 @@
 
 import { createPortal } from "react-dom";
 import { useEffect, type ReactNode } from "react";
-import { AlertCircle, X } from "lucide-react";
-import { GlassIconButtonUI } from "@/shared/ui/GlassIconButtonUI";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
-import { cn } from "@/app/lib/utils";
-import { LIQUID_GLASS_FLOAT_CLASS } from "@/shared/ui/LiquidGlassUI";
+import { NoticeCardUI } from "@/shared/ui/NoticeCardUI";
+import { useNoticeStackSlot } from "@/shared/ui/ToastUI";
+
+/**
+ * A single warning that the calling component opens and closes itself.
+ *
+ * Its card is `NoticeCardUI`, the same card the toast stack draws, so a
+ * popup and a toast always look alike. This wrapper adds only what a popup
+ * needs on top: the `open` prop, a portal to the top centre of the page, and
+ * closing on Escape.
+ *
+ * Every warning in the web app is a WarningPopup. A component renders one
+ * for a failure on its own screen; `notifyError` reaches code that has no
+ * component, and `AppToasts` draws what it raises with this same popup.
+ * Toasts are for success and information. docs/design-system.md has the
+ * full rule.
+ *
+ * While the toast viewport is mounted the card joins its column, so a popup
+ * and a toast stack instead of overlapping.
+ */
 
 interface WarningPopupAction {
     label: ReactNode;
@@ -22,6 +38,13 @@ interface WarningPopupProps {
     children?: ReactNode;
     icon?: ReactNode;
     primaryAction?: WarningPopupAction;
+    /**
+     * Extra buttons or links for the action row, before `primaryAction`.
+     * `primaryAction` is always the black pill, so nothing here may be one
+     * when it is set; style these with `noticeActionClassName`.
+     */
+    actions?: ReactNode;
+    /** Dev extension: second explicit action before the primary action. */
     secondaryAction?: WarningPopupAction;
     className?: string;
 }
@@ -34,9 +57,12 @@ export function WarningPopup({
     children,
     icon,
     primaryAction,
+    actions,
     secondaryAction,
     className,
 }: WarningPopupProps) {
+    const stackSlot = useNoticeStackSlot();
+
     useEffect(() => {
         if (!open) return;
         const handleKeyDown = (event: KeyboardEvent) => {
@@ -48,58 +74,33 @@ export function WarningPopup({
 
     if (!open) return null;
 
-    const warningIcon = icon ?? (
-        <AlertCircle className="h-3 w-3 shrink-0 text-red-600" />
-    );
-
-    return createPortal(
-        <div className="pointer-events-none fixed left-1/2 top-5 z-[220] w-[min(92vw,520px)] -translate-x-1/2 px-4">
-            <div
-                role="alert"
-                aria-live="assertive"
-                aria-atomic="true"
-                className={cn(
-                    `pointer-events-auto relative flex rounded-2xl px-3 py-3 text-xs ${LIQUID_GLASS_FLOAT_CLASS}`,
-                    className,
-                )}
-            >
-                <div className="min-w-0 flex-1 text-red-600">
-                    {title && (
-                        <div className="mb-1 flex items-center gap-1.5 text-sm font-medium">
-                            {warningIcon}
-                            {title}
-                        </div>
-                    )}
-                    {message && (
-                        <div
-                            className={cn(
-                                "text-black",
-                                title
-                                    ? "pl-[18px]"
-                                    : "flex items-start gap-1.5",
-                            )}
-                        >
-                            {!title && warningIcon}
-                            {/* Setup steps carry long redirect URIs; wrap them. */}
-                            <span className="min-w-0 [overflow-wrap:anywhere]">
-                                {message}
-                            </span>
-                        </div>
-                    )}
-                    {children}
-                    {(primaryAction || secondaryAction) && (
-                        <div className="mt-2 flex items-center justify-end gap-2">
-                            {secondaryAction && (
-                                <PillButtonUI
-                                    tone="white"
-                                    size="sm"
-                                    onClick={secondaryAction.onClick}
-                                    disabled={secondaryAction.disabled}
-                                >
-                                    {secondaryAction.label}
-                                </PillButtonUI>
-                            )}
-                            {primaryAction && (
+    const card = (
+        <NoticeCardUI
+            tone="error"
+            role="alert"
+            aria-live="assertive"
+            aria-atomic="true"
+            title={title}
+            message={message}
+            icon={icon}
+            onDismiss={onClose}
+            dismissLabel="Dismiss warning"
+            className={className}
+            actions={
+                actions || secondaryAction || primaryAction ? (
+                    <>
+                        {secondaryAction ? (
+                            <PillButtonUI
+                                tone="white"
+                                size="sm"
+                                onClick={secondaryAction.onClick}
+                                disabled={secondaryAction.disabled}
+                            >
+                                {secondaryAction.label}
+                            </PillButtonUI>
+                        ) : null}
+                        {actions}
+                        {primaryAction ? (
                             <PillButtonUI
                                 tone="black"
                                 size="sm"
@@ -108,18 +109,20 @@ export function WarningPopup({
                             >
                                 {primaryAction.label}
                             </PillButtonUI>
-                            )}
-                        </div>
-                    )}
-                </div>
-                <GlassIconButtonUI
-                    onClick={onClose}
-                    className="absolute right-1.5 top-1.5 h-5 w-5"
-                    aria-label="Dismiss warning"
-                >
-                    <X className="h-3 w-3" />
-                </GlassIconButtonUI>
-            </div>
+                        ) : null}
+                    </>
+                ) : undefined
+            }
+        >
+            {children}
+        </NoticeCardUI>
+    );
+
+    if (stackSlot) return createPortal(card, stackSlot);
+
+    return createPortal(
+        <div className="pointer-events-none fixed left-1/2 top-5 z-[220] w-[min(92vw,520px)] -translate-x-1/2 px-4">
+            {card}
         </div>,
         document.body,
     );

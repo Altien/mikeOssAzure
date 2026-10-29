@@ -21,6 +21,10 @@ import {
     LIQUID_GLASS_SELECTED_CLASS,
 } from "@/app/components/ui/liquid-surface";
 import {
+    PAGE_HEADER_ROW_CLASS,
+    PAGE_HEADER_TITLE_CLASS,
+} from "./pageHeaderStyles";
+import {
     HeaderButtonUI,
     HeaderButtonsUI,
     headerButtonClassName,
@@ -118,8 +122,8 @@ export function PageHeader({
         <div
             className={cn(
                 "flex items-center justify-between",
-                "mx-4 md:mx-8",
-                "min-h-[76px] pb-5 pt-3",
+                "mx-3 md:mx-6.5",
+                PAGE_HEADER_ROW_CLASS,
                 shrink && "shrink-0",
             )}
         >
@@ -426,7 +430,10 @@ function PageHeaderBreadcrumbs({ items }: { items: PageHeaderBreadcrumb[] }) {
     return (
         <div
             ref={containerRef}
-            className="relative flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden text-2xl font-medium font-serif"
+            className={cn(
+                "relative flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden",
+                PAGE_HEADER_TITLE_CLASS,
+            )}
         >
             {parent?.onClick && (
                 <button
@@ -629,7 +636,9 @@ function BreadcrumbItem({
     const content = item.loading ? (
         <div
             className={cn(
-                "h-6 rounded bg-gray-100 animate-pulse",
+                // The height of a line of the title, so the header does not
+                // shift when the name arrives.
+                "h-5 rounded bg-gray-100 animate-pulse",
                 item.skeletonClassName ?? "w-32",
             )}
         />

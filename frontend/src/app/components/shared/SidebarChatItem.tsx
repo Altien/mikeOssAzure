@@ -1,7 +1,16 @@
 "use client";
 
-import { useState, useRef } from "react";
-import { MoreHorizontal, Pencil, Trash2, Users, Loader2 } from "lucide-react";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+    MessageSquare,
+    MoreHorizontal,
+    Pencil,
+    Trash2,
+    Users,
+    Loader2,
+    LogOut,
+} from "lucide-react";
 import {
     Dropdown,
     DropdownContent,
@@ -10,7 +19,7 @@ import {
 } from "@/shared/ui/dropdown";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { RenameModal } from "@/app/components/modals/RenameModal";
-import { PermissionDeniedPopup } from "@/app/components/popups/PermissionDeniedPopup";
+import { LeaveChatPopup } from "@/app/components/assistant/LeaveChatPopup";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { can, roleFrom } from "@/app/lib/permissions";
 import { userFacingApiError } from "@/app/lib/userFacingError";
@@ -22,12 +31,10 @@ import {
     LIQUID_GLASS_SELECTED_CLASS,
     LIQUID_GLASS_HOVER_CLASS,
 } from "@/app/components/ui/liquid-surface";
-
-// Hover slide for titles too long for the row: paced by distance so a long
-// title glides at the same unhurried speed as a short one.
-const TITLE_SLIDE_MS_PER_PX = 25;
-const TITLE_SLIDE_MIN_MS = 800;
-const TITLE_SLIDE_BACK_MS = 600;
+import {
+    SIDEBAR_TITLE_SLIDE_CLASS,
+    useSidebarTitleSlide,
+} from "./useSidebarTitleSlide";
 
 interface Props {
     chat: Chat;
@@ -35,6 +42,8 @@ interface Props {
     onSelect: () => void;
     projectName?: string;
     responseStatus?: "loading" | "complete";
+    /** Offers showing this chat beside the one on screen. */
+    onOpenInSideChat?: () => void;
 }
 
 export function SidebarChatItem({
@@ -43,34 +52,24 @@ export function SidebarChatItem({
     onSelect,
     projectName,
     responseStatus,
+    onOpenInSideChat,
 }: Props) {
     const { renameChat, deleteChat } = useChatHistoryContext();
+    const router = useRouter();
+    const [leaveOpen, setLeaveOpen] = useState(false);
     const [renameOpen, setRenameOpen] = useState(false);
     const [renaming, setRenaming] = useState(false);
     const [shareOpen, setShareOpen] = useState(false);
     const [menuOpen, setMenuOpen] = useState(false);
-    const [titleSlide, setTitleSlide] = useState({
-        offset: 0,
-        duration: TITLE_SLIDE_BACK_MS,
-    });
-    const [gate, setGate] = useState<{
-        action: string;
-        requiredRole: "owner" | "editor";
-    } | null>(null);
     const [deleteError, setDeleteError] = useState<string | null>(null);
     const [renameError, setRenameError] = useState<string | null>(null);
-    const titleTextRef = useRef<HTMLSpanElement>(null);
-    // Chats joined the project role ladder: rename is content collaboration
-    // (member+, the tier the server's PATCH asks for) and delete sits at the
-    // top (the creator — is_owner ⇒ admin via roleFrom — or a project
-    // admin). The overview RPC serves BOTH is_owner and access_role on every
-    // row — the same verdict its own visibility predicate filtered on — so
-    // this gate reflects what the server would actually answer; roleFrom
-    // fails closed to viewer when a row carries neither field.
+    const { titleRef, titleStyle, slideHandlers } = useSidebarTitleSlide();
+    // Chat management belongs to owners; editors can still send messages.
     const role = roleFrom(chat);
-    const canRename = can(role, "content.edit");
+    const canRename = can(role, "access.manage");
     const canShare = can(role, "access.manage");
     const canDelete = can(role, "container.delete");
+    const canLeave = chat.can_leave === true && chat.project_id === null && role !== "owner";
     // One label for the row's tooltip and its accessible name, so the
     // "Shared" marker rendered beside the title is part of both.
     const chatTitle = chat.title ?? "Untitled chat";
@@ -112,33 +111,6 @@ export function SidebarChatItem({
         }
     };
 
-    // Runs on hover and on keyboard focus, so a keyboard user can read a
-    // clipped title too. The title stays revealed until both have ended;
-    // focus from a click does not count, or the opened chat's row would stay
-    // slid after the pointer leaves.
-    const revealTitle = (button: HTMLButtonElement) => {
-        const text = titleTextRef.current;
-        if (!text) return;
-        const style = getComputedStyle(button);
-        const available =
-            button.clientWidth -
-            (parseFloat(style.paddingLeft) || 0) -
-            (parseFloat(style.paddingRight) || 0);
-        const overflow = Math.ceil(text.offsetWidth - available);
-        if (overflow <= 0) return;
-        setTitleSlide({
-            offset: overflow,
-            duration: Math.max(
-                TITLE_SLIDE_MIN_MS,
-                overflow * TITLE_SLIDE_MS_PER_PX,
-            ),
-        });
-    };
-
-    const resetTitle = () => {
-        setTitleSlide({ offset: 0, duration: TITLE_SLIDE_BACK_MS });
-    };
-
     return (
         <div
             className={cn(
@@ -173,17 +145,7 @@ export function SidebarChatItem({
                 <button
                     type="button"
                     onClick={onSelect}
-                    onMouseEnter={(e) => revealTitle(e.currentTarget)}
-                    onMouseLeave={(e) => {
-                        if (!e.currentTarget.matches(":focus-visible")) resetTitle();
-                    }}
-                    onFocus={(e) => {
-                        if (e.currentTarget.matches(":focus-visible"))
-                            revealTitle(e.currentTarget);
-                    }}
-                    onBlur={(e) => {
-                        if (!e.currentTarget.matches(":hover")) resetTitle();
-                    }}
+                    {...slideHandlers}
                     // The row owns the hover fill, so it draws the ring.
                     data-focus-fill
                     className={cn(
@@ -203,12 +165,9 @@ export function SidebarChatItem({
                     aria-label={rowLabel}
                 >
                     <span
-                        ref={titleTextRef}
-                        className="inline-block transition-transform ease-in-out motion-reduce:transition-none"
-                        style={{
-                            transform: `translateX(-${titleSlide.offset}px)`,
-                            transitionDuration: `${titleSlide.duration}ms`,
-                        }}
+                        ref={titleRef}
+                        className={SIDEBAR_TITLE_SLIDE_CLASS}
+                        style={titleStyle}
                     >
                         {projectName && (
                             <span className="text-gray-400 font-normal">{projectName}: </span>
@@ -229,16 +188,12 @@ export function SidebarChatItem({
                     at all has told us nothing, and marking it "Shared"
                     would be a claim we cannot make. */}
                 {chat.is_owner === false && (
-                    // `text-[10px] text-gray-400` measured about 2.6:1 —
-                    // below the 4.5:1 the accessibility baseline requires,
-                    // on the one word in the row that says whose work this
-                    // is. text-xs on the muted gray that does meet it.
-                    <span className="mr-1 shrink-0 text-xs text-gray-500">
+                    <span className="mx-1 shrink-0 text-xs text-gray-400 font-normal">
                         Shared
                     </span>
                 )}
 
-                <Dropdown open={menuOpen} onOpenChange={setMenuOpen}>
+                {(canShare || canRename || canDelete || canLeave || onOpenInSideChat) && <Dropdown open={menuOpen} onOpenChange={setMenuOpen}>
                     <DropdownTrigger asChild>
                         <button
                             type="button"
@@ -253,73 +208,56 @@ export function SidebarChatItem({
                         </button>
                     </DropdownTrigger>
                     <DropdownContent align="end">
-                        <DropdownItem
-                            onSelect={() => {
-                                if (!canShare) {
-                                    setGate({
-                                        action: "share this chat",
-                                        requiredRole: "owner",
-                                    });
-                                    return;
-                                }
-                                setShareOpen(true);
-                            }}
-                        >
+                        {onOpenInSideChat && (
+                            // Two chats need a wide page.
+                            <DropdownItem
+                                onSelect={onOpenInSideChat}
+                                className="max-md:hidden"
+                            >
+                                <MessageSquare aria-hidden="true" className="mr-2 h-4 w-4" />
+                                Open in side chat
+                            </DropdownItem>
+                        )}
+                        {canShare && <DropdownItem onSelect={() => setShareOpen(true)}>
                             <Users className="mr-2 h-4 w-4" />
                             Share
-                        </DropdownItem>
-                        <DropdownItem
-                            onSelect={() => {
-                                if (!canRename) {
-                                    setGate({
-                                        action: "rename this chat",
-                                        requiredRole: "editor",
-                                    });
-                                    return;
-                                }
-                                setRenameOpen(true);
-                            }}
-                        >
+                        </DropdownItem>}
+                        {canRename && <DropdownItem onSelect={() => setRenameOpen(true)}>
                             <Pencil className="mr-2 h-4 w-4" />
                             Rename
-                        </DropdownItem>
-                        <DropdownItem
+                        </DropdownItem>}
+                        {canDelete && <DropdownItem
                             onSelect={() => {
-                                if (!canDelete) {
-                                    setGate({
-                                        action: "delete this chat",
-                                        requiredRole: "owner",
-                                    });
-                                    return;
-                                }
                                 deleteChat(chat.id).catch((error) => {
-                                    setDeleteError(
-                                        userFacingApiError(
-                                            error,
-                                            "The chat could not be deleted. Please try again.",
-                                        ),
-                                    );
+                                    setDeleteError(userFacingApiError(error,
+                                        "The chat could not be deleted. Please try again."));
                                 });
                             }}
                             className="text-red-600 focus:text-red-600"
                         >
                             <Trash2 className="mr-2 h-4 w-4" />
                             Delete
-                        </DropdownItem>
+                        </DropdownItem>}
+                        {canLeave && <DropdownItem onSelect={() => setLeaveOpen(true)}>
+                            <LogOut className="mr-2 h-4 w-4" />
+                            Leave
+                        </DropdownItem>}
                     </DropdownContent>
-                </Dropdown>
-            {/* TODO(contacts): no `contacts` to pass. The sidebar rows come
-                from get_chats_overview and GET /chat/:id serves only
-                chat + is_owner + access_role, so no ranked admin list
-                reaches a chat surface and the popup's "Ask …" line can never
-                render here. Needs the server to return the shape project
-                detail already returns as `admin_contacts`. */}
-            <PermissionDeniedPopup
-                open={!!gate}
-                action={gate?.action}
-                requiredRole={gate?.requiredRole}
-                onClose={() => setGate(null)}
-            />
+                </Dropdown>}
+            {leaveOpen && <LeaveChatPopup
+                chatId={chat.id}
+                onClose={() => setLeaveOpen(false)}
+                onLeft={() => {
+                    // Use the current route: the user may have navigated while
+                    // the request was in flight, or left the secondary chat.
+                    const url = new URL(window.location.href);
+                    if (url.pathname === `/assistant/chat/${chat.id}`) router.push("/assistant");
+                    else if (url.searchParams.get("side") === chat.id) {
+                        url.searchParams.delete("side");
+                        router.replace(url.pathname + url.search);
+                    }
+                }}
+            />}
             <RenameModal
                 open={renameOpen}
                 breadcrumbs={["Assistant", "Rename Chat"]}

@@ -5,6 +5,7 @@ type Row = Record<string, unknown>;
 export function driveDb(
     options: {
         tokenRow?: Row | null;
+        memberships?: Row[];
         states?: Row[];
         onInsert?: (table: string, row: Row) => void;
         onDelete?: (table: string) => void;
@@ -16,7 +17,7 @@ export function driveDb(
     const failures = new Map<string, unknown>();
     const db = {
         from(table: string) {
-            const rows = table === "user_google_drive_tokens" ? tokens : states;
+            const rows = table === "org_members" ? options.memberships ?? [] : table === "user_google_drive_tokens" ? tokens : states;
             let action = "select";
             let patch: Row = {};
             let single = false;
@@ -28,6 +29,17 @@ export function driveDb(
                 },
                 eq(key: string, value: unknown) {
                     filters.push((r) => r[key] === value);
+                    return query;
+                },
+                // Active-org membership guards use a joined deleted_at null filter.
+                is(key: string, value: unknown) { filters.push(r => (r[key] ?? null) === value); return query; },
+                // Only the workspace filter (`org_id` eq/is) is used.
+                filter(key: string, op: string, value: unknown) {
+                    filters.push((r) =>
+                        op === "is"
+                            ? (r[key] ?? null) === value
+                            : r[key] === value,
+                    );
                     return query;
                 },
                 gt(key: string, value: string) {
@@ -104,7 +116,10 @@ export function driveDb(
                 );
                 if (index < 0) return { data: false, error: null };
                 const state = states.splice(index, 1)[0];
-                const previous = tokens.find((r) => r.user_id === state.user_id);
+                const sameWorkspace = (r: Row) =>
+                    r.user_id === state.user_id &&
+                    (r.org_id ?? null) === (state.org_id ?? null);
+                const previous = tokens.find(sameWorkspace);
                 const row = {
                     enabled: previous?.enabled ?? true,
                     disabled_tools: previous?.disabled_tools ?? [],
@@ -113,22 +128,21 @@ export function driveDb(
                     grant_id: randomUUID(),
                     ...(args.p_tokens as Row),
                     user_id: state.user_id,
+                    org_id: state.org_id ?? null,
                 };
-                const prior = tokens.findIndex(
-                    (r) => r.user_id === row.user_id,
-                );
+                const prior = tokens.findIndex(sameWorkspace);
                 if (prior >= 0) tokens.splice(prior, 1);
                 tokens.push(row);
                 writes.push({ table: "user_google_drive_tokens", row });
                 return { data: true, error: null };
             }
             if (name === "disconnect_google_drive") {
+                const inWorkspace = (r: Row) =>
+                    r.user_id === args.p_user_id &&
+                    (r.org_id ?? null) === (args.p_org_id ?? null);
                 for (let i = states.length - 1; i >= 0; i--)
-                    if (states[i].user_id === args.p_user_id)
-                        states.splice(i, 1);
-                const index = tokens.findIndex(
-                    (r) => r.user_id === args.p_user_id,
-                );
+                    if (inWorkspace(states[i])) states.splice(i, 1);
+                const index = tokens.findIndex(inWorkspace);
                 const row = index >= 0 ? tokens.splice(index, 1)[0] : null;
                 return { data: row, error: null };
             }

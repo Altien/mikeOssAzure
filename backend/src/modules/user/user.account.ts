@@ -13,16 +13,20 @@ import {
     listOrgsBlockingAccountDeletion,
     type AccountDeletionOrgBlocker,
 } from "./user.dataCleanup";
-import { type Db, errorMessage } from "./user.shared";
+import { withKind, type ErrorKind } from "../../lib/appError";
+import { type Db } from "./user.shared";
 
 /**
- * Turn the sole-admin blockers into instructions the user can actually act
- * on. The two reasons need DIFFERENT actions â€” appointing a successor fixes
- * an org that still has members, and does nothing for an org whose only
- * problem is that it still owns matters â€” so a single "make another member
- * an admin" sentence sent the second group off to look for members who do
- * not exist. A mixed batch gets both sentences, each naming its own orgs.
+ * The failure as the route's sendInternalError should report it: its kind
+ * names the flow that broke, the thrown value (an Error or a PostgREST
+ * object) stays the cause so its code still extracts. Nothing is logged
+ * here — the route logs the same object once, with the request id.
  */
+function deletionFailure(kind: ErrorKind, message: string, cause: unknown): Error {
+    return withKind(cause, kind, message);
+}
+
+/** Explain which organizations need an owner before account deletion. */
 export function describeAccountDeletionBlockers(
     blockers: AccountDeletionOrgBlocker[],
 ): string {
@@ -35,12 +39,12 @@ export function describeAccountDeletionBlockers(
     const withMembers = named("members");
     if (withMembers)
         sentences.push(
-            `You are the only admin of ${withMembers}. Make another member an admin, or delete the organization, before deleting your account.`,
+            `You are the only owner of ${withMembers}. Make another member an owner, or delete the organization, before deleting your account.`,
         );
     const withContent = named("content");
     if (withContent)
         sentences.push(
-            `You are the only admin of ${withContent}, which still owns content. Delete or move the organization's projects, workflows, documents and reviews, or delete the organization, before deleting your account.`,
+            `You are the only owner of ${withContent}, and must appoint another owner or explicitly delete the organization before deleting your account.`,
         );
     return sentences.join(" ");
 }
@@ -56,6 +60,15 @@ export async function deleteUserAccount(
     | { ok: false; error: unknown; kind?: undefined }
 > {
     try {
+        // ORGANIZATIONS FIRST. An account that is the only owner of an
+        // team organization cannot be deleted, even when it is empty:
+        // promoting an arbitrary successor hands a firm's matters to whoever
+        // joined first (and silently clears their `deny` overrides), while
+        // removing the member outright is refused by the last-owner guard
+        // (org_members_protect_last_owner), and would otherwise leave the
+        // organization memberless, invisible and undeletable. Answer 409 and let the user
+        // choose a successor. This check runs BEFORE the enqueue so nothing
+        // is scheduled, revoked, or destroyed.
         const blockers = await listOrgsBlockingAccountDeletion(db, userId);
         if (blockers.length > 0)
             return { ok: false, kind: "org_successor_required", blockers };
@@ -69,86 +82,86 @@ export async function deleteUserAccount(
             p_user_email: userEmail?.toLowerCase() ?? null,
             p_provider: provider,
         });
+        if (error?.code === "23514") {
+            const currentBlockers = await listOrgsBlockingAccountDeletion(db, userId);
+            if (currentBlockers.length) return { ok: false, kind: "org_successor_required", blockers: currentBlockers };
+        }
         if (error || !data) throw error ?? new Error("Erasure was not scheduled");
         return { ok: true };
     } catch (err) {
-        const detail = errorMessage(err);
-        console.error("[user/account] delete failed", {
-            userId,
-            error: detail,
-        });
-        return { ok: false, error: err };
+        return {
+            ok: false,
+            error: deletionFailure("account.delete_failed", "account deletion failed", err),
+        };
     }
 }
 
 export async function deleteUserChats(
     db: Db,
     userId: string,
+    orgId: string | null,
 ): Promise<{ ok: true } | { ok: false; error: unknown }> {
     try {
-        await deleteAllUserChats(db, userId);
+        await deleteAllUserChats(db, userId, orgId);
         return { ok: true };
     } catch (err) {
-        const detail = errorMessage(err);
-        console.error("[user/chats] delete failed", {
-            userId,
-            error: detail,
-        });
-        return { ok: false, error: err };
+        return {
+            ok: false,
+            error: deletionFailure("db.query_failed", "chat deletion failed", err),
+        };
     }
 }
 
 export async function deleteUserProjectsData(
     db: Db,
     userId: string,
+    orgId: string | null,
 ): Promise<{ ok: true } | { ok: false; error: unknown }> {
     try {
-        await deleteUserProjects(db, userId);
+        await deleteUserProjects(db, userId, orgId);
         return { ok: true };
     } catch (err) {
-        const detail = errorMessage(err);
-        console.error("[user/projects] delete failed", {
-            userId,
-            error: detail,
-        });
-        return { ok: false, error: err };
+        return {
+            ok: false,
+            error: deletionFailure("db.query_failed", "project deletion failed", err),
+        };
     }
 }
 
 export async function deleteUserTabularReviews(
     db: Db,
     userId: string,
+    orgId: string | null,
 ): Promise<{ ok: true } | { ok: false; error: unknown }> {
     try {
-        await deleteAllUserTabularReviews(db, userId);
+        await deleteAllUserTabularReviews(db, userId, orgId);
         return { ok: true };
     } catch (err) {
-        const detail = errorMessage(err);
-        console.error("[user/tabular-reviews] delete failed", {
-            userId,
-            error: detail,
-        });
-        return { ok: false, error: err };
+        return {
+            ok: false,
+            error: deletionFailure("db.query_failed", "tabular review deletion failed", err),
+        };
     }
 }
 
 /**
- * Wipe the user's app memory and the memories of private projects they
- * created. Organization and merely shared projects are intentionally outside
- * this account-level destructive action.
+ * Wipe the user's own memory for one workspace (`orgId` null is Personal)
+ * and, in Personal, the memories of private projects they created.
+ * Organization and merely shared projects are intentionally outside this
+ * destructive action.
  */
 export async function deletePrivateMemories(
     db: Db,
     userId: string,
+    orgId: string | null,
 ): Promise<{ ok: true } | { ok: false; error: unknown }> {
     try {
-        await deleteUserPrivateMemories(db, userId);
+        await deleteUserPrivateMemories(db, userId, orgId);
         return { ok: true };
     } catch (err) {
-        console.error("[user/memories] delete failed", {
-            userId,
-            error: errorMessage(err),
-        });
-        return { ok: false, error: err };
+        return {
+            ok: false,
+            error: deletionFailure("db.query_failed", "private memory deletion failed", err),
+        };
     }
 }

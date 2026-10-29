@@ -176,6 +176,64 @@ describe("TabularReviewView server-owned generation", () => {
         }));
     });
 
+    it("uses the new review timestamp when running again after completion", async () => {
+        mockDetail({});
+        const stream = openStream();
+        vi.mocked(streamTabularGeneration).mockResolvedValueOnce(stream.response);
+        render(<TRView reviewId="r1" />);
+        fireEvent.click(await screen.findByTitle("Run review"));
+        await screen.findByTitle("Stop generation");
+        mockDetail({ review: { updated_at: "2026-10-16T01:00:00Z" } });
+        stream.done();
+        await screen.findByTitle("Run review");
+        const rerun = openStream();
+        vi.mocked(streamTabularGeneration).mockResolvedValueOnce(rerun.response);
+        fireEvent.click(screen.getByTitle("Run review"));
+        await waitFor(() => expect(streamTabularGeneration).toHaveBeenLastCalledWith(
+            "r1", "2026-10-16T01:00:00Z", expect.any(AbortSignal),
+        ));
+        rerun.done();
+        await screen.findByTitle("Run review");
+    });
+
+    it("shows a server deadline error to the user", async () => {
+        mockDetail({});
+        const stream = openStream();
+        vi.mocked(streamTabularGeneration).mockResolvedValue(stream.response);
+        render(<TRView reviewId="r1" />);
+        fireEvent.click(await screen.findByTitle("Run review"));
+        await screen.findByTitle("Stop generation");
+        const message =
+            "The request timed out because it stopped responding. Please try again.";
+        stream.push(
+            `data: ${JSON.stringify({ type: "error", message, safe_to_display: true })}\n\n`,
+        );
+        stream.done();
+        await screen.findByTitle("Run review");
+        expect(await screen.findByText(message)).toBeInTheDocument();
+    });
+
+    it("hides unsafe server error details", async () => {
+        mockDetail({});
+        const stream = openStream();
+        vi.mocked(streamTabularGeneration).mockResolvedValue(stream.response);
+        render(<TRView reviewId="r1" />);
+        fireEvent.click(await screen.findByTitle("Run review"));
+        await screen.findByTitle("Stop generation");
+        const message = "internal database credential details";
+        stream.push(
+            `data: ${JSON.stringify({ type: "error", message, safe_to_display: false })}\n\n`,
+        );
+        stream.done();
+        await screen.findByTitle("Run review");
+        expect(
+            await screen.findByText(
+                "The review could not be completed. Please try again.",
+            ),
+        ).toBeInTheDocument();
+        expect(screen.queryByText(message)).not.toBeInTheDocument();
+    });
+
     it("stops through the endpoint instead of dropping the stream", async () => {
         mockDetail({});
         const stream = openStream();
@@ -251,6 +309,7 @@ describe("TabularReviewView server-owned generation", () => {
         );
         expect(await screen.findByTitle("Stop generation")).toBeInTheDocument();
 
+        mockDetail({ review: { updated_at: "2026-10-16T01:00:00Z", is_running: false } });
         stream.done();
         await waitFor(() =>
             expect(screen.getByTitle("Run review")).toBeInTheDocument(),

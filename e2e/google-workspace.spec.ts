@@ -106,6 +106,7 @@ test("Google SSO does not auto-connect Gmail; account choice, write upgrade and 
       return route.fulfill({
         json: {
           configured: true,
+          available: true,
           schemaReady: true,
           connected: gmail && connected,
           writeEnabled: gmail && writeEnabled,
@@ -180,7 +181,19 @@ test("Calendar Add opens Google account selection directly with read-only access
       cancellations++;
       return route.fulfill({ status: 204 });
     }
-    if (path.includes("/integrations/")) return route.fulfill({ json: { configured: true, schemaReady: true, connected: false, writeEnabled: false } });
+    if (path.includes("/integrations/"))
+      return route.fulfill({
+        json: {
+          configured: true,
+          available: true,
+          schemaReady: true,
+          connected: false,
+          writeEnabled: false,
+          enabled: true,
+          requireWriteApproval: false,
+          tools: [],
+        },
+      });
     return route.fulfill({ json: [] });
   });
   await page.goto("/settings/connectors");

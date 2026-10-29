@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ReviewsListTable } from "./ReviewsListTable";
+import { formatDate } from "@/app/components/projects/ProjectPageParts";
 import type { TabularReview } from "@/app/components/shared/types";
 
 // The live round caught the list surfaces refusing "edit details" at the
@@ -116,5 +117,59 @@ describe("ReviewsListTable details gate", () => {
             { action: "edit tabular review details", requiredRole: "editor" },
             expect.objectContaining({ id: "r1" }),
         );
+    });
+});
+
+describe("ReviewsListTable creator column", () => {
+    it("shows each creator's avatar only when the host asks for it", () => {
+        const handlers = { onOpenDetails: vi.fn(), onOwnerOnlyAction: vi.fn() };
+        const row = { ...review("viewer"), owner_display_name: "Ada Lovelace" };
+        const { unmount } = renderTable(row, handlers, { showCreator: true });
+        expect(screen.getByText("Creator")).toBeVisible();
+        expect(screen.getByRole("img", { name: "Ada Lovelace" })).toHaveTextContent("AL");
+        unmount();
+        renderTable(row, handlers);
+        expect(screen.queryByText("Creator")).toBeNull();
+        expect(screen.queryByRole("img", { name: "Ada Lovelace" })).toBeNull();
+    });
+});
+
+describe("ReviewsListTable updated column", () => {
+    it("shows when each review last changed and sorts by it", () => {
+        const updated = "2026-03-04T12:00:00.000Z";
+        renderTable(
+            {
+                ...review("owner"),
+                created_at: "2026-01-02T12:00:00.000Z",
+                updated_at: updated,
+            },
+            { onOpenDetails: vi.fn(), onOwnerOnlyAction: vi.fn() },
+        );
+        expect(screen.getByText("Updated")).toBeVisible();
+        expect(screen.getByText(formatDate(updated))).toBeVisible();
+        expect(
+            screen.getByRole("button", { name: "Sort by updated date" }),
+        ).toBeInTheDocument();
+    });
+});
+
+describe("ReviewsListTable creator filter", () => {
+    it("hands the chosen creator to the host", async () => {
+        const user = userEvent.setup();
+        const onChange = vi.fn();
+        renderTable(review("viewer"), { onOpenDetails: vi.fn(), onOwnerOnlyAction: vi.fn() }, {
+            showCreator: true,
+            creatorFilter: {
+                value: null,
+                onChange,
+                loadPeople: async () => ({
+                    users: [{ user_id: "u2", display_name: "Ada Lovelace", email: null, profile_photo: null }],
+                    nextOffset: null,
+                }),
+            },
+        });
+        await user.click(screen.getByRole("button", { name: "Filter by creator" }));
+        await user.click(await screen.findByRole("button", { name: /Ada Lovelace/ }));
+        expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ user_id: "u2" }));
     });
 });

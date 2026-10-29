@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { AppError } from "../../../lib/appError";
+import { diagnosticErrorTags } from "../../../lib/observability/sentryPrivacy";
 import {
   MAX_UPLOAD_SIZE_BYTES,
   MAX_UPLOAD_SESSION_FILES,
@@ -175,5 +177,92 @@ describe("parseUploadSessionRequest", () => {
         ),
       ).toThrow("filename is invalid");
     }
+  });
+
+  // A document uploaded on its own belongs to the workspace it is uploaded
+  // in: the manifest names that organization, and its absence is Personal.
+  it.each([
+    ["a standalone document", { scope: "standalone" }],
+    ["a library document", { scope: "library", library_kind: "file" }],
+  ])("lets %s name the organization it is uploaded in", (_label, destination) => {
+    const parsed = parseUploadSessionRequest(
+      { ...documentRequest(1), destination: { ...destination, org_id: SESSION_ID } },
+      USER_ID,
+      SESSION_ID,
+    );
+    expect(parsed.destination).toMatchObject({ org_id: SESSION_ID });
+    // ... or leave it out, or say null, for Personal.
+    for (const personal of [{}, { org_id: null }]) {
+      expect(() =>
+        parseUploadSessionRequest(
+          { ...documentRequest(1), destination: { ...destination, ...personal } },
+          USER_ID,
+          SESSION_ID,
+        ),
+      ).not.toThrow();
+    }
+  });
+
+  it("rejects an organization that is not an id, and one named for a project upload", () => {
+    expect(() =>
+      parseUploadSessionRequest(
+        { ...documentRequest(1), destination: { scope: "standalone", org_id: "acme" } },
+        USER_ID,
+        SESSION_ID,
+      ),
+    ).toThrow(UploadSessionValidationError);
+    // A project decides for what is uploaded into it.
+    expect(() =>
+      parseUploadSessionRequest(
+        {
+          ...documentRequest(1),
+          destination: { scope: "project", project_id: USER_ID, org_id: SESSION_ID },
+        },
+        USER_ID,
+        SESSION_ID,
+      ),
+    ).toThrow(UploadSessionValidationError);
+  });
+});
+
+// A refused manifest is an AppError: should one ever escape the route's
+// 4xx mapping, Sentry sees the kind, not "Error: <the user's filename>".
+// The HTTP status and client code the route answers with are unchanged.
+describe("UploadSessionValidationError", () => {
+  it("is an AppError named upload.session_invalid that keeps its status and code", () => {
+    const refused = new UploadSessionValidationError("PRIVATE_NAME.docx is too large", {
+      status: 413,
+      code: "upload_file_too_large",
+    });
+    expect(refused).toBeInstanceOf(AppError);
+    expect(refused).toBeInstanceOf(UploadSessionValidationError);
+    expect(refused.name).toBe("UploadSessionValidationError");
+    expect(refused.status).toBe(413);
+    expect(refused.code).toBe("upload_file_too_large");
+    expect(refused.message).toContain("PRIVATE_NAME.docx");
+    // The kind is what names the event; the boundary also reads `status`
+    // (as it does for every error that carries one) but never the message.
+    expect(diagnosticErrorTags(refused)).toMatchObject({
+      error_kind: "upload.session_invalid",
+    });
+    expect(JSON.stringify(diagnosticErrorTags(refused))).not.toContain("PRIVATE_NAME");
+  });
+
+  it("defaults to 400 invalid_upload_session", () => {
+    const refused = new UploadSessionValidationError("bad manifest");
+    expect(refused.status).toBe(400);
+    expect(refused.code).toBe("invalid_upload_session");
+    expect(refused.kind).toBe("upload.session_invalid");
+  });
+
+  it("is what the parser throws", () => {
+    let thrown: unknown;
+    try {
+      parseUploadSessionRequest(documentRequest(MAX_UPLOAD_SESSION_FILES + 1), USER_ID, SESSION_ID);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(UploadSessionValidationError);
+    expect(diagnosticErrorTags(thrown)).toMatchObject({ error_kind: "upload.session_invalid" });
   });
 });

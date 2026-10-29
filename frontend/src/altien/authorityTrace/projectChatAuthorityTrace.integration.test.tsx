@@ -43,23 +43,28 @@ vi.mock("@/app/hooks/useAssistantChat", () => ({
     }),
 }));
 
+// Stable sidebar callbacks match the project page's primary/side-chat effects.
+const chatHistoryFixture = vi.hoisted(() => ({
+    setCurrentChatId: vi.fn(),
+    setSideChatId: vi.fn(),
+    newChatMessages: null,
+    setNewChatMessages: vi.fn(),
+    chats: [],
+    saveChat: vi.fn(),
+    renameChat: vi.fn(),
+}));
 vi.mock("@/app/contexts/ChatHistoryContext", () => ({
-    useChatHistoryContext: () => ({
-        setCurrentChatId: vi.fn(),
-        newChatMessages: null,
-        setNewChatMessages: vi.fn(),
-        chats: [],
-        saveChat: vi.fn(),
-        renameChat: vi.fn(),
-    }),
+    useChatHistoryContext: () => chatHistoryFixture,
 }));
 
 vi.mock("@/app/contexts/SidebarContext", () => ({
     useSidebar: () => ({ setSidebarOpen: vi.fn() }),
 }));
 
+const profileFixture = vi.hoisted(() => ({ profile: { displayName: "Tester" } }));
 vi.mock("@/app/contexts/UserProfileContext", () => ({
-    useUserProfile: () => ({ profile: { displayName: "Tester" } }),
+    useUserProfile: () => profileFixture,
+    useOptionalUserProfile: () => profileFixture,
 }));
 
 vi.mock("@/app/lib/mikeApi", () => ({

@@ -1,3 +1,4 @@
+import { AppError } from "../../appError";
 import { createClient, type Session, type SupabaseClient, type User } from "@supabase/supabase-js";
 import { supabaseSessionConfiguration } from "../../runtimeConfig";
 import type { ServerCredential } from "../../serverSession";
@@ -68,18 +69,25 @@ export async function startSupabaseOAuth(redirectTo: string) {
 }
 
 export async function startSupabaseSSO(domain: string, redirectTo: string) {
+  try {
+
   const storage = new Map<string, string>();
   const auth = client(storage);
   const result = await auth.auth.signInWithSSO({ domain, options: { redirectTo, skipBrowserRedirect: true } });
-  if (result.error || !result.data.url) throw new Error("SSO sign-in is unavailable");
+  if (result.error || !result.data.url) throw new AppError("auth.sso_failed", "SSO sign-in is unavailable", { cause: result.error });
   return { url: result.data.url, verifierState: JSON.stringify(Object.fromEntries(storage)) };
+
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw new AppError("auth.sso_failed", "SSO sign-in is unavailable", { cause: error });
+  }
 }
 
 export async function startSupabaseRecovery(email: string, redirectTo: string) {
   const storage = new Map<string, string>();
   const auth = client(storage);
   const result = await auth.auth.resetPasswordForEmail(email, { redirectTo });
-  if (result.error) throw new Error("Password recovery is unavailable");
+  if (result.error) throw new Error("Password recovery is unavailable", { cause: result.error });
   return JSON.stringify(Object.fromEntries(storage));
 }
 

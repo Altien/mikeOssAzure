@@ -11,6 +11,7 @@ const {
   releaseMemoryConversationTurn,
   scheduleMemoryConsolidation,
   dbInserts,
+  dbRpcCalls,
 } = vi.hoisted(() => ({
     runLLMStream: vi.fn(),
     checkProjectAccess: vi.fn(),
@@ -26,6 +27,7 @@ const {
     generation: 1,
   }),
   dbInserts: [] as { table: string; value: unknown }[],
+  dbRpcCalls: [] as { name: string; args: Record<string, unknown> }[],
 }));
 
 function makeQuery(table: string) {
@@ -71,12 +73,10 @@ function makeQuery(table: string) {
 function mockSupabase() {
   return {
     from: vi.fn((table: string) => makeQuery(table)),
-    rpc: vi.fn((name: string) =>
-      Promise.resolve({
-        data: name.startsWith("append_chat_") ? "appended" : null,
-        error: null,
-      }),
-    ),
+    rpc: vi.fn((name: string, args: Record<string, unknown>) => {
+      dbRpcCalls.push({ name, args });
+      return Promise.resolve({ data: name.startsWith("append_chat_") ? "appended" : null, error: null });
+    }),
     auth: {
       getUser: () =>
         Promise.resolve({ data: { user: { id: "u1" } }, error: null }),
@@ -182,6 +182,7 @@ vi.mock("../../modules/chat/chat.service", async (importOriginal) => {
 vi.mock("../../modules/user/user.settings", () => ({
     getUserModelSettings: vi.fn(async () => ({
         legal_research_us: false,
+        web_search: DEFAULT_WEB_SEARCH_SETTINGS,
         title_model: "test-model",
         tabular_model: "test-model",
         last_selected_chat_model: null,
@@ -196,6 +197,16 @@ vi.mock("../../modules/user/user.settings", () => ({
         },
     })),
     persistLastSelectedChatModel: vi.fn(async () => null),
+}));
+
+// The one-result fake above cannot answer the reads this makes; the rule has
+// its own tests in lib/__tests__/documentWorkspace.test.ts.
+const { findNewAttachmentsOutsideWorkspace } = vi.hoisted(() => ({
+    findNewAttachmentsOutsideWorkspace: vi.fn(async (): Promise<string[]> => []),
+}));
+vi.mock("../../lib/documentWorkspace", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../../lib/documentWorkspace")>()),
+    findNewAttachmentsOutsideWorkspace,
 }));
 
 vi.mock("../../lib/access", () => ({
@@ -213,9 +224,15 @@ vi.mock("../../lib/access", () => ({
 // and mounts this router at /api/projects/:projectId/chat (paths below carry /api).
 import { buildApp } from "../../app";
 const app = buildApp();
+// Dev drift: unit facade supplies the canonical owner identity; real claim/CAS is tested by the SQL gate.
+vi.mock("../../lib/streamRuns", async load => ({
+  ...await load<typeof import("../../lib/streamRuns")>(),
+  streamRunFenceArgs: (runId: string) => ({ p_run_id: runId, p_owner_token: "test-owner-token", p_fence: "1" }),
+}));
 import { resetAssistantTurnRunsForTests } from "../../lib/assistantTurnRuns";
 import { spotlight } from "../../modules/chat/engine/index";
 import { createServerSupabase } from "../../lib/supabase";
+import { DEFAULT_WEB_SEARCH_SETTINGS } from "../../lib/webSearch";
 
 const VALID_BODY = {
     messages: [{ role: "user", content: "hello" }],
@@ -227,6 +244,7 @@ describe("POST /projects/:projectId/chat", () => {
         resetAssistantTurnRunsForTests();
         vi.clearAllMocks();
     dbInserts.length = 0;
+    dbRpcCalls.length = 0;
         buildMessages.mockReturnValue([]);
         buildProjectDocContext.mockResolvedValue({
             docIndex: {},
@@ -279,7 +297,7 @@ describe("POST /projects/:projectId/chat", () => {
         expect(res.text).toContain('"type":"chat_title"');
         expect(runLLMStream).toHaveBeenCalledTimes(1);
         expect(buildProjectDocContext).toHaveBeenCalledWith(
-            "p1", "u1", expect.anything(), VALID_BODY.messages,
+            "p1", "u1", expect.anything(), VALID_BODY.messages, "u1@test.local",
         );
     expect(runLLMStream).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -333,14 +351,55 @@ describe("POST /projects/:projectId/chat", () => {
     expect(releaseMemoryConversationTurn).not.toHaveBeenCalled();
     });
 
+    it("runs a personal project's chat on the caller's own keys", async () => {
+        const userSettings = await import("../../modules/user/user.settings.js");
+
+        await request(app)
+            .post("/api/projects/p1/chat")
+            .set("Authorization", "Bearer test")
+            .send(VALID_BODY);
+
+        expect(userSettings.getUserModelSettings).toHaveBeenCalledWith(
+            "u1",
+            expect.anything(),
+            { orgId: null },
+        );
+    });
+
+    it("runs an organization project's chat on the organization's keys", async () => {
+        const userSettings = await import("../../modules/user/user.settings.js");
+        checkProjectAccess.mockResolvedValue({
+            ok: true,
+            isCreator: true,
+            orgRole: "member",
+            projectRole: "owner",
+            project: { id: "p1", user_id: "u1", org_id: "org-1" },
+        });
+
+        const res = await request(app)
+            .post("/api/projects/p1/chat")
+            .set("Authorization", "Bearer test")
+            .send(VALID_BODY);
+
+        expect(res.status).toBe(200);
+        expect(userSettings.getUserModelSettings).toHaveBeenCalledWith(
+            "u1",
+            expect.anything(),
+            { orgId: "org-1" },
+        );
+    });
+
     it("uses the shared last-selected model when a new project chat omits model", async () => {
         const userSettings = await import("../../modules/user/user.settings.js");
         vi.mocked(userSettings.getUserModelSettings).mockResolvedValueOnce({
             legal_research_us: false,
             // Dev drift: UserModelSettings also carries Dev's fast_model.
             fast_model: "test-model",
+            web_search: DEFAULT_WEB_SEARCH_SETTINGS,
             title_model: null,
             memory_curator_model: null,
+            subagent_model: null,
+            subagent_reasoning: null,
             last_selected_reasoning_level: null,
             tabular_model: null,
             last_selected_chat_model: "gpt-6-luna",
@@ -356,6 +415,33 @@ describe("POST /projects/:projectId/chat", () => {
         expect(runLLMStream).toHaveBeenCalledWith(
             expect.objectContaining({ model: "gpt-6-luna" }),
         );
+    });
+
+    it("saves a subagent run only after the answer it belongs to", async () => {
+        runLLMStream.mockImplementationOnce(async ({ subagentRuns }) => {
+            await subagentRuns.save("delegation-1", "completed", {});
+            return { fullText: "Answer", events: [], citations: [] };
+        });
+
+        await request(app)
+            .post("/api/projects/p1/chat")
+            .set("Authorization", "Bearer test")
+            .send(VALID_BODY);
+
+        const assistant = dbInserts.findIndex(
+            ({ table, value }) =>
+                table === "chat_messages" && (value as { role?: string }).role === "assistant",
+        );
+        const committed = dbRpcCalls.find(call => Array.isArray(call.args.p_subagent_runs));
+        expect(assistant).toBeGreaterThanOrEqual(0);
+        expect(committed?.name).toBe("append_chat_assistant_events");
+        expect(committed?.args).toMatchObject({
+            p_message_id: (dbInserts[assistant].value as { id: string }).id,
+            p_chat_id: "chat-1", p_author_user_id: "u1", p_org_id: null,
+            p_owner_token: "test-owner-token", p_fence: "1",
+            p_subagent_runs: [expect.objectContaining({ chat_id: "chat-1", user_id: "u1", message_id: (dbInserts[assistant].value as { id: string }).id })],
+        });
+        expect(dbInserts.filter(({ table }) => table === "chat_subagent_runs")).toEqual([]);
     });
 
     it("normalizes validated request fields before using them", async () => {

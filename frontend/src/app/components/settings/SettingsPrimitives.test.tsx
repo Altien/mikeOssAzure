@@ -10,7 +10,7 @@ describe("settings primitives", () => {
 
     expect(
       screen.getByRole("heading", { name: "Appearance", level: 2 }),
-    ).toHaveClass("font-serif", "text-2xl", "font-medium", "text-gray-900");
+    ).toHaveClass("font-sans", "text-xl", "font-medium", "text-gray-900");
   });
 
   it("supports the danger heading tone", () => {
@@ -35,8 +35,7 @@ describe("settings primitives", () => {
       "sm:flex-row",
       "border-t",
       "first:border-t-0",
-      "px-4",
-      "py-5",
+      "p-4",
     );
   });
 

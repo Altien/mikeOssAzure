@@ -14,7 +14,13 @@
  * included.
  */
 import { streamWordChat, streamWordChatTurn, readSSE } from "./mikeApi";
+import { MikeApiError, parseApiErrorBody } from "./client";
+import {
+  WordChatTerminalError,
+  terminalErrorFromFrame,
+} from "../lib/wordChatTerminalError";
 import type { ReasoningLevel } from "../lib/wordChatTypes";
+import type { TextCardEvent } from "@mike/contracts";
 
 export interface WordChatDocumentReadEvent {
   type: "doc_read_start" | "doc_read";
@@ -47,16 +53,14 @@ export class WordChatStreamInterrupted extends Error {
   }
 }
 
-/** The server ended the turn with an error frame and a terminal `[DONE]`. */
-export class WordChatTerminalError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "WordChatTerminalError";
-  }
-}
+// Defined in an Office-free module so its classification is unit-testable;
+// re-exported so existing imports keep working.
+export { WordChatTerminalError };
 
 /** Everything a turn's frames are routed to, whichever response carries them. */
 export interface WordTurnHandlers {
+  /** Copy-ready text placed at this point in the response timeline. */
+  onTextCard?: (event: TextCardEvent) => void;
   /**
    * The turn's identity as the server reports it. `turnId` is what the pane
    * stops and what it reattaches to.
@@ -102,10 +106,23 @@ async function consumeTurnStream(
   onText: (text: string) => void,
 ): Promise<void> {
   if (!res.ok) {
+    // The chat endpoint answers with the same error envelope as the rest of
+    // the API, so it is parsed the same way: status/code/request id for
+    // classification, and never the raw body on screen.
     const body = await res.text().catch(() => "");
-    throw new Error(`Chat request failed (${res.status}): ${body}`);
+    const parsed = parseApiErrorBody({
+      status: res.status,
+      body,
+      requestId: res.headers.get("x-request-id"),
+    });
+    throw new MikeApiError({
+      status: res.status,
+      code: parsed.code,
+      requestId: parsed.requestId,
+      message: parsed.message,
+    });
   }
-  let streamError: string | null = null;
+  let streamError: WordChatTerminalError | null = null;
   const result = await readSSE(
     res,
     (data) => {
@@ -146,6 +163,18 @@ async function consumeTurnStream(
               : {},
         });
       } else if (
+        d.type === "text_card" &&
+        typeof d.card_id === "string" &&
+        typeof d.title === "string" &&
+        typeof d.text === "string"
+      ) {
+        params.onTextCard?.({
+          type: "text_card",
+          card_id: d.card_id,
+          title: d.title,
+          text: d.text,
+        });
+      } else if (
         (d.type === "doc_read_start" || d.type === "doc_read") &&
         typeof d.filename === "string" &&
         d.filename
@@ -160,8 +189,7 @@ async function consumeTurnStream(
       } else if (d.type === "citations" && Array.isArray(d.citations)) {
         params.onCitations?.(d.citations);
       } else if (d.type === "error") {
-        streamError =
-          typeof d.message === "string" ? d.message : "Stream error";
+        streamError = terminalErrorFromFrame(d);
       }
     },
     {
@@ -176,7 +204,7 @@ async function consumeTurnStream(
     if (!params.signal?.aborted) throw new WordChatStreamInterrupted();
     return;
   }
-  if (streamError) throw new WordChatTerminalError(streamError);
+  if (streamError) throw streamError;
 }
 
 /**
@@ -214,6 +242,8 @@ export async function streamAssistant(
       // Workflow runs travel as a reference — the backend resolves the body
       // server-side (inside the <workflow-instructions> fence), same as the web.
       workflow?: { id: string; title: string };
+      // A playbook travels the same way; the engine tells the model to run it.
+      playbook?: { id: string; title: string };
     }[];
     documentContext?: string;
     model: string;

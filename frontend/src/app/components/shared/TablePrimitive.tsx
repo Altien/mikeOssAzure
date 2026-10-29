@@ -131,6 +131,7 @@ export function TableFilters<T extends string>({
     options,
     onChange,
     widthClassName = "w-52",
+    contentClassName,
     align = "left",
 }: {
     label: string;
@@ -139,6 +140,7 @@ export function TableFilters<T extends string>({
     options: TableFilterOption<T>[];
     onChange: (value: T | null) => void;
     widthClassName?: string;
+    contentClassName?: string;
     /**
      * Which side the menu opens toward. "left" (default) anchors the menu's
      * right edge to the button and extends leftward; "right" anchors the menu's
@@ -171,7 +173,7 @@ export function TableFilters<T extends string>({
             </DropdownTrigger>
             <DropdownContent
                 align={align === "right" ? "start" : "end"}
-                className={`overflow-hidden ${widthClassName}`}
+                className={cn("overflow-hidden", widthClassName, contentClassName)}
             >
                 <DropdownItem
                     selected={value === null}
@@ -282,7 +284,8 @@ export function TableScrollArea({
     return (
         <div
             className={cn(
-                "mx-3 mb-2 min-h-0 min-w-0 flex-1 rounded-2xl md:mx-6.5 md:mb-3",
+                "mx-3 mb-2 min-h-0 min-w-0 flex-1 md:mx-6.5 md:mb-3",
+                preserveGridBorder && "rounded-2xl",
                 className,
             )}
         >
@@ -290,7 +293,7 @@ export function TableScrollArea({
                 className={cn(
                     "flex h-full min-h-0 min-w-0 flex-col overflow-hidden",
                     TABLE_SURFACE_CLASS,
-                    preserveGridBorder && "tabular-review-table-surface",
+                    preserveGridBorder && "tabular-review-table-surface rounded-2xl",
                 )}
             >
                 <div className="relative flex min-h-0 min-w-0 flex-1">

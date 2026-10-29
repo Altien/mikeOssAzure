@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Chat, Citation, Message } from "@/app/components/shared/types";
+import type { Chat, Citation, EditAnnotation, Message } from "@/app/components/shared/types";
 import { MikeApiError } from "@/app/lib/mikeApi";
 import { ChatView } from "./ChatView";
 import { PageChromeContext } from "@/app/contexts/PageChromeContext";
@@ -14,6 +14,20 @@ import { PageChromeContext } from "@/app/contexts/PageChromeContext";
 
 const { listDocumentVersions } = vi.hoisted(() => ({
     listDocumentVersions: vi.fn(),
+}));
+
+// This harness renders authenticated work without booting the session provider.
+// Keep the real owner/generation hooks; only supply their controlled auth input.
+const authenticatedOwner = vi.hoisted(() => ({
+  user: { id: "u1", email: "owner@example.com", pendingEmail: null, createdWithGoogle: false },
+  isAuthenticated: true, authLoading: false, authError: null,
+  signOut: vi.fn(async () => {}), signInLocal: vi.fn(async () => {}),
+  getAccessToken: vi.fn(async () => "test-token"), updateEmail: vi.fn(), setPassword: vi.fn(async () => {}),
+  refreshSession: vi.fn(async () => null), retrySession: vi.fn(async () => null),
+}));
+vi.mock("@/app/contexts/AuthContext", async (original) => ({
+  ...(await original<typeof import("@/app/contexts/AuthContext")>()),
+  useAuth: () => authenticatedOwner,
 }));
 
 vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
@@ -45,8 +59,8 @@ vi.mock("./ChatAccessModal", () => ({ ChatAccessModal: () => null }));
 // not this file's.
 vi.mock("./AssistantSidePanel", async (importOriginal) => ({
     ...(await importOriginal<typeof import("./AssistantSidePanel")>()),
-    AssistantSidePanel: ({ tabs }: { tabs: { id: string; kind: string }[] }) => (
-        <div data-testid="panel-tabs" data-kind={tabs[0]?.kind}>{tabs.length}</div>
+    AssistantSidePanel: ({ tabs }: { tabs: { id: string; kind: string; document: { version_id: string | null } }[] }) => (
+        <div data-testid="panel-tabs" data-kind={tabs[0]?.kind} data-version={tabs[0]?.document.version_id}>{tabs.length}</div>
     ),
 }));
 
@@ -58,7 +72,9 @@ vi.mock("./AssistantMessage", () => ({
         activeCitation,
         onCitationClick,
         onOpenDocument,
+        onEditViewClick,
     }: {
+        onEditViewClick?: (edit: EditAnnotation, filename: string) => void;
         citations?: Citation[];
         activeCitation?: Citation | null;
         onCitationClick?: (citation: Citation) => void;
@@ -89,6 +105,9 @@ vi.mock("./AssistantMessage", () => ({
                 }
             >
                 download card
+            </button>
+            <button type="button" onClick={() => onEditViewClick?.({ edit_id: "e1", document_id: "doc-1", version_id: "", version_number: 1, change_id: "c1", deleted_text: "old", inserted_text: "new", status: "pending" }, "agreement.docx")}>
+                legacy edit
             </button>
         </>
     ),
@@ -294,4 +313,24 @@ describe("ChatView citation on a chat shared without its documents", () => {
         await waitFor(() => expect(pill).toHaveAttribute("aria-pressed", "true"));
         expect(screen.getByTestId("panel-tabs")).toHaveAttribute("data-kind", "citation");
     });
+});
+
+
+it("resolves a legacy edit to its historical version", async () => {
+    listDocumentVersions.mockResolvedValue({ current_version_id: "v2", versions: [
+        { id: "v1", version_number: 1, filename: "agreement.docx" },
+        { id: "v2", version_number: 2, filename: "agreement.docx" },
+    ] });
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: "legacy edit" }));
+    expect(await screen.findByTestId("panel-tabs")).toHaveAttribute("data-version", "v1");
+    expect(screen.getByTestId("panel-tabs")).toHaveAttribute("data-kind", "edit");
+});
+
+it("reports a missing legacy edit version without opening the current version", async () => {
+    listDocumentVersions.mockResolvedValue({ current_version_id: "v2", versions: [{ id: "v2", version_number: 2, filename: "agreement.docx" }] });
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: "legacy edit" }));
+    expect(await screen.findByText("This document could not be opened. Please try again.")).toBeVisible();
+    expect(screen.queryByTestId("panel-tabs")).toBeNull();
 });

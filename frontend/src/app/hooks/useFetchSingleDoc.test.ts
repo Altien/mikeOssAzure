@@ -1,9 +1,19 @@
-import { describe, it, expect, vi } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { beforeEach, describe, it, expect, vi } from "vitest";
+import { act, renderHook, waitFor } from "@testing-library/react";
+const reporting = vi.hoisted(() => ({ reportError: vi.fn(), reportNetworkFailure: vi.fn() }));
+vi.mock("@/app/lib/authEvents", () => ({ authenticatedFetch: vi.fn(), currentAuthEpoch: vi.fn(() => 0) }));
+vi.mock("@/app/lib/errorReporting", async original => ({ ...await original<typeof import("@/app/lib/errorReporting")>(), reportError: reporting.reportError, reportNetworkFailure: reporting.reportNetworkFailure, reportApiFailure: vi.fn(), markErrorHandled: vi.fn(), trackPendingRequest: vi.fn(() => () => {}) }));
+import { authenticatedFetch } from "@/app/lib/authEvents";
+import * as errorReporting from "@/app/lib/errorReporting";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/msw-server";
 
 import { useFetchSingleDoc } from "./useFetchSingleDoc";
+import { API_BASE } from "@/app/lib/mikeApi";
+
+// File-local auth transport defaults to the existing MSW network harness.
+// Reporting mocks retain the real handled-error ownership helpers.
+beforeEach(() => { vi.mocked(authenticatedFetch).mockImplementation((url, init) => fetch(url, init)); });
 
 describe("useFetchSingleDoc: disabled when documentId is missing", () => {
     it("does not fetch when documentId is null", () => {
@@ -199,4 +209,62 @@ describe("useFetchSingleDoc: error handling", () => {
         expect(result.current.error).toBe("Failed to load document.");
         expect(result.current.result).toBeNull();
     });
+});
+
+it("reports a 5xx under documents.open with its request id, and keeps the generic message", async () => {
+    vi.mocked(authenticatedFetch).mockResolvedValue(
+        new Response("boom", {
+            status: 500,
+            headers: { "x-request-id": "11111111-2222-4333-8444-555555555555" },
+        }),
+    );
+    const { result } = renderHook(() => useFetchSingleDoc("d1"));
+    await waitFor(() => expect(result.current.error).toBe("Failed to load document."));
+    expect(reporting.reportError).toHaveBeenCalledTimes(1);
+    expect(reporting.reportError.mock.calls[0]![1]).toMatchObject({
+        tags: {
+            component: "mike-api",
+            operation: "documents.open",
+            http_method: "GET",
+            http_status: 500,
+            request_id: "11111111-2222-4333-8444-555555555555",
+        },
+    });
+});
+
+it("does not report a 4xx answer", async () => {
+    vi.mocked(authenticatedFetch).mockResolvedValue(new Response("gone", { status: 404 }));
+    const { result } = renderHook(() => useFetchSingleDoc("d1"));
+    await waitFor(() => expect(result.current.error).toBe("Failed to load document."));
+    expect(reporting.reportError).not.toHaveBeenCalled();
+    expect(reporting.reportNetworkFailure).not.toHaveBeenCalled();
+});
+
+it("hands a request that never got a response to the network reporter", async () => {
+    const failure = new TypeError("Failed to fetch");
+    vi.mocked(authenticatedFetch).mockRejectedValue(failure);
+    const { result } = renderHook(() => useFetchSingleDoc("d1", "v1"));
+    await waitFor(() => expect(result.current.error).toBe("Failed to load document."));
+    expect(reporting.reportNetworkFailure).toHaveBeenCalledWith(failure, {
+        method: "GET",
+        url: `${API_BASE}/single-documents/d1/display?version_id=v1`,
+    });
+    expect(reporting.reportError).not.toHaveBeenCalled();
+});
+
+it("does not report or set an error for a download it aborted itself", async () => {
+    vi.mocked(authenticatedFetch).mockImplementation(
+        (_url, init) =>
+            new Promise((_resolve, reject) => {
+                init?.signal?.addEventListener("abort", () =>
+                    reject(new DOMException("Aborted", "AbortError")),
+                );
+            }),
+    );
+    const { result, unmount } = renderHook(() => useFetchSingleDoc("d1"));
+    unmount();
+    await act(async () => {});
+    expect(result.current.error).toBeNull();
+    expect(reporting.reportError).not.toHaveBeenCalled();
+    expect(reporting.reportNetworkFailure).not.toHaveBeenCalled();
 });

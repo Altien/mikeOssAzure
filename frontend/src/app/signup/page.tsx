@@ -10,23 +10,60 @@ import Link from "next/link";
 import { SiteLogo } from "@/app/components/site-logo";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { cn } from "@/app/lib/utils";
+import { WarningPopup } from "@/app/components/popups/WarningPopup";
+import { noticeActionClassName } from "@/shared/ui/NoticeCardUI";
 import {
     authGlassCardUIClassName,
     authInputUIClassName,
 } from "@/shared/ui/AuthStylesUI";
-import { knownErrorCodeMessage } from "@/app/lib/userFacingError";
+import { reportFault,
+    UserVisibleError,
+    describeError,
+    supportMailtoFor,
+    type UserFacingError,
+} from "@/app/lib/userFacingError";
 
-const SIGNUP_ERROR_MESSAGES = {
-    user_already_exists: "An account with this email already exists.",
-    email_exists: "An account with this email already exists.",
+
+/** A failure the form found itself, so the text is already user-facing. */
+function localSignupError(message: string): UserFacingError {
+    return describeError(
+        new UserVisibleError(message, { kind: "validation" }),
+        { action: "create your account" },
+    );
+}
+
+/**
+ * The shared auth table with this screen's deltas. Anything not listed
+ * falls through to `describeError` so a 429, a 5xx, or a dropped connection
+ * still says what actually happened.
+ */
+const SIGNUP_ERROR_MESSAGES = authMessages({
+    validation_failed: "Check your email address and password and try again.",
+    invalid_request: "Check your email address and password and try again.",
     over_email_send_rate_limit:
-        "Too many signup emails were requested. Please wait and try again.",
-    weak_password: "Choose a stronger password and try again.",
-} as const;
+        "Too many signup emails have been requested. Wait a few minutes and try again.",
+    request_timeout: "The signup request timed out. Try again.",
+});
+
+/** Classify a signup failure into text a person can act on. */
+function describeSignupError(error: unknown): UserFacingError {
+    const described = reportFault(error, {
+        action: "create your account",
+        codeMessages: SIGNUP_ERROR_MESSAGES,
+        fallback: "Unable to create your account right now. Try again.",
+        operation: "auth.signup",
+    });
+    return described.kind === "rate_limited"
+        ? { ...described, message: TOO_MANY_ATTEMPTS_MESSAGE }
+        : described;
+}
 import {
     MIN_PASSWORD_LENGTH,
+    isPasswordTooLong,
+    maximumPasswordMessage,
     minimumPasswordMessage,
 } from "@/app/components/auth/passwordPolicy";
+import { TOO_MANY_ATTEMPTS_MESSAGE, authMessages } from "@/app/lib/authMessages";
 import { AuthDividerUI } from "@/shared/ui/AuthDividerUI";
 import { GoogleAuthButton } from "@/app/components/auth/GoogleAuthButton";
 import { FieldLabel } from "@/app/components/ui/form-field";
@@ -39,7 +76,7 @@ function SignupContent() {
     const [password, setPassword] = useState("");
     const [confirmPassword, setConfirmPassword] = useState("");
     const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    const [error, setError] = useState<UserFacingError | null>(null);
     const [success, setSuccess] = useState(false);
     const isAccountCreatedPreview =
         process.env.NODE_ENV !== "production" &&
@@ -47,16 +84,25 @@ function SignupContent() {
 
     useEffect(() => {
         if (isAccountCreatedPreview) return;
-        if (!authLoading && isAuthenticated && !success) {
+        if (!authLoading && isAuthenticated && !loading && !success) {
             router.replace("/onboarding/profile");
         }
     }, [
         authLoading,
         isAccountCreatedPreview,
         isAuthenticated,
+        loading,
         router,
         success,
     ]);
+
+    useEffect(() => {
+        if (!success) return;
+        const timer = setTimeout(() => {
+            router.push("/onboarding/profile");
+        }, 2000);
+        return () => clearTimeout(timer);
+    }, [router, success]);
 
     const handleSignup = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -65,14 +111,20 @@ function SignupContent() {
 
         // Validate passwords match
         if (password !== confirmPassword) {
-            setError("Passwords do not match");
+            setError(localSignupError("The two passwords don't match."));
             setLoading(false);
             return;
         }
 
-        // Validate password length
+        // Validate password length. The upper bound is bcrypt's 72 BYTES:
+        // GoTrue rejects anything longer, so say so before the round trip.
         if (password.length < MIN_PASSWORD_LENGTH) {
-            setError(minimumPasswordMessage);
+            setError(localSignupError(`${minimumPasswordMessage}.`));
+            setLoading(false);
+            return;
+        }
+        if (isPasswordTooLong(password)) {
+            setError(localSignupError(maximumPasswordMessage));
             setLoading(false);
             return;
         }
@@ -88,20 +140,11 @@ function SignupContent() {
             if (!result.requiresEmailConfirmation) {
                 await refreshSession();
                 setSuccess(true);
-                setTimeout(() => {
-                    router.push("/onboarding/profile");
-                }, 2000);
             } else {
                 router.push("/signup/check-email");
             }
-        } catch (error: unknown) {
-            setError(
-                knownErrorCodeMessage(
-                    error,
-                    SIGNUP_ERROR_MESSAGES,
-                    "Unable to create your account right now. Please try again.",
-                ),
-            );
+        } catch (caught: unknown) {
+            setError(describeSignupError(caught));
         } finally {
             setLoading(false);
         }
@@ -196,12 +239,6 @@ function SignupContent() {
                             />
                         </div>
 
-                        {error && (
-                            <div className="text-red-600 text-sm bg-red-50 p-3 rounded">
-                                {error}
-                            </div>
-                        )}
-
                         <div className="space-y-3 pt-2">
                             <div className="text-center text-xs text-gray-500">
                                 By signing up, you agree to our{" "}
@@ -251,6 +288,25 @@ function SignupContent() {
                     </Link>
                 </div>
             </div>
+            <WarningPopup
+                open={!!error}
+                onClose={() => setError(null)}
+                title={error?.title}
+                message={error?.message}
+                actions={
+                    error?.supportable ? (
+                        <a
+                            href={supportMailtoFor(
+                                error,
+                                "Failed to create an account.",
+                            )}
+                            className={noticeActionClassName()}
+                        >
+                            Contact support
+                        </a>
+                    ) : undefined
+                }
+            />
         </div>
     );
 }

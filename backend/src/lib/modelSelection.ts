@@ -1,8 +1,16 @@
+import { isProviderDisabled } from "./llm/providerPreferences";
+import type { DelegationModelTier } from "@mike/contracts";
 import {
+    builtInModelIds,
     CLAUDE_LOW_MODELS,
+    CLAUDE_MID_MODELS,
     GEMINI_LOW_MODELS,
+    GEMINI_MID_MODELS,
     OPENAI_LOW_MODELS,
+    OPENAI_MID_MODELS,
     MISTRAL_LOW_MODELS,
+    MISTRAL_MID_MODELS,
+    type Provider,
     providerForModel,
     normalizeReasoningLevelForModel,
     resolveModel,
@@ -10,6 +18,13 @@ import {
     REASONING_LEVELS,
     type ReasoningLevel,
 } from "./llm";
+import {
+    azureCredentials,
+    azureFoundryCredentials,
+    bedrockCredentials,
+    customEndpointCredentials,
+    vertexCredentials,
+} from "./llm/cloudProviders";
 import {
     apiKeyForConfiguredModel,
     configuredModelRequiresApiKey,
@@ -82,6 +97,7 @@ export async function hasApiKeyForModel(
     apiKeys: UserApiKeys,
 ): Promise<boolean> {
     const provider = providerForModel(model);
+    if (isProviderDisabled(provider, apiKeys)) return false;
     if (provider === "openai-compatible") {
         const configured = getConfiguredModel(model);
         return configured !== null &&
@@ -92,6 +108,15 @@ export async function hasApiKeyForModel(
         return !!apiKeys.azureOpenai?.endpoint?.trim() &&
             !!apiKeys.azureOpenai?.apiKey?.trim() &&
             !!apiKeys.azureOpenai?.deployment?.trim();
+    }
+    if (provider === "bedrock") return (await bedrockCredentials(apiKeys)) !== null;
+    if (provider === "azure") return (await azureCredentials(apiKeys)) !== null;
+    if (provider === "azure-foundry") {
+        return (await azureFoundryCredentials(apiKeys)) !== null;
+    }
+    if (provider === "vertex") return (await vertexCredentials(apiKeys)) !== null;
+    if (provider === "custom") {
+        return (await customEndpointCredentials(apiKeys)) !== null;
     }
     return !!apiKeys[provider]?.trim();
 }
@@ -121,6 +146,8 @@ export async function resolveEffectiveChatModel(args: {
     apiKeys: UserApiKeys;
     userId: string;
     db: Db;
+    /** The organization the work belongs to: its lists govern its keys. */
+    orgId?: string | null;
 }): Promise<EffectiveChatModelResult> {
     const requestedText = args.requested?.trim() ?? "";
     if (requestedText) {
@@ -140,8 +167,17 @@ export async function resolveEffectiveChatModel(args: {
                 args.userId,
                 args.db,
                 "throw",
+                args.orgId,
             );
             if (!(await hasApiKeyForModel(model, args.apiKeys))) {
+                if (isProviderDisabled(providerForModel(model), args.apiKeys)) {
+                    return {
+                        ok: false,
+                        status: 422,
+                        code: "model_unavailable",
+                        detail: "This model provider is turned off. Turn it on in Settings → Bring Your Own Keys or select another model.",
+                    };
+                }
                 return {
                     ok: false,
                     status: 422,
@@ -176,6 +212,7 @@ export async function resolveEffectiveChatModel(args: {
             args.userId,
             args.db,
             "fallback",
+            args.orgId,
         );
         if (selected && (await hasApiKeyForModel(selected, args.apiKeys))) {
             return { ok: true, model: selected, source: candidate.source };
@@ -225,6 +262,61 @@ export function titleModelForChat(
         case "openrouter":
         case "vercel":
         case "opencode-go":
+        case "bedrock":
+        case "azure":
+        case "azure-foundry":
+        case "vertex":
+        case "xai":
+        case "custom":
             return resolvedChatModel;
     }
+}
+
+export const DELEGATION_MODEL_TIERS: readonly DelegationModelTier[] = [
+    "light",
+    "standard",
+    "same",
+];
+
+function tieredModels(
+    provider: Provider,
+): { light: readonly string[]; standard: readonly string[] } | null {
+    switch (provider) {
+        case "claude":
+            return { light: CLAUDE_LOW_MODELS, standard: CLAUDE_MID_MODELS };
+        case "gemini":
+            return { light: GEMINI_LOW_MODELS, standard: GEMINI_MID_MODELS };
+        case "openai":
+            return { light: OPENAI_LOW_MODELS, standard: OPENAI_MID_MODELS };
+        case "mistral":
+            return { light: MISTRAL_LOW_MODELS, standard: MISTRAL_MID_MODELS };
+        default:
+            return null;
+    }
+}
+
+/** Empty for routers, cloud platforms and local models. */
+export function sameProviderModels(chatModel: string, apiKeys: UserApiKeys): string[] {
+    const provider = providerForModel(chatModel);
+    return builtInModelIds().filter(
+        (model) => providerForModel(model) === provider && hasApiKeyForModel(model, apiKeys),
+    );
+}
+
+/**
+ * As with titles, only first-party chat models step down to a cheaper model of
+ * the same provider; otherwise the chat model runs.
+ */
+export function subagentModelFor(
+    chatModel: string,
+    tier: DelegationModelTier,
+): string {
+    const tiers = tieredModels(providerForModel(chatModel));
+    if (!tiers || tier === "same") return chatModel;
+    const chatRank = [tiers.light, tiers.standard].findIndex((models) =>
+        models.includes(chatModel),
+    );
+    const atOrBelowTier =
+        chatRank >= 0 && chatRank <= DELEGATION_MODEL_TIERS.indexOf(tier);
+    return atOrBelowTier ? chatModel : tiers[tier][0];
 }

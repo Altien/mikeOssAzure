@@ -1,3 +1,4 @@
+import { teamOrgIdOf } from "../../../../lib/personalOrgs";
 // Connector write approvals inside the assistant turn.
 //
 // A connector whose "Ask for permission for write actions" setting is on does
@@ -15,6 +16,7 @@ import type {
   McpToolEvent,
 } from "@mike/contracts";
 import type { Db } from "../../../../lib/supabase";
+import type { ConnectorOwner } from "../../../../lib/connectorOwner";
 import type { ConnectorCallPlan } from "../../../../lib/mcp/types";
 import {
   planGoogleDriveCall,
@@ -40,16 +42,16 @@ export const MAX_APPROVAL_RESULT_CHARS = 4_000;
 
 /** All writable connectors share the same assistant approval flow. */
 export async function planConnectorToolCall(
-  userId: string,
+  owner: ConnectorOwner,
   name: string,
   args: Record<string, unknown>,
   db: Db,
 ): Promise<ConnectorCallPlan> {
   if (name.startsWith("google_drive_"))
-    return planGoogleDriveCall(userId, name, args, db);
+    return planGoogleDriveCall(owner, name, args, db);
   if (isGoogleWorkspaceTool(name))
-    return planGoogleWorkspaceCall(userId, name, args, db);
-  if (name.startsWith("mcp_")) return planMcpToolCall(userId, name, args, db);
+    return planGoogleWorkspaceCall(owner, name, args, db);
+  if (name.startsWith("mcp_")) return planMcpToolCall(owner, name, args, db);
   return { type: "run" };
 }
 
@@ -63,6 +65,29 @@ function isApprovalItem(
 }
 
 /**
+ * One pause carries every pending decision: approvals join the model's own
+ * questions when it asked any in the same step.
+ */
+export function addApprovalItems(
+  askInputsEvents: AskInputsEvent[],
+  items: ConnectorApprovalItem[],
+): void {
+  if (items.length === 0) return;
+  if (askInputsEvents.length > 0) {
+    askInputsEvents[0] = {
+      ...askInputsEvents[0],
+      items: [...askInputsEvents[0].items, ...items],
+    };
+  } else {
+    askInputsEvents.push({
+      type: "ask_inputs",
+      event_id: crypto.randomUUID(),
+      items,
+    });
+  }
+}
+
+/**
  * Runs the items the user approved in a just-appended ask_inputs_response and
  * appends their results. Call only after the append reported "appended": that
  * append is what guarantees each approval runs at most once.
@@ -73,6 +98,7 @@ export async function runApprovedConnectorActions(args: {
   messageId: string;
   askEventId: string;
   userId: string;
+  orgId?: string | null;
 }): Promise<McpToolEvent[]> {
   const { db, chatId, messageId, askEventId, userId } = args;
   const row = await loadAssistantMessage(db, chatId, messageId);
@@ -94,15 +120,22 @@ export async function runApprovedConnectorActions(args: {
       .filter((item) => item.kind === "approval" && item.decision === "approve")
       .map((item) => item.id),
   );
+  // An approval runs on the connections of the conversation's workspace,
+  // as the call it reviews would have; its binding pins the exact connector
+  // and grant, so one replaced or removed since is refused.
+  const owner: ConnectorOwner = {
+    userId,
+    orgId: await teamOrgIdOf(db, args.orgId),
+  };
   const events: McpToolEvent[] = [];
   for (const item of ask.items.filter(isApprovalItem)) {
     if (!approved.has(item.id)) continue;
     const { content: result, event } =
       item.binding.type === "google"
         ? item.binding.provider === "google-drive"
-          ? await executeApprovedGoogleDriveCall(userId, item, db)
-          : await executeApprovedGoogleWorkspaceCall(userId, item, db)
-        : await executeApprovedMcpToolCall(userId, item, db);
+          ? await executeApprovedGoogleDriveCall(owner, item, db)
+          : await executeApprovedGoogleWorkspaceCall(owner, item, db)
+        : await executeApprovedMcpToolCall(owner, item, db);
     // These events are stored and streamed outside runLLMStream, so apply its
     // rule here: the user never sees a connector's raw error text.
     events.push({
@@ -135,6 +168,7 @@ export function writeApprovedConnectorFrames(
         name: event.openai_tool_name,
         connector_name: event.connector_name,
         tool_name: event.tool_name,
+        tool_title: event.tool_title,
         status: event.status,
         error: event.error,
         approval_id: event.approval_id,

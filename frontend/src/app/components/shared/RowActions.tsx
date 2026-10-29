@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
+    Check,
     Download,
     Eye,
     EyeOff,
@@ -9,6 +10,7 @@ import {
     FolderMinus,
     Hash,
     History,
+    Loader2,
     Pencil,
     Plus,
     Trash2,
@@ -26,9 +28,12 @@ import {
     DropdownItem,
     DropdownTrigger,
 } from "@/shared/ui/dropdown";
+import { notifyError } from "@/app/lib/userFacingError";
 import { LIQUID_GLASS_HOVER_CLASS } from "@/app/components/ui/liquid-surface";
 
 export { CLOSE_ROW_ACTIONS_EVENT, closeRowActionMenus };
+
+export type RowAddStatus = "idle" | "pending" | "complete";
 
 interface Props {
     onDeselect?: () => void;
@@ -36,6 +41,9 @@ interface Props {
     /** Copies the row into the caller's own collection; `addLabel` names it. */
     onAdd?: () => void;
     addLabel?: string;
+    /** Keep the menu open to display progress and completion of an add action. */
+    addStatus?: RowAddStatus;
+    addDisabled?: boolean;
     onDelete?: () => void | Promise<void>;
     onHide?: () => void;
     onUnhide?: () => void;
@@ -79,6 +87,8 @@ export function RowActionMenuItems({
     onView,
     onAdd,
     addLabel = "Add",
+    addStatus,
+    addDisabled = false,
     onDelete,
     onHide,
     onUnhide,
@@ -108,6 +118,25 @@ export function RowActionMenuItems({
         action();
     };
 
+    // "Delete" alone would make the title "Couldn't delete"; callers that
+    // name the row ("Delete review") already read as an action.
+    const deleteAction =
+        deleteLabel.trim().toLowerCase() === "delete"
+            ? "delete this item"
+            : deleteLabel.trim().toLowerCase();
+
+    async function runDelete() {
+        if (!onDelete) return;
+        try {
+            await onDelete();
+        } catch (error) {
+            notifyError(error, {
+                action: deleteAction,
+                onRetry: () => void runDelete(),
+            });
+        }
+    }
+
     return (
         <>
             {onDeselect && (
@@ -123,9 +152,24 @@ export function RowActionMenuItems({
                 </DropdownItem>
             )}
             {onAdd && (
-                <DropdownItem onSelect={run(onAdd)}>
-                    <Plus className="h-3.5 w-3.5" />
-                    {addLabel}
+                <DropdownItem
+                    disabled={addDisabled || addStatus === "pending" || addStatus === "complete"}
+                    aria-busy={addStatus === "pending" || undefined}
+                    className={addStatus === "complete" ? "data-[disabled]:opacity-100" : undefined}
+                    onSelect={(event) => {
+                        if (addStatus !== undefined) event.preventDefault();
+                        else onClose?.();
+                        onAdd();
+                    }}
+                >
+                    {addStatus === "pending" ? (
+                        <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin" />
+                    ) : addStatus === "complete" ? (
+                        <Check aria-hidden="true" className="h-3.5 w-3.5 text-green-600" />
+                    ) : (
+                        <Plus aria-hidden="true" className="h-3.5 w-3.5" />
+                    )}
+                    <span aria-live={addStatus !== undefined ? "polite" : undefined}>{addLabel}</span>
                 </DropdownItem>
             )}
             {onNewSubfolder && (
@@ -203,15 +247,7 @@ export function RowActionMenuItems({
                 <DropdownItem
                     variant="destructive"
                     disabled={deleting || deleteDisabled}
-                    onSelect={run(() => {
-                        // The menu closes immediately, so an async handler that
-                        // rejects has nothing left to report to. Swallow it here
-                        // rather than leaving an unhandled rejection; surfaces
-                        // that can explain the failure do so themselves.
-                        void Promise.resolve(onDelete()).catch((error) => {
-                            console.error("row delete action failed", error);
-                        });
-                    })}
+                    onSelect={run(() => { void runDelete(); })}
                 >
                     <Trash2 className="h-3.5 w-3.5" />
                     {deleteLabel}
@@ -224,7 +260,25 @@ export function RowActionMenuItems({
 /** Width shared by the row button menu and the right-click menu. */
 export const ROW_ACTION_MENU_CLASS = "w-48";
 
-export function RowActions(props: Props) {
+function CustomRowActionItems({
+    renderItems,
+    onActionChosen,
+}: {
+    renderItems: (onActionChosen: () => void) => ReactNode;
+    onActionChosen: () => void;
+}) {
+    return renderItems(onActionChosen);
+}
+
+export function RowActions({
+    renderItems,
+    ariaLabel = "Open row actions",
+    ...props
+}: Props & {
+    /** Reuse these items in selection and right-click menus as well. */
+    renderItems?: (onActionChosen: () => void) => ReactNode;
+    ariaLabel?: string;
+}) {
     const [open, setOpen] = useState(false);
     // An action often opens something that takes focus itself (an inline
     // rename field, a modal). Returning focus to the button afterwards would
@@ -250,7 +304,7 @@ export function RowActions(props: Props) {
             <DropdownTrigger asChild>
                 <button
                     type="button"
-                    aria-label="Open row actions"
+                    aria-label={ariaLabel}
                     // The row itself is clickable; opening its menu must not
                     // also activate the row.
                     onClick={(event) => event.stopPropagation()}
@@ -269,12 +323,21 @@ export function RowActions(props: Props) {
                     actionChosenRef.current = false;
                 }}
             >
-                <RowActionMenuItems
-                    {...props}
-                    onClose={() => {
-                        actionChosenRef.current = true;
-                    }}
-                />
+                {renderItems ? (
+                    <CustomRowActionItems
+                        renderItems={renderItems}
+                        onActionChosen={() => {
+                            actionChosenRef.current = true;
+                        }}
+                    />
+                ) : (
+                    <RowActionMenuItems
+                        {...props}
+                        onClose={() => {
+                            actionChosenRef.current = true;
+                        }}
+                    />
+                )}
             </DropdownContent>
         </Dropdown>
     );

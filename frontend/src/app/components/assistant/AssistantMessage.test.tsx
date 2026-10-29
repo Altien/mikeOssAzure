@@ -1,4 +1,5 @@
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { renderWithProviders } from "@/test/render";
 import type { Citation } from "../shared/types";
@@ -142,5 +143,34 @@ describe("AssistantMessage Authority Trace", () => {
         expect(
             screen.queryByText("Authority Trace failed"),
         ).not.toBeInTheDocument();
+    });
+});
+
+describe("AssistantMessage web sources", () => {
+    it("lists a page cited by several steps once, keeping its title", async () => {
+        const user = userEvent.setup();
+        render(
+            <AssistantMessage
+                events={[
+                    {
+                        type: "web_sources",
+                        sources: [{ url: "https://law.test/s172" }],
+                    },
+                    { type: "content", text: "The answer." },
+                    {
+                        type: "web_sources",
+                        sources: [
+                            { url: "https://law.test/s172", title: "Section 172" },
+                            { url: "https://law.test/s171", title: "Section 171" },
+                        ],
+                    },
+                ]}
+            />,
+        );
+
+        const toggle = screen.getByRole("button", { name: /Sources/ });
+        expect(toggle).toHaveTextContent("2 web pages");
+        await user.click(toggle);
+        expect(screen.getByText("Section 172")).toBeInTheDocument();
     });
 });

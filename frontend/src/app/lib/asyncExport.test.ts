@@ -44,10 +44,10 @@ describe("runUserExport", () => {
 
         expect(startUserExportMock).toHaveBeenCalledWith("audit-csv", {
             q: "agreement",
-        });
+        }, undefined);
         expect(getUserExportStatusMock).toHaveBeenCalledTimes(2);
-        expect(getUserExportStatusMock).toHaveBeenLastCalledWith("exp-1");
-        expect(downloadUserExportMock).toHaveBeenCalledWith("exp-1");
+        expect(getUserExportStatusMock).toHaveBeenLastCalledWith("exp-1", undefined);
+        expect(downloadUserExportMock).toHaveBeenCalledWith("exp-1", undefined);
         // The download's own content-disposition wins over the status record.
         expect(filename).toBe("download.csv");
         expect(blob).toBe(downloaded);
@@ -67,7 +67,7 @@ describe("runUserExport", () => {
         await expect(runUserExport("account")).resolves.toMatchObject({
             filename: "status.csv",
         });
-        expect(startUserExportMock).toHaveBeenCalledWith("account", undefined);
+        expect(startUserExportMock).toHaveBeenCalledWith("account", undefined, undefined);
     });
 
     it("keeps a null filename when neither half of the flow supplies one", async () => {

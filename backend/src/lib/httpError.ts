@@ -3,6 +3,15 @@ import { safeErrorLog } from "./safeError";
 import { reportError, requestRoutePattern } from "./observability/sentry";
 
 export const INTERNAL_ERROR_CODE = "internal_error";
+export const RATE_LIMITED_CODE = "rate_limited";
+
+/** Body for a 429 from an application rate limiter. */
+export function rateLimitedBody(detail: string): {
+  code: typeof RATE_LIMITED_CODE;
+  detail: string;
+} {
+  return { code: RATE_LIMITED_CODE, detail };
+}
 export const INTERNAL_ERROR_MESSAGE =
   "Something went wrong. Please try again.";
 
@@ -124,8 +133,6 @@ export function sendInternalError(
       // as one issue instead of one per project.
       http_route: requestRoutePattern(res.req),
     },
-    // Path only: OAuth callback query strings carry codes and state.
-    extra: { path: res.req?.originalUrl?.split("?")[0] },
   });
 
   if (schemaCode) {

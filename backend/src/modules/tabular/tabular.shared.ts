@@ -1,3 +1,4 @@
+import { isProviderDisabled } from "../../lib/llm/providerPreferences";
 // Shared types + helpers used across the tabular extraction files.
 //
 // These are module-internal: they are exported here so sibling files
@@ -17,9 +18,8 @@ import {
 } from "../../lib/llm/registry";
 import { getUserModelSettings } from "../user/user.service";
 import { resolveRequestedModel } from "../../lib/routerModels";
-import { TABULAR_MODEL_REQUIRED_DETAIL } from "../../lib/modelSelection";
+import { TABULAR_MODEL_REQUIRED_DETAIL, hasApiKeyForModel } from "../../lib/modelSelection";
 import { UserFacingError } from "../../lib/safeError";
-import { resolveSecret } from "../../lib/envSecrets";
 import type { Db } from "../../lib/supabase";
 import type { ServiceFailure } from "../../lib/serviceResult";
 
@@ -114,6 +114,12 @@ function providerLabel(provider: Provider): string {
     if (provider === "openrouter") return "OpenRouter";
     if (provider === "vercel") return "Vercel AI Gateway";
     if (provider === "opencode-go") return "OpenCode Go";
+    if (provider === "bedrock") return "Amazon Bedrock";
+    if (provider === "azure") return "Azure OpenAI";
+    if (provider === "azure-foundry") return "Azure AI Foundry";
+    if (provider === "vertex") return "Google Vertex AI";
+    if (provider === "xai") return "xAI";
+    if (provider === "custom") return "OpenAI-compatible endpoint";
     if (provider === "openai-compatible") return "Configured endpoint";
     return "Gemini";
 }
@@ -127,6 +133,12 @@ const SERVER_KEY_SECRETS: Record<Exclude<Provider, "azureOpenai" | "openai-compa
     openrouter: "openrouter-api-key",
     vercel: "ai-gateway-api-key",
     "opencode-go": "opencode-api-key",
+    bedrock: "aws-bearer-token-bedrock",
+    azure: "azure-openai-api-key",
+    "azure-foundry": "azure-foundry-api-key",
+    vertex: "google-vertex-credentials-json",
+    xai: "xai-api-key",
+    custom: "custom-api-key",
 };
 
 export type MissingApiKey = {
@@ -140,6 +152,9 @@ export async function missingModelApiKey(
     apiKeys: UserApiKeys,
 ): Promise<MissingApiKey | null> {
     const provider = providerForModel(model);
+    if (isProviderDisabled(provider, apiKeys)) {
+        return { provider, model, detail: `${providerLabel(provider)} is turned off. Turn it on in Settings → Bring Your Own Keys or select a different tabular review model.` };
+    }
     if (provider === "openai-compatible") {
         const configured = getConfiguredModel(model);
         if (!configured || !configuredModelRequiresApiKey(configured) ||
@@ -151,8 +166,8 @@ export async function missingModelApiKey(
         if (configured?.endpoint?.trim() && configured.apiKey?.trim() && configured.deployment?.trim()) return null;
         return { provider, model, detail: "Azure OpenAI is not configured for this organisation. Ask an administrator to configure its endpoint, API key and deployment on /install." };
     }
-    if (apiKeys[provider]?.trim()) return null;
-    if ((await resolveSecret(SERVER_KEY_SECRETS[provider])).length > 0) return null;
+    // Use the same awaited credential and companion-setting policy as chat.
+    if (await hasApiKeyForModel(model, apiKeys)) return null;
     return {
         provider,
         model,
@@ -185,6 +200,8 @@ export async function validateSelectedModel(
     model: unknown,
     userId: string,
     db: Db,
+    /** The review's organization, whose keys it then runs on. */
+    orgId?: string | null,
 ): Promise<ValidatedModel | ModelValidationFailure> {
     const requested = resolveModel(
         typeof model === "string" ? model.trim() : "",
@@ -215,6 +232,7 @@ export async function validateSelectedModel(
             userId,
             db,
             "throw",
+            orgId,
         );
     } catch (error) {
         if (error instanceof UserFacingError) {
@@ -227,7 +245,9 @@ export async function validateSelectedModel(
         throw error;
     }
 
-    const { api_keys: apiKeys } = await getUserModelSettings(userId, db);
+    const { api_keys: apiKeys } = await getUserModelSettings(userId, db, {
+        orgId,
+    });
     const missingKey = await missingModelApiKey(selected, apiKeys);
     if (missingKey) {
         return {

@@ -1,569 +1,282 @@
-import {
-  S3Client,
-  PutObjectCommand,
-  CopyObjectCommand,
-  GetObjectCommand,
-  DeleteObjectCommand,
-  HeadObjectCommand,
-  ListObjectsV2Command,
-} from "@aws-sdk/client-s3";
-import { getSignedUrl as awsGetSignedUrl } from "@aws-sdk/s3-request-presigner";
+/**
+ * Object storage facade for Mike document management.
+ *
+ * The transport lives behind the StorageAdapter interface
+ * (./storage/adapter.ts); the default is the S3-protocol adapter
+ * (./storage/s3.ts — Cloudflare R2, RustFS, MinIO). This module owns the
+ * policy every backend shares: not-configured degradation (reads return
+ * null/empty, writes throw), error logging, StorageOperationError wrapping,
+ * Content-Disposition building, and the storage-key layout.
+ *
+ * Deployments on a different object store implement StorageAdapter in one
+ * file and call setStorageAdapter() at boot; no call sites change.
+ */
+
+import { AppError, type ErrorKind } from "./appError";
 import { bestEffort } from "./observability/sentry";
-import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { createConfiguredStorageAdapter } from "./storage/configured";
+import { StorageCopyInvariantError } from "./storage/adapter";
 import { Readable } from "node:stream";
-import { safeErrorLog } from "./safeError";
-import { BlobServiceClient, ContainerClient } from "@azure/storage-blob";
-import { DefaultAzureCredential } from "@azure/identity";
+import type {
+  StorageAdapter,
+  StoredObjectMetadata,
+} from "./storage/adapter";
+import { createS3StorageAdapter } from "./storage/s3";
+import { createFilesystemStorageAdapter } from "./storage/filesystem";
+import { buildContentDisposition } from "./storage/filenames";
+export { BlobUploadSizeError } from "./storage/filesystem";
+export {
+  buildContentDisposition,
+  encodeRFC5987,
+  normalizeDownloadFilename,
+  sanitizeDispositionFilename,
+} from "./storage/filenames";
 
-// ─── Provider interface ────────────────────────────────────────────────────────
-//
-// Callers import the module-level functions below (uploadFile, downloadFile,
-// deleteFile, getSignedUrl). Those signatures never change regardless of which
-// provider is active. Adding a new provider means implementing this interface
-// and updating createProvider() — nothing else.
+export type { StorageAdapter, StoredObjectMetadata } from "./storage/adapter";
 
-export type StoredObjectMetadata = {
-  size: number;
-  etag: string | null;
-  contentType: string | null;
-};
+let adapter: StorageAdapter = process.env.STORAGE_DRIVER === "fs"
+  ? createFilesystemStorageAdapter()
+  : createS3StorageAdapter();
 
-export class StorageOperationError extends Error {
-  constructor(readonly operation: string, options?: { cause?: unknown }) {
-    super(`Object storage ${operation} failed`, options);
-    this.name = "StorageOperationError";
-  }
-}
+export let storageEnabled = adapter.enabled;
+let adapterGeneration = 0;
+let initialization: Promise<void> | undefined;
 
-export interface StorageProvider {
-  readonly kind: "r2" | "azure";
-  upload(key: string, content: ArrayBuffer, contentType: string): Promise<void>;
-  uploadFromPath(key: string, filePath: string, contentType: string): Promise<void>;
-  download(key: string): Promise<ArrayBuffer | null>;
-  readStream(key: string): Readable;
-  head(key: string): Promise<StoredObjectMetadata | null>;
-  copy(sourceKey: string, targetKey: string, sourceEtag?: string): Promise<void>;
-  signedUpload(key: string, contentType: string, size: number, expiresIn: number): Promise<string | null>;
-  /** All object keys under `prefix` (upstream 44e868e listFiles, relocated). */
-  list(prefix: string): Promise<string[]>;
-  remove(key: string): Promise<void>;
-  /** Direct browser URL, or null when the provider delegates to the backend download proxy. */
-  signedUrl(
-    key: string,
-    expiresIn: number,
-    downloadFilename?: string,
-  ): Promise<string | null>;
-}
-
-// ─── Cloudflare R2 provider ───────────────────────────────────────────────────
-
-class R2Provider implements StorageProvider {
-  readonly kind = "r2" as const;
-  private readonly bucket: string;
-  // Upstream caches the S3 client at module level (4f33843, "storage
-  // caching"); dev's provider-class structure relocates that cache into the
-  // provider instance. Upstream's requireStorageConfig() throw-on-upload is
-  // already covered (more strongly) by requireProvider() below.
-  private cachedClient?: S3Client;
-  private cachedBrowserSigningClient?: { endpoint: string; client: S3Client };
-
-  constructor() {
-    if (
-      !process.env.R2_ENDPOINT_URL ||
-      !process.env.R2_ACCESS_KEY_ID ||
-      !process.env.R2_SECRET_ACCESS_KEY
-    ) {
-      throw new Error(
-        "R2 storage requires R2_ENDPOINT_URL, R2_ACCESS_KEY_ID, and R2_SECRET_ACCESS_KEY",
-      );
-    }
-    this.bucket = process.env.R2_BUCKET_NAME ?? "mike";
-  }
-
-  private client(): S3Client {
-    if (!this.cachedClient) {
-      this.cachedClient = new S3Client({
-        region: "auto",
-        endpoint: process.env.R2_ENDPOINT_URL!,
-        forcePathStyle: true,
-        requestChecksumCalculation: "WHEN_REQUIRED",
-        responseChecksumValidation: "WHEN_REQUIRED",
-        credentials: {
-          accessKeyId: process.env.R2_ACCESS_KEY_ID!,
-          secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
-        },
-      });
-    }
-    return this.cachedClient;
-  }
-
-  async upload(
-    key: string,
-    content: ArrayBuffer,
-    contentType: string,
-  ): Promise<void> {
-    await this.client().send(
-      new PutObjectCommand({
-        Bucket: this.bucket,
-        Key: key,
-        Body: Buffer.from(content),
-        ContentType: contentType,
-      }),
-    );
-  }
-
-  async uploadFromPath(key: string, filePath: string, contentType: string): Promise<void> {
-    const file = await stat(filePath);
-    const body = createReadStream(filePath);
-    try {
-      await this.client().send(new PutObjectCommand({
-        Bucket: this.bucket, Key: key, Body: body,
-        ContentLength: file.size, ContentType: contentType,
-      }));
-    } catch (error) {
-      throw new StorageOperationError("upload", { cause: error });
-    } finally {
-      body.destroy();
-    }
-  }
-
-  readStream(key: string): Readable {
-    const provider = this;
-    return Readable.from((async function* () {
-      try {
-        const response = await provider.client().send(new GetObjectCommand({ Bucket: provider.bucket, Key: key }));
-        if (!response.Body) throw new StorageOperationError("download");
-        for await (const chunk of response.Body as AsyncIterable<Uint8Array>) yield chunk;
-      } catch (error) {
-        if (error instanceof StorageOperationError) throw error;
-        throw new StorageOperationError("download", { cause: error });
-      }
-    })());
-  }
-
-  async head(key: string): Promise<StoredObjectMetadata | null> {
-    try {
-      const response = await this.client().send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
-      return { size: response.ContentLength ?? 0, etag: response.ETag ?? null, contentType: response.ContentType ?? null };
-    } catch (error) {
-      if ((error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode === 404) return null;
-      throw new StorageOperationError("HEAD", { cause: error });
-    }
-  }
-
-  async copy(sourceKey: string, targetKey: string, sourceEtag?: string): Promise<void> {
-    try {
-      await this.client().send(new CopyObjectCommand({
-        Bucket: this.bucket, Key: targetKey,
-        CopySource: encodeURIComponent(`${this.bucket}/${sourceKey}`).replace(/%2F/g, "/"),
-        ...(sourceEtag ? { CopySourceIfMatch: sourceEtag } : {}),
-      }));
-      if (!await this.head(targetKey)) throw new StorageOperationError("copy");
-    } catch (error) {
-      if (error instanceof StorageOperationError) throw error;
-      throw new StorageOperationError("copy", { cause: error });
-    }
-  }
-
-  // Signs URLs the browser follows, so it uses the browser-reachable
-  // endpoint (R2_PUBLIC_ENDPOINT_URL, falling back to R2_ENDPOINT_URL).
-  private browserSigningClient(): S3Client {
-    const endpoint = process.env.R2_PUBLIC_ENDPOINT_URL?.trim() || process.env.R2_ENDPOINT_URL!;
-    if (this.cachedBrowserSigningClient?.endpoint !== endpoint) {
-      this.cachedBrowserSigningClient = { endpoint, client: new S3Client({
-        region: "auto", endpoint, forcePathStyle: true,
-        requestChecksumCalculation: "WHEN_REQUIRED", responseChecksumValidation: "WHEN_REQUIRED",
-        credentials: { accessKeyId: process.env.R2_ACCESS_KEY_ID!, secretAccessKey: process.env.R2_SECRET_ACCESS_KEY! },
-      }) };
-    }
-    return this.cachedBrowserSigningClient.client;
-  }
-
-  async signedUpload(key: string, contentType: string, size: number, expiresIn: number): Promise<string> {
-    try {
-      return await awsGetSignedUrl(this.browserSigningClient(),
-        new PutObjectCommand({ Bucket: this.bucket, Key: key, ContentType: contentType, ContentLength: size }),
-        { expiresIn, signableHeaders: new Set(["content-type", "content-length"]) });
-    } catch (error) {
-      throw new StorageOperationError("sign upload", { cause: error });
-    }
-  }
-
-  async download(key: string): Promise<ArrayBuffer | null> {
-    try {
-      const response = await this.client().send(
-        new GetObjectCommand({ Bucket: this.bucket, Key: key }),
-      );
-      if (!response.Body) return null;
-      const bytes = await response.Body.transformToByteArray();
-      return bytes.buffer as ArrayBuffer;
-    } catch (error) {
-      console.error("[storage] downloadFile failed", {
-        key,
-        error: safeErrorLog(error),
-      });
-      return null;
-    }
-  }
-
-  async list(prefix: string): Promise<string[]> {
-    const keys: string[] = [];
-    let ContinuationToken: string | undefined;
-    do {
-      const response = await this.client().send(
-        new ListObjectsV2Command({
-          Bucket: this.bucket,
-          Prefix: prefix,
-          ContinuationToken,
-        }),
-      );
-      for (const item of response.Contents ?? []) {
-        if (item.Key) keys.push(item.Key);
-      }
-      ContinuationToken = response.NextContinuationToken;
-    } while (ContinuationToken);
-    return keys;
-  }
-
-  async remove(key: string): Promise<void> {
-    await this.client().send(
-      new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
-    );
-  }
-
-  async signedUrl(
-    key: string,
-    expiresIn: number,
-    downloadFilename?: string,
-  ): Promise<string | null> {
-    try {
-      const responseContentDisposition = downloadFilename
-        ? buildContentDisposition("attachment", downloadFilename)
-        : undefined;
-      const command = new GetObjectCommand({
-        Bucket: this.bucket,
-        Key: key,
-        ResponseContentDisposition: responseContentDisposition,
-      });
-      // The browser follows this URL, so sign it for the public endpoint.
-      // (Dev: R2 only. AzureBlobProvider.signedUrl stays null: private Blob
-      // bytes go through the authenticated /api download routes.)
-      return await awsGetSignedUrl(this.browserSigningClient(), command, { expiresIn });
-    } catch (error) {
-      console.error("[storage] getSignedUrl failed", {
-        key,
-        error: safeErrorLog(error),
-      });
-      return null;
-    }
-  }
-}
-
-// ─── Azure Blob Storage provider ──────────────────────────────────────────────
-//
-// Auth priority:
-//   1. AZURE_STORAGE_CONNECTION_STRING — connection string (local dev / Azurite)
-//   2. AZURE_STORAGE_ACCOUNT_NAME      — account name + DefaultAzureCredential
-//                                        (Managed Identity in Container Apps)
-//
-// Container name defaults to "documents"; override with AZURE_STORAGE_CONTAINER_NAME.
-//
-// signedUrl() returns null because Azure deployments use the backend download
-// proxy (GET /download/:token) rather than direct storage URLs. The /url route
-// falls back to buildDownloadUrl() when this returns null.
-
-class AzureBlobProvider implements StorageProvider {
-  readonly kind = "azure" as const;
-  private readonly container: ContainerClient;
-
-  constructor() {
-    const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
-    const accountName = process.env.AZURE_STORAGE_ACCOUNT_NAME;
-    const containerName =
-      process.env.AZURE_STORAGE_CONTAINER_NAME ?? "documents";
-
-    let serviceClient: BlobServiceClient;
-    if (connectionString) {
-      serviceClient = BlobServiceClient.fromConnectionString(connectionString);
-    } else if (accountName) {
-      serviceClient = new BlobServiceClient(
-        `https://${accountName}.blob.core.windows.net`,
-        new DefaultAzureCredential(),
-      );
-    } else {
-      throw new Error(
-        "Azure Blob Storage requires AZURE_STORAGE_CONNECTION_STRING or AZURE_STORAGE_ACCOUNT_NAME",
-      );
-    }
-
-    this.container = serviceClient.getContainerClient(containerName);
-  }
-
-  async upload(
-    key: string,
-    content: ArrayBuffer,
-    contentType: string,
-  ): Promise<void> {
-    const blob = this.container.getBlockBlobClient(key);
-    await blob.uploadData(Buffer.from(content), {
-      blobHTTPHeaders: { blobContentType: contentType },
+/** Await before API listening, worker claims, or CLI storage work. */
+export function initStorage(): Promise<void> {
+  if (!initialization) {
+    const generation = adapterGeneration;
+    initialization = createConfiguredStorageAdapter().then((configured) => {
+      // An explicit injected adapter wins over an in-flight default bootstrap.
+      if (adapterGeneration === generation) setStorageAdapter(configured);
     });
   }
+  return initialization;
+}
 
-  async uploadFromPath(key: string, filePath: string, contentType: string): Promise<void> {
-    const body = createReadStream(filePath);
-    try {
-      await this.container.getBlockBlobClient(key).uploadStream(body, 8 * 1024 * 1024, 2, {
-        blobHTTPHeaders: { blobContentType: contentType },
-      });
-    } catch (error) {
-      throw new StorageOperationError("upload", { cause: error });
-    } finally {
-      body.destroy();
-    }
-  }
+/** Replace the storage backend. Call before the first request is served. */
+export function setStorageAdapter(next: StorageAdapter): void {
+  adapterGeneration++;
+  adapter = next;
+  storageEnabled = next.enabled;
+}
 
-  readStream(key: string): Readable {
-    const provider = this;
-    return Readable.from((async function* () {
-      try {
-        const response = await provider.container.getBlobClient(key).download(0);
-        if (!response.readableStreamBody) throw new StorageOperationError("download");
-        for await (const chunk of response.readableStreamBody) yield chunk;
-      } catch (error) {
-        if (error instanceof StorageOperationError) throw error;
-        throw new StorageOperationError("download", { cause: error });
-      }
-    })());
-  }
+const STORAGE_FAILURE_KIND = {
+  HEAD: "storage.head_failed",
+  copy: "storage.copy_failed",
+  "source changed": "storage.copy_failed",
+  "copy verification": "storage.copy_failed",
+  upload: "storage.upload_failed",
+  "stage part transport": "storage.upload_failed",
+  "stage part": "storage.upload_failed",
+  "seal parts transport": "storage.upload_failed",
+  "commit parts": "storage.upload_failed",
+  "missing staging ETag": "storage.copy_failed",
+  download: "storage.download_failed",
+  delete: "storage.delete_failed",
+} as const satisfies Record<string, ErrorKind>;
 
-  async head(key: string): Promise<StoredObjectMetadata | null> {
-    try {
-      const p = await this.container.getBlobClient(key).getProperties();
-      return { size: p.contentLength ?? 0, etag: p.etag ?? null, contentType: p.contentType ?? null };
-    } catch (error) {
-      if ((error as { statusCode?: number }).statusCode === 404) return null;
-      throw new StorageOperationError("HEAD", { cause: error });
-    }
-  }
+export type StorageOperation = keyof typeof STORAGE_FAILURE_KIND;
 
-  async copy(sourceKey: string, targetKey: string, sourceEtag?: string): Promise<void> {
-    const source = this.container.getBlobClient(sourceKey);
-    try {
-      const properties = await source.getProperties();
-      if (sourceEtag && properties.etag !== sourceEtag) throw new StorageOperationError("source changed");
-      const response = await source.download(0, undefined, { conditions: { ifMatch: sourceEtag ?? properties.etag } });
-      if (!response.readableStreamBody) throw new StorageOperationError("download");
-      await this.container.getBlockBlobClient(targetKey).uploadStream(response.readableStreamBody as Readable, 8 * 1024 * 1024, 2, {
-        blobHTTPHeaders: { blobContentType: properties.contentType },
-      });
-      const target = await this.head(targetKey);
-      if (!target || target.size !== properties.contentLength) throw new StorageOperationError("copy verification");
-    } catch (error) {
-      if (error instanceof StorageOperationError) throw error;
-      throw new StorageOperationError("copy", { cause: error });
-    }
-  }
-
-  async signedUpload(): Promise<null> {
-    // Private Blob is reached through authenticated /api chunk upload, never
-    // through a browser SAS that cannot traverse this account's firewall.
-    return null;
-  }
-
-  async stagePart(key: string, blockId: string, stream: Readable, length: number, signal?: AbortSignal): Promise<void> {
-    try {
-      await this.container.getBlockBlobClient(key).stageBlock(blockId, stream, length, { abortSignal: signal });
-    } catch (error) {
-      throw new StorageOperationError("stage part", { cause: error });
-    }
-  }
-
-  async sealParts(key: string, blocks: string[], contentType: string): Promise<void> {
-    try {
-      await this.container.getBlockBlobClient(key).commitBlockList(blocks, {
-        blobHTTPHeaders: { blobContentType: contentType }, conditions: { ifNoneMatch: "*" },
-      });
-    } catch (error) {
-      throw new StorageOperationError("commit parts", { cause: error });
-    }
-  }
-
-  async download(key: string): Promise<ArrayBuffer | null> {
-    try {
-      const buffer = await this.container.getBlobClient(key).downloadToBuffer();
-      return buffer.buffer as ArrayBuffer;
-    } catch (error) {
-      console.error("[storage] downloadFile failed", {
-        key,
-        error: safeErrorLog(error),
-      });
-      return null;
-    }
-  }
-
-  async list(prefix: string): Promise<string[]> {
-    const keys: string[] = [];
-    for await (const blob of this.container.listBlobsFlat({ prefix })) {
-      keys.push(blob.name);
-    }
-    return keys;
-  }
-
-  async remove(key: string): Promise<void> {
-    await this.container.getBlobClient(key).deleteIfExists();
-  }
-
-  async signedUrl(
-    _key: string,
-    _expiresIn: number,
-    _downloadFilename?: string,
-  ): Promise<string | null> {
-    return null;
+/** Retain Dev's conditional-copy operation names and the original SDK cause. */
+export class StorageOperationError extends AppError {
+  constructor(readonly operation: StorageOperation, options?: { cause?: unknown }) {
+    super(STORAGE_FAILURE_KIND[operation], `Object storage ${operation} failed`, options);
   }
 }
 
-// ─── Factory ──────────────────────────────────────────────────────────────────
-
-function createProvider(): StorageProvider {
-  if (
-    process.env.AZURE_STORAGE_ACCOUNT_NAME ||
-    process.env.AZURE_STORAGE_CONNECTION_STRING
-  ) {
-    return new AzureBlobProvider();
+/**
+ * A storage failure this facade absorbs: the caller gets null, as it does
+ * when storage is not configured, so nothing above reports it. Report it
+ * here, once, with the operation (and the SDK's code via the cause) on the
+ * event, then log the SAME object: the console bridge recognises a reported
+ * error and files no second, context-free "Failure in application".
+ */
+function requireStorageConfig(): void {
+  if (!adapter.enabled) {
+    throw new Error(adapter.configurationHint);
   }
-  if (
-    process.env.R2_ENDPOINT_URL &&
-    process.env.R2_ACCESS_KEY_ID &&
-    process.env.R2_SECRET_ACCESS_KEY
-  ) {
-    return new R2Provider();
-  }
-  throw new Error(
-    "No storage provider configured. Set AZURE_STORAGE_ACCOUNT_NAME (Azure) " +
-      "or R2_ENDPOINT_URL + R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY (Cloudflare R2).",
-  );
 }
 
-let _provider: StorageProvider | null = null;
-let _initError: Error | null = null;
-try {
-  _provider = createProvider();
-} catch (err) {
-  // Don't crash at startup — auth-only routes (e.g. /health, /auth/*) must
-  // still work when storage is misconfigured. Defer the failure to the first
-  // storage operation so the route returns a clear 500 instead of silently
-  // dropping bytes (the previous behaviour did the latter — uploads "succeeded"
-  // but no blob was written, leaving DB rows orphaned with paths that point
-  // nowhere).
-  _initError = err instanceof Error ? err : new Error(String(err));
-}
-
-export const storageEnabled = _provider !== null;
-
-function requireProvider(op: string): StorageProvider {
-  if (_provider) return _provider;
-  const reason = _initError?.message ?? "no provider configured";
-  throw new Error(`Storage is not configured (cannot ${op}): ${reason}`);
-}
-
+/**
+ * Fail closed for workflows where treating an unconfigured object store as an
+ * empty/successful operation would discard the only durable deletion pointer.
+ */
 export function assertStorageConfigured(): void {
-  requireProvider("clean up stored files");
+  requireStorageConfig();
 }
 
-// ─── Public API ───────────────────────────────────────────────────────────────
-//
-// These signatures are the stable contract. Callers never import the provider
-// classes directly. Mutating operations (upload, remove) throw when storage is
-// unconfigured so the failure surfaces immediately. Read operations
-// (download, signedUrl) return null so callers can fall through to "not
-// found" semantics without a 500.
+// ---------------------------------------------------------------------------
+// Upload
+// ---------------------------------------------------------------------------
 
 export async function uploadFile(
   key: string,
   content: ArrayBuffer,
   contentType: string,
 ): Promise<void> {
-  await requireProvider("upload").upload(key, content, contentType);
+  requireStorageConfig();
+  await adapter.uploadFile(key, content, contentType);
 }
 
-export async function uploadFileFromPath(key: string, filePath: string, contentType: string): Promise<void> {
-  await requireProvider("upload").uploadFromPath(key, filePath, contentType);
+export async function uploadFileFromPath(
+  key: string,
+  filePath: string,
+  contentType: string,
+): Promise<void> {
+  requireStorageConfig();
+  try {
+    await adapter.uploadFileFromPath(key, filePath, contentType);
+  } catch (error) {
+    throw new StorageOperationError("upload", { cause: error });
+  }
 }
 
-export function createFileReadStream(key: string): Readable {
-  return requireProvider("download").readStream(key);
-}
-
-export async function headFile(key: string): Promise<StoredObjectMetadata | null> {
-  return requireProvider("HEAD").head(key);
-}
-
-export async function copyFile(sourceKey: string, targetKey: string, sourceEtag?: string): Promise<void> {
-  await requireProvider("copy").copy(sourceKey, targetKey, sourceEtag);
-}
-
-export function uploadTransport(): "direct" | "authenticated_parts" {
-  return requireProvider("upload").kind === "azure" ? "authenticated_parts" : "direct";
-}
-
+/**
+ * Presign a single direct browser `PUT`. The declared content type and byte
+ * count are part of the signature, so the URL cannot be replayed with a
+ * different body: the browser sets `Content-Length` from the body itself, and
+ * any other size fails signature validation at the store.
+ */
 export async function getSignedUploadUrl(
-  key: string, contentType: string, size: number, expiresIn = 900,
+  key: string,
+  contentType: string,
+  expectedSizeBytes: number,
+  expiresIn = 900,
 ): Promise<string | null> {
-  return requireProvider("sign upload").signedUpload(key, contentType, size, expiresIn);
+  if (!adapter.enabled) return null;
+  try {
+    return await adapter.getSignedUploadUrl(
+      key,
+      contentType,
+      expectedSizeBytes,
+      expiresIn,
+    );
+  } catch (error) {
+    // Thrown once with the SDK's own code on the cause; the route that
+    // answers reports it. Logging and returning null here filed the failure
+    // twice: once from storage, once from the caller's cause-less throw.
+    throw new AppError(
+      "storage.signed_url_failed",
+      "Object storage signed upload URL failed",
+      { cause: error },
+    );
+  }
 }
 
-export async function stageUploadPart(key: string, blockId: string, stream: Readable, length: number, signal?: AbortSignal): Promise<void> {
-  const provider = requireProvider("stage part");
-  if (provider.kind !== "azure") throw new StorageOperationError("stage part transport");
-  await (provider as AzureBlobProvider).stagePart(key, blockId, stream, length, signal);
+export async function headFile(
+  key: string,
+): Promise<StoredObjectMetadata | null> {
+  // Dev: a missing configuration is not evidence an upload/blob is absent.
+  requireStorageConfig();
+  try {
+    return await adapter.headFile(key);
+  } catch (error) {
+    // Thrown, not logged: the caller that catches this reports it, and a
+    // console line here filed the same failure a second time.
+    throw new StorageOperationError("HEAD", { cause: error });
+  }
 }
 
-export async function sealUploadParts(key: string, blocks: string[], contentType: string): Promise<void> {
-  const provider = requireProvider("seal parts");
-  if (provider.kind !== "azure") throw new StorageOperationError("seal parts transport");
-  await (provider as AzureBlobProvider).sealParts(key, blocks, contentType);
+export async function copyFile(
+  sourceKey: string,
+  targetKey: string,
+  sourceEtag?: string,
+): Promise<void> {
+  requireStorageConfig();
+  try {
+    if (sourceEtag === undefined) await adapter.copyFile(sourceKey, targetKey);
+    else await adapter.copyFile(sourceKey, targetKey, sourceEtag);
+  } catch (error) {
+    if (error instanceof StorageCopyInvariantError) {
+      throw new StorageOperationError(error.operation, { cause: error });
+    }
+    throw new StorageOperationError("copy", { cause: error });
+  }
 }
 
-export async function downloadFile(key: string): Promise<ArrayBuffer | null> {
-  return _provider?.download(key) ?? null;
+// ---------------------------------------------------------------------------
+// Download
+// ---------------------------------------------------------------------------
+
+export async function downloadFile(key: string, signal?: AbortSignal): Promise<ArrayBuffer | null> {
+  if (!adapter.enabled) return null;
+  try {
+    return signal ? await adapter.downloadFile(key, signal) : await adapter.downloadFile(key);
+  } catch (error) {
+    // null is "not there" (the adapters translate a missing object); a
+    // transport or permission failure is thrown so the caller's handler
+    // reports it once, with the store's own code on the cause.
+    throw new StorageOperationError("download", { cause: error });
+  }
 }
 
-// Read operation — returns [] when storage is unconfigured, mirroring
-// upstream 44e868e's `if (!storageEnabled) return []`.
+/**
+ * Read an object the caller can go on without: a cached rendition, an
+ * optional PDF copy, a fallback source. null for an object that is not
+ * there, and null for a failure too, which is reported once here as a
+ * warning with the store's code, because the caller will carry on and
+ * nothing else would file it. A read the caller cannot do without uses
+ * downloadFile, whose failure propagates to the handler that reports it.
+ */
+export async function downloadFileIfAvailable(
+  key: string,
+): Promise<ArrayBuffer | null> {
+  return (await bestEffort(downloadFile(key), { what: "optional-read" })) ?? null;
+}
+
+/**
+ * Lazily stream an object from the store. The read starts only when a consumer
+ * reads from the returned stream, allowing archive writers to apply
+ * backpressure without buffering whole files or opening every object
+ * concurrently.
+ */
+export function createFileReadStream(key: string): Readable {
+  return Readable.from(
+    (async function* () {
+      requireStorageConfig();
+      try {
+        const body = await adapter.openReadStream(key);
+        if (!body) {
+          throw new StorageOperationError("download");
+        }
+        for await (const chunk of body) {
+          yield chunk;
+        }
+      } catch (error) {
+        // Thrown, not logged (see headFile).
+        if (error instanceof StorageOperationError) throw error;
+        throw new StorageOperationError("download", { cause: error });
+      }
+    })(),
+  );
+}
+
 export async function listFiles(prefix: string): Promise<string[]> {
-  return _provider?.list(prefix) ?? [];
+  if (!adapter.enabled) return [];
+  return adapter.listFiles(prefix);
 }
 
-// "The object is not there" is the outcome a delete asks for, but only the
-// store's own answer to that effect may count. S3, R2 and MinIO answer a
-// DeleteObject on a missing key with 204; an S3-compatible store that answers
-// 404 instead names the reason in the body, and the SDK surfaces that as
-// `NoSuchKey`. A 404 WITHOUT that code (the SDK calls it "NotFound") is what
-// a wrong endpoint, a proxy path or a bucket-level 404 produce while the
-// object may well still exist. Treating it as success would let the durable
-// cleanup jobs (dbq/storageCleanup, documents.cleanupJobs, user.dataCleanup)
-// record the key as deleted, stop retrying, and leave the bytes behind for
-// good, so anything other than NoSuchKey stays a failure.
-function isMissingObject(error: unknown): boolean {
-  return (error as { name?: unknown } | null)?.name === "NoSuchKey";
-}
+// ---------------------------------------------------------------------------
+// Delete
+// ---------------------------------------------------------------------------
 
 export async function deleteFile(key: string): Promise<void> {
-  // Mutating op: an unconfigured provider must fail loudly (see AGENTS.md).
-  const provider = requireProvider("delete");
+  // Upstream divergence (sync-log: 80136892): durable cleanup must keep retrying
+  // when storage is unconfigured; an optional/no-op delete loses its pointer.
+  requireStorageConfig();
   // An empty key names no object. Sent anyway, the SDK either rejects it
   // (a missing URI label) or, on some stores, addresses the bucket itself.
   if (!key) return;
   try {
-    await provider.remove(key);
+    // The adapter resolves when the store itself says the object is already
+    // gone (see deleteFile in ./storage/adapter.ts), so reaching this catch
+    // means the delete genuinely failed.
+    await adapter.deleteFile(key);
   } catch (error) {
-    if (isMissingObject(error)) return;
-    if (error instanceof StorageOperationError) throw error;
     // Same shape as HEAD/copy/download failures: the operation is named and
-    // the SDK error is the cause, where the Sentry privacy boundary reads
-    // storage_operation and failure_code.
+    // the SDK error (with its errno or S3 code) is the cause, which is where
+    // the Sentry privacy boundary reads storage_operation and failure_code.
     throw new StorageOperationError("delete", { cause: error });
   }
 }
@@ -605,20 +318,47 @@ export function deleteFilesBestEffort(
     },
   );
   return bestEffort(work, {
-    what: `storage-delete:${stage}`,
+    what: stage,
     tags: { component: "storage", stage, storage_operation: "delete" },
   });
 }
+
+// ---------------------------------------------------------------------------
+// Signed URL (pre-signed for temporary direct access)
+// ---------------------------------------------------------------------------
 
 export async function getSignedUrl(
   key: string,
   expiresIn = 3600,
   downloadFilename?: string,
 ): Promise<string | null> {
-  return _provider?.signedUrl(key, expiresIn, downloadFilename) ?? null;
+  if (!adapter.enabled) return null;
+  try {
+    // Override the response Content-Disposition so the browser uses this
+    // filename on download, instead of the last path segment of the storage
+    // key (which includes the document UUID). The `download` attribute on <a>
+    // is ignored for cross-origin URLs, so we have to set it server-side.
+    const responseContentDisposition = downloadFilename
+      ? buildContentDisposition("attachment", downloadFilename)
+      : undefined;
+    return await adapter.getSignedUrl(
+      key,
+      expiresIn,
+      responseContentDisposition,
+      downloadFilename,
+    );
+  } catch (error) {
+    throw new AppError(
+      "storage.signed_url_failed",
+      "Object storage signed URL failed",
+      { cause: error },
+    );
+  }
 }
 
-// ─── Storage key helpers ──────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// Storage key helpers
+// ---------------------------------------------------------------------------
 
 export function storageKey(
   userId: string,
@@ -680,32 +420,63 @@ function storageExtension(filename: string, fallback: string): string {
   return /^\.[a-z0-9]{1,16}$/.test(ext) ? ext : fallback;
 }
 
-// ─── Content-Disposition helpers ─────────────────────────────────────────────
 
-export function normalizeDownloadFilename(name: string): string {
-  const trimmed = name.trim();
-  const base = trimmed || "download";
-  return base.replace(/[\x00-\x1F\x7F]/g, "_").replace(/[\\/]/g, "_");
+// ---------------------------------------------------------------------------
+// Streamed signed uploads (filesystem driver)
+// ---------------------------------------------------------------------------
+
+/**
+ * Redeem a backend-minted upload capability by streaming the request body
+ * into storage. Only the filesystem driver mints those capabilities (an S3
+ * store takes the browser's presigned PUT directly), so a transport without
+ * writeBlobFromStream rejects the call rather than silently dropping bytes.
+ */
+export async function writeBlobFromStream(
+  key: string,
+  body: Readable,
+  maxBytes: number,
+): Promise<number> {
+  requireStorageConfig();
+  if (!adapter.writeBlobFromStream) {
+    throw new Error("writeBlobFromStream is only available on the fs driver");
+  }
+  return adapter.writeBlobFromStream(key, body, maxBytes);
 }
 
-export function sanitizeDispositionFilename(name: string): string {
-  // Non-ASCII goes in filename*; a raw non-latin1 char in the header throws ERR_INVALID_CHAR.
-  return normalizeDownloadFilename(name)
-    .replace(/["\\]/g, "_")
-    .replace(/[^\x20-\x7E]/g, "_");
+/** Remove a partially written blob after a failed or oversized upload. */
+export async function discardBlob(key: string): Promise<void> {
+  requireStorageConfig();
+  await adapter.discardBlob?.(key);
 }
 
-export function encodeRFC5987(str: string): string {
-  return encodeURIComponent(str).replace(
-    /['()*]/g,
-    (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase(),
-  );
+/** Dev's private Blob upload flow stays behind the same adapter seam. */
+export function uploadTransport(): "direct" | "authenticated_parts" {
+  requireStorageConfig();
+  return adapter.uploadTransport ?? "direct";
 }
 
-export function buildContentDisposition(
-  kind: "inline" | "attachment",
-  filename: string,
-): string {
-  const normalized = normalizeDownloadFilename(filename);
-  return `${kind}; filename="${sanitizeDispositionFilename(normalized)}"; filename*=UTF-8''${encodeRFC5987(normalized)}`;
+export async function stageUploadPart(
+  key: string, blockId: string, body: Readable, length: number, signal?: AbortSignal,
+): Promise<void> {
+  requireStorageConfig();
+  if (adapter.uploadTransport !== "authenticated_parts" || !adapter.stageUploadPart) {
+    throw new StorageOperationError("stage part transport");
+  }
+  try {
+    await adapter.stageUploadPart(key, blockId, body, length, signal);
+  } catch (error) {
+    throw new StorageOperationError("stage part", { cause: error });
+  }
+}
+
+export async function sealUploadParts(key: string, blockIds: string[], contentType: string): Promise<void> {
+  requireStorageConfig();
+  if (adapter.uploadTransport !== "authenticated_parts" || !adapter.sealUploadParts) {
+    throw new StorageOperationError("seal parts transport");
+  }
+  try {
+    await adapter.sealUploadParts(key, blockIds, contentType);
+  } catch (error) {
+    throw new StorageOperationError("commit parts", { cause: error });
+  }
 }

@@ -6,15 +6,17 @@ import {
     useEffect,
     useLayoutEffect,
     useMemo,
+    useRef,
     useState,
     ReactNode,
     useCallback,
-    useRef,
 } from "react";
+import { currentAuthEpoch } from "@/app/lib/authEvents";
 import { useAuth } from "@/app/contexts/AuthContext";
 import {
     type ApiKeyState,
     type ApiKeyProvider,
+    type ApiKeySettings,
     type PersonalisationDetails,
     type PracticeSetting,
     type ProfessionalTitle,
@@ -22,7 +24,10 @@ import {
     completeUserOnboarding,
     getUserProfile,
     isMfaRequiredError,
+    MikeApiError,
     saveApiKey,
+    setUserProfilePhoto,
+    setApiKeyEnabled,
     updateUserMfaOnLogin,
     updateUserProfile,
     updateChatModel,
@@ -32,15 +37,25 @@ import {
     updateLastSelectedChatSettings,
     parseTabularChatSelectionKey,
 } from "@/app/lib/mikeApi";
+import { API_KEY_PROVIDERS, apiKeyStateFromStatus } from "@/app/lib/apiKeyState";
 import type { Message } from "@/app/components/shared/types";
 import { applyDarkMode } from "@/app/lib/theme";
+import { notifyError } from "@/app/lib/userFacingError";
+import { useAssignLatest } from "@/app/hooks/useLatestRef";
+import {
+    ROUTER_PROFILE_FIELDS,
+    routerProfileLists,
+    type RouterProfileLists,
+    type RouterSlug,
+} from "@/shared/lib/modelCatalog";
 import { publishTabularChatSettingsUpdate } from "@/app/lib/tabularChatSettingsEvents";
 import {
     clearConfiguredModels,
     refreshConfiguredModels,
 } from "@/app/hooks/useConfiguredModels";
 
-interface UserProfile {
+interface UserProfile extends RouterProfileLists {
+    profilePhoto: string | null;
     displayName: string | null;
     organisation: string | null;
     jurisdiction: string | null;
@@ -57,18 +72,32 @@ interface UserProfile {
     titleModel: string | null;
     tabularModel: string | null;
     memoryCuratorModel: string | null;
+    subagentModel: string | null;
+    subagentReasoning: NonNullable<Message["reasoning"]> | null;
     lastSelectedChatModel: string | null;
     lastSelectedReasoningLevel: NonNullable<Message["reasoning"]>;
     mfaOnLogin: boolean;
-    legalResearchUs: boolean;
+    /**
+     * The deployment answers CourtListener lookups from its bulk index, so
+     * the connector is installed for everyone without a token.
+     */
+    courtlistenerBulkData: boolean;
     quickActionsVisible: boolean;
-    openRouterModels: string[];
-    vercelModels: string[];
-    openCodeGoModels: string[];
+    /** Whether responses and subagents show the model, effort and tokens they used. */
+    responseDetailsVisible: boolean;
     darkMode: boolean;
     projectMemoryDefault: boolean;
     apiKeys: ApiKeyState;
+    /** Settings saved with the user's own keys (region, endpoint, location, base URL). */
+    apiKeySettings: ApiKeySettings;
 }
+
+export type PreferenceField =
+    | "titleModel"
+    | "tabularModel"
+    | "memoryCuratorModel"
+    | "subagentModel"
+    | "subagentReasoning";
 
 interface UserProfileContextType {
     profile: UserProfile | null;
@@ -83,6 +112,7 @@ interface UserProfileContextType {
      * selection that is absent from the router lists) must not run at all.
      */
     apiKeysDegraded: boolean;
+    updateProfilePhoto: (photo: string | null) => Promise<void>;
     updateDisplayName: (name: string) => Promise<boolean>;
     updateOrganisation: (organisation: string) => Promise<boolean>;
     completeOnboarding: (details?: PersonalisationDetails) => Promise<boolean>;
@@ -91,7 +121,7 @@ interface UserProfileContextType {
     ) => Promise<boolean>;
     syncPasswordSet: () => Promise<boolean>;
     updateModelPreference: (
-        field: "titleModel" | "tabularModel" | "memoryCuratorModel",
+        field: PreferenceField,
         value: string | null,
     ) => Promise<boolean>;
     persistChatModelSelection: (
@@ -103,40 +133,28 @@ interface UserProfileContextType {
         chatId?: string | null,
     ) => Promise<boolean>;
     updateMfaOnLogin: (enabled: boolean) => Promise<boolean>;
-    updateLegalResearchUs: (enabled: boolean) => Promise<boolean>;
     updateQuickActionsVisible: (visible: boolean) => Promise<boolean>;
-    updateOpenRouterModels: (models: string[]) => Promise<boolean>;
-    updateVercelModels: (models: string[]) => Promise<boolean>;
-    updateOpenCodeGoModels: (models: string[]) => Promise<boolean>;
+    updateResponseDetailsVisible: (visible: boolean) => Promise<boolean>;
+    /** Save one router's Model Selections. */
+    updateRouterModels: (
+        router: RouterSlug,
+        models: string[],
+    ) => Promise<boolean>;
     updateDarkMode: (enabled: boolean) => Promise<void>;
     updateProjectMemoryDefault: (enabled: boolean) => Promise<void>;
     updateApiKey: (
         provider: ApiKeyProvider,
         value: string | null,
+        settings?: ApiKeySettings[keyof ApiKeySettings],
     ) => Promise<boolean>;
     reloadProfile: () => Promise<void>;
+    updateApiKeyEnabled: (provider: ApiKeyProvider, enabled: boolean) => Promise<boolean>;
     incrementMessageCredits: () => Promise<boolean>;
 }
 
 const UserProfileContext = createContext<UserProfileContextType | undefined>(
     undefined,
 );
-
-const API_KEY_PROVIDERS: ApiKeyProvider[] = [
-    "claude",
-    "gemini",
-    "openai",
-    "mistral",
-    "openrouter",
-    "vercel",
-    "opencode-go",
-    "courtlistener",
-    // Upstream divergence (OSS-6, §2.3 item 3): dev's organisation
-    // credentials (Key Vault) for Kimi and Azure OpenAI. The Azure OpenAI
-    // deployment list lives in src/altien/models/aoaiDeployments.
-    "kimi",
-    "azure_openai",
-];
 
 function emptyApiKeys(): ApiKeyState {
     return {
@@ -147,26 +165,29 @@ function emptyApiKeys(): ApiKeyState {
         openrouter: { configured: false, source: null },
         vercel: { configured: false, source: null },
         "opencode-go": { configured: false, source: null },
+        bedrock: { configured: false, source: null },
+        azure: { configured: false, source: null },
+        "azure-foundry": { configured: false, source: null },
+        vertex: { configured: false, source: null },
+        xai: { configured: false, source: null },
+        custom: { configured: false, source: null },
         courtlistener: { configured: false, source: null },
         kimi: { configured: false, source: null },
         azure_openai: { configured: false, source: null },
+        brave: { configured: false, source: null },
+        tavily: { configured: false, source: null },
+        deepseek: { configured: false, source: null },
     };
 }
 
+/** Normalizes the API profile into client defaults, including nullable photos and provider-key state. */
 function toProfile(data: ApiUserProfile): UserProfile {
     const { apiKeyStatus, ...profile } = data;
-    const apiKeys = emptyApiKeys();
-    for (const provider of API_KEY_PROVIDERS) {
-        apiKeys[provider] = {
-            configured: !!apiKeyStatus[provider],
-            source:
-                apiKeyStatus.sources?.[provider] ??
-                (apiKeyStatus[provider] ? "user" : null),
-        };
-    }
+    const apiKeys = apiKeyStateFromStatus(apiKeyStatus);
 
     return {
         ...profile,
+        profilePhoto: profile.profilePhoto ?? null,
         jurisdiction: profile.jurisdiction ?? null,
         practiceSetting: profile.practiceSetting ?? null,
         professionalTitle: profile.professionalTitle ?? null,
@@ -178,23 +199,21 @@ function toProfile(data: ApiUserProfile): UserProfile {
         passwordSet: profile.passwordSet === true ? true : null,
         darkMode: profile.darkMode === true,
         memoryCuratorModel: profile.memoryCuratorModel ?? null,
+        subagentModel: profile.subagentModel ?? null,
+        subagentReasoning: profile.subagentReasoning ?? null,
         lastSelectedChatModel: profile.lastSelectedChatModel ?? null,
         lastSelectedReasoningLevel: profile.lastSelectedReasoningLevel ?? "high",
         mfaOnLogin: profile.mfaOnLogin === true,
+        courtlistenerBulkData: profile.courtlistenerBulkData === true,
+        responseDetailsVisible: profile.responseDetailsVisible === true,
         projectMemoryDefault: profile.projectMemoryDefault !== false,
-        openRouterModels: Array.isArray(profile.openRouterModels)
-            ? profile.openRouterModels
-            : [],
-        vercelModels: Array.isArray(profile.vercelModels)
-            ? profile.vercelModels
-            : [],
-        openCodeGoModels: Array.isArray(profile.openCodeGoModels)
-            ? profile.openCodeGoModels
-            : [],
+        ...routerProfileLists(profile),
         apiKeys,
+        apiKeySettings: apiKeyStatus.settings ?? {},
     };
 }
 
+/** Loads the authenticated profile and shares persisted updates across settings, navigation, and account consumers. */
 export function UserProfileProvider({ children }: { children: ReactNode }) {
     const { user, isAuthenticated } = useAuth();
     const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -216,24 +235,58 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     }
     const accountGuard = useCallback((owner: string) => {
         const epoch = authEpochRef.current;
-        return () => identityRef.current === owner && authEpochRef.current === epoch;
+        const globalEpoch = currentAuthEpoch();
+        return () => identityRef.current === owner && authEpochRef.current === epoch && currentAuthEpoch() === globalEpoch;
     }, []);
+
+    // Every mutator below keeps its `boolean` contract so callers need no
+    // churn, but a failure is never silent any more: the context classifies
+    // the error once and raises the notice that carries the sentence, an
+    // honest "Retry" and the support link. That notice is the only report:
+    // callers show no inline status for the same failure.
+    //
+    // The `if (!user) return false` guards stay silent on purpose: there is
+    // no failed request to report, only a call made before there is a session.
+    //
+    // "Retry" re-enters the mutator through this ref rather than through the
+    // closure that raised the notice, so it always re-runs the latest one
+    // (the mutators are re-created whenever `user` changes).
+    const retryRef = useRef<UserProfileContextType | null>(null);
+
+    const failureEpoch = authEpochRef.current;
+    const failureAuthEpoch = currentAuthEpoch();
+    const reportFailure = useCallback(
+        (error: unknown, action: string, retry: () => void) => {
+            const isCurrent = () => identityRef.current === identity && authEpochRef.current === failureEpoch && currentAuthEpoch() === failureAuthEpoch;
+            if (!isCurrent()) return;
+            notifyError(error, {
+                action,
+                // One notice per setting, however many times an autosave loop
+                // retries it.
+                dedupeKey: `profile:${action}`,
+                // Retry belongs to the account that failed, even though the implementation ref is latest.
+                onRetry: () => { if (isCurrent()) retry(); },
+            });
+        },
+        [identity, failureEpoch, failureAuthEpoch],
+    );
 
     const loadProfile = useCallback(async () => {
         const owner = identity;
+        const globalEpoch = currentAuthEpoch();
         const writeEpoch = writeEpochRef.current;
         const loadEpoch = ++loadEpochRef.current;
-        const isCurrent = () => identityRef.current === owner &&
+        const isCurrent = () => identityRef.current === owner && currentAuthEpoch() === globalEpoch &&
             writeEpochRef.current === writeEpoch && loadEpochRef.current === loadEpoch;
         try {
             let profileData: ApiUserProfile;
             try {
-                profileData = await getUserProfile();
+                profileData = await getUserProfile(isCurrent);
             } catch {
                 // One retry with a short backoff absorbs a transient network
                 // blip before the app falls back to the degraded profile.
                 await new Promise((resolve) => setTimeout(resolve, 750));
-                profileData = await getUserProfile();
+                profileData = await getUserProfile(isCurrent);
             }
             if (isCurrent()) {
                 setProfile(toProfile(profileData));
@@ -246,12 +299,23 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 error,
             );
             setApiKeysDegraded(true);
+            // The fallback profile below looks like a real, empty account, so
+            // the load has to say that it failed rather than let the user read
+            // placeholders as answers.
+            notifyError(error, {
+                action: "load your profile",
+                dedupeKey: "profile-load",
+                onRetry: () => {
+                    if (isCurrent()) void retryRef.current?.reloadProfile();
+                },
+            });
             // Calculate a default future reset date for fallback
             const futureResetDate = new Date();
             futureResetDate.setDate(futureResetDate.getDate() + 30);
 
             // Set fallback profile data on exception
             setProfile({
+                profilePhoto: null,
                 displayName: null,
                 organisation: null,
                 jurisdiction: null,
@@ -268,17 +332,19 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 titleModel: null,
                 tabularModel: null,
                 memoryCuratorModel: null,
+                subagentModel: null,
+                subagentReasoning: null,
                 lastSelectedChatModel: null,
                 lastSelectedReasoningLevel: "high",
                 mfaOnLogin: false,
-                legalResearchUs: true,
+                courtlistenerBulkData: false,
                 quickActionsVisible: true,
-                openRouterModels: [],
-                vercelModels: [],
-                openCodeGoModels: [],
+                responseDetailsVisible: false,
+                ...routerProfileLists({}),
                 darkMode: false,
                 projectMemoryDefault: true,
                 apiKeys: emptyApiKeys(),
+                apiKeySettings: {},
             });
         } finally {
             if (isCurrent()) setLoading(false);
@@ -316,6 +382,16 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
         applyDarkMode(profile?.darkMode === true);
     }, [profile?.darkMode]);
 
+    /** Persists a photo change before publishing the returned value to every profile consumer. */
+    const updateProfilePhoto = useCallback(async (photo: string | null) => {
+        if (!user) return;
+        const current = accountGuard(user.id);
+        if (!current()) return;
+        const updated = await setUserProfilePhoto(photo, current);
+        if (!current()) return;
+        setProfile((previous) => previous ? { ...previous, profilePhoto: updated.profilePhoto } : previous);
+    }, [user, accountGuard]);
+
     const updateDisplayName = useCallback(
         async (displayName: string): Promise<boolean> => {
             if (!user) return false;
@@ -329,11 +405,14 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                     prev ? { ...prev, ...toProfile(updated) } : null,
                 );
                 return true;
-            } catch {
+            } catch (error) {
+                reportFailure(error, "save your name", () => {
+                    void retryRef.current?.updateDisplayName(displayName);
+                });
                 return false;
             }
         },
-        [user, accountGuard],
+        [user, accountGuard, reportFailure],
     );
 
     const updateOrganisation = useCallback(
@@ -349,11 +428,16 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 );
                 return true;
             } catch (error) {
+                // An MFA challenge is a step in the flow, not a failure: the
+                // caller opens the verification popup and re-runs the save.
                 if (isMfaRequiredError(error)) throw error;
+                reportFailure(error, "save your organisation", () => {
+                    void retryRef.current?.updateOrganisation(organisation);
+                });
                 return false;
             }
         },
-        [user, accountGuard],
+        [user, accountGuard, reportFailure],
     );
 
     const completeOnboarding = useCallback(
@@ -366,11 +450,14 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 if (!current()) return false;
                 setProfile(toProfile(updated));
                 return true;
-            } catch {
+            } catch (error) {
+                reportFailure(error, "save your practice details", () => {
+                    void retryRef.current?.completeOnboarding(details);
+                });
                 return false;
             }
         },
-        [user, accountGuard],
+        [user, accountGuard, reportFailure],
     );
 
     const updatePersonalisation = useCallback(
@@ -389,27 +476,41 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 setProfile(toProfile(updated));
                 setLoading(false);
                 return true;
-            } catch {
+            } catch (error) {
+                reportFailure(
+                    error,
+                    "save your personalisation settings",
+                    () => {
+                        void retryRef.current?.updatePersonalisation(details);
+                    },
+                );
                 return false;
             }
         },
-        [user],
+        [reportFailure, user],
     );
 
     const syncPasswordSet = useCallback(async (): Promise<boolean> => {
         if (!user) return false;
+        const current = accountGuard(user.id);
+        if (!current()) return false;
         try {
-            const updated = await getUserProfile();
+            const updated = await getUserProfile(current);
+            if (!current()) return false;
             setProfile(toProfile(updated));
             return true;
-        } catch {
+        } catch (error) {
+            if (!current()) return false;
+            reportFailure(error, "refresh your password status", () => {
+                void retryRef.current?.syncPasswordSet();
+            });
             return false;
         }
-    }, [user]);
+    }, [reportFailure, user, accountGuard]);
 
     const updateModelPreference = useCallback(
         async (
-            field: "titleModel" | "tabularModel" | "memoryCuratorModel",
+            field: PreferenceField,
             value: string | null,
         ): Promise<boolean> => {
             if (!user) return false;
@@ -421,11 +522,14 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                     prev ? { ...prev, ...toProfile(updated) } : null,
                 );
                 return true;
-            } catch {
+            } catch (error) {
+                reportFailure(error, "save your model preference", () => {
+                    void retryRef.current?.updateModelPreference(field, value);
+                });
                 return false;
             }
         },
-        [user],
+        [reportFailure, user],
     );
 
     const persistChatModelSelection = useCallback(
@@ -459,11 +563,17 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                         : current,
                 );
                 return true;
-            } catch {
+            } catch (error) {
+                reportFailure(error, "save your model selection", () => {
+                    void retryRef.current?.persistChatModelSelection(
+                        model,
+                        chatId,
+                    );
+                });
                 return false;
             }
         },
-        [user],
+        [reportFailure, user],
     );
 
     const persistChatReasoningSelection = useCallback(
@@ -503,11 +613,17 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                         : current,
                 );
                 return true;
-            } catch {
+            } catch (error) {
+                reportFailure(error, "save your reasoning level", () => {
+                    void retryRef.current?.persistChatReasoningSelection(
+                        reasoningLevel,
+                        chatId,
+                    );
+                });
                 return false;
             }
         },
-        [user],
+        [reportFailure, user],
     );
 
     const updateMfaOnLogin = useCallback(
@@ -520,29 +636,19 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 );
                 return true;
             } catch (error) {
+                // An MFA challenge is a step in the flow, not a failure.
                 if (isMfaRequiredError(error)) throw error;
-                return false;
-            }
-        },
-        [user],
-    );
-
-    const updateLegalResearchUs = useCallback(
-        async (enabled: boolean): Promise<boolean> => {
-            if (!user) return false;
-            try {
-                const updated = await updateUserProfile({
-                    legalResearchUs: enabled,
-                });
-                setProfile((prev) =>
-                    prev ? { ...prev, ...toProfile(updated) } : null,
+                reportFailure(
+                    error,
+                    "update your login verification setting",
+                    () => {
+                        void retryRef.current?.updateMfaOnLogin(enabled);
+                    },
                 );
-                return true;
-            } catch {
                 return false;
             }
         },
-        [user],
+        [reportFailure, user],
     );
 
     const updateQuickActionsVisible = useCallback(
@@ -556,59 +662,59 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                     prev ? { ...prev, ...toProfile(updated) } : null,
                 );
                 return true;
-            } catch {
+            } catch (error) {
+                reportFailure(error, "update your quick actions setting", () => {
+                    void retryRef.current?.updateQuickActionsVisible(visible);
+                });
                 return false;
             }
         },
-        [user],
+        [reportFailure, user],
     );
 
-    const updateOpenRouterModels = useCallback(
-        async (openRouterModels: string[]): Promise<boolean> => {
+    const updateResponseDetailsVisible = useCallback(
+        async (visible: boolean): Promise<boolean> => {
             if (!user) return false;
             try {
-                const updated = await updateUserProfile({ openRouterModels });
+                const updated = await updateUserProfile({
+                    responseDetailsVisible: visible,
+                });
                 setProfile((prev) =>
                     prev ? { ...prev, ...toProfile(updated) } : null,
                 );
                 return true;
-            } catch {
+            } catch (error) {
+                reportFailure(error, "update your response details setting", () => {
+                    void retryRef.current?.updateResponseDetailsVisible(visible);
+                });
                 return false;
             }
         },
-        [user],
+        [reportFailure, user],
     );
 
-    const updateVercelModels = useCallback(
-        async (vercelModels: string[]): Promise<boolean> => {
+    const updateRouterModels = useCallback(
+        async (router: RouterSlug, models: string[]): Promise<boolean> => {
             if (!user) return false;
             try {
-                const updated = await updateUserProfile({ vercelModels });
+                const current = accountGuard(user.id);
+                if (!current()) return false;
+                const updated = await updateUserProfile({
+                    [ROUTER_PROFILE_FIELDS[router]]: models,
+                }, current);
+                if (!current()) return false;
                 setProfile((prev) =>
                     prev ? { ...prev, ...toProfile(updated) } : null,
                 );
                 return true;
-            } catch {
+            } catch (error) {
+                reportFailure(error, `save your ${router} models`, () => {
+                    void retryRef.current?.updateRouterModels(router, models);
+                });
                 return false;
             }
         },
-        [user],
-    );
-
-    const updateOpenCodeGoModels = useCallback(
-        async (openCodeGoModels: string[]): Promise<boolean> => {
-            if (!user) return false;
-            try {
-                const updated = await updateUserProfile({ openCodeGoModels });
-                setProfile((prev) =>
-                    prev ? { ...prev, ...toProfile(updated) } : null,
-                );
-                return true;
-            } catch {
-                return false;
-            }
-        },
-        [user],
+        [user, accountGuard, reportFailure],
     );
 
     const updateDarkMode = useCallback(
@@ -656,11 +762,12 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
         async (
             provider: ApiKeyProvider,
             value: string | null,
+            settings?: ApiKeySettings[keyof ApiKeySettings],
         ): Promise<boolean> => {
             if (!user) return false;
             const normalized = value?.trim() ? value.trim() : null;
             try {
-                const status = await saveApiKey(provider, normalized);
+                const status = await saveApiKey(provider, normalized, settings);
                 setProfile((prev) =>
                     prev
                         ? {
@@ -669,13 +776,43 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                                   ...prev.apiKeys,
                                   [provider]: {
                                       configured: status[provider],
+                                      enabled: status.enabled?.[provider] !== false,
                                       source:
                                           status.sources?.[provider] ?? null,
                                   },
                               },
+                              apiKeySettings: status.settings ?? {},
                           }
                         : null,
                 );
+                void refreshConfiguredModels();
+                return true;
+            } catch (error) {
+                // An MFA challenge is a step in the flow, not a failure.
+                if (isMfaRequiredError(error)) throw error;
+                if (error instanceof MikeApiError && error.status === 400) throw error;
+                return false;
+            }
+        },
+        [user],
+    );
+
+    const updateApiKeyEnabled = useCallback(
+        async (provider: ApiKeyProvider, enabled: boolean): Promise<boolean> => {
+            if (!user) return false;
+            try {
+                const current = accountGuard(user.id);
+                if (!current()) return false;
+                const status = await setApiKeyEnabled(provider, enabled, current);
+                if (!current()) return false;
+                setProfile((prev) => prev && current() ? {
+                    ...prev,
+                    apiKeys: Object.fromEntries(API_KEY_PROVIDERS.map((slug) => [slug, {
+                        configured: !!status[slug],
+                        source: status.sources?.[slug] ?? null,
+                        enabled: status.enabled?.[slug] !== false,
+                    }])) as ApiKeyState,
+                } : prev);
                 void refreshConfiguredModels();
                 return true;
             } catch (error) {
@@ -683,7 +820,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 return false;
             }
         },
-        [user],
+        [user, accountGuard],
     );
 
     const reloadProfile = useCallback(async () => {
@@ -712,6 +849,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             profile,
             loading,
             apiKeysDegraded,
+            updateProfilePhoto,
             updateDisplayName,
             updateOrganisation,
             completeOnboarding,
@@ -721,14 +859,13 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             persistChatModelSelection,
             persistChatReasoningSelection,
             updateMfaOnLogin,
-            updateLegalResearchUs,
             updateQuickActionsVisible,
-            updateOpenRouterModels,
-            updateVercelModels,
-            updateOpenCodeGoModels,
+            updateResponseDetailsVisible,
+            updateRouterModels,
             updateDarkMode,
             updateProjectMemoryDefault,
             updateApiKey,
+            updateApiKeyEnabled,
             reloadProfile,
             incrementMessageCredits,
         }),
@@ -736,6 +873,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             profile,
             loading,
             apiKeysDegraded,
+            updateProfilePhoto,
             updateDisplayName,
             updateOrganisation,
             completeOnboarding,
@@ -745,18 +883,20 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             persistChatModelSelection,
             persistChatReasoningSelection,
             updateMfaOnLogin,
-            updateLegalResearchUs,
             updateQuickActionsVisible,
-            updateOpenRouterModels,
-            updateVercelModels,
-            updateOpenCodeGoModels,
+            updateResponseDetailsVisible,
+            updateRouterModels,
             updateDarkMode,
             updateProjectMemoryDefault,
             updateApiKey,
+            updateApiKeyEnabled,
             reloadProfile,
             incrementMessageCredits,
         ],
     );
+
+    // Keep the "Retry" entry point pointing at the current mutators.
+    useAssignLatest(retryRef, value);
 
     return (
         <UserProfileContext.Provider value={value}>

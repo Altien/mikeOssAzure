@@ -32,16 +32,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
+      - name: Enable pnpm and install the lock parser
+        run: |
+          corepack enable
+          pnpm --dir backend install --frozen-lockfile --ignore-scripts
       - name: Audit gate self-tests
         run: node --test scripts/audit-gate.test.mjs
 
   # Blocking for EVERY tree in the matrix below: high/critical advisories
   # fail the build unless their GHSA id is documented (with a reason) in
-  # scripts/audit-allowlist.json — see scripts/pnpm-audit-gate.mjs. Auditing
-  # straight from the pnpm lockfile needs no dependency install.
+  # scripts/audit-allowlist.json — see scripts/pnpm-audit-gate.mjs. The scoped
+  # graph parser uses the pinned yaml dependency from each standalone workspace.
   # Advisories with no non-breaking fix anywhere in the ecosystem get an
   # allowlist entry instead of demoting the whole job to report-only (which
   # would hide new advisories too); Dependabot (added in this PR) surfaces
@@ -70,7 +74,7 @@ jobs:
       # tags are mutable, so a compromised action repo could silently swap
       # what "v4" points at; a 40-char SHA cannot be moved.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
       - name: Verify audited lock trees
@@ -80,5 +84,7 @@ jobs:
           test "$actual" = "$expected"
       - name: Enable pnpm
         run: corepack enable
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Dependency security audit
         run: node "$GITHUB_WORKSPACE/scripts/pnpm-audit-gate.mjs"

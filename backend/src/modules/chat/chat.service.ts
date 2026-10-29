@@ -7,6 +7,7 @@ export {
   listChats,
   createChat,
   deleteChat,
+  discardRejectedChatInput,
   type ChatWriteResult,
 } from "./chat.crud";
 export {
@@ -14,6 +15,8 @@ export {
   listChatGrants,
   grantChatAccess,
   revokeChatAccess,
+  leaveChat,
+  withChatLeaveAccess,
 } from "./chat.sharing";
 export { updateChatSettings } from "./chat.settings";
 export { updateChatTitle } from "./chat.titles";
@@ -25,6 +28,7 @@ export {
   assistantStreamErrorPayload,
   ASSISTANT_ERROR_MESSAGE,
   buildCancelledAssistantMessage,
+  buildStoppedAssistantMessage,
   extractCitations,
   isAbortError,
   runLLMStream,
@@ -44,22 +48,28 @@ export {
   type MessageTimeContext,
   buildUserPersonalisationPrompt,
   buildWorkflowStore,
+  attachPriorReasoning,
   enrichWithPriorEvents,
   appendAskInputsResponseToAssistantMessage,
   runApprovedConnectorActions,
   writeApprovedConnectorFrames,
   generateSpotlightNonce,
   spotlightFilename,
+  createSubagentRunStore,
+  purgeExpiredSubagentRuns,
   type AskInputsResponseRequest,
   type AssistantEvent,
   type ChatDocumentReference,
   type ChatMessage,
+  type SubagentDefaults,
   type TabularCellStore,
   TABULAR_TOOLS,
   parseOptionalDocumentContext,
   createReservedAssistantMessageUpdater,
   createWordClientToolsAdapter,
   isClientToolCallPending,
+  logAssistantMessageFailure,
+  requestIdOf,
   reserveAssistantMessage,
   submitClientToolResult,
   ACTIVE_WORD_DOCUMENT_ID,
@@ -77,3 +87,5 @@ export {
   WORD_EDIT_FORMATS,
   type WordEditApplyMode,
 } from "./engine/wordDocumentEdits";
+
+export { deleteUserSubagentRuns } from "./engine/tools/delegateRuns";

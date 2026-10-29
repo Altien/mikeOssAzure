@@ -9,6 +9,8 @@ import {
   Settings2,
 } from "lucide-react";
 import { twMerge } from "tailwind-merge";
+import { TabPillButtonUI } from "./TabPillButtonUI";
+import { textButtonUIClassName } from "./TextButtonUI.styles";
 import {
   DROPDOWN_ROWS_CLASS,
   Dropdown,
@@ -30,7 +32,7 @@ export interface ModelToggleOption {
   id: string;
   label: string;
   group: ModelToggleGroup;
-  /** Execution path shown when the same model is available more than once. */
+  /** Provider route; direct/local/configured sources only show for duplicates. */
   source?: string;
 }
 
@@ -45,7 +47,7 @@ export const REASONING_LEVELS = [
 
 export type ReasoningLevel = (typeof REASONING_LEVELS)[number];
 
-const REASONING_LEVEL_LABELS: Record<ReasoningLevel, string> = {
+export const REASONING_LEVEL_LABELS: Record<ReasoningLevel, string> = {
   none: "None",
   low: "Low",
   medium: "Medium",
@@ -63,7 +65,23 @@ const ALWAYS_REASONING_LEVELS: readonly ReasoningLevel[] =
 export function reasoningLevelsForModel(
   modelId: string,
 ): readonly ReasoningLevel[] {
-  const catalogId = modelId.replace(/^(?:openrouter|vercel)\//, "");
+  const catalogId = modelId.startsWith("bedrock/")
+    ? // Bedrock names Claude "anthropic.claude-…", optionally behind a
+      // cross-region inference-profile prefix ("us.", "us-gov.") or at the
+      // end of an inference-profile ARN, after its last "/".
+      modelId
+        .split("/")
+        .at(-1)!
+        .replace(/^(?:[a-z]+(?:-[a-z]+)*\.)?anthropic\./, "")
+    : modelId
+        .replace(/^(?:openrouter|vercel)\//, "")
+        // An explicit protocol is not part of the model name.
+        .replace(
+          /^((?:vertex|azure-foundry)\/)(?:anthropic|openai|gemini):/,
+          "$1",
+        )
+        // Vertex pins Claude versions as "claude-opus-5-5@20260101".
+        .replace(/^(vertex\/[^@]+)@/, "$1-");
   // Astra, Sol 6.1, and current Fable/Opus cannot disable thinking.
   if (
     /(?:^|\/)(?:gpt-6-astra|gpt-6\.1-sol|claude-fable-5-1|claude-opus-5-5)(?:$|-)/.test(
@@ -113,6 +131,7 @@ export const MODEL_TOGGLE_GROUPS: readonly ModelToggleGroup[] = [
   "DeepSeek",
   "Xiaomi",
   "Mistral AI",
+  "xAI",
   "Configured",
   "Local",
   "Kimi",
@@ -137,7 +156,10 @@ export interface ModelToggleUIProps {
   compact?: boolean;
   /** `default` matches the toolbar's other buttons; `muted` is the lighter chat-composer look. */
   tone?: "muted" | "default";
-  modalInput?: boolean;
+  /** A full-width form field: liquid glass, or "flat" grey like a flat select. */
+  modalInput?: boolean | "flat";
+  /** Use the shared table-toolbar pill for the picker trigger. */
+  toolbar?: boolean;
   /** Extra classes for the compact trigger button, for a host row's sizing. */
   triggerClassName?: string;
   emptyLabel?: string;
@@ -146,6 +168,13 @@ export interface ModelToggleUIProps {
   onReasoningChange?: (level: ReasoningLevel) => void;
   reasoningLevels?: readonly ReasoningLevel[];
 }
+
+// The grey filled field of ModalSelect's flat variant, so the two can sit
+// side by side in a pane's form.
+const FLAT_INPUT_CLASS = textButtonUIClassName({
+  className:
+    "flex h-10 w-full items-center justify-between gap-2 rounded-xl bg-app-surface-active px-3 text-sm text-gray-700",
+});
 
 const itemClassName =
   "theme-dropdown-item flex cursor-pointer select-none items-center gap-2 rounded-md px-2.5 py-1.5 text-xs text-gray-700 outline-none transition-colors focus:text-gray-900 data-[highlighted]:text-gray-900 data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&>*]:pointer-events-none";
@@ -164,6 +193,7 @@ export function ModelToggleUI({
   compact = false,
   tone = "muted",
   modalInput = false,
+  toolbar = false,
   triggerClassName,
   emptyLabel = "No Models",
   onEmptyClick,
@@ -171,6 +201,7 @@ export function ModelToggleUI({
   onReasoningChange,
   reasoningLevels = REASONING_LEVELS,
 }: ModelToggleUIProps) {
+  const TriggerButton = toolbar ? TabPillButtonUI : "button";
   const [open, setOpen] = React.useState(false);
   const reasoningInputRef = React.useRef<HTMLInputElement>(null);
   const selected = models.find((model) => model.id === value);
@@ -204,14 +235,18 @@ export function ModelToggleUI({
 
   if (!loading && models.length === 0) {
     return (
-      <button
+      <TriggerButton
         type="button"
         aria-label="No models available"
         title="Configure models"
         onClick={onEmptyClick}
         disabled={!onEmptyClick}
         className={
-          modalInput
+          toolbar
+            ? twMerge("min-w-0 max-w-full", triggerClassName)
+            : modalInput === "flat"
+            ? twMerge(FLAT_INPUT_CLASS, "justify-start text-gray-400")
+            : modalInput
             ? `flex h-10 w-full items-center rounded-xl px-3 text-sm text-gray-400 ${LIQUID_GLASS_SUBTLE_CLASS} ${LIQUID_GLASS_HOVER_CLASS} transition-colors enabled:cursor-pointer enabled:hover:text-gray-700 disabled:cursor-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2`
             : twMerge(
                 "flex h-8 shrink-0 items-center rounded-lg px-2 text-sm text-gray-400 transition-colors enabled:cursor-pointer enabled:hover:text-gray-700 disabled:cursor-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2",
@@ -220,14 +255,14 @@ export function ModelToggleUI({
         }
       >
         <span className="max-w-[200px] truncate">{emptyLabel}</span>
-      </button>
+      </TriggerButton>
     );
   }
 
   return (
     <Dropdown open={open} onOpenChange={handleOpenChange}>
       <DropdownTrigger asChild>
-        <button
+        <TriggerButton
           type="button"
           aria-label="Choose model"
           title={
@@ -241,7 +276,11 @@ export function ModelToggleUI({
           }
           disabled={loading}
           className={
-            modalInput
+            toolbar
+              ? twMerge("min-w-0 max-w-full", triggerClassName)
+              : modalInput === "flat"
+              ? FLAT_INPUT_CLASS
+              : modalInput
               ? `flex h-10 w-full items-center justify-between gap-2 rounded-xl px-3 text-sm text-gray-700 ${LIQUID_GLASS_SUBTLE_CLASS} ${LIQUID_GLASS_HOVER_CLASS} transition-colors enabled:cursor-pointer disabled:cursor-default disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 ${open ? LIQUID_GLASS_SELECTED_CLASS : ""}`
               : twMerge(
                   `flex h-8 shrink-0 items-center rounded-lg text-sm ${tone === "default" ? "text-gray-700 enabled:hover:text-gray-900 disabled:hover:text-gray-700" : "text-gray-400 enabled:hover:text-gray-700 disabled:hover:text-gray-400"} transition-colors enabled:cursor-pointer disabled:cursor-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 ${compact ? "w-8 justify-center px-0" : "gap-1.5 px-2"} ${open ? "text-gray-700" : ""}`,
@@ -269,11 +308,11 @@ export function ModelToggleUI({
               />
             </>
           )}
-        </button>
+        </TriggerButton>
       </DropdownTrigger>
       <DropdownContent
-        side={modalInput ? "bottom" : "top"}
-        align={modalInput ? "start" : "end"}
+        side={modalInput || toolbar ? "bottom" : "top"}
+        align={modalInput || toolbar ? "start" : "end"}
         sideOffset={modalInput ? 4 : 8}
         className={`flex max-h-[min(320px,60vh)] flex-col overflow-hidden rounded-2xl text-gray-700 ${modalInput ? "w-[var(--radix-dropdown-menu-trigger-width)]" : "w-56"}`}
       >
@@ -309,18 +348,24 @@ export function ModelToggleUI({
                         aria-hidden="true"
                         className="h-1 w-1 shrink-0 rounded-full bg-gray-400/80"
                       />
-                      <span className="flex-1">{model.label}</span>
+                      <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+                        {model.label}
+                      </span>
+                      {model.id === value && (
+                        <Check
+                          aria-hidden="true"
+                          className="ml-1 h-3.5 w-3.5 shrink-0 text-gray-600"
+                        />
+                      )}
                       {model.source &&
-                        (routeCounts.get(
-                          `${model.group}\u0000${model.label.toLocaleLowerCase()}`,
-                        ) ?? 0) > 1 && (
-                          <span className="text-[9px] font-medium text-gray-400">
+                        (!["Direct", "Local", "Configured"].includes(model.source) ||
+                          (routeCounts.get(
+                            `${model.group}\u0000${model.label.toLocaleLowerCase()}`,
+                          ) ?? 0) > 1) && (
+                          <span className="shrink-0 text-right text-[10px] font-medium text-gray-400">
                             {model.source}
                           </span>
                         )}
-                      {model.id === value && (
-                        <Check className="ml-1 h-3.5 w-3.5 text-gray-600" />
-                      )}
                     </DropdownItem>
                   ))}
               </React.Fragment>

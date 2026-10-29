@@ -1,5 +1,7 @@
 import { afterEach, describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
+// Dev drift: this101-case router fixture is not the rate-limit suite.
+vi.hoisted(() => { process.env.RATE_LIMIT_CHAT_MAX = "1000"; });
 
 // ---------------------------------------------------------------------------
 // Hoisted mock fns reconfigured per-test. Access helpers + model settings are
@@ -14,6 +16,7 @@ const {
     filterAccessibleDocumentIds,
     getUserModelSettings,
     resolveContentOrgId,
+    resolveStandaloneOrgId,
     runLLMStream,
     extractRowColumns,
     beginMemoryConversationTurn,
@@ -25,6 +28,7 @@ const {
     filterAccessibleDocumentIds: vi.fn(),
     getUserModelSettings: vi.fn(),
     resolveContentOrgId: vi.fn(),
+    resolveStandaloneOrgId: vi.fn(),
     runLLMStream: vi.fn(),
     // The synchronous generate loop's one slow call. Mocked so the route's
     // run lifecycle (detach, resume, stop) can be driven frame by frame
@@ -203,6 +207,15 @@ vi.mock("../../lib/access", async (importOriginal) => ({
     listAccessibleProjectIds: vi.fn(async () => []),
     getOrgRole: vi.fn(async () => null),
     resolveContentOrgId: (...args: unknown[]) => resolveContentOrgId(...args),
+    resolveStandaloneOrgId: (...args: unknown[]) =>
+        resolveStandaloneOrgId(...args),
+}));
+// Which organizations are team ones is the database's to say; here every
+// org_id a fixture carries names a team organization.
+vi.mock("../../lib/personalOrgs", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../../lib/personalOrgs")>()),
+    teamOrgIdOf: async (_db: unknown, orgId: string | null | undefined) =>
+        orgId ?? null,
 }));
 
 vi.mock("../../modules/user/user.settings", () => ({
@@ -246,6 +259,7 @@ describe("tabular.routes", () => {
         });
         // Default: personal content — no tenant to inherit.
         resolveContentOrgId.mockResolvedValue({ ok: true, orgId: null });
+        resolveStandaloneOrgId.mockResolvedValue({ ok: true, orgId: null });
         // Default: every requested doc is accessible (identity passthrough).
         filterAccessibleDocumentIds.mockImplementation(
             async (ids: string[]) => ids,
@@ -273,8 +287,58 @@ describe("tabular.routes", () => {
     });
     afterEach(() => vi.unstubAllGlobals());
 
+    // ── GET /tabular-review/creators ──────────────────────────────────────
+    describe("GET /tabular-review/creators", () => {
+        it("lists each person who created a review in the project once", async () => {
+            supabaseState.tables.tabular_reviews = {
+                data: [{ user_id: "u2" }, { user_id: "u2" }, { user_id: "u1" }],
+                error: null,
+            };
+            supabaseState.tables.user_profiles = {
+                data: [{ user_id: "u2", display_name: "Ada", email: "ada@test.local", profile_photo: "data:image/png;base64,AAAA" }],
+                error: null,
+            };
+            const res = await request(app)
+                .get("/api/tabular-review/creators?project_id=p1")
+                .set(...AUTH);
+            expect(res.status).toBe(200);
+            // Names and photos only: the review list does not expose emails.
+            expect(res.body).toEqual([
+                { user_id: "u2", display_name: "Ada", email: null, profile_photo: "data:image/png;base64,AAAA" },
+                { user_id: "u1", display_name: null, email: null, profile_photo: null },
+            ]);
+        });
+
+        it("refuses a project the caller cannot open", async () => {
+            checkProjectAccess.mockResolvedValue({ ok: false });
+            const res = await request(app)
+                .get("/api/tabular-review/creators?project_id=p1")
+                .set(...AUTH);
+            expect(res.status).toBe(404);
+            expect(supabaseState.operations).not.toContain("from:tabular_reviews");
+        });
+
+        it("requires a project", async () => {
+            const res = await request(app).get("/api/tabular-review/creators").set(...AUTH);
+            expect(res.status).toBe(400);
+        });
+    });
+
     // ── GET /tabular-review (overview) ────────────────────────────────────
     describe("GET /tabular-review", () => {
+        it("requests all workspace reviews by update time for History", async () => {
+            const res = await request(app)
+                .get("/api/tabular-review?workspace=personal&sort_key=updated&sort_direction=desc&limit=31")
+                .set(...AUTH);
+            expect(res.status).toBe(200);
+            expect(supabaseState.rpcCalls).toContainEqual({
+                fn: "get_tabular_reviews_overview",
+                args: expect.objectContaining({
+                    p_workspace: "personal", p_project_id: null, p_scope: "all",
+                    p_sort_key: "updated", p_sort_direction: "desc", p_limit: 31,
+                }),
+            });
+        });
         it("returns the overview rows from the RPC", async () => {
             supabaseState.rpc = {
                 data: [{ id: "r1", title: "Alpha" }],
@@ -289,6 +353,62 @@ describe("tabular.routes", () => {
             expect(res.body).toEqual([{ id: "r1", title: "Alpha" }]);
         });
 
+        it("labels a project's reviews with each creator's name and photo", async () => {
+            supabaseState.rpc = {
+                data: [{ id: "r1", user_id: "u2" }, { id: "r2", user_id: null }],
+                error: null,
+            };
+            supabaseState.tables.user_profiles = {
+                data: [{ user_id: "u2", display_name: " Ada ", profile_photo: "data:image/png;base64,AAAA" }],
+                error: null,
+            };
+            const res = await request(app)
+                .get("/api/tabular-review?project_id=p1")
+                .set(...AUTH);
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual([
+                { id: "r1", user_id: "u2", owner_display_name: "Ada", owner_profile_photo: "data:image/png;base64,AAAA" },
+                { id: "r2", user_id: null },
+            ]);
+        });
+
+        it("filters the list and select-all ids by creator", async () => {
+            await request(app)
+                .get("/api/tabular-review?project_id=p1&owner_user_id=u2")
+                .set(...AUTH);
+            await request(app)
+                .get("/api/tabular-review/ids?project_id=p1&owner_user_id=u2")
+                .set(...AUTH);
+            expect(supabaseState.rpcCalls).toContainEqual({
+                fn: "get_tabular_reviews_overview",
+                args: expect.objectContaining({ p_project_id: "p1", p_owner_user_id: "u2" }),
+            });
+            expect(supabaseState.rpcCalls).toContainEqual({
+                fn: "get_tabular_review_ids_overview",
+                args: expect.objectContaining({ p_project_id: "p1", p_owner_user_id: "u2" }),
+            });
+        });
+
+        it("omits the creator argument when unfiltered", async () => {
+            await request(app).get("/api/tabular-review?project_id=p1").set(...AUTH);
+            expect(supabaseState.rpcCalls[0].args).not.toHaveProperty("p_owner_user_id");
+        });
+
+        it("labels the cross-project list's reviews with each creator", async () => {
+            supabaseState.rpc = { data: [{ id: "r1", user_id: "u2" }], error: null };
+            supabaseState.tables.user_profiles = {
+                data: [{ user_id: "u2", display_name: "Ada", profile_photo: null }],
+                error: null,
+            };
+            const res = await request(app)
+                .get("/api/tabular-review")
+                .set(...AUTH);
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual([
+                { id: "r1", user_id: "u2", owner_display_name: "Ada", owner_profile_photo: null },
+            ]);
+        });
+
         it("returns 500 with detail when the RPC errors", async () => {
             supabaseState.rpc = { data: null, error: { message: "boom" } };
 
@@ -298,6 +418,25 @@ describe("tabular.routes", () => {
 
             expect(res.status).toBe(500);
             expect(res.body.detail).toBe("Something went wrong. Please try again.");
+        });
+    });
+
+    describe("GET /tabular-review/history-status", () => {
+        const id = "11111111-1111-4111-8111-111111111111";
+        it("uses the authenticated identity and only returns authorized status snapshots", async () => {
+            supabaseState.rpc = { data: [{ id, is_running: true, is_complete: false }], error: null };
+            const res = await request(app).get(`/api/tabular-review/history-status?ids=${id}`).set(...AUTH);
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual([{ id, is_running: true, is_complete: false }]);
+            expect(supabaseState.rpcCalls).toContainEqual({
+                fn: "get_tabular_review_history_status",
+                args: { p_user_id: "u1", p_user_email: "u1@test.local", p_review_ids: [id] },
+            });
+        });
+        it.each(["", "invalid", Array(101).fill(id).join(",")])("rejects invalid or oversized id lists", async (ids) => {
+            const res = await request(app).get(`/api/tabular-review/history-status?ids=${ids}`).set(...AUTH);
+            expect(res.status).toBe(400);
+            expect(supabaseState.rpcCalls).toEqual([]);
         });
     });
 
@@ -318,7 +457,11 @@ describe("tabular.routes", () => {
             ).toBe(false);
         });
 
-        it("rejects standalone organization scope", async () => {
+        it("400s an organization the caller does not belong to, and writes nothing", async () => {
+            resolveStandaloneOrgId.mockResolvedValue({
+                ok: false,
+                detail: "You are not a member of that organization.",
+            });
             const res = await request(app)
                 .post("/api/tabular-review")
                 .set(...AUTH)
@@ -332,13 +475,40 @@ describe("tabular.routes", () => {
 
             expect(res.status).toBe(400);
             expect(res.body.detail).toBe(
-                "Tabular reviews cannot be organization-scoped. Create the review inside an organization project instead.",
+                "You are not a member of that organization.",
             );
             expect(
                 supabaseState.inserts.some(
                     (insert) => insert.table === "tabular_reviews",
                 ),
             ).toBe(false);
+        });
+
+        it("passes the workspace's organization through from the request body", async () => {
+            resolveStandaloneOrgId.mockResolvedValue({
+                ok: true,
+                orgId: "org-1",
+            });
+            await request(app)
+                .post("/api/tabular-review")
+                .set(...AUTH)
+                .send({
+                    title: "Firm review",
+                    document_ids: [],
+                    columns_config: [],
+                    model: "claude-sonnet-5-5",
+                    org_id: "org-1",
+                });
+
+            expect(resolveStandaloneOrgId).toHaveBeenCalledWith(
+                expect.anything(),
+                { userId: "u1", orgId: "org-1" },
+            );
+            expect(
+                supabaseState.inserts.find(
+                    (insert) => insert.table === "tabular_reviews",
+                )?.payload,
+            ).toMatchObject({ org_id: "org-1", project_id: null });
         });
 
         it("creates a review (201) and only persists accessible documents", async () => {
@@ -971,10 +1141,10 @@ describe("tabular.routes", () => {
             supabaseState.updates.find((u) => u.table === "tabular_reviews")
                 ?.payload as Record<string, unknown> | undefined;
 
-        it("clears org_id when a review moves into a personal project", async () => {
-            // The leak: without restamping, a review carried out of an org
-            // project into somebody's personal project must not keep the old
-            // organization's lifecycle stamp.
+        it("400s moving an organization's review into a personal project", async () => {
+            // What belongs to an organization stays in it: carried into
+            // somebody's personal project, the firm's review would become
+            // that person's property.
             seedMove("org-1");
             resolveContentOrgId.mockResolvedValue({ ok: true, orgId: null });
 
@@ -983,11 +1153,11 @@ describe("tabular.routes", () => {
                 .set(...AUTH)
                 .send({ project_id: "p-to" });
 
-            expect(res.status).toBe(200);
-            expect(movePayload()).toMatchObject({
-                project_id: "p-to",
-                org_id: null,
-            });
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toBe(
+                "This review belongs to an organization and can only be moved to a project in the same organization.",
+            );
+            expect(movePayload()).toBeUndefined();
         });
 
         it("refuses the move when the tenant lookup fails, instead of guessing", async () => {
@@ -1953,6 +2123,22 @@ describe("tabular.routes", () => {
             resetStreamRunsForTests();
         });
 
+        it("returns a safe internal error and releases the claimed lease when document access lookup fails", async () => {
+            filterAccessibleDocumentIds.mockRejectedValueOnce(new Error("Document access lookup failed: private database detail"));
+
+            const res = await startGeneration();
+
+            expect(res.status).toBe(500);
+            expect(res.body).toMatchObject({
+                code: "internal_error", detail: "Something went wrong. Please try again.",
+            });
+            expect(res.text).not.toContain("private database detail");
+            expect(rpcNames()).toEqual([
+                "begin_tabular_review_generation", "finish_tabular_review_generation",
+            ]);
+            expect(extractRowColumns).not.toHaveBeenCalled();
+        });
+
         it("keeps extracting after the requesting socket closes, and a reload attaches from where it left off", async () => {
             const held = heldExtraction();
             const first = startGeneration();
@@ -2728,7 +2914,7 @@ describe("tabular.routes", () => {
             const held = heldGeneration();
             const first = send();
             const firstDone = first.then((res) => res);
-            await held.started;
+            await Promise.race([held.started, firstDone.then(res => { throw new Error(`Turn refused before generation: HTTP ${res.status} ${res.text}`); })]);
             const turnId = await activeTurnId();
 
             // A caller who cannot see the review cannot watch its answers.

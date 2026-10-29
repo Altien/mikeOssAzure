@@ -27,6 +27,15 @@ import {
     type TableSortDirection,
     TableStickyCell,
 } from "@/app/components/shared/TablePrimitive";
+import {
+    CreatorLabel,
+    CreatorLabelSkeleton,
+} from "@/app/components/shared/CreatorLabel";
+import {
+    PersonFilter,
+    type LoadPeople,
+    type PersonOption,
+} from "@/app/components/shared/PersonFilter";
 import { EmptyState } from "@/app/components/ui/empty-state";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { cn } from "@/app/lib/utils";
@@ -59,6 +68,8 @@ export function ReviewsListTable({
     deletingReviewIds,
     hasActiveFilters,
     projectColumn,
+    showCreator = false,
+    creatorFilter,
     rowClassName,
     sort,
     onSortChange,
@@ -94,6 +105,14 @@ export function ReviewsListTable({
         projects: Project[];
         filter: string | null;
         onFilterChange: (projectId: string | null) => void;
+    };
+    /** Adds a Creator column showing who made each review. */
+    showCreator?: boolean;
+    /** Filters the Creator column; the host refetches with the person. */
+    creatorFilter?: {
+        value: PersonOption | null;
+        onChange: (person: PersonOption | null) => void;
+        loadPeople: LoadPeople;
     };
     /** Applied to the header and every row, for the host's gutter. */
     rowClassName?: string;
@@ -171,6 +190,8 @@ export function ReviewsListTable({
         sort?.key === "documents" ? sort.direction : null;
     const createdSortDirection =
         sort?.key === "created" ? sort.direction : null;
+    const updatedSortDirection =
+        sort?.key === "updated" ? sort.direction : null;
     const nameFilterButton = (
         <TableSortFilter
             label="Sort by review name"
@@ -198,6 +219,13 @@ export function ReviewsListTable({
             label="Sort by created date"
             value={createdSortDirection}
             onChange={(direction) => handleSortChange("created", direction)}
+        />
+    );
+    const updatedFilterButton = (
+        <TableSortFilter
+            label="Sort by updated date"
+            value={updatedSortDirection}
+            onChange={(direction) => handleSortChange("updated", direction)}
         />
     );
 
@@ -276,10 +304,32 @@ export function ReviewsListTable({
                             </div>
                         </TableHeaderCell>
                     )}
+                    {showCreator && (
+                        <TableHeaderCell className="w-32">
+                            <div className="flex items-center gap-1">
+                                <span>Creator</span>
+                                {!loading && creatorFilter && (
+                                    <PersonFilter
+                                        label="Filter by creator"
+                                        selectedTitle={(name) =>
+                                            `Created by ${name}`
+                                        }
+                                        {...creatorFilter}
+                                    />
+                                )}
+                            </div>
+                        </TableHeaderCell>
+                    )}
                     <TableHeaderCell className="w-32">
                         <div className="flex items-center gap-1">
                             <span>Created</span>
                             {!loading && createdFilterButton}
+                        </div>
+                    </TableHeaderCell>
+                    <TableHeaderCell className="w-32">
+                        <div className="flex items-center gap-1">
+                            <span>Updated</span>
+                            {!loading && updatedFilterButton}
                         </div>
                     </TableHeaderCell>
                     <TableHeaderCell className="w-8" />
@@ -289,6 +339,7 @@ export function ReviewsListTable({
             {loading ? (
                 <ReviewsLoadingRows
                     showProject={!!projectColumn}
+                    showCreator={showCreator}
                     rowClassName={rowClassName}
                 />
             ) : error ? (
@@ -395,9 +446,33 @@ export function ReviewsListTable({
                                         )}
                                     </TableCell>
                                 )}
+                                {showCreator && (
+                                    <TableCell className="w-32">
+                                        <CreatorLabel
+                                            label={
+                                                review.is_owner
+                                                    ? "Me"
+                                                    : review.owner_display_name?.trim() ||
+                                                      "Shared"
+                                            }
+                                            photo={review.owner_profile_photo}
+                                            name={review.owner_display_name}
+                                        />
+                                    </TableCell>
+                                )}
                                 <TableCell className="w-32">
                                     {review.created_at ? (
                                         formatDate(review.created_at)
+                                    ) : (
+                                        <span className="text-gray-300">—</span>
+                                    )}
+                                </TableCell>
+                                <TableCell className="w-32">
+                                    {review.updated_at || review.created_at ? (
+                                        formatDate(
+                                            review.updated_at ||
+                                                review.created_at,
+                                        )
                                     ) : (
                                         <span className="text-gray-300">—</span>
                                     )}
@@ -433,9 +508,11 @@ export function ReviewsListTable({
 
 function ReviewsLoadingRows({
     showProject,
+    showCreator,
     rowClassName,
 }: {
     showProject: boolean;
+    showCreator: boolean;
     rowClassName?: string;
 }) {
     const titleWidths = ["w-36", "w-40", "w-44", "w-48", "w-52"];
@@ -463,6 +540,14 @@ function ReviewsLoadingRows({
                             <SkeletonLine className="w-24" />
                         </TableCell>
                     )}
+                    {showCreator && (
+                        <TableCell className="w-32">
+                            <CreatorLabelSkeleton className="w-16" />
+                        </TableCell>
+                    )}
+                    <TableCell className="w-32">
+                        <SkeletonLine className="w-20" />
+                    </TableCell>
                     <TableCell className="w-32">
                         <SkeletonLine className="w-20" />
                     </TableCell>

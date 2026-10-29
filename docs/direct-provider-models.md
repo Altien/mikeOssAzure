@@ -15,6 +15,18 @@ audio, embedding, or restricted-access models.
 Main chat still requires an explicit model selection. Internal Gemini fallbacks
 use 3.8 Flash. A saved title-model override continues to take precedence.
 
+## Provider switches
+
+Configured provider cards show a switch for the current account. Turning a
+provider off preserves shared credentials and saved model selections, but makes
+its models unavailable to that user and blocks secondary Key Vault or
+environment fallback. The Azure router and legacy Azure OpenAI aliases share
+one preference. Turning it back on restores normal credential resolution.
+
+Numbered migration 0108 adds a per-user preference map and an atomic,
+service-role-only update function. Preference updates never create, replace or
+delete shared credentials or encrypted legacy secret rows.
+
 ## Mistral setup
 
 Create an API key in [Mistral Studio](https://console.mistral.ai/). In this
@@ -38,6 +50,111 @@ blocks use the existing shared AI SDK loop. The available reasoning controls are
 None and High. The API IDs are `mistral-large-4`, `mistral-medium-3-5`, and
 `mistral-small-2603`. Large 4 is currently a public preview, labeled accordingly.
 
+## Amazon Bedrock and Azure OpenAI setup
+
+Provider credentials are shared by this installation and configured by an
+administrator in Azure Key Vault. Environment variables are a fallback for
+local development. Users see credential availability under Settings → API Keys
+and choose router model IDs under its Routers section. Personal key changes
+remain refused.
+
+- Amazon Bedrock uses `aws-bearer-token-bedrock` (alias `bedrock-api-key`)
+  and `bedrock-aws-region` (alias `aws-region`). The corresponding environment
+  fallbacks are AWS_BEARER_TOKEN_BEDROCK and BEDROCK_AWS_REGION (or AWS_REGION).
+- Azure Responses uses the existing Azure connection: `azure-openai-api-key`
+  and `azure-openai-endpoint`; `azure-api-key` is also accepted. An endpoint
+  may be a resource name or an https URL on an Azure AI hostname. Every vault
+  alias is checked before environment fallback.
+
+Keys and the region or endpoint supplied to a request stay together. The
+model IDs are `bedrock/<model-or-inference-profile-id>` and
+`azure/<deployment>`; an explicit router ID must be in the user's saved
+selection. Bedrock uses bearer-authenticated Converse and Azure uses the v1
+Responses API. Existing `aoai:<deployment>` models keep their Azure Chat
+Completions protocol and encrypted compound settings.
+
+Numbered migration 0106 adds companion settings and extends the legacy
+provider constraint without replacing existing Azure payloads or identity
+types.
+
+## Google Vertex AI, Azure AI Foundry, xAI and custom endpoints
+
+Four more providers are configured centrally in Key Vault. Companion values
+are kept with the deployment key, like Bedrock and Azure OpenAI:
+
+| Provider | Key | Saved with |
+| --- | --- | --- |
+| Google Vertex AI | The full contents of a service-account key file (JSON) | The Vertex AI location, for example `us-central1` or `global` |
+| Azure AI Foundry | The Foundry resource's API key | The resource name (`contoso-foundry`) or its endpoint URL |
+| xAI | An xAI API key | — |
+| OpenAI-compatible endpoint | The endpoint's API key | Its base URL, for example `https://llm.example.com/v1` |
+
+Use `google-vertex-credentials-json` with `google-vertex-location`,
+`azure-foundry-api-key` with `azure-foundry-endpoint`, `xai-api-key`, and
+`custom-api-key` with `custom-base-url`. Uppercase underscore equivalents are
+local environment fallbacks. Existing `MIKE_MODEL_CONFIG_JSON` declarations
+remain supported for shared endpoints, including approved private endpoints.
+Every new cloud input checks Key Vault before its environment fallback.
+
+Users add model selections once the administrator has configured a provider. The app-level IDs are
+`vertex/<model-id>`, `azure-foundry/<deployment>`, `xai/<model>` and
+`custom/<model>`, and a request can only use a model in the requesting user's
+saved list.
+
+Model IDs for Bedrock, Azure OpenAI, Azure AI Foundry, Vertex AI, xAI and
+custom endpoints are typed by users and some SDKs put them into request URLs,
+so they must follow a strict grammar, checked when a model is saved, when a
+request resolves it, and again before a provider is called: `/`-separated
+segments of letters, digits and `. _ : @ + -`, with no empty, `.` or `..`
+segments and no `?`, `#`, `%`, backslash, whitespace or control characters.
+Vertex Claude and Gemini IDs are a single segment and partner IDs are exactly
+`publisher/model`. A model declared in `MIKE_MODEL_CONFIG_JSON` keeps its
+declared provider even if its ID starts with one of these prefixes.
+
+Moving a saved Azure AI Foundry key or custom-endpoint key to a different
+host requires entering the key again; changing a Vertex AI location does not,
+because the location only selects one of Google's own regional endpoints.
+
+- **Vertex AI:** the service account needs the Vertex AI User role, and the
+  project is read from the key file's `project_id`. A model ID selects the
+  protocol: `claude…` IDs (`claude-opus-5-5@20260101`) use Anthropic Messages,
+  `publisher/model` IDs (`meta/llama-4-maverick-maas`) use the
+  OpenAI-compatible partner-model endpoint, and anything else is sent to the
+  Gemini API. Access tokens are minted from the key's email and private key
+  only and cached per key; the file's `token_uri` is ignored, and neither
+  ambient Google credentials nor a `GOOGLE_VERTEX_API_KEY` in the environment
+  is ever used. Models are typed by ID.
+- **Azure AI Foundry:** deployment names of non-OpenAI models. A deployment
+  whose name contains `claude` is called over Anthropic Messages at
+  `/anthropic/v1`; every other deployment is called over Chat Completions at
+  `/openai/v1`, without reasoning controls. Rename-proofing is not possible
+  with an API key, so keep `claude` in the name of Claude deployments. OpenAI
+  deployments belong under Azure OpenAI, which uses the Responses API.
+- **xAI:** the model list is read live from `https://api.x.ai/v1/models`, with
+  image, video and voice models filtered out. Requests use `@ai-sdk/xai`.
+- **OpenAI-compatible endpoint:** any service that implements
+  `POST {base URL}/chat/completions`, such as a LiteLLM proxy, vLLM, Groq,
+  Together, Fireworks or DeepSeek. The model list is read from
+  `GET {base URL}/models` when the endpoint offers one; otherwise IDs are
+  typed. Because the backend sends requests and the key to a configured
+  URL, the URL must be public `https`, and every request goes through the
+  same guarded fetch as custom MCP connectors: loopback, private, link-local
+  and cloud-metadata addresses are refused, including when a public name
+  resolves to one. Endpoints on a private network belong in
+  `MIKE_MODEL_CONFIG_JSON`.
+
+Vertex AI and Foundry infer the protocol from the model or deployment name.
+When a name does not reveal it, save the ID with an explicit protocol:
+`anthropic:<name>` for Anthropic Messages, `openai:<name>` for Chat
+Completions (the partner-model endpoint on Vertex), or `gemini:<name>` for the
+Gemini API on Vertex. The prefix selects the protocol and is not sent upstream;
+for example a Foundry Claude deployment named `prod-sonnet` is saved as
+`anthropic:prod-sonnet`.
+
+Before deploying, apply numbered migrations 0107 and 0108 for provider
+constraints and account preferences. Dev retains text user identities and
+application access control; Supabase RLS/schema.sql are not imported.
+
 ## Saved selections
 
 Removed direct-provider IDs are normalized when read, including saved chat,
@@ -59,7 +176,10 @@ change their selections in the model picker and task settings. GPT-6 Astra and
 GPT-6.1 Sol require reasoning, so a saved None setting is normalized to Low.
 Current Fable and Opus also require thinking. Sonnet's lowest setting uses the
 SDK's `between_tools` behavior. Lightweight automatic titles use their provider's
-small model with reasoning disabled.
+small model with reasoning disabled. On Bedrock, Azure, Foundry, Vertex AI, xAI,
+custom endpoints and routers, titles use the chat model itself; when that model
+cannot turn reasoning off, the title call gets extra output headroom so its
+thinking cannot use up the whole title budget.
 
 OpenRouter and Vercel continue to use their live catalogs and users' saved
 allowlists. OpenCode Go retains its protocol compatibility list. Ollama models
@@ -68,8 +188,10 @@ mappings.
 
 ## Catalog maintenance
 
-Keep `backend/src/lib/llm/models.ts`, the web `ModelToggle.tsx`, and the Word
-add-in's `modelCatalog.ts` synchronized, including legacy mappings. Update
+Keep `backend/src/lib/llm/models.ts` and the client catalog
+`frontend/src/shared/lib/modelCatalog.ts` (used by both the web app and the
+Word add-in) synchronized, including legacy mappings;
+`frontend/src/wordAddin/catalogParity.test.ts` compares them. Update
 reasoning capabilities in the backend and shared `ModelToggleUI.tsx` together.
 
 Sources:
@@ -84,3 +206,5 @@ Sources:
 - [Mistral Medium 3.5](https://docs.mistral.ai/models/mistral-medium-3-5-26-04)
 - [Mistral Small 4](https://docs.mistral.ai/models/mistral-small-4-0-26-03)
 - [Mistral AI SDK adapter](https://ai-sdk.dev/providers/ai-sdk-providers/mistral)
+
+Dev compatibility (sync-log: 1da19c20): the pure shared client catalog includes authenticated configured models and legacy aoai: discovery; these remain distinct from user-saved azure/ deployment selections. Provider credentials and endpoints are organisation-managed; personal key/settings writes remain refused. Outbound cloud endpoint/model ID validation applies to managed calls. Bedrock SDK endpoints are explicit, and the direct Claude output ceiling is used where the SDK would otherwise supply a small default.

@@ -1,18 +1,19 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-    mergeConfiguredModelOptions,
-    ModelToggle,
-    underlyingProviderGroup,
-} from "./ModelToggle";
+import { mergeConfiguredModelOptions, ModelToggle } from "./ModelToggle";
+import { underlyingProviderGroup } from "@/shared/lib/modelCatalog";
 import type {
     ApiKeyState,
     ConfiguredModelOption,
 } from "@/app/lib/mikeApi";
 
-const { configuredModels } = vi.hoisted(() => ({
+const { configuredModels, workspace } = vi.hoisted(() => ({
     configuredModels: [] as ConfiguredModelOption[],
+    // Personal unless a test says otherwise.
+    workspace: {
+        workspaceId: "personal" as string | null,
+    },
 }));
 
 vi.mock("@/app/hooks/useOllamaModels", () => ({
@@ -22,7 +23,15 @@ vi.mock("@/app/hooks/useConfiguredModels", () => ({
     useConfiguredModels: () => configuredModels,
 }));
 
-beforeEach(() => configuredModels.splice(0));
+vi.mock("@/app/contexts/WorkspaceContext", () => ({
+    PERSONAL_WORKSPACE: "personal",
+    useWorkspace: () => workspace,
+}));
+
+beforeEach(() => {
+    configuredModels.splice(0);
+    workspace.workspaceId = "personal";
+});
 
 it("lets deployment configuration override a duplicate catalog id", () => {
     expect(
@@ -38,6 +47,8 @@ function keys(configured: Partial<Record<keyof ApiKeyState, boolean>>) {
         "claude",
         "gemini",
         "openai",
+        "bedrock",
+        "azure",
         "openrouter",
         "vercel",
         "opencode-go",
@@ -321,7 +332,7 @@ describe("ModelToggle availability states", () => {
                 value=""
                 onChange={vi.fn()}
                 apiKeys={keys({ openrouter: true })}
-                openRouterModels={[]}
+                routerSelections={{ openrouter: [] }}
                 onNoModelsClick={onNoModelsClick}
             />,
         );
@@ -330,6 +341,47 @@ describe("ModelToggle availability states", () => {
             screen.getByRole("button", { name: "No models available" }),
         );
         expect(onNoModelsClick).toHaveBeenCalledWith("router-models");
+    });
+
+    it("says the organization has no models added when its router key has none", async () => {
+        const user = userEvent.setup();
+        const onNoModelsClick = vi.fn();
+        workspace.workspaceId = "org-1";
+        const orgKeys = keys({ openrouter: true });
+        orgKeys.openrouter = { configured: true, enabled: true, source: "org" };
+        render(
+            <ModelToggle
+                value=""
+                onChange={vi.fn()}
+                apiKeys={orgKeys}
+                routerSelections={{ openrouter: [] }}
+                onNoModelsClick={onNoModelsClick}
+            />,
+        );
+
+        await user.click(
+            screen.getByRole("button", { name: "No models available" }),
+        );
+        expect(onNoModelsClick).toHaveBeenCalledWith("org-router-models");
+    });
+
+    it("says the organization has set nothing up when it has no providers", async () => {
+        const user = userEvent.setup();
+        const onNoModelsClick = vi.fn();
+        workspace.workspaceId = "org-1";
+        render(
+            <ModelToggle
+                value=""
+                onChange={vi.fn()}
+                apiKeys={keys({})}
+                onNoModelsClick={onNoModelsClick}
+            />,
+        );
+
+        await user.click(
+            screen.getByRole("button", { name: "No models available" }),
+        );
+        expect(onNoModelsClick).toHaveBeenCalledWith("org-api-keys");
     });
 
     it("filters to configured providers when keys are loaded", () => {
@@ -366,7 +418,7 @@ describe("ModelToggle provider grouping", () => {
                 value="gemini-3.8-flash"
                 onChange={vi.fn()}
                 apiKeys={keys({ gemini: true, "opencode-go": true })}
-                openCodeGoModels={["glm-5"]}
+                routerSelections={{ "opencode-go": ["glm-5"] }}
             />,
         );
 
@@ -374,7 +426,7 @@ describe("ModelToggle provider grouping", () => {
         await user.click(await screen.findByText("Zhipu AI"));
 
         expect(await screen.findByText("Glm 5")).toBeInTheDocument();
-        expect(screen.queryByText("OpenCode Go")).not.toBeInTheDocument();
+        expect(screen.getByText("OpenCode")).toBeInTheDocument();
     });
 
     it("hides the group when the OpenCode Go key is missing", async () => {
@@ -384,23 +436,23 @@ describe("ModelToggle provider grouping", () => {
                 value="gemini-3.8-flash"
                 onChange={vi.fn()}
                 apiKeys={keys({ gemini: true })}
-                openCodeGoModels={["glm-5"]}
+                routerSelections={{ "opencode-go": ["glm-5"] }}
             />,
         );
 
         await user.click(screen.getByRole("button", { name: "Choose model" }));
 
-        expect(screen.queryByText("OpenCode Go")).not.toBeInTheDocument();
+        expect(screen.queryByText("OpenCode")).not.toBeInTheDocument();
     });
 
-    it("shows route labels only when the same provider model has duplicates", async () => {
+    it("distinguishes direct and routed copies of the same model", async () => {
         const user = userEvent.setup();
         render(
             <ModelToggle
                 value="claude-fable-5-1"
                 onChange={vi.fn()}
                 apiKeys={keys({ claude: true, openrouter: true })}
-                openRouterModels={["anthropic/claude-fable-5-1"]}
+                routerSelections={{ openrouter: ["anthropic/claude-fable-5-1"] }}
             />,
         );
 
@@ -408,6 +460,29 @@ describe("ModelToggle provider grouping", () => {
 
         expect(screen.getByText("Direct")).toBeInTheDocument();
         expect(screen.getByText("OpenRouter")).toBeInTheDocument();
+    });
+
+    it.each([
+        { source: "OpenRouter", provider: "openrouter", models: { openrouter: ["openai/gpt-4o"] }, id: "openrouter/openai/gpt-4o" },
+        { source: "Azure", provider: "azure", models: { azure: ["gpt-4o"] }, id: "azure/gpt-4o" },
+        { source: "Bedrock", provider: "bedrock", models: { bedrock: ["us.anthropic.claude-sonnet-4-6-v1:0"] }, id: "bedrock/us.anthropic.claude-sonnet-4-6-v1:0" },
+    ])("identifies $source even without a direct copy of the model", async ({ source, provider, models, id }) => {
+        const user = userEvent.setup();
+        const onChange = vi.fn();
+        render(
+            <ModelToggle
+                value={id}
+                onChange={onChange}
+                apiKeys={keys({ [provider]: true })}
+                routerSelections={models}
+            />,
+        );
+
+        await user.click(screen.getByRole("button", { name: "Choose model" }));
+        const row = screen.getByRole("menuitem", { name: new RegExp(source) });
+        expect(row).toHaveTextContent(source);
+        await user.click(row);
+        expect(onChange).toHaveBeenCalledWith(id);
     });
 });
 

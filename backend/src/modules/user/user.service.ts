@@ -17,6 +17,7 @@
 //   user.apiKeyStore.ts — the encrypted per-user API-key store itself
 //   user.settings.ts — per-user model settings + last-selected model/reasoning
 //   user.mcp.ts      — MCP connector wrappers over lib/mcpConnectors
+//   user.courtlistener.ts — CourtListener connector status, switch and token
 //   user.account.ts  — destructive account/data deletion (args + ordering kept)
 //   user.export.ts   — the durable async export flow (enqueue / poll /
 //                      download artifact); user.exportJobs.ts builds it
@@ -35,7 +36,7 @@
 // tests import exactly the same names they always did.
 
 export { errorMessage } from "./user.shared";
-export { getOrganisationApiKeys } from "./user.apiKeyStore";
+export { getOrganisationApiKeys, getUserExecutionApiKeys } from "./user.apiKeyStore";
 
 export {
     validateProfilePayload,
@@ -50,7 +51,10 @@ export {
     recordPasswordSet,
 } from "./user.profile";
 
+export { setUserProfilePhoto } from "./user.photo";
+
 export { setMfaOnLogin } from "./user.mfa";
+export { setApiKeyEnabled, setApiKeyEnabledFor } from "./user.apiKeyEnabled";
 
 export {
     getCustomInstructions,
@@ -65,8 +69,15 @@ export {
 } from "./user.responseStyle";
 
 export {
+    getWebSearchSettings,
+    saveWebSearchSettings,
+    validateWebSearchPayload,
+} from "./user.webSearch";
+
+export {
     getApiKeyStatus,
     saveApiKey,
+    saveApiKeyForOwner,
 } from "./user.apiKeys";
 
 export {
@@ -79,6 +90,12 @@ export {
     refreshMcpConnectorTools,
     setMcpToolEnabled,
 } from "./user.mcp";
+
+export {
+    courtListenerConnectorStatus,
+    setCourtListenerEnabled,
+    setCourtListenerToken,
+} from "./user.courtlistener";
 
 export {
     deletePrivateMemories,
@@ -106,6 +123,13 @@ export {
 } from "./user.settings";
 export {
     getUserApiKeys,
+    getEffectiveApiKeys,
+    getApiKeyStatusFor,
+    getEffectiveApiKeyStatus,
+    normalizeApiKeyProvider,
+    orgKeyOwner,
+    type ApiKeyProvider,
+    type ApiKeyStatus,
 } from "./user.apiKeyStore";
 export { setUserApiKey } from "./user.apiKeyStore";
 
@@ -114,7 +138,7 @@ export { resolveUserChatSelection } from "./user.chatSelection";
 export { handleAccountDelete } from "./user.accountJobs";
 export { handleExportBuild } from "./user.exportJobs";
 export { handleMcpRefreshToken, MCP_TOKEN_REFRESH_WINDOW_MS } from "./user.mcpJobs";
-export { MAX_ZIP_EXPORT_DOCUMENTS } from "./user.exportContracts";
+export { MAX_ZIP_EXPORT_DOCUMENTS, isWorkspaceExportType } from "./user.exportContracts";
 
 export { deleteProjectsByIds } from "./user.dataCleanup";
 export { describeAccountDeletionBlockers } from "./user.account";

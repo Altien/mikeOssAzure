@@ -1,30 +1,14 @@
 import React, { useEffect, useState } from "react";
 import { KeyRound, X } from "lucide-react";
 import { getApiKeyStatus, type ApiKeyStatus } from "../../api/mikeApi";
-import { loadRuntimeConfig } from "../../auth/runtimeConfig";
+import { getWebAppUrl, openExternalUrl } from "../../lib/openExternalUrl";
 
 const DISMISS_KEY = "apiKeyBannerDismissed";
 
 // The web app hosts the API-keys settings page; the task pane only links to it.
-// Read the substituted value directly — a `typeof process` guard is false in
-// the browser and would silently fall through to the default.
-/**
- * Open the web app's API-keys page in the system browser. Office's
- * openBrowserWindow is the sanctioned way out of the task-pane webview
- * (window.open is blocked in some hosts); fall back to window.open when the
- * API isn't available (e.g. the hermetic e2e bundle or older hosts).
- */
+// Managed credentials stay on the operator install surface; no personal secret writes.
 async function openApiKeysPage(): Promise<void> {
-  const configured = (await loadRuntimeConfig()).frontendOrigin;
-  if (!configured || !/^https?:\/\//.test(configured)) return;
-  const target = `${new URL(configured).origin}/install`;
-  const ui =
-    typeof Office !== "undefined" ? Office.context?.ui : undefined;
-  if (ui && typeof ui.openBrowserWindow === "function") {
-    ui.openBrowserWindow(target);
-  } else {
-    window.open(target, "_blank", "noopener,noreferrer");
-  }
+  openExternalUrl(`${await getWebAppUrl()}/install`);
 }
 
 function isDismissed(): boolean {

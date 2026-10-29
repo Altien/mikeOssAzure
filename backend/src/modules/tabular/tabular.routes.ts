@@ -31,12 +31,14 @@ import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import { recordAudit } from "../../lib/audit";
 import { sendInternalError } from "../../lib/httpError";
+import { reportError, setOperation } from "../../lib/observability/sentry";
+import { AppError } from "../../lib/appError";
 import { sendServiceFailure } from "../../lib/serviceResult";
 import {
     AssistantStreamError,
     assistantStreamErrorPayload,
     ASSISTANT_ERROR_MESSAGE,
-    buildCancelledAssistantMessage,
+    buildStoppedAssistantMessage,
     isAbortError,
     runLLMStream,
     stripTransientAssistantEvents,
@@ -71,7 +73,9 @@ import {
     getTabularReviewAccess,
     getTabularReviewDetail,
     getTabularReviewPeople,
+    getTabularReviewHistoryStatuses,
     grantTabularReviewAccess,
+    listProjectReviewCreators,
     listTabularReviewIds,
     listTabularReviews,
     revokeTabularReviewAccess,
@@ -105,6 +109,10 @@ import {
 } from "../../lib/memory/schedule";
 import { parsePaginationQuery } from "../../lib/pagination";
 import { normalizeSearchTerm } from "../../lib/search";
+import {
+    resolveWorkspaceFilter,
+    sendWorkspaceFailure,
+} from "../../lib/workspace";
 import { parseTabularReviewSort } from "../../lib/sort";
 import { parseTabularReviewScope } from "./tabular.overview";
 
@@ -135,6 +143,13 @@ function sendTabularFailure(res: Response, failure: TabularFailure): void {
  */
 const reviewRunKey = (reviewId: string) => `review:${reviewId}`;
 
+/** `?owner_user_id=` as a creator filter, or null when absent or empty. */
+function ownerUserIdFilterOf(query: Record<string, unknown>): string | null {
+    return typeof query.owner_user_id === "string" && query.owner_user_id
+        ? query.owner_user_id
+        : null;
+}
+
 /** `?project_id=` as a filter, or null when it is absent or empty. */
 function projectIdFilterOf(query: Record<string, unknown>): string | null {
     return typeof query.project_id === "string" && query.project_id
@@ -145,15 +160,36 @@ function projectIdFilterOf(query: Record<string, unknown>): string | null {
 // GET /tabular-review
 tabularRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
     const query = req.query as Record<string, unknown>;
-    const result = await listTabularReviews(createServerSupabase(), {
-        userId: res.locals.userId as string,
+    const db = createServerSupabase();
+    const userId = res.locals.userId as string;
+    const workspace = await resolveWorkspaceFilter(db, userId, query.workspace);
+    if (!workspace.ok) return void sendWorkspaceFailure(res, workspace);
+    const result = await listTabularReviews(db, {
+        userId,
         userEmail: res.locals.userEmail as string | undefined,
         projectIdFilter: projectIdFilterOf(query),
         scope: parseTabularReviewScope(query.scope),
         pagination: parsePaginationQuery(query),
         searchTerm: normalizeSearchTerm(query.search),
         sort: parseTabularReviewSort(query),
+        workspace: workspace.workspace,
+        includeStatus: query.include === "status",
+        ownerUserIdFilter: ownerUserIdFilterOf(query),
     });
+    if (!result.ok) return void sendTabularFailure(res, result);
+    res.json(result.data);
+}));
+
+// Only small status snapshots; the RPC rechecks review access for every id.
+tabularRouter.get("/history-status", requireAuth, asyncRoute(async (req, res) => {
+    const ids = typeof req.query.ids === "string" ? req.query.ids.split(",") : [];
+    if (ids.length === 0 || ids.length > 100 || ids.some(id => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))) {
+        return void res.status(400).json({ detail: "Provide between 1 and 100 valid review ids" });
+    }
+    const result = await getTabularReviewHistoryStatuses(
+        createServerSupabase(), res.locals.userId as string,
+        res.locals.userEmail as string | undefined, [...new Set(ids)],
+    );
     if (!result.ok) return void sendTabularFailure(res, result);
     res.json(result.data);
 }));
@@ -164,12 +200,32 @@ tabularRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
 // have to page through full review payloads just to collect checkboxes.
 tabularRouter.get("/ids", requireAuth, asyncRoute(async (req, res) => {
     const query = req.query as Record<string, unknown>;
-    const result = await listTabularReviewIds(createServerSupabase(), {
-        userId: res.locals.userId as string,
+    const db = createServerSupabase();
+    const userId = res.locals.userId as string;
+    const workspace = await resolveWorkspaceFilter(db, userId, query.workspace);
+    if (!workspace.ok) return void sendWorkspaceFailure(res, workspace);
+    const result = await listTabularReviewIds(db, {
+        userId,
         userEmail: res.locals.userEmail as string | undefined,
         projectIdFilter: projectIdFilterOf(query),
         scope: parseTabularReviewScope(query.scope),
         searchTerm: normalizeSearchTerm(query.search),
+        workspace: workspace.workspace,
+        ownerUserIdFilter: ownerUserIdFilterOf(query),
+    });
+    if (!result.ok) return void sendTabularFailure(res, result);
+    res.json(result.data);
+}));
+
+// GET /tabular-review/creators?project_id= (must come before /:reviewId)
+// The people behind a project's reviews, for its Creator filter.
+tabularRouter.get("/creators", requireAuth, asyncRoute(async (req, res) => {
+    const projectId = projectIdFilterOf(req.query as Record<string, unknown>);
+    if (!projectId) return void res.status(400).json({ detail: "project_id is required" });
+    const result = await listProjectReviewCreators(createServerSupabase(), {
+        projectId,
+        userId: res.locals.userId as string,
+        userEmail: res.locals.userEmail as string | undefined,
     });
     if (!result.ok) return void sendTabularFailure(res, result);
     res.json(result.data);
@@ -353,6 +409,7 @@ tabularRouter.post(
     "/:reviewId/regenerate-cell",
     requireAuth,
     asyncRoute(async (req, res) => {
+        setOperation("tabular.cell");
         const { row_id, column_index } = req.body as {
             row_id?: string;
             column_index: number;
@@ -377,6 +434,7 @@ tabularRouter.post(
 
 // POST /tabular-review/:reviewId/generate
 tabularRouter.post("/:reviewId/generate", requireAuth, asyncRoute(async (req, res) => {
+    setOperation("tabular.run");
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { reviewId } = req.params;
@@ -578,6 +636,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, asyncRoute(async (req, re
 
         let sentGenerationError = false;
         const completed = await streamTabularGenerateSync({
+            onActivity: run.touch,
             write,
             db,
             reviewId,
@@ -669,6 +728,7 @@ tabularRouter.post(
     "/:reviewId/generate/stop",
     requireAuth,
     asyncRoute(async (req, res) => {
+        setOperation("tabular.run");
         const { reviewId } = req.params;
         // Edit standing only — not a usable model or keys for the caller, who
         // may not be the collaborator who started the run.
@@ -707,6 +767,7 @@ tabularRouter.get(
     "/:reviewId/generate/stream",
     requireAuth,
     asyncRoute(async (req, res) => {
+        setOperation("tabular.run");
         const { reviewId } = req.params;
         const db = createServerSupabase();
         const view = await prepareTabularRunView(db, {
@@ -772,6 +833,7 @@ tabularRouter.get(
     "/:reviewId/chats/:chatId/turn/:turnId/stream",
     requireAuth,
     asyncRoute(async (req, res) => {
+        setOperation("tabular.chat");
         const { reviewId, chatId, turnId } = req.params;
         const gate = await ensureReviewChatReadAccess(
             createServerSupabase(),
@@ -804,6 +866,7 @@ tabularRouter.post(
     "/:reviewId/chats/:chatId/turn/:turnId/stop",
     requireAuth,
     asyncRoute(async (req, res) => {
+        setOperation("tabular.chat");
         const { reviewId, chatId, turnId } = req.params;
         const gate = await ensureReviewChatWriteAccess(
             createServerSupabase(),
@@ -890,6 +953,7 @@ tabularRouter.get(
 
 // POST /tabular-review/:reviewId/chat
 tabularRouter.post("/:reviewId/chat", requireAuth, asyncRoute(async (req, res) => {
+    setOperation("tabular.chat");
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { reviewId } = req.params;
@@ -952,6 +1016,7 @@ tabularRouter.post("/:reviewId/chat", requireAuth, asyncRoute(async (req, res) =
         memorySharedAudience,
         memoryTurn,
         model: selectedChatModel,
+        orgId,
         readableMemoryProjectId,
         reasoningLevel: selectedReasoningLevel,
         reviewTitle,
@@ -972,7 +1037,17 @@ tabularRouter.post("/:reviewId/chat", requireAuth, asyncRoute(async (req, res) =
                 conversationId: chatId as string,
                 turn: memoryTurn,
             });
-        } catch {
+        } catch (error) {
+            // The lease lapses on its own; the turn is answered either way.
+            // Reported as a warning, with the database's error as the cause.
+            reportError(
+                new AppError(
+                    "memory.consolidation_failed",
+                    "Memory activity lease could not be released",
+                    { cause: error },
+                ),
+                { level: "warning" },
+            );
             console.warn("[memory] tabular activity release failed", {
                 chatId,
             });
@@ -1023,6 +1098,7 @@ tabularRouter.post("/:reviewId/chat", requireAuth, asyncRoute(async (req, res) =
 
     try {
         const { fullText, events } = await runLLMStream({
+            onActivity: run?.touch,
             apiMessages,
             docStore: new Map(),
             docIndex: {},
@@ -1037,6 +1113,7 @@ tabularRouter.post("/:reviewId/chat", requireAuth, asyncRoute(async (req, res) =
             model: selectedChatModel,
             reasoning: selectedReasoningLevel,
             apiKeys: api_keys,
+            orgId,
             signal: stream.signal,
             conversationId: chatId,
             includeMemory: true,
@@ -1111,7 +1188,8 @@ tabularRouter.post("/:reviewId/chat", requireAuth, asyncRoute(async (req, res) =
         if (isAbortError(err)) {
             console.log("[tabular/chat] turn stopped", { chatId });
             if (chatId && err instanceof AssistantStreamError) {
-                const partial = buildCancelledAssistantMessage({
+                const partial = buildStoppedAssistantMessage({
+                    stopReason: run?.stopReason,
                     fullText: err.fullText,
                     events: err.events,
                     buildCitations: (fullText) =>
@@ -1134,7 +1212,7 @@ tabularRouter.post("/:reviewId/chat", requireAuth, asyncRoute(async (req, res) =
             }
             // Readers still attached (Stop came from another tab, or this one
             // is only watching) learn the outcome the same way a reload
-            // would: the stored row now ends "Cancelled by user."
+            // would: persistence uses the same stop reason.
             write(stopOutcomeFrame(run));
             write("data: [DONE]\n\n");
             return;

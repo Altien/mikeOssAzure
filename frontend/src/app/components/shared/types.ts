@@ -24,6 +24,9 @@ export interface Folder {
   user_id: string;
   name: string;
   parent_folder_id: string | null;
+  /** The creator's name and photo; the project directory carries them. */
+  owner_display_name?: string | null;
+  owner_profile_photo?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -40,6 +43,13 @@ export interface LibraryFolder {
 
 export type ResourceAccessScope = "private" | "shared" | "organization";
 
+/**
+ * Who may open an organization's project or workflow without being named:
+ * nobody ("private", the default) or every member of its organization.
+ * A personal item is always "private"; it is shared by naming people.
+ */
+export type ContentVisibility = "private" | "organization";
+
 export interface Project {
   id: string;
   /** The creator. Null once an org project outlives the account that made it. */
@@ -53,13 +63,17 @@ export interface Project {
    */
   access_role?: "owner" | "editor" | "viewer";
   /** The caller's role in the owning organization, if the project has one. */
-  org_role?: "admin" | "member" | null;
+  org_role?: "owner" | "admin" | "member" | null;
   org_id?: string | null;
+  /** Present on the detail payload; the lists carry `access_scope` instead. */
+  visibility?: ContentVisibility;
   access_scope?: ResourceAccessScope;
   organization_name?: string | null;
   direct_grant_count?: number;
   owner_display_name?: string | null;
   owner_email?: string | null;
+  /** The creator's photo; only the paginated overview list carries it. */
+  owner_profile_photo?: string | null;
   /**
    * Everyone who can administer this project, with an address. The
    * permission-denied popup needs it: telling somebody they were refused
@@ -99,6 +113,8 @@ export interface Document {
   filename: string;
   owner_email?: string | null;
   owner_display_name?: string | null;
+  /** The creator's photo; the project directory carries it. */
+  owner_profile_photo?: string | null;
   file_type: string | null; // pdf | docx | doc | xlsx | xlsm | xls | pptx | ppt
   storage_path: string | null;
   pdf_storage_path: string | null;
@@ -154,10 +170,14 @@ export interface StructureNode {
 
 export interface Chat {
   id: string;
+  /** True only for non-owner recipients of a standalone direct grant. */
+  can_leave?: boolean;
   project_id: string | null;
   user_id: string;
   org_id?: string | null;
   creator_display_name?: string | null;
+  /** The creator's photo; a project's chat list carries it. */
+  creator_profile_photo?: string | null;
   project_name?: string | null;
   title: string | null;
   model?: string | null;
@@ -209,158 +229,164 @@ type WireActivity<T extends WireAssistantEvent["type"]> = Extract<
   WireAssistantEvent,
   { type: T }
 >;
+type WireDelegation = WireActivity<"delegation">;
 export type AssistantEvent =
-    | AuthorityTraceAssistantEvent
-    | { type: "reasoning"; text: string; isStreaming?: boolean }
-    | { type: "error"; message: string; safe_to_display?: boolean }
-    | {
-          type: "tool_call_start";
-          name: string;
-          isStreaming?: boolean;
-      }
-    | {
-          type: "mcp_tool_call";
-          connector_id: string;
-          connector_name: string;
-          tool_name: string;
-          openai_tool_name: string;
-          approval_id?: string;
-          status: "ok" | "error";
-          error?: string;
-          isStreaming?: boolean;
-      }
-    | AskInputsEvent
-    | AskInputsResponseEvent
-    | { type: "thinking"; isStreaming?: boolean }
-    | {
-          type: "doc_read";
-          filename: string;
-          document_id?: string;
-          version_id?: string | null;
-          version_number?: number | null;
-          isStreaming?: boolean;
-      }
-    | {
-          type: "doc_find";
-          filename: string;
-          document_id?: string;
-          version_id?: string | null;
-          version_number?: number | null;
-          query: string;
-          total_matches: number;
-          isStreaming?: boolean;
-      }
-    | {
-          type: "doc_created";
-          filename: string;
-          download_url: string;
-          /** Set when the generated doc is persisted as a first-class document. */
-          document_id?: string;
-          version_id?: string;
-          version_number?: number | null;
-          isStreaming?: boolean;
-      }
-    | { type: "doc_download"; filename: string; download_url: string }
-    | {
-          type: "doc_replicated";
-          /** Source document filename. */
-          filename: string;
-          /** How many copies were produced in this single tool call. */
-          count: number;
-          /** One entry per new copy. Empty while streaming. */
-          copies?: {
-              new_filename: string;
-              document_id: string;
-              version_id: string;
-          }[];
-          error?: string;
-          isStreaming?: boolean;
-      }
-    | { type: "workflow_applied"; workflow_id: string; title: string }
-    | {
-          type: "doc_edited";
-          filename: string;
-          document_id: string;
-          version_id: string;
-          /** Per-document monotonic Vn written at emit time. */
-          version_number?: number | null;
-          download_url: string;
-          annotations: EditAnnotation[];
-          error?: string;
-          isStreaming?: boolean;
-      }
-    | {
-          type: "courtlistener_search_case_law";
-          query: string;
-          result_count?: number;
-          error?: string;
-          isStreaming?: boolean;
-      }
-    | {
-          type: "courtlistener_get_cases";
-          cluster_ids: number[];
-          case_count?: number;
-          opinion_count?: number;
-          cases?: {
-              cluster_id: number;
-              case_name: string | null;
-              citation: string | null;
-              dateFiled?: string | null;
-              url?: string | null;
-          }[];
-          error?: string;
-          isStreaming?: boolean;
-      }
-    | {
-          type: "courtlistener_find_in_case";
-          cluster_id: number | null;
-          query: string;
-          total_matches?: number;
-          case_name?: string | null;
-          citation?: string | null;
-          searches?: {
-              cluster_id: number | null;
-              query: string;
-              total_matches?: number;
-              case_name?: string | null;
-              citation?: string | null;
-              error?: string;
-          }[];
-          error?: string;
-          isStreaming?: boolean;
-      }
-    | {
-          type: "courtlistener_read_case";
-          cluster_id: number | null;
-          case_name?: string | null;
-          citation?: string | null;
-          opinion_count?: number;
-          error?: string;
-          isStreaming?: boolean;
-      }
-    | {
-          type: "courtlistener_verify_citations";
-          citation_count?: number;
-          match_count?: number;
-          error?: string;
-          isStreaming?: boolean;
-      }
-    | {
-          type: "case_citation";
-          cluster_id: number | null;
-          case_name: string | null;
-          citation: string | null;
-          url: string;
-          pdfUrl?: string | null;
-          dateFiled?: string | null;
-          document?: PanelDocument;
-      }
-    | {
-          type: "case_opinions";
-          cluster_id: number;
-          document?: PanelDocument;
-      }
-    | { type: "content"; text: string; isStreaming?: boolean };
+  | WireActivity<"text_card">
+  | AuthorityTraceAssistantEvent
+  | (WireActivity<"doc_search"> & { isStreaming?: boolean })
+  | (WireActivity<"web_search"> & { isStreaming?: boolean })
+  | (WireActivity<"web_read"> & { isStreaming?: boolean })
+  | WireActivity<"web_sources">
+  | WireActivity<"response_details">
+  | (Omit<WireDelegation, "events" | "status" | "model" | "effort"> & {
+      events: AssistantEvent[];
+      /** The rest arrive when the subagent finishes; a stopped run never gets them. */
+      status?: WireDelegation["status"];
+      model?: string;
+      effort?: WireDelegation["effort"];
+      isStreaming?: boolean;
+      activity?: string;
+    })
+  | (Omit<WireActivity<"reasoning">, "isStreaming"> & { isStreaming?: boolean })
+  | (Omit<WireActivity<"error">, "safe_to_display"> & {
+      safe_to_display?: boolean;
+    })
+  | {
+      type: "tool_call_start";
+      name: string;
+      isStreaming?: boolean;
+    }
+  | (Omit<WireActivity<"mcp_tool_call">, "error" | "isStreaming"> & {
+      error?: string;
+      isStreaming?: boolean;
+    })
+  | AskInputsEvent
+  | AskInputsResponseEvent
+  | { type: "thinking"; isStreaming?: boolean }
+  | (Omit<
+      WireActivity<"doc_read">,
+      "document_id" | "version_id" | "version_number" | "isStreaming"
+    > & {
+      document_id?: string;
+      version_id?: string | null;
+      version_number?: number | null;
+      isStreaming?: boolean;
+    })
+  | (Omit<
+      WireActivity<"doc_find">,
+      "document_id" | "version_id" | "version_number" | "isStreaming"
+    > & {
+      document_id?: string;
+      version_id?: string | null;
+      version_number?: number | null;
+      isStreaming?: boolean;
+    })
+  | (Omit<
+      WireActivity<"doc_created">,
+      "document_id" | "version_id" | "version_number" | "isStreaming"
+    > & {
+      document_id?: string;
+      version_id?: string;
+      version_number?: number | null;
+      isStreaming?: boolean;
+    })
+  | WireActivity<"doc_download">
+  | (Omit<
+      WireActivity<"doc_replicated">,
+      "copies" | "error" | "isStreaming"
+    > & {
+      copies?: {
+        new_filename: string;
+        document_id: string;
+        version_id: string;
+      }[];
+      error?: string;
+      isStreaming?: boolean;
+    })
+  | WireActivity<"workflow_applied">
+  | (Omit<
+      WireActivity<"doc_edited">,
+      "version_number" | "annotations" | "error" | "isStreaming"
+    > & {
+      version_number?: number | null;
+      annotations: EditAnnotation[];
+      error?: string;
+      isStreaming?: boolean;
+    })
+  | (Omit<
+      WireActivity<"courtlistener_search_case_law">,
+      "result_count" | "error" | "isStreaming"
+    > & { result_count?: number; error?: string; isStreaming?: boolean })
+  | (Omit<
+      WireActivity<"courtlistener_get_cases">,
+      "case_count" | "opinion_count" | "cases" | "error" | "isStreaming"
+    > & {
+      case_count?: number;
+      opinion_count?: number;
+      cases?: {
+        cluster_id: number;
+        case_name: string | null;
+        citation: string | null;
+        dateFiled?: string | null;
+        url?: string | null;
+      }[];
+      error?: string;
+      isStreaming?: boolean;
+    })
+  | (Omit<
+      WireActivity<"courtlistener_find_in_case">,
+      | "total_matches"
+      | "case_name"
+      | "citation"
+      | "searches"
+      | "error"
+      | "isStreaming"
+    > & {
+      total_matches?: number;
+      case_name?: string | null;
+      citation?: string | null;
+      searches?: {
+        cluster_id: number | null;
+        query: string;
+        total_matches?: number;
+        case_name?: string | null;
+        citation?: string | null;
+        error?: string;
+      }[];
+      error?: string;
+      isStreaming?: boolean;
+    })
+  | (Omit<
+      WireActivity<"courtlistener_read_case">,
+      "case_name" | "citation" | "opinion_count" | "error" | "isStreaming"
+    > & {
+      case_name?: string | null;
+      citation?: string | null;
+      opinion_count?: number;
+      error?: string;
+      isStreaming?: boolean;
+    })
+  | (Omit<
+      WireActivity<"courtlistener_verify_citations">,
+      "citation_count" | "match_count" | "error" | "isStreaming"
+    > & {
+      citation_count?: number;
+      match_count?: number;
+      error?: string;
+      isStreaming?: boolean;
+    })
+  | (Omit<
+      WireActivity<"case_citation">,
+      "pdfUrl" | "dateFiled" | "document"
+    > & {
+      pdfUrl?: string | null;
+      dateFiled?: string | null;
+      document?: PanelDocument;
+    })
+  | (Omit<WireActivity<"case_opinions">, "document"> & {
+      document?: PanelDocument;
+    })
+  | (Omit<WireActivity<"content">, "isStreaming"> & { isStreaming?: boolean });
 
 export type CaseCitationQuote = {
   opinionId: number | null;
@@ -376,6 +402,8 @@ export interface Message {
   content: string;
   files?: MessageFile[];
   workflow?: { id: string; title: string };
+  /** The playbook the user picked to run, shown as a pill. */
+  playbook?: { id: string; title: string };
   model?: string;
   reasoning?: "none" | "low" | "medium" | "high" | "xhigh" | "max";
   citations?: Citation[];
@@ -712,6 +740,8 @@ export interface ColumnConfig {
 export interface TabularReview {
   id: string;
   project_id: string | null;
+  /** Project label included with sidebar history results. */
+  project_name?: string | null;
   user_id: string;
   org_id?: string | null;
   title: string | null;
@@ -726,11 +756,15 @@ export interface TabularReview {
   is_owner?: boolean;
   /** Server-set: true while another generation request holds the review lease. */
   is_running?: boolean;
+  /** Every current row/column cell has a completed result. */
+  is_complete?: boolean;
   /** Server-computed role for the caller, from the detail endpoint and the
    *  overview RPC alike. */
   access_role?: "owner" | "editor" | "viewer";
   owner_email?: string | null;
   owner_display_name?: string | null;
+  /** The creator's photo; both review lists carry it. */
+  owner_profile_photo?: string | null;
   created_at: string;
   updated_at: string;
   document_count?: number;
@@ -790,6 +824,8 @@ export interface Workflow {
   id: string;
   user_id: string | null;
   org_id?: string | null;
+  /** Present on the detail payload; the lists carry `access_scope` instead. */
+  visibility?: ContentVisibility;
   access_scope?: ResourceAccessScope;
   organization_name?: string | null;
   direct_grant_count?: number;

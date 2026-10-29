@@ -1,5 +1,5 @@
 import express from "express";
-import { randomUUID } from "node:crypto";
+import { rateLimitedBody } from "./lib/httpError";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
@@ -22,7 +22,7 @@ import { quickActionsRouter } from "./modules/quick-actions/quickActions.routes"
 import { workflowAddonsRouter } from "./modules/workflows/workflowAddons.routes";
 import { userRouter } from "./modules/user/user.routes";
 import { modelsRouter } from "./modules/models/models.routes";
-import { downloadsRouter } from "./modules/downloads/downloads.routes";
+import { blobUploadHandler, downloadsRouter } from "./modules/downloads/downloads.routes";
 import { sourceDocumentsRouter } from "./modules/source-documents/sourceDocuments.routes";
 import { auditRouter } from "./modules/audit/audit.routes";
 import { authRouter } from "./modules/auth/auth.routes";
@@ -36,6 +36,7 @@ import {
   projectMemoryRouter,
   userMemoryRouter,
 } from "./modules/memory/memory.routes";
+import { playbooksRouter } from "./modules/playbooks/playbooks.routes";
 import { manifestPublicKey } from "./lib/manifestSigning";
 import { safeErrorLog } from "./lib/safeError";
 import { authorityTraceRouter } from "./altien/authorityTrace/router";
@@ -44,7 +45,7 @@ import { helpRouter } from "./modules/platform/help.routes";
 import { handleUnhandledError, protectInternalErrorResponses } from "./middleware/internalErrorResponse";
 import { configuredAllowedOrigins as configuredOrigins } from "./lib/origins";
 import { envInt } from "./lib/runtimeConfig";
-import { tagCurrentRequest } from "./lib/observability/sentry";
+import { requestDiagnostics } from "./middleware/requestDiagnostics";
 
 // ── Rate-limit configuration (from upstream ba6f771) ───────────────────────
 
@@ -93,9 +94,9 @@ function makeLimiter(options: {
     skip: (req) => req.method === "OPTIONS" || options.skip?.(req) === true,
     keyGenerator: options.keyGenerator,
     skipSuccessfulRequests: options.skipSuccessfulRequests,
-    message: {
-      detail: options.message ?? "Too many requests. Please try again later.",
-    },
+    message: rateLimitedBody(
+      options.message ?? "Too many requests. Please try again later.",
+    ),
   });
 }
 
@@ -157,6 +158,12 @@ export function buildApp(): express.Express {
     message: "Too many export requests. Please try again later.",
   });
 
+  const playbookImportLimiter = makeLimiter({
+    windowMs: hours(envInt("RATE_LIMIT_UPLOAD_WINDOW_HOURS", 1)),
+    max: envInt("RATE_LIMIT_UPLOAD_MAX", 50),
+    message: "Too many playbook imports. Please try again later.",
+  });
+
   const dataDeleteLimiter = makeLimiter({
     windowMs: hours(envInt("RATE_LIMIT_DATA_DELETE_WINDOW_HOURS", 1)),
     max: envInt("RATE_LIMIT_DATA_DELETE_MAX", 20),
@@ -179,14 +186,7 @@ export function buildApp(): express.Express {
   // OAuth redirect_uri and uses the ingress-stamped client IP for rate limiting.
   app.set("trust proxy", 1);
 
-  app.use((_req, res, next) => {
-    const requestId = randomUUID();
-    res.locals.requestId = requestId;
-    res.setHeader("X-Request-ID", requestId);
-    // Same id on the Sentry event, the response body, and the access log.
-    tagCurrentRequest(requestId);
-    next();
-  });
+  app.use(requestDiagnostics);
   app.use(protectInternalErrorResponses);
 
   // helmet (security headers) — taken from upstream ba6f771; CSP and COEP
@@ -237,15 +237,23 @@ export function buildApp(): express.Express {
   // the route mounts below. Bundled-frontend assets are exempt: one page
   // load fetches dozens of JS/CSS chunks, which exhausted the 300/15 min
   // budget after ~20 page loads (OSS-6 smoke, 2026-09-30).
+  const blobUploadPath = /^\/api\/download\/signed\/[^/]+$/;
+  const blobUploadLimiter = makeLimiter({
+    windowMs: minutes(envInt("RATE_LIMIT_BLOB_UPLOAD_WINDOW_MINUTES", 15)),
+    max: envInt("RATE_LIMIT_BLOB_UPLOAD_MAX", 1000),
+    message: "Too many uploads. Please try again later.",
+  });
   const uploadPartPath = /^\/api\/upload-sessions\/[^/]+\/files\/[^/]+\/parts\/\d+$/;
   app.use((req, res, next) =>
-    isStaticAsset(req) || (req.method === "PUT" && uploadPartPath.test(req.path))
+    isStaticAsset(req) || (req.method === "PUT" && (uploadPartPath.test(req.path) || blobUploadPath.test(req.path)))
       ? next() : generalLimiter(req, res, next),
   );
 
   // Parse this return channel before the general 50 MB parser. Its full
   // /api path also gives it a separate limiter budget under static hosting.
   app.post(TOOL_RESULT_PATH, toolResultLimiter, express.json({ limit: "2mb" }));
+  // The filesystem capability upload consumes a bounded stream before JSON parsing.
+  app.put("/api/download/signed/:token", blobUploadLimiter, blobUploadHandler);
   const jsonParser = express.json({ limit: JSON_BODY_LIMIT });
   // Blob parts are bounded streams. Never let the global JSON parser buffer a
   // mislabeled 8 MiB part (or the global 50 MiB ceiling) before ownership and
@@ -261,7 +269,9 @@ export function buildApp(): express.Express {
   app.use(cookieParser());
 
   // ── Static frontend bundle (must be set up BEFORE the API routers below) ──
-  const PUBLIC_DIR = path.resolve(__dirname, "..", "public");
+  const PUBLIC_DIR = process.env.FRONTEND_PUBLIC_DIR
+    ? path.resolve(process.env.FRONTEND_PUBLIC_DIR)
+    : path.resolve(__dirname, "..", "public");
   const FRONTEND_BUNDLED = fs.existsSync(PUBLIC_DIR);
 
   // Resolve the static-export shell file for `reqPath`. Returns a path on disk
@@ -319,6 +329,7 @@ export function buildApp(): express.Express {
   app.post("/api/projects/:projectId/chat", chatLimiter);
   app.post("/api/tabular-review/:reviewId/chat", chatLimiter);
   app.post("/api/tabular-review/:reviewId/generate", chatLimiter);
+  app.post("/api/playbooks/:playbookId/review", chatLimiter);
   app.post("/api/chat/create", chatCreateLimiter);
   app.post("/api/single-documents", uploadLimiter);
   app.post("/api/library/:kind/documents", uploadLimiter);
@@ -341,6 +352,7 @@ export function buildApp(): express.Express {
   // its download stay on the general limiter (upstream 33facdba removed the
   // synchronous user/audit export GETs and the /api/users alias).
   app.post("/api/user/exports", exportLimiter);
+  app.post(["/api/playbooks/import", "/api/playbooks/import/upload-url"], playbookImportLimiter);
   app.delete("/api/user/account", dataDeleteLimiter);
   app.delete("/api/user/chats", dataDeleteLimiter);
   app.delete("/api/user/projects", dataDeleteLimiter);
@@ -368,6 +380,7 @@ export function buildApp(): express.Express {
   app.use("/api/authority-trace", authorityTraceRouter);
   app.use("/api/altien/skills", skillsRouter);
   app.use("/api/audit", auditRouter);
+  app.use("/api/playbooks", playbooksRouter);
   app.use("/api/auth", authRouter);
   app.use("/api/llm", llmRouter);
   app.use("/api/admin/diagnostics", diagnosticsRouter);

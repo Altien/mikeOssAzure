@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkflowList } from "./WorkflowList";
@@ -91,6 +91,20 @@ vi.mock("./NewWorkflowModal", () => ({
 
 vi.mock("./WorkflowAddonPreviewModal", () => ({
   WorkflowAddonPreviewModal: () => null,
+}));
+
+const packAddons = [1, 2, 3].map((index) => ({
+  id: `pack-addon-${index}`,
+  addon_key: `workflow-${index}`,
+  pack_key: index === 3 ? "other-pack" : "starter-pack",
+  pack_title: index === 3 ? "Other pack" : "Starter pack",
+  pack_description: null,
+  title: `Pack workflow ${index}`,
+  type: "assistant",
+  description: "Test workflow",
+  language: "English",
+  practice: "General",
+  jurisdictions: ["General"],
 }));
 
 describe("WorkflowList pack toolbar", () => {
@@ -313,6 +327,57 @@ describe("WorkflowList pack toolbar", () => {
     expect(routerPush).not.toHaveBeenCalled();
   });
 
+  it("imports a folder from its plus button and shows progress without opening it", async () => {
+    const user = userEvent.setup();
+    listWorkflowAddons.mockResolvedValue(packAddons);
+    let finish!: (value: unknown) => void;
+    importWorkflowAddon
+      .mockResolvedValueOnce({ id: "copy-1" })
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    render(<WorkflowList initialTab="addons" />);
+    const folder = (await screen.findByText("Starter pack")).closest(".group") as HTMLElement;
+    const otherFolder = screen.getByText("Other pack").closest(".group") as HTMLElement;
+    const button = within(folder).getByRole("button", { name: "Import" });
+    expect(button).toHaveClass("h-6", "w-6");
+    expect(button.querySelector("svg")).toHaveClass("lucide-plus");
+    await user.click(button);
+
+    const pending = within(folder).getByRole("button", { name: "Importing…" });
+    expect(pending).toBeDisabled();
+    expect(pending).toHaveAttribute("aria-busy", "true");
+    expect(pending.querySelector("svg")).toHaveClass("animate-spin");
+    expect(within(otherFolder).getByRole("button", { name: "Import" })).toBeDisabled();
+    expect(importWorkflowAddon.mock.calls.map(([id]) => id)).toEqual(["pack-addon-1", "pack-addon-2"]);
+    expect(setActiveTab).not.toHaveBeenCalled();
+    expect(routerPush).not.toHaveBeenCalled();
+    expect(screen.queryByText("Pack workflow 1")).not.toBeInTheDocument();
+
+    await act(async () => finish({ id: "copy-2" }));
+    const imported = within(folder).getByRole("button", { name: "Imported" });
+    expect(imported).toHaveClass("text-green-600");
+    expect(imported).toBeDisabled();
+    expect(within(otherFolder).getByRole("button", { name: "Import" })).toBeEnabled();
+  });
+
+  it("retries a partially imported folder without copying successful workflows again", async () => {
+    const user = userEvent.setup();
+    listWorkflowAddons.mockResolvedValue(packAddons);
+    importWorkflowAddon
+      .mockResolvedValueOnce({ id: "copy-1" })
+      .mockRejectedValueOnce(new Error("Import failed"));
+    render(<WorkflowList initialTab="addons" />);
+    const folder = (await screen.findByText("Starter pack")).closest(".group") as HTMLElement;
+    await user.click(within(folder).getByRole("button", { name: "Import" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Some selected add-ons could not be imported.");
+    expect(within(folder).queryByRole("button", { name: "Imported" })).not.toBeInTheDocument();
+
+    importWorkflowAddon.mockResolvedValueOnce({ id: "copy-2" });
+    await user.click(within(folder).getByRole("button", { name: "Import" }));
+    expect(await within(folder).findByRole("button", { name: "Imported" })).toBeDisabled();
+    expect(importWorkflowAddon.mock.calls.map(([id]) => id)).toEqual(["pack-addon-1", "pack-addon-2", "pack-addon-2"]);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("shows resource access scopes in the workflows table", () => {
     activeTab.current = "all";
     workflowRows.current = [
@@ -365,13 +430,18 @@ describe("WorkflowList pack toolbar", () => {
     render(<WorkflowList />);
 
     expect(screen.getByText("Access")).toBeInTheDocument();
+    // One of three: Public, Private, or Private (Shared).
     expect(screen.getByText("Private")).toBeInTheDocument();
-    expect(screen.getByText("2 users")).toBeInTheDocument();
-    expect(screen.getByText("Elite Law LLP")).toBeInTheDocument();
-    expect(screen.getByTitle("Shared with Elite Law LLP")).toBeVisible();
+    expect(screen.getByText("Private (Shared)")).toBeInTheDocument();
+    expect(screen.getByText("Public")).toBeInTheDocument();
+    // How many people, and whose "everyone", are in the hover detail.
+    expect(screen.getByTitle("Shared with 2 users")).toBeVisible();
+    expect(
+      screen.getByTitle("Shared with everyone in Elite Law LLP"),
+    ).toBeVisible();
   });
 
-  it("filters Private and Shared from the Access column header", async () => {
+  it("filters Public and Private from the Access column header", async () => {
     const user = userEvent.setup();
     activeTab.current = "all";
     render(<WorkflowList />);
@@ -379,11 +449,11 @@ describe("WorkflowList pack toolbar", () => {
     await user.click(
       screen.getByRole("button", { name: "Filter by access" }),
     );
-    await user.click(screen.getByRole("menuitem", { name: "Shared" }));
+    await user.click(screen.getByRole("menuitem", { name: "Public" }));
 
     const calls = usePaginatedWorkflowsSpy.mock.calls;
     expect(calls.at(-1)?.[0]).toEqual(
-      expect.objectContaining({ scope: "collaborative" }),
+      expect.objectContaining({ scope: "public" }),
     );
 
     await user.click(
@@ -391,7 +461,8 @@ describe("WorkflowList pack toolbar", () => {
     );
     await user.click(screen.getByRole("menuitem", { name: "Private" }));
     expect(usePaginatedWorkflowsSpy.mock.calls.at(-1)?.[0]).toEqual(
-      expect.objectContaining({ scope: "private" }),
+      // Private is everything that is not public, shared or not.
+      expect.objectContaining({ scope: "nonpublic" }),
     );
   });
 

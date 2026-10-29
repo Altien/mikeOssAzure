@@ -2,6 +2,20 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { AskInputPopup } from "./AskInputPopup";
 
+// This harness renders authenticated work without booting the session provider.
+// Keep the real owner/generation hooks; only supply their controlled auth input.
+const authenticatedOwner = vi.hoisted(() => ({
+  user: { id: "u1", email: "owner@example.com", pendingEmail: null, createdWithGoogle: false },
+  isAuthenticated: true, authLoading: false, authError: null,
+  signOut: vi.fn(async () => {}), signInLocal: vi.fn(async () => {}),
+  getAccessToken: vi.fn(async () => "test-token"), updateEmail: vi.fn(), setPassword: vi.fn(async () => {}),
+  refreshSession: vi.fn(async () => null), retrySession: vi.fn(async () => null),
+}));
+vi.mock("@/app/contexts/AuthContext", async (original) => ({
+  ...(await original<typeof import("@/app/contexts/AuthContext")>()),
+  useAuth: () => authenticatedOwner,
+}));
+
 describe("AskInputPopup", () => {
     it("submits an open-ended answer entered in a textarea", async () => {
         const onSubmit = vi.fn();
@@ -255,6 +269,22 @@ describe("AskInputPopup", () => {
         );
     });
 
+    it("names the subagent that requested an action", () => {
+        render(
+            <AskInputPopup
+                assistantMessageId="assistant-1"
+                event={{
+                    type: "ask_inputs",
+                    event_id: "ask-1",
+                    items: [{ ...sendEmail, requested_by: "Notify counsel" }],
+                }}
+                onSubmit={vi.fn()}
+            />,
+        );
+
+        expect(screen.getByText(/Notify counsel/)).toBeInTheDocument();
+    });
+
     it("collects a decision for every pending action before submitting", async () => {
         const onSubmit = vi.fn();
         render(
@@ -280,4 +310,18 @@ describe("AskInputPopup", () => {
             { id: "approve-post", kind: "approval", decision: "approve" },
         ]);
     });
+});
+
+
+it("caps Other choice answers at the backend limit", () => {
+    const onSubmit = vi.fn();
+    render(<AskInputPopup assistantMessageId="assistant-1" event={{ type: "ask_inputs", event_id: "ask-1", items: [{ id: "a", kind: "choice", question: "Which option?", options: [{ value: "Option A" }], allow_other: true, other_label: "Other" }] }} onSubmit={onSubmit} />);
+    fireEvent.click(screen.getByText("Other"));
+    const input = screen.getByRole("textbox", { name: "Other" });
+    expect(input).toHaveAttribute("maxlength", "1000");
+    fireEvent.change(input, { target: { value: "x".repeat(1001) } });
+    expect(input).toHaveValue("x".repeat(1000));
+    expect(screen.getByText("1,000 / 1,000")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(onSubmit.mock.calls[0][0].responses[0].answer).toHaveLength(1000);
 });

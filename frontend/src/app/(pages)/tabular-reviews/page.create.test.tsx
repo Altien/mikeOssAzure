@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { MikeApiError } from "@/app/lib/mikeApi";
+import { listProjects, MikeApiError } from "@/app/lib/mikeApi";
 import type { TabularReview } from "@/app/components/shared/types";
 import TabularReviewsPage from "./page";
 
@@ -29,6 +29,13 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
         grantTabularReviewAccess(...args),
     listProjects: vi.fn(async () => []),
     listWorkflows: vi.fn(async () => []),
+}));
+
+const workspaceOrg = vi.hoisted(() => ({ id: undefined as string | undefined }));
+vi.mock("@/app/contexts/WorkspaceContext", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("@/app/contexts/WorkspaceContext")>()),
+    useWorkspaceOrgId: () => workspaceOrg.id,
+    useWorkspaceParam: () => workspaceOrg.id ?? "personal",
 }));
 
 vi.mock("next/navigation", () => ({
@@ -196,6 +203,7 @@ async function openDialogAndReachCreate() {
 describe("Tabular reviews page creation", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        workspaceOrg.id = undefined;
         window.matchMedia = vi.fn().mockImplementation((query: string) => ({
             matches: true,
             media: query,
@@ -206,6 +214,46 @@ describe("Tabular reviews page creation", () => {
             removeEventListener: vi.fn(),
             dispatchEvent: vi.fn(),
         }));
+    });
+
+    it("reloads project choices and closes the old workspace's create dialog on a switch", async () => {
+        const { rerender } = render(<TabularReviewsPage />);
+        await waitFor(() => expect(listProjects).toHaveBeenLastCalledWith({ workspace: "personal" }));
+        fireEvent.click(screen.getByRole("button", { name: "New tabular review" }));
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
+        workspaceOrg.id = "org-1";
+        rerender(<TabularReviewsPage />);
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+        await waitFor(() => expect(listProjects).toHaveBeenLastCalledWith({ workspace: "org-1" }));
+    });
+
+    // A review started on its own belongs to the workspace it is started in.
+    it("files the review under the organization whose workspace is active", async () => {
+        workspaceOrg.id = "org-1";
+        createTabularReview.mockResolvedValue(createdReview);
+        grantTabularReviewAccess.mockResolvedValue({});
+
+        fireEvent.click(await openDialogAndReachCreate());
+
+        await waitFor(() => expect(createTabularReview).toHaveBeenCalled());
+        expect(createTabularReview.mock.calls[0][0]).toMatchObject({
+            org_id: "org-1",
+        });
+        expect(createTabularReview.mock.calls[0][0]).not.toHaveProperty(
+            "project_id",
+        );
+    });
+
+    it("names no organization for a review started in Personal", async () => {
+        createTabularReview.mockResolvedValue(createdReview);
+        grantTabularReviewAccess.mockResolvedValue({});
+
+        fireEvent.click(await openDialogAndReachCreate());
+
+        await waitFor(() => expect(createTabularReview).toHaveBeenCalled());
+        expect(createTabularReview.mock.calls[0][0]).not.toHaveProperty(
+            "org_id",
+        );
     });
 
     it("keeps the created review and reports the refused grant instead of creating a second review", async () => {

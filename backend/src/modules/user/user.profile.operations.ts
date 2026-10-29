@@ -6,6 +6,7 @@ import { findProfileUserByEmail } from "../../lib/userLookup";
 import { replaceUserRouterModels, ROUTER_SLUGS, type RouterSlug } from "../../lib/routerModels";
 import { type Db } from "./user.shared";
 import { ensureProfileRow, loadProfile } from "./user.profile.load";
+import { AppError, type ErrorKind } from "../../lib/appError";
 
 import { PersonalisationUpdate } from "./user.profile.validation";
 
@@ -37,6 +38,7 @@ export async function getUserProfile(
     return { ok: true, body: { ...data, apiKeyStatus } };
 }
 
+/** Returns the minimal identity needed to offer a new direct share. */
 export async function lookupUserByEmail(
     db: Db,
     email: string,
@@ -90,18 +92,33 @@ export async function updateUserProfile(
 // Onboarding + password capability
 // ---------------------------------------------------------------------------
 
-// Records the personalisation answers and marks onboarding complete. Unlike
-// the sendInternalError-backed profile handlers, these two surfaces still
-// report the underlying message, so the failure results carry `detail`.
+// A failed query as the route's sendInternalError should report it: the kind
+// names what broke, the PostgREST object stays the cause so its code still
+// extracts; `detail` keeps the message for callers that read it.
+function profileWriteFailure(
+    kind: ErrorKind,
+    message: string,
+    cause: { message: string },
+): { ok: false; detail: string; error: AppError } {
+    return {
+        ok: false,
+        detail: cause.message,
+        error: new AppError(kind, message, { cause }),
+    };
+}
+
+// Records the personalisation answers and marks onboarding complete.
 export async function completeUserOnboarding(
     db: Db,
     userId: string,
     update: PersonalisationUpdate,
 ): Promise<
-    { ok: true; body: Record<string, unknown> } | { ok: false; detail: string }
+    | { ok: true; body: Record<string, unknown> }
+    | { ok: false; detail: string; error: AppError }
 > {
     const ensureError = await ensureProfileRow(db, userId);
-    if (ensureError) return { ok: false, detail: ensureError.message };
+    if (ensureError)
+        return profileWriteFailure("db.query_failed", "profile row could not be ensured", ensureError);
 
     const { error: updateError } = await db
         .from("user_profiles")
@@ -111,17 +128,18 @@ export async function completeUserOnboarding(
             updated_at: new Date().toISOString(),
         })
         .eq("user_id", userId);
-    if (updateError) return { ok: false, detail: updateError.message };
+    if (updateError)
+        return profileWriteFailure("db.query_failed", "onboarding update failed", updateError);
 
     const apiKeyStatus = await getUserApiKeyStatus(userId, db);
     const { data, error } = await loadProfile(db, userId, { apiKeyStatus });
-    if (error) return { ok: false, detail: error.message };
+    if (error) return profileWriteFailure("db.query_failed", "profile load failed", error);
     return { ok: true, body: { ...data, apiKeyStatus } };
 }
 
 export type RecordPasswordSetResult =
     | { ok: true; body: Record<string, unknown> }
-    | { ok: false; kind: "db_error"; detail: string }
+    | { ok: false; kind: "db_error"; detail: string; error: AppError }
     | { ok: false; kind: "provider_error"; status: number; detail: string };
 
 // The normal current-user provider update enforces secure password changes
@@ -164,14 +182,18 @@ export async function recordPasswordSet(
             detail: "The sign-in provider could not update the password." };
     const ensureError = await ensureProfileRow(db, userId);
     if (ensureError)
-        return { ok: false, kind: "db_error", detail: ensureError.message };
+        return { kind: "db_error", ...profileWriteFailure("db.query_failed", "Profile row could not be ensured", ensureError) };
     const { error: markerError } = await db.from("user_profiles")
         .update({ password_set_at: new Date().toISOString(), updated_at: new Date().toISOString() })
         .eq("user_id", userId);
-    if (markerError) return { ok: false, kind: "db_error", detail: markerError.message };
+    if (markerError) return { kind: "db_error", ...profileWriteFailure("db.query_failed", "Password marker could not be recorded", markerError) };
 
     const apiKeyStatus = await getUserApiKeyStatus(userId, db);
     const { data, error } = await loadProfile(db, userId, { apiKeyStatus });
-    if (error) return { ok: false, kind: "db_error", detail: error.message };
+    if (error)
+        return {
+            kind: "db_error",
+            ...profileWriteFailure("db.query_failed", "profile load failed", error),
+        };
     return { ok: true, body: { ...data, apiKeyStatus } };
 }

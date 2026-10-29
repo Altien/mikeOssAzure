@@ -13,6 +13,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
+import { AppError } from "../../lib/appError";
 import {
   ALLOWED_DOCUMENT_TYPES,
   ALLOWED_DOCUMENT_TYPES_LABEL,
@@ -44,8 +45,16 @@ const clientFileSchema = z
   })
   .strict();
 
+// A document uploaded on its own — attached to a chat, or added to the
+// library — belongs to the workspace it is uploaded in: `org_id` names that
+// organization, and its absence is Personal. A project or workflow decides
+// for the documents uploaded into it.
+const workspaceOrgId = z.string().uuid().nullable().optional();
+
 const documentDestinationSchema = z.discriminatedUnion("scope", [
-  z.object({ scope: z.literal("standalone") }).strict(),
+  z
+    .object({ scope: z.literal("standalone"), org_id: workspaceOrgId })
+    .strict(),
   z
     .object({
       scope: z.literal("project"),
@@ -58,6 +67,7 @@ const documentDestinationSchema = z.discriminatedUnion("scope", [
       scope: z.literal("library"),
       library_kind: z.enum(["file", "template"]),
       folder_id: z.string().uuid().nullable().optional(),
+      org_id: workspaceOrgId,
     })
     .strict(),
   z
@@ -147,7 +157,11 @@ export type ParsedUploadSessionRequest = {
   files: UploadSessionFile[];
 };
 
-export class UploadSessionValidationError extends Error {
+/**
+ * The client's manifest was refused. `status` and `code` are what the route
+ * answers with; the AppError kind is what Sentry sees if one ever escapes.
+ */
+export class UploadSessionValidationError extends AppError {
   readonly status: number;
   readonly code: string;
 
@@ -155,8 +169,7 @@ export class UploadSessionValidationError extends Error {
     message: string,
     options: { status?: number; code?: string } = {},
   ) {
-    super(message);
-    this.name = "UploadSessionValidationError";
+    super("upload.session_invalid", message);
     this.status = options.status ?? 400;
     this.code = options.code ?? "invalid_upload_session";
   }

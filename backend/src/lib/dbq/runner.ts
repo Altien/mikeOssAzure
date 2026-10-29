@@ -13,8 +13,10 @@
 // query, and FOR UPDATE SKIP LOCKED in the claim RPC makes any number of
 // backend replicas partition the work safely.
 
+import { AppError } from "../appError";
 import { createServerSupabase } from "../supabase";
 import { jobErrorMessage } from "./jobError";
+import { runIsolated } from "./jobScope";
 import { deleteFile } from "../storage";
 import { enqueueAppJobDelivery } from "../queue/appJobsQueue";
 import { redisEnabled } from "./driver";
@@ -24,7 +26,7 @@ import {
     type DbJob,
     type DbJobHandlers,
 } from "./types";
-import { reportError } from "../observability/sentry";
+import { reportError, setOperation } from "../observability/sentry";
 import {
     createPollFailureGate,
     type PollFailureGate,
@@ -102,14 +104,13 @@ export type DbJobFailureHook = (db: Db, job: DbJob) => Promise<void>;
  *
  * The retry budget is for flaky networks and busy databases. Spending 20
  * attempts over hours on a job the domain will refuse identically every time
- * (account deletion for the only admin of an organization that still has
+ * (account deletion for the only owner of an organization that still has
  * members) buries the real reason under a wall of repeats and leaves the
  * user's request in limbo far longer than it needs to be.
  */
-export class NonRetryableJobError extends Error {
+export class NonRetryableJobError extends AppError {
     constructor(message: string) {
-        super(message);
-        this.name = "NonRetryableJobError";
+        super("dbq.non_retryable", message);
     }
 }
 
@@ -122,7 +123,7 @@ export class NonRetryableJobError extends Error {
  *   unknown kind            -> failed immediately (retrying can't fix it)
  * Exported for unit tests; the poll loop below is just claim + fan-in.
  */
-export async function processClaimedJob(
+async function runClaimedJob(
     db: Db,
     handlers: DbJobHandlers,
     job: DbJob,
@@ -175,6 +176,7 @@ export async function processClaimedJob(
     const retryUntilSuccess = RETRY_UNTIL_SUCCESS_KINDS.has(job.kind);
     const handler = handlers[job.kind];
     if (!handler) {
+        setOperation("jobs.dispatch");
         clearInterval(heartbeat);
         // During a rolling deploy, an older worker may claim a cleanup job
         // before it knows the handler. Keep private object cleanup retryable.
@@ -184,7 +186,7 @@ export async function processClaimedJob(
             null,
             retryUntilSuccess ? new Date(Date.now() + 60_000).toISOString() : null,
         );
-        const unknownKind = new Error(`Unknown db_jobs kind: ${job.kind}`);
+        const unknownKind = new AppError("dbq.unknown_job_kind", `Unknown db_jobs kind: ${job.kind}`);
         reportError(unknownKind, {
             tags: { component: "dbq", job_kind: job.kind },
             extra: { job_id: job.id },
@@ -199,12 +201,32 @@ export async function processClaimedJob(
         return;
     }
 
+    let unpublishedResult: Record<string, unknown> | void;
+    let publicationUncertain = false;
+    const discardUnpublished = async () => {
+        if (!unpublishedResult || !handler.onUnpublishedResult) return;
+        try {
+            await handler.onUnpublishedResult(db, job, unpublishedResult, { publicationUncertain });
+            unpublishedResult = undefined;
+        } catch (cleanupError) {
+            // An unknown publication outcome is not permission to delete.
+            reportError(cleanupError, { tags: { component: "dbq", job_kind: job.kind, stage: "failure-hook" }, extra: { job_id: job.id } });
+        }
+    };
     try {
-        if (!handler) throw new Error(`unknown job kind: ${job.kind}`);
+        if (!handler) throw new AppError("dbq.unknown_job_kind", `unknown job kind: ${job.kind}`);
         const result = await handler(db, job);
+        unpublishedResult = result;
         clearInterval(heartbeat);
-        if (!await finish("done", null, result ?? null))
+        publicationUncertain = true;
+        const published = await finish("done", null, result ?? null);
+        publicationUncertain = false;
+        if (!published) {
             console.warn("[dbq] claim lost before completion", { id: job.id });
+            await discardUnpublished();
+        } else {
+            unpublishedResult = undefined;
+        }
     } catch (err) {
         clearInterval(heartbeat);
         const message = jobErrorMessage(err);
@@ -235,6 +257,10 @@ export async function processClaimedJob(
                 return data === true;
               })()
             : await finish(spent ? "failed" : "pending", message, null, spent ? null : runAt);
+        // This follows the fenced retry/terminal transition: a lost response
+        // from finish(done) is reconciled by the handler before cleanup.
+        if (owned) publicationUncertain = false;
+        await discardUnpublished();
         if (!owned) {
             console.warn("[dbq] claim lost before retry transition", { id: job.id });
             return;
@@ -503,4 +529,9 @@ export async function stopDbJobRunner(): Promise<void> {
     pollTimer = null;
     sweepTimer = null;
     if (inFlight) await inFlight;
+}
+
+/** Each canonical claimed job keeps its own diagnostic operation/stage scope. */
+export async function processClaimedJob(db: Db, handlers: DbJobHandlers, job: DbJob, failureHooks: Readonly<Record<string, DbJobFailureHook>> = {}): Promise<void> {
+    return runIsolated(() => runClaimedJob(db, handlers, job, failureHooks));
 }

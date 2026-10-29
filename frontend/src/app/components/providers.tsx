@@ -8,6 +8,7 @@ import { FullScreenLoader } from "@/app/components/shared/FullScreenLoader";
 import { AoaiDeploymentsProvider } from "@/altien/models/aoaiDeployments";
 import { OnboardingGate } from "@/app/components/auth/OnboardingGate";
 import { useInputModality } from "@/app/hooks/useInputModality";
+import { AppToasts } from "@/app/components/ui/toast";
 
 // Upstream divergence (OSS-6, auth): dev wraps the tree in ConfigProvider
 // (runtime GET /config decides entra | local | supabase before AuthProvider
@@ -26,6 +27,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
                             <OnboardingGate>{children}</OnboardingGate>
                         </Suspense>
                     </AoaiDeploymentsProvider>
+                    <AppToasts />
                 </UserProfileProvider>
             </AuthProvider>
         </ConfigProvider>

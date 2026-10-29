@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { completeText, reportError } = vi.hoisted(() => ({
     completeText: vi.fn(),
@@ -68,7 +68,7 @@ describe("logChatTitleFailure", () => {
         expect(reportError).toHaveBeenCalledTimes(1);
         expect(reportError).toHaveBeenCalledWith(retryError, {
             level: "warning",
-            tags: { component: "chat-title" },
+            tags: { component: "chat-title", operation: "chat.title" },
         });
         expect(console.error).not.toHaveBeenCalled();
         expect(console.warn).toHaveBeenCalledTimes(1);
@@ -89,6 +89,42 @@ describe("logChatTitleFailure", () => {
 });
 
 describe("generateAssistantChatTitle", () => {
+    afterEach(() => vi.useRealTimers());
+
+    it("bounds a title provider that ignores abort", async () => {
+        vi.useFakeTimers();
+        completeText.mockImplementation(() => new Promise(() => {}));
+        const pending = generateAssistantChatTitle({
+            model: "title-model",
+            message: "Hello",
+        });
+        const rejected = expect(pending).rejects.toMatchObject({
+            name: "TimeoutError",
+        });
+        await vi.advanceTimersByTimeAsync(15_001);
+        await rejected;
+        expect(completeText.mock.calls[0][0].abortSignal.aborted).toBe(true);
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("releases a pending title immediately on user Stop", async () => {
+        vi.useFakeTimers();
+        completeText.mockImplementation(() => new Promise(() => {}));
+        const controller = new AbortController();
+        const pending = generateAssistantChatTitle({
+            model: "title-model",
+            message: "Hello",
+            abortSignal: controller.signal,
+        });
+        const rejected = expect(pending).rejects.toMatchObject({
+            name: "AbortError",
+        });
+        controller.abort();
+        await rejected;
+        expect(completeText.mock.calls[0][0].abortSignal.aborted).toBe(true);
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
     beforeEach(() => {
         vi.clearAllMocks();
     });

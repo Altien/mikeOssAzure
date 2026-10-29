@@ -8,10 +8,19 @@ import {
   type ReactNode,
 } from "react";
 import Image from "next/image";
-import { Plus } from "lucide-react";
+import { FolderPlus, Plus } from "lucide-react";
 import { ConnectorSetupGuideLink } from "@/app/components/settings/ConnectorSetupGuideLink";
 import { NewCustomMcpModal } from "@/app/components/settings/NewCustomMcpModal";
-import { ConnectorCard } from "@/app/components/settings/ConnectorCard";
+import {
+  ConnectorCard,
+  ConnectorCardSkeleton,
+} from "@/app/components/settings/ConnectorCard";
+import {
+  COURTLISTENER_NAME,
+  CourtListenerIcon,
+  CourtListenerTokenModal,
+  useCourtListenerConnector,
+} from "@/app/components/settings/CourtListenerConnector";
 import {
   McpConnectorForm,
   type McpConnectorFormDraft,
@@ -32,7 +41,14 @@ import {
   type GoogleConnector,
   type GoogleConnectorProvider,
 } from "@/app/components/settings/useGoogleConnector";
+import { useGoogleDrivePicker } from "@/app/components/settings/useGoogleDrivePicker";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
+import {
+  PERSONAL_WORKSPACE,
+  PERSONAL_WORKSPACE_LABEL,
+  useWorkspace,
+} from "@/app/contexts/WorkspaceContext";
+import { useHasMultipleWorkspaces } from "@/app/hooks/useHasMultipleWorkspaces";
 import {
   type McpConnectorSummary,
   MikeApiError,
@@ -46,19 +62,49 @@ import {
   startMcpConnectorOAuth,
   updateMcpConnector,
 } from "@/app/lib/mikeApi";
-import { userFacingApiError } from "@/app/lib/userFacingError";
+import { reportFault } from "@/app/lib/userFacingError";
 import { SettingsDescription } from "@/app/components/settings/SettingsText";
-import { GlassCardUI } from "@/shared/ui/GlassCardUI";
 import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { LIQUID_GLASS_SUBTLE_CLASS } from "@/shared/ui/LiquidGlassUI";
 import { ToggleSwitchUI } from "@/shared/ui/ToggleSwitchUI";
 
+/** What the user was doing, for "Couldn't ..." and honest retry text. */
+const CONNECTOR_ACTION_LABELS = {
+  create: "add this connector",
+  save: "save this connector",
+  "clear-token": "clear the stored token",
+  delete: "delete this connector",
+  refresh: "refresh this connector",
+  "connector-enabled": "change this connector",
+  "tool-enabled": "change this tool",
+  "google-add": "add this connector",
+  "native-update": "update this connector",
+  "write-approval": "change write approval for this connector",
+  "read-only": "change this connector's read-only setting",
+} as const;
+
+/**
+ * The one place connector failures become words. Never echoes a raw error.
+ * No per-code table: a connector 4xx `detail` (setup steps, "needs to be
+ * authorized again") is written for users by the backend and passes through
+ * `describeError` untouched, and `oauth_required` from Refresh is handled
+ * by re-running the authorization, never shown.
+ */
+function connectorMessage(error: unknown, action: string): string {
+  return reportFault(error, {
+    action,
+    fallback: `Mike couldn't ${action}. Try again.`,
+    operation: "settings.connectors",
+  }).message;
+}
+
 type PendingMfaAction =
   | { type: "create"; draft: AddDraft; surface: CreateSurface }
   | { type: "google-add"; provider: GoogleConnectorProvider }
-  // A Google settings change or delete; replayed as-is after verification.
-  | { type: "google-update"; retry: () => Promise<void> }
+  // A Google or CourtListener settings change or delete; replayed as-is
+  // after verification.
+  | { type: "native-update"; retry: () => Promise<void> }
   | { type: "write-approval"; connectorId: string; enabled: boolean }
   | { type: "read-only"; connectorId: string; enabled: boolean }
   | { type: "save"; connectorId: string }
@@ -140,6 +186,8 @@ function isGoogleMcpConnector(connector: McpConnectorSummary) {
       hostname === "googleapis.com" || hostname.endsWith(".googleapis.com")
     );
   } catch {
+    // A URL we cannot parse is simply not Google's. Nothing the user asked
+    // for fails here, so there is nothing to report.
     return false;
   }
 }
@@ -274,9 +322,9 @@ function ConnectorBrandIcon({ name }: { name: string }) {
 }
 
 function googleSetupGuideUrl(provider: GoogleConnectorProvider) {
-  return `https://github.com/open-legal-products/mike/blob/main/docs/${
-    provider === "google-drive" ? "google-drive" : "google-workspace"
-  }.md`;
+  return `https://github.com/open-legal-products/mike/blob/main/docs/google-workspace.md#${
+    provider === "google-drive" ? "google-drive" : "gmail-and-google-calendar"
+  }`;
 }
 
 function GoogleConnectorIcon({
@@ -336,7 +384,54 @@ function mcpDetailsView(connector: McpConnectorSummary): ConnectorDetailsView {
   };
 }
 
+/**
+ * Connections belong to a workspace: a person keeps a separate set for
+ * Personal and for each organization they belong to, and a chat uses only
+ * those of the workspace it is in. This page manages the active workspace's.
+ *
+ * Keyed by workspace, so switching starts again from the other workspace's
+ * connections: nothing loaded, selected or pending for one workspace can be
+ * shown or saved in another, and an authorization still waiting is abandoned
+ * (and cancelled in the workspace it was started in).
+ */
 export default function ConnectorsPage() {
+  const { workspaceId, activeOrganization } = useWorkspace();
+  const multipleWorkspaces = useHasMultipleWorkspaces();
+  const workspace = workspaceId ?? undefined;
+  const organizationName =
+    workspace && workspace !== PERSONAL_WORKSPACE
+      ? (activeOrganization?.name ?? null)
+      : null;
+  return (
+    <WorkspaceConnectors
+      key={workspace ?? PERSONAL_WORKSPACE}
+      workspace={workspace}
+      organizationName={organizationName}
+      multipleWorkspaces={multipleWorkspaces}
+    />
+  );
+}
+
+function WorkspaceConnectors({
+  workspace,
+  organizationName,
+  multipleWorkspaces,
+}: {
+  /** "personal", an organization id, or undefined outside a workspace. */
+  workspace: string | undefined;
+  /** The active organization's name, or null in Personal (or still loading). */
+  organizationName: string | null;
+  /** Whether the person has more than one workspace to tell apart. */
+  multipleWorkspaces: boolean;
+}) {
+  // Which workspace these connectors are saved for, said only to someone
+  // with more than one, and only once that workspace has a name to show.
+  const savedFor = !multipleWorkspaces
+    ? null
+    : (organizationName ??
+      (workspace && workspace !== PERSONAL_WORKSPACE
+        ? null
+        : PERSONAL_WORKSPACE_LABEL));
   const [connectors, setConnectors] = useState<McpConnectorSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -385,13 +480,21 @@ export default function ConnectorsPage() {
   const selectedConnector = selectedConnectorDetails;
   const initializedDetailConnectorIdRef = useRef<string | null>(null);
   // Hooks in a fixed order: Discover lists Google in this order too.
-  const googleDrive = useGoogleConnector("google-drive", "Google Drive");
-  const gmail = useGoogleConnector("gmail", "Gmail");
+  const googleDrive = useGoogleConnector(
+    "google-drive",
+    "Google Drive",
+    workspace,
+  );
+  const gmail = useGoogleConnector("gmail", "Gmail", workspace);
   const googleCalendar = useGoogleConnector(
     "google-calendar",
     "Google Calendar",
+    workspace,
   );
   const googleConnectors = [googleDrive, gmail, googleCalendar];
+  const courtListener = useCourtListenerConnector(workspace);
+  const [courtListenerOpen, setCourtListenerOpen] = useState(false);
+  const drivePicker = useGoogleDrivePicker(workspace);
   const [selectedGoogleProvider, setSelectedGoogleProvider] =
     useState<GoogleConnectorProvider | null>(null);
   const selectedGoogle =
@@ -399,17 +502,20 @@ export default function ConnectorsPage() {
       (connector) => connector.provider === selectedGoogleProvider,
     ) ?? null;
 
+  // Only the first load shows placeholders; a reload keeps the lists.
+  const [connectorsLoaded, setConnectorsLoaded] = useState(false);
   const loadConnectors = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      setConnectors(await listMcpConnectors());
+      setConnectors(await listMcpConnectors(workspace));
     } catch (err) {
-      setError(userFacingApiError(err, "Failed to load connectors."));
+      setError(connectorMessage(err, "load your connectors"));
     } finally {
       setLoading(false);
+      setConnectorsLoaded(true);
     }
-  }, []);
+  }, [workspace]);
 
   useEffect(() => {
     void loadConnectors();
@@ -504,9 +610,7 @@ export default function ConnectorsPage() {
         current && current.id !== connectorId ? current : fresh,
       );
     } catch (err) {
-      setDetailError(
-        userFacingApiError(err, "Failed to load connector details."),
-      );
+      setDetailError(connectorMessage(err, "load this connector"));
     } finally {
       setLoadingConnectorId((current) =>
         current === connectorId ? null : current,
@@ -534,15 +638,10 @@ export default function ConnectorsPage() {
         // Refresh from the details modal on a Slack/Google connector
         // whose OAuth client is not configured on this server: show
         // the operator guidance where the user is looking.
-        setDetailSetupNotice(err.message);
+        setDetailSetupNotice(connectorMessage(err, CONNECTOR_ACTION_LABELS[action.type]));
         return;
       }
-      const message = userFacingApiError(
-        err,
-        action.type === "google-add"
-          ? "Failed to add connector."
-          : "Action failed.",
-      );
+      const message = connectorMessage(err, CONNECTOR_ACTION_LABELS[action.type]);
       if (action.type === "google-add") {
         setAddErrorGuideUrl(
           isConnectorSetupError(err)
@@ -559,7 +658,7 @@ export default function ConnectorsPage() {
         setAddError(message);
       } else if (
         action.type === "save" ||
-        action.type === "google-update" ||
+        action.type === "native-update" ||
         action.type === "write-approval" ||
         action.type === "read-only"
       )
@@ -606,8 +705,10 @@ export default function ConnectorsPage() {
     });
   };
 
-  /** A Manage-dialog change to a Google connector, through the shared sensitive-action path. */
-  const runGoogleUpdate = async (busy: string, change: () => Promise<void>) => {
+  /**
+   * A change to a Google or CourtListener connector, under the deployment authentication boundary.
+   */
+  const runNativeUpdate = async (busy: string, change: () => Promise<void>) => {
     const run = async () => {
       setBusyKey(busy);
       try {
@@ -616,11 +717,11 @@ export default function ConnectorsPage() {
         setBusyKey(null);
       }
     };
-    await runSensitiveAction({ type: "google-update", retry: run }, run);
+    await runSensitiveAction({ type: "native-update", retry: run }, run);
   };
 
   const handleDeleteGoogle = (connector: GoogleConnector) =>
-    runGoogleUpdate(`delete:${connector.provider}`, async () => {
+    runNativeUpdate(`delete:${connector.provider}`, async () => {
       await connector.disconnect();
       setSelectedGoogleProvider(null);
     });
@@ -842,12 +943,15 @@ export default function ConnectorsPage() {
       };
       try {
         const headers = parseCustomHeaders(draft.customHeaders);
-        const created = await createMcpConnector({
-          name: draft.name,
-          serverUrl: draft.serverUrl,
-          bearerToken: draft.bearerToken.trim() || null,
-          ...(headers ? { headers } : {}),
-        });
+        const created = await createMcpConnector(
+          {
+            name: draft.name,
+            serverUrl: draft.serverUrl,
+            bearerToken: draft.bearerToken.trim() || null,
+            ...(headers ? { headers } : {}),
+          },
+          workspace,
+        );
         const connector = created.connector;
         createdConnector = connector;
         replaceConnector(connector);
@@ -900,7 +1004,7 @@ export default function ConnectorsPage() {
           // the incomplete connector from Installed is immediately actionable.
           await loadConnectors();
         }
-        const message = userFacingApiError(err, "Failed to add connector.");
+        const message = connectorMessage(err, "add this connector");
         const discarded = await discardCreatedConnector();
         setAddErrorGuideUrl(
           isConnectorSetupError(err)
@@ -1199,7 +1303,30 @@ export default function ConnectorsPage() {
   const installedGoogle = googleConnectors.filter(
     (connector) => connector.status?.connected,
   );
+  // Discover only offers what is not installed yet: an added connector is
+  // managed from Installed. A service the operator switched off is not
+  // offered either; one connected before the switch stays under Installed
+  // so the user can still delete it.
+  const discoverGoogle = googleConnectors.filter(
+    (connector) =>
+      !connector.status?.connected && connector.status?.available !== false,
+  );
+  const discoverPresets = CONNECTOR_PRESETS.filter(
+    (preset) =>
+      !connectors.some(
+        (connector) =>
+          normalizedServerUrl(connector.serverUrl) ===
+          normalizedServerUrl(preset.serverUrl),
+      ),
+  );
   const googleLoading = googleConnectors.some((connector) => connector.loading);
+  // Which list a connector belongs in is only known once every source has
+  // answered. Until then both lists show placeholders, so no card appears in
+  // Discover only to move to Installed or vanish (a service the operator
+  // switched off) a moment later.
+  const initialLoading =
+    !connectorsLoaded || googleLoading || courtListener.loading;
+  const discoverCourtListener = !courtListener.installed;
   const googleAdding = googleConnectors.some(
     (connector) => connector.phase !== "idle",
   );
@@ -1215,7 +1342,9 @@ export default function ConnectorsPage() {
   return (
     <div className="@container">
       <section aria-labelledby="installed-connectors-heading">
-        <div className="mb-4 flex items-center justify-between gap-3">
+        <div
+          className={`${savedFor ? "mb-1" : "mb-4"} flex items-center justify-between gap-3`}
+        >
           <SettingsHeading id="installed-connectors-heading">
             Installed
           </SettingsHeading>
@@ -1230,13 +1359,24 @@ export default function ConnectorsPage() {
             Custom
           </PillButtonUI>
         </div>
+        {savedFor && (
+          <div className="mb-4">
+            <SettingsDescription>
+              Saved for {savedFor}. Each workspace has its own connectors.
+            </SettingsDescription>
+          </div>
+        )}
         {error && (
           <div className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
             {error}
           </div>
         )}
-        <div className="grid grid-cols-1 gap-3 @min-[32rem]:grid-cols-2">
-          {installedGoogle.map((connector) => (
+        <div
+          className="grid grid-cols-1 gap-3 @min-[32rem]:grid-cols-2"
+          aria-busy={initialLoading || undefined}
+        >
+          {initialLoading && <ConnectorListSkeleton />}
+          {!initialLoading && installedGoogle.map((connector) => (
             <ConnectorRow
               key={connector.provider}
               name={connector.name}
@@ -1248,13 +1388,31 @@ export default function ConnectorsPage() {
                 void connector.refresh().catch(() => undefined);
               }}
               onEnabledChange={(enabled) =>
-                void runGoogleUpdate(`connector:${connector.provider}`, () =>
+                void runNativeUpdate(`connector:${connector.provider}`, () =>
                   connector.updateSettings({ enabled }),
                 )
               }
             />
           ))}
-          {!loading &&
+          {!initialLoading && courtListener.installed && (
+            <ConnectorRow
+              name={COURTLISTENER_NAME}
+              icon={<CourtListenerIcon />}
+              enabled={courtListener.enabled}
+              busy={
+                courtListener.busy ||
+                busyKey === "connector:courtlistener"
+              }
+              onOpen={() => setCourtListenerOpen(true)}
+              onEnabledChange={(enabled) =>
+                void runNativeUpdate("connector:courtlistener", () =>
+                  courtListener.setEnabled(enabled),
+                )
+              }
+            />
+          )}
+          {!initialLoading &&
+            !loading &&
             connectors.map((connector) => {
               const preset = findConnectorPreset(connector.serverUrl);
               return (
@@ -1276,18 +1434,13 @@ export default function ConnectorsPage() {
                 />
               );
             })}
-          {!loading &&
-            !googleLoading &&
+          {!initialLoading &&
+            !loading &&
             connectors.length === 0 &&
-            installedGoogle.length === 0 && (
+            installedGoogle.length === 0 &&
+            !courtListener.installed && (
               <div className="@min-[32rem]:col-span-2">
-                <GlassCardUI>
-                  <div className="p-4">
-                    <SettingsDescription>
-                      No connectors yet.
-                    </SettingsDescription>
-                  </div>
-                </GlassCardUI>
+                <SettingsDescription>No connectors yet.</SettingsDescription>
               </div>
             )}
         </div>
@@ -1298,13 +1451,24 @@ export default function ConnectorsPage() {
             Discover
           </SettingsHeading>
         </div>
-        <div className="grid grid-cols-1 gap-3 @min-[32rem]:grid-cols-2">
-          {googleConnectors.map((connector) => (
+        {!initialLoading &&
+          discoverGoogle.length === 0 &&
+          !discoverCourtListener &&
+          discoverPresets.length === 0 && (
+            <SettingsDescription>
+              Every available connector is installed.
+            </SettingsDescription>
+          )}
+        <div
+          className="grid grid-cols-1 gap-3 @min-[32rem]:grid-cols-2"
+          aria-busy={initialLoading || undefined}
+        >
+          {initialLoading && <ConnectorListSkeleton />}
+          {!initialLoading && discoverGoogle.map((connector) => (
             <DiscoverCard
               key={connector.provider}
               name={connector.name}
               icon={<GoogleConnectorIcon provider={connector.provider} />}
-              added={!!connector.status?.connected}
               adding={connector.phase === "adding"}
               authorizing={connector.phase === "authorizing"}
               loading={connector.loading}
@@ -1316,12 +1480,37 @@ export default function ConnectorsPage() {
               onCancel={connector.cancel}
             />
           ))}
-          {CONNECTOR_PRESETS.map((preset) => {
-            const isAdded = connectors.some(
-              (connector) =>
-                normalizedServerUrl(connector.serverUrl) ===
-                normalizedServerUrl(preset.serverUrl),
-            );
+          {!initialLoading && discoverCourtListener && (
+            <DiscoverCard
+              name={COURTLISTENER_NAME}
+              icon={<CourtListenerIcon />}
+              adding={busyKey === "connector:courtlistener"}
+              authorizing={false}
+              loading={false}
+              disabled={busyKey !== null || googleAdding}
+              onAdd={() => {
+                if (courtListener.loadFailed) {
+                  setAddErrorGuideUrl(null);
+                  setAddError(
+                    `Could not load ${COURTLISTENER_NAME}. Reload this page and try again.`,
+                  );
+                  return;
+                }
+                // With the organization's token or the bulk index there is
+                // nothing to enter: adding it switches it back on.
+                const status = courtListener.status;
+                if (status && (status.tokenSource !== null || status.bulkData)) {
+                  void runNativeUpdate("connector:courtlistener", () =>
+                    courtListener.setEnabled(true),
+                  );
+                  return;
+                }
+                setCourtListenerOpen(true);
+              }}
+              onCancel={() => setCourtListenerOpen(false)}
+            />
+          )}
+          {!initialLoading && discoverPresets.map((preset) => {
             const isAdding =
               busyKey === "create" &&
               installingPresetUrl !== null &&
@@ -1337,7 +1526,6 @@ export default function ConnectorsPage() {
                 key={preset.serverUrl}
                 name={preset.name}
                 icon={<ConnectorBrandIcon name={preset.name} />}
-                added={isAdded}
                 adding={isAdding && !isAuthorizing}
                 authorizing={isAuthorizing}
                 loading={loading}
@@ -1349,6 +1537,13 @@ export default function ConnectorsPage() {
           })}
         </div>
       </section>
+
+      <CourtListenerTokenModal
+        open={courtListenerOpen}
+        onClose={() => setCourtListenerOpen(false)}
+        connector={courtListener}
+        organizationName={organizationName}
+      />
 
       <NewCustomMcpModal
         open={addOpen}
@@ -1445,10 +1640,35 @@ export default function ConnectorsPage() {
         connector={selectedGoogleView}
         busyKey={busyKey}
         toolsLoading={false}
+        actions={
+          selectedGoogle?.provider === "google-drive" &&
+          selectedGoogle.status?.connected &&
+          selectedGoogle.status.pickerAvailable ? (
+            <div className="flex flex-col items-start gap-1.5">
+              <PillButtonUI
+                tone="white"
+                disabled={busyKey !== null}
+                loading={busyKey === "picker:google-drive"}
+                onClick={() =>
+                  void runNativeUpdate(
+                    "picker:google-drive",
+                    drivePicker.addFiles,
+                  )
+                }
+              >
+                <FolderPlus className="h-3.5 w-3.5" aria-hidden="true" />
+                Add files from Google Drive
+              </PillButtonUI>
+              <p role="status" className="text-xs text-gray-500">
+                {drivePicker.message}
+              </p>
+            </div>
+          ) : undefined
+        }
         onClose={() => setSelectedGoogleProvider(null)}
         onRefresh={() =>
           selectedGoogle &&
-          void runGoogleUpdate(`refresh:${selectedGoogle.provider}`, () =>
+          void runNativeUpdate(`refresh:${selectedGoogle.provider}`, () =>
             selectedGoogle.refresh().then(() => undefined),
           )
         }
@@ -1457,19 +1677,19 @@ export default function ConnectorsPage() {
         }
         onToolEnabled={(toolName, enabled) =>
           selectedGoogle &&
-          void runGoogleUpdate(`tool:${toolName}`, () =>
+          void runNativeUpdate(`tool:${toolName}`, () =>
             selectedGoogle.setToolEnabled(toolName, enabled),
           )
         }
         onReadOnly={(readOnly) =>
           selectedGoogle &&
-          void runGoogleUpdate(`read-only:${selectedGoogle.provider}`, () =>
+          void runNativeUpdate(`read-only:${selectedGoogle.provider}`, () =>
             selectedGoogle.updateSettings({ readOnly }),
           )
         }
         onRequireWriteApproval={(requireWriteApproval) =>
           selectedGoogle &&
-          void runGoogleUpdate(`approval:${selectedGoogle.provider}`, () =>
+          void runNativeUpdate(`approval:${selectedGoogle.provider}`, () =>
             selectedGoogle.updateSettings({ requireWriteApproval }),
           )
         }
@@ -1546,10 +1766,19 @@ function ConnectorRow({
   );
 }
 
+/** Two placeholder cards: one row on a wide page, two on a narrow one. */
+function ConnectorListSkeleton() {
+  return (
+    <>
+      <ConnectorCardSkeleton />
+      <ConnectorCardSkeleton />
+    </>
+  );
+}
+
 function DiscoverCard({
   name,
   icon,
-  added,
   adding,
   authorizing,
   loading,
@@ -1559,7 +1788,6 @@ function DiscoverCard({
 }: {
   name: string;
   icon: ReactNode;
-  added: boolean;
   adding: boolean;
   authorizing: boolean;
   loading: boolean;
@@ -1576,23 +1804,15 @@ function DiscoverCard({
           tone="blue"
           size="sm"
           onClick={authorizing ? onCancel : onAdd}
-          disabled={loading || added || (!authorizing && (adding || disabled))}
+          disabled={loading || (!authorizing && (adding || disabled))}
           loading={adding}
           aria-label={
-            added
-              ? `${name} connector added`
-              : authorizing
-                ? `Cancel ${name} authorization`
-                : `Add ${name} connector`
+            authorizing
+              ? `Cancel ${name} authorization`
+              : `Add ${name} connector`
           }
         >
-          {added
-            ? "Added"
-            : authorizing
-              ? "Cancel"
-              : adding
-                ? "Adding..."
-                : "Add"}
+          {authorizing ? "Cancel" : adding ? "Adding..." : "Add"}
         </PillButtonUI>
       }
     />

@@ -1,3 +1,4 @@
+import { type ConnectorOwner, workspaceFilter } from "../../lib/connectorOwner";
 // Per-user encrypted provider-key storage. Adapted from upstream
 // ba6f7711449de47bd25cad7ac21bdc2a53355963's `backend/src/lib/userApiKeys.ts`.
 //
@@ -23,10 +24,13 @@
 //      lands; remove the function then.
 
 import crypto from "node:crypto";
+import { WEB_SEARCH_BACKENDS, type WebSearchBackend } from "../../lib/webSearch/settings";
+import { loadDeploymentSearchApiKeys } from "../../lib/webSearch/credentials";
 import { getConfig } from "../../lib/config";
 import { resolveSecret, resolveProviderSecret, resolveVercelApiKey } from "../../lib/envSecrets";
-import { createServerSupabase } from "../../lib/supabase";
-import type { AzureOpenaiSettings, UserApiKeys } from "../../lib/llm";
+import { createServerSupabase, type Db } from "../../lib/supabase";
+import { envBedrockCredentials, envAzureCredentials, envAzureFoundryCredentials, envVertexCredentials, envVertexServiceAccountKey, envCustomEndpointCredentials } from "../../lib/llm/cloudProviders";
+import type { ProviderSettings, AzureOpenaiSettings, UserApiKeys } from "../../lib/llm";
 
 // `openrouter` and `courtlistener` added with upstream 44e868e
 // (CourtListener integration). Unlike upstream, their org-level
@@ -42,14 +46,23 @@ export type ApiKeyProvider =
     | "opencode-go"
     | "vercel"
     | "courtlistener"
-    | "azure_openai";
+    | "bedrock"
+    | "azure"
+    | "azure-foundry"
+    | "vertex"
+    | "xai"
+    | "custom"
+    | "azure_openai"
+    | WebSearchBackend;
 
-export type ApiKeySource = "env" | "user" | null;
-export type ApiKeyStatus = Record<string, boolean | Record<string, ApiKeySource>> & {
-    sources: Record<string, ApiKeySource>;
+export type ApiKeySource = "env" | "user" | "org" | null;
+export type ApiKeyStatus = Record<ApiKeyProvider, boolean> & {
+    sources: Record<ApiKeyProvider, ApiKeySource>;
+    enabled: Partial<Record<ApiKeyProvider, boolean>>;
+    settings: ProviderSettings;
 };
 
-const ORG_PROVIDERS = ["claude", "gemini", "openai", "kimi", "mistral", "openrouter", "opencode-go", "vercel", "courtlistener", "azure_openai"] as const;
+const ORG_PROVIDERS = ["claude", "gemini", "openai", "kimi", "mistral", "openrouter", "opencode-go", "vercel", "courtlistener", "azure_openai", "bedrock", "azure", "azure-foundry", "vertex", "xai", "custom", ...WEB_SEARCH_BACKENDS] as const;
 
 export function normalizeApiKeyProvider(value: unknown): ApiKeyProvider | null {
     return typeof value === "string" && (ORG_PROVIDERS as readonly string[]).includes(value)
@@ -57,18 +70,17 @@ export function normalizeApiKeyProvider(value: unknown): ApiKeyProvider | null {
 }
 
 /** Legacy wire shape, backed only by organisation Key Vault credentials. */
-export async function getUserApiKeyStatus(_userId: string, _db?: ReturnType<typeof createServerSupabase>): Promise<ApiKeyStatus> {
-    const keys = await getOrganisationApiKeys();
-    const status: Record<string, boolean> = {};
-    const sources: Record<string, ApiKeySource> = {};
+export async function getUserApiKeyStatus(userId: string, db: Db = createServerSupabase()): Promise<ApiKeyStatus> {
+    const [keys, enabled] = await Promise.all([getOrganisationApiKeys(), getProviderEnabled(userId, db)]);
+    const status = { sources: {}, enabled, settings: {} } as ApiKeyStatus;
     for (const provider of ORG_PROVIDERS) {
         const configured = provider === "azure_openai"
             ? !!(keys.azureOpenai?.apiKey && keys.azureOpenai?.endpoint)
             : !!keys[provider];
-        status[provider] = configured;
-        sources[provider] = configured ? "env" : null;
+        status[provider] = configured && enabled[provider] !== false;
+        status.sources[provider] = configured ? "env" : null;
     }
-    return { ...status, sources };
+    return status;
 }
 
 /**
@@ -91,6 +103,13 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
         azureApiKey,
         azureApiVersion,
         azureDeployment,
+        cloudBedrock,
+        cloudAzure,
+        cloudFoundry,
+        cloudVertex,
+        vertexKey,
+        xai,
+        custom,
     ] = await Promise.all([
         resolveSecret("anthropic-api-key"),
         resolveSecret("gemini-api-key"),
@@ -102,14 +121,22 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
         resolveProviderSecret("openrouter-api-key"),
         resolveVercelApiKey(),
         resolveProviderSecret("opencode-api-key"),
-        resolveSecret("courtlistener-api-token"),
+        resolveProviderSecret("courtlistener-api-token"),
         resolveSecret("azure-openai-endpoint"),
         resolveSecret("azure-openai-api-key"),
         resolveSecret("azure-openai-api-version"),
         resolveSecret("azure-openai-deployment"),
+        envBedrockCredentials(),
+        envAzureCredentials(),
+        envAzureFoundryCredentials(),
+        envVertexCredentials(),
+        envVertexServiceAccountKey(),
+        resolveProviderSecret("xai-api-key"),
+        envCustomEndpointCredentials(),
     ]);
 
     return {
+        ...await loadDeploymentSearchApiKeys(),
         claude: claude || null,
         gemini: gemini || null,
         openai: openai || null,
@@ -119,6 +146,19 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
         vercel: vercel || null,
         "opencode-go": openCodeGo || null,
         courtlistener: courtlistener || null,
+        bedrock: cloudBedrock?.apiKey ?? null,
+        azure: cloudAzure?.apiKey ?? null,
+        "azure-foundry": cloudFoundry?.apiKey ?? null,
+        vertex: cloudVertex ? vertexKey : null,
+        xai: xai || null,
+        custom: custom?.apiKey ?? null,
+        providerSettings: {
+            bedrock: cloudBedrock ? { region: cloudBedrock.region } : null,
+            azure: cloudAzure ? { endpoint: cloudAzure.endpoint } : null,
+            "azure-foundry": cloudFoundry ? { endpoint: cloudFoundry.endpoint } : null,
+            vertex: cloudVertex ? { location: cloudVertex.location } : null,
+            custom: custom ? { baseUrl: custom.baseUrl } : null,
+        },
         azureOpenai:
             azureEndpoint && azureApiKey
                 ? {
@@ -129,6 +169,52 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
                   }
                 : null,
     };
+}
+
+export async function getProviderEnabled(
+    userId: string,
+    db: Db = createServerSupabase(),
+): Promise<Partial<Record<ApiKeyProvider, boolean>>> {
+    const { data, error } = await db.from("user_profiles")
+        .select("provider_enabled").eq("user_id", userId).maybeSingle();
+    if (error) throw error;
+    const value: unknown = data?.provider_enabled;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    const enabled: Partial<Record<ApiKeyProvider, boolean>> = {};
+    for (const provider of ORG_PROVIDERS) {
+        const flag = (value as Record<string, unknown>)[provider];
+        if (typeof flag === "boolean") enabled[provider] = flag;
+    }
+    if (enabled.azure === false || enabled.azure_openai === false) {
+        enabled.azure = false;
+        enabled.azure_openai = false;
+    }
+    return enabled;
+}
+
+// Upstream divergence (sync-log: 25779536): provider switches are preferences,
+// never secret rows. A user's preference only masks centrally supplied keys
+// for that same user and cannot modify another user's or the organisation's keys.
+export async function getUserExecutionApiKeys(
+    userId: string,
+    db: Db = createServerSupabase(),
+): Promise<UserApiKeys> {
+    const [keys, enabled] = await Promise.all([
+        getOrganisationApiKeys(), getProviderEnabled(userId, db),
+    ]);
+    const disabled = ORG_PROVIDERS.filter(provider => enabled[provider] === false);
+    for (const provider of disabled) {
+        if (provider === "azure_openai") {
+            keys.azureOpenai = null;
+        } else {
+            keys[provider] = null;
+        }
+    }
+    keys.disabledProviders = [
+        ...disabled,
+        ...(disabled.includes("azure") || disabled.includes("azure_openai") ? ["azure", "azure_openai", "azureOpenai"] : []),
+    ];
+    return keys;
 }
 
 // Upstream divergence (sync-log: 972cf22): router credentials use the same
@@ -204,26 +290,8 @@ async function encrypt(plaintext: string): Promise<EncryptedPayload> {
     };
 }
 
-async function decrypt(payload: EncryptedPayload): Promise<string> {
-    const key = await getEncryptionKey();
-    const iv = Buffer.from(payload.iv, "base64");
-    const ciphertext = Buffer.from(payload.encrypted_key, "base64");
-    const authTag = Buffer.from(payload.auth_tag, "base64");
-    const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
-    decipher.setAuthTag(authTag);
-    const plaintext = Buffer.concat([
-        decipher.update(ciphertext),
-        decipher.final(),
-    ]);
-    return plaintext.toString("utf8");
-}
 
-type StoredRow = {
-    provider: ApiKeyProvider;
-    encrypted_key: string;
-    iv: string;
-    auth_tag: string;
-};
+
 
 type AzureOpenaiBlob = {
     endpoint: string;
@@ -232,21 +300,7 @@ type AzureOpenaiBlob = {
     deployment: string;
 };
 
-function parseAzureOpenaiBlob(plaintext: string): AzureOpenaiSettings | null {
-    try {
-        const parsed = JSON.parse(plaintext) as Partial<AzureOpenaiBlob>;
-        if (!parsed.endpoint || !parsed.deployment) return null;
-        return {
-            endpoint: parsed.endpoint,
-            deployment: parsed.deployment,
-            apiKey: parsed.key ?? null,
-            apiVersion: parsed.version ?? null,
-        };
-    } catch (err) {
-        console.error("[userApiKeys] failed to parse azure_openai blob", err);
-        return null;
-    }
-}
+
 
 function serializeAzureOpenaiBlob(settings: AzureOpenaiSettings): string {
     const blob: AzureOpenaiBlob = {
@@ -269,70 +323,8 @@ function serializeAzureOpenaiBlob(settings: AzureOpenaiSettings): string {
  * `user_profiles`. The fallback is removed when `0007_drop_legacy_provider_keys.sql`
  * lands.
  */
-export async function getUserApiKeys(
-    userId: string,
-    db?: ReturnType<typeof createServerSupabase>,
-): Promise<UserApiKeys> {
-    const client = db ?? createServerSupabase();
-
-    const { data: rows, error } = await client
-        .from("user_api_keys")
-        .select("provider, encrypted_key, iv, auth_tag")
-        .eq("user_id", userId);
-    if (error) {
-        console.error("[userApiKeys] failed to read user_api_keys", {
-            userId,
-            error: error.message,
-        });
-        // Fall through to the legacy-column fallback so we don't hard-fail
-        // during transitional states.
-    }
-
-    const decrypted: Partial<Record<ApiKeyProvider, string>> = {};
-    for (const row of (rows ?? []) as StoredRow[]) {
-        try {
-            decrypted[row.provider] = await decrypt(row);
-        } catch (err) {
-            console.error("[userApiKeys] decryption failed", {
-                userId,
-                provider: row.provider,
-                err: err instanceof Error ? err.message : String(err),
-            });
-            // Skip the row — the caller will see "no key" and act
-            // accordingly. Better than crashing the whole request.
-        }
-    }
-
-    const haveAny = Object.keys(decrypted).length > 0;
-    const legacy = haveAny
-        ? null
-        : await readLegacyProviderKeys(userId, client);
-
-    // openrouter / courtlistener (44e868e): no legacy user_profiles
-    // columns to fall back to — instead fall back to the org-level
-    // secret (KV primary, env fallback: OPENROUTER_API_KEY /
-    // COURTLISTENER_API_TOKEN — same env names upstream reads directly).
-    const openrouter =
-        decrypted.openrouter ??
-        (await resolveProviderSecret("openrouter-api-key")) ??
-        null;
-    const courtlistener =
-        decrypted.courtlistener ??
-        (await resolveSecret("courtlistener-api-token")) ??
-        null;
-
-    return {
-        claude: decrypted.claude ?? legacy?.claude ?? null,
-        gemini: decrypted.gemini ?? legacy?.gemini ?? null,
-        openai: decrypted.openai ?? legacy?.openai ?? null,
-        openrouter: openrouter || null,
-        vercel: decrypted.vercel || (await resolveVercelApiKey()) || null,
-        "opencode-go": decrypted["opencode-go"] || (await resolveProviderSecret("opencode-api-key")) || null,
-        courtlistener: courtlistener || null,
-        azureOpenai: decrypted.azure_openai
-            ? parseAzureOpenaiBlob(decrypted.azure_openai)
-            : (legacy?.azureOpenai ?? null),
-    };
+export async function getUserApiKeys(userId: string, db: Db = createServerSupabase()): Promise<UserApiKeys> {
+    return getEffectiveApiKeys(userId, null, db);
 }
 
 /**
@@ -416,6 +408,7 @@ export async function getConfiguredProviders(
         .select("provider")
         .eq("user_id", userId);
     const configured: Record<ApiKeyProvider, boolean> = {
+        brave: false, deepseek: false, tavily: false,
         claude: false,
         gemini: false,
         openai: false,
@@ -426,6 +419,12 @@ export async function getConfiguredProviders(
         "opencode-go": false,
         courtlistener: false,
         azure_openai: false,
+        bedrock: false,
+        azure: false,
+        "azure-foundry": false,
+        vertex: false,
+        xai: false,
+        custom: false,
     };
     for (const row of (rows ?? []) as { provider: ApiKeyProvider }[]) {
         configured[row.provider] = true;
@@ -510,4 +509,146 @@ export async function _readLegacyRowForMigration(
         .eq("user_id", userId)
         .maybeSingle();
     return (data as LegacyRow | null) ?? null;
+}
+
+// Upstream divergence (sync-log: db8d42c3): owner-aware interfaces share the
+// deployment Key Vault credentials. Personal/org DB secret writes are NOT
+// SUPPORTED by this managed deployment. Preferences still mask the caller.
+export type ApiKeyOwner = { kind: "user" | "org"; id: string };
+export const userKeyOwner = (id: string): ApiKeyOwner => ({ kind: "user", id });
+export const orgKeyOwner = (id: string): ApiKeyOwner => ({ kind: "org", id });
+
+async function requireOrgKeyMembership(userId: string, orgId: string, db: Db): Promise<void> {
+    const { data, error } = await db.from("org_members").select("role, organizations!inner(id)").is("organizations.deleted_at", null)
+        .eq("org_id", orgId).eq("user_id", userId).maybeSingle();
+    if (error) throw error;
+    if (!data || !["owner", "admin", "member"].includes(data.role))
+        throw new Error("workspace_not_found");
+}
+
+export async function getApiKeyStatusFor(owner: ApiKeyOwner, db: Db = createServerSupabase()): Promise<ApiKeyStatus> {
+    if (owner.kind === "user") return getUserApiKeyStatus(owner.id, db);
+    const keys = await getOrganisationApiKeys();
+    const status = { sources: {}, enabled: {}, settings: keys.providerSettings ?? {} } as ApiKeyStatus;
+    for (const provider of ORG_PROVIDERS) {
+        const configured = provider === "azure_openai"
+            ? !!(keys.azureOpenai?.apiKey && keys.azureOpenai?.endpoint) : !!keys[provider];
+        status[provider] = configured;
+        status.sources[provider] = configured ? "env" : null;
+    }
+    return status;
+}
+
+export async function getEffectiveApiKeyStatus(userId: string, orgId?: string | null, db: Db = createServerSupabase()): Promise<ApiKeyStatus> {
+    if (orgId) await requireOrgKeyMembership(userId, orgId, db);
+    const status = await getUserApiKeyStatus(userId, db);
+    const connection = await managedCourtListenerForOwner({ userId, orgId: orgId ?? null }, db);
+    status.courtlistener = Boolean(connection.key);
+    status.sources.courtlistener = connection.key ? "env" : null;
+    status.enabled.courtlistener = connection.enabled;
+    return status;
+}
+
+export async function getEffectiveApiKeys(userId: string, orgId?: string | null, db: Db = createServerSupabase()): Promise<UserApiKeys> {
+    // Refuse a missing/deleted membership BEFORE resolving central secrets.
+    if (orgId) await requireOrgKeyMembership(userId, orgId, db);
+    const keys = await getUserExecutionApiKeys(userId, db);
+    const courtlistener = await managedCourtListenerForOwner({ userId, orgId: orgId ?? null }, db);
+    keys.courtlistener = courtlistener.key;
+    // CourtListener now has its own workspace switch; other provider masks remain.
+    keys.disabledProviders = (keys.disabledProviders ?? []).filter((provider) => provider !== "courtlistener");
+    return keys;
+}
+
+// Upstream divergence (sync-log: 18035cf6): workspace enable rows only; deployment credentials remain managed.
+export type CourtListenerConnection = {
+    /** The on/off switch; on until the person turns it off. */
+    enabled: boolean;
+    /** The person's own token for the workspace. */
+    token: string | null;
+};
+
+const WITHOUT_COURTLISTENER: CourtListenerConnection = {
+    enabled: true,
+    token: null,
+};
+
+type CourtListenerRow = {
+    enabled: boolean | null;
+    encrypted_key: string | null;
+    iv: string | null;
+    auth_tag: string | null;
+};
+
+/**
+ * "unmigrated" until 20261022_01 lands: the token is then still a
+ * user_api_keys row, and the overlays below leave whatever it gave alone.
+ */
+async function readCourtListenerConnection(
+    owner: ConnectorOwner,
+    db: Db,
+): Promise<CourtListenerConnection | "unmigrated"> {
+    if (owner.orgId) await requireOrgKeyMembership(owner.userId, owner.orgId, db);
+    const { data, error } = await db
+        .from("user_courtlistener_connections")
+        .select("enabled")
+        .eq("user_id", owner.userId)
+        .filter(...workspaceFilter(owner))
+        .maybeSingle();
+    if (error) {
+        throw error;
+    }
+    const row = data as CourtListenerRow | null;
+    if (!row) return WITHOUT_COURTLISTENER;
+    return {
+        enabled: row.enabled !== false,
+        // Legacy ciphertext remains for lifecycle cleanup, never effective credentials.
+        token: null,
+    };
+}
+
+export async function loadCourtListenerConnection(
+    owner: ConnectorOwner,
+    db: Db = createServerSupabase(),
+): Promise<CourtListenerConnection> {
+    const connection = await readCourtListenerConnection(owner, db);
+    return connection === "unmigrated" ? WITHOUT_COURTLISTENER : connection;
+}
+
+/**
+ * Change `owner`'s switch, token, or both, creating their connection for
+ * the workspace on first use. A null or blank token removes theirs.
+ */
+export async function saveCourtListenerConnection(
+    owner: ConnectorOwner,
+    patch: { enabled?: boolean; token?: string | null },
+    db: Db = createServerSupabase(),
+): Promise<void> {
+    const row: Record<string, unknown> = {
+        user_id: owner.userId,
+        org_id: owner.orgId,
+        updated_at: new Date().toISOString(),
+    };
+    if (typeof patch.enabled === "boolean") row.enabled = patch.enabled;
+    if (owner.orgId) await requireOrgKeyMembership(owner.userId, owner.orgId, db);
+    if (patch.token !== undefined)
+        throw Object.assign(new Error("CourtListener credentials are managed by your organization."), { status: 403, code: "managed_credentials" });
+
+    const { error } = await db
+        .from("user_courtlistener_connections")
+        .upsert(row, { onConflict: "user_id,org_id" });
+    if (error) throw error;
+}
+
+
+
+
+
+async function managedCourtListenerForOwner(owner: ConnectorOwner, db: Db) {
+    if (owner.orgId) await requireOrgKeyMembership(owner.userId, owner.orgId, db);
+    const connection = await loadCourtListenerConnection(owner, db);
+    const key = connection.enabled
+        ? await resolveProviderSecret("courtlistener-api-token")
+        : "";
+    return { key: key || null, enabled: connection.enabled };
 }

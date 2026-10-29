@@ -26,6 +26,20 @@ const {
     mockGenerateTitle: vi.fn(),
 }));
 
+// This harness renders authenticated work without booting the session provider.
+// Keep the real owner/generation hooks; only supply their controlled auth input.
+const authenticatedOwner = vi.hoisted(() => ({
+  user: { id: "u1", email: "owner@example.com", pendingEmail: null, createdWithGoogle: false },
+  isAuthenticated: true, authLoading: false, authError: null,
+  signOut: vi.fn(async () => {}), signInLocal: vi.fn(async () => {}),
+  getAccessToken: vi.fn(async () => "test-token"), updateEmail: vi.fn(), setPassword: vi.fn(async () => {}),
+  refreshSession: vi.fn(async () => null), retrySession: vi.fn(async () => null),
+}));
+vi.mock("@/app/contexts/AuthContext", async (original) => ({
+  ...(await original<typeof import("@/app/contexts/AuthContext")>()),
+  useAuth: () => authenticatedOwner,
+}));
+
 vi.mock("@/app/lib/mikeApi", () => ({
     streamChat: mockStreamChat,
     streamProjectChat: mockStreamProjectChat,
@@ -383,7 +397,7 @@ describe("useAssistantChat: SSE event handling", () => {
 });
 
 describe("useAssistantChat: error path", () => {
-    it("non-2xx response writes an error string onto the assistant message", async () => {
+    it("an unacknowledged server failure warns that the turn may still be running", async () => {
         mockStreamChat.mockResolvedValue(errorResponse(500, "boom"));
 
         const { result } = renderHook(() => useAssistantChat());
@@ -394,12 +408,13 @@ describe("useAssistantChat: error path", () => {
 
         const last = result.current.messages[result.current.messages.length - 1];
         expect(last.role).toBe("assistant");
-        // Dev drift: upstream #450 shows a generic message (Sentry gets the real error).
-        expect(last.error).toBe("Sorry, something went wrong.");
+        // A missing turn acknowledgement cannot prove the server stopped work.
+        expect(last.error).toBe("The answer may still be running. Check chat history before sending the question again.");
+        expect(mockStreamChat).toHaveBeenCalledTimes(1);
         expect(result.current.isResponseLoading).toBe(false);
     });
 
-    it("a thrown non-Error becomes the generic 'something went wrong' message", async () => {
+    it("a missing response body keeps the unacknowledged turn recoverable without resending", async () => {
         mockStreamChat.mockResolvedValue({
             ok: true,
             // No body — triggers "No response body" throw in the hook.
@@ -412,8 +427,9 @@ describe("useAssistantChat: error path", () => {
         });
 
         const last = result.current.messages[result.current.messages.length - 1];
-        // Dev drift: upstream #450 shows a generic message (Sentry gets the real error).
-        expect(last.error).toBe("Sorry, something went wrong.");
+        // A missing turn acknowledgement cannot prove the server stopped work.
+        expect(last.error).toBe("The answer may still be running. Check chat history before sending the question again.");
+        expect(mockStreamChat).toHaveBeenCalledTimes(1);
     });
 });
 

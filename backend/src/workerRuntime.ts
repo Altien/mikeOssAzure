@@ -27,10 +27,12 @@ import { uploadProcessingConfiguration } from "./lib/runtimeConfig";
 import { createServerSupabase } from "./lib/supabase";
 import { initServerSessionKeys } from "./lib/serverSession";
 import { initDownloadSigningSecret } from "./lib/downloadTokens";
+import { initStorage } from "./lib/storage";
 import { initManifestSigningKey, manifestPublicKey } from "./lib/manifestSigning";
 import { enforceDocumentLifecycleMigration } from "./lib/dbq/lifecycleGuard";
 import { reportError } from "./lib/observability/sentry";
 import { safeErrorLog } from "./lib/safeError";
+import { stopExtractionProcess } from "./lib/extraction/isolated";
 
 const SWEEP_INTERVAL_MS = (() => {
     const raw = Number(process.env.STALE_SWEEP_INTERVAL_MS);
@@ -83,16 +85,19 @@ async function runMcpTokenRefreshSweep(): Promise<void> {
         });
     }
 }
+export type WorkerRole = "jobs" | "uploads";
+export const WORKER_ROLES: readonly WorkerRole[] = ["jobs", "uploads"];
 let started = false;
 
 /** Start every background worker (idempotent). */
-export async function startAllWorkers(): Promise<void> {
+export async function startAllWorkers(roles: readonly WorkerRole[] = WORKER_ROLES): Promise<void> {
     if (started) return;
     await enforceDocumentLifecycleMigration();
     // Worker threads have independent module caches. The API's Key Vault
     // warm-up cannot initialize this process's signing or session state.
     await initServerSessionKeys();
     await initDownloadSigningSecret();
+    await initStorage();
     await initManifestSigningKey();
     manifestPublicKey();
     const db = createServerSupabase();
@@ -112,6 +117,18 @@ export async function startAllWorkers(): Promise<void> {
     });
     if (finishError) throw new Error("DB job terminal RPC is unavailable");
 
+    if (roles.includes("uploads")) {
+    // Upload-session processing: lease-based claims over Postgres, so any
+    // number of runtimes can poll concurrently without double-processing.
+    const uploadProcessing = uploadProcessingConfiguration();
+    stopUploadWorker = startUploadProcessingWorkers(uploadProcessing);
+    console.log(
+        `Upload processing started with ${uploadProcessing.concurrency} workers ` +
+            `and a ${uploadProcessing.maxRunningPerUser}-job per-user cap`,
+    );
+    }
+    if (!roles.includes("jobs")) { started = true; return; }
+
     // BullMQ workers: conversion/extraction when their flags are on, plus
     // the app-jobs delivery worker — all only when the Redis driver is
     // active (the registry's `enabled` predicates gate this).
@@ -123,14 +140,6 @@ export async function startAllWorkers(): Promise<void> {
     // up, poll-driven otherwise) — see lib/dbq/runner.ts.
     startDbJobRunner(DB_JOB_HANDLERS, DB_JOB_FAILURE_HOOKS);
 
-    // Upload-session processing: lease-based claims over Postgres, so any
-    // number of runtimes can poll concurrently without double-processing.
-    const uploadProcessing = uploadProcessingConfiguration();
-    stopUploadWorker = startUploadProcessingWorkers(uploadProcessing);
-    console.log(
-        `Upload processing started with ${uploadProcessing.concurrency} workers ` +
-            `and a ${uploadProcessing.maxRunningPerUser}-job per-user cap`,
-    );
 
     // Stale-work reaper: a crash between "status = processing/generating"
     // and the finalizing write strands rows in a transient state forever —
@@ -178,5 +187,6 @@ export async function stopAllWorkers(): Promise<void> {
     }
     await stopWorkers();
     await stopDbJobRunner();
+    await stopExtractionProcess();
     started = false;
 }

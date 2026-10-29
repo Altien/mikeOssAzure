@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { ProfilePhotoSettings } from "@/app/components/settings/ProfilePhotoSettings";
 import { useRouter } from "next/navigation";
 import { LogOut, Trash2 } from "lucide-react";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
@@ -17,7 +18,9 @@ import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 // via Conditional Access â€” so the popup and its retry paths are omitted.
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { deleteAccount } from "@/app/lib/mikeApi";
-import { userFacingApiError } from "@/app/lib/userFacingError";
+import { describeError, notifyError } from "@/app/lib/userFacingError";
+import { authMessages } from "@/app/lib/authMessages";
+import { useRequestOwner } from "@/app/hooks/useRequestOwner";
 import { SettingsSection } from "./SettingsSection";
 
 const isDev = process.env.NODE_ENV !== "production";
@@ -30,21 +33,30 @@ interface EmailWarning {
     message: string;
 }
 
+const EMAIL_ERROR_MESSAGES = authMessages({
+  validation_failed: "Enter a valid email address.",
+  invalid_request: "Enter a valid email address.",
+  reauthentication_needed: "Log in again before changing your email.",
+});
+
+const EMAIL_TAKEN_CODES = new Set(["email_exists", "user_already_exists"]);
+const EMAIL_RATE_LIMIT_CODES = new Set([
+  "over_email_send_rate_limit",
+  "over_request_rate_limit",
+]);
+
+/** Composes authenticated account settings, including profile-photo editing and account security controls. */
 export default function SettingsPage() {
     const router = useRouter();
+    const requestOwner = useRequestOwner();
     const { user, signOut, updateEmail } = useAuth();
-    const { profile, updateDisplayName, updateOrganisation } = useUserProfile();
+    const { profile, updateDisplayName } = useUserProfile();
     // Dev (OSS-6, auth): see the Email and Danger Zone notes.
     const { authProvider } = useConfig();
     const emailEditable = authProvider === "supabase";
     const [displayName, setDisplayName] = useState("");
     const [isSavingName, setIsSavingName] = useState(false);
     const [saved, setSaved] = useState(false);
-    const [nameError, setNameError] = useState<string | null>(null);
-    const [organisation, setOrganisation] = useState("");
-    const [isSavingOrg, setIsSavingOrg] = useState(false);
-    const [orgSaved, setOrgSaved] = useState(false);
-    const [orgError, setOrgError] = useState<string | null>(null);
     const [email, setEmail] = useState("");
     const [isSavingEmail, setIsSavingEmail] = useState(false);
     const [emailSaved, setEmailSaved] = useState(false);
@@ -54,7 +66,6 @@ export default function SettingsPage() {
         emailEditable && user?.createdWithGoogle === true && profile?.passwordSet !== true;
     const [deleteConfirm, setDeleteConfirm] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
-    const [deleteError, setDeleteError] = useState<string | null>(null);
 
     const handleLogout = async () => {
         await signOut();
@@ -73,9 +84,6 @@ export default function SettingsPage() {
         setDisplayName(profile?.displayName ?? "");
     }, [profile?.displayName]);
 
-    useEffect(() => {
-        setOrganisation(profile?.organisation ?? "");
-    }, [profile?.organisation]);
 
     useEffect(() => {
         if (user?.email) {
@@ -100,22 +108,26 @@ export default function SettingsPage() {
     }, [user]);
 
     const handleDeleteAccount = async () => {
+        const isCurrent = requestOwner.capture();
+        if (!isCurrent()) return;
         devLog("[account] delete account requested");
         setIsDeleting(true);
-        setDeleteError(null);
         try {
-            await deleteAccount();
+            await deleteAccount(isCurrent);
+            if (!isCurrent()) return;
             await signOut();
             router.push("/");
         } catch (error) {
             setIsDeleting(false);
             devLog("[account] delete account failed", { error });
             setDeleteConfirm(false);
-            setDeleteError(userFacingApiError(error, "Your account could not be deleted. Please try again."));
+            if (isCurrent()) notifyError(error, { action: "delete your account", onRetry: () => { if (isCurrent()) setDeleteConfirm(true); }, supportNote: "Account deletion failed." });
         }
     };
 
     const handleSaveEmail = async () => {
+        const isCurrent = requestOwner.capture();
+        if (!isCurrent() || !emailEditable) return;
         if (requiresPasswordForEmailChange) {
             setEmailWarning({ title: "Set or update your password", message: "Open Security settings to set or update a password before changing your email." });
             return;
@@ -129,6 +141,7 @@ export default function SettingsPage() {
         setEmailWarning(null);
         try {
             const updatedUser = await updateEmail(nextEmail);
+            if (!isCurrent()) return;
             const pendingEmail = updatedUser.pendingEmail;
             setEmail(pendingEmail || updatedUser.email);
             setEmailSaved(true);
@@ -140,12 +153,10 @@ export default function SettingsPage() {
             setTimeout(() => setEmailSaved(false), 2000);
         } catch (error: unknown) {
             devLog("[account] save email failed", { error });
-            const message =
-                error instanceof Error
-                    ? error.message
-                    : "Failed to update email. Please try again.";
+            if (!isCurrent()) return;
+            const described = describeError(error, {action: "update your email", codeMessages: EMAIL_ERROR_MESSAGES, fallback: "Unable to update your email. Try again."});
 
-            if (isAlreadyRegisteredEmailError(message)) {
+            if (described.code && EMAIL_TAKEN_CODES.has(described.code)) {
                 setEmail(user?.pendingEmail || user?.email || "");
                 setEmailWarning({
                     title: "Email already registered",
@@ -154,7 +165,7 @@ export default function SettingsPage() {
                 return;
             }
 
-            if (isEmailRateLimitError(message)) {
+            if ((described.code && EMAIL_RATE_LIMIT_CODES.has(described.code)) || described.kind === "rate_limited") {
                 setEmail(user?.pendingEmail || user?.email || "");
                 setEmailWarning({
                     title: "Email change unavailable",
@@ -164,7 +175,7 @@ export default function SettingsPage() {
                 return;
             }
 
-            setEmailStatus("Failed to update email. Please try again.");
+            setEmailStatus(described.message);
         } finally {
             setIsSavingEmail(false);
         }
@@ -174,33 +185,15 @@ export default function SettingsPage() {
         const nextName = displayName.trim();
         if (nextName === (profile?.displayName ?? "")) return;
         setIsSavingName(true);
-        setNameError(null);
         const success = await updateDisplayName(nextName);
         setIsSavingName(false);
 
         if (success) {
             setSaved(true);
             setTimeout(() => setSaved(false), 2000);
-        } else {
-            setNameError("Unable to save your name.");
         }
     };
 
-    const handleSaveOrganisation = async () => {
-        const nextOrganisation = organisation.trim();
-        if (nextOrganisation === (profile?.organisation ?? "")) return;
-        setIsSavingOrg(true);
-        setOrgError(null);
-        const success = await updateOrganisation(nextOrganisation);
-        setIsSavingOrg(false);
-
-        if (success) {
-            setOrgSaved(true);
-            setTimeout(() => setOrgSaved(false), 2000);
-        } else {
-            setOrgError("Unable to save your organisation.");
-        }
-    };
 
     if (!user) return null;
 
@@ -215,15 +208,13 @@ export default function SettingsPage() {
                     <div className="space-y-8 p-4">
                         <div>
                             <div className="flex items-start justify-between gap-3">
-                                <FieldLabel>Display Name</FieldLabel>
+                                <FieldLabel htmlFor="profile-display-name">Display Name</FieldLabel>
                                 <span
-                                    className={`text-xs ${nameError ? "text-red-600" : "text-gray-400"}`}
+                                    className="text-xs text-gray-400"
                                     aria-live="polite"
                                 >
                                     {isSavingName
                                         ? "Saving..."
-                                        : nameError
-                                          ? nameError
                                           : saved
                                             ? "Saved"
                                             : ""}
@@ -231,11 +222,11 @@ export default function SettingsPage() {
                             </div>
                             <div className="space-y-2">
                                 <SettingsTextInput
+                                    id="profile-display-name"
                                     type="text"
                                     value={displayName}
                                     onChange={(e) => {
                                         setDisplayName(e.target.value);
-                                        setNameError(null);
                                         setSaved(false);
                                     }}
                                     onBlur={() =>
@@ -245,38 +236,7 @@ export default function SettingsPage() {
                                 />
                             </div>
                         </div>
-                        <div>
-                            <div className="flex items-start justify-between gap-3">
-                                <FieldLabel>Organisation</FieldLabel>
-                                <span
-                                    className={`text-xs ${orgError ? "text-red-600" : "text-gray-400"}`}
-                                    aria-live="polite"
-                                >
-                                    {isSavingOrg
-                                        ? "Saving..."
-                                        : orgError
-                                          ? orgError
-                                          : orgSaved
-                                            ? "Saved"
-                                            : ""}
-                                </span>
-                            </div>
-                            <div className="space-y-2">
-                                <SettingsTextInput
-                                    type="text"
-                                    value={organisation}
-                                    onChange={(e) => {
-                                        setOrganisation(e.target.value);
-                                        setOrgError(null);
-                                        setOrgSaved(false);
-                                    }}
-                                    onBlur={() =>
-                                        void handleSaveOrganisation()
-                                    }
-                                    placeholder="Enter your organisation"
-                                />
-                            </div>
-                        </div>
+                        <ProfilePhotoSettings />
                     </div>
                 </SettingsSection>
             </section>
@@ -375,6 +335,7 @@ export default function SettingsPage() {
                 </SettingsSection>
             </section>
 
+
             {/* Actions */}
             <section className="space-y-3">
                 <h2 className="text-2xl font-medium font-serif text-gray-900">
@@ -410,8 +371,7 @@ export default function SettingsPage() {
                                 Delete account
                             </p>
                             <p className="text-sm text-gray-500">
-                                Permanently delete your account and all
-                                associated data. This action cannot be undone.
+                                Permanently delete your account and personal workspace. Organization work follows its member removal policy. This action cannot be undone.
                             </p>
                         </div>
                         <PillButtonUI
@@ -431,7 +391,7 @@ export default function SettingsPage() {
             <ConfirmPopup
                 open={deleteConfirm}
                 title="Delete account?"
-                message="This will permanently delete your account and all associated data. This action cannot be undone."
+                message="This will permanently delete your account and personal workspace. Organization work follows its member removal policy. This action cannot be undone."
                 confirmLabel="Delete"
                 confirmVariant="danger"
                 confirmStatus={isDeleting ? "loading" : "idle"}
@@ -441,12 +401,6 @@ export default function SettingsPage() {
                     setDeleteConfirm(false);
                 }}
                 onConfirm={() => void handleDeleteAccount()}
-            />
-            <WarningPopup
-                open={deleteError !== null}
-                title="Account deletion failed"
-                message={deleteError}
-                onClose={() => setDeleteError(null)}
             />
             <WarningPopup
                 open={!!emailWarning}
@@ -462,12 +416,3 @@ export default function SettingsPage() {
     );
 }
 
-function isAlreadyRegisteredEmailError(message: string) {
-    return message
-        .toLowerCase()
-        .includes("a user with this email address has already been registered");
-}
-
-function isEmailRateLimitError(message: string) {
-    return /email.*rate limit|rate limit.*email/i.test(message);
-}

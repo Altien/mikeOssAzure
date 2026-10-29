@@ -1,3 +1,4 @@
+// Dev drift: imported request cases use the canonical /api router mount.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 import { streamAiSdk } from "../../lib/llm/aiSdk";
@@ -71,7 +72,7 @@ const { streamWithProvider, unexpectedFetch } = vi.hoisted(() => ({
 }));
 
 vi.mock("../../modules/chat/chat.title", async (importOriginal) => ({
-    ...(await importOriginal<typeof import("../../modules/chat/chat.title")>()),
+    ...(await importOriginal<typeof import("../../modules/chat/chat.title.js")>()),
     generateAssistantChatTitle: vi.fn(async () => "Generated Title"),
 }));
 
@@ -409,6 +410,7 @@ vi.mock("../../modules/chat/engine/index", async (importOriginal) => {
 vi.mock("../../modules/user/user.settings", () => ({
     getUserModelSettings: vi.fn(async () => ({
         legal_research_us: false,
+        web_search: DEFAULT_WEB_SEARCH_SETTINGS,
         title_model: "test-model",
         tabular_model: "test-model",
         last_selected_chat_model: null,
@@ -448,6 +450,7 @@ import { buildApp } from "../../app";
 const app = buildApp();
 import { resetAssistantTurnRunsForTests } from "../../lib/assistantTurnRuns";
 import { createServerSupabase } from "../../lib/supabase";
+import { DEFAULT_WEB_SEARCH_SETTINGS } from "../../lib/webSearch";
 
 const VALID_BODY = {
     messages: [{ role: "user", content: "hello" }],
@@ -711,8 +714,11 @@ describe("POST /chat — streaming endpoint", () => {
             legal_research_us: false,
             // Dev drift: Dev's UserModelSettings keeps the Altien fast_model field
             fast_model: "test-model",
+            web_search: DEFAULT_WEB_SEARCH_SETTINGS,
             title_model: null,
             memory_curator_model: null,
+            subagent_model: null,
+            subagent_reasoning: null,
             last_selected_reasoning_level: null,
             tabular_model: null,
             last_selected_chat_model: "gpt-6-luna",
@@ -1277,8 +1283,11 @@ describe("POST /chat — streaming endpoint", () => {
             legal_research_us: false,
             // Dev drift: Dev's UserModelSettings keeps the Altien fast_model field
             fast_model: "test-model",
+            web_search: DEFAULT_WEB_SEARCH_SETTINGS,
             title_model: null,
             memory_curator_model: null,
+            subagent_model: null,
+            subagent_reasoning: null,
             last_selected_reasoning_level: null,
             tabular_model: null,
             last_selected_chat_model: "gpt-6-luna",
@@ -1427,12 +1436,24 @@ describe("POST /chat — streaming endpoint", () => {
         const doneIndex = res.text.indexOf("data: [DONE]");
         expect(errorIndex).toBeGreaterThanOrEqual(0);
         expect(doneIndex).toBeGreaterThan(errorIndex);
+        // The database's error is logged wrapped in the AppError that names
+        // the kind (and was reported first), not as a bare PostgREST object.
         expect(errorSpy).toHaveBeenCalledWith(
             "[chat/stream] failed to save assistant response",
             expect.objectContaining({
-                message: "terminal update failed (attempt 3)",
+                kind: "chat.message_save_failed",
+                cause: expect.objectContaining({
+                    message: "terminal update failed (attempt 3)",
+                }),
             }),
         );
+        const errorFrame = JSON.parse(
+            res.text
+                .split("\n")
+                .find((line) => line.includes("could not be saved"))!
+                .replace(/^data:\s*/, ""),
+        ) as { request_id?: string };
+        expect(errorFrame.request_id).toBe(res.headers["x-request-id"]);
     expect(scheduleMemoryConsolidation).not.toHaveBeenCalled();
         errorSpy.mockRestore();
     });
@@ -1463,7 +1484,10 @@ describe("POST /chat — streaming endpoint", () => {
         expect(errorSpy).toHaveBeenCalledWith(
             "[chat/stream] failed to reserve assistant message",
             expect.objectContaining({
-                message: "assistant reservation failed",
+                kind: "chat.message_reserve_failed",
+                cause: expect.objectContaining({
+                    message: "assistant reservation failed",
+                }),
             }),
         );
         errorSpy.mockRestore();
@@ -1482,6 +1506,18 @@ describe("POST /chat — streaming endpoint", () => {
         expect(res.status).toBe(200);
         expect(res.text).toContain('"type":"error"');
         expect(res.text).toContain("[DONE]");
+        // The terminal frame carries the request id (the X-Request-ID header)
+        // so the user can quote the one handle that finds this failure.
+        const errorFrame = JSON.parse(
+            res.text
+                .split("\n")
+                .filter((line) => line.includes('"type":"error"'))
+                .at(-1)!
+                .replace(/^data:\s*/, ""),
+        ) as { message: string; request_id?: string; safe_to_display?: boolean };
+        expect(errorFrame.request_id).toBe(res.headers["x-request-id"]);
+        expect(errorFrame.request_id).toMatch(/^[0-9a-f-]{36}$/);
+        expect(errorFrame.safe_to_display).toBeUndefined();
 
         const metadata = JSON.parse(
             res.text
@@ -1632,7 +1668,7 @@ describe("POST /chat — streaming endpoint", () => {
             }));
             if (decision === "approve") {
                 expect(execute).toHaveBeenCalledExactlyOnceWith(
-                    "u1", approval, expect.anything(),
+                    { userId: "u1", orgId: null }, approval, expect.anything(),
                 );
                 expect(row.content).toContainEqual(expect.objectContaining({
                     type: "mcp_tool_call", approval_id: approval.id, status: "ok",
@@ -1919,10 +1955,13 @@ describe("POST /chat — streaming endpoint", () => {
             fast_model: "test-model",
             title_model: "test-model",
             memory_curator_model: null,
+            subagent_model: null,
+            subagent_reasoning: null,
             last_selected_reasoning_level: null,
             tabular_model: "test-model",
             last_selected_chat_model: null,
             legal_research_us: true,
+            web_search: DEFAULT_WEB_SEARCH_SETTINGS,
             api_keys: {
                 gemini: "test-key",
                 courtlistener: "configured-but-unused",
@@ -2190,7 +2229,7 @@ function tableQuery(
 }
 
 function makeRbacDb(
-    orgRole: "admin" | "member" | null,
+    orgRole: "owner" | "admin" | "member" | null,
     chatUserId = "colleague-1",
     overrides: {
         grantRole?: "owner" | "editor" | "viewer" | null;
@@ -2224,6 +2263,10 @@ function makeRbacDb(
                         id: "proj-1",
                         user_id: "colleague-1",
                         org_id: "org-1",
+                        // Open to the whole organization, so membership is
+                        // what these cases vary. A private project would
+                        // refuse every non-owner before the gate under test.
+                        visibility: "organization",
                         ...overrides.project,
                     },
                     table,
@@ -2280,6 +2323,19 @@ function makeRbacDb(
     };
 }
 
+/** Every row a request tried to insert into `chats` through this fake. */
+function chatInsertsOf(db: ReturnType<typeof makeRbacDb>): unknown[] {
+    return db.from.mock.calls.flatMap(([table], index) =>
+        table === "chats"
+            ? (
+                  db.from.mock.results[index].value as {
+                      insert: { mock: { calls: unknown[][] } };
+                  }
+              ).insert.mock.calls.map(([payload]) => payload)
+            : [],
+    );
+}
+
 // // #383 resolves an effective model before any chat write; the default
 // settings stub (no last-selected model, gemini-only key) cannot resolve
 // one, which would fail these permission tests with a 429 that has
@@ -2290,8 +2346,11 @@ async function seedResolvableModel() {
         legal_research_us: false,
         // Dev drift: Dev's UserModelSettings keeps the Altien fast_model field
         fast_model: "test-model",
+        web_search: DEFAULT_WEB_SEARCH_SETTINGS,
         title_model: null,
         memory_curator_model: null,
+        subagent_model: null,
+        subagent_reasoning: null,
         last_selected_reasoning_level: null,
         tabular_model: null,
         last_selected_chat_model: "gpt-6-luna",
@@ -2314,6 +2373,101 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
     afterEach(() => {
         // Restore the permissive default stub for the other describe blocks.
         mockedCreate.mockImplementation(() => mockSupabase() as never);
+    });
+
+    // A chat started on its own belongs to the workspace it is started in,
+    // named by the client as org_id; the first message is what creates it.
+    it("400s a new chat in an organization the caller is not in, before any model call", async () => {
+        const db = makeRbacDb(null);
+        mockedCreate.mockImplementation(() => db as never);
+
+        const res = await request(app)
+            .post("/api/chat")
+            .set("Authorization", "Bearer test")
+            .send({ ...VALID_BODY, org_id: "org-1" });
+
+        expect(res.status).toBe(400);
+        expect(res.body.detail).toBe(
+            "You are not a member of that organization.",
+        );
+        expect(runLLMStream).not.toHaveBeenCalled();
+        expect(chatInsertsOf(db)).toEqual([]);
+    });
+
+    it("files a new standalone chat under the organization its author is working in, and runs it on that organization's keys", async () => {
+        await seedResolvableModel();
+        const db = makeRbacDb("member", "u1");
+        mockedCreate.mockImplementation(() => db as never);
+
+        await request(app)
+            .post("/api/chat")
+            .set("Authorization", "Bearer test")
+            .send({ ...VALID_BODY, model: "gpt-6-luna", org_id: "org-1" });
+
+        expect(chatInsertsOf(db)).toEqual([
+            expect.objectContaining({
+                user_id: "u1",
+                project_id: null,
+                org_id: "org-1",
+            }),
+        ]);
+        const userSettings = await import("../../modules/user/user.settings.js");
+        expect(
+            vi.mocked(userSettings.getUserModelSettings).mock.calls.at(-1)?.[2],
+        ).toMatchObject({ orgId: "org-1" });
+    });
+
+    it("keeps a new standalone chat personal when no organization is named", async () => {
+        await seedResolvableModel();
+        const db = makeRbacDb("member", "u1");
+        mockedCreate.mockImplementation(() => db as never);
+
+        await request(app)
+            .post("/api/chat")
+            .set("Authorization", "Bearer test")
+            .send({ ...VALID_BODY, model: "gpt-6-luna" });
+
+        expect(chatInsertsOf(db)).toEqual([
+            expect.objectContaining({ project_id: null, org_id: null }),
+        ]);
+    });
+
+    // Memory follows the workspace: a chat started on its own in an
+    // organization is its author's alone, and is given the organization so
+    // that the author's memory FOR IT is what gets loaded.
+    it("treats the author's own standalone chat in an organization as private, and names the organization", async () => {
+        await seedResolvableModel();
+        const db = makeRbacDb("member", "u1", {
+            chat: { project_id: null, org_id: "org-1" },
+        });
+        mockedCreate.mockImplementation(() => db as never);
+
+        await request(app)
+            .post("/api/chat")
+            .set("Authorization", "Bearer test")
+            .send({ ...VALID_BODY, model: "gpt-6-luna", chat_id: "chat-1" });
+
+        expect(runLLMStream).toHaveBeenCalledWith(
+            expect.objectContaining({
+                memorySharedAudience: false,
+                orgId: "org-1",
+            }),
+        );
+    });
+
+    it("treats a chat in an organization's project as a shared audience", async () => {
+        await seedResolvableModel();
+        const db = makeRbacDb("member", "u1");
+        mockedCreate.mockImplementation(() => db as never);
+
+        await request(app)
+            .post("/api/chat")
+            .set("Authorization", "Bearer test")
+            .send({ ...VALID_BODY, model: "gpt-6-luna", chat_id: "chat-1" });
+
+        expect(runLLMStream).toHaveBeenCalledWith(
+            expect.objectContaining({ memorySharedAudience: true }),
+        );
     });
 
     it("403s a personal-project Viewer POSTing to an existing chat", async () => {
@@ -2466,10 +2620,8 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
 // Chat sharing, deletion and the people roster.
 //
 // Same fixture as above, now exercising the routes chats gained with the
-// role-aware permission schema. The ladder under test: title edits are
-// content.edit (member+), grants are access.manage (admin only), and
-// deleting the chat is container.delete (admin only) — so a member who may
-// rename the chat must not be able to re-share or erase it.
+// role-aware permission schema. Titles and grants require access.manage,
+// deletion requires container.delete, and direct recipients can leave.
 // ---------------------------------------------------------------------------
 describe("chat grants, deletion and roster", () => {
     const mockedCreate = vi.mocked(createServerSupabase);
@@ -2487,8 +2639,83 @@ describe("chat grants, deletion and roster", () => {
     const chatWrites = (op: "update" | "delete") =>
         rbacWrites.filter((w) => w.table === "chats" && w.op === op);
 
-    it("lets an org admin rename a colleague's chat", async () => {
-        mockedCreate.mockImplementation(() => makeRbacDb("admin") as never);
+    it.each(["viewer", "editor"] as const)("refuses standalone %s rename, including combined model updates", async (role) => {
+        mockedCreate.mockImplementation(() => makeRbacDb(null, "colleague-1", {
+            chat: { project_id: null, org_id: null }, chatGrantRole: role,
+        }) as never);
+        for (const body of [{ title: "Changed" }, { title: "Changed", model: "gpt-6-luna" }]) {
+            const res = await request(app).patch("/api/chat/chat-1").set("Authorization", "Bearer test").send(body);
+            expect(res.status).toBe(403);
+        }
+        expect(chatWrites("update")).toEqual([]);
+    });
+
+    it("refuses a project editor rename even when they created the chat", async () => {
+        mockedCreate.mockImplementation(() => makeRbacDb("member", "u1") as never);
+        const res = await request(app).patch("/api/chat/chat-1").set("Authorization", "Bearer test").send({ title: "Changed" });
+        expect(res.status).toBe(403);
+        expect(chatWrites("update")).toEqual([]);
+    });
+
+    it.each(["viewer", "editor"] as const)("lets a directly shared %s leave only their own grant", async (role) => {
+        mockedCreate.mockImplementation(() => makeRbacDb(null, "colleague-1", {
+            chat: { project_id: null, org_id: null }, chatGrantRole: role,
+        }) as never);
+        const res = await request(app).post("/api/chat/chat-1/leave").set("Authorization", "Bearer test")
+            .send({ email: "victim@example.com", userId: "someone-else" });
+        expect(res.status).toBe(204);
+        expect(rbacWrites).toEqual([expect.objectContaining({
+            table: "chat_access_grants", op: "delete", filters: [
+                { column: "chat_id", value: "chat-1" }, { column: "email", value: "u1@test.local" },
+            ],
+        })]);
+    });
+
+    it("serves direct-recipient Leave availability in both list and detail responses", async () => {
+        const db = makeRbacDb(null, "colleague-1", {
+            chat: { project_id: null, org_id: null }, chatGrantRole: "viewer",
+        });
+        db.rpc.mockResolvedValue({ data: [
+            { id: "chat-1", project_id: null, access_role: "viewer" },
+            { id: "project-chat", project_id: "p1", access_role: "editor" },
+        ], error: null } as never);
+        mockedCreate.mockImplementation(() => db as never);
+        const list = await request(app).get("/api/chat").set("Authorization", "Bearer test");
+        expect(list.status).toBe(200);
+        expect(list.body).toMatchObject([
+            { id: "chat-1", can_leave: true }, { id: "project-chat", can_leave: false },
+        ]);
+        const detail = await request(app).get("/api/chat/chat-1").set("Authorization", "Bearer test");
+        expect(detail.status).toBe(200);
+        expect(detail.body.chat.can_leave).toBe(true);
+    });
+
+    it("refuses leaving a project chat without removing membership or grants", async () => {
+        mockedCreate.mockImplementation(() => makeRbacDb("member") as never);
+        const res = await request(app).post("/api/chat/chat-1/leave").set("Authorization", "Bearer test");
+        expect(res.status).toBe(409);
+        expect(res.body.code).toBe("access_inherited");
+        expect(rbacWrites).toEqual([]);
+    });
+
+    it.each([true, false])("refuses an owner leaving (creator=%s)", async (isCreator) => {
+        mockedCreate.mockImplementation(() => makeRbacDb(null, isCreator ? "u1" : "colleague-1", {
+            chat: { project_id: null, org_id: null }, chatGrantRole: "owner",
+        }) as never);
+        const res = await request(app).post("/api/chat/chat-1/leave").set("Authorization", "Bearer test");
+        expect(res.status).toBe(403);
+        expect(rbacWrites).toEqual([]);
+    });
+
+    it("does not disclose an inaccessible chat when leaving", async () => {
+        mockedCreate.mockImplementation(() => makeRbacDb(null, "colleague-1", { chat: { project_id: null, org_id: null } }) as never);
+        const res = await request(app).post("/api/chat/chat-1/leave").set("Authorization", "Bearer test");
+        expect(res.status).toBe(404);
+        expect(rbacWrites).toEqual([]);
+    });
+
+    it("lets a project owner rename a colleague's chat", async () => {
+        mockedCreate.mockImplementation(() => makeRbacDb("owner") as never);
 
         const res = await request(app)
             .patch("/api/chat/chat-1")
@@ -2512,7 +2739,7 @@ describe("chat grants, deletion and roster", () => {
         // have it drop the chat from the sidebar over a transient outage.
         mockedCreate.mockImplementation(
             () =>
-                makeRbacDb("admin", "colleague-1", {
+                makeRbacDb("owner", "colleague-1", {
                     chatWriteError: "connection terminated unexpectedly",
                 }) as never,
         );
@@ -2921,6 +3148,12 @@ describe("chat grants, deletion and roster", () => {
         ]);
     });
 
+    it("lets an editor delete their own project chat", async () => {
+        mockedCreate.mockImplementation(() => makeRbacDb("member", "u1") as never);
+        const res = await request(app).delete("/api/chat/chat-1").set("Authorization", "Bearer test");
+        expect(res.status).toBe(204);
+    });
+
     it("403s an org member deleting a colleague's chat", async () => {
         // container.delete is the admin rung: a member may write in the chat
         // and rename it, but erasing a colleague's container is not theirs.
@@ -2937,11 +3170,12 @@ describe("chat grants, deletion and roster", () => {
         expect(chatWrites("delete")).toEqual([]);
     });
 
-    it("lets an org admin delete a colleague's chat in the org's project", async () => {
-        // The other side of that rung: an org admin inherits project admin,
-        // and someone who could delete the whole project outright is not
-        // meaningfully restrained from deleting one chat inside it.
-        mockedCreate.mockImplementation(() => makeRbacDb("admin") as never);
+    it("lets an organization owner delete a colleague's chat in the org's project", async () => {
+        // The other side of that rung: an organization owner is Owner of
+        // every project in it, and someone who could delete the whole
+        // project outright is not meaningfully restrained from deleting one
+        // chat inside it.
+        mockedCreate.mockImplementation(() => makeRbacDb("owner") as never);
 
         const res = await request(app)
             .delete("/api/chat/chat-1")
@@ -2951,6 +3185,37 @@ describe("chat grants, deletion and roster", () => {
         expect(chatWrites("delete")[0]?.filters).toEqual([
             { column: "id", value: "chat-1" },
         ]);
+    });
+
+    it("403s an org admin deleting a colleague's chat, like any other editor", async () => {
+        // Administering the organization gives no standing on its content:
+        // on a public project an admin is an Editor, and deleting another
+        // person's chat is an Owner's call.
+        mockedCreate.mockImplementation(() => makeRbacDb("admin") as never);
+
+        const res = await request(app)
+            .delete("/api/chat/chat-1")
+            .set("Authorization", "Bearer test");
+
+        expect(res.status).toBe(403);
+        expect(chatWrites("delete")).toEqual([]);
+    });
+
+    it("404s a member reaching for a chat in a private project they were not given", async () => {
+        // Private by default: the chat inherits the project's verdict, and
+        // membership of the organization is no longer one.
+        for (const role of ["admin", "member"] as const) {
+            mockedCreate.mockImplementation(
+                () =>
+                    makeRbacDb(role, "colleague-1", {
+                        project: { visibility: "private" },
+                    }) as never,
+            );
+            const res = await request(app)
+                .get("/api/chat/chat-1")
+                .set("Authorization", "Bearer test");
+            expect(res.status).toBe(404);
+        }
     });
 
     it("404s a delete from someone with no access at all", async () => {
@@ -3012,6 +3277,7 @@ describe("chat grants, deletion and roster", () => {
     });
 
     it("returns the creator and direct-grant roster from GET /chat/:chatId/people", async () => {
+        const photo = "data:image/png;base64,iVBORw0KGgo=";
         mockedCreate.mockImplementation(
             () =>
                 makeRbacDb(null, "colleague-1", {
@@ -3041,11 +3307,13 @@ describe("chat grants, deletion and roster", () => {
                             user_id: "u1",
                             email: "u1@test.local",
                             display_name: "Current User",
+                            profile_photo: photo,
                         },
                         {
                             user_id: "colleague-1",
                             email: "colleague@example.com",
                             display_name: "Colleague One",
+                            profile_photo: photo,
                         },
                         {
                             user_id: "mate-1",
@@ -3065,6 +3333,7 @@ describe("chat grants, deletion and roster", () => {
             user_id: "colleague-1",
             email: "colleague@example.com",
             display_name: "Colleague One",
+            profile_photo: photo,
             role: "owner",
         });
         expect(res.body.members).toEqual([
@@ -3072,12 +3341,14 @@ describe("chat grants, deletion and roster", () => {
                 user_id: "u1",
                 email: "u1@test.local",
                 display_name: "Current User",
+                profile_photo: photo,
                 role: "editor",
             },
             {
                 user_id: "mate-1",
                 email: "mate@example.com",
                 display_name: "Mate",
+                profile_photo: null,
                 role: "viewer",
             },
         ]);
@@ -3328,9 +3599,116 @@ describe("server-owned turns: resume, stop, concurrency", () => {
             code: "turn_in_progress",
             detail: "A response is already being generated for this chat.",
         });
+        expect(dbInserts.filter(entry => entry.table === "chat_messages" &&
+            (entry.value as { role?: string }).role === "user")).toHaveLength(1);
         held.release();
         expect((await firstDone).text).toContain("data: [DONE]");
         expect(runLLMStream).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(["idle", "max_lifetime"] as const)(
+        "persists %s as a deadline error and failed audit",
+        async (reason) => {
+            const { AssistantStreamAbortError } =
+                await import("../../modules/chat/engine/index.js");
+            const { getAssistantTurnRun } =
+                await import("../../lib/assistantTurnRuns.js");
+            const started = new Promise<StreamParams>((resolve) => {
+                runLLMStream.mockImplementation(async (params: unknown) => {
+                    const p = params as StreamParams;
+                    resolve(p);
+                    emitFrom(p)({ type: "content_delta", text: "Partial" });
+                    await new Promise<void>((done) =>
+                        p.signal?.addEventListener("abort", () => done(), {
+                            once: true,
+                        }),
+                    );
+                    throw new AssistantStreamAbortError("Partial", [
+                        { type: "content", text: "Partial" },
+                    ]);
+                });
+            });
+            const firstDone = request(app)
+                .post("/api/chat")
+                .set("Authorization", "Bearer test")
+                .send(VALID_BODY)
+                .then((res) => res);
+            await started;
+            const turnId = (findAssistantReservation()?.value as { id: string }).id;
+            getAssistantTurnRun(turnId)!.stop(reason);
+            const text = (await firstDone).text;
+            expect(text).toContain('"type":"error"');
+            expect(text).not.toContain('"type":"cancelled"');
+            expect(findAssistantUpdate()?.value).toMatchObject({
+                content: [
+                    { type: "content", text: "Partial" },
+                    {
+                        type: "error",
+                        message: expect.any(String),
+                        safe_to_display: true,
+                    },
+                ],
+            });
+            expect(
+                dbInserts.find(({ table }) => table === "db_jobs")?.value,
+            ).toMatchObject({
+                kind: "audit.chat_turn",
+                payload: { base: { status: "failed" } },
+            });
+        },
+    );
+
+    it("user Stop persists partial history while title generation is pending", async () => {
+        const { generateAssistantChatTitle } =
+            await import("../../modules/chat/chat.title.js");
+        const { AssistantStreamAbortError } =
+            await import("../../modules/chat/engine/index.js");
+        const { getAssistantTurnRun } =
+            await import("../../lib/assistantTurnRuns.js");
+        let releaseTitle!: (title: string) => void;
+        vi.mocked(generateAssistantChatTitle).mockImplementationOnce(
+            () =>
+                new Promise<string>((resolve) => {
+                    releaseTitle = resolve;
+                }),
+        );
+        const started = new Promise<StreamParams>((resolve) => {
+            runLLMStream.mockImplementation(async (params: unknown) => {
+                const p = params as StreamParams;
+                resolve(p);
+                emitFrom(p)({ type: "content_delta", text: "Partial before stop" });
+                await new Promise<void>((done) =>
+                    p.signal?.addEventListener("abort", () => done(), {
+                        once: true,
+                    }),
+                );
+                throw new AssistantStreamAbortError("Partial before stop", [
+                    { type: "content", text: "Partial before stop" },
+                ]);
+            });
+        });
+        const response = request(app)
+            .post("/api/chat")
+            .set("Authorization", "Bearer test")
+            .send(VALID_BODY)
+            .then((r) => r);
+        await started;
+        const id = (findAssistantReservation()?.value as { id: string }).id;
+        vi.useFakeTimers();
+        getAssistantTurnRun(id)!.stop();
+        await vi.advanceTimersByTimeAsync(30001);
+        vi.useRealTimers();
+        const terminal = await response;
+        const savedBeforeTitleResolved = findAssistantUpdate()?.value;
+        releaseTitle("Late title");
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        expect(terminal.text).toContain('"type":"cancelled"');
+        expect(savedBeforeTitleResolved).toMatchObject({
+            content: [
+                { type: "content", text: "Partial before stop" },
+                { type: "content", text: "Cancelled by user." },
+            ],
+        });
     });
 
     it("stops a run through the endpoint: readers see cancelled then [DONE], the partial answer is stored", async () => {

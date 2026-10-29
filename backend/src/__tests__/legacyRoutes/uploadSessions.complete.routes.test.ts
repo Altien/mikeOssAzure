@@ -12,6 +12,12 @@ const mocks = vi.hoisted(() => ({
   rpc: vi.fn(),
   session: null as Record<string, unknown> | null,
   files: [] as Array<Record<string, unknown>>,
+  setOperation: vi.fn(),
+}));
+
+vi.mock("../../lib/observability/sentry", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/observability/sentry")>()),
+  setOperation: mocks.setOperation,
 }));
 
 vi.mock("../../middleware/auth", () => ({
@@ -268,6 +274,8 @@ describe("upload session completion", () => {
       status: "uploaded",
       observed_size_bytes: 4,
     });
+    // Sealing reads and copies the object: a storage flow, named as one.
+    expect(mocks.setOperation).toHaveBeenCalledWith("upload_session.storage");
   });
 
   it("answers 503, not 500, when object storage fails while sealing", async () => {

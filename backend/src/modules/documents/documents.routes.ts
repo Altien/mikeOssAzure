@@ -12,6 +12,7 @@ import { requireAuth } from "../../middleware/auth";
 import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import { sendInternalError } from "../../lib/httpError";
+import { setOperation } from "../../lib/observability/sentry";
 import { buildContentDisposition, createFileReadStream } from "../../lib/storage";
 import { sendDocumentDisplay } from "../../lib/documentDisplay";
 import { contentTypeForDocumentType } from "../../lib/documentTypes";
@@ -42,8 +43,12 @@ documentsRouter.get("/:documentId", requireAuth, asyncRoute(async (req, res) => 
     const db = createServerSupabase();
 
     const result = await getDocument(documentId, userId, userEmail, db);
-    if (!result.ok)
+    if (!result.ok) {
+        if (result.kind === "error") return void sendInternalError(res, result.error);
+        if (result.kind === "forbidden")
+            return void res.status(403).json({ detail: "You do not have access to this document." });
         return void res.status(404).json({ detail: "Document not found" });
+    }
     res.json(result.doc);
 }));
 
@@ -237,6 +242,7 @@ documentsRouter.get("/:documentId/url", requireAuth, asyncRoute(async (req, res)
 // Returns every version row for the document in document order, with
 // the human-friendly version number when present.
 documentsRouter.get("/:documentId/versions", requireAuth, asyncRoute(async (req, res) => {
+    setOperation("documents.version");
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { documentId } = req.params;
@@ -259,6 +265,7 @@ documentsRouter.post(
     "/:documentId/versions/from-document",
     requireAuth,
     asyncRoute(async (req, res) => {
+        setOperation("documents.version");
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
         const { documentId } = req.params;
@@ -293,16 +300,15 @@ documentsRouter.post(
             db,
         );
         if (!result.ok) {
+            // The 500s carry their cause: one report, with the kind and the
+            // failing dependency's code, instead of a bare detail string.
+            if ("error" in result)
+                return void sendInternalError(res, result.error);
             const status =
                 result.kind === "source_not_owner" ||
                 result.kind === "target_forbidden"
                     ? 403
-                    : result.kind === "target_not_found" ||
-                        result.kind === "source_not_found" ||
-                        result.kind === "source_no_active" ||
-                        result.kind === "source_bytes"
-                      ? 404
-                      : 500;
+                    : 404;
             return void res.status(status).json({ detail: result.detail });
         }
         res.status(201).json(result.version);
@@ -321,6 +327,7 @@ documentsRouter.patch(
     "/:documentId/versions/:versionId",
     requireAuth,
     asyncRoute(async (req, res) => {
+        setOperation("documents.version");
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
         const { documentId, versionId } = req.params;
@@ -351,6 +358,7 @@ documentsRouter.delete(
     "/:documentId/versions/:versionId",
     requireAuth,
     asyncRoute(async (req, res) => {
+        setOperation("documents.version");
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
         const { documentId, versionId } = req.params;

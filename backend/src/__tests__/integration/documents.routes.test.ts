@@ -1,5 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
+import { AppError } from "../../lib/appError";
+import { diagnosticErrorTags } from "../../lib/observability/sentryPrivacy";
+const versionCopy = vi.hoisted(() => ({ override: null as null | ((...args: any[]) => any) }));
+vi.mock("../../modules/documents/documents.service", async load => {
+    const actual = await load<typeof import("../../modules/documents/documents.service")>();
+    return { ...actual, createVersionFromDocument: (...args: Parameters<typeof actual.createVersionFromDocument>) =>
+        versionCopy.override ? versionCopy.override(...args) : actual.createVersionFromDocument(...args) };
+});
+const sentry = vi.hoisted(() => ({ setOperation: vi.fn(), reportError: vi.fn((_error: unknown, _context?: unknown) => null) }));
+vi.mock("../../lib/observability/sentry", async load => ({ ...await load<typeof import("../../lib/observability/sentry")>(), ...sentry }));
 
 // ---------------------------------------------------------------------------
 // DELETE /single-documents/:documentId — the container's rule, not `user_id`.
@@ -169,6 +179,45 @@ const access = (projectRole: string, isCreator: boolean) => ({
     isCreator,
     orgRole: "admin",
     projectRole,
+});
+
+describe("GET /single-documents/:documentId", () => {
+    beforeEach(() => {
+        errors = {};
+        rows = {
+            documents: [{ id: DOC, user_id: "u2", project_id: "p1", org_id: "o1", workflow_id: null }],
+            document_versions: [],
+        };
+        ensureDocAccess.mockResolvedValue(access("viewer", false));
+    });
+
+    it("returns the file metadata with read-only permissions for a viewer", async () => {
+        const res = await request(app).get(`/api/single-documents/${DOC}`).set(...AUTH);
+        expect(res.status).toBe(200);
+        expect(res.body).toMatchObject({ id: DOC, can_edit: false, can_delete: false });
+    });
+
+    it("distinguishes denied access from a missing document without exposing metadata", async () => {
+        ensureDocAccess.mockResolvedValue({ ok: false });
+        const res = await request(app).get(`/api/single-documents/${DOC}`).set(...AUTH);
+        expect(res.status).toBe(403);
+        expect(res.body).toEqual({ detail: "You do not have access to this document." });
+    });
+
+    it.each(["missing", "archived"])("returns 404 for a %s document", async (state) => {
+        if (state === "missing") rows.documents = [];
+        else rows.documents[0].archived_at = "2026-10-14T00:00:00Z";
+        const res = await request(app).get(`/api/single-documents/${DOC}`).set(...AUTH);
+        expect(res.status).toBe(404);
+        expect(res.body).toEqual({ detail: "Document not found" });
+    });
+
+    it("does not describe a database failure as a missing document", async () => {
+        errors.documents = { message: "private database failure" };
+        const res = await request(app).get(`/api/single-documents/${DOC}`).set(...AUTH);
+        expect(res.status).toBe(500);
+        expect(JSON.stringify(res.body)).not.toContain("private database failure");
+    });
 });
 
 describe("DELETE /single-documents/:documentId", () => {
@@ -408,6 +457,8 @@ describe("DELETE /single-documents/:documentId/versions/:versionId", () => {
         expect(rpcCalls.map((call) => call.name)).toEqual([
             "delete_document_version",
         ]);
+        // Every event this request produces is tagged with the version flow.
+        expect(sentry.setOperation).toHaveBeenCalledWith("documents.version");
     });
 });
 
@@ -463,5 +514,46 @@ describe("POST /single-documents/:documentId/versions/from-document", () => {
 
         expect(res.status).toBe(404);
         expect(res.body.detail).toBe("Document not found");
+    });
+
+    // An internal failure used to be console.error'd in the service AND
+    // answered as a bare 500 by the route: two context-free events. The
+    // service now hands the route one AppError with the cause, and the route
+    // reports it once through sendInternalError, kind and SQLSTATE attached.
+    it("reports an internal failure once, with its kind, and answers 500", async () => {
+        sentry.reportError.mockClear();
+        const rpcError = { code: "42501", message: "permission denied for function" };
+        versionCopy.override = async () => ({
+            ok: false,
+            kind: "version_insert",
+            detail: "Failed to record new version.",
+            error: new AppError("db.rpc_failed", "[versions/copy] insert failed", {
+                cause: rpcError,
+            }),
+        });
+        const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        try {
+            const res = await request(app)
+                .post(`/api/single-documents/${DOC}/versions/from-document`)
+                .set(...AUTH)
+                .send({ source_document_id: SOURCE });
+
+            expect(res.status).toBe(500);
+            expect(res.body).toMatchObject({ code: "internal_error" });
+            expect(JSON.stringify(res.body)).not.toContain("permission denied");
+
+            expect(sentry.reportError).toHaveBeenCalledOnce();
+            const [reported, context] = sentry.reportError.mock.calls[0]!;
+            expect(diagnosticErrorTags(reported)).toEqual({
+                error_kind: "db.rpc_failed",
+                failure_code: "42501",
+            });
+            expect(context).toMatchObject({
+                tags: { component: "http", http_status: 500 },
+            });
+        } finally {
+            versionCopy.override = null;
+            log.mockRestore();
+        }
     });
 });

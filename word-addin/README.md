@@ -7,6 +7,13 @@ It uses the same Mike account, API, Entra identity, model providers, and
 workflow library as the web app. Word conversations are stored separately from
 the web assistant's chat history.
 
+Word currently uses the
+Personal workspace for models, memory, workflows, quick actions and document
+pickers. Organization documents and workflow assets cannot be attached to Word
+chats. Older chats with organization attachments must be replaced with a new
+Personal chat before continuing; they are also excluded from new Personal
+memory learning. This does not purge previously stored chats or memory.
+
 ## Prerequisites
 
 - Node.js 22 or newer

@@ -5,64 +5,7 @@ import {
     buildUserAccountExport,
 } from "../user.dataExport";
 
-type Row = Record<string, unknown>;
-
-// Read-only fake supporting the query subset buildUserAccountExport uses
-// (select/range/eq/neq/in/order/filter + thenable).
-function makeDb(tables: Record<string, Row[]>) {
-    const reads: string[] = [];
-    function query(table: string) {
-        let rows = [...(tables[table] ?? [])];
-        const builder: any = {
-            select: () => builder,
-            range: () => builder,
-            order: () => builder,
-            limit: () => builder,
-            eq: (col: string, val: unknown) => {
-                rows = rows.filter((r) => r[col] === val);
-                return builder;
-            },
-            neq: (col: string, val: unknown) => {
-                rows = rows.filter((r) => r[col] !== val);
-                return builder;
-            },
-            is: (col: string, val: unknown) => {
-                rows = rows.filter((r) => (r[col] ?? null) === val);
-                return builder;
-            },
-            not: (col: string, op: string, val: unknown) => {
-                if (op === "is" && val === null)
-                    rows = rows.filter((r) => (r[col] ?? null) !== null);
-                return builder;
-            },
-            in: (col: string, vals: unknown[]) => {
-                rows = rows.filter((r) => vals.includes(r[col]));
-                return builder;
-            },
-            filter: (col: string, op: string, value: string) => {
-                reads.push(`${table}.${col}:${op}`);
-                if (op !== "cs") return builder;
-                const expected = JSON.parse(value) as string[];
-                rows = rows.filter((r) => {
-                    const actual = r[col];
-                    return (
-                        Array.isArray(actual) &&
-                        expected.every((item) => actual.includes(item))
-                    );
-                });
-                return builder;
-            },
-            maybeSingle: async () => ({ data: rows[0] ?? null, error: null }),
-            single: async () => ({ data: rows[0] ?? null, error: null }),
-            then: (
-                resolve: (v: { data: Row[]; error: null }) => unknown,
-                reject?: (e: unknown) => unknown,
-            ) => Promise.resolve({ data: rows, error: null }).then(resolve, reject),
-        };
-        return builder;
-    }
-    return { db: { from: (t: string) => query(t) } as any, reads };
-}
+import { makeExportDb as makeDb, type Row } from "./user.dataExport.fixture";
 
 describe("account export: shared projects", () => {
     const tables = {
@@ -93,7 +36,7 @@ describe("account export: shared projects", () => {
 
     it("lists exactly the grant-reachable projects", async () => {
         const { db, reads } = makeDb(tables);
-        const exported = await buildUserAccountExport(db, "u1", "u1@example.com");
+        const exported = await buildUserAccountExport(db, "u1", "u1@example.com", null);
         const shared = (exported as any).shared_access.projects as Row[];
         expect(shared.map((p) => p.id)).toEqual(["granted-p"]);
         expect(reads.filter((r) => r.startsWith("projects."))).toEqual([]);
@@ -131,6 +74,7 @@ describe("memory exports", () => {
             db,
             "u1",
             "u1@example.com",
+            null,
         );
 
         expect(exported.memory).toMatchObject({
@@ -162,7 +106,7 @@ describe("memory exports", () => {
         });
 
         await expect(
-            buildUserAccountExport(db, "u1", "u1@example.com"),
+            buildUserAccountExport(db, "u1", "u1@example.com", null),
         ).rejects.toThrow(/checksum mismatch/i);
     });
 
@@ -203,5 +147,40 @@ describe("memory exports", () => {
             source: "curator",
         });
         expect(manifest.digest.value).toMatch(/^[0-9a-f]{64}$/);
+    });
+});
+
+// PR #608 regression: the export listed which providers had keys but not the
+// non-secret region/endpoint/location/base URL saved with them, nor whether
+// the provider was switched off — both are the user's data.
+describe("account export: API keys", () => {
+    it("includes each key's non-secret settings and enabled flag, never the key", async () => {
+        const { db } = makeDb({
+            user_api_keys: [
+                {
+                    user_id: "u1",
+                    provider: "bedrock",
+                    encrypted_key: "ciphertext",
+                    iv: "iv",
+                    auth_tag: "tag",
+                    settings: { region: "eu-west-2" },
+                    enabled: false,
+                    created_at: "1",
+                    updated_at: "2",
+                },
+            ],
+        });
+        const exported = (await buildUserAccountExport(db, "u1", undefined, null)) as any;
+        expect(exported.api_keys).toEqual([
+            {
+                provider: "bedrock",
+                has_key: true,
+                enabled: false,
+                settings: { region: "eu-west-2" },
+                created_at: "1",
+                updated_at: "2",
+            },
+        ]);
+        expect(JSON.stringify(exported.api_keys)).not.toMatch(/ciphertext|auth_tag|"iv"/);
     });
 });

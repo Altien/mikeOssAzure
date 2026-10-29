@@ -1,11 +1,24 @@
 allowBuilds:
   '@openrouter/sdk': true
+  '@swc/core': false
   esbuild: true
   msw: true
   sharp: true
   unrs-resolver: true
   workerd: true
 overrides:
+  'body-parser@2.3.0': 2.4.0
+  'zod@4.6.5': 4.6.7
+  'undici@7.29.1': 7.30.1
+  # Source180 npm lock updates, carried by the existing pnpm graph.
+  'vite@>=6 <7': 6.4.5
+  'vite@>=8 <9': 8.3.5
+  rolldown: 1.2.14
+  postcss: 8.5.31
+  'nanoid@>=3 <4': 3.3.20
+  # Source177 npm lock security delta, retained in Dev pnpm resolution.
+  markdown-it: ^14.3.3
+  '@node-minify/core>glob': ^10.5.0
   eslint-plugin-react-hooks: ~7.0.1
   # GHSA-wq5f-xc86-pv6w (librsvg in sharp's prebuilt binary): Next and
   # wrangler/miniflare both resolve sharp; hold every copy at the patched line.

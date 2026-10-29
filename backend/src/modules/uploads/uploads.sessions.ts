@@ -10,6 +10,8 @@
 
 import { Transform, type TransformCallback, type Readable } from "node:stream";
 
+import { AppError } from "../../lib/appError";
+import { markStage } from "../../lib/observability/sentry";
 import {
   copyFile,
   getSignedUploadUrl,
@@ -118,7 +120,13 @@ async function signPendingFiles(
         file.expected_size_bytes,
         ttl,
       );
-      if (!url) throw new Error("Failed to create signed upload URL");
+      // A signing failure throws from storage.ts with its cause; null only
+      // means the store is not configured.
+      if (!url)
+        throw new AppError(
+          "storage.signed_url_failed",
+          "Failed to create signed upload URL",
+        );
       return {
         ...publicFile(file),
         upload: {
@@ -316,6 +324,7 @@ async function completeSessionFile(
     if (file.status === "verifying" && file.verification_lease_until &&
       new Date(file.verification_lease_until).getTime() > Date.now()) return "in_progress";
     if (file.status === "pending_upload" || file.status === "verifying") {
+      markStage("seal-recover");
       let failQuery = db
         .from("upload_session_files")
         .update({

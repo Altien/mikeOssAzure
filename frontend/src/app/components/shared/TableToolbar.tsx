@@ -2,6 +2,7 @@
 
 import React, { useSyncExternalStore } from "react";
 import { Settings2 } from "lucide-react";
+import { cn } from "@/app/lib/utils";
 import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
 import {
     Dropdown,
@@ -44,6 +45,11 @@ interface Props<T extends string> {
     leading?: React.ReactNode;
     /** Optional content rendered on the right side of the toolbar */
     actions?: React.ReactNode;
+    /**
+     * Overrides for the toolbar row, such as dropping its page gutters when
+     * it sits inside a section that already has its own.
+     */
+    className?: string;
 }
 
 export function TableToolbar<T extends string>({
@@ -52,6 +58,7 @@ export function TableToolbar<T extends string>({
     onChange,
     leading,
     actions,
+    className,
 }: Props<T>) {
     const hasItems = items.length > 0;
     const isDesktop = useSyncExternalStore(
@@ -61,9 +68,14 @@ export function TableToolbar<T extends string>({
     );
 
     return (
-        <div className="mx-3 mb-2 flex h-10 items-center md:mx-6.5">
+        <div
+            className={cn(
+                "mx-3 mb-2 flex h-10 items-center md:mx-6.5",
+                className,
+            )}
+        >
             {(leading || hasItems) && (
-                <div className="-my-2 flex flex-1 items-center gap-1.5 py-2">
+                <div className="-my-2 flex min-w-0 flex-1 items-center gap-1.5 py-2">
                     {leading}
                     {items.map((item) => (
                         <TabPillButtonUI

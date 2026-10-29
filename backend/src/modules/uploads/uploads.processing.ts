@@ -17,9 +17,15 @@ import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { pathToFileURL } from "node:url";
 
+import { AppError } from "../../lib/appError";
 import { recordAudit } from "../../lib/audit";
+import { runIsolated } from "../../lib/dbq/jobScope";
 import { convertedPdfKey, officeFileToPdf } from "../../lib/convert";
-import { reportError } from "../../lib/observability/sentry";
+import {
+  markStage,
+  reportError,
+  setOperation,
+} from "../../lib/observability/sentry";
 import {
   createPollFailureGate,
   type PollFailureGate,
@@ -105,10 +111,9 @@ const UPLOAD_TEMP_RETENTION_MS = 2 * UPLOAD_JOB_LEASE_SECONDS * 1000;
  * stop, mark the file failed, and clean up whatever bytes this job wrote —
  * never to recreate the row.
  */
-class ChangedDocumentError extends Error {
+class ChangedDocumentError extends AppError {
   constructor() {
-    super("document_changed");
-    this.name = "ChangedDocumentError";
+    super("upload.document_changed", "document_changed");
   }
 }
 
@@ -221,6 +226,7 @@ async function buildPdfRendition(args: {
   if (args.fileType === "pdf") return args.sourceStoragePath;
   if (!shouldConvertToPdf(args.fileType)) return null;
   try {
+    markStage("conversion");
     const pdfPath = await officeFileToPdf(
       args.sourceFilePath,
       args.workingDirectory,
@@ -329,7 +335,9 @@ async function requireSealedFile(
   } catch (error) {
     await removeTemporaryArtifact(directory);
     if (error instanceof StorageOperationError) {
-      throw new Error("sealed_upload_not_found", { cause: error });
+      throw new AppError("upload.sealed_missing", "sealed_upload_not_found", {
+        cause: error,
+      });
     }
     throw error;
   }
@@ -406,6 +414,8 @@ export async function processUploadJob(
   jobId: string,
   workerId: string,
 ): Promise<void> {
+  setOperation("documents.upload.complete");
+  markStage("claim");
   const { data: job, error: jobError } = await db.from("upload_processing_jobs")
     .select("id, session_id, file_id, attempts, locked_by, claim_token")
     .eq("id", jobId).eq("status", "running").eq("locked_by", workerId).single();
@@ -446,6 +456,7 @@ export async function processUploadJob(
     await renew();
     let payload: Record<string, unknown>;
     try {
+      markStage("process-file");
       payload = await prepareUploadFile(db, typedSession, typedFile, typedJob.claim_token);
     } catch (error) {
       // A stale editor save cannot succeed on retry (sync 6e3ef6fa).
@@ -525,6 +536,7 @@ export async function cleanupUploadSessions(db: Db): Promise<void> {
     .limit(20);
   if (sessionsError) throw sessionsError;
   for (const session of sessions ?? []) {
+    markStage("session-expiry");
     // The RPC queues both immediate and post-signature-expiry prefix sweeps in
     // the same transaction as cleaned_at. Files already processing are left
     // alone; their atomic publish queues their own object cleanup.
@@ -592,8 +604,9 @@ function startUploadProcessingWorker(options: {
     try {
       const db = createServerSupabase();
       if (options.runCleanup && Date.now() - lastCleanupAt >= 60_000) {
+        // Own scope: the stages cleanup marks must not land on a later job.
         await Promise.all([
-          cleanupUploadSessions(db),
+          runIsolated(() => cleanupUploadSessions(db)),
           cleanupUploadProcessingTempFiles(),
         ]);
         lastCleanupAt = Date.now();
@@ -608,7 +621,10 @@ function startUploadProcessingWorker(options: {
         schedule(UPLOAD_WORKER_POLL_MS);
         return;
       }
-      await processUploadJob(db, jobId, workerId);
+      // Each job in its own Sentry isolation scope: several of these loops
+      // share the process, and the operation/stages one job records must not
+      // land on another's failure.
+      await runIsolated(() => processUploadJob(db, jobId, workerId));
       failures.success();
       schedule(0);
     } catch (thrown) {

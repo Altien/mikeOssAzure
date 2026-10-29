@@ -1,5 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { captureRequestOwner } = vi.hoisted(() => ({ captureRequestOwner: vi.fn(() => () => true) }));
+vi.mock("@/app/hooks/useRequestOwner", () => ({ useRequestOwner: () => ({ capture: captureRequestOwner }) }));
 import ConnectorsPage from "./page";
 import {
     MikeApiError,
@@ -38,17 +41,78 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => {
         getMcpConnector: vi.fn(),
         updateMcpConnector: vi.fn(),
         setMcpToolEnabled: vi.fn(),
-        getGoogleDriveStatus: vi.fn(() => new Promise(() => {})),
+        // Google answers "not connected" unless a test says otherwise: the
+        // page shows placeholders until every connector source has answered.
+        getGoogleDriveStatus: vi.fn(async () => ({
+            configured: true, available: true, schemaReady: true, connected: false,
+            scope: null, enabled: true, writeEnabled: false, requireWriteApproval: false,
+            pickerAvailable: false, tools: [], redirectUri: null,
+        })),
         startGoogleDriveOAuth: vi.fn(),
         cancelGoogleDriveOAuth: vi.fn(),
         disconnectGoogleDrive: vi.fn(),
         updateGoogleDriveSettings: vi.fn(),
         setGoogleDriveToolEnabled: vi.fn(),
-        getGoogleWorkspaceStatus: vi.fn(() => new Promise(() => {})),
+        getGoogleWorkspaceStatus: vi.fn(async () => ({
+            configured: true, available: true, schemaReady: true, connected: false,
+            writeEnabled: false, enabled: true, requireWriteApproval: false,
+            readOnly: false, tools: [], redirectUri: null,
+        })),
         updateGoogleWorkspaceSettings: vi.fn(),
         setGoogleWorkspaceToolEnabled: vi.fn(),
     };
 });
+
+// The active workspace. Every test runs in Personal unless it says otherwise.
+const workspaceState = vi.hoisted(() => ({
+    workspaceId: "personal" as string | null,
+    activeOrganization: null as { id: string; name: string } | null,
+    // Only Personal unless a test says otherwise.
+    organizations: [] as { id: string; name: string }[] | null,
+}));
+vi.mock("@/app/contexts/WorkspaceContext", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("@/app/contexts/WorkspaceContext")>()),
+    useWorkspace: () => ({
+        workspaceId: workspaceState.workspaceId,
+        activeOrganization: workspaceState.activeOrganization,
+        organizations: workspaceState.organizations,
+    }),
+}));
+
+beforeEach(() => {
+    workspaceState.workspaceId = "personal";
+    workspaceState.activeOrganization = null;
+    workspaceState.organizations = [];
+    courtListener.workspaces = [];
+});
+
+// CourtListener's state and dialog have their own tests; here a test sets
+// where the page should place it, and sees which workspace it was asked for.
+const courtListener = vi.hoisted(() => ({
+    loading: false,
+    loadFailed: false,
+    installed: false,
+    enabled: true,
+    setEnabled: vi.fn(),
+    status: null as null | { tokenSource: "user" | "org" | null; bulkData: boolean },
+    workspaces: [] as (string | undefined)[],
+}));
+vi.mock("@/app/components/settings/CourtListenerConnector", () => ({
+    COURTLISTENER_NAME: "CourtListener",
+    CourtListenerIcon: () => null,
+    CourtListenerTokenModal: ({ open }: { open: boolean }) =>
+        open ? <div role="dialog" aria-label="CourtListener token" /> : null,
+    useCourtListenerConnector: (workspace?: string) => {
+        courtListener.workspaces.push(workspace);
+        return {
+            ...courtListener,
+            busy: false,
+            saveToken: vi.fn(),
+            deleteToken: vi.fn(),
+        };
+    },
+}));
+
 
 function makeSummary(
     overrides: Partial<McpConnectorSummary> = {},
@@ -541,17 +605,21 @@ describe("ConnectorsPage suggested connectors", () => {
             await flushMicrotasks();
         });
 
-        expect(createMcpConnector).toHaveBeenCalledWith({
-            name: "Notion",
-            serverUrl: "https://mcp.notion.com/mcp",
-            bearerToken: null,
-        });
+        expect(createMcpConnector).toHaveBeenCalledWith(
+            {
+                name: "Notion",
+                serverUrl: "https://mcp.notion.com/mcp",
+                bearerToken: null,
+            },
+            "personal",
+        );
         expect(startMcpConnectorOAuth).toHaveBeenCalledWith("notion-1");
         expect(refreshMcpConnectorTools).toHaveBeenCalledTimes(1);
         expect(screen.queryByText("Connector added")).toBeNull();
+        // Once installed, the preset leaves Discover.
         expect(
-            screen.getByRole("button", { name: "Notion connector added" }),
-        ).toBeDisabled();
+            screen.queryByRole("button", { name: "Add Notion connector" }),
+        ).toBeNull();
     });
 
     it("adds the Airtable DCR preset with one click", async () => {
@@ -581,16 +649,20 @@ describe("ConnectorsPage suggested connectors", () => {
             await flushMicrotasks();
         });
 
-        expect(createMcpConnector).toHaveBeenCalledWith({
-            name: "Airtable",
-            serverUrl: "https://mcp.airtable.com/mcp",
-            bearerToken: null,
-        });
+        expect(createMcpConnector).toHaveBeenCalledWith(
+            {
+                name: "Airtable",
+                serverUrl: "https://mcp.airtable.com/mcp",
+                bearerToken: null,
+            },
+            "personal",
+        );
         expect(startMcpConnectorOAuth).toHaveBeenCalledWith("airtable-1");
         expect(refreshMcpConnectorTools).toHaveBeenCalledTimes(1);
+        // Once installed, the preset leaves Discover.
         expect(
-            screen.getByRole("button", { name: "Airtable connector added" }),
-        ).toBeDisabled();
+            screen.queryByRole("button", { name: "Add Airtable connector" }),
+        ).toBeNull();
     });
 
     it("adds the Linear DCR preset with one click", async () => {
@@ -634,17 +706,21 @@ describe("ConnectorsPage suggested connectors", () => {
             await flushMicrotasks();
         });
 
-        expect(createMcpConnector).toHaveBeenCalledWith({
-            name: "Linear",
-            serverUrl: "https://mcp.linear.app/mcp",
-            bearerToken: null,
-        });
+        expect(createMcpConnector).toHaveBeenCalledWith(
+            {
+                name: "Linear",
+                serverUrl: "https://mcp.linear.app/mcp",
+                bearerToken: null,
+            },
+            "personal",
+        );
         expect(startMcpConnectorOAuth).toHaveBeenCalledWith("linear-1");
         expect(popupClose).toHaveBeenCalled();
         expect(screen.queryByText("New Custom Connector")).toBeNull();
+        // Once installed, the preset leaves Discover.
         expect(
-            screen.getByRole("button", { name: "Linear connector added" }),
-        ).toBeDisabled();
+            screen.queryByRole("button", { name: "Add Linear connector" }),
+        ).toBeNull();
     });
 
     it("does not offer to add a preset that is already configured", async () => {
@@ -660,9 +736,10 @@ describe("ConnectorsPage suggested connectors", () => {
             await flushMicrotasks();
         });
 
+        // Once installed, the preset leaves Discover.
         expect(
-            screen.getByRole("button", { name: "Notion connector added" }),
-        ).toBeDisabled();
+            screen.queryByRole("button", { name: "Add Notion connector" }),
+        ).toBeNull();
         expect(createMcpConnector).not.toHaveBeenCalled();
         expect(
             screen.getByRole("switch", { name: "My Notion connector" }),
@@ -800,12 +877,14 @@ describe("Google Drive connection lifecycle", () => {
     const ready = {
         writeEnabled: false,
         requireWriteApproval: false,
+        available: true,
         connected: false,
         scope: null,
         configured: true,
         schemaReady: true,
         redirectUri: null,
         enabled: true,
+        pickerAvailable: false,
         tools: driveTools,
     };
     const state = "a".repeat(32);
@@ -826,12 +905,28 @@ describe("Google Drive connection lifecycle", () => {
             fireEvent.click(dialog.getByRole("switch", { name: "Ask for permission for write actions" }));
             await flushMicrotasks();
         });
-        expect(updateGoogleDriveSettings).toHaveBeenCalledWith({ requireWriteApproval: true });
+        expect(updateGoogleDriveSettings).toHaveBeenCalledWith({ requireWriteApproval: true }, "personal", expect.any(Function));
         await act(async () => {
             fireEvent.click(dialog.getByRole("switch", { name: "Move to Trash enabled" }));
             await flushMicrotasks();
         });
-        expect(setGoogleDriveToolEnabled).toHaveBeenCalledWith("google_drive_trash_file", false);
+        expect(setGoogleDriveToolEnabled).toHaveBeenCalledWith("google_drive_trash_file", false, "personal", expect.any(Function));
+    });
+
+    it("offers Add files from Google Drive only when the server can open the Picker", async () => {
+        const addFiles = { name: "Add files from Google Drive" };
+        vi.mocked(getGoogleDriveStatus).mockResolvedValue({ ...ready, connected: true });
+        render(<ConnectorsPage />);
+        await act(flushMicrotasks);
+        fireEvent.click(screen.getByRole("button", { name: "Manage Google Drive" }));
+        expect(within(screen.getByRole("dialog")).queryByRole("button", addFiles)).toBeNull();
+        cleanup();
+
+        vi.mocked(getGoogleDriveStatus).mockResolvedValue({ ...ready, connected: true, pickerAvailable: true });
+        render(<ConnectorsPage />);
+        await act(flushMicrotasks);
+        fireEvent.click(screen.getByRole("button", { name: "Manage Google Drive" }));
+        expect(within(screen.getByRole("dialog")).getByRole("button", addFiles)).toHaveAttribute("type", "button");
     });
 
     let popup: { location: { href: string }; close: ReturnType<typeof vi.fn> };
@@ -893,7 +988,7 @@ describe("Google Drive connection lifecycle", () => {
         ).toBeTruthy();
         expect(
             screen.getByRole("link", { name: /setup guide/i }),
-        ).toHaveAttribute("href", expect.stringContaining("google-drive.md"));
+        ).toHaveAttribute("href", expect.stringContaining("google-workspace.md#google-drive"));
         // The blank window opened for the flow is closed again.
         expect(popup.close).toHaveBeenCalled();
         expect(
@@ -918,7 +1013,7 @@ describe("Google Drive connection lifecycle", () => {
         expect(window.open).not.toHaveBeenCalled();
     });
 
-    it("shows Adding, then Cancel, and becomes an installed connector like Slack", async () => {
+    it("shows Adding, then Cancel, and moves from Discover to Installed like Slack", async () => {
         let resolveStart!: (value: { authorizationUrl: string }) => void;
         vi.mocked(startGoogleDriveOAuth).mockReturnValue(
             new Promise((resolve) => {
@@ -954,10 +1049,10 @@ describe("Google Drive connection lifecycle", () => {
 
         expect(cancelGoogleDriveOAuth).not.toHaveBeenCalled();
         expect(
-            discover().getByRole("button", {
-                name: "Google Drive connector added",
+            discover().queryByRole("button", {
+                name: "Add Google Drive connector",
             }),
-        ).toBeDisabled();
+        ).toBeNull();
         expect(
             installed().getByRole("switch", { name: "Google Drive connector" }),
         ).toHaveAttribute("aria-checked", "true");
@@ -1002,7 +1097,7 @@ describe("Google Drive connection lifecycle", () => {
             await vi.advanceTimersByTimeAsync(0);
             await flushMicrotasks();
         });
-        expect(cancelGoogleDriveOAuth).toHaveBeenCalledWith(state);
+        expect(cancelGoogleDriveOAuth).toHaveBeenCalledWith(state, "personal", expect.any(Function));
         expect(screen.queryByText("Could not add connector")).toBeNull();
         const count = vi.mocked(getGoogleDriveStatus).mock.calls.length;
         await act(async () => {
@@ -1077,9 +1172,10 @@ describe("Google Drive connection lifecycle", () => {
             );
             await flushMicrotasks();
         });
-        expect(updateGoogleDriveSettings).toHaveBeenCalledWith({
-            enabled: false,
-        });
+        expect(updateGoogleDriveSettings).toHaveBeenCalledWith(
+            { enabled: false },
+            "personal",
+        expect.any(Function),);
         expect(
             installed().getByRole("switch", { name: "Google Drive connector" }),
         ).toHaveAttribute("aria-checked", "false");
@@ -1089,6 +1185,7 @@ describe("Google Drive connection lifecycle", () => {
 describe("Connector write approval settings", () => {
     const gmailStatus: GoogleWorkspaceStatus = {
         configured: true,
+        available: true,
         schemaReady: true,
         connected: true,
         writeEnabled: true,
@@ -1174,9 +1271,11 @@ describe("Connector write approval settings", () => {
             fireEvent.click(approval);
             await flushMicrotasks();
         });
-        expect(updateGoogleWorkspaceSettings).toHaveBeenCalledWith("gmail", {
-            requireWriteApproval: true,
-        });
+        expect(updateGoogleWorkspaceSettings).toHaveBeenCalledWith(
+            "gmail",
+            { requireWriteApproval: true },
+            "personal",
+        expect.any(Function),);
         expect(approval).toHaveAttribute("aria-checked", "true");
 
         await act(async () => {
@@ -1189,7 +1288,8 @@ describe("Connector write approval settings", () => {
             "gmail",
             "gmail_send",
             false,
-        );
+            "personal",
+        expect.any(Function),);
     });
 
     it("sets an MCP connector's approval setting and lets write tools be switched", async () => {
@@ -1263,9 +1363,9 @@ describe("Connector read-only mode", () => {
         { name: "delete", title: "Delete record", description: "Delete a record.", write: true, enabled: false },
     ];
     const status = {
-        configured: true, schemaReady: true, connected: true, enabled: true,
+        configured: true, available: true, schemaReady: true, connected: true, enabled: true,
         writeEnabled: true, readOnly: false, requireWriteApproval: true,
-        scope: null, redirectUri: null, tools,
+        scope: null, redirectUri: null, pickerAvailable: false, tools,
     };
     beforeEach(() => {
         vi.clearAllMocks();
@@ -1332,8 +1432,8 @@ describe("Connector read-only mode", () => {
         expect(read).toBeEnabled();
         expect(read).toHaveAttribute("aria-checked", "true");
         if (provider === "mcp") expect(updateMcpConnector).toHaveBeenCalledWith(mcp.id, { readOnly: true });
-        else if (provider === "google-drive") expect(updateGoogleDriveSettings).toHaveBeenCalledWith({ readOnly: true });
-        else expect(updateGoogleWorkspaceSettings).toHaveBeenCalledWith(provider, { readOnly: true });
+        else if (provider === "google-drive") expect(updateGoogleDriveSettings).toHaveBeenCalledWith({ readOnly: true }, "personal", expect.any(Function));
+        else expect(updateGoogleWorkspaceSettings).toHaveBeenCalledWith(provider, { readOnly: true }, "personal", expect.any(Function));
         await act(async () => { fireEvent.click(toggle); await flushMicrotasks(); });
         expect(toggle).toHaveAttribute("aria-checked", "false");
         expect(write).toBeEnabled();
@@ -1403,5 +1503,294 @@ describe("Connector read-only mode", () => {
         expect(toggle).toHaveAttribute("aria-checked", "false");
         expect(screen.getByText("Connector update failed")).toBeVisible();
         expect(screen.queryByText("private backend detail")).not.toBeInTheDocument();
+    });
+});
+
+describe("Google services the operator switched off", () => {
+    const status: GoogleWorkspaceStatus = {
+        configured: true,
+        available: true,
+        schemaReady: true,
+        connected: false,
+        writeEnabled: false,
+        enabled: true,
+        requireWriteApproval: false,
+        redirectUri: null,
+        tools: [],
+    };
+    const driveStatus = {
+        ...status,
+        available: true,
+        scope: null,
+        pickerAvailable: false,
+    };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.useFakeTimers();
+        vi.mocked(listMcpConnectors).mockResolvedValue([]);
+        vi.mocked(getGoogleDriveStatus).mockResolvedValue(driveStatus);
+    });
+
+    afterEach(() => {
+        cleanup();
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+    });
+
+    const discover = () => within(screen.getByRole("region", { name: "Discover" }));
+    const installed = () => within(screen.getByRole("region", { name: "Installed" }));
+
+    it("does not offer an unavailable service in Discover but still offers the others", async () => {
+        vi.mocked(getGoogleWorkspaceStatus).mockImplementation(async (provider) => ({
+            ...status,
+            available: provider !== "gmail",
+        }));
+        render(<ConnectorsPage />);
+        await act(flushMicrotasks);
+        expect(discover().queryByRole("button", { name: "Add Gmail connector" })).toBeNull();
+        expect(discover().getByRole("button", { name: "Add Google Calendar connector" })).toBeTruthy();
+        expect(discover().getByRole("button", { name: "Add Google Drive connector" })).toBeTruthy();
+        expect(installed().queryByRole("button", { name: "Manage Gmail" })).toBeNull();
+    });
+
+    it("keeps a connection made before the switch under Installed so it can be deleted", async () => {
+        vi.mocked(getGoogleWorkspaceStatus).mockImplementation(async (provider) =>
+            provider === "gmail"
+                ? { ...status, available: false, connected: true, grantId: "g1", accountEmail: "old@example.com" }
+                : status,
+        );
+        render(<ConnectorsPage />);
+        await act(flushMicrotasks);
+        expect(installed().getByRole("button", { name: "Manage Gmail" })).toBeTruthy();
+        expect(discover().queryByRole("button", { name: "Add Gmail connector" })).toBeNull();
+    });
+});
+
+describe("ConnectorsPage CourtListener", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(listMcpConnectors).mockResolvedValue([]);
+        courtListener.installed = false;
+        courtListener.loading = false;
+        courtListener.status = null;
+    });
+
+    afterEach(() => {
+        cleanup();
+    });
+
+    const discover = () => within(screen.getByRole("region", { name: "Discover" }));
+
+    it.each([
+        ["the deployment's bulk data", { tokenSource: null, bulkData: true }],
+        ["the organization's token", { tokenSource: "org", bulkData: false }],
+    ] as const)("switches CourtListener back on from Discover when %s needs no token", async (_case, status) => {
+        courtListener.status = status;
+        courtListener.setEnabled.mockResolvedValue(undefined);
+        render(<ConnectorsPage />);
+        await act(flushMicrotasks);
+        await act(async () => {
+            fireEvent.click(discover().getByRole("button", { name: "Add CourtListener connector" }));
+        });
+        expect(courtListener.setEnabled).toHaveBeenCalledWith(true);
+        expect(screen.queryByRole("dialog", { name: "CourtListener token" })).toBeNull();
+    });
+    const installed = () => within(screen.getByRole("region", { name: "Installed" }));
+
+    it("offers CourtListener in Discover until it is installed, with no extra text", async () => {
+        render(<ConnectorsPage />);
+        await act(flushMicrotasks);
+        expect(screen.queryByRole("region", { name: "Built in" })).toBeNull();
+        expect(installed().queryByRole("button", { name: "Manage CourtListener" })).toBeNull();
+        fireEvent.click(discover().getByRole("button", { name: "Add CourtListener connector" }));
+        expect(screen.getByRole("dialog", { name: "CourtListener token" })).toBeTruthy();
+        // No explanatory line above the lists.
+        expect(screen.queryByText(/workspace|Personal/)).toBeNull();
+    });
+
+    it("lists an installed CourtListener with its switch under Installed", async () => {
+        courtListener.installed = true;
+        render(<ConnectorsPage />);
+        await act(flushMicrotasks);
+        expect(discover().queryByRole("button", { name: "Add CourtListener connector" })).toBeNull();
+        await act(async () => {
+            fireEvent.click(installed().getByRole("switch", { name: "CourtListener connector" }));
+            await flushMicrotasks();
+        });
+        expect(courtListener.setEnabled).toHaveBeenCalledWith(false);
+        fireEvent.click(installed().getByRole("button", { name: "Manage CourtListener" }));
+        expect(screen.getByRole("dialog", { name: "CourtListener token" })).toBeTruthy();
+    });
+});
+
+describe("ConnectorsPage first load", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(listMcpConnectors).mockResolvedValue([]);
+        vi.mocked(getGoogleWorkspaceStatus).mockResolvedValue({
+            configured: true, available: true, schemaReady: true, connected: false,
+            writeEnabled: false, enabled: true, requireWriteApproval: false,
+            readOnly: false, tools: [], redirectUri: null,
+        });
+        courtListener.installed = false;
+        courtListener.loading = false;
+    });
+
+    afterEach(() => {
+        cleanup();
+    });
+
+    const discover = () => within(screen.getByRole("region", { name: "Discover" }));
+
+    it("shows no connector card until every source has answered", async () => {
+        let resolveDrive!: (value: Awaited<ReturnType<typeof getGoogleDriveStatus>>) => void;
+        vi.mocked(getGoogleDriveStatus).mockReturnValue(
+            new Promise((resolve) => {
+                resolveDrive = resolve;
+            }),
+        );
+        render(<ConnectorsPage />);
+        await act(flushMicrotasks);
+        // Gmail, Calendar and the MCP list have answered; Drive has not.
+        expect(discover().queryByRole("button", { name: /^Add / })).toBeNull();
+        expect(screen.queryByText("No connectors yet.")).toBeNull();
+        await act(async () => {
+            resolveDrive({
+                configured: true, available: false, schemaReady: true, connected: false,
+                scope: null, enabled: true, writeEnabled: false, requireWriteApproval: false,
+                pickerAvailable: false, tools: [], redirectUri: null,
+            });
+            await flushMicrotasks();
+        });
+        // A switched-off Drive never appeared, so it cannot flash and vanish.
+        expect(discover().queryByRole("button", { name: "Add Google Drive connector" })).toBeNull();
+        expect(discover().getByRole("button", { name: "Add Gmail connector" })).toBeTruthy();
+        expect(screen.getByText("No connectors yet.")).toBeTruthy();
+    });
+
+    it("waits for the profile before placing CourtListener", async () => {
+        courtListener.loading = true;
+        render(<ConnectorsPage />);
+        await act(flushMicrotasks);
+        expect(discover().queryByRole("button", { name: /^Add / })).toBeNull();
+    });
+});
+
+describe("ConnectorsPage workspaces", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.useRealTimers();
+        vi.mocked(listMcpConnectors).mockResolvedValue([]);
+        vi.mocked(getGoogleWorkspaceStatus).mockResolvedValue({
+            configured: true, available: true, schemaReady: true, connected: false,
+            writeEnabled: false, enabled: true, requireWriteApproval: false,
+            readOnly: false, tools: [], redirectUri: null,
+        });
+        courtListener.installed = false;
+        courtListener.loading = false;
+    });
+
+    afterEach(() => {
+        cleanup();
+    });
+
+    const installed = () => within(screen.getByRole("region", { name: "Installed" }));
+
+    it("says nothing about workspaces to someone who has only Personal", async () => {
+        render(<ConnectorsPage />);
+        await act(flushMicrotasks);
+
+        expect(screen.queryByText(/Each workspace has its own connectors/)).toBeNull();
+    });
+
+    it("says which workspace the installed connectors are saved for", async () => {
+        workspaceState.organizations = [{ id: "org-1", name: "Acme LLP" }];
+        const { unmount } = render(<ConnectorsPage />);
+        await act(flushMicrotasks);
+        expect(
+            installed().getByText(
+                "Saved for Personal. Each workspace has its own connectors.",
+            ),
+        ).toBeInTheDocument();
+        unmount();
+
+        workspaceState.workspaceId = "org-1";
+        workspaceState.activeOrganization = { id: "org-1", name: "Acme LLP" };
+        render(<ConnectorsPage />);
+        await act(flushMicrotasks);
+        expect(
+            installed().getByText(
+                "Saved for Acme LLP. Each workspace has its own connectors.",
+            ),
+        ).toBeInTheDocument();
+    });
+
+    it("reads and adds connectors in the active organization's workspace", async () => {
+        workspaceState.workspaceId = "org-1";
+        workspaceState.activeOrganization = { id: "org-1", name: "Acme LLP" };
+        const notion = makeSummary({
+            id: "notion-1",
+            name: "Notion",
+            serverUrl: "https://mcp.notion.com/mcp",
+        });
+        vi.mocked(createMcpConnector).mockResolvedValue({
+            connector: notion,
+            oauthRequired: false,
+        });
+        render(<ConnectorsPage />);
+        await act(flushMicrotasks);
+
+        expect(listMcpConnectors).toHaveBeenCalledWith("org-1");
+        expect(getGoogleDriveStatus).toHaveBeenCalledWith("org-1", expect.any(Function));
+        expect(getGoogleWorkspaceStatus).toHaveBeenCalledWith("gmail", "org-1", expect.any(Function));
+        expect(getGoogleWorkspaceStatus).toHaveBeenCalledWith("google-calendar", "org-1", expect.any(Function));
+        expect(courtListener.workspaces).toContain("org-1");
+        expect(courtListener.workspaces).not.toContain("personal");
+
+        vi.spyOn(window, "open").mockReturnValue({
+            location: { href: "" },
+            close: vi.fn(),
+            closed: false,
+        } as unknown as Window);
+        vi.mocked(startMcpConnectorOAuth).mockResolvedValue({
+            authorizationUrl: null,
+            alreadyAuthorized: true,
+            callbackOrigin: "https://api.example",
+        });
+        vi.mocked(refreshMcpConnectorTools).mockResolvedValue(notion);
+        await act(async () => {
+            fireEvent.click(screen.getByRole("button", { name: "Add Notion connector" }));
+            await flushMicrotasks();
+        });
+        expect(createMcpConnector).toHaveBeenCalledWith(
+            expect.objectContaining({ name: "Notion" }),
+            "org-1",
+        );
+    });
+
+    it("starts again from the other workspace's connectors on a switch", async () => {
+        const slack = makeSummary({
+            id: "slack-1",
+            name: "Slack",
+            serverUrl: "https://mcp.slack.com/mcp",
+        });
+        vi.mocked(listMcpConnectors).mockImplementation(async (workspace) =>
+            workspace === "personal" ? [slack] : [],
+        );
+        const { rerender } = render(<ConnectorsPage />);
+        await act(flushMicrotasks);
+        expect(installed().getByRole("button", { name: "Manage Slack" })).toBeTruthy();
+
+        workspaceState.workspaceId = "org-2";
+        workspaceState.activeOrganization = { id: "org-2", name: "Beta LLP" };
+        rerender(<ConnectorsPage />);
+        await act(flushMicrotasks);
+
+        expect(listMcpConnectors).toHaveBeenLastCalledWith("org-2");
+        expect(getGoogleDriveStatus).toHaveBeenLastCalledWith("org-2", expect.any(Function));
+        expect(courtListener.workspaces.at(-1)).toBe("org-2");
+        expect(installed().queryByRole("button", { name: "Manage Slack" })).toBeNull();
+        expect(screen.getByText("No connectors yet.")).toBeTruthy();
     });
 });

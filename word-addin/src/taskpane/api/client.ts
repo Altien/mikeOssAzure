@@ -2,6 +2,7 @@ import type {
   ApiKeyStatus,
   Document,
   LibraryFolder,
+  Playbook,
   Project,
   Workflow,
 } from "../types";
@@ -11,8 +12,16 @@ import type {
 // parity tests) never pull this module, and its runtime imports, into
 // the web app's type-check graph.
 export type { ApiKeyStatus } from "../types";
-import { describeNetworkFailure } from "../lib/networkError";
-import { reportApiFailure, reportNetworkFailure } from "../lib/errorReporting";
+import type { RouterProfileLists } from "@mike/model-catalog";
+import { SERVER_FAILURE_MESSAGE } from "@mike/user-error";
+import { networkFailure } from "../lib/networkError";
+import { sessionHandledError } from "../lib/sessionRefresh";
+import {
+  reportApiFailure,
+  reportError,
+  reportNetworkFailure,
+  type AddinOperation,
+} from "../lib/errorReporting";
 import type { ReasoningLevel } from "../lib/wordChatTypes";
 import {
   createControlRequestRetryPolicy,
@@ -37,12 +46,14 @@ interface MikeApiClientConfig {
   baseUrl?: string;
   getAuthHeaders?: AuthHeaderProvider;
   fetchImpl?: typeof fetch;
+  captureOwner?: () => (() => boolean);
 }
 
 interface ResolvedMikeApiClientConfig {
   baseUrl: string;
   getAuthHeaders: AuthHeaderProvider;
   fetchImpl: typeof fetch;
+  captureOwner: () => (() => boolean);
 }
 
 const isDev = process.env.NODE_ENV !== "production";
@@ -50,16 +61,92 @@ const devLog = (...args: Parameters<typeof console.log>): void => {
   if (isDev) console.log(...args);
 };
 
-class MikeApiError extends Error {
+/**
+ * A non-ok HTTP response. Carries everything the UI needs to classify the
+ * failure (`status`, `code`) and everything support needs to find it in the
+ * logs (`requestId`). `message` is only ever safe-to-show text: the
+ * backend's own 4xx `detail`, or a generic line for 5xx.
+ */
+export class MikeApiError extends Error {
   readonly status: number;
   readonly code: string | null;
+  readonly requestId: string | null;
 
-  constructor(args: { message: string; status: number; code?: string | null }) {
+  constructor(args: {
+    message: string;
+    status: number;
+    code?: string | null;
+    requestId?: string | null;
+  }) {
     super(args.message);
     this.name = "MikeApiError";
     this.status = args.status;
     this.code = args.code ?? null;
+    this.requestId = args.requestId ?? null;
   }
+}
+
+export interface ParsedApiError {
+  message: string;
+  code: string | null;
+  requestId: string | null;
+}
+
+/**
+ * Turn a non-ok response body into the fields the UI shows. Pure, so the
+ * rules ("never echo a 5xx body", "keep the backend's 4xx detail") can be
+ * checked without a server.
+ *
+ * `message` falls back to `API error: <status>`, which `describeError`
+ * recognises as "no usable text" and replaces with its own wording.
+ */
+export function parseApiErrorBody(args: {
+  status: number;
+  body: string;
+  requestId?: string | null;
+}): ParsedApiError {
+  const generic = `API error: ${args.status}`;
+  let code: string | null = null;
+  let requestId = args.requestId ?? null;
+  let detail: string | null = null;
+
+  try {
+    const parsed = JSON.parse(args.body) as {
+      detail?: unknown;
+      code?: unknown;
+      request_id?: unknown;
+      error?: { code?: unknown; message?: unknown; request_id?: unknown };
+    };
+    code =
+      typeof parsed.error?.code === "string"
+        ? parsed.error.code
+        : typeof parsed.code === "string"
+          ? parsed.code
+          : null;
+    requestId =
+      (typeof parsed.request_id === "string" ? parsed.request_id : null) ??
+      (typeof parsed.error?.request_id === "string"
+        ? parsed.error.request_id
+        : null) ??
+      requestId;
+    detail =
+      typeof parsed.error?.message === "string" && parsed.error.message
+        ? parsed.error.message
+        : typeof parsed.detail === "string" && parsed.detail
+          ? parsed.detail
+          : null;
+  } catch {
+    // A non-JSON body is a proxy or host page, never user-facing copy.
+    detail = null;
+  }
+
+  return {
+    // 4xx detail is written for users by the backend. A 5xx body (a stack
+    // trace, a proxy's HTML, a provider's complaint) never is: replace it.
+    message: args.status >= 500 ? SERVER_FAILURE_MESSAGE : (detail ?? generic),
+    code,
+    requestId,
+  };
 }
 
 let clientConfig: ResolvedMikeApiClientConfig = {
@@ -68,6 +155,7 @@ let clientConfig: ResolvedMikeApiClientConfig = {
   // A wrapper keeps native fetch detached from the config object. Chromium
   // throws "Illegal invocation" when native fetch is called as a method.
   fetchImpl: (...args: Parameters<typeof fetch>) => fetch(...args),
+  captureOwner: () => () => true,
 };
 
 export function configureMikeApiClient(config: MikeApiClientConfig): void {
@@ -75,11 +163,20 @@ export function configureMikeApiClient(config: MikeApiClientConfig): void {
     baseUrl: config.baseUrl ?? clientConfig.baseUrl,
     getAuthHeaders: config.getAuthHeaders ?? clientConfig.getAuthHeaders,
     fetchImpl: config.fetchImpl ?? clientConfig.fetchImpl,
+    captureOwner: config.captureOwner ?? clientConfig.captureOwner,
   };
 }
 
+function assertRequestOwner(isCurrent: () => boolean): void {
+  if (!isCurrent()) { const error = new Error("Word request owner changed"); error.name = "AbortError"; throw error; }
+}
+
 async function getAuthHeaders(): Promise<Record<string, string>> {
-  return clientConfig.getAuthHeaders();
+  const isCurrent = clientConfig.captureOwner();
+  assertRequestOwner(isCurrent);
+  const headers = await clientConfig.getAuthHeaders();
+  assertRequestOwner(isCurrent);
+  return headers;
 }
 
 function apiUrl(path: string): string {
@@ -93,9 +190,14 @@ function apiUrl(path: string): string {
 async function sendRequest(
   url: string,
   init: RequestInit & { method?: string },
+  operation?: AddinOperation,
 ): Promise<Response> {
+  const isCurrent = clientConfig.captureOwner();
+  assertRequestOwner(isCurrent);
   try {
-    return await clientConfig.fetchImpl(url, init);
+    const response = await clientConfig.fetchImpl(url, init);
+    assertRequestOwner(isCurrent);
+    return response;
   } catch (error) {
     // Preserve cancellation identity for callers and avoid reporting normal
     // user stops, including signals aborted with a custom reason.
@@ -108,92 +210,67 @@ async function sendRequest(
     ) {
       throw error;
     }
-    reportNetworkFailure(error, { method: init.method ?? "GET", url });
-    throw new Error(
-      describeNetworkFailure(error, {
-        method: init.method ?? "GET",
-        url,
-      }),
-      { cause: error },
-    );
+    reportNetworkFailure(error, { method: init.method ?? "GET", url, operation });
+    throw networkFailure(error, { method: init.method ?? "GET", url });
   }
 }
 
-async function toApiError(
+/**
+ * Build the error for a non-ok response. Exported so every hand-rolled
+ * fetch in the add-in (auth, word-chat) produces the same shape as the
+ * typed client instead of a bespoke `new Error(status + body)`.
+ */
+export async function responseError(
   response: Response,
-  path: string,
+  path?: string,
   method = "GET",
+  /** The user-level flow the request belonged to, for a 5xx's report. */
+  operation?: AddinOperation,
 ): Promise<MikeApiError> {
-  const text = await response.text();
-  try {
-    const parsed = JSON.parse(text) as {
-      detail?: unknown;
-      code?: unknown;
-      request_id?: unknown;
-      error?: { code?: unknown; message?: unknown };
-    };
-    const code =
-      typeof parsed.error?.code === "string"
-        ? parsed.error.code
-        : typeof parsed.code === "string"
-          ? parsed.code
-          : null;
-    const message =
-      typeof parsed.error?.message === "string" && parsed.error.message
-        ? parsed.error.message
-        : typeof parsed.detail === "string" && parsed.detail
-          ? parsed.detail
-          : `API error: ${response.status}`;
-    devLog("[mike-api] non-ok response", {
-      path,
+  const text = await response.text().catch(() => "");
+  const parsed = parseApiErrorBody({
+    status: response.status,
+    body: text,
+    requestId: response.headers.get("x-request-id"),
+  });
+  devLog("[mike-api] non-ok response", {
+    path: path ?? response.url,
+    status: response.status,
+    code: parsed.code,
+    requestId: parsed.requestId,
+    bodyPreview: text.slice(0, 200),
+  });
+  // A 401 the session layer already handled carries its own sentence: the
+  // session toast or login gate said what happened, and the body's "Not
+  // authenticated" would only contradict it.
+  const handled = sessionHandledError(response);
+  const apiError = new MikeApiError({
+    status: response.status,
+    code: handled?.code ?? parsed.code,
+    requestId: parsed.requestId,
+    message: handled?.message ?? parsed.message,
+  });
+  // A 5xx is the server's fault and worth an event; 4xx are user-facing
+  // outcomes (validation, permission) and stay out of Sentry.
+  if (response.status >= 500) {
+    reportApiFailure({
+      path: path ?? response.url,
+      method,
+      operation,
       status: response.status,
-      code,
-      detail: parsed.detail,
+      code: parsed.code,
+      requestId: parsed.requestId,
+      error: apiError,
     });
-    const apiError = new MikeApiError({
-      status: response.status,
-      code,
-      message,
-    });
-    if (response.status >= 500) {
-      reportApiFailure({
-        path,
-        method,
-        status: response.status,
-        code,
-        requestId:
-          typeof parsed.request_id === "string"
-            ? parsed.request_id
-            : response.headers.get("x-request-id"),
-        error: apiError,
-      });
-    }
-    return apiError;
-  } catch {
-    devLog("[mike-api] non-ok non-json response", {
-      path,
-      status: response.status,
-      bodyPreview: text.slice(0, 200),
-    });
-    const apiError = new MikeApiError({
-      status: response.status,
-      message: text || `API error: ${response.status}`,
-    });
-    if (response.status >= 500) {
-      reportApiFailure({
-        path,
-        method,
-        status: response.status,
-        requestId: response.headers.get("x-request-id"),
-        error: apiError,
-      });
-    }
-    return apiError;
   }
+  return apiError;
 }
 
-async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+async function apiRequest<T>(operation: AddinOperation, path: string, init?: RequestInit): Promise<T> {
+  const isCurrent = clientConfig.captureOwner();
+  assertRequestOwner(isCurrent);
   const authHeaders = await getAuthHeaders();
+  assertRequestOwner(isCurrent);
   const { headers: initHeaders, ...restInit } = init ?? {};
   const response = await sendRequest(apiUrl(path), {
     cache: "no-store",
@@ -203,10 +280,10 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
       ...authHeaders,
       ...(initHeaders as Record<string, string> | undefined),
     },
-  });
+  }, operation);
 
   if (!response.ok) {
-    throw await toApiError(response, path, restInit.method ?? "GET");
+    throw await responseError(response, path, restInit.method ?? "GET", operation);
   }
   if (
     response.status === 204 ||
@@ -214,7 +291,9 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   ) {
     return undefined as T;
   }
-  return (await response.json()) as T;
+  const result = (await response.json()) as T;
+  assertRequestOwner(isCurrent);
+  return result;
 }
 
 /**
@@ -243,8 +322,16 @@ async function uploadSessionFiles<T>(args: {
     onProgress: args.onProgress,
     signal: args.signal,
     transport: {
-      apiRequest,
+      apiRequest: <R>(path: string, init?: RequestInit) => apiRequest<R>("upload_session.control", path, init),
       fetchStorage: (...fetchArgs) => clientConfig.fetchImpl(...fetchArgs),
+      onStorageFailure: ({ error, status, network }) => reportError(error, {
+        ...(network ? { level: "warning" as const } : {}),
+        tags: {
+          component: "mike-api", operation: "upload_session.storage", http_method: "PUT",
+          ...(status !== undefined ? { http_status: status } : {}),
+          ...(network ? { network: true } : {}),
+        },
+      }),
       shouldRetryControlRequest: createControlRequestRetryPolicy((error) =>
         error instanceof MikeApiError
           ? { status: error.status, code: error.code }
@@ -258,17 +345,18 @@ export async function listProjects(pagination?: {
   limit?: number;
   offset?: number;
 }): Promise<Project[]> {
-  const params = new URLSearchParams({ view: "summary" });
+  const params = new URLSearchParams({ view: "summary", workspace: "personal" });
   if (pagination?.limit != null) {
     params.set("limit", String(pagination.limit));
   }
   if (pagination?.offset != null) {
     params.set("offset", String(pagination.offset));
   }
-  return apiRequest<Project[]>(`/projects?${params.toString()}`);
+  return apiRequest<Project[]>("projects.manage", `/projects?${params.toString()}`);
 }
 
-interface UserProfile {
+/** GET /user/profile; each router's Model Selections may be absent on an older API. */
+interface UserProfile extends Partial<RouterProfileLists> {
   displayName: string | null;
   organisation: string | null;
   messageCreditsUsed: number;
@@ -280,21 +368,17 @@ interface UserProfile {
   lastSelectedChatModel: string | null;
   lastSelectedReasoningLevel: ReasoningLevel;
   mfaOnLogin: boolean;
-  legalResearchUs: boolean;
-  openRouterModels: string[];
-  vercelModels: string[];
-  openCodeGoModels: string[];
   apiKeyStatus: ApiKeyStatus;
 }
 
 export async function getUserProfile(): Promise<UserProfile> {
-  return apiRequest<UserProfile>("/user/profile");
+  return apiRequest<UserProfile>("settings.profile", "/user/profile");
 }
 
 export async function updateLastSelectedChatModel(
   model: string,
 ): Promise<UserProfile> {
-  return apiRequest<UserProfile>("/user/profile", {
+  return apiRequest<UserProfile>("chat.turn", "/user/profile", {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ lastSelectedChatModel: model }),
@@ -305,7 +389,7 @@ export async function updateLastSelectedChatModel(
 export async function updateLastSelectedReasoningLevel(
   reasoningLevel: ReasoningLevel,
 ): Promise<UserProfile> {
-  return apiRequest<UserProfile>("/user/profile", {
+  return apiRequest<UserProfile>("settings.profile", "/user/profile", {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ lastSelectedReasoningLevel: reasoningLevel }),
@@ -314,7 +398,7 @@ export async function updateLastSelectedReasoningLevel(
 }
 
 export async function getApiKeyStatus(): Promise<ApiKeyStatus> {
-  return apiRequest<ApiKeyStatus>("/user/api-keys");
+  return apiRequest<ApiKeyStatus>("settings.keys", "/user/api-keys");
 }
 
 export async function uploadStandaloneDocument(
@@ -349,7 +433,7 @@ export async function getLibrary(
   kind: LibraryKind,
   pagination?: { limit?: number; offset?: number },
 ): Promise<LibraryCollection> {
-  const params = new URLSearchParams();
+  const params = new URLSearchParams({ workspace: "personal" });
   if (pagination?.limit != null) {
     params.set("limit", String(pagination.limit));
   }
@@ -358,7 +442,7 @@ export async function getLibrary(
   }
   const query = params.toString();
   return apiRequest<LibraryCollection>(
-    `/library/${kind}${query ? `?${query}` : ""}`,
+    "documents.directory", `/library/${kind}${query ? `?${query}` : ""}`,
   );
 }
 
@@ -367,14 +451,14 @@ export async function getLibraryFolderChildren(
   folderId: string,
   pagination?: { limit?: number; offset?: number },
 ): Promise<LibraryCollection> {
-  const params = new URLSearchParams({ parent_folder_id: folderId });
+  const params = new URLSearchParams({ parent_folder_id: folderId, workspace: "personal" });
   if (pagination?.limit != null) {
     params.set("limit", String(pagination.limit));
   }
   if (pagination?.offset != null) {
     params.set("offset", String(pagination.offset));
   }
-  return apiRequest<LibraryCollection>(`/library/${kind}?${params.toString()}`);
+  return apiRequest<LibraryCollection>("documents.directory", `/library/${kind}?${params.toString()}`);
 }
 
 export async function getProjectDirectoryLevel(
@@ -392,7 +476,7 @@ export async function getProjectDirectoryLevel(
   if (options?.limit != null) params.set("limit", String(options.limit));
   if (options?.offset != null) params.set("offset", String(options.offset));
   return apiRequest<LibraryCollection>(
-    `/projects/${projectId}/directory?${params.toString()}`,
+    "projects.manage", `/projects/${projectId}/directory?${params.toString()}`,
   );
 }
 
@@ -414,6 +498,7 @@ export async function streamWordChat(payload: {
     content: string;
     files?: { filename: string; document_id?: string }[];
     workflow?: { id: string; title: string };
+    playbook?: { id: string; title: string };
   }[];
   chat_id?: string;
   model?: string;
@@ -427,8 +512,11 @@ export async function streamWordChat(payload: {
   client_tools?: boolean;
   signal?: AbortSignal;
 }): Promise<Response> {
+  const isCurrent = clientConfig.captureOwner();
+  assertRequestOwner(isCurrent);
   const { signal, ...body } = payload;
   const authHeaders = await getAuthHeaders();
+  assertRequestOwner(isCurrent);
   return sendRequest(apiUrl("/word-chat"), {
     method: "POST",
     headers: {
@@ -438,7 +526,7 @@ export async function streamWordChat(payload: {
     },
     body: JSON.stringify({ ...body, time_zone: browserTimeZone() }),
     signal,
-  });
+  }, "word_chat.turn");
 }
 
 /**
@@ -453,7 +541,7 @@ export async function postWordChatToolResult(payload: {
   signal?: AbortSignal;
 }): Promise<void> {
   const { signal, ...body } = payload;
-  await apiRequest<void>("/word-chat/tool-result", {
+  await apiRequest<void>("word_chat.turn", "/word-chat/tool-result", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -474,6 +562,10 @@ export async function streamWordChatTurn(payload: {
   from?: number;
   signal?: AbortSignal;
 }): Promise<Response> {
+  const isCurrent = clientConfig.captureOwner();
+  assertRequestOwner(isCurrent);
+  const authHeaders = await getAuthHeaders();
+  assertRequestOwner(isCurrent);
   const params = new URLSearchParams({
     document_id: payload.documentId,
     from: String(payload.from ?? 1),
@@ -485,9 +577,9 @@ export async function streamWordChatTurn(payload: {
     ),
     {
       method: "GET",
-      headers: { Accept: "text/event-stream", ...(await getAuthHeaders()) },
+      headers: { Accept: "text/event-stream", ...authHeaders },
       signal: payload.signal,
-    },
+    }, "word_chat.turn",
   );
 }
 
@@ -502,7 +594,7 @@ export async function stopWordChatTurn(payload: {
 }): Promise<{ stopped: boolean; finished: boolean }> {
   const params = new URLSearchParams({ document_id: payload.documentId });
   return apiRequest<{ stopped: boolean; finished: boolean }>(
-    `/word-chat/${encodeURIComponent(payload.chatId)}/turn/` +
+    "word_chat.turn", `/word-chat/${encodeURIComponent(payload.chatId)}/turn/` +
       `${encodeURIComponent(payload.turnId)}/stop?${params}`,
     { method: "POST" },
   );
@@ -601,7 +693,7 @@ export async function listQuickActions(): Promise<
   import("../types").QuickAction[]
 > {
   return apiRequest<import("../types").QuickAction[]>(
-    "/quick-actions?surface=word",
+    "quick_actions.run", "/quick-actions?surface=word&workspace=personal",
   );
 }
 
@@ -618,7 +710,7 @@ export async function updateQuickAction(
   },
 ): Promise<import("../types").QuickAction> {
   return apiRequest<import("../types").QuickAction>(
-    `/quick-actions/${quickActionId}`,
+    "quick_actions.run", `/quick-actions/${quickActionId}`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -636,7 +728,7 @@ export async function createQuickAction(payload: {
   enabled?: boolean;
   sort_order?: number;
 }): Promise<import("../types").QuickAction> {
-  return apiRequest<import("../types").QuickAction>("/quick-actions", {
+  return apiRequest<import("../types").QuickAction>("quick_actions.run", "/quick-actions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -646,7 +738,7 @@ export async function createQuickAction(payload: {
 export async function listWorkflowAssets(
   workflowId: string,
 ): Promise<Document[]> {
-  return apiRequest<Document[]>(`/workflows/${workflowId}/assets`);
+  return apiRequest<Document[]>("workflows.run", `/workflows/${workflowId}/assets`);
 }
 
 export async function uploadWorkflowAsset(
@@ -693,7 +785,7 @@ export async function getWorkflowAssetUrl(
   assetId: string,
 ): Promise<{ url: string; filename: string }> {
   return apiRequest<{ url: string; filename: string }>(
-    `/single-documents/${assetId}/url`,
+    "workflows.run", `/single-documents/${assetId}/url`,
   );
 }
 
@@ -701,13 +793,18 @@ export async function deleteWorkflowAsset(
   workflowId: string,
   assetId: string,
 ): Promise<void> {
-  await apiRequest(`/workflows/${workflowId}/assets/${assetId}`, {
+  await apiRequest("workflows.run", `/workflows/${workflowId}/assets/${assetId}`, {
     method: "DELETE",
   });
 }
 
 export async function listWorkflows(type: WorkflowType): Promise<Workflow[]> {
-  return apiRequest<Workflow[]>(`/workflows?type=${type}`);
+  return apiRequest<Workflow[]>("workflows.run", `/workflows?type=${type}&workspace=personal`);
+}
+
+/** Playbooks the user can run; Word chats are Personal, like its workflows. */
+export async function listPlaybooks(): Promise<Playbook[]> {
+  return apiRequest<Playbook[]>("playbooks.save", "/playbooks?workspace=personal");
 }
 
 export async function createWorkflow(payload: {
@@ -721,7 +818,7 @@ export async function createWorkflow(payload: {
   skill_md?: string;
   columns_config?: { index: number; name: string; prompt: string }[];
 }): Promise<Workflow> {
-  return apiRequest<Workflow>("/workflows", {
+  return apiRequest<Workflow>("workflows.run", "/workflows", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -741,7 +838,7 @@ export async function updateWorkflow(
     columns_config?: { index: number; name: string; prompt: string }[];
   },
 ): Promise<Workflow> {
-  return apiRequest<Workflow>(`/workflows/${workflowId}`, {
+  return apiRequest<Workflow>("workflows.run", `/workflows/${workflowId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -749,7 +846,7 @@ export async function updateWorkflow(
 }
 
 export async function deleteWorkflow(workflowId: string): Promise<void> {
-  await apiRequest(`/workflows/${workflowId}`, {
+  await apiRequest("workflows.run", `/workflows/${workflowId}`, {
     method: "DELETE",
   });
 }

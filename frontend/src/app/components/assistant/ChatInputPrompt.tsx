@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { Message } from "../shared/types";
 import { AskInputPopup } from "./AskInputPopup";
 import { findPendingAskInput } from "@/app/lib/pendingAskInput";
+
+type AskInputSubmit = NonNullable<Parameters<typeof AskInputPopup>[0]["onSubmit"]>;
 
 function pendingInput(messages: Message[]) {
     const pending = findPendingAskInput(messages);
@@ -35,10 +37,29 @@ export function ChatInputPrompt({
     canSend?: boolean | null;
     /** The thread's history is still arriving; prompt nothing until it has. */
     chatLoading?: boolean;
-    onSubmit: NonNullable<Parameters<typeof AskInputPopup>[0]["onSubmit"]>;
+    /**
+     * Sends the answer. The prompt closes when `onAccepted` is called (the
+     * server took the turn, so the answer can resume) or the returned
+     * promise settles, whichever comes first; `null` or a rejection before
+     * then keeps the form open for a retry.
+     */
+    onSubmit: (
+        ...args: [...Parameters<AskInputSubmit>, onAccepted: () => void]
+    ) => ReturnType<AskInputSubmit>;
     onCancel: () => void;
     children: ReactNode;
 }) {
+    // Keep the entered form mounted while the hook optimistically appends its
+    // response event, so a rejected submission can be retried without retyping.
+    const submissionRef = useRef<symbol | null>(null);
+    useLayoutEffect(() => {
+        submissionRef.current = null;
+        return () => { submissionRef.current = null; };
+    }, [chatKey]);
+    const [submittedInput, setSubmittedInput] = useState<{
+        chatKey: typeof chatKey;
+        input: NonNullable<ReturnType<typeof pendingInput>>;
+    } | null>(null);
     const [hiddenInputs, setHiddenInputs] = useState({
         chatKey,
         keys: new Set<string>(),
@@ -46,8 +67,11 @@ export function ChatInputPrompt({
     // Reset on every thread change, including a return to a dismissed prompt.
     if (hiddenInputs.chatKey !== chatKey) {
         setHiddenInputs({ chatKey, keys: new Set<string>() });
+        setSubmittedInput(null);
     }
-    const activeInput = pendingInput(messages);
+    const activeInput = submittedInput && submittedInput.chatKey === chatKey
+        ? submittedInput.input
+        : pendingInput(messages);
     if (
         !canSend ||
         chatLoading ||
@@ -73,9 +97,30 @@ export function ChatInputPrompt({
             key={`${chatKey ?? "new"}:${activeInput.key}`}
             event={activeInput.event}
             assistantMessageId={activeInput.assistantMessageId}
-            onSubmit={(response, content, files) => {
-                hideInput();
-                onSubmit(response, content, files);
+            onSubmit={async (response, content, files) => {
+                const input = activeInput;
+                const submission = Symbol();
+                submissionRef.current = submission;
+                setSubmittedInput({ chatKey, input });
+                try {
+                    // Settles on acceptance, without waiting for the answer
+                    // to finish streaming.
+                    const result = await new Promise<Awaited<ReturnType<AskInputSubmit>>>(
+                        (resolve, reject) => {
+                            Promise.resolve(
+                                onSubmit(response, content, files, () => resolve()),
+                            ).then(resolve, reject);
+                        },
+                    );
+                    if (result === null || submissionRef.current !== submission) return null;
+                    setHiddenInputs((current) => current.chatKey === chatKey
+                        ? { chatKey, keys: new Set(current.keys).add(input.key) }
+                        : current);
+                    setSubmittedInput((current) => current?.chatKey === chatKey ? null : current);
+                    return result;
+                } catch {
+                    return null;
+                }
             }}
             onDismiss={() => {
                 hideInput();

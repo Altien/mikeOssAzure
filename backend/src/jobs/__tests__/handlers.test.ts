@@ -1,3 +1,4 @@
+// Dev drift: export attempts renew a canonical claim, check account status, and return an attempt-specific pointer.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Db } from "../../lib/supabase";
 import type { AuditEventInput } from "../../lib/audit";
@@ -69,6 +70,12 @@ vi.mock("../../lib/auditExport", async (importOriginal) => {
 const buildMemoryArchive = vi.fn(async (..._a: unknown[]) =>
     Buffer.from("memory-zip"),
 );
+// Whether the organization lets this member export; settled per test.
+const memberDataActionAllowed = vi.fn(async (..._a: unknown[]) => true);
+vi.mock("../../modules/orgs/orgs.service", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../../modules/orgs/orgs.service")>()),
+    memberDataActionAllowed: (...a: unknown[]) => memberDataActionAllowed(...a),
+}));
 vi.mock("../../lib/memory/archive", () => ({
     buildMemoryArchive: (...a: unknown[]) => buildMemoryArchive(...a),
 }));
@@ -119,6 +126,7 @@ vi.mock("../../lib/storage", () => ({
     deleteFile: (key: string) => deleteFile(key),
     listFiles: (prefix: string) => listFiles(prefix),
     downloadFile: (...a: unknown[]) => downloadFile(...a),
+    downloadFileIfAvailable: (...a: unknown[]) => downloadFile(...a),
 }));
 
 import {
@@ -140,7 +148,7 @@ const JOB = (kind: string, payload: Record<string, unknown>): DbJob => ({
     max_attempts: 3,
     run_at: "",
     claimed_at: null,
-    claim_token: null,
+    claim_token: "claim-1",
     lease_expires_at: null,
     finished_at: null,
     last_error: null,
@@ -167,7 +175,7 @@ function makeDb(selectData: unknown[] = []) {
             return { error: null };
         },
     );
-    function from() {
+    function from(table?: string) {
         const state: { op: string; filters: Record<string, unknown> } = {
             op: "select",
             filters: {},
@@ -185,6 +193,8 @@ function makeDb(selectData: unknown[] = []) {
                 state.filters[c] = v;
                 return b;
             },
+            is(c: string, v: unknown) { state.filters[c] = v; return b; },
+            maybeSingle() { return Promise.resolve({ data: table === "org_members" ? { role: "member" } : table === "organizations" ? { kind: "team" } : null, error: null }); },
             neq(c: string, v: unknown) {
                 state.filters[`neq:${c}`] = v;
                 return b;
@@ -216,6 +226,7 @@ function makeDb(selectData: unknown[] = []) {
         trace,
         from,
         rpc: vi.fn(async (name: string) => {
+            if (name === "renew_db_job") return { data: true, error: null };
             if (name === "complete_account_erasure") {
                 trace.push("account.complete");
                 return { data: true, error: null };
@@ -454,11 +465,12 @@ describe("handleStorageCleanup", () => {
 });
 
 describe("handleExportBuild", () => {
-    it("builds, uploads under the user's exports/ prefix, and returns the signed link", async () => {
+    it("builds, uploads under the user's exports/ prefix, and returns its claim-specific artifact pointer", async () => {
         const out = await handleExportBuild(
             makeDb() as never,
             JOB("export.build", { userId: "u1", type: "account" }),
         );
+        if (!out) throw new Error("Expected published export artifact");
         expect(buildUserAccountExport).toHaveBeenCalled();
         const [path, , contentType] = uploadFile.mock.calls[0];
         expect(path).toMatch(/^exports\/u1\/job-1-/);
@@ -491,15 +503,18 @@ describe("handleExportBuild", () => {
                 type: "memory-zip",
             }),
         );
+        if (!out) throw new Error("Expected published export artifact");
 
+        // No workspace in the payload is Personal, never every workspace.
         expect(buildMemoryArchive).toHaveBeenCalledWith(
             db,
             "u1",
             "u@x.test",
+            null,
         );
         const [path, , contentType] = uploadFile.mock.calls[0];
         expect(path).toBe(
-            "exports/u1/job-1-mike-memory-export.zip",
+            "exports/u1/job-1-1-claim-1-mike-memory-export.zip",
         );
         expect(contentType).toBe("application/zip");
         expect(out.filename).toBe("mike-memory-export.zip");
@@ -509,7 +524,40 @@ describe("handleExportBuild", () => {
         );
     });
 
-    it("builds the history CSV from the job's stored filters", async () => {
+    it("builds an organization's export when its owners still allow it", async () => {
+        memberDataActionAllowed.mockResolvedValueOnce(true);
+        const db = makeDb();
+        const out = await handleExportBuild(
+            db as never,
+            JOB("export.build", {
+                userId: "u1",
+                userEmail: "u@x.test",
+                type: "memory-zip",
+                orgId: "11111111-1111-4111-8111-111111111111",
+            }),
+        );
+        if (!out) throw new Error("Expected published export artifact");
+
+        expect(memberDataActionAllowed).toHaveBeenCalledWith(db, "u1", "11111111-1111-4111-8111-111111111111", "export");
+        expect(buildMemoryArchive).toHaveBeenCalledWith(db, "u1", "u@x.test", "11111111-1111-4111-8111-111111111111");
+        expect(out.filename).toBe("mike-memory-export-11111111.zip");
+    });
+
+    it("fails an organization's export, without retrying, once its owners turn exports off", async () => {
+        memberDataActionAllowed.mockResolvedValueOnce(false);
+        buildUserAccountExport.mockClear();
+
+        await expect(
+            handleExportBuild(
+                makeDb() as never,
+                JOB("export.build", { userId: "u1", type: "account", orgId: "11111111-1111-4111-8111-111111111111" }),
+            ),
+        ).rejects.toMatchObject({ name: "NonRetryableJobError" });
+        expect(buildUserAccountExport).not.toHaveBeenCalled();
+        expect(uploadFile).not.toHaveBeenCalled();
+    });
+
+    it("builds the My Activity CSV from the job's stored filters", async () => {
         const query = { sortBy: "created_at", sortDirection: "desc", page: 3, limit: 2000 };
         const out = await handleExportBuild(
             makeDb() as never,
@@ -520,6 +568,7 @@ describe("handleExportBuild", () => {
                 query,
             }),
         );
+        if (!out) throw new Error("Expected published export artifact");
         expect(buildAuditCsv).toHaveBeenCalledWith(
             expect.anything(),
             "u1",
@@ -527,9 +576,9 @@ describe("handleExportBuild", () => {
             query,
         );
         const [path, , contentType] = uploadFile.mock.calls[0];
-        expect(path).toBe("exports/u1/job-1-history-export.csv");
+        expect(path).toBe("exports/u1/job-1-1-claim-1-my-activity.csv");
         expect(contentType).toMatch(/^text\/csv/);
-        expect(out.filename).toBe("history-export.csv");
+        expect(out.filename).toBe("my-activity.csv");
         expect(out.content_type).toMatch(/^text\/csv/);
         // Exporting history does not itself record an audit row.
         expect(recordAudit).not.toHaveBeenCalled();
@@ -563,11 +612,12 @@ describe("handleExportBuild", () => {
                 document_ids: ["d1", "d2"],
             }),
         );
+        if (!out) throw new Error("Expected published export artifact");
 
         expect(ensureDocAccess).toHaveBeenCalledTimes(2);
         expect(loadActiveVersion.mock.calls.map((c) => c[0])).toEqual(["d1"]);
         const [path, , contentType] = uploadFile.mock.calls[0];
-        expect(path).toBe("exports/u1/job-1-documents.zip");
+        expect(path).toBe("exports/u1/job-1-1-claim-1-documents.zip");
         expect(contentType).toBe("application/zip");
         expect(out.filename).toBe("documents.zip");
         expect(out.content_type).toBe("application/zip");

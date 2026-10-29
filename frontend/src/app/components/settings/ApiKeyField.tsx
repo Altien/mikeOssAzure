@@ -1,157 +1,356 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { Eye, EyeOff } from "lucide-react";
-import { FieldLabel } from "@/app/components/ui/form-field";
-import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { SettingsTextInput } from "@/app/components/settings/SettingsTextInput";
+import { FieldLabel, FormTextInput } from "@/app/components/ui/form-field";
+import { SettingsRow } from "./SettingsRow";
+import { SettingsDescription, SettingsLabel } from "./SettingsText";
+import {
+  UserVisibleError,
+  notifyError,
+  notifyInfo,
+  notifySuccess,
+} from "@/app/lib/userFacingError";
+import { useRequestOwner } from "@/app/hooks/useRequestOwner";
+import { useLatestRef } from "@/app/hooks/useLatestRef";
 import { settingsGlassIconButtonClassName } from "@/app/(pages)/settings/settingsStyles";
 
-// The server returns only status, never a saved credential.
+// Upstream divergence (sync-log: 25779536): Entra owns MFA and shared
+// provider modals do not expose key editing. Existing server-configured
+// callers retain disabled fields and actions.
+// The backend never returns saved keys, so the mask is a fixed-length stand-in.
 const SAVED_KEY_MASK = "x".repeat(24);
 
-// Upstream divergence (sync-log: 3a10943): upstream gates save/remove behind
-// MfaVerificationPopup (Supabase-auth TOTP step-up). Dev has no app-level MFA
-// (Entra enforces it at the IdP), so save/remove run directly.
+/**
+ * A non-secret value a key is only usable with (an AWS region, an Azure
+ * resource). It is saved together with a new key, and can be changed on its
+ * own once a key is saved.
+ */
+export type ApiKeyFieldSetting = {
+  label: string;
+  placeholder: string;
+  /** The value saved with the user's own key, or null when there is none. */
+  savedValue: string | null;
+  /** Canonical form of a typed value, or null when it is not valid. */
+  normalize: (value: string) => string | null;
+  invalidMessage: string;
+};
+
+type ApiKeyFieldAction = {
+  label: string;
+  onClick: () => Promise<void>;
+  disabled: boolean;
+};
+
 export function ApiKeyField({
-    label,
-    description,
-    placeholder,
-    hasSavedKey,
-    isServerConfigured = false,
-    onSave,
-    onRemove,
+  label,
+  variant = "settings",
+  description,
+  hasSavedKey,
+  isServerConfigured = false,
+  placeholder,
+  keyLabel = "API key",
+  validateKey,
+  setting,
+  onSave,
+  onRemove,
+  render,
 }: {
-    label: string;
-    description?: string;
-    placeholder: string;
-    hasSavedKey: boolean;
-    isServerConfigured?: boolean;
-    onSave: (value: string) => Promise<boolean>;
-    onRemove: () => Promise<boolean>;
+  label: string;
+  variant?: "settings" | "modal";
+  description?: string;
+  hasSavedKey: boolean;
+  isServerConfigured?: boolean;
+  placeholder?: string;
+  /** What the modal calls the secret, when it is not a plain API key. */
+  keyLabel?: string;
+  /** Why a typed key cannot be saved, or null when it can. */
+  validateKey?: (value: string) => string | null;
+  setting?: ApiKeyFieldSetting;
+  /** Called with the typed key ("" when only the setting changed) and,
+   *  for fields with a setting, its normalized value. */
+  onSave: (value: string, settingValue?: string) => Promise<boolean>;
+  onRemove: () => Promise<boolean>;
+  /** Place the fields and actions separately, such as in a modal footer. */
+  render?: (
+    fields: ReactNode,
+    saveAction: ApiKeyFieldAction,
+    removeAction: ApiKeyFieldAction | undefined,
+  ) => ReactNode;
 }) {
-    const [value, setValue] = useState("");
-    const [reveal, setReveal] = useState(false);
-    const [isEditing, setIsEditing] = useState(false);
-    const [isSaving, setIsSaving] = useState(false);
-    const [saved, setSaved] = useState(false);
-    const [warningMessage, setWarningMessage] = useState<string | null>(null);
+  const requestOwner = useRequestOwner();
+  const settingInputId = useId();
+  const settingErrorId = useId();
+  const keyErrorId = useId();
+  const Input = variant === "modal" ? FormTextInput : SettingsTextInput;
+  const Container = variant === "modal" ? "div" : SettingsRow;
+  const savedSettingValue = setting?.savedValue ?? "";
+  const [value, setValue] = useState("");
+  const [settingValue, setSettingValue] = useState(savedSettingValue);
+  const [settingError, setSettingError] = useState<string | null>(null);
+  const [keyError, setKeyError] = useState<string | null>(null);
+  const [reveal, setReveal] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
 
-    useEffect(() => {
-        setValue("");
-    }, [hasSavedKey]);
+  // The field is cleared on success and whenever the saved-key state
+  // changes, and the user may well correct a rejected key before reaching
+  // for the notice. A Retry therefore reads the box as it is NOW instead of
+  // resending the value the failed attempt closed over.
+  const valueRef = useLatestRef(value);
+  const settingValueRef = useLatestRef(settingValue);
 
-    const dirty = value.trim().length > 0;
-    const showMask = hasSavedKey && !isEditing && !dirty;
+  useEffect(() => {
+    setValue("");
+  }, [hasSavedKey]);
 
-    const handleSave = async () => {
-        setIsSaving(true);
-        try {
-            const ok = await onSave(value);
-            if (ok) {
-                setValue("");
-                setSaved(true);
-                setTimeout(() => setSaved(false), 2000);
-            } else {
-                setWarningMessage(`Failed to save ${label}. Please try again.`);
-            }
-        } catch {
-            setWarningMessage(`Failed to save ${label}. Please try again.`);
-        } finally {
-            setIsSaving(false);
-        }
-    };
+  useEffect(() => {
+    setSettingValue(savedSettingValue);
+    setSettingError(null);
+  }, [savedSettingValue]);
 
-    const handleRemove = async () => {
-        setIsSaving(true);
-        try {
-            const ok = await onRemove();
-            if (!ok) {
-                setWarningMessage(`Failed to remove ${label}. Please try again.`);
-            }
-        } catch {
-            setWarningMessage(`Failed to remove ${label}. Please try again.`);
-        } finally {
-            setIsSaving(false);
-        }
-    };
+  const keyDirty = value.trim().length > 0;
+  const settingDirty =
+    !!setting && settingValue.trim() !== savedSettingValue;
+  // A setting alone can only be saved onto a key that already exists.
+  const dirty = keyDirty || (hasSavedKey && settingDirty);
+  const showMask = hasSavedKey && !isEditing && !keyDirty;
 
-    return (
-        <>
-        <div className="px-4 py-5">
-            <FieldLabel>{label}</FieldLabel>
-            {description && (
-                <p className="mb-3 text-sm text-gray-500">{description}</p>
-            )}
-            <div className="space-y-2">
-                <div className="relative flex-1">
-                    <SettingsTextInput
-                        aria-label={label}
-                        type={reveal && !showMask ? "text" : "password"}
-                        value={showMask ? SAVED_KEY_MASK : value}
-                        readOnly={showMask}
-                        onFocus={() => setIsEditing(true)}
-                        onBlur={() => setIsEditing(false)}
-                        onChange={(event) => setValue(event.target.value)}
-                        placeholder={
-                            isServerConfigured
-                                ? "Server .env key configured"
-                                : hasSavedKey
-                                  ? "Saved key hidden"
-                                  : placeholder
-                        }
-                        className="pr-10"
-                        autoComplete="off"
-                        spellCheck={false}
-                        disabled={isServerConfigured}
-                    />
-                    {dirty && (
-                        <button
-                            type="button"
-                            onClick={() => setReveal((current) => !current)}
-                            disabled={isServerConfigured}
-                            className={`absolute inset-y-1 right-1.5 flex items-center ${settingsGlassIconButtonClassName}`}
-                            aria-label={reveal ? "Hide key" : "Show key"}
-                        >
-                            {reveal ? (
-                                <EyeOff className="h-4 w-4" />
-                            ) : (
-                                <Eye className="h-4 w-4" />
-                            )}
-                        </button>
-                    )}
-                </div>
-                <div className="flex flex-wrap justify-end gap-2">
-                    <button
-                        type="button"
-                        onClick={handleSave}
-                        disabled={
-                            isServerConfigured || isSaving || !dirty || saved
-                        }
-                        className="text-xs font-medium text-gray-700 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-400"
-                    >
-                        {isSaving ? "Saving..." : saved ? "Saved" : "Save"}
-                    </button>
-                    {hasSavedKey && !isServerConfigured && (
-                        <button
-                            type="button"
-                            onClick={handleRemove}
-                            disabled={isSaving}
-                            className="text-xs font-medium text-red-600 transition-colors hover:text-red-700 disabled:cursor-not-allowed disabled:text-red-300"
-                        >
-                            Remove
-                        </button>
-                    )}
-                </div>
-            </div>
-        </div>
-        {/* Upstream #498: failures surface in a warning popup, not window.alert. */}
-        <WarningPopup
-            open={!!warningMessage}
-            title="API key update failed"
-            message={warningMessage}
-            onClose={() => setWarningMessage(null)}
-        />
-        </>
+  /**
+   * Re-run a save only while the box still holds the key that failed.
+   * Anything else — a corrected key, a cleared field — would silently store
+   * the wrong secret, so say what happened and leave the input alone.
+   */
+  const retrySave = (attempted: string, attemptedSetting: string, isCurrent = requestOwner.capture()) => {
+    if (!isCurrent()) return;
+    if (valueRef.current === attempted && settingValueRef.current === attemptedSetting) {
+      void handleSave();
+      return;
+    }
+    notifyInfo(
+      valueRef.current.trim().length > 0
+        ? `Your ${label} has changed since that attempt. Press Save to store the key now in the field.`
+        : `The ${label} field is empty, so there is nothing to retry. Enter the key again and press Save.`,
+      "Nothing was sent",
     );
+  };
+
+  const handleSave = async () => {
+    const isCurrent = requestOwner.capture();
+    if (!isCurrent()) return;
+    if (isServerConfigured) return;
+    const invalidKey = keyDirty ? (validateKey?.(value) ?? null) : null;
+    if (invalidKey) {
+      setKeyError(invalidKey);
+      return;
+    }
+    let normalizedSetting: string | undefined;
+    if (setting) {
+      const normalized = setting.normalize(settingValue);
+      if (!normalized) {
+        setSettingError(setting.invalidMessage);
+        return;
+      }
+      normalizedSetting = normalized;
+    }
+    setSettingError(null);
+    const attempted = valueRef.current;
+    const attemptedSetting = settingValueRef.current;
+    setIsSaving(true);
+    try {
+      const ok = setting
+        ? await onSave(value, normalizedSetting)
+        : await onSave(value);
+      if (!isCurrent()) return;
+      if (ok) {
+        setValue("");
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+      } else {
+        // The caller reports failure as `false`, with no error to classify.
+        notifyError(
+          new UserVisibleError(
+            `Mike couldn't save your ${label}. The key was not changed.`,
+            { retryable: true },
+          ),
+          {
+            action: `save your ${label}`,
+            onRetry: () => retrySave(attempted, attemptedSetting, isCurrent),
+          },
+        );
+      }
+    } catch (error) {
+      if (!isCurrent()) return;
+      notifyError(error, { action: `save your ${label}`, onRetry: () => retrySave(attempted, attemptedSetting, isCurrent) });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleRemove = async () => {
+    const isCurrent = requestOwner.capture();
+    if (!isCurrent()) return;
+    if (isServerConfigured) return;
+    setIsSaving(true);
+    try {
+      const ok = await onRemove();
+      if (!isCurrent()) return;
+      if (ok) {
+        notifySuccess(`${label} removed.`);
+      } else {
+        notifyError(
+          new UserVisibleError(
+            `Mike couldn't remove your ${label}. The key is still saved.`,
+            { retryable: true },
+          ),
+          {
+            action: `remove your ${label}`,
+            onRetry: () => { if (isCurrent()) void handleRemove(); },
+          },
+        );
+      }
+    } catch (error) {
+      if (!isCurrent()) return;
+      notifyError(error, { action: `remove your ${label}`, onRetry: () => { if (isCurrent()) void handleRemove(); } });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const saveAction = {
+    label: isSaving ? "Saving..." : saved ? "Saved" : "Save",
+    onClick: handleSave,
+    disabled: isServerConfigured || isSaving || !dirty || saved,
+  };
+  const removeAction = hasSavedKey && !isServerConfigured ? {
+    label: "Remove",
+    onClick: handleRemove,
+    disabled: isSaving,
+  } : undefined;
+
+  const fields = (
+    <Container
+      {...(variant === "modal"
+        ? { className: "space-y-3" }
+        : { layout: "stacked" as const })}
+    >
+      {variant !== "modal" && (
+        <div className={description ? "space-y-1" : undefined}>
+          <SettingsLabel>{label}</SettingsLabel>
+          {description && (
+            <SettingsDescription>{description}</SettingsDescription>
+          )}
+        </div>
+      )}
+      <div className={variant === "modal" ? "space-y-4" : "space-y-2"}>
+        <div>
+          {variant === "modal" && (
+            <FieldLabel htmlFor={`${settingInputId}-key`}>{keyLabel}</FieldLabel>
+          )}
+          <div className="relative flex-1">
+            <Input
+              id={`${settingInputId}-key`}
+              aria-label={label}
+              placeholder={isServerConfigured ? "Organisation credential configured" : placeholder}
+              type={reveal && !showMask ? "text" : "password"}
+              value={showMask ? SAVED_KEY_MASK : value}
+              readOnly={showMask}
+              onFocus={() => setIsEditing(true)}
+              onBlur={() => setIsEditing(false)}
+              onChange={(event) => {
+                setValue(event.target.value);
+                setKeyError(null);
+              }}
+              aria-invalid={keyError ? true : undefined}
+              aria-describedby={keyError ? keyErrorId : undefined}
+              className="pr-10"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={isServerConfigured}
+            />
+            {keyDirty && (
+              <button
+                type="button"
+                onClick={() => setReveal((current) => !current)}
+                className={`absolute inset-y-1 right-1.5 flex items-center ${settingsGlassIconButtonClassName}`}
+                aria-label={reveal ? "Hide key" : "Show key"}
+              >
+                {reveal ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
+              </button>
+            )}
+          </div>
+          {keyError && (
+            <p id={keyErrorId} className="mt-1 text-xs text-red-600">
+              {keyError}
+            </p>
+          )}
+        </div>
+        {setting && (
+          <div className="space-y-1">
+            {variant === "modal" ? (
+              <FieldLabel htmlFor={settingInputId}>{setting.label}</FieldLabel>
+            ) : (
+              <label htmlFor={settingInputId} className="block text-sm text-gray-500">
+                {setting.label}
+              </label>
+            )}
+            <Input
+              id={settingInputId}
+              type="text"
+              value={settingValue}
+              onChange={(event) => {
+                setSettingValue(event.target.value);
+                setSettingError(null);
+              }}
+              placeholder={setting.placeholder}
+              aria-invalid={settingError ? true : undefined}
+              aria-describedby={settingError ? settingErrorId : undefined}
+              autoComplete="off"
+              spellCheck={false}
+              disabled={isServerConfigured}
+            />
+            {settingError && (
+              <p id={settingErrorId} className="text-xs text-red-600">
+                {settingError}
+              </p>
+            )}
+          </div>
+        )}
+        {!render && (
+          <div className="flex flex-wrap justify-end gap-2">
+            <button
+              type="button"
+              onClick={saveAction.onClick}
+              disabled={saveAction.disabled}
+              className="text-xs font-medium text-gray-700 transition-colors hover:text-gray-950 disabled:cursor-not-allowed disabled:text-gray-400"
+            >
+              {saveAction.label}
+            </button>
+            {removeAction && (
+              <button
+                type="button"
+                onClick={removeAction.onClick}
+                disabled={removeAction.disabled}
+                className="text-xs font-medium text-red-600 transition-colors hover:text-red-700 disabled:cursor-not-allowed disabled:text-red-300"
+              >
+                {removeAction.label}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </Container>
+  );
+
+  return (
+    <>
+      {render ? render(fields, saveAction, removeAction) : fields}
+    </>
+  );
 }

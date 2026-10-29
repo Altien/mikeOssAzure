@@ -10,7 +10,7 @@ export function OnboardingShell({
 }: {
     step: string;
     title: string;
-    description: string;
+    description?: string;
     children: ReactNode;
 }) {
     return (
@@ -26,9 +26,11 @@ export function OnboardingShell({
                     <h1 className="font-serif text-2xl font-medium text-gray-950">
                         {title}
                     </h1>
-                    <p className="mt-2 text-sm leading-relaxed text-gray-600">
-                        {description}
-                    </p>
+                    {description && (
+                        <p className="mt-2 text-sm leading-relaxed text-gray-600">
+                            {description}
+                        </p>
+                    )}
                     <div className="mt-6">{children}</div>
                 </div>
             </div>

@@ -4,6 +4,7 @@ import {
   type GoogleOAuthDialogMessage,
 } from "../taskpane/auth/oauthProtocol";
 import { API_BASE_URL, loadRuntimeConfig } from "../taskpane/auth/runtimeConfig";
+import { describeError } from "@mike/user-error";
 import { initAddinErrorReporting } from "../taskpane/lib/errorReporting";
 
 void loadRuntimeConfig().then((config) => initAddinErrorReporting("oauth-dialog", config.wordSentryDsn)).catch(() => {});
@@ -53,13 +54,21 @@ function clearTemporaryAuthStorage(): void {
   window.sessionStorage.removeItem(REQUEST_STORAGE_KEY);
 }
 
+/**
+ * The message shown in the dialog (and relayed to the pane) for a non-ok
+ * response. A 4xx `detail` is written for the user; a 5xx body is a stack
+ * trace or a proxy page, so it is never repeated.
+ */
 async function responseError(response: Response): Promise<string> {
+  if (response.status >= 500) {
+    return "Google sign-in is temporarily unavailable. Try again.";
+  }
   const body = (await response.json().catch(() => ({}))) as {
     detail?: unknown;
   };
   return typeof body.detail === "string" && body.detail
     ? body.detail
-    : `Google sign-in failed (HTTP ${response.status}).`;
+    : "Google sign-in failed. Try again.";
 }
 
 async function runGoogleOAuth(): Promise<void> {
@@ -166,10 +175,11 @@ Office.onReady(() => {
     const requestId =
       new URL(window.location.href).searchParams.get("requestId") ??
       window.sessionStorage.getItem(REQUEST_STORAGE_KEY);
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Unable to complete Google sign-in.";
+    // Whatever threw here — fetch, Office.js, a bad redirect — its text is
+    // for the console. The pane shows this sentence.
+    const message = describeError(error, {
+      fallback: "Mike couldn't complete Google sign-in. Try again.",
+    }).message;
     if (requestId) {
       sendError(requestId, message);
     } else {

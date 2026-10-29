@@ -77,13 +77,47 @@ export const DropdownRadioGroup = React.forwardRef<
 export const DropdownContent = React.forwardRef<
     React.ElementRef<typeof DropdownPrimitive.Content>,
     React.ComponentPropsWithoutRef<typeof DropdownPrimitive.Content>
->(function DropdownContent({ className, sideOffset = 4, ...props }, ref) {
+>(function DropdownContent(
+    { className, sideOffset = 4, onPointerDownOutside, onCloseAutoFocus, ...props },
+    ref,
+) {
+    const contentRef = React.useRef<HTMLDivElement | null>(null);
     return (
         <DropdownPrimitive.Portal>
             <DropdownPrimitive.Content
-                ref={ref}
+                ref={(node) => {
+                    contentRef.current = node;
+                    if (typeof ref === "function") ref(node);
+                    else if (ref) ref.current = node;
+                }}
                 data-slot="dropdown-content"
                 sideOffset={sideOffset}
+                onCloseAutoFocus={(event) => {
+                    onCloseAutoFocus?.(event);
+                    // Radix restores focus on a timer after the old content
+                    // unmounts. If this menu has reopened already, focusing
+                    // its trigger would dismiss the new non-modal menu.
+                    if (contentRef.current?.dataset.state === "open") {
+                        event.preventDefault();
+                    }
+                }}
+                onPointerDownOutside={(event) => {
+                    onPointerDownOutside?.(event);
+                    // A press on the menu's own trigger is the trigger's to
+                    // answer: it toggles the menu. Counting it as a press
+                    // outside as well dismisses a menu the same press just
+                    // reopened, which happens whenever the trigger is
+                    // pressed while the menu is still animating shut (it
+                    // can be, in a non-modal menu).
+                    const triggerId =
+                        contentRef.current?.getAttribute("aria-labelledby");
+                    const trigger = triggerId
+                        ? document.getElementById(triggerId)
+                        : null;
+                    if (trigger?.contains(event.target as Node)) {
+                        event.preventDefault();
+                    }
+                }}
                 className={mergeClasses(
                     DROPDOWN_CHROME_CLASS,
                     DROPDOWN_Z_INDEX_CLASS,
@@ -211,11 +245,18 @@ export function DropdownAtPoint({
     point,
     onClose,
     children,
+    followPoint = false,
     ...contentProps
 }: {
     point: { x: number; y: number };
     onClose: () => void;
     children: React.ReactNode;
+    /**
+     * Treat a changed point as the same menu moving (it is anchored to
+     * something that reflows, like highlighted text) rather than as a new
+     * menu opened somewhere else.
+     */
+    followPoint?: boolean;
 } & Omit<
     React.ComponentPropsWithoutRef<typeof DropdownPrimitive.Content>,
     "children"
@@ -224,7 +265,7 @@ export function DropdownAtPoint({
         <Dropdown
             // A new point is a new menu. Without the remount, a right-click
             // while one is open can leave it positioned at the old point.
-            key={`${point.x},${point.y}`}
+            key={followPoint ? undefined : `${point.x},${point.y}`}
             open
             modal={false}
             onOpenChange={(open) => {
@@ -255,6 +296,9 @@ export function DropdownAtPoint({
                 sideOffset={0}
                 // There is no real trigger to hand focus back to.
                 onCloseAutoFocus={(event) => event.preventDefault()}
+                // A zero-size trigger gives the positioner nothing to watch
+                // for movement, so a followed point is re-read every frame.
+                updatePositionStrategy={followPoint ? "always" : undefined}
                 {...contentProps}
             >
                 {children}

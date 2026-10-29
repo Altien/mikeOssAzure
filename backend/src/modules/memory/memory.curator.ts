@@ -1,3 +1,4 @@
+import { wordChatHasWorkspaceAttachments } from "../../lib/wordWorkspace";
 import { randomUUID } from "node:crypto";
 import { checkProjectAccess, ensureChatAccess, ensureReviewAccess, projectHasSharedAudience } from "../../lib/access";
 import { hasDirectContentGrants } from "../../lib/contentAccess";
@@ -14,8 +15,11 @@ import {
   type UserModelSettings,
 } from "../user/user.service";
 import { DbJobDeferredError, type Db, type DbJob } from "../../lib/dbq/types";
-import { ensureMemoryFile, getMemoryCurrent, MemoryConversationNotQuietError, MemoryDisabledError, MemoryEpochSupersededError, MemoryJobSupersededError, MemoryValidationError, writeMemoryFile, type MemoryFileRow, type MemoryScope, type MemorySurface } from "../../lib/memory/files";
+import { AppError } from "../../lib/appError";
+import { setOperation } from "../../lib/observability/sentry";
+import { ensureMemoryFile, getMemoryCurrentForFile, MemoryConversationNotQuietError, MemoryDisabledError, MemoryEpochSupersededError, MemoryJobSupersededError, MemoryValidationError, writeMemoryFile, type MemoryFileRow, type MemoryScope, type MemorySurface } from "../../lib/memory/files";
 import { MEMORY_INACTIVITY_MS } from "../../lib/memory/schedule";
+import { teamOrgIdOf } from "../../lib/personalOrgs";
 
 const TRANSCRIPT_MESSAGE_LIMIT = 120;
 const TRANSCRIPT_CHARACTER_LIMIT = 48_000;
@@ -46,8 +50,16 @@ export type MemoryCuratorStoredMessage = {
 type CuratorConversation = {
   model: string | null;
   projectId: string | null;
+  /** The conversation's organization, whose keys the curator then runs on. */
+  orgId: string | null;
   projectWritable: boolean;
   appMemoryEligible: boolean;
+  /**
+   * The workspace whose memory the actor learns into from this
+   * conversation: a team organization, or null for Personal. The database
+   * refuses a write to any other (memory_source_org_id).
+   */
+  appOrgId: string | null;
   actorEmail: string | null;
   messages: MemoryCuratorStoredMessage[];
 };
@@ -448,6 +460,8 @@ async function loadConversation(
   const email = await actorEmail(db, state.actor_user_id);
   let model: string | null = null;
   let projectId: string | null = null;
+  let orgId: string | null = null;
+  let appOrgId: string | null = null;
   let projectWritable = false;
   let appMemoryEligible = state.surface !== "tabular";
   let messages: MemoryCuratorStoredMessage[] = [];
@@ -473,13 +487,19 @@ async function loadConversation(
     );
     if (!access.ok) return null;
     projectId = (data.project_id as string | null) ?? null;
+    orgId = (data.org_id as string | null) ?? null;
     // App memory may only learn from a conversation nobody else can read:
-    // the chat must be the actor's own, outside any organization, with no
-    // direct grants. This mirrors memory_source_allows_app_memory and the
-    // routes' read-side audience check.
+    // the chat must be the actor's own, with no direct grants, and either
+    // personal or started on its own in a team organization — in which case
+    // it learns into the actor's memory for THAT workspace. A chat in an
+    // organization's project is the project's. This mirrors
+    // memory_source_allows_app_memory / memory_source_org_id and the routes'
+    // read-side audience check.
+    const teamOrgId = await teamOrgIdOf(db, orgId);
+    appOrgId = teamOrgId && !projectId ? teamOrgId : null;
     appMemoryEligible =
       data.user_id === state.actor_user_id &&
-      !data.org_id &&
+      (!teamOrgId || !projectId) &&
       !(await hasDirectContentGrants(db, "chat", state.conversation_id));
     if (projectId) {
       const projectAccess = await checkProjectAccess(
@@ -515,6 +535,7 @@ async function loadConversation(
       .maybeSingle();
     if (error) throw new Error("Memory curator could not load the Word chat");
     if (!data || data.user_id !== state.actor_user_id) return null;
+    if (await wordChatHasWorkspaceAttachments(db, [], state.conversation_id)) return null;
     model = (data.model as string | null) ?? null;
     messages = await loadEligibleMemoryMessages(
       db,
@@ -553,6 +574,7 @@ async function loadConversation(
     );
     if (!access.ok) return null;
     projectId = (review.project_id as string | null) ?? null;
+    orgId = (review.org_id as string | null) ?? null;
     // Same boundary as chat: a tabular review learns app memory only when it
     // is the actor's own private review inside a private project.
     appMemoryEligible =
@@ -594,8 +616,10 @@ async function loadConversation(
   return {
     model,
     projectId,
+    orgId,
     projectWritable,
     appMemoryEligible,
+    appOrgId,
     actorEmail: email,
     messages,
   };
@@ -677,6 +701,12 @@ export function memoryScopeFailureCause(
   let current: unknown = error;
   for (let depth = 0; depth < 3 && current && typeof current === "object"; depth++) {
     const raw = current as Record<string, unknown>;
+    // Our own wrappers (a scope failure wrapped again at the job level) say
+    // nothing about the dependency; the classification is further down.
+    if (current instanceof AppError) {
+      current = raw.cause;
+      continue;
+    }
     const diagnostics: { name?: string; code?: string; statusCode?: number } = {};
     if (typeof raw.name === "string" && raw.name !== "Error" && SAFE_DIAGNOSTIC_CODE.test(raw.name)) {
       diagnostics.name = raw.name;
@@ -694,11 +724,47 @@ export function memoryScopeFailureCause(
   return undefined;
 }
 
-/** The fixed-text scope failure, with the original's classification as its cause. */
+const SCOPE_DEPENDENCY_FAILURE = "Memory curator scope dependency failed";
+
+/**
+ * The fixed-text scope failure, under its kind, with the original's
+ * classification and stack frames as its cause. A `new Error` built here had
+ * only this function's stack, so Sentry could not say where the dependency
+ * failed (MIKE-BACKEND-F). The frames are code locations and travel; the
+ * stack's first line is the original message and is replaced, so neither
+ * the event nor the operator log (which renders the cause chain) sees it.
+ * A failure with no stack and nothing safe to say has no cause.
+ */
 export function memoryScopeFailure(error: unknown): Error {
-  return new Error("Memory curator scope failed", {
-    cause: memoryScopeFailureCause(error),
-  });
+  const diagnostics = memoryScopeFailureCause(error);
+  const frames = scopeFailureFrames(error);
+  let cause: Error | undefined;
+  if (diagnostics || frames) {
+    cause = Object.assign(new Error(SCOPE_DEPENDENCY_FAILURE), diagnostics);
+    if (frames) {
+      cause.stack = `${cause.name}: ${SCOPE_DEPENDENCY_FAILURE}${frames}`;
+    }
+  }
+  return new AppError(
+    "memory.consolidation_failed",
+    "Memory curator scope failed",
+    cause ? { cause } : undefined,
+  );
+}
+
+/**
+ * The `    at …` lines of the original stack, without its message line.
+ * Our own wrappers (a scope failure wrapped again at the job level) hold the
+ * frames of the wrap, not of the dependency; skip them like the cause reader.
+ */
+function scopeFailureFrames(error: unknown): string {
+  let current: unknown = error;
+  for (let depth = 0; depth < 3 && current instanceof AppError && current.cause !== undefined; depth++) {
+    current = current.cause;
+  }
+  if (!(current instanceof Error) || typeof current.stack !== "string") return "";
+  const at = current.stack.indexOf("\n    at ");
+  return at >= 0 ? current.stack.slice(at) : "";
 }
 
 export async function runMemoryCuratorScope(
@@ -906,7 +972,7 @@ export async function runMemoryCuratorScope(
   }
   if (writeFailure) throw memoryScopeFailure(writeFailure);
   if (invalidCalls > 0 && !written && !terminalReason) {
-    throw new Error("Memory curator scope failed");
+    throw memoryScopeFailure(undefined);
   }
   // `written` is assigned from the async runTools callback. TypeScript does
   // not include callback side effects in outer control-flow narrowing.
@@ -970,14 +1036,22 @@ async function refreshJobFileStatuses(args: {
       epoch: payloadEpoch(args.job, "projectEpoch"),
     },
   ];
+  // The actor has one memory per workspace; the job names the one it is for.
+  const appOrgId = payloadString(args.job, "appOrgId");
   for (const target of targets) {
     if (!target.ownerId || target.epoch == null) continue;
-    const { data, error } = await args.db
+    const lookup = args.db
       .from("memory_files")
       .select("id, epoch")
       .eq("scope", target.scope)
-      .eq(target.ownerColumn, target.ownerId)
-      .maybeSingle();
+      .eq(target.ownerColumn, target.ownerId);
+    const { data, error } = await (
+      target.scope !== "user"
+        ? lookup
+        : appOrgId
+          ? lookup.eq("org_id", appOrgId)
+          : lookup.is("org_id", null)
+    ).maybeSingle();
     if (error) throw new Error("Memory curator could not refresh file status");
     if (!data || numeric(data.epoch as number | string) !== target.epoch) {
       continue;
@@ -1132,6 +1206,7 @@ export async function handleMemoryConsolidation(
   db: Db,
   job: DbJob,
 ): Promise<Record<string, unknown>> {
+  setOperation("memory.consolidate");
   const stateId = payloadString(job, "stateId");
   const requestedGeneration = Number(job.payload.generation);
   if (!stateId || !Number.isSafeInteger(requestedGeneration)) {
@@ -1226,7 +1301,12 @@ export async function handleMemoryConsolidation(
     const sourceEpoch = payloadEpoch(job, "sourceEpoch");
     const terminalAt = payloadString(job, "terminalAt") ?? undefined;
     const terminalTurnId = payloadString(job, "turnId");
-    const appFile = await ensureMemoryFile(db, "user", state.actor_user_id);
+    const appFile = await ensureMemoryFile(
+      db,
+      "user",
+      state.actor_user_id,
+      conversation.appOrgId,
+    );
     const appTranscript = buildMemoryCuratorTranscript(
       conversation.messages,
       state.actor_user_id,
@@ -1329,13 +1409,16 @@ export async function handleMemoryConsolidation(
     return { skipped: conversation ? "no_enabled_scope" : "inaccessible" };
   }
 
-  const settings = await getUserModelSettings(state.actor_user_id, db);
+  const settings = await getUserModelSettings(state.actor_user_id, db, {
+    orgId: conversation.orgId,
+  });
   const resolved = await resolveEffectiveChatModel({
     chatModel: conversation.model,
     lastSelectedModel: settings.last_selected_chat_model,
     apiKeys: settings.api_keys,
     userId: state.actor_user_id,
     db,
+    orgId: conversation.orgId,
   });
   if (!resolved.ok) throw new Error("Memory curator has no available model");
   const model = await memoryCuratorModelForChat({
@@ -1354,10 +1437,9 @@ export async function handleMemoryConsolidation(
       continue;
     }
     try {
-      const { current, file } = await getMemoryCurrent(
+      const { current, file } = await getMemoryCurrentForFile(
         db,
-        candidate.file.scope,
-        candidate.ownerId,
+        candidate.file,
       );
       if (!current.enabled || numeric(file.epoch) !== candidate.expectedEpoch) {
         await recordResult({

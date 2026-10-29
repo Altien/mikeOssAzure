@@ -6,7 +6,10 @@ import { isPanelDocument } from "@/app/components/shared/types";
 import { handleAuthorityTraceStreamEvent } from "@/altien/authorityTrace/events";
 import type { AssistantEvent, Citation } from "@/app/components/shared/types";
 import type { AssistantTurnHandle } from "@/app/lib/assistantTurns";
-import type { ConnectorApprovalItem } from "@mike/contracts";
+import type {
+  ConnectorApprovalItem,
+  WebSource,
+} from "@mike/contracts";
 
 /**
  * Reading an assistant turn's SSE stream into its turn record.
@@ -41,9 +44,65 @@ export type TurnStreamHooks = {
   onChatId?: (chatId: string, assistantMessageId?: string) => void;
   onChatTitle?: (chatId: string, title: string) => void;
   onRejectedApiKey?: () => void;
-  /** The server sent an `error` frame; the turn is over as far as the model goes. */
-  onErrorFrame?: () => void;
+  /**
+   * The server sent an `error` frame; the turn is over as far as the model
+   * goes. `message` is what the bubble shows; `safeToDisplay` marks a
+   * configuration refusal that a re-send would repeat.
+   */
+  onErrorFrame?: (frame: {
+    message: string;
+    safeToDisplay: boolean;
+    /** The backend's failure code, when the frame named one. */
+    code: string | null;
+    /** The id of the request that produced the frame, when it carried one. */
+    requestId: string | null;
+    reportingOwner?: "backend";
+  }) => void;
 };
+
+/**
+ * The error for a chat request the server refused before streaming. It
+ * carries the status so the failure can be classified (429, 5xx), plus the
+ * backend's failure shape: `code` sharpens the classification, `request_id`
+ * is what a support email is worth sending, and a 4xx `detail` is written
+ * for the user. Without a usable detail the message stays the API client's
+ * placeholder form, which `describeError` knows not to show a user. The body
+ * is read once, and a body that is not JSON is simply dropped.
+ */
+export async function chatRequestError(response: Response): Promise<Error> {
+  const read = (value: unknown) =>
+    typeof value === "string" && value.trim() ? value.trim() : null;
+  let detail: string | null = null;
+  let code: string | null = null;
+  let requestId = read(response.headers.get("x-request-id"));
+  // Only a JSON error body is read: anything else (an HTML proxy page, a
+  // stream that never ends) is released unread so the failure still
+  // surfaces promptly.
+  const isJson = /json/i.test(response.headers.get("content-type") ?? "");
+  try {
+    if (!isJson) throw new Error("not a JSON error body");
+    const body = (await response.json()) as Record<string, unknown>;
+    detail = read(body?.detail);
+    code = read(body?.code);
+    requestId = read(body?.request_id) ?? requestId;
+  } catch {
+    try {
+      await response.body?.cancel();
+    } catch {
+      // The connection may already be gone; the status is what matters.
+    }
+  }
+  return Object.assign(
+    new Error(
+      response.status < 500 && detail ? detail : `API error: ${response.status}`,
+    ),
+    {
+      status: response.status,
+      ...(code ? { code } : {}),
+      ...(requestId ? { requestId } : {}),
+    },
+  );
+}
 
 export function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
@@ -93,6 +152,47 @@ function isConnectorApprovalItem(
     !!binding.grant_id.trim() &&
     (binding.etag === undefined || typeof binding.etag === "string")
   );
+}
+
+function parseWebSources(value: unknown): WebSource[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const { url, title } = (item ?? {}) as { url?: unknown; title?: unknown };
+    if (typeof url !== "string" || !url) return [];
+    return [{ url, ...(typeof title === "string" && title ? { title } : {}) }];
+  });
+}
+
+function parseWebToolFailure(data: Record<string, unknown>) {
+  return typeof data.error === "string" && data.error ? { error: data.error } : {};
+}
+
+function parseResponseDetails(
+  data: Record<string, unknown>,
+): Extract<AssistantEvent, { type: "response_details" }> | null {
+  if (typeof data.model !== "string" || !data.model) return null;
+  const usage = (data.usage ?? null) as {
+    input_tokens?: unknown;
+    output_tokens?: unknown;
+  } | null;
+  const tokens =
+    usage &&
+    typeof usage.input_tokens === "number" &&
+    typeof usage.output_tokens === "number"
+      ? { input_tokens: usage.input_tokens, output_tokens: usage.output_tokens }
+      : null;
+  return {
+    type: "response_details",
+    model: data.model,
+    ...(typeof data.reasoning === "string" && data.reasoning
+      ? { reasoning: data.reasoning }
+      : {}),
+    ...(tokens ? { usage: tokens } : {}),
+  };
+}
+
+function delegationWithId(id: unknown) {
+  return (e: AssistantEvent) => e.type === "delegation" && e.delegation_id === id;
 }
 
 function parseCourtlistenerEventCases(value: unknown) {
@@ -388,7 +488,16 @@ export async function consumeAssistantTurnStream(
             error: message,
           }));
           turn.setLoadingCitations(false);
-          hooks.onErrorFrame?.();
+          // Read defensively: the backend is adding `request_id` to error
+          // frames, and older servers send neither field.
+          hooks.onErrorFrame?.({
+            message,
+            safeToDisplay,
+            ...(data.reporting_owner === "backend" ? { reportingOwner: "backend" as const } : {}),
+            code: typeof data.code === "string" ? data.code : null,
+            requestId:
+              typeof data.request_id === "string" ? data.request_id : null,
+          });
           continue;
         }
 
@@ -603,6 +712,10 @@ export async function consumeAssistantTurnStream(
                 typeof data.tool_name === "string"
                   ? (data.tool_name as string)
                   : openaiToolName,
+              tool_title:
+                typeof data.tool_title === "string" && data.tool_title
+                  ? (data.tool_title as string)
+                  : undefined,
               openai_tool_name: openaiToolName,
               status: data.status === "error" ? "error" : "ok",
               error:
@@ -867,6 +980,23 @@ export async function consumeAssistantTurnStream(
           continue;
         }
 
+        if (data.type === "text_card") {
+          if (
+            typeof data.card_id === "string" &&
+            typeof data.title === "string" &&
+            typeof data.text === "string"
+          ) {
+            pushEvent({
+              type: "text_card",
+              card_id: data.card_id,
+              title: data.title,
+              text: data.text,
+            });
+            pushThinkingPlaceholder();
+          }
+          continue;
+        }
+
         if (data.type === "ask_inputs") {
           const eventId =
             typeof data.event_id === "string" ? data.event_id.trim() : "";
@@ -1006,6 +1136,123 @@ export async function consumeAssistantTurnStream(
             },
           );
           pushThinkingPlaceholder();
+          continue;
+        }
+
+        if (data.type === "doc_search_start" || data.type === "doc_search") {
+          if (typeof data.search_id !== "string" || typeof data.scope !== "string"
+            || typeof data.query !== "string" || typeof data.offset !== "number") continue;
+          const { search_id, scope, query, offset, match_count, next_offset, coverage, error, error_code } =
+            data as unknown as Extract<AssistantEvent, { type: "doc_search" }>;
+          const event: Extract<AssistantEvent, { type: "doc_search" }> = {
+            type: "doc_search", search_id, scope, query, offset,
+            match_count, next_offset, coverage, error, error_code,
+            isStreaming: data.type === "doc_search_start",
+          };
+          // Match the call ID, so repeated queries and pagination stay separate.
+          // A completion may arrive without its start when resuming a turn.
+          if (!updateMatchingEvent(
+            (e) => e.type === "doc_search" && e.search_id === search_id,
+            () => event,
+          )) pushEvent(event);
+          if (!event.isStreaming) pushThinkingPlaceholder();
+          continue;
+        }
+
+        if (data.type === "web_search_start" || data.type === "web_search") {
+          if (typeof data.search_id !== "string") continue;
+          const searchId = data.search_id;
+          const isStreaming = data.type === "web_search_start";
+          const query = typeof data.query === "string" ? data.query : "";
+          const event: Extract<AssistantEvent, { type: "web_search" }> = {
+            type: "web_search",
+            search_id: searchId,
+            query,
+            results: parseWebSources(data.results),
+            ...(isStreaming ? {} : parseWebToolFailure(data)),
+            isStreaming,
+          };
+          // Either frame may lack the query; keep whichever one had it.
+          if (!updateMatchingEvent(
+            (e) => e.type === "web_search" && e.search_id === searchId,
+            (e) => ({
+              ...event,
+              query: query || (e as typeof event).query,
+            }),
+          )) pushEvent(event);
+          if (!isStreaming) pushThinkingPlaceholder();
+          continue;
+        }
+
+        if (data.type === "web_read_start" || data.type === "web_read") {
+          if (typeof data.read_id !== "string" || typeof data.url !== "string") continue;
+          const readId = data.read_id;
+          const isStreaming = data.type === "web_read_start";
+          const event: Extract<AssistantEvent, { type: "web_read" }> = {
+            type: "web_read",
+            read_id: readId,
+            url: data.url,
+            ...(typeof data.title === "string" && data.title
+              ? { title: data.title }
+              : {}),
+            ...(isStreaming ? {} : parseWebToolFailure(data)),
+            isStreaming,
+          };
+          if (!updateMatchingEvent(
+            (e) => e.type === "web_read" && e.read_id === readId,
+            () => event,
+          )) pushEvent(event);
+          if (!isStreaming) pushThinkingPlaceholder();
+          continue;
+        }
+
+        if (data.type === "web_sources") {
+          const sources = parseWebSources(data.sources);
+          if (sources.length) pushEvent({ type: "web_sources", sources });
+          continue;
+        }
+
+        if (data.type === "response_details") {
+          const details = parseResponseDetails(data);
+          if (details) pushEvent(details);
+          continue;
+        }
+
+        if (data.type === "delegation_start") {
+          if (typeof data.delegation_id !== "string") continue;
+          pushEvent({
+            type: "delegation",
+            delegation_id: data.delegation_id,
+            ...(typeof data.continued_from === "string"
+              ? { continued_from: data.continued_from }
+              : {}),
+            title: typeof data.title === "string" ? data.title : "",
+            task: typeof data.task === "string" ? data.task : "",
+            events: [],
+            isStreaming: true,
+          });
+          continue;
+        }
+
+        if (data.type === "delegation_activity") {
+          const activity = typeof data.name === "string" ? data.name : "";
+          updateMatchingEvent(delegationWithId(data.delegation_id), (e) => ({
+            ...e,
+            activity,
+          }));
+          continue;
+        }
+
+        if (data.type === "delegation") {
+          if (typeof data.delegation_id !== "string") continue;
+          const event = data as unknown as AssistantEvent;
+          const matches = delegationWithId(data.delegation_id);
+          if (!updateMatchingEvent(matches, () => event)) pushEvent(event);
+          // Parallel subagents share the timeline; "Thinking..." waits for the last.
+          const stillDelegating = eventsRef.current.some(
+            (e) => e.type === "delegation" && e.isStreaming,
+          );
+          if (!stillDelegating) pushThinkingPlaceholder();
           continue;
         }
 
@@ -1265,10 +1512,7 @@ export async function readAssistantTurn(args: {
   const { turn, sink, cursor, signal, hooks } = args;
   const retries = args.retries ?? 2;
   let response = await args.open();
-  if (!response.ok) {
-    await response.body?.cancel().catch(() => {});
-    throw new Error(`Chat request failed with status ${response.status}`);
-  }
+  if (!response.ok) throw await chatRequestError(response);
   for (let attempt = 0; ; attempt += 1) {
     try {
       await consumeAssistantTurnStream(response, { turn, sink, cursor, signal, hooks });

@@ -9,7 +9,18 @@
  * directly) so that importing any of them runs the side-effecting
  * configureMikeApiClient() below before the first request leaves.
  */
-import { configureMikeApiClient } from "./client";
+import { configureMikeApiClient, responseError } from "./client";
+import {
+  notifySessionCheckFailed,
+  notifySessionExpired,
+  notifySuccess,
+} from "../lib/notify";
+import {
+  announceSessionRecovered,
+  classifySessionRefresh,
+  createRefreshingFetch,
+  forgetSessionRecoveryRetries,
+} from "../lib/sessionRefresh";
 import type {
   ActiveWordTurn,
   Chat,
@@ -17,7 +28,7 @@ import type {
   Message,
   WordDocumentEdit,
 } from "../types";
-import { refreshSession } from "../auth/session";
+import { markSessionEnded, refreshSession, captureSessionOwner } from "../auth/session";
 import { API_BASE_URL } from "../auth/runtimeConfig";
 import {
   assistantContentFromEvents,
@@ -33,20 +44,54 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
   return {};
 }
 
-// The backend refreshes HttpOnly sessions before API handlers run. A 401 means
-// the session can no longer be refreshed; synchronize the login gate and leave
-// the original response intact for the caller.
-const fetchWithRefresh: typeof fetch = async (input, init) => {
-  const res = await fetch(input, { ...init, credentials: "include" });
-  if (res.status !== 401) return res;
-  await refreshSession().catch(() => null);
-  return res;
-};
+/** Re-check the session on demand, for the "Retry" on an unreachable check. */
+async function recheckSession(isCurrent = captureSessionOwner()): Promise<void> {
+  if (!isCurrent()) return;
+  const outcome = await refreshSession().then(
+    (user) => classifySessionRefresh({ ok: true, user }),
+    (error: unknown) => classifySessionRefresh({ ok: false, error }),
+  );
+  if (!isCurrent()) return;
+  if (outcome.kind === "refreshed") {
+    // Screens that failed on the unchecked 401 load again by themselves.
+    announceSessionRecovered();
+    notifySuccess("You're signed back in.");
+    return;
+  }
+  if (outcome.kind === "expired") {
+    forgetSessionRecoveryRetries();
+    markSessionEnded();
+    notifySessionExpired();
+    return;
+  }
+  notifySessionCheckFailed(() => recheckSession(isCurrent));
+}
+
+/**
+ * The backend refreshes HttpOnly sessions before API handlers run, so a 401
+ * means this pane's cookie needs a refresh — or is genuinely dead. The three
+ * outcomes are kept apart in lib/sessionRefresh; this wires them to the
+ * pane's session state and toasts.
+ */
+const fetchWithRefresh = createRefreshingFetch({
+  fetchImpl: (input, init) => fetch(input, init),
+  refreshSession,
+  onExpired: () => {
+    // Sign the pane out so the login gate is actually on screen: telling
+    // someone to sign in with nothing to click is what this replaces.
+    forgetSessionRecoveryRetries();
+    markSessionEnded();
+    notifySessionExpired();
+  },
+  onUnreachable: (isCurrent) => notifySessionCheckFailed(() => recheckSession(isCurrent)),
+  captureOwner: captureSessionOwner,
+});
 
 configureMikeApiClient({
   baseUrl: BASE_URL,
   getAuthHeaders,
   fetchImpl: fetchWithRefresh,
+  captureOwner: captureSessionOwner,
 });
 
 export {
@@ -63,6 +108,7 @@ export {
   getWorkflowAssetUrl,
   listProjects,
   listQuickActions,
+  listPlaybooks,
   listWorkflowAssets,
   listWorkflows,
   postWordChatToolResult,
@@ -103,14 +149,11 @@ export async function listProjectDocuments(
     `${BASE_URL}/projects/${projectId}/documents`,
     {
       cache: "no-store",
-      headers: { Accept: "application/json", ...(await getAuthHeaders()) },
+      headers: { Accept: "application/json" },
     },
   );
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(
-      `GET /projects/${projectId}/documents failed (${res.status}): ${body}`,
-    );
+    throw await responseError(res, `/projects/${projectId}/documents`, "GET", "documents.directory");
   }
   return res.json() as Promise<Document[]>;
 }
@@ -125,8 +168,11 @@ export interface AzureModelOption {
 export async function getAzureModels(): Promise<AzureModelOption[]> {
   const res = await fetchWithRefresh(`${BASE_URL}/llm/azure-openai/deployments`, {
     cache: "no-store",
-    headers: { Accept: "application/json", ...(await getAuthHeaders()) },
+    headers: { Accept: "application/json" },
   });
+  // Local models are an optional extra: when the endpoint is absent or the
+  // Ollama host is down there is simply no "Local" group to offer, and
+  // nothing the user asked for has failed.
   if (!res.ok) return [];
   const body = (await res.json()) as { deployments?: { name: string; model?: string | null }[] };
   return (body.deployments ?? []).map((d) => ({ id: `aoai:${d.name}`, label: d.model ? `${d.name} (${d.model})` : d.name, group: "Azure OpenAI" }));
@@ -144,7 +190,7 @@ export interface ConfiguredModelOption {
 export async function getConfiguredModels(): Promise<ConfiguredModelOption[]> {
   const res = await fetchWithRefresh(`${BASE_URL}/models/configured`, {
     cache: "no-store",
-    headers: { Accept: "application/json", ...(await getAuthHeaders()) },
+    headers: { Accept: "application/json" },
   });
   if (!res.ok) return [];
   const body = (await res.json()) as { models?: ConfiguredModelOption[] };
@@ -157,6 +203,7 @@ interface WordChatServerMessage {
   content: string | unknown[] | null;
   files?: { filename: string; document_id?: string }[] | null;
   workflow?: { id: string; title: string } | null;
+  playbook?: { id: string; title: string } | null;
   citations?: unknown;
   edits?: unknown;
 }
@@ -233,14 +280,6 @@ function normalizeWordDocumentEdits(value: unknown): WordDocumentEdit[] {
   });
 }
 
-async function throwWordChatResponseError(
-  response: Response,
-  fallback: string,
-): Promise<never> {
-  const body = await response.text().catch(() => "");
-  throw new Error(body || `${fallback} (${response.status}).`);
-}
-
 export async function listCloudWordChats(
   documentId: string,
   limit: number,
@@ -255,11 +294,9 @@ export async function listCloudWordChats(
   const res = await fetchWithRefresh(`${BASE_URL}/word-chat?${params}`, {
     cache: "no-store",
     signal,
-    headers: { Accept: "application/json", ...(await getAuthHeaders()) },
+    headers: { Accept: "application/json" },
   });
-  if (!res.ok) {
-    await throwWordChatResponseError(res, "Failed to load Word chats");
-  }
+  if (!res.ok) throw await responseError(res, undefined, "GET", "word_chat.turn");
   return res.json() as Promise<Chat[]>;
 }
 
@@ -282,12 +319,10 @@ export async function getCloudWordChat(
     `${BASE_URL}/word-chat/${encodeURIComponent(chatId)}?${params}`,
     {
       cache: "no-store",
-      headers: { Accept: "application/json", ...(await getAuthHeaders()) },
+      headers: { Accept: "application/json" },
     },
   );
-  if (!res.ok) {
-    await throwWordChatResponseError(res, "Failed to open Word chat");
-  }
+  if (!res.ok) throw await responseError(res, undefined, "GET", "word_chat.turn");
   const raw = (await res.json()) as {
     chat: Chat;
     messages: WordChatServerMessage[];
@@ -304,6 +339,7 @@ export async function getCloudWordChat(
           content: typeof message.content === "string" ? message.content : "",
           files: message.files ?? undefined,
           workflow: message.workflow ?? undefined,
+          playbook: message.playbook ?? undefined,
         };
       }
       const events = normalizeStoredAssistantEvents(message.content);
@@ -338,9 +374,7 @@ export async function updateCloudWordChatModel(
       keepalive: true,
     },
   );
-  if (!res.ok) {
-    await throwWordChatResponseError(res, "Failed to save Word chat model");
-  }
+  if (!res.ok) throw await responseError(res, undefined, "PATCH", "word_chat.turn");
 }
 
 export async function updateCloudWordChatReasoning(
@@ -361,9 +395,7 @@ export async function updateCloudWordChatReasoning(
       keepalive: true,
     },
   );
-  if (!res.ok) {
-    await throwWordChatResponseError(res, "Failed to save reasoning level");
-  }
+  if (!res.ok) throw await responseError(res, undefined, "PATCH", "word_chat.turn");
 }
 
 export async function createCloudWordDocumentEdit(args: {
@@ -398,9 +430,7 @@ export async function createCloudWordDocumentEdit(args: {
       keepalive: true,
     },
   );
-  if (!res.ok) {
-    await throwWordChatResponseError(res, "Failed to save Word edit");
-  }
+  if (!res.ok) throw await responseError(res, undefined, "PUT", "word.edit_apply");
   const edits = normalizeWordDocumentEdits([await res.json()]);
   const edit = edits[0];
   if (!edit) throw new Error("Word edit response was invalid.");
@@ -427,7 +457,5 @@ export async function updateCloudWordDocumentEdit(args: {
       keepalive: true,
     },
   );
-  if (!res.ok) {
-    await throwWordChatResponseError(res, "Failed to update Word edit");
-  }
+  if (!res.ok) throw await responseError(res, undefined, "PATCH", "word.edit_apply");
 }

@@ -16,6 +16,7 @@ import type {
 } from "@/app/components/shared/types";
 import ProjectAssistantChatPage from "./page";
 import { getProject } from "@/app/lib/mikeApi";
+import { ToastViewportUI, clearToasts } from "@/shared/ui/ToastUI";
 import type { DocxCloseGuard } from "@/app/components/shared/views/DocxRenderer.types";
 
 const state = vi.hoisted(() => ({
@@ -27,6 +28,7 @@ const state = vi.hoisted(() => ({
     deleteDocument: vi.fn(),
     discardDraft: vi.fn(),
     uploadProjectDocuments: vi.fn(),
+    moveDocumentToFolder: vi.fn(),
     loadChats: vi.fn().mockResolvedValue(undefined),
     setCurrentChatId: vi.fn(),
     setNewChatMessages: vi.fn(),
@@ -67,6 +69,7 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
     getDocument: state.getDocument,
     deleteDocument: state.deleteDocument,
     uploadProjectDocuments: state.uploadProjectDocuments,
+    moveDocumentToFolder: state.moveDocumentToFolder,
     listProjectChats: vi
         .fn()
         .mockImplementation(async () => state.projectChats),
@@ -74,6 +77,7 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
 }));
 vi.mock("@/app/contexts/ChatHistoryContext", () => ({
     useChatHistoryContext: () => ({
+        setSideChatId: () => {},
         setCurrentChatId: state.setCurrentChatId,
         setNewChatMessages: state.setNewChatMessages,
         newChatMessages: null,
@@ -107,7 +111,14 @@ vi.mock("@/app/components/projects/ProjectExplorer", () => ({
     }: {
         documents: Document[];
         onDocClick: (doc: Document) => void;
-    }) => <button onClick={() => onDocClick(documents[0])}>Open draft</button>,
+    }) => (
+        <button
+            data-folder={documents[0]?.folder_id ?? "root"}
+            onClick={() => onDocClick(documents[0])}
+        >
+            Open draft
+        </button>
+    ),
 }));
 vi.mock("@/app/components/assistant/ChatInput", () => ({
     ChatInput: ({
@@ -253,6 +264,38 @@ async function renderWorkspace(canSend = true, strict = false) {
         else expect(button).toBeDisabled();
     });
 }
+
+describe("project side chat menu", () => {
+    it("closes the side chat from the main chat and offers opening it again", async () => {
+        await renderWorkspace();
+        const primary = screen
+            .getByRole("button", { name: "Send question" })
+            .closest<HTMLElement>('[data-chat-pane="primary"]')!;
+        const openActions = () => {
+            const trigger = within(primary).getByRole("button", { name: "Actions" });
+            fireEvent.pointerDown(
+                trigger,
+                new MouseEvent("pointerdown", { bubbles: true, cancelable: true }),
+            );
+            fireEvent.click(trigger);
+        };
+
+        openActions();
+        fireEvent.click(await screen.findByRole("menuitem", { name: "Open side chat" }));
+        expect(await screen.findAllByRole("button", { name: "Send question" })).toHaveLength(2);
+        expect(window.location.search).toBe("?side=new");
+
+        openActions();
+        expect(screen.queryByRole("menuitem", { name: "Open side chat" })).toBeNull();
+        fireEvent.click(await screen.findByRole("menuitem", { name: "Close side chat" }));
+        expect(screen.getAllByRole("button", { name: "Send question" })).toHaveLength(1);
+        expect(window.location.search).toBe("");
+        expect(window.location.pathname).toBe("/projects/p1/assistant/chat");
+
+        openActions();
+        expect(await screen.findByRole("menuitem", { name: "Open side chat" })).toBeInTheDocument();
+    });
+});
 
 describe("project document deletion", () => {
     async function openMenu() {
@@ -531,6 +574,224 @@ describe("document viewer drops", () => {
         }
         expect(screen.queryByText("Drop files here to open")).toBeNull();
         expect(state.uploadProjectDocuments).not.toHaveBeenCalled();
+    });
+});
+
+describe("explorer uploads", () => {
+    const completed = (id: string, filename: string) => ({
+        clientId: id,
+        filename,
+        status: "completed" as const,
+        result: { id, filename, file_type: "pdf", status: "ready" },
+        error: null,
+        errorCode: null,
+    });
+    const failed = (filename: string, errorCode: string | null = null) => ({
+        clientId: filename,
+        filename,
+        status: "error" as const,
+        result: null,
+        error: "refused",
+        errorCode,
+    });
+
+    // External files dropped on the tree bubble up to the Explorer pane's
+    // own drop handler; the mocked tree is the drop target.
+    function dropOnExplorer(files: File[]) {
+        fireEvent.drop(screen.getByRole("button", { name: "Open draft" }), {
+            dataTransfer: { types: ["Files"], files, items: [], getData: () => "" },
+        });
+    }
+
+    async function findUploadWarning() {
+        const title = await screen.findByText("Some files were not uploaded");
+        return title.closest<HTMLElement>('[role="alert"]')!;
+    }
+
+    it("names the files that did not upload instead of dropping them silently", async () => {
+        state.uploadProjectDocuments.mockResolvedValueOnce([
+            completed("a", "Alpha.pdf"),
+            failed("Broken.pdf"),
+        ]);
+        await renderWorkspace();
+        dropOnExplorer([
+            new File(["a"], "Alpha.pdf"),
+            new File(["b"], "Broken.pdf"),
+        ]);
+        const dialog = await findUploadWarning();
+        expect(dialog).toHaveTextContent(
+            "Broken.pdf could not be uploaded. Please try again.",
+        );
+        expect(dialog).not.toHaveTextContent("Alpha.pdf");
+    });
+
+    it("reports the limit a batch broke from the file picker", async () => {
+        state.uploadProjectDocuments.mockResolvedValueOnce([
+            completed("a", "Alpha.pdf"),
+            failed("Huge.pdf", "upload_file_too_large"),
+        ]);
+        const { container } = await act(async () =>
+            render(
+                <Suspense fallback="Loading">
+                    <ProjectAssistantChatPage />
+                </Suspense>,
+            ),
+        );
+        await screen.findByRole("button", { name: "Send question" });
+        const picker = container.querySelector(
+            'input[type="file"]:not([webkitdirectory])',
+        )!;
+        fireEvent.change(picker, {
+            target: {
+                files: [
+                    new File(["a"], "Alpha.pdf"),
+                    new File(["b"], "Huge.pdf"),
+                ],
+            },
+        });
+        expect(
+            await screen.findByText(
+                "Each uploaded file must be 100 MB or smaller.",
+            ),
+        ).toBeVisible();
+    });
+
+    it("filters unsupported types out of a drop and reports both failures together", async () => {
+        state.uploadProjectDocuments.mockResolvedValueOnce([
+            failed("Broken.pdf"),
+        ]);
+        await renderWorkspace();
+        const pdf = new File(["b"], "Broken.pdf");
+        dropOnExplorer([pdf, new File(["png"], "Photo.png")]);
+        const dialog = await findUploadWarning();
+        expect(dialog).toHaveTextContent("Unsupported file type.");
+        expect(dialog).toHaveTextContent("Broken.pdf could not be uploaded.");
+        expect(state.uploadProjectDocuments).toHaveBeenCalledWith(
+            "p1",
+            [expect.objectContaining({ file: pdf })],
+            expect.any(Object),
+        );
+    });
+
+    it("never opens an upload session for a drop of only unsupported files", async () => {
+        await renderWorkspace();
+        dropOnExplorer([new File(["png"], "Photo.png")]);
+        expect(
+            await screen.findByText(/Unsupported file type\./),
+        ).toBeVisible();
+        expect(state.uploadProjectDocuments).not.toHaveBeenCalled();
+    });
+
+    it("does not leak a transport error and can be dismissed", async () => {
+        state.uploadProjectDocuments.mockRejectedValueOnce(
+            new Error("connect ECONNREFUSED 10.0.0.3:5432"),
+        );
+        await renderWorkspace();
+        dropOnExplorer([new File(["a"], "Alpha.pdf")]);
+        const dialog = await findUploadWarning();
+        expect(dialog).toHaveTextContent(
+            "Files could not be uploaded. Please try again.",
+        );
+        expect(dialog).not.toHaveTextContent("ECONNREFUSED");
+        fireEvent.click(
+            within(dialog).getByRole("button", { name: "Dismiss warning" }),
+        );
+        await waitFor(() =>
+            expect(screen.queryByText("Some files were not uploaded")).toBeNull(),
+        );
+    });
+
+    it("names every file when the whole batch fails", async () => {
+        state.uploadProjectDocuments.mockResolvedValueOnce([
+            failed("Alpha.pdf"),
+            failed("Beta.docx"),
+        ]);
+        await renderWorkspace();
+        dropOnExplorer([
+            new File(["a"], "Alpha.pdf"),
+            new File(["b"], "Beta.docx"),
+        ]);
+        const dialog = await findUploadWarning();
+        expect(dialog).toHaveTextContent(
+            "Alpha.pdf, Beta.docx could not be uploaded. Please try again.",
+        );
+    });
+
+    it("does nothing for an empty selection", async () => {
+        await renderWorkspace();
+        dropOnExplorer([]);
+        // Give any stray async work a turn before asserting nothing happened.
+        await act(async () => {});
+        expect(state.uploadProjectDocuments).not.toHaveBeenCalled();
+        expect(screen.queryByText("Some files were not uploaded")).toBeNull();
+    });
+
+    it("sends both copies of a duplicate filename instead of collapsing them", async () => {
+        // The type filter keys on File identity, not on the name, so two
+        // different files that happen to share a name both reach the session.
+        state.uploadProjectDocuments.mockResolvedValueOnce([
+            completed("a", "Same.pdf"),
+            completed("b", "Same.pdf"),
+        ]);
+        await renderWorkspace();
+        const first = new File(["one"], "Same.pdf");
+        const second = new File(["two"], "Same.pdf");
+        dropOnExplorer([first, second]);
+        await waitFor(() =>
+            expect(state.uploadProjectDocuments).toHaveBeenCalledWith(
+                "p1",
+                [
+                    expect.objectContaining({ file: first }),
+                    expect.objectContaining({ file: second }),
+                ],
+                expect.any(Object),
+            ),
+        );
+        expect(screen.queryByText("Some files were not uploaded")).toBeNull();
+    });
+
+    // Counterexample for the type guard: the filter ends the flow for a
+    // file, so supported files with an upper-case extension or a non-ASCII
+    // name must still go through untouched and raise no warning.
+    it("keeps upper-case extensions and unicode names on the upload path", async () => {
+        state.uploadProjectDocuments.mockResolvedValueOnce([
+            completed("a", "SCAN.PDF"),
+            completed("b", "Vertrag-Übersicht.docx"),
+        ]);
+        await renderWorkspace();
+        const scan = new File(["a"], "SCAN.PDF");
+        const contract = new File(["b"], "Vertrag-Übersicht.docx");
+        dropOnExplorer([scan, contract]);
+        await waitFor(() =>
+            expect(state.uploadProjectDocuments).toHaveBeenCalledWith(
+                "p1",
+                [
+                    expect.objectContaining({ file: scan }),
+                    expect.objectContaining({ file: contract }),
+                ],
+                expect.any(Object),
+            ),
+        );
+        expect(screen.queryByText(/Unsupported file type/)).toBeNull();
+    });
+
+    // Counterexample for the failure path: reporting a failure must not
+    // block the next attempt, and a successful retry clears the old warning.
+    it("lets the user retry after a failed upload and clears the stale warning", async () => {
+        state.uploadProjectDocuments
+            .mockRejectedValueOnce(new Error("network down"))
+            .mockResolvedValueOnce([completed("a", "Alpha.pdf")]);
+        await renderWorkspace();
+        dropOnExplorer([new File(["a"], "Alpha.pdf")]);
+        await findUploadWarning();
+
+        dropOnExplorer([new File(["a"], "Alpha.pdf")]);
+        await waitFor(() =>
+            expect(state.uploadProjectDocuments).toHaveBeenCalledTimes(2),
+        );
+        await waitFor(() =>
+            expect(screen.queryByText("Some files were not uploaded")).toBeNull(),
+        );
     });
 });
 
@@ -1088,5 +1349,51 @@ describe("leaving a project chat mid-stream", () => {
         expect(body.state.cancelled).toBe(false);
         expect(screen.queryByText(/First answer/)).not.toBeInTheDocument();
         expect(screen.queryByText(/and the rest/)).not.toBeInTheDocument();
+    });
+});
+
+describe("project explorer root drop", () => {
+    // Dropping a document on the panel outside the tree moved it to the root
+    // optimistically; a failed request left it shown at the root with no
+    // word to the user.
+    it("puts a document back and says so when the move to the root fails", async () => {
+        clearToasts();
+        vi.mocked(getProject).mockResolvedValueOnce({
+            id: "p1",
+            name: "Matter",
+            access_role: "owner",
+            documents: [{ id: "doc1", filename: "Draft.docx", folder_id: "f1" }],
+            folders: [{ id: "f1", name: "Drafts", parent_folder_id: null }],
+        } as unknown as Awaited<ReturnType<typeof getProject>>);
+        state.moveDocumentToFolder.mockRejectedValue(
+            new TypeError("Failed to fetch"),
+        );
+        await renderWorkspace();
+        render(<ToastViewportUI />);
+        const explorer = screen.getByRole("button", { name: "Open draft" });
+        expect(explorer).toHaveAttribute("data-folder", "f1");
+
+        await act(async () => {
+            fireEvent.drop(explorer.parentElement!, {
+                dataTransfer: {
+                    getData: (type: string) =>
+                        type === "application/mike-doc" ? "doc1" : "",
+                    files: [],
+                    types: ["application/mike-doc"],
+                },
+            });
+        });
+
+        expect(state.moveDocumentToFolder).toHaveBeenCalledWith(
+            "p1",
+            "doc1",
+            null,
+            expect.any(Function),
+        );
+        expect(await screen.findByRole("alert")).toHaveTextContent(
+            "Couldn't move this document",
+        );
+        expect(explorer).toHaveAttribute("data-folder", "f1");
+        clearToasts();
     });
 });

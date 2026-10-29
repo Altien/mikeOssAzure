@@ -17,7 +17,7 @@
 //      explicitly are remembered so the bridge does not double-report them.
 
 import * as Sentry from "@sentry/node";
-import { diagnosticErrorTags, privacyBoundaryIntegration } from "./sentryPrivacy";
+import { retainExceptionTypes, diagnosticRoute, diagnosticErrorTags, privacyBoundaryIntegration, type Operation, type Stage } from "./sentryPrivacy";
 
 export type SentryRole = "api" | "worker" | "worker-thread" | "job";
 
@@ -35,6 +35,14 @@ export type ReportContext = {
 
 const CONSOLE_MECHANISM = "auto.core.capture_console";
 const NESTED_SEARCH_DEPTH = 2;
+
+// Node's console bridge also captures the warning text printed by Node. The
+// warning object has its own structured reporter below, so drop that duplicate.
+const NODE_WARNING_TEXT = /^\(node:\d+\) (?:\[[\w-]+\] )?[\w$]+: /;
+
+function isNodeWarningText(args: unknown[]): boolean {
+  return args.length === 1 && typeof args[0] === "string" && NODE_WARNING_TEXT.test(args[0]);
+}
 
 // BEGIN shared-redaction
 // This block is the privacy control for every runtime. It is authored once
@@ -143,6 +151,8 @@ function redactQueryParams(value: unknown): unknown {
  * handled by redactUrl, then bearer tokens before the bare-JWT pattern.
  */
 const TEXT_PATTERNS: Array<[RegExp, string | ((match: string) => string)]> = [
+  [/\b(?:AccountKey|SharedAccessSignature)\s*=\s*[^;\s]+/gi, "[azure-storage-secret]"],
+  [/\b(?:client_secret|clientSecret)\s*[:=]\s*[\x22\x27]?[^;\s\x22\x27]+/gi, "[client-secret]"],
   [/https?:\/\/[^\s"'<>]+/g, (match) => redactUrl(match)],
   [/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [Filtered]"],
   [/\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{2,}(?:\.[A-Za-z0-9_-]*)?/g, "[jwt]"],
@@ -185,18 +195,20 @@ const EXTRA_KEY_ALLOWLIST = new Set([
   "file_id",
   "fileId",
   "id",
+  "import_id",
   "job_id",
   "jobId",
   "kind",
   "message",
   "name",
-  "path",
+  "playbook_id",
   "request_id",
   "requestId",
   "review_id",
   "reviewId",
   "row_id",
   "rowId",
+  "run_id",
   "session_id",
   "sessionId",
   "stableEditId",
@@ -269,6 +281,7 @@ export function redactShaped(value: unknown, depth = 0): unknown {
  * default so the project learns what forks run into; the opt-out and the
  * override are one variable each (see resolveDsn).
  */
+// Upstream divergence (sync-log: 321cdf7c): retain deployment-configured telemetry; no hosted default.
 export const MIKE_SENTRY_DSN = { backend: "", frontend: "", wordAddin: "" } as const;
 
 export type DsnResolution = {
@@ -408,7 +421,14 @@ function mapStringLeaves(
 export function minimiseForCommunity<T extends CommunityEvent>(event: T): T {
   delete event.server_name;
   delete event.user;
-  delete event.breadcrumbs;
+  // Breadcrumbs are request history; only our own stage trail stays
+  // (category mike.stage, message a stage name), the privacy boundary
+  // checks each one against the diagnostic label format.
+  const trail = Array.isArray(event.breadcrumbs)
+    ? event.breadcrumbs.filter((crumb) => (crumb as { category?: unknown })?.category === "mike.stage")
+    : [];
+  if (trail.length) event.breadcrumbs = trail;
+  else delete event.breadcrumbs;
   if (event.tags) {
     delete event.tags.server_name;
     delete event.tags.url;
@@ -689,6 +709,7 @@ export function scrubEvent(
     if (args.some((arg) => findNested(arg, isReported))) {
       return null;
     }
+    if (isNodeWarningText(args)) return null;
     // Positional payloads after the label are never titles or grouping keys.
     const label = typeof args[0] === "string" ? args[0].trim() : "Console error";
     const nestedError = args
@@ -721,6 +742,8 @@ export function scrubEvent(
     const nested = findNested(arg, c => c instanceof Error || 'code' in c);
     Object.assign(event.tags, diagnosticErrorTags(nested));
   }
+
+  retainExceptionTypes(event.exception?.values, [original, ...(args ?? [])], event.tags?.warning_name);
 
   // The title and the exception text are free text from libraries that
   // happily quote emails, tokens, and URLs (Postgres "Key (email)=(…)",
@@ -852,13 +875,48 @@ export function initSentry(
     beforeSend: scrubEvent,
   });
   initialized = true;
+  installProcessWarningReporter(env);
   if (config.dsnSource !== "default") {
     console.log(
       `[sentry] enabled for ${role} (environment ${config.environment}` +
         `${config.release ? `, release ${config.release}` : ""})`,
     );
   }
+  if (!config.release && env.NODE_ENV === "production") {
+    // Without a release an event cannot be mapped to the code that produced
+    // it; the images get it from the GIT_SHA build arg (docs/observability.md).
+    console.warn(
+      "[sentry] no release: build the images with GIT_SHA=$(git rev-parse HEAD) or set SENTRY_RELEASE",
+    );
+  }
   return true;
+}
+
+/** Report Node process warnings with bounded, stable grouping metadata. */
+export function reportProcessWarning(warning: unknown): string | null {
+  const shaped = warning as { name?: unknown; code?: unknown } | null;
+  const name = typeof shaped?.name === "string" ? shaped.name : "Warning";
+  const code = typeof shaped?.code === "string" ? shaped.code : undefined;
+  if (name === "DeprecationWarning" && process.noDeprecation) return null;
+  return reportError(warning, {
+    level: "warning",
+    tags: { component: "runtime-warning", warning_name: name, warning_code: code },
+    fingerprint: ["runtime-warning", name, code ?? ""],
+  });
+}
+
+/**
+ * `--no-warnings` (or NODE_NO_WARNINGS=1) is the operator saying "do not
+ * tell me about these"; honour it the way Node's own printer does. Registered once per process: a second
+ * initSentry() returns before reaching here.
+ */
+function installProcessWarningReporter(env: NodeJS.ProcessEnv): void {
+  const silenced =
+    env.NODE_NO_WARNINGS === "1" ||
+    process.execArgv.includes("--no-warnings") ||
+    /(?:^|\s)--no-warnings(?:\s|=|$)/.test(env.NODE_OPTIONS ?? "");
+  if (silenced) return;
+  process.on("warning", reportProcessWarning);
 }
 
 /**
@@ -967,10 +1025,46 @@ export function bestEffort<T>(
   });
 }
 
-/** Attach the request id to every event captured during this request. */
-export function tagCurrentRequest(requestId: string): void {
+/**
+ * Name the flow this request or job belongs to. Set once at the entry
+ * (route handler, job handler) and every event captured until it finishes
+ * carries `operation`, which leads the issue title and the fingerprint.
+ * Default stack grouping still distinguishes different failure sites.
+ */
+export function setOperation(operation: Operation): void {
   if (!initialized) return;
-  Sentry.getIsolationScope().setTag("request_id", requestId);
+  Sentry.getIsolationScope().setTag("operation", operation);
+}
+
+/**
+ * Record that the current request or job reached a stage. The stages a
+ * failed operation passed through arrive on its event as breadcrumbs, so a
+ * failure in `seal-recover` is distinguishable from the same throw reached
+ * via `copy-rollback`. Only the static, source-authored stage label travels,
+ * never runtime data or a free-form message.
+ */
+export function markStage(stage: Stage): void {
+  if (!initialized) return;
+  Sentry.addBreadcrumb({ category: "mike.stage", message: stage, level: "info" });
+}
+
+/** Baseline identity for all request captures, including middleware/console errors. */
+export function tagCurrentRequest(
+  requestId: string,
+  request?: { method: string; originalUrl: string },
+): void {
+  if (!initialized) return;
+  const scope = Sentry.getIsolationScope();
+  scope.setTag("request_id", requestId);
+  if (request) {
+    // Never put a concrete URL, query, resource name or id on the scope.
+    // This fallback exists before Express selects a route; setOperation in
+    // a domain handler replaces it with the more specific business flow.
+    scope.setTag("component", "http");
+    scope.setTag("operation", "http.request");
+    scope.setTag("http_method", request.method);
+    scope.setTag("http_route", diagnosticRoute(request.originalUrl));
+  }
 }
 
 /** Attach the authenticated user's id (never the email) to this request. */
@@ -999,8 +1093,12 @@ function describe(value: unknown): string {
 }
 
 /** Test seam: forget init and throttle state between unit tests. */
-export function resetSentryForTests(install: InstallKind = "official"): void {
-  initialized = false;
+export function resetSentryForTests(
+  install: InstallKind = "official",
+  options: { initialized?: boolean } = {},
+): void {
+  initialized = options.initialized ?? false;
+  process.off("warning", reportProcessWarning);
   // Tests exercise the full event shape unless they opt into community mode.
   currentInstall = install;
   throttleBuckets.clear();

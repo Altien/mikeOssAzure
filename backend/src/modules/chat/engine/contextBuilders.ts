@@ -1,6 +1,11 @@
+import { AppError } from "../../../lib/appError";
+import { reportError } from "../../../lib/observability/sentry";
 import { responseLanguageName } from "../../../lib/responseLanguages";
+import { deadlineMessage, type StreamStopReason } from "../../../lib/streamRuns";
 import crypto from "crypto";
 import type { Db } from "../../../lib/supabase";
+import { listWorkspaceWorkflows } from "../../../lib/workflowWorkspace";
+import { teamOrgIdOf } from "../../../lib/personalOrgs";
 import { ensureDocAccess } from "../../../lib/access";
 import { attachActiveVersionPaths } from "../../../lib/documentVersions";
 import {
@@ -11,6 +16,7 @@ import {
   type AskInputItem,
   type AskInputsResponseRequest,
   type AskInputResponseItem,
+  MAX_ASK_INPUT_CHOICE_LENGTH,
   MAX_ASK_INPUT_TEXT_LENGTH,
   devLog,
 } from "./types";
@@ -264,6 +270,120 @@ export function spotlightWorkflow(text: string, nonce: string): string {
   return `<workflow-instructions nonce="${nonce}">\n${neutralized}\n</workflow-instructions nonce="${nonce}">`;
 }
 
+/** Tail of a turn's reasoning kept when it is replayed to the model. */
+export const MAX_REPLAYED_REASONING_CHARS = 12_000;
+
+/**
+ * Reasoning replayed across the whole history. The newest turns are kept
+ * first; once a turn does not fit, it and every older turn go back as text.
+ */
+export const MAX_REPLAYED_REASONING_TOTAL_CHARS = 36_000;
+
+const MAX_REPLAYED_BRIEF_CHARS = 4_000;
+
+/**
+ * Attaches each earlier assistant turn's stored reasoning to the matching
+ * message in `messages`, for models that opt into reasoning replay
+ * (see ConfiguredModel.replayReasoning). Reasoning is replayed regardless of
+ * which model produced it, including events without model metadata. The
+ * client sends history as text only, so a message is matched by its visible text
+ * — the row's `content` events joined, exactly as the frontend rebuilds it.
+ * An unmatched or ambiguous message is left as is. Run this before
+ * enrichWithPriorEvents, which appends to the last assistant message's text.
+ */
+export async function attachPriorReasoning(
+  messages: ChatMessage[],
+  chatId: string | null | undefined,
+  db: Db,
+  messageTable = "chat_messages",
+): Promise<ChatMessage[]> {
+  if (!chatId || !messages.some((m) => m.role === "assistant")) {
+    return messages;
+  }
+  const { data: rows, error } = await db
+    .from(messageTable)
+    .select("content")
+    .eq("chat_id", chatId)
+    .eq("role", "assistant")
+    .not("content", "is", null)
+    .order("created_at", { ascending: true });
+  // Replay is an optimisation: a failed read degrades to text-only history.
+  if (error || !rows?.length) return messages;
+
+  const turns = (rows as { content?: unknown }[]).map((row) => {
+    const events = Array.isArray(row.content)
+      ? (row.content as { type?: unknown; text?: unknown }[])
+      : [];
+    const textOf = (type: string) =>
+      events
+        .filter((ev) => ev?.type === type && typeof ev.text === "string")
+        .map((ev) => ev.text as string);
+    const reasoning = textOf("reasoning").join("\n\n").trim();
+    return {
+      text: textOf("content").join("").trim(),
+      reasoning:
+        reasoning.length > MAX_REPLAYED_REASONING_CHARS
+          ? reasoning.slice(-MAX_REPLAYED_REASONING_CHARS)
+          : reasoning,
+    };
+  });
+
+  // Identical replies are paired in order only when the request carries every
+  // stored copy. If some are missing (a shortened or retried history), there
+  // is no telling which turn a copy is, so it goes back as text.
+  const storedByText = new Map<string, number[]>();
+  for (const [i, { text }] of turns.entries()) {
+    const indices = storedByText.get(text);
+    if (indices) indices.push(i);
+    else storedByText.set(text, [i]);
+  }
+  const assistantText = (msg: ChatMessage) =>
+    msg.role === "assistant" ? (msg.content ?? "").trim() : "";
+  const requestCount = new Map<string, number>();
+  for (const msg of messages) {
+    const text = assistantText(msg);
+    if (text) requestCount.set(text, (requestCount.get(text) ?? 0) + 1);
+  }
+  const seen = new Map<string, number>();
+  const matched = messages.map((msg) => {
+    const text = assistantText(msg);
+    if (!text) return undefined;
+    const occurrence = seen.get(text) ?? 0;
+    seen.set(text, occurrence + 1);
+    const stored = storedByText.get(text) ?? [];
+    if (stored.length !== requestCount.get(text)) return undefined;
+    return turns[stored[occurrence]].reasoning || undefined;
+  });
+
+  let remaining = MAX_REPLAYED_REASONING_TOTAL_CHARS;
+  for (let i = matched.length - 1; i >= 0; i--) {
+    const reasoning = matched[i];
+    if (reasoning === undefined) continue;
+    if (reasoning.length > remaining) {
+      remaining = 0;
+      matched[i] = undefined;
+    } else {
+      remaining -= reasoning.length;
+    }
+  }
+
+  return messages.map((msg, i) => {
+    const reasoning = matched[i];
+    return reasoning === undefined ? msg : { ...msg, reasoning };
+  });
+}
+
+/** An answer's events with each delegation's own events after it. */
+export function withDelegationEvents<T extends { type?: unknown; events?: unknown }>(
+  events: T[],
+): T[] {
+  return events.flatMap((event) =>
+    event?.type === "delegation" && Array.isArray(event.events)
+      ? [event, ...(event.events as T[])]
+      : [event],
+  );
+}
+
 export async function enrichWithPriorEvents(
   messages: ChatMessage[],
   chatId: string | null | undefined,
@@ -316,13 +436,46 @@ export async function enrichWithPriorEvents(
   const approvedIds: string[] = [];
   const approvalOutcomes = new Set<string>();
   let rejectedApprovalSeen = false;
-  for (const ev of content as Record<string, unknown>[]) {
+  const documentLines = (ev: Record<string, unknown>): string[] | null => {
     if (ev?.type === "doc_created") {
-      lines.push(
-        `- generated_document → ${refFor(ev.document_id, ev.filename)}`,
-      );
-    } else if (ev?.type === "doc_edited") {
-      lines.push(`- edit_document → ${refFor(ev.document_id, ev.filename)}`);
+      return [`- generated_document → ${refFor(ev.document_id, ev.filename)}`];
+    }
+    if (ev?.type === "doc_edited") {
+      return [`- edit_document → ${refFor(ev.document_id, ev.filename)}`];
+    }
+    if (ev?.type !== "doc_replicated") return null;
+    // The model needs to know what each copy resolved to so it
+    // can call edit_document / read_document on them. Emit one
+    // line per copy, all attributed back to the same source.
+    const srcLabel =
+      typeof ev.filename === "string" ? untrustedRef(ev.filename) : "";
+    const copies = Array.isArray(ev.copies)
+      ? (ev.copies as {
+          new_filename?: unknown;
+          document_id?: unknown;
+        }[])
+      : [];
+    return copies.map((c) => {
+      const ref = refFor(c.document_id, c.new_filename);
+      return srcLabel
+        ? `- replicate_document → ${ref} (copy of ${srcLabel})`
+        : `- replicate_document → ${ref}`;
+    });
+  };
+  // A subagent's connector calls that ran without waiting on an approval.
+  const subagentConnectorLines = (ev: Record<string, unknown>): string[] => {
+    if (ev?.type !== "mcp_tool_call") return [];
+    const label = `${untrustedRef(ev.tool_name)} on ${untrustedRef(ev.connector_name)}`;
+    return [
+      ev.status === "error"
+        ? `- ${label} failed: ${untrustedRef(ev.error)}`
+        : `- ran ${label}`,
+    ];
+  };
+  for (const ev of content as Record<string, unknown>[]) {
+    const docLines = documentLines(ev);
+    if (docLines) {
+      lines.push(...docLines);
     } else if (ev?.type === "doc_read") {
       // Live Word reads have no doc_id and belong to a different tool;
       // labeling them read_document would name a handle that doesn't exist.
@@ -331,28 +484,40 @@ export async function enrichWithPriorEvents(
       } else {
         lines.push(`- read_document → ${refFor(ev.document_id, ev.filename)}`);
       }
-    } else if (ev?.type === "doc_replicated") {
-      // The model needs to know what each copy resolved to so it
-      // can call edit_document / read_document on them. Emit one
-      // line per copy, all attributed back to the same source.
-      const srcLabel =
-        typeof ev.filename === "string" ? untrustedRef(ev.filename) : "";
-      const copies = Array.isArray(ev.copies)
-        ? (ev.copies as {
-            new_filename?: unknown;
-            document_id?: unknown;
-          }[])
-        : [];
-      for (const c of copies) {
-        const ref = refFor(c.document_id, c.new_filename);
-        lines.push(
-          srcLabel
-            ? `- replicate_document → ${ref} (copy of ${srcLabel})`
-            : `- replicate_document → ${ref}`,
-        );
-      }
     } else if (ev?.type === "workflow_applied") {
       lines.push(`- applied workflow: ${untrustedRef(ev.title)}`);
+    } else if (ev?.type === "web_search" && !ev.error) {
+      const count = Array.isArray(ev.results) ? ev.results.length : 0;
+      lines.push(
+        `- web_search ${untrustedRef(ev.query)} → ${count} result${count === 1 ? "" : "s"}`,
+      );
+    } else if (ev?.type === "web_read" && !ev.error) {
+      lines.push(`- read_webpage → ${untrustedRef(ev.url)}`);
+    } else if (ev?.type === "web_sources" && Array.isArray(ev.sources)) {
+      for (const source of ev.sources as { url?: unknown }[]) {
+        lines.push(`- cited web page → ${untrustedRef(source.url)}`);
+      }
+    } else if (ev?.type === "delegation") {
+      const question =
+        typeof ev.question === "string"
+          ? `; question: ${untrustedRef(ev.question)}`
+          : "";
+      const brief =
+        typeof ev.brief === "string"
+          ? `; brief: ${untrustedRef(ev.brief.slice(0, MAX_REPLAYED_BRIEF_CHARS))}`
+          : "";
+      const awaitingApproval = Array.isArray(ev.approval_ids)
+        ? " (waiting on the user's approval)"
+        : "";
+      lines.push(
+        `- delegated ${untrustedRef(ev.title)} (id: ${String(ev.delegation_id)}) → ${String(ev.status)}${awaitingApproval}${question}${brief}`,
+        ...(Array.isArray(ev.events)
+          ? (ev.events as Record<string, unknown>[]).flatMap(
+              (nested) =>
+                documentLines(nested) ?? subagentConnectorLines(nested),
+            )
+          : []),
+      );
     } else if (ev?.type === "ask_inputs") {
       const items = (Array.isArray(ev.items) ? ev.items : []) as Record<
         string,
@@ -510,6 +675,41 @@ export function parseOptionalDocumentContext(
   };
 }
 
+const DOCUMENT_LIST_HEADING = "\n\n---\nAVAILABLE DOCUMENTS:\n";
+
+function documentListPrompt(
+  docs: { doc_id: string; filename: string; folder_path?: string }[],
+  nonce?: string,
+): string {
+  if (!docs.length) return "";
+  let section = DOCUMENT_LIST_HEADING;
+  for (const doc of docs) {
+    // Filenames are user-controlled and may contain injected text.
+    // Wrap in the spotlight fence so the LLM treats them as data.
+    const rawLabel = doc.folder_path
+      ? `${doc.folder_path} / ${doc.filename}`
+      : doc.filename;
+    const label = spotlightFilename(rawLabel, nonce);
+    section += `- ${doc.doc_id}: ${label}\n`;
+  }
+  section +=
+    "\nYou do NOT retain document content between conversation turns. You MUST call read_document (or fetch_documents) once at the start of every response that involves a document's content, even if you have read it in a previous turn. Within the same response, do not call read_document or fetch_documents again for a document/version that has already been read; use the prior tool result, find_in_document for targeted checks, or proceed to the next required tool. Failure to read once per turn will result in hallucinated or stale content.\n---\n";
+  return section;
+}
+
+export function withDocumentList(
+  systemPrompt: string,
+  docStore: DocStore,
+  nonce?: string,
+): string {
+  // buildMessages ends the system prompt with its document list.
+  const listStart = systemPrompt.indexOf(DOCUMENT_LIST_HEADING);
+  const withoutList =
+    listStart < 0 ? systemPrompt : systemPrompt.slice(0, listStart);
+  const docs = [...docStore].map(([doc_id, { filename }]) => ({ doc_id, filename }));
+  return withoutList + documentListPrompt(docs, nonce);
+}
+
 export function buildMessages(
   messages: ChatMessage[],
   docAvailability: {
@@ -537,20 +737,7 @@ export function buildMessages(
     systemContent += `\n\n${MESSAGE_TIME_PROMPT}`;
   }
 
-  if (docAvailability.length) {
-    systemContent += "\n\n---\nAVAILABLE DOCUMENTS:\n";
-    for (const doc of docAvailability) {
-      // Filenames are user-controlled and may contain injected text.
-      // Wrap in the spotlight fence so the LLM treats them as data.
-      const rawLabel = doc.folder_path
-        ? `${doc.folder_path} / ${doc.filename}`
-        : doc.filename;
-      const label = spotlightFilename(rawLabel, nonce);
-      systemContent += `- ${doc.doc_id}: ${label}\n`;
-    }
-    systemContent +=
-      "\nYou do NOT retain document content between conversation turns. You MUST call read_document (or fetch_documents) once at the start of every response that involves a document's content, even if you have read it in a previous turn. Within the same response, do not call read_document or fetch_documents again for a document/version that has already been read; use the prior tool result, find_in_document for targeted checks, or proceed to the next required tool. Failure to read once per turn will result in hallucinated or stale content.\n---\n";
-  }
+  systemContent += documentListPrompt(docAvailability, nonce);
   formatted.push({ role: "system", content: systemContent });
 
   // Map document_id (UUID) → current-turn doc_id slug, so when we
@@ -573,6 +760,13 @@ export function buildMessages(
         : msg.workflow.title;
       content = `[Workflow: ${title} (id: ${msg.workflow.id})]\n\n${content}`;
     }
+    if (msg.role === "user" && msg.playbook) {
+      // Playbook names are user-controlled; spotlight them.
+      const title = nonce
+        ? spotlight(msg.playbook.title, nonce)
+        : msg.playbook.title;
+      content = `[Playbook: ${title} (id: ${msg.playbook.id}). Review the attached document with run_playbook using this playbook id, unless the user asks for something else.]\n\n${content}`;
+    }
     if (msg.role === "user" && msg.files?.length) {
       const lines = msg.files.map((f) => {
         const slug = f.document_id
@@ -584,7 +778,12 @@ export function buildMessages(
       });
       content = `[The user attached the following document(s) to this message:\n${lines.join("\n")}]\n\n${content}`;
     }
-    formatted.push({ role: msg.role, content: stamp(msg, index, content) });
+    content = stamp(msg, index, content);
+    formatted.push(
+      msg.role === "assistant" && msg.reasoning
+        ? { role: msg.role, content, reasoning: msg.reasoning }
+        : { role: msg.role, content },
+    );
   }
   return formatted;
 }
@@ -658,19 +857,28 @@ export async function loadUserMessageSentTimes(
   const userCount = messages.filter((m) => m.role === "user").length;
   const times: (string | null)[] = new Array(userCount).fill(null);
   if (!chatId || userCount === 0) return times;
-  const { data, error } = await db
-    .from(messageTable)
-    .select("created_at")
-    .eq("chat_id", chatId)
-    .eq("role", "user")
-    .order("created_at", { ascending: true });
-  if (error || !Array.isArray(data)) return times;
-  const stored = (data as { created_at?: unknown }[]).map((row) =>
-    typeof row.created_at === "string" ? row.created_at : null,
-  );
   const savedCount = latestUnsaved ? userCount - 1 : userCount;
+  const stored: (string | null)[] = [];
+  // Read only the context window, newest first, in pages below PostgREST's
+  // row cap. An oldest-first capped query mislabels long conversations.
+  for (let offset = 0; offset < savedCount; offset += 500) {
+    const count = Math.min(500, savedCount - offset);
+    const { data, error } = await db
+      .from(messageTable)
+      .select("created_at")
+      .eq("chat_id", chatId)
+      .eq("role", "user")
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(offset, offset + count - 1);
+    if (error || !Array.isArray(data)) return times;
+    stored.push(...data.map((row: { created_at?: unknown }) =>
+      typeof row.created_at === "string" ? row.created_at : null,
+    ));
+    if (data.length < count) break;
+  }
   for (let k = 1; k <= Math.min(savedCount, stored.length); k++) {
-    times[savedCount - k] = stored[stored.length - k];
+    times[savedCount - k] = stored[k - 1];
   }
   return times;
 }
@@ -693,6 +901,7 @@ export function stripTransientAssistantEvents(events: AssistantEvent[]) {
 // therefore produces a type error until its textless-turn behavior is chosen
 // deliberately, instead of silently dropping an otherwise useful response.
 const COMPLETES_TEXTLESS_TURN = {
+  text_card: true,
   reasoning: false,
   ask_inputs: true,
   ask_inputs_response: false,
@@ -700,6 +909,7 @@ const COMPLETES_TEXTLESS_TURN = {
   authority_trace_verification: true,
   doc_read: false,
   doc_find: false,
+  doc_search: false,
   doc_created: true,
   doc_download: true,
   doc_replicated: true,
@@ -712,6 +922,11 @@ const COMPLETES_TEXTLESS_TURN = {
   courtlistener_read_case: false,
   courtlistener_verify_citations: false,
   mcp_tool_call: false,
+  web_search: false,
+  web_read: false,
+  web_sources: false,
+  delegation: false,
+  response_details: false,
   case_opinions: false,
   content: false,
   word_edit_block: false,
@@ -775,7 +990,7 @@ export function parseAskInputsResponsePayload(
             : "";
         const answers = (Array.isArray(current.answers) ? current.answers : [])
           .filter((answer): answer is string => typeof answer === "string")
-          .map((answer) => answer.trim().slice(0, 1_000))
+          .map((answer) => answer.trim().slice(0, MAX_ASK_INPUT_CHOICE_LENGTH))
           .filter(Boolean)
           .slice(0, 9);
         if (!question || (answers.length === 0 && !skipped)) return null;
@@ -796,7 +1011,7 @@ export function parseAskInputsResponsePayload(
           typeof current.answer === "string"
             ? current.answer
                 .trim()
-                .slice(0, kind === "text" ? MAX_ASK_INPUT_TEXT_LENGTH : 1_000)
+                .slice(0, kind === "text" ? MAX_ASK_INPUT_TEXT_LENGTH : MAX_ASK_INPUT_CHOICE_LENGTH)
             : "";
         if (!question || (!answer && !skipped)) return null;
         return {
@@ -855,9 +1070,18 @@ export async function loadAssistantMessage(
     .maybeSingle();
   if (selectError || !row) {
     if (selectError) {
+      const failure = new AppError(
+        "chat.context_failed",
+        "Failed to load the assistant message",
+        { cause: selectError },
+      );
+      reportError(failure, {
+        level: "warning",
+        tags: { component: "chat-stream" },
+      });
       console.error(
         "[assistant-events] failed to load assistant message",
-        selectError,
+        failure,
       );
     }
     return null;
@@ -873,12 +1097,13 @@ export async function appendAssistantEventsToMessage(
   events: AssistantEvent[],
   citations: unknown[] | undefined,
   runId?: string,
+  continuations?: { rows: readonly import("./tools/delegateRuns").SavedSubagentRun[]; userEmail?: string | null; orgId: string | null },
 ): Promise<boolean> {
-  if (events.length === 0 && (!citations || citations.length === 0))
+  if (!continuations?.rows.length && events.length === 0 && (!citations || citations.length === 0))
     return true;
   const cluster = streamRunCluster();
   const fence = runId ? streamRunFenceArgs(runId) : null;
-  if (cluster && !fence) return false;
+  if ((cluster || continuations?.rows.length) && !fence) return false;
   const { data, error } = await db.rpc(cluster ? "append_chat_assistant_events_fenced" : "append_chat_assistant_events", {
     ...(fence ?? {}),
     p_chat_id: chatId,
@@ -886,11 +1111,20 @@ export async function appendAssistantEventsToMessage(
     p_author_user_id: authorUserId,
     p_events: events,
     p_citations: citations ?? [],
+    ...(continuations?.rows.length ? { p_subagent_runs: continuations.rows, p_user_email: continuations.userEmail ?? null, p_org_id: continuations.orgId } : {}),
   });
   if (error || data !== "appended") {
+    // The RPC's error (or its unexpected verdict) is the cause; the caller
+    // falls back, so the report is the only record that events were lost.
+    const failure = new AppError(
+      "chat.message_save_failed",
+      "Failed to append assistant events",
+      { cause: error ?? { result: data } },
+    );
+    reportError(failure, { tags: { component: "chat-stream" } });
     console.error(
       "[assistant-events] failed to update assistant message",
-      error ?? { result: data },
+      failure,
     );
     return false;
   }
@@ -1081,9 +1315,15 @@ export async function appendAskInputsResponseToAssistantMessage(
     p_response: storedResponse,
   });
   if (error) {
+    const failure = new AppError(
+      "chat.message_save_failed",
+      "Failed to append the ask-inputs response",
+      { cause: error },
+    );
+    reportError(failure, { tags: { component: "chat-stream" } });
     console.error(
       "[assistant-events] failed to append ask-input response",
-      error,
+      failure,
     );
     return "failed";
   }
@@ -1112,6 +1352,25 @@ export function buildCancelledAssistantMessage(args: {
     events,
     citations: args.buildCitations(args.fullText, events),
   };
+}
+
+/** Preserve partial output while distinguishing a deadline from an explicit Stop. */
+export function buildStoppedAssistantMessage(
+  args: Parameters<typeof buildCancelledAssistantMessage>[0] & {
+    stopReason?: StreamStopReason | null;
+  },
+) {
+  if (!args.stopReason || args.stopReason === "user")
+    return buildCancelledAssistantMessage(args);
+  const events: AssistantEvent[] = [
+    ...stripTransientAssistantEvents(args.events),
+    {
+      type: "error",
+      message: deadlineMessage(args.stopReason),
+      safe_to_display: true,
+    },
+  ];
+  return { events, citations: args.buildCitations(args.fullText, events) };
 }
 
 // ---------------------------------------------------------------------------
@@ -1151,7 +1410,7 @@ export async function buildDocContext(
     for (const row of rows ?? []) {
       const content = (row as { content?: unknown }).content;
       if (!Array.isArray(content)) continue;
-      for (const ev of content as Record<string, unknown>[]) {
+      for (const ev of withDelegationEvents(content as Record<string, unknown>[])) {
         if (
           (ev?.type === "doc_created" || ev?.type === "doc_edited") &&
           typeof ev.document_id === "string"
@@ -1212,7 +1471,14 @@ export async function buildDocContext(
     // asked about, so ask once per container and reuse the answer; a
     // document with no container at all still resolves individually, which
     // costs nothing (it is a `user_id === caller` comparison in memory).
+    //
+    // A document filed on its own under an organization has no container
+    // either: it is its uploader's alone, while they are a member. That
+    // verdict turns on the uploader as well as the organization, so the two
+    // together are the key — one answer per organization would hand a
+    // colleague's files to whoever's own file happened to be asked first.
     const containerKey = (doc: {
+      user_id: string | null;
       project_id: string | null;
       workflow_id?: string | null;
       org_id?: string | null;
@@ -1222,16 +1488,18 @@ export async function buildDocContext(
         : doc.workflow_id
           ? `workflow:${doc.workflow_id}`
           : doc.org_id
-            ? `org:${doc.org_id}`
+            ? `org:${doc.org_id}:${doc.user_id ?? ""}`
             : null;
 
     const verdictByContainer = new Map<string, boolean>();
     for (const doc of candidates) {
       const key = containerKey(doc);
       if (!key || verdictByContainer.has(key)) continue;
-      // The representative carries the container this verdict is about; its
-      // `user_id` only ever decides the ROLE, never `ok`, so reusing one
-      // document's answer for its siblings cannot widen access.
+      // The representative carries the container this verdict is about. In
+      // a project or a workflow its `user_id` only ever decides the ROLE,
+      // never `ok`, so reusing one document's answer for its siblings cannot
+      // widen access; on its own in an organization the uploader is part of
+      // the key.
       const verdict = await ensureDocAccess(doc, userId, userEmail ?? null, db);
       verdictByContainer.set(key, verdict.ok);
     }
@@ -1277,11 +1545,13 @@ export async function buildDocContext(
   return { docIndex, docStore };
 }
 
+/** Build project context and resolve message attachments with the caller's identity. */
 export async function buildProjectDocContext(
   projectId: string,
   userId: string,
   db: Db,
   messages: ChatMessage[] = [],
+  userEmail?: string | null,
 ): Promise<{
   docIndex: DocIndex;
   docStore: DocStore;
@@ -1372,7 +1642,7 @@ export async function buildProjectDocContext(
     ),
   }));
   if (attachmentMessages.some((message) => message.files?.length)) {
-    const attachments = await buildDocContext(attachmentMessages, userId, db);
+    const attachments = await buildDocContext(attachmentMessages, userId, db, undefined, "chat_messages", userEmail);
     for (const [label, document] of Object.entries(attachments.docIndex)) {
       const attachmentLabel = `attachment-${label}`;
       docIndex[attachmentLabel] = document;
@@ -1396,18 +1666,26 @@ export async function buildWorkflowStore(
   userId: string,
   userEmail: string | null | undefined,
   db: Db,
+  orgId: string | null = null,
 ): Promise<WorkflowStore> {
   const store: WorkflowStore = new Map();
-  const normalizedUserEmail = (userEmail ?? "").trim().toLowerCase();
+  const workspace = (await teamOrgIdOf(db, orgId)) ?? "personal";
 
-  // Best-effort: the chat routes call this outside their try blocks, so a
-  // thrown error here becomes an unhandled rejection that kills the process
-  // (Express 4 does not forward async errors). A chat must never fail —
-  // let alone crash the backend — because default installation failed.
+  // Default installation is best-effort; authorization and catalog reads below
+  // still fail closed if the workspace cannot be resolved.
   try {
     await ensureDefaultWorkflows(userId, db);
   } catch (err) {
-    console.error("[buildWorkflowStore] ensureDefaultWorkflows failed:", err);
+    const failure = new AppError(
+      "workflows.default_install_failed",
+      "Default workflow installation failed",
+      { cause: err },
+    );
+    reportError(failure, {
+      level: "warning",
+      tags: { component: "chat-stream" },
+    });
+    console.error("[buildWorkflowStore] ensureDefaultWorkflows failed:", failure);
   }
 
   // Keep catalog IDs readable for historical chat attachments, but do not
@@ -1420,9 +1698,18 @@ export async function buildWorkflowStore(
     .order("active", { ascending: false })
     .order("updated_at", { ascending: false });
   if (catalogError) {
+    const failure = new AppError(
+      "chat.context_failed",
+      "Workflow catalog lookup failed",
+      { cause: catalogError },
+    );
+    reportError(failure, {
+      level: "warning",
+      tags: { component: "chat-stream" },
+    });
     console.error(
       "[buildWorkflowStore] workflow catalog lookup failed",
-      safeErrorLog(catalogError),
+      safeErrorLog(failure),
     );
   } else {
     for (const workflow of catalogWorkflows ?? []) {
@@ -1436,46 +1723,16 @@ export async function buildWorkflowStore(
     }
   }
 
-  // Then overlay user-owned assistant workflows.
-  const { data: workflows } = await db
-    .from("workflows")
-    .select("id, title, prompt_md")
-    .eq("user_id", userId)
-    .eq("type", "assistant");
-  for (const wf of workflows ?? []) {
+  // Only workflows currently authorized in the conversation's workspace.
+  // Global catalog entries above are the sole workspace-independent exception.
+  const workflows = await listWorkspaceWorkflows<{
+    id: string;
+    title: string;
+    prompt_md: string;
+  }>(db, { userId, userEmail, type: "assistant", workspace });
+  for (const wf of workflows) {
     if (wf.prompt_md) {
-      store.set(wf.id, {
-        title: wf.title,
-        skill_md: wf.prompt_md,
-        listed: true,
-      });
-    }
-  }
-
-  // Shared assistant workflows must also be readable by workflow tools.
-  if (normalizedUserEmail) {
-    const { data: shares } = await db
-      .from("workflow_shares")
-      .select("workflow_id")
-      .eq("shared_with_email", normalizedUserEmail);
-    const sharedIds = [
-      ...new Set((shares ?? []).map((share) => share.workflow_id)),
-    ];
-    if (sharedIds.length > 0) {
-      const { data: sharedWorkflows } = await db
-        .from("workflows")
-        .select("id, title, prompt_md")
-        .in("id", sharedIds)
-        .eq("type", "assistant");
-      for (const wf of sharedWorkflows ?? []) {
-        if (wf.prompt_md) {
-          store.set(wf.id, {
-            title: wf.title,
-            skill_md: wf.prompt_md,
-            listed: true,
-          });
-        }
-      }
+      store.set(wf.id, { title: wf.title, skill_md: wf.prompt_md, listed: true });
     }
   }
   const databaseWorkflowIds = [...store.entries()]

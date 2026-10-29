@@ -30,6 +30,7 @@ import { NewWorkflowModal } from "./NewWorkflowModal";
 import { TableToolbar } from "../shared/TableToolbar";
 import { RowActionMenuItems, RowActions } from "../shared/RowActions";
 import { PageHeader } from "@/app/components/shared/PageHeader";
+import { PAGE_HEADER_TITLE_CLASS } from "@/app/components/shared/pageHeaderStyles";
 import { SubfolderSvgIcon } from "@/app/components/shared/FolderSvgIcon";
 import { EmptyState } from "@/app/components/ui/empty-state";
 import { LIQUID_GLASS_HOVER_CLASS } from "@/app/components/ui/liquid-surface";
@@ -45,6 +46,7 @@ import { ConfirmPopup } from "../popups/ConfirmPopup";
 import { WorkflowAddonPreviewModal } from "./WorkflowAddonPreviewModal";
 import { TableLoadMoreRow } from "@/app/components/shared/TableLoadMoreRow";
 import { userFacingApiError } from "@/app/lib/userFacingError";
+import { useWorkspaceParam } from "@/app/contexts/WorkspaceContext";
 import {
   SkeletonCheckbox,
   SkeletonLine,
@@ -79,10 +81,12 @@ const WORKFLOW_TABS: { id: WorkflowListTab; label: string }[] = [
 ];
 const WORKFLOW_TAB_IDS = WORKFLOW_TABS.map((tab) => tab.id);
 
-type AccessFilter = "private" | "shared";
+// Public: open to the whole organization. Private: everything else, whether
+// it is its creator's alone or shared with individuals.
+type AccessFilter = "public" | "private";
 const ACCESS_FILTER_OPTIONS: TableFilterOption<AccessFilter>[] = [
+  { value: "public", label: "Public" },
   { value: "private", label: "Private" },
-  { value: "shared", label: "Shared" },
 ];
 
 function workflowFilterOptions(
@@ -113,6 +117,7 @@ export function WorkflowList({
   const [addonsLoading, setAddonsLoading] = useState(true);
   const [selected, setSelected] = useState<Workflow | null>(null);
   const [newModalOpen, setNewModalOpen] = useState(false);
+  const workspace = useWorkspaceParam();
   const [activeTab, setActiveTab] = useQueryParamTab(
     WORKFLOW_TAB_IDS,
     packKey ? "addons" : initialTab,
@@ -148,7 +153,8 @@ export function WorkflowList({
   >("idle");
   const [importingAddonId, setImportingAddonId] = useState<string | null>(null);
   const [importedAddonIds, setImportedAddonIds] = useState<string[]>([]);
-  const [bulkImportingAddons, setBulkImportingAddons] = useState(false);
+  const [bulkImportingAddonIds, setBulkImportingAddonIds] = useState<string[]>([]);
+  const bulkImportingAddons = bulkImportingAddonIds.length > 0;
   const [addonsError, setAddonsError] = useState("");
   const [actionError, setActionError] = useState("");
   const openAddonIdRef = useRef<string | null>(null);
@@ -185,9 +191,9 @@ export function WorkflowList({
     jurisdictionFilter,
     scope:
       accessFilter === "private"
-        ? "private"
-        : accessFilter === "shared"
-          ? "collaborative"
+        ? "nonpublic"
+        : accessFilter === "public"
+          ? "public"
           : "all",
     sort: nameSortDirection
       ? { key: "name", direction: nameSortDirection }
@@ -209,12 +215,16 @@ export function WorkflowList({
     const controller = new AbortController();
     void getWorkflowFilterOptions({
       type: selectedType,
+      workspace,
       signal: controller.signal,
     })
       .then((options) => {
         if (!controller.signal.aborted) setDatabaseFilterOptions(options);
       })
       .catch(() => {
+        // Silent on purpose: these only populate optional filter menus, the
+        // list itself still loads and reports its own failures, and the next
+        // tab or type change refetches them.
         if (!controller.signal.aborted) {
           setDatabaseFilterOptions({
             practices: [],
@@ -224,7 +234,7 @@ export function WorkflowList({
         }
       });
     return () => controller.abort();
-  }, [activeTab, selectedType]);
+  }, [activeTab, selectedType, workspace]);
 
 
   const query = search.trim().toLowerCase();
@@ -297,7 +307,8 @@ export function WorkflowList({
       const detailed = await getWorkflowAddon(addon.id);
       if (openAddonIdRef.current === addon.id) setSelectedAddon(detailed);
     } catch {
-      // The list payload still provides a useful preview.
+      // Silent on purpose: the panel is already open on the list payload,
+      // which is a complete preview; only the extra detail is missing.
     }
   }
 
@@ -307,7 +318,7 @@ export function WorkflowList({
   }
 
   async function importAddon(addon: WorkflowAddon) {
-    if (importingAddonId || importedAddonIds.includes(addon.id)) return;
+    if (bulkImportingAddons || importingAddonId || importedAddonIds.includes(addon.id)) return;
     setImportingAddonId(addon.id);
     setActionError("");
     try {
@@ -332,11 +343,14 @@ export function WorkflowList({
   }
 
   async function importAddons(selectedAddons: WorkflowAddon[]) {
-    if (bulkImportingAddons || selectedAddons.length === 0) return;
-    setBulkImportingAddons(true);
+    if (bulkImportingAddons || importingAddonId) return;
+    const targets = selectedAddons.filter((addon) => !importedAddonIds.includes(addon.id));
+    if (targets.length === 0) return;
+    setBulkImportingAddonIds(targets.map((addon) => addon.id));
+    setActionError("");
     try {
       const results = await Promise.allSettled(
-        selectedAddons.map((addon) => importWorkflowAddon(addon.id)),
+        targets.map((addon) => importWorkflowAddon(addon.id)),
       );
       const imported = results.flatMap((result) =>
         result.status === "fulfilled" ? [result.value] : [],
@@ -346,18 +360,18 @@ export function WorkflowList({
         setImportedAddonIds((current) => [
           ...new Set([
             ...current,
-            ...selectedAddons.flatMap((addon, index) =>
+            ...targets.flatMap((addon, index) =>
               results[index]?.status === "fulfilled" ? [addon.id] : [],
             ),
           ]),
         ]);
       }
       setSelectedAddonIds([]);
-      if (imported.length !== selectedAddons.length) {
+      if (imported.length !== targets.length) {
         setActionError("Some selected add-ons could not be imported.");
       }
     } finally {
-      setBulkImportingAddons(false);
+      setBulkImportingAddonIds([]);
     }
   }
 
@@ -511,7 +525,7 @@ export function WorkflowList({
           },
         ]}
       >
-        <h1 className="font-serif text-2xl font-medium text-gray-900">
+        <h1 className={`${PAGE_HEADER_TITLE_CLASS} text-gray-900`}>
           Workflows
         </h1>
       </PageHeader>
@@ -558,7 +572,7 @@ export function WorkflowList({
           onSelectedIdsChange={setSelectedAddonIds}
           importingAddonId={importingAddonId}
           importedAddonIds={importedAddonIds}
-          bulkImporting={bulkImportingAddons}
+          bulkImportingIds={bulkImportingAddonIds}
           activePackKey={packKey}
           onOpenPack={openAddonPack}
           onOpen={openAddon}
@@ -1084,7 +1098,7 @@ function AddonTable({
   onSelectedIdsChange,
   importingAddonId,
   importedAddonIds,
-  bulkImporting,
+  bulkImportingIds,
   activePackKey,
   onOpenPack,
   onOpen,
@@ -1098,13 +1112,14 @@ function AddonTable({
   onSelectedIdsChange: (ids: string[]) => void;
   importingAddonId: string | null;
   importedAddonIds: string[];
-  bulkImporting: boolean;
+  bulkImportingIds: string[];
   activePackKey: string | null;
   onOpenPack: (packKey: string) => void;
   onOpen: (addon: WorkflowAddon) => void;
   onImport: (addon: WorkflowAddon) => Promise<void>;
   onImportMany: (addons: WorkflowAddon[]) => void;
 }) {
+  const bulkImporting = bulkImportingIds.length > 0;
   const [expandedPackKeys, setExpandedPackKeys] = useState<Set<string>>(
     () => new Set(),
   );
@@ -1217,11 +1232,45 @@ function AddonTable({
     );
   }
 
+  function renderImportButton(rowAddons: WorkflowAddon[]) {
+    const targets = rowAddons.filter((addon) => !importedAddonIds.includes(addon.id));
+    const imported = targets.length === 0;
+    const importing = rowAddons.some((addon) =>
+      importingAddonId === addon.id || bulkImportingIds.includes(addon.id),
+    );
+    const label = imported ? "Imported" : importing ? "Importing…" : "Import";
+    return (
+      <button
+        type="button"
+        disabled={bulkImporting || importingAddonId !== null || imported}
+        aria-label={label}
+        aria-busy={importing || undefined}
+        title={label}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (targets.length === 1) void onImport(targets[0]);
+          else onImportMany(targets);
+        }}
+        className={`flex h-6 w-6 items-center justify-center rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed ${
+          imported
+            ? "text-green-600"
+            : `text-gray-600 hover:text-gray-950 disabled:text-gray-400 ${LIQUID_GLASS_HOVER_CLASS}`
+        }`}
+      >
+        {imported ? (
+          <Check aria-hidden="true" className="h-3.5 w-3.5" />
+        ) : importing ? (
+          <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <Plus aria-hidden="true" className="h-3.5 w-3.5" />
+        )}
+      </button>
+    );
+  }
+
   function renderAddonRow(addon: WorkflowAddon, nested = false) {
     const Icon =
       addon.type === "tabular" ? TabularReviewSkeuoIcon : ChatSkeuoIcon;
-    const imported = importedAddonIds.includes(addon.id);
-    const importing = importingAddonId === addon.id;
     return (
       <TableRow
         key={addon.id}
@@ -1277,31 +1326,7 @@ function AddonTable({
           {addon.language || "—"}
         </TableCell>
         <TableCell className="flex w-8 justify-end">
-          <button
-            type="button"
-            disabled={bulkImporting || importing || imported}
-            aria-label={
-              imported ? "Imported" : importing ? "Importing…" : "Import"
-            }
-            title={imported ? "Imported" : importing ? "Importing…" : "Import"}
-            onClick={(event) => {
-              event.stopPropagation();
-              void onImport(addon);
-            }}
-            className={`flex h-6 w-6 items-center justify-center rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed ${
-              imported
-                ? "text-green-600"
-                : `text-gray-600 hover:text-gray-950 disabled:text-gray-400 ${LIQUID_GLASS_HOVER_CLASS}`
-            }`}
-          >
-            {imported ? (
-              <Check className="h-3.5 w-3.5" />
-            ) : importing ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Plus className="h-3.5 w-3.5" />
-            )}
-          </button>
+          {renderImportButton([addon])}
         </TableCell>
       </TableRow>
     );
@@ -1499,7 +1524,9 @@ function AddonTable({
                     <TableCell className="w-28 text-xs text-gray-600">
                       —
                     </TableCell>
-                    <TableCell className="w-8" />
+                    <TableCell className="flex w-8 justify-end">
+                      {renderImportButton(pack.addons)}
+                    </TableCell>
                   </TableRow>,
                   ...(expanded
                     ? pack.addons.map((addon) => renderAddonRow(addon, true))

@@ -5,7 +5,9 @@ import type {
 } from "../types";
 import type { RedlineEdit } from "./redline";
 
+export type WordChatStorageMode = "cloud" | "local";
 export type WorkflowAttachment = { id: string; title: string };
+export type PlaybookAttachment = { id: string; title: string };
 
 /**
  * Opening a stored chat in the pane. `activeTurnId` is set when the server is
@@ -51,6 +53,10 @@ export type EditCardStatus =
   | "ambiguous"
   | "unsearchable"
   | "conflicted"
+  /** Skipped because the document already carries this exact edit. */
+  | "already-applied"
+  /** Word faulted mid-apply and nothing could prove whether it landed. */
+  | "unverified"
   | "incomplete"
   | "unmanaged"
   | "error"
@@ -75,6 +81,7 @@ interface RuntimeMessageBase {
   id: string;
   files?: SavedMessage["files"];
   workflow?: SavedMessage["workflow"];
+  playbook?: SavedMessage["playbook"];
   /** Only the current streamed turn may mutate the live Word document. */
   live?: boolean;
 }
@@ -100,6 +107,8 @@ export interface WordChatSubmission {
   content: string;
   files?: { filename: string; document_id?: string }[];
   workflow?: WorkflowAttachment;
+  /** A playbook to run, sent as `{ id, title }` like a workflow. */
+  playbook?: PlaybookAttachment;
   model: string;
   reasoning: ReasoningLevel;
 }

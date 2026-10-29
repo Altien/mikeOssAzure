@@ -159,6 +159,16 @@ shares the source document's chat history. Remove the Mike document setting or
 treat the copy as a new document before external distribution when that stable
 metadata is undesirable.
 
+The composer's **+** menu attaches a workflow or a playbook to the next message,
+as the web composer does. The playbook travels on the user message as
+`playbook: { id, title }`, is stored with it (`word_chat_messages.playbook`,
+migration `0163`), and shows as a pill on that message. See
+[Playbooks](playbooks.md#in-the-assistant).
+
+Cloud chat storage uses the backend `word_*` tables. Existing deployments need
+the canonical Word chat migrations; fresh databases already
+contain those tables.
+
 The composer mirrors the web assistant controls:
 
 - **Add documents** opens the same library-style selector used by the web assistant. Search and select files, templates, or project documents, or upload new files from inside the modal; confirmed documents appear as removable chips and are attached to the next message.
@@ -168,6 +178,25 @@ The composer mirrors the web assistant controls:
 The chat header and composer float over the message surface. Use **New chat** to clear the current conversation, **Chat history** to reopen a saved conversation, and the hamburger menu to access Quick Actions, Workflows, or Sign out.
 
 When an answer proposes document edits, it streams each change using `<original>`, `<replacement>`, and `<reason>` tags. The task pane hides those transport tags, renders edit cards immediately, applies sealed edits to Word as tracked changes, and provides **Accept** and **Reject** controls for review.
+
+## Errors and support
+
+The task pane never renders a raw `error.message`. `describeError` (shared
+with the web app, `frontend/src/shared/lib/userError.ts`) classifies a thrown
+value once, and `word-addin/src/taskpane/lib/notify.ts` shows the result as a
+toast with an honest "Retry", built on the toast core it shares with the web
+app (`frontend/src/shared/lib/errorNotifier.ts`). Transport failures go through
+`word-addin/src/taskpane/lib/networkError.ts`, which calls the shared
+`networkMessage(origin)` so both clients say the same sentence; the add-in
+passes the API origin, because a self-hoster whose own container is down is
+not helped by "check your connection". Failures a user cannot fix offer a
+support hand-off carrying the request id, code, status, page and time —
+enough for support to find the request in the logs without the user quoting
+anything from a document. `frontend/src/wordAddin/errorReporting.test.tsx`
+exercises these add-in modules through the same `@mike/*` aliases webpack
+resolves, so a change on either side of the contract fails that suite.
+
+## Automated tests
 
 ### Quick Actions
 
@@ -218,11 +247,25 @@ pnpm typecheck
 
 Upstream's hermetic Playwright suite (`e2e/`) and live Word-on-the-web demo recorders (`e2e-live/`) are bootstrapped against Supabase auth and are **not** included in this fork (deferred with the rest of upstream's Playwright/e2e tooling).
 
----
+## Shared UI maintenance
+
+The task pane is independently bundled. When the web design system changes,
+compare:
+
+- `src/shared/styles/tokens.css` with `frontend/src/app/globals.css`; and
+- `src/shared/chat/ChatInput.tsx` and the vendored UI primitives with their web
+  counterparts, retaining narrow-pane adaptations.
+
+Design tokens are not compared by hand: both targets import
+`frontend/src/shared/ui/DesignTokensUI.css`, and `src/shared/styles/tokens.css`
+holds only the add-in's base layer.
 
 Files with no add-in-specific behavior are not vendored at all: they are
 aliased straight at the web source (`@mike/*` in `webpack.config.js` and
-`tsconfig.json`), so there is nothing to keep in sync.
+`tsconfig.json`), so there is nothing to keep in sync. The model catalog is one
+of them: `@mike/model-catalog` is `frontend/src/shared/lib/modelCatalog.ts`,
+and `src/taskpane/lib/modelCatalog.ts` only adapts the add-in's key-status
+shape to it.
 
 ## Troubleshooting
 

@@ -20,6 +20,8 @@ export type DocStore = Map<
      * the model when it chooses to read them.
      */
     inline_text?: string;
+    /** Search handles pin the source revision and reauthorize every subsequent read. */
+    search_source?: { revision: string; userId: string; userEmail?: string | null; workspace: string };
   }
 >;
 
@@ -73,6 +75,13 @@ export type ChatMessage = {
     version_number?: number;
   }[];
   workflow?: { id: string; title: string };
+  /** The playbook the user picked to run, shown as a pill. */
+  playbook?: { id: string; title: string };
+  /**
+   * Stored reasoning for an assistant turn, attached server-side by
+   * attachPriorReasoning. Never accepted from the request body.
+   */
+  reasoning?: string;
 };
 
 /**
@@ -118,6 +127,7 @@ export function resolveDocLabel(
 export type { AskInputOption } from "@mike/contracts";
 
 export const MAX_ASK_INPUT_TEXT_LENGTH = 5_000;
+export const MAX_ASK_INPUT_CHOICE_LENGTH = 1_000;
 /** What the user sees for a failed tool call; the raw error stays server-side. */
 export const TOOL_ERROR_MESSAGE = "This tool could not complete its request.";
 

@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import {
   describe,
   it,
@@ -7,9 +8,11 @@ import {
   afterEach,
 } from "vitest";
 
-const { getConfigMock, createServerSupabaseMock } = vi.hoisted(() => ({
+const { getConfigMock, createServerSupabaseMock, managedSecrets, resolveManagedSecretMock } = vi.hoisted(() => ({
   getConfigMock: vi.fn(),
   createServerSupabaseMock: vi.fn(),
+  managedSecrets: new Map<string, string>(),
+  resolveManagedSecretMock: vi.fn(),
 }));
 
 vi.mock("./config", () => ({
@@ -20,6 +23,24 @@ vi.mock("./config", () => ({
 
 vi.mock("./supabase", () => ({
   createServerSupabase: createServerSupabaseMock,
+}));
+
+// Dev drift: execution credentials are managed; storage helpers remain internal.
+vi.mock("./envSecrets", () => ({
+  resolveSecret: resolveManagedSecretMock,
+  resolveProviderSecret: resolveManagedSecretMock,
+  resolveVercelApiKey: () => resolveManagedSecretMock("ai-gateway-api-key"),
+}));
+vi.mock("./llm/cloudProviders", () => ({
+  envBedrockCredentials: vi.fn(async () => null),
+  envAzureCredentials: vi.fn(async () => null),
+  envAzureFoundryCredentials: vi.fn(async () => null),
+  envVertexCredentials: vi.fn(async () => null),
+  envVertexServiceAccountKey: vi.fn(async () => ""),
+  envCustomEndpointCredentials: vi.fn(async () => null),
+}));
+vi.mock("./webSearch/credentials", () => ({
+  loadDeploymentSearchApiKeys: vi.fn(async () => ({ brave: null, tavily: null, deepseek: null })),
 }));
 
 import {
@@ -61,8 +82,12 @@ function makeClient(opts: {
       const chain = () => builder;
       builder.select = chain;
       builder.eq = chain;
+      builder.filter = chain;
+      builder.is = chain;
       builder.maybeSingle = () =>
-        Promise.resolve(opts.legacyMaybeSingle ?? { data: null });
+        Promise.resolve(table === "user_courtlistener_connections"
+          ? { data: { enabled: true, token: null } }
+          : (opts.legacyMaybeSingle ?? { data: null }));
       // For api-keys queries the chain is itself awaited (no maybeSingle).
       builder.then = (
         onF: (v: Result) => unknown,
@@ -95,12 +120,23 @@ function makeClient(opts: {
 }
 
 const SECRET = "test-encryption-secret-for-aes-gcm";
+// Verify encrypted storage independently of the intentionally managed execution read path.
+function decryptStored(row: Record<string, unknown>): string {
+  const key = crypto.createHash("sha256").update(SECRET).digest();
+  const decipher = crypto.createDecipheriv("aes-256-gcm", key, Buffer.from(row.iv as string, "base64"));
+  decipher.setAuthTag(Buffer.from(row.auth_tag as string, "base64"));
+  return Buffer.concat([decipher.update(Buffer.from(row.encrypted_key as string, "base64")), decipher.final()]).toString("utf8");
+}
+
 const envSnapshot = {} as Record<string, string | undefined>;
 
 beforeEach(() => {
   envSnapshot.NODE_ENV = process.env.NODE_ENV;
   process.env.NODE_ENV = "test";
   getConfigMock.mockReset();
+  managedSecrets.clear();
+  resolveManagedSecretMock.mockReset();
+  resolveManagedSecretMock.mockImplementation(async (name: string) => managedSecrets.get(name) ?? "");
   // Name-aware: only the encryption key resolves. Dev's openrouter /
   // courtlistener global fallbacks (resolveSecret → getConfig) must see
   // "not configured", or every test would find phantom keys for them.
@@ -178,13 +214,9 @@ describe("organisation provider credentials", () => {
       "azure-openai-deployment": "org-deployment",
     };
     vi.stubEnv("KEY_VAULT_NAME", "test-vault");
-    getConfigMock.mockImplementation((name: string) =>
-      values[name]
-        ? Promise.resolve(values[name])
-        : Promise.reject(new Error(`missing ${name}`)),
-    );
+    for (const [name, value] of Object.entries(values)) managedSecrets.set(name, value);
 
-    await expect(getOrganisationApiKeys()).resolves.toEqual({
+    await expect(getOrganisationApiKeys()).resolves.toMatchObject({
       claude: "org-anthropic",
       gemini: "org-gemini",
       openai: "org-openai",
@@ -234,39 +266,13 @@ describe("setUserApiKey — encryption invariants", () => {
 
   it("serialises an azure_openai object payload before encrypting it", async () => {
     const { client, upsertedRows } = makeClient({ upsert: { error: null } });
-
-    await setUserApiKey(
-      "u1",
-      "azure_openai",
-      {
-        endpoint: "https://x.openai.azure.com",
-        deployment: "gpt-5",
-        apiKey: "azure-secret",
-        apiVersion: "2024-02-15-preview",
-      },
-      client as never,
-    );
-
-    // Round-trip: read it back and the parser should reconstruct the object.
-    const ciphertext = upsertedRows[0].encrypted_key as string;
-    const iv = upsertedRows[0].iv as string;
-    const authTag = upsertedRows[0].auth_tag as string;
-
-    const { client: readClient } = makeClient({
-      apiKeysQuery: {
-        data: [
-          { provider: "azure_openai", encrypted_key: ciphertext, iv, auth_tag: authTag },
-        ],
-      },
-    });
-
-    const keys = await getUserApiKeys("u1", readClient as never);
-
-    expect(keys.azureOpenai).toEqual({
-      endpoint: "https://x.openai.azure.com",
-      deployment: "gpt-5",
-      apiKey: "azure-secret",
-      apiVersion: "2024-02-15-preview",
+    await setUserApiKey("u1", "azure_openai", {
+      endpoint: "https://x.openai.azure.com", deployment: "gpt-5",
+      apiKey: "azure-secret", apiVersion: "2024-02-15-preview",
+    }, client as never);
+    expect(JSON.parse(decryptStored(upsertedRows[0]!))).toEqual({
+      endpoint: "https://x.openai.azure.com", deployment: "gpt-5",
+      key: "azure-secret", version: "2024-02-15-preview",
     });
   });
 
@@ -311,227 +317,44 @@ describe("setUserApiKey — encryption invariants", () => {
   });
 });
 
-describe("getUserApiKeys — decryption + fallback", () => {
-  it("returns claude/gemini/openai/azureOpenai filled from decrypted rows", async () => {
-    const { client: writeClient, upsertedRows } = makeClient({
-      upsert: { error: null },
-    });
-    await setUserApiKey("u1", "claude", "sk-claude", writeClient as never);
-    await setUserApiKey("u1", "gemini", "sk-gemini", writeClient as never);
-    await setUserApiKey("u1", "openai", "sk-openai", writeClient as never);
-
-    const rows = upsertedRows.map((r) => ({
-      provider: r.provider,
-      encrypted_key: r.encrypted_key,
-      iv: r.iv,
-      auth_tag: r.auth_tag,
-    }));
-    const { client: readClient } = makeClient({ apiKeysQuery: { data: rows } });
-
-    const keys = await getUserApiKeys("u1", readClient as never);
-
-    expect(keys).toEqual({
-      claude: "sk-claude",
-      gemini: "sk-gemini",
-      openai: "sk-openai",
-      openrouter: null,
-      vercel: null,
-      "opencode-go": null,
-      courtlistener: null,
-      azureOpenai: null,
-    });
-  });
-
-  it("skips a row whose ciphertext was tampered with rather than throwing", async () => {
-    const { client: writeClient, upsertedRows } = makeClient({
-      upsert: { error: null },
-    });
-    await setUserApiKey("u1", "claude", "sk-claude", writeClient as never);
-    await setUserApiKey("u1", "openai", "sk-openai", writeClient as never);
-
-    // Corrupt the claude row's auth tag — GCM decrypt will fail.
-    const goodOpenAi = upsertedRows[1];
-    const tampered = { ...upsertedRows[0], auth_tag: "AAAAAAAAAAAAAAAAAAAAAAAA" };
-    const { client: readClient } = makeClient({
-      apiKeysQuery: { data: [tampered, goodOpenAi] },
-    });
-
-    const keys = await getUserApiKeys("u1", readClient as never);
-
-    expect(keys.claude).toBeNull();
-    expect(keys.openai).toBe("sk-openai");
-    expect(console.error).toHaveBeenCalledWith(
-      "[userApiKeys] decryption failed",
-      expect.objectContaining({ userId: "u1", provider: "claude" }),
-    );
-  });
-
-  it("falls back to user_profiles legacy columns only when no encrypted row exists", async () => {
-    const { client } = makeClient({
-      apiKeysQuery: { data: [] },
-      legacyMaybeSingle: {
-        data: {
-          claude_api_key: "legacy-claude",
-          gemini_api_key: null,
-          openai_api_key: "legacy-openai",
-          azure_openai_endpoint: "https://legacy.openai.azure.com",
-          azure_openai_api_key: "legacy-az",
-          azure_openai_api_version: null,
-          azure_openai_deployment: "gpt-3",
-        },
-      },
-    });
-
+describe("getUserApiKeys — managed execution credentials", () => {
+  // Dev drift: the old personal-decryption/fallback scenarios are now refusal boundaries.
+  const scenarios: Array<[string, Parameters<typeof makeClient>[0]]> = [
+    ["does not execute encrypted personal keys", { apiKeysQuery: { data: [{ provider: "claude", encrypted_key: "personal-secret" }] } }],
+    ["does not decrypt a tampered personal row", { apiKeysQuery: { data: [{ provider: "claude", auth_tag: "tampered" }] } }],
+    ["does not execute legacy profile plaintext", { legacyMaybeSingle: { data: { claude_api_key: "legacy-secret" } } }],
+    ["does not combine encrypted and legacy personal sources", { apiKeysQuery: { data: [{ provider: "claude" }] }, legacyMaybeSingle: { data: { gemini_api_key: "legacy-secret" } } }],
+    ["does not execute an incomplete legacy Azure configuration", { legacyMaybeSingle: { data: { azure_openai_endpoint: "https://legacy.openai.azure.com", azure_openai_api_key: "legacy-secret" } } }],
+    ["does not parse a personal Azure non-JSON blob", { apiKeysQuery: { data: [{ provider: "azure_openai", encrypted_key: "not-json" }] } }],
+    ["does not execute a personal Azure blob missing deployment", { apiKeysQuery: { data: [{ provider: "azure_openai", encrypted_key: "missing-deployment" }] } }],
+  ];
+  it.each(scenarios)("%s", async (_label, options) => {
+    for (const [name, value] of Object.entries({
+      "anthropic-api-key": "managed-claude", "gemini-api-key": "managed-gemini",
+      "openai-api-key": "managed-openai", "azure-openai-endpoint": "https://managed.openai.azure.com",
+      "azure-openai-api-key": "managed-azure", "azure-openai-deployment": "managed-deployment",
+    })) managedSecrets.set(name, value);
+    const { client, fromCalls } = makeClient(options);
     const keys = await getUserApiKeys("u1", client as never);
-
-    expect(keys.claude).toBe("legacy-claude");
-    expect(keys.openai).toBe("legacy-openai");
-    expect(keys.gemini).toBeNull();
-    expect(keys.azureOpenai).toEqual({
-      endpoint: "https://legacy.openai.azure.com",
-      deployment: "gpt-3",
-      apiKey: "legacy-az",
-      apiVersion: null,
+    expect(keys).toMatchObject({
+      claude: "managed-claude", gemini: "managed-gemini", openai: "managed-openai",
+      azureOpenai: { endpoint: "https://managed.openai.azure.com", apiKey: "managed-azure", deployment: "managed-deployment" },
     });
-  });
-
-  it("does NOT fall back to legacy when any encrypted row exists (avoid double-source confusion)", async () => {
-    const { client: writeClient, upsertedRows } = makeClient({
-      upsert: { error: null },
-    });
-    await setUserApiKey("u1", "claude", "sk-claude", writeClient as never);
-
-    const { client: readClient, fromCalls } = makeClient({
-      apiKeysQuery: { data: [upsertedRows[0]] },
-      legacyMaybeSingle: {
-        data: {
-          claude_api_key: "DO-NOT-USE",
-          gemini_api_key: "legacy-gem",
-          openai_api_key: null,
-          azure_openai_endpoint: null,
-          azure_openai_api_key: null,
-          azure_openai_api_version: null,
-          azure_openai_deployment: null,
-        },
-      },
-    });
-
-    const keys = await getUserApiKeys("u1", readClient as never);
-
-    expect(keys.claude).toBe("sk-claude");
-    expect(keys.gemini).toBeNull();
-    expect(fromCalls).toEqual(["user_api_keys"]);
-  });
-
-  it("treats a legacy azure row without endpoint+deployment as null (incomplete config)", async () => {
-    const { client } = makeClient({
-      apiKeysQuery: { data: [] },
-      legacyMaybeSingle: {
-        data: {
-          claude_api_key: null,
-          gemini_api_key: null,
-          openai_api_key: null,
-          azure_openai_endpoint: "https://x.openai.azure.com",
-          azure_openai_api_key: "key",
-          azure_openai_api_version: null,
-          azure_openai_deployment: null,
-        },
-      },
-    });
-
-    const keys = await getUserApiKeys("u1", client as never);
-
-    expect(keys.azureOpenai).toBeNull();
-  });
-
-  it("returns null for an azure_openai row whose decrypted blob is not valid JSON", async () => {
-    const { client: writeClient, upsertedRows } = makeClient({
-      upsert: { error: null },
-    });
-    // Setting azure_openai with a bare string bypasses the structured
-    // serialiser. The decoded blob will fail JSON.parse → null.
-    await setUserApiKey(
-      "u1",
-      "azure_openai",
-      "not-an-object" as never,
-      writeClient as never,
-    );
-
-    const { client: readClient } = makeClient({
-      apiKeysQuery: {
-        data: [
-          {
-            provider: "azure_openai",
-            encrypted_key: upsertedRows[0].encrypted_key,
-            iv: upsertedRows[0].iv,
-            auth_tag: upsertedRows[0].auth_tag,
-          },
-        ],
-      },
-    });
-
-    const keys = await getUserApiKeys("u1", readClient as never);
-
-    expect(keys.azureOpenai).toBeNull();
-  });
-
-  it("returns null azure_openai when the JSON blob is missing endpoint or deployment", async () => {
-    const { client: writeClient, upsertedRows } = makeClient({
-      upsert: { error: null },
-    });
-    await setUserApiKey(
-      "u1",
-      "azure_openai",
-      JSON.stringify({ key: "k" }) as never,
-      writeClient as never,
-    );
-
-    const { client: readClient } = makeClient({
-      apiKeysQuery: {
-        data: [
-          {
-            provider: "azure_openai",
-            encrypted_key: upsertedRows[0].encrypted_key,
-            iv: upsertedRows[0].iv,
-            auth_tag: upsertedRows[0].auth_tag,
-          },
-        ],
-      },
-    });
-
-    const keys = await getUserApiKeys("u1", readClient as never);
-
-    expect(keys.azureOpenai).toBeNull();
+    expect(fromCalls).toEqual(["user_profiles", "user_courtlistener_connections"]);
+    expect(fromCalls).not.toContain("user_api_keys");
   });
 });
 
 describe("getUserApiKeys — error handling", () => {
-  it("logs and still consults the legacy fallback when the encrypted-rows query errors", async () => {
-    const { client } = makeClient({
-      apiKeysQuery: {
-        data: null,
-        error: { message: "permission denied" },
-      },
-      legacyMaybeSingle: {
-        data: {
-          claude_api_key: "from-legacy",
-          gemini_api_key: null,
-          openai_api_key: null,
-          azure_openai_endpoint: null,
-          azure_openai_api_key: null,
-          azure_openai_api_version: null,
-          azure_openai_deployment: null,
-        },
-      },
+  it("uses managed credentials without consulting an unreadable personal secret table", async () => {
+    managedSecrets.set("anthropic-api-key", "managed-claude");
+    const { client, fromCalls } = makeClient({
+      apiKeysQuery: { data: null, error: { message: "permission denied" } },
+      legacyMaybeSingle: { data: { claude_api_key: "legacy-secret" } },
     });
-
     const keys = await getUserApiKeys("u1", client as never);
-
-    expect(keys.claude).toBe("from-legacy");
-    expect(console.error).toHaveBeenCalledWith(
-      "[userApiKeys] failed to read user_api_keys",
-      expect.objectContaining({ userId: "u1", error: "permission denied" }),
-    );
+    expect(keys.claude).toBe("managed-claude");
+    expect(fromCalls).not.toContain("user_api_keys");
   });
 });
 
@@ -549,38 +372,10 @@ describe("default db argument", () => {
 });
 
 describe("azure_openai serialisation defaults", () => {
-  it("stores null for apiKey and apiVersion when they're omitted from the input", async () => {
-    const { client: writeClient, upsertedRows } = makeClient({
-      upsert: { error: null },
-    });
-    await setUserApiKey(
-      "u1",
-      "azure_openai",
-      { endpoint: "ep", deployment: "dep" },
-      writeClient as never,
-    );
-
-    const { client: readClient } = makeClient({
-      apiKeysQuery: {
-        data: [
-          {
-            provider: "azure_openai",
-            encrypted_key: upsertedRows[0].encrypted_key,
-            iv: upsertedRows[0].iv,
-            auth_tag: upsertedRows[0].auth_tag,
-          },
-        ],
-      },
-    });
-
-    const keys = await getUserApiKeys("u1", readClient as never);
-
-    expect(keys.azureOpenai).toEqual({
-      endpoint: "ep",
-      deployment: "dep",
-      apiKey: null,
-      apiVersion: null,
-    });
+  it("stores null for apiKey and apiVersion when omitted from internal storage input", async () => {
+    const { client, upsertedRows } = makeClient({ upsert: { error: null } });
+    await setUserApiKey("u1", "azure_openai", { endpoint: "ep", deployment: "dep" }, client as never);
+    expect(JSON.parse(decryptStored(upsertedRows[0]!))).toEqual({ endpoint: "ep", deployment: "dep", key: null, version: null });
   });
 });
 
@@ -645,6 +440,9 @@ describe("getConfiguredProviders", () => {
     const result = await getConfiguredProviders("u1", client as never);
 
     expect(result).toEqual({
+      // Dev drift: the storage metadata vocabulary now includes cloud/search providers.
+      brave: false, deepseek: false, tavily: false, bedrock: false, azure: false,
+      "azure-foundry": false, vertex: false, xai: false, custom: false,
       claude: true,
       gemini: false,
       openai: false,
@@ -677,6 +475,9 @@ describe("getConfiguredProviders", () => {
     const result = await getConfiguredProviders("u1", client as never);
 
     expect(result).toEqual({
+      // Dev drift: the storage metadata vocabulary now includes cloud/search providers.
+      brave: false, deepseek: false, tavily: false, bedrock: false, azure: false,
+      "azure-foundry": false, vertex: false, xai: false, custom: false,
       claude: true,
       gemini: false,
       openai: true,
@@ -699,6 +500,9 @@ describe("getConfiguredProviders", () => {
     const result = await getConfiguredProviders("u1", client as never);
 
     expect(result).toEqual({
+      // Dev drift: the storage metadata vocabulary now includes cloud/search providers.
+      brave: false, deepseek: false, tavily: false, bedrock: false, azure: false,
+      "azure-foundry": false, vertex: false, xai: false, custom: false,
       claude: false,
       gemini: false,
       openai: false,

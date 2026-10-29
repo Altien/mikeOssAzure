@@ -3,7 +3,10 @@
  * test runner (the add-in package has no unit-test runner of its own).
  */
 import { describe, expect, it, vi } from "vitest";
-import { isAllowedModelId, isModelAvailable } from "../../../word-addin/src/taskpane/lib/modelCatalog";
+import {
+    isAllowedModelId, isModelAvailable,
+    unavailableModelMessage,
+} from "../../../word-addin/src/taskpane/lib/modelCatalog";
 import { loadWithRetry } from "../../../word-addin/src/taskpane/lib/composerPreflight";
 import type { ApiKeyStatus } from "../../../word-addin/src/taskpane/types";
 
@@ -52,6 +55,29 @@ describe("isModelAvailable fail-open", () => {
                 "opencode-go": true,
             }),
         ).toBe(true);
+    });
+});
+
+describe("unavailableModelMessage", () => {
+    it("names the unavailable centrally managed provider", () => {
+        expect(
+            unavailableModelMessage("bedrock/us.anthropic.claude-opus-5-5", NO_KEYS),
+        ).toBe("Amazon Bedrock is unavailable. Ask an administrator to check the organisation credential.");
+        expect(unavailableModelMessage("gemini-3.8-flash", NO_KEYS)).toBe(
+            "Google is unavailable. Ask an administrator to check the organisation credential.",
+        );
+    });
+
+    it("asks to turn a switched-off provider back on instead of adding a key", () => {
+        expect(
+            unavailableModelMessage("xai/grok-5", {
+                ...NO_KEYS,
+                xai: false,
+                enabled: { xai: false },
+            }),
+        ).toBe(
+            "xAI is turned off. Turn it back on in Bring Your Own Keys before using this model.",
+        );
     });
 });
 

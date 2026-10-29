@@ -16,6 +16,32 @@ const ASK_RESPONSE_IDS = {
 };
 
 describe("chat request validation", () => {
+  it("keeps the playbook a user picked, and refuses a malformed one", () => {
+    expect(
+      parseChatMessages([
+        {
+          role: "user",
+          content: "Review this",
+          playbook: { id: " pb-1 ", title: " NDA playbook " },
+        },
+      ]),
+    ).toEqual({
+      ok: true,
+      value: [
+        {
+          role: "user",
+          content: "Review this",
+          playbook: { id: "pb-1", title: "NDA playbook" },
+        },
+      ],
+    });
+    expect(
+      parseChatMessages([{ role: "user", content: "x", playbook: { id: "pb-1" } }]),
+    ).toEqual({
+      ok: false,
+      detail: "messages[0].playbook.title must be a non-empty string",
+    });
+  });
   it("normalizes valid messages and their nested metadata", () => {
     expect(
             parseChatMessages([
@@ -398,5 +424,21 @@ describe("chat request validation", () => {
             ok: false,
             detail,
         });
+    });
+});
+
+
+describe("recovered ask-input limits", () => {
+    it.each(["choice", "multi_choice", "text"] as const)("caps trimmed %s answers at the persistence boundary", (kind) => {
+        const limit = kind === "text" ? 5000 : 1000;
+        const payload = (answer: string) => ({
+            assistant_message_id: "assistant-1",
+            ask_event_id: "ask-1",
+            responses: [{ id: "a", kind, question: "Question?", ...(kind === "multi_choice" ? { answers: [answer] } : { answer }) }],
+        });
+        expect(parseOptionalAskInputsResponse(payload("x".repeat(limit + 1))).ok).toBe(false);
+        const accepted = parseOptionalAskInputsResponse(payload(`  ${"x".repeat(limit)}\n`));
+        expect(accepted.ok).toBe(true);
+        if (accepted.ok) expect(JSON.stringify(accepted.value)).toContain("x".repeat(limit));
     });
 });

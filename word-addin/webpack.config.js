@@ -204,6 +204,30 @@ module.exports = async (_env, options) => {
           "uploadSessionClient.ts",
         ),
         "@mike/secure-uuid": frontendShared("lib", "secureUuid.ts"),
+        // Error presentation is shared across the web app and add-in.
+        "@mike/toast-store": frontendShared("lib", "toastStore.ts"),
+        "@mike/error-notifier": frontendShared("lib", "errorNotifier.ts"),
+        "@mike/toast-ui": frontendSharedUi("ToastUI.tsx"),
+        "@mike/user-error": frontendShared("lib", "userError.ts"),
+        // One model catalog (routers, picker rows, key-based availability)
+        // for the web app and the add-in.
+        "@mike/model-catalog": frontendShared("lib", "modelCatalog.ts"),
+        // Quoting and annotating a passage of a response: one wire format,
+        // menu, pill and modal for the web app and the add-in.
+        "@mike/message-excerpts": frontendShared("lib", "messageExcerpts.ts"),
+        "@mike/response-selection-menu-ui": frontendSharedUi(
+          "ResponseSelectionMenuUI.tsx",
+        ),
+        "@mike/excerpt-pill-ui": frontendSharedUi("ExcerptPillUI.tsx"),
+        // The attached-playbook pill: the same in both composers.
+        "@mike/playbook-pill-ui": frontendSharedUi("PlaybookPillUI.tsx"),
+        "@mike/excerpt-modal-ui": frontendSharedUi("ExcerptModalUI.tsx"),
+        "@mike/chat-history-dropdown-ui": frontendSharedUi(
+          "ChatHistoryDropdownUI.tsx",
+        ),
+        "@mike/composer-send-button-ui": frontendSharedUi(
+          "ComposerSendButtonUI.styles.ts",
+        ),
       },
     },
     module: {

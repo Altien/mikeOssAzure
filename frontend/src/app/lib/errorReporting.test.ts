@@ -37,6 +37,7 @@ vi.mock("@sentry/react", () => ({
 import * as Sentry from "@sentry/react";
 import {
     browserSentryOptions,
+    isReported,
     reportApiFailure,
     reportError,
     scrubEvent,
@@ -48,6 +49,8 @@ import {
     trackPendingRequest,
 } from "./errorReporting";
 import { diagnosticEvent } from "@/shared/lib/sentryPrivacy";
+import { MikeApiError, downloadDocumentsZip, updateWorkflow } from "./mikeApi";
+import { notifyError } from "./userFacingError";
 
 afterEach(() => {
     resetApiUnreachableWindow();
@@ -58,6 +61,19 @@ afterEach(() => {
 });
 
 describe("reportError", () => {
+    it("lets notification callers recognize an already-reported error by identity", () => {
+        const error = new Error("same failure");
+        expect(isReported(error)).toBe(false);
+        for (const value of [null, undefined, "same failure", 0]) {
+            expect(isReported(value)).toBe(false);
+        }
+
+        reportError(error);
+
+        expect(isReported(error)).toBe(true);
+        expect(isReported(new Error("same failure"))).toBe(false);
+    });
+
     it("is a no-op without a DSN but still marks the error for the console bridge", () => {
         const error = new Error("x");
         expect(reportError(error, { tags: { a: "b" } })).toBeNull();
@@ -114,6 +130,64 @@ describe("markErrorHandled", () => {
             ),
         ).toBeNull();
     });
+
+    it("counts as reported for notification callers, so they do not file it again", () => {
+        const error = new Error("schema_out_of_date, filed by the backend");
+        markErrorHandled(error);
+        expect(isReported(error)).toBe(true);
+    });
+});
+
+describe("API operation identity before capture", () => {
+    afterEach(() => vi.useRealTimers());
+
+    it("does not report a notice wrapper around an already reported cause", () => {
+        state.enabled = true;
+        const cause = new Error("original fault");
+        reportError(cause, { tags: { operation: "chat.turn" } });
+        const wrapper = new Error("delivery uncertain", { cause: new Error("wrapper", { cause }) });
+        notifyError(wrapper, { operation: "chat.turn" });
+        expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+        expect(isReported(wrapper)).toBe(true);
+        expect(scrubEvent({ exception: { values: [{ mechanism: { handled: false } }] } }, { originalException: wrapper })).toBeNull();
+    });
+
+    it("reports ZIP request failures as POST with their operation", async () => {
+        state.enabled = true;
+        vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 500 })));
+        await expect(downloadDocumentsZip(["document-id"])).rejects.toBeInstanceOf(MikeApiError);
+        expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
+        expect(state.scopes[0].setTag).toHaveBeenCalledWith("operation", "documents.directory");
+        expect(state.scopes[0].setTag).toHaveBeenCalledWith("http_method", "POST");
+        expect(state.scopes[0].setFingerprint).toHaveBeenCalledWith(["api-5xx", "POST", "/single-documents/download-zip", "500"]);
+    });
+
+    it("reports immediately and keeps its operation across a delayed screen handler", async () => {
+        vi.useFakeTimers();
+        state.enabled = true;
+        vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ code: "internal_error" }), {
+            status: 500, headers: { "x-request-id": "req-workflow" },
+        })));
+        const error = await updateWorkflow("workflow-id", { skill_md: "# Workflow" }).catch((error: unknown) => error);
+        expect(error).toBeInstanceOf(MikeApiError);
+        expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
+        expect(state.scopes[0].setTag).toHaveBeenCalledWith("operation", "workflows.run");
+        await vi.advanceTimersByTimeAsync(1000);
+        notifyError(error, { operation: "workflows.run" });
+        expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
+        expect(Sentry.captureException).not.toHaveBeenCalled();
+        expect(state.scopes[0].setTag).toHaveBeenCalledWith("request_id", "req-workflow");
+    });
+
+    it("does not require a screen to report and deduplicates the same API error", () => {
+        state.enabled = true;
+        const error = new Error("x");
+        const failure = { path: "/x", status: 500, error, operation: "new_feature.run" };
+        expect(reportApiFailure(failure)).toBe("msg-1");
+        expect(reportApiFailure(failure)).toBeNull();
+        expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
+        expect(isReported(error)).toBe(true);
+    });
 });
 
 describe("reportApiFailure", () => {
@@ -148,10 +222,9 @@ describe("reportApiFailure", () => {
         expect(scope.setTag).toHaveBeenCalledWith("request_id", "req-9");
         expect(scope.setTag).toHaveBeenCalledWith("error_code", "internal_error");
         expect(scope.setTag).toHaveBeenCalledWith("http_status", 502);
-        expect(scope.setExtra).toHaveBeenCalledWith(
-            "path",
-            "/projects/8f1c2a3e-1234-4bcd-9e0f-1234567890ab?x=1",
-        );
+        // The raw path (with its ids) is not offered to the event at all; the
+        // normalised route tag is what identifies the endpoint.
+        expect(scope.setExtra).not.toHaveBeenCalledWith("path", expect.anything());
     });
 
     it("marks the thrown error so the console bridge drops its later copy", () => {

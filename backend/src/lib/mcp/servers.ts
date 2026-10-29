@@ -1,7 +1,11 @@
+import { getOrgRole } from "../access";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { ConnectorApprovalItem } from "@mike/contracts";
 import type { OpenAIToolSchema } from "../llm";
+import { type ConnectorOwner, workspaceFilter } from "../connectorOwner";
+import { AppError } from "../appError";
+import { reportError } from "../observability/sentry";
 import { createServerSupabase } from "../supabase";
 import {
     authConfigPatch,
@@ -108,14 +112,16 @@ async function withMcpClient<T>(
 }
 
 export async function listUserMcpConnectors(
-    userId: string,
+    owner: ConnectorOwner,
     db: Db = createServerSupabase(),
     options: { includeTools?: boolean } = {},
 ): Promise<McpConnectorSummary[]> {
+    if (owner.orgId && !(await getOrgRole(owner.userId, owner.orgId, db))) throw new Error("Workspace not found");
     const { data: connectors, error } = await db
         .from("user_mcp_connectors")
         .select("*")
-        .eq("user_id", userId)
+        .eq("user_id", owner.userId)
+        .filter(...workspaceFilter(owner))
         .order("created_at", { ascending: false });
     if (error) throw error;
     const rows = (connectors ?? []) as ConnectorRow[];
@@ -218,7 +224,7 @@ export async function getUserMcpConnector(
 }
 
 export async function createUserMcpConnector(
-    userId: string,
+    owner: ConnectorOwner,
     input: {
         name: string;
         serverUrl: string;
@@ -227,6 +233,7 @@ export async function createUserMcpConnector(
     },
     db: Db = createServerSupabase(),
 ): Promise<McpConnectorSummary> {
+    if (owner.orgId && !(await getOrgRole(owner.userId, owner.orgId, db))) throw new Error("Workspace not found");
     const name = input.name.trim().slice(0, 80);
     if (!name) throw new Error("Connector name is required.");
     const serverUrl = await validateRemoteMcpUrl(input.serverUrl.trim());
@@ -240,7 +247,8 @@ export async function createUserMcpConnector(
     const { data, error } = await db
         .from("user_mcp_connectors")
         .insert({
-            user_id: userId,
+            user_id: owner.userId,
+            org_id: owner.orgId,
             name,
             transport: "streamable_http",
             server_url: serverUrl,
@@ -317,10 +325,9 @@ export async function updateUserMcpConnector(
         .select("*")
         .single();
     if (error) throw error;
-    const [summary] = await listUserMcpConnectors(userId, db).then((items) =>
-        items.filter((item) => item.id === connectorId),
+    return getUserMcpConnector(userId, connectorId, db).catch(() =>
+        toConnectorSummary(data as ConnectorRow),
     );
-    return summary ?? (await toConnectorSummary(data as ConnectorRow));
 }
 
 export async function completeUserMcpConnectorOAuth(
@@ -416,10 +423,9 @@ export async function refreshUserMcpConnectorTools(
         if (error) throw error;
     }
 
-    const [summary] = await listUserMcpConnectors(userId, db).then((items) =>
-        items.filter((item) => item.id === connector.id),
+    return getUserMcpConnector(userId, connector.id, db).catch(() =>
+        toConnectorSummary(connector),
     );
-    return summary ?? (await toConnectorSummary(connector));
 }
 
 export async function setUserMcpToolEnabled(
@@ -436,29 +442,37 @@ export async function setUserMcpToolEnabled(
         .eq("connector_id", connectorId)
         .eq("id", toolId);
     if (error) throw error;
-    const [summary] = await listUserMcpConnectors(userId, db).then((items) =>
-        items.filter((item) => item.id === connectorId),
-    );
-    if (!summary) throw new Error("Connector not found.");
-    return summary;
+    return getUserMcpConnector(userId, connectorId, db);
 }
 
 export async function buildUserMcpTools(
-    userId: string,
+    owner: ConnectorOwner,
     db: Db = createServerSupabase(),
 ): Promise<OpenAIToolSchema[]> {
+    if (owner.orgId && !(await getOrgRole(owner.userId, owner.orgId, db))) throw new Error("Workspace not found");
     const { data, error } = await db
         .from("user_mcp_connector_tools")
         .select(
-            "openai_tool_name, tool_name, title, description, input_schema, annotations, requires_confirmation, enabled, user_mcp_connectors!inner(id, user_id, name, enabled, read_only)",
+            "openai_tool_name, tool_name, title, description, input_schema, annotations, requires_confirmation, enabled, user_mcp_connectors!inner(id, user_id, org_id, name, enabled, read_only)",
         )
         .eq("enabled", true)
-        .eq("user_mcp_connectors.user_id", userId)
+        .eq("user_mcp_connectors.user_id", owner.userId)
+        .filter(...workspaceFilter(owner, "user_mcp_connectors.org_id"))
         .eq("user_mcp_connectors.enabled", true);
     if (error) {
+        // Without this the turn silently runs with no connector tools; the
+        // database's code rides on the cause, the message stays in the log.
+        const failure = new AppError(
+            "db.query_failed",
+            "Failed to load the user's MCP tools",
+            { cause: error },
+        );
+        reportError(failure, {
+            tags: { component: "chat-stream", operation: "chat.mcp" },
+        });
         console.error("[mcp-connectors] failed to load tools", {
-            userId,
-            error: error.message,
+            userId: owner.userId,
+            error: failure,
         });
         return [];
     }
@@ -492,17 +506,24 @@ export async function buildUserMcpTools(
     });
 }
 
+/**
+ * The enabled tool `openaiToolName` names, on one of `owner`'s enabled
+ * connectors in their workspace. A tool on a connector for another workspace
+ * resolves to nothing, as if it did not exist.
+ */
 async function resolveCallableTool(
-    userId: string,
+    owner: ConnectorOwner,
     openaiToolName: string,
     db: Db,
 ): Promise<{ connector: ConnectorRow; tool: ToolCacheRow } | null> {
+    if (owner.orgId && !(await getOrgRole(owner.userId, owner.orgId, db))) throw new Error("Workspace not found");
     const { data, error } = await db
         .from("user_mcp_connector_tools")
         .select("*, user_mcp_connectors!inner(*)")
         .eq("openai_tool_name", openaiToolName)
         .eq("enabled", true)
-        .eq("user_mcp_connectors.user_id", userId)
+        .eq("user_mcp_connectors.user_id", owner.userId)
+        .filter(...workspaceFilter(owner, "user_mcp_connectors.org_id"))
         .eq("user_mcp_connectors.enabled", true)
         .single();
     if (error || !data) return null;
@@ -555,12 +576,12 @@ const MAX_APPROVAL_ARGUMENT_CHARS = 200_000;
  * on waits; everything else runs.
  */
 export async function planMcpToolCall(
-    userId: string,
+    owner: ConnectorOwner,
     openaiToolName: string,
     args: Record<string, unknown>,
     db: Db = createServerSupabase(),
 ): Promise<ConnectorCallPlan> {
-    const resolved = await resolveCallableTool(userId, openaiToolName, db);
+    const resolved = await resolveCallableTool(owner, openaiToolName, db);
     if (!resolved) return { type: "result", ...unavailableTool(openaiToolName) };
     const { connector, tool } = resolved;
     if (
@@ -606,7 +627,7 @@ export async function planMcpToolCall(
 }
 
 export async function executeMcpToolCall(
-    userId: string,
+    owner: ConnectorOwner,
     openaiToolName: string,
     args: Record<string, unknown>,
     db: Db = createServerSupabase(),
@@ -614,10 +635,10 @@ export async function executeMcpToolCall(
     content: string;
     event: McpToolEvent;
 }> {
-    const resolved = await resolveCallableTool(userId, openaiToolName, db);
+    const resolved = await resolveCallableTool(owner, openaiToolName, db);
     if (!resolved) return unavailableTool(openaiToolName);
     return callResolvedTool(
-        userId,
+        owner,
         resolved.connector,
         resolved.tool,
         args,
@@ -631,13 +652,13 @@ export async function executeMcpToolCall(
  * while the reviewed tool is still the same enabled tool on the same connector.
  */
 export async function executeApprovedMcpToolCall(
-    userId: string,
+    owner: ConnectorOwner,
     item: ConnectorApprovalItem,
     db: Db = createServerSupabase(),
 ): Promise<{ content: string; event: McpToolEvent }> {
     const resolved =
         item.binding.type === "mcp"
-            ? await resolveCallableTool(userId, item.tool_name, db)
+            ? await resolveCallableTool(owner, item.tool_name, db)
             : null;
     const result =
         resolved &&
@@ -648,7 +669,7 @@ export async function executeApprovedMcpToolCall(
         item.binding.connection_fingerprint ===
             (await connectionFingerprint(resolved.connector, db))
             ? await callResolvedTool(
-                    userId,
+                    owner,
                     resolved.connector,
                     resolved.tool,
                     item.arguments,
@@ -675,7 +696,7 @@ async function connectionFingerprint(
 }
 
 async function callResolvedTool(
-    userId: string,
+    owner: ConnectorOwner,
     connector: ConnectorRow,
     tool: ToolCacheRow,
     args: Record<string, unknown>,
@@ -692,7 +713,7 @@ async function callResolvedTool(
             connector,
             async (client) => {
                 const current = await resolveCallableTool(
-                    userId,
+                    owner,
                     tool.openai_tool_name,
                     db,
                 );
@@ -729,12 +750,24 @@ async function callResolvedTool(
         );
         const toolError = mcpToolResultErrorMessage(result);
         if (toolError) {
+            // The server answered, and said no: usually the model's arguments,
+            // sometimes the server. Its text stays in the log; Sentry gets the
+            // kind. Logged alongside so the console bridge skips this line.
+            const rejected = new AppError(
+                "mcp.call_rejected",
+                "MCP tool call rejected by server",
+            );
+            reportError(rejected, {
+                level: "warning",
+                tags: { component: "chat-stream", operation: "chat.mcp" },
+            });
             console.error("[mcp-connectors] tool call rejected by server", {
                 connectorId: connector.id,
                 connectorName: connector.name,
                 toolName: tool.tool_name,
                 error: toolError,
                 serverResponse: sanitizeMcpToolErrorResult(result),
+                reported: rejected,
             });
             const content = stringifyMcpResult({
                 ok: false,
@@ -742,7 +775,7 @@ async function callResolvedTool(
                 serverResult: result,
             });
             await insertMcpAuditLog(db, {
-                user_id: userId,
+                user_id: owner.userId,
                 connector_id: connector.id,
                 tool_id: tool.id,
                 tool_name: tool.tool_name,
@@ -762,6 +795,7 @@ async function callResolvedTool(
                     connector_id: connector.id,
                     connector_name: connector.name,
                     tool_name: tool.tool_name,
+                    ...(tool.title ? { tool_title: tool.title } : {}),
                     openai_tool_name: tool.openai_tool_name,
                     status: "error",
                     error: toolError,
@@ -770,7 +804,7 @@ async function callResolvedTool(
         }
         const content = stringifyMcpResult(result);
         await insertMcpAuditLog(db, {
-            user_id: userId,
+            user_id: owner.userId,
             connector_id: connector.id,
             tool_id: tool.id,
             tool_name: tool.tool_name,
@@ -786,17 +820,32 @@ async function callResolvedTool(
                 connector_id: connector.id,
                 connector_name: connector.name,
                 tool_name: tool.tool_name,
+                ...(tool.title ? { tool_title: tool.title } : {}),
                 openai_tool_name: tool.openai_tool_name,
                 status: "ok",
             },
         };
     } catch (err) {
         const diagnostic = formatMcpErrorForAgent(err);
+        // An error that names itself (OAuth required, blocked destination)
+        // keeps its kind and is the user's connector, not our bug: warning.
+        // Anything else is a failed call with the transport's error as cause.
+        const failure =
+            err instanceof AppError
+                ? err
+                : new AppError("mcp.call_failed", "MCP tool call failed", {
+                      cause: err,
+                  });
+        reportError(failure, {
+            tags: { component: "chat-stream", operation: "chat.mcp" },
+            ...(failure !== err ? {} : { level: "warning" as const }),
+        });
         console.error("[mcp-connectors] tool call failed", {
             connectorId: connector.id,
             connectorName: connector.name,
             toolName: tool.tool_name,
             ...diagnostic,
+            reported: failure,
         });
         // This payload can embed remote-server-authored text (diagnostic.message
         // and diagnostic.serverError originate from the MCP server's error
@@ -819,7 +868,7 @@ async function callResolvedTool(
                 : {}),
         });
         await insertMcpAuditLog(db, {
-            user_id: userId,
+            user_id: owner.userId,
             connector_id: connector.id,
             tool_id: tool.id,
             tool_name: tool.tool_name,
@@ -836,6 +885,7 @@ async function callResolvedTool(
                 connector_id: connector.id,
                 connector_name: connector.name,
                 tool_name: tool.tool_name,
+                ...(tool.title ? { tool_title: tool.title } : {}),
                 openai_tool_name: tool.openai_tool_name,
                 status: "error",
                 error: diagnostic.message,
@@ -860,8 +910,19 @@ async function insertMcpAuditLog(
 ) {
     const { error } = await db.from("user_mcp_tool_audit_logs").insert(row);
     if (error) {
+        // The call already ran; a lost audit row is a warning, not a failure
+        // of the turn, but one somebody must see.
+        const failure = new AppError(
+            "db.query_failed",
+            "Failed to write the MCP tool audit log",
+            { cause: error },
+        );
+        reportError(failure, {
+            level: "warning",
+            tags: { component: "chat-stream", operation: "chat.mcp" },
+        });
         console.error("[mcp-connectors] failed to write audit log", {
-            error: error.message,
+            error: failure,
         });
     }
 }

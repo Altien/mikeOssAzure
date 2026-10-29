@@ -63,10 +63,23 @@ test("Google Drive connect, cancel and disconnect", async ({
                 json: {
                     connected,
                     scope: connected
-                        ? "https://www.googleapis.com/auth/drive.readonly"
+                        ? "https://www.googleapis.com/auth/drive.file"
                         : null,
                     configured: true,
                     schemaReady: true,
+                    enabled: true,
+                    writeEnabled: connected,
+                    requireWriteApproval: false,
+                    pickerAvailable: false,
+                    tools: [
+                        {
+                            name: "google_drive_search",
+                            title: "Search files",
+                            description: "Search Drive.",
+                            write: false,
+                            enabled: true,
+                        },
+                    ],
                 },
             });
         },

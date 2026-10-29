@@ -46,8 +46,7 @@ const downloadFile = vi.fn(
         new Uint8Array([0xd0, 0xcf, 0x11, 0xe0]).buffer as ArrayBuffer | null,
 );
 vi.mock("../../lib/storage", async (importOriginal) => {
-    // extractedTextKey stays REAL: the point of the precompute test is that
-    // the handler writes the key the read path will look for.
+    // Legacy precompute must not publish or trust a fixed version-only key.
     const actual = await importOriginal<typeof import("../../lib/storage")>();
     return {
         ...actual,
@@ -56,6 +55,10 @@ vi.mock("../../lib/storage", async (importOriginal) => {
     };
 });
 
+const canonicalInline = vi.hoisted(() => vi.fn());
+vi.mock("../../modules/documents/documents.indexing", async (original) => ({
+  ...(await original<typeof import("../../modules/documents/documents.indexing")>()), processDocumentTextInline: canonicalInline,
+}));
 import { McpOAuthRequiredError } from "../../lib/mcp/oauth";
 import {
     handleMcpRefreshToken,
@@ -212,55 +215,33 @@ describe("handleMcpRefreshToken", () => {
 });
 
 describe("handleDocumentPrecomputeText", () => {
-    it("uploads the extracted text to extracted-text/<versionId>.txt", async () => {
-        await handleDocumentPrecomputeText(
-            DB,
-            JOB("document.precompute_text", {
-                versionId: "v-123",
-                storagePath: "documents/u1/d1/brief.doc",
-                fileType: "doc",
-            }),
-        );
-        expect(downloadFile).toHaveBeenCalledWith("documents/u1/d1/brief.doc");
-        const [key, body, contentType] = uploadFile.mock.calls[0] as [
-            string,
-            ArrayBuffer,
-            string,
-        ];
-        expect(key).toBe("extracted-text/v-123.txt");
-        expect(contentType).toBe("text/plain; charset=utf-8");
-        expect(Buffer.from(body).toString("utf8")).toBe(
-            "[Page 1]\nhello from libreoffice",
-        );
+    const token = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const precompute = (fileType: unknown) => ({ ...JOB("document.precompute_text", {
+        versionId: "v-123", storagePath: "documents/u1/d1/brief.doc", fileType,
+    }), claim_token: token, lease_expires_at: new Date(Date.now()+300_000).toISOString() });
+    beforeEach(() => canonicalInline.mockReset().mockResolvedValue(undefined));
+    it("delegates legacy text to the claim-fenced revision-aware queue and extractor", async () => {
+        const rpc = vi.fn(async () => ({ data: true, error: null }));
+        const db = { rpc } as never;
+        await handleDocumentPrecomputeText(db, precompute("doc"));
+        expect(rpc).toHaveBeenCalledWith("queue_document_text", {
+            p_version_id: "v-123", p_retry_failed: false,
+            p_precompute_job: { id: "job-1", attempt: 1, token },
+        });
+        expect(canonicalInline).toHaveBeenCalledWith(db, ["v-123"]);
+        expect(downloadFile).not.toHaveBeenCalled(); expect(uploadFile).not.toHaveBeenCalled();
     });
-
-    it("throws when the source bytes are gone so the job retries", async () => {
-        downloadFile.mockResolvedValue(null);
-        await expect(
-            handleDocumentPrecomputeText(
-                DB,
-                JOB("document.precompute_text", {
-                    versionId: "v-123",
-                    storagePath: "documents/u1/d1/brief.doc",
-                    fileType: "ppt",
-                }),
-            ),
-        ).rejects.toThrow(/source unavailable/);
-        expect(uploadFile).not.toHaveBeenCalled();
+    it("propagates guarded enqueue failure so the canonical job retries", async () => {
+        const failure = new Error("queue unavailable");
+        const rpc = vi.fn(async () => ({ data: null, error: failure }));
+        await expect(handleDocumentPrecomputeText({ rpc } as never, precompute("ppt"))).rejects.toBe(failure);
+        expect(canonicalInline).not.toHaveBeenCalled(); expect(uploadFile).not.toHaveBeenCalled();
     });
-
     it("refuses types that already have an in-process reader", async () => {
-        for (const fileType of ["docx", "pptx", "xlsx", "pdf", undefined]) {
-            await handleDocumentPrecomputeText(
-                DB,
-                JOB("document.precompute_text", {
-                    versionId: "v-123",
-                    storagePath: "documents/u1/d1/brief.docx",
-                    fileType,
-                }),
-            );
-        }
-        expect(extractLegacyOfficeText).not.toHaveBeenCalled();
-        expect(uploadFile).not.toHaveBeenCalled();
+        const rpc = vi.fn();
+        for (const fileType of ["docx", "pptx", "xlsx", "pdf", undefined])
+            await handleDocumentPrecomputeText({ rpc } as never, precompute(fileType));
+        expect(rpc).not.toHaveBeenCalled(); expect(canonicalInline).not.toHaveBeenCalled();
+        expect(extractLegacyOfficeText).not.toHaveBeenCalled(); expect(uploadFile).not.toHaveBeenCalled();
     });
 });

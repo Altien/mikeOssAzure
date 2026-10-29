@@ -8,7 +8,8 @@ import {
     type OrgMember,
     type UserLookupResult,
 } from "@/app/lib/mikeApi";
-import type { ProjectRole } from "@/app/lib/permissions";
+import type { ContentVisibility } from "@/app/components/shared/types";
+import { isOrgOwner, type ProjectRole } from "@/app/lib/permissions";
 import {
     OrganizationAccessEditor,
     AccessEditor,
@@ -19,6 +20,7 @@ import {
 export interface PendingDirectGrant {
     email: string;
     display_name: string | null;
+    profile_photo?: string | null;
     role: ProjectRole;
 }
 
@@ -28,11 +30,16 @@ export interface PendingOrgOverride {
     role: AccessAssignmentRole;
 }
 
+/**
+ * Edits pending access choices before resource creation, retaining photos only from authorized rosters.
+ * Unscoped email lookup supplies identity fields for monogram-only pending recipients.
+ */
 export function CreateAccessStep({
     orgId,
     organizationName,
     currentUserEmail,
     currentUserId,
+    currentUserProfile: profile,
     directGrants,
     onDirectGrantsChange,
     orgOverrides = [],
@@ -40,11 +47,14 @@ export function CreateAccessStep({
     inheritedFromProject = false,
     inheritedProjectId = null,
     ownerLabel = "Project owners",
+    resourceNoun,
+    visibility = "private",
 }: {
     orgId: string | null;
     organizationName?: string | null;
     currentUserEmail?: string | null;
     currentUserId?: string | null;
+    currentUserProfile?: { displayName?: string | null; profilePhoto?: string | null } | null;
     directGrants: PendingDirectGrant[];
     onDirectGrantsChange: (grants: PendingDirectGrant[]) => void;
     orgOverrides?: PendingOrgOverride[];
@@ -53,6 +63,13 @@ export function CreateAccessStep({
     /** The project whose people are shown, read-only, when access is inherited. */
     inheritedProjectId?: string | null;
     ownerLabel?: string;
+    /** What the item is called where the step describes sharing it. */
+    resourceNoun?: string;
+    /**
+     * For an organization's item: public or private, as chosen on the
+     * details step. Decides whether individuals can be added here.
+     */
+    visibility?: ContentVisibility;
 }) {
     const [memberState, setMemberState] = useState<{
         orgId: string;
@@ -104,6 +121,7 @@ export function CreateAccessStep({
                         user_id: people.owner.user_id,
                         email: people.owner.email,
                         display_name: people.owner.display_name,
+                        profile_photo: people.owner.profile_photo,
                         role: "owner",
                         isCreator: true,
                     });
@@ -116,6 +134,7 @@ export function CreateAccessStep({
                         user_id: member.user_id ?? null,
                         email: member.email,
                         display_name: member.display_name,
+                        profile_photo: member.profile_photo,
                         role: member.role ?? "editor",
                     });
                 }
@@ -161,7 +180,8 @@ export function CreateAccessStep({
                           {
                               key: "creator",
                               email: currentEmail,
-                              display_name: null,
+                              display_name: profile?.displayName ?? null,
+                              profile_photo: profile?.profilePhoto,
                               role: "owner" as const,
                               isCreator: true,
                           },
@@ -171,6 +191,7 @@ export function CreateAccessStep({
                     key: grant.email,
                     email: grant.email,
                     display_name: grant.display_name,
+                    profile_photo: grant.profile_photo,
                     role: grant.role,
                 })),
             ];
@@ -185,7 +206,11 @@ export function CreateAccessStep({
             user_id: member.user_id,
             email: member.email,
             display_name: member.display_name,
-            role: member.role === "admin" ? "owner" : "editor",
+            profile_photo: member.profile_photo,
+            // Marked so the editor can leave the organization's owners out
+            // of a public item's pickers: they own those already. A private
+            // item is shared with them like with anyone.
+            role: isOrgOwner(member.role) ? "owner" : "editor",
             isCreator,
         };
     });
@@ -198,6 +223,7 @@ export function CreateAccessStep({
             user_id: override.user_id,
             email: override.email,
             display_name: member?.display_name ?? null,
+            profile_photo: member?.profile_photo,
             role: override.role,
         };
     });
@@ -244,7 +270,7 @@ export function CreateAccessStep({
 
     function assignOrganizationMember(
         member: AccessRow,
-        role: "owner" | "deny",
+        role: AccessAssignmentRole,
     ) {
         if (!member.user_id || !member.email) return;
         onOrgOverridesChange?.([
@@ -266,8 +292,12 @@ export function CreateAccessStep({
                 assignments={organizationAssignments}
                 organizationName={organizationName}
                 ownerLabel={ownerLabel}
+                resourceNoun={resourceNoun}
                 loading={loading}
                 error={loadError}
+                currentUserId={currentUserId}
+                currentUserEmail={currentUserEmail}
+                visibility={visibility}
                 onAssign={assignOrganizationMember}
                 onRemove={(assignment) =>
                     onOrgOverridesChange?.(

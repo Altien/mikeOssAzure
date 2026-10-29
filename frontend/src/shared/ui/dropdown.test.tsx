@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
     Dropdown,
@@ -13,6 +13,38 @@ import {
 } from "./dropdown";
 
 describe("dropdown", () => {
+    it("keeps a rapidly reopened non-modal menu open through delayed close autofocus", async () => {
+        render(
+            <Dropdown defaultOpen modal={false}>
+                <DropdownTrigger>Options</DropdownTrigger>
+                <DropdownContent>
+                    <DropdownItem>First option</DropdownItem>
+                </DropdownContent>
+            </Dropdown>,
+        );
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+
+        fireEvent.click(screen.getByRole("menuitem", { name: "First option" }));
+        fireEvent.pointerDown(
+            screen.getByRole("button", { name: "Options" }),
+            new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }),
+        );
+        expect(screen.getByRole("menu")).toBeInTheDocument();
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 10));
+        });
+        expect(screen.getByRole("menu")).toBeInTheDocument();
+
+        fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 10));
+        });
+        expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Options" })).toHaveFocus();
+    });
+
     it("uses the floating liquid-glass material for its open menu", () => {
         render(
             <Dropdown open>
@@ -133,5 +165,41 @@ describe("dropdown", () => {
         fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
 
         expect(onClose).toHaveBeenCalledOnce();
+    });
+
+    it("leaves a press on its own trigger to the trigger, and dismisses on any other", async () => {
+        const onOpenChange = vi.fn();
+        render(
+            <>
+                <Dropdown open modal={false} onOpenChange={onOpenChange}>
+                    <DropdownTrigger>Options</DropdownTrigger>
+                    <DropdownContent>
+                        <DropdownItem>First option</DropdownItem>
+                    </DropdownContent>
+                </Dropdown>
+                <button type="button">Elsewhere</button>
+            </>,
+        );
+        // The menu starts listening for outside presses a tick after it opens.
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+        const press = (name: string) =>
+            fireEvent.pointerDown(
+                screen.getByText(name),
+                new MouseEvent("pointerdown", { bubbles: true, cancelable: true }),
+            );
+
+        // The trigger answers its own press by toggling: one call, not also
+        // a dismissal. Two would shut a menu the same press had just
+        // reopened while it was still animating closed.
+        press("Options");
+        expect(onOpenChange).toHaveBeenCalledTimes(1);
+        expect(onOpenChange).toHaveBeenLastCalledWith(false);
+
+        onOpenChange.mockClear();
+        press("Elsewhere");
+        expect(onOpenChange).toHaveBeenCalledTimes(1);
+        expect(onOpenChange).toHaveBeenLastCalledWith(false);
     });
 });
