@@ -3,6 +3,7 @@ import { SecretClient } from "@azure/keyvault-secrets";
 import { randomBytes } from "node:crypto";
 import { Client } from "pg";
 import { createServerSupabase } from "../lib/supabase";
+import { initStorage } from "../lib/storage";
 import { syncWorkflowCatalog } from "../lib/workflowCatalogSync";
 import { resolveProviderSecret } from "../lib/envSecrets";
 import { assertDirectMigrationConnection, parseMigrationCommand, runMigrationCommand } from "./migrationLedger";
@@ -220,6 +221,9 @@ async function main() {
   // exist and before the backend revision is activated. Reference bytes are
   // uploaded first; a failed sync leaves the previous DB catalogue active and
   // fails the job, so an empty or partial catalogue cannot be deployed.
+  // Catalogue assets upload through the storage facade, which stays disabled
+  // until the configured adapter is resolved (Key Vault first).
+  await initStorage();
   const githubToken = await resolveProviderSecret("mike-workflows-github-token");
   const result = await syncWorkflowCatalog(
     createServerSupabase(),

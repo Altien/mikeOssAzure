@@ -39,12 +39,15 @@ function decodeKey(value: string, name: string): Buffer {
     throw new Error(`${name} is not configured`);
   }
   const decoded = Buffer.from(value, "base64url");
-  // Existing installations may have the old Bicep GUID state secret. Keep
-  // that value stable across rollout and derive a fixed HMAC key from it.
-  if (name === "auth-state-secret" && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value)) {
+  const canonical = decoded.length === 32 && decoded.toString("base64url") === value.replace(/=+$/, "");
+  // Existing installations may have an older state secret: the Bicep GUID,
+  // or a hand-provisioned value (e.g. 48-char standard base64). Keep it
+  // stable across rollout — install sessions still sign with it — and
+  // derive a fixed HMAC key from it.
+  if (name === "auth-state-secret" && !canonical && value.length >= 32) {
     return createHash("sha256").update(`mike-auth-state-v1:${value}`).digest();
   }
-  if (decoded.length !== 32 || decoded.toString("base64url") !== value.replace(/=+$/, "")) {
+  if (!canonical) {
     throw new Error(`${name} must be 32 random bytes in base64url form`);
   }
   return decoded;

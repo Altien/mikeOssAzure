@@ -46,6 +46,8 @@ COPY frontend/package.json frontend/pnpm-lock.yaml frontend/.npmrc frontend/pnpm
 RUN pnpm install --frozen-lockfile
 
 COPY frontend/. ./
+# tsconfig maps @mike/contracts to ../packages/contracts (declarations only).
+COPY packages/contracts /packages/contracts
 RUN pnpm run build
 # Result: /app/out — static HTML, JS, CSS, fonts.
 
@@ -59,6 +61,7 @@ RUN pnpm install --frozen-lockfile
 
 COPY backend/tsconfig.json ./
 COPY backend/src ./src
+COPY packages/contracts /packages/contracts
 
 RUN pnpm run build
 # Result: /app/dist — compiled JS.
