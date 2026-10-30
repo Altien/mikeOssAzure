@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Db } from "../supabase";
 import { runWithTenant } from "../tenantContext";
-import { checkProjectAccess, checkWorkflowAccess, ensureDocAccess, ensureChatAccess, ensureReviewAccess } from "../access";
+import { checkProjectAccess, checkWorkflowAccess, createDocumentAccessChecker, ensureDocAccess, ensureChatAccess, ensureReviewAccess } from "../access";
 import { makeFakeDb } from "../../test/helpers/fakeDb";
 const actor = { tenantId: "tenant-a", userId: "admin", roles: ["TenantAdmin", "Member"], pooled: true, readOnly: true };
 const row = { id: "object-id", user_id: "owner", tenant_id: "tenant-a", project_id: null, workflow_id: null, org_id: null };
@@ -58,6 +58,16 @@ describe("audited pooled tenant-admin read access", () => {
     expect(await runWithTenant(actor, () => ensureDocAccess({ ...row, project_id: "parent" }, "admin", null, fake.db as unknown as Db))).toMatchObject({ ok: true, projectRole: "viewer" });
     expect(fake.callsFor("audit_events")).toHaveLength(1);
     expect(fake.callsFor("audit_events")[0].payload).toMatchObject({ detail: { object: { kind: "document", id: row.id } } });
+  });
+  // Upstream divergence (sync-log: 98f01a2b): the batch checker shares only the
+  // normal container verdict; the tenant-admin fallback stays per document.
+  it("audits every document of a shared project in a batch access check", async () => {
+    const fake = fixture();
+    const check = createDocumentAccessChecker("admin", null, fake.db as unknown as Db);
+    const docs = ["doc-1", "doc-2"].map(id => ({ ...row, id, project_id: "parent" }));
+    const results = await runWithTenant(actor, () => Promise.all(docs.map(doc => check(doc))));
+    expect(results).toEqual([expect.objectContaining({ ok: true, projectRole: "viewer" }), expect.objectContaining({ ok: true, projectRole: "viewer" })]);
+    expect(fake.callsFor("audit_events").map(call => (call.payload as { detail: { object: { id: string } } }).detail.object.id)).toEqual(["doc-1", "doc-2"]);
   });
   it("does not audit ordinary ownership access or turn an existing Owner into a Viewer", async () => {
     const fake = makeFakeDb(() => ({ data: { ...row, user_id: "admin" } }));
