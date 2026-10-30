@@ -771,9 +771,22 @@ describe("upload processing", () => {
         expect.stringMatching(/^\[upload-worker\] iteration recovered after \d+ consecutive failure/),
       );
 
+      // The same failure returning minutes after it was reported is a flap,
+      // not news: one event per class per window, however often it recurs.
       claimError = missingRpc;
       await vi.advanceTimersByTimeAsync(2_000);
+      expect(reports()).toHaveLength(1);
+      expect(consoleWarn).toHaveBeenCalledWith(
+        expect.stringMatching(/^\[upload-worker\] iteration failing again \(Error:PGRST202\)/),
+      );
+
+      // A different failure class is reported at once.
+      claimError = null;
+      await vi.advanceTimersByTimeAsync(31_000);
+      claimError = { ...missingRpc, code: "40P01", message: "deadlock detected" };
+      await vi.advanceTimersByTimeAsync(2_000);
       expect(reports()).toHaveLength(2);
+      expect(diagnosticErrorTags(reports()[1][0]).failure_code).toBe("40P01");
     } finally {
       stop();
       vi.useRealTimers();

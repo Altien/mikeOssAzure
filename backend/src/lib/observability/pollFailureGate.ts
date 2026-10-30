@@ -15,7 +15,12 @@
 //   - stay quiet for repeats, logging a one-line count at most once per
 //     summary interval (console.warn: breadcrumb, never a Sentry event);
 //   - back the poll interval off exponentially, bounded;
-//   - on the first success after failures, log recovery once and reset.
+//   - on the first success after failures, log recovery once and reset;
+//   - after a recovery, stay quiet about a class that was reported within the
+//     repeat window. A loop that alternates one failed tick with successful
+//     ones (a lease lost on every long job, a deadlocked claim every few
+//     minutes) is flapping, not newly broken: re-reporting it on every flap
+//     filed MIKE-BACKEND-M dozens of times per hour with no new information.
 //
 // The class key is the error's name plus an allowlist-shaped `code` found on
 // the error or its cause chain (PostgREST, SQLSTATE, errno). An error with no
@@ -84,6 +89,11 @@ export type PollFailureGateOptions = {
   maxDelayMs: number;
   /** Minimum spacing of the "still failing" line. Default 60 s. */
   summaryIntervalMs?: number;
+  /**
+   * How long after a class was reported the same class, returning after a
+   * recovery, is treated as a repeat rather than news. Default 15 min.
+   */
+  repeatReportIntervalMs?: number;
   now?: () => number;
   log?: Pick<Console, "warn" | "log">;
 };
@@ -102,6 +112,7 @@ export function createPollFailureGate(
   const now = options.now ?? Date.now;
   const log = options.log ?? console;
   const summaryIntervalMs = options.summaryIntervalMs ?? 60_000;
+  const repeatReportIntervalMs = options.repeatReportIntervalMs ?? 15 * 60_000;
   const baseDelay = () =>
     typeof options.baseDelayMs === "function"
       ? options.baseDelayMs()
@@ -112,6 +123,12 @@ export function createPollFailureGate(
   let quietSinceSummary = 0;
   let lastSummaryAt = 0;
   let retryAt = 0;
+  // Survives success(): the class last sent to Sentry and when, so a flap
+  // back into it is recognised as a repeat.
+  let lastReportedClass: string | null = null;
+  let lastReportedAt = 0;
+  let flapsSinceLine = 0;
+  let lastFlapLineAt = 0;
 
   return {
     failure(error) {
@@ -129,7 +146,24 @@ export function createPollFailureGate(
         currentClass = failureClass;
         quietSinceSummary = 0;
         lastSummaryAt = at;
-        return { report: true, delayMs, consecutive };
+        const repeat =
+          failureClass === lastReportedClass &&
+          at - lastReportedAt < repeatReportIntervalMs;
+        if (!repeat) {
+          lastReportedClass = failureClass;
+          lastReportedAt = at;
+          return { report: true, delayMs, consecutive };
+        }
+        flapsSinceLine += 1;
+        if (at - lastFlapLineAt >= summaryIntervalMs) {
+          log.warn(
+            `${options.label} failing again (${failureClass}) ${Math.round((at - lastReportedAt) / 1000)}s after it was reported; ` +
+              `${flapsSinceLine} recurrence(s) not re-reported; next attempt in ${Math.round(delayMs / 1000)}s`,
+          );
+          lastFlapLineAt = at;
+          flapsSinceLine = 0;
+        }
+        return { report: false, delayMs, consecutive };
       }
       quietSinceSummary += 1;
       if (at - lastSummaryAt >= summaryIntervalMs) {

@@ -598,6 +598,16 @@ async function prepareUploadFile(
   }
 }
 
+/**
+ * The job row no longer says this worker holds it: another worker claimed
+ * it after the lease aged out, or a sweep retired it. Named, so Sentry files
+ * it under its own kind (MIKE-BACKEND-M grouped every code-less iteration
+ * failure as one anonymous "Failure in upload-worker / iteration").
+ */
+function leaseLost(): AppError {
+  return new AppError("upload.lease_lost", "upload_job_lease_lost");
+}
+
 export async function processUploadJob(
   db: Db,
   jobId: string,
@@ -608,23 +618,30 @@ export async function processUploadJob(
   const { data: job, error: jobError } = await db.from("upload_processing_jobs")
     .select("id, session_id, file_id, attempts, locked_by, claim_token")
     .eq("id", jobId).eq("status", "running").eq("locked_by", workerId).single();
-  if (jobError || !job || !job.claim_token) throw jobError ?? new Error("upload_job_not_found");
+  if (jobError || !job || !job.claim_token)
+    throw jobError ?? new AppError("upload.job_missing", "upload_job_not_found");
   const typedJob = job as UploadJobRow;
   const { data: session, error: sessionError } = await db.from("upload_sessions")
     .select("id, user_id, user_email, purpose, destination, status")
     .eq("id", typedJob.session_id).single();
-  if (sessionError || !session) throw sessionError ?? new Error("upload_session_not_found");
+  if (sessionError || !session) {
+    throw sessionError
+      ?? new AppError("upload.session_missing", "upload_session_not_found");
+  }
   const typedSession = session as UploadSessionRow;
   const { data: file, error: fileError } = await db.from("upload_session_files")
     .select("*").eq("id", typedJob.file_id).eq("session_id", typedSession.id).single();
-  if (fileError || !file) throw fileError ?? new Error("upload_session_file_not_found");
+  if (fileError || !file) {
+    throw fileError
+      ?? new AppError("upload.file_missing", "upload_session_file_not_found");
+  }
   const typedFile = file as UploadFileRow;
   const renew = async () => {
     const { data, error } = await db.rpc("renew_upload_processing_job", {
       p_job_id: jobId, p_worker_id: workerId, p_attempt: typedJob.attempts,
       p_token: typedJob.claim_token, p_lease_seconds: UPLOAD_JOB_LEASE_SECONDS,
     });
-    if (error || data !== true) throw error ?? new Error("upload_job_lease_lost");
+    if (error || data !== true) throw error ?? leaseLost();
   };
   const finish = async (payload: Record<string, unknown> | null, failure: string | null) => {
     const { data, error } = await db.rpc("finish_upload_processing_job", {
@@ -632,7 +649,7 @@ export async function processUploadJob(
       p_token: typedJob.claim_token, p_payload: payload, p_failure: failure,
       p_lease_seconds: UPLOAD_JOB_LEASE_SECONDS,
     });
-    if (error || !data) throw error ?? new Error("upload_job_lease_lost");
+    if (error || !data) throw error ?? leaseLost();
     return data as { status: string; result?: unknown };
   };
   const startedAt = Date.now();
