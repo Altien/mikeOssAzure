@@ -117,7 +117,7 @@ export function PasswordSettingsSection() {
 
     return (
         <section className="space-y-3">
-            <h2 className="font-serif text-2xl font-medium text-gray-900">
+            <h2 id="password" className="font-serif text-2xl font-medium text-gray-900">
                 Password
             </h2>
             <SettingsSection>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/app/contexts/AuthContext";
@@ -12,6 +12,8 @@ import {
     SettingsShell,
     type SettingsShellTab,
 } from "@/app/components/settings/SettingsShell";
+import { SettingsSearch } from "@/app/components/settings/SettingsSearch";
+import { SETTINGS_SEARCH_ENTRIES } from "@/app/lib/settingsSearch";
 
 const TABS: SettingsShellTab[] = [
     { id: "account", label: "Account", href: "/settings" },
@@ -89,6 +91,28 @@ export default function SettingsLayout({
         return () => { cancelled = true; };
     }, [tenancyMode, isAuthenticated, authLoading, user?.id]);
 
+    // Dev (pooled tenancy): the tenant-admin tab joins the list, and so its
+    // search entries, only for a confirmed tenant administrator.
+    const showTenantAdmin =
+        tenancyMode === "pooled" &&
+        organisationAdmin !== null &&
+        organisationAdmin === (user?.id ?? "");
+    const visibleTabs = useMemo(
+        () =>
+            (showTenantAdmin ? [...TABS, TENANT_ADMIN_TAB] : TABS).filter(
+                (tab) => !(hidePrivacyData && tab.id === "privacy-data"),
+            ),
+        [showTenantAdmin, hidePrivacyData],
+    );
+    // Search only what is listed: an entry on a hidden tab would open a page
+    // the person is not offered.
+    const searchEntries = useMemo(() => {
+        const visibleTabIds = new Set(visibleTabs.map((tab) => tab.id));
+        return SETTINGS_SEARCH_ENTRIES.filter((entry) =>
+            visibleTabIds.has(entry.tabId),
+        );
+    }, [visibleTabs]);
+
     useEffect(() => {
         if (!authLoading && !isAuthenticated) {
             router.push("/");
@@ -112,19 +136,12 @@ export default function SettingsLayout({
         return children;
     }
 
-    const showTenantAdmin =
-        tenancyMode === "pooled" &&
-        organisationAdmin !== null &&
-        organisationAdmin === (user?.id ?? "");
-    const baseTabs = showTenantAdmin ? [...TABS, TENANT_ADMIN_TAB] : TABS;
-
     return (
         <SettingsShell
             title="Settings"
             navLabel="Settings"
-            tabs={baseTabs.filter(
-                (tab) => !(hidePrivacyData && tab.id === "privacy-data"),
-            ).map((tab) =>
+            search={<SettingsSearch entries={searchEntries} />}
+            tabs={visibleTabs.map((tab) =>
                 tab.id === "organizations" && invitationCount > 0
                     ? {
                           ...tab,

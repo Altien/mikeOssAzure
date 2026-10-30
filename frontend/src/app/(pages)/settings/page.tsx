@@ -201,7 +201,7 @@ export default function SettingsPage() {
         <div className="space-y-8">
             {/* Profile Settings */}
             <section className="space-y-3">
-                <h2 className="text-2xl font-medium font-serif text-gray-900">
+                <h2 id="profile" className="text-2xl font-medium font-serif text-gray-900">
                     Profile
                 </h2>
                 <SettingsSection>
@@ -243,7 +243,7 @@ export default function SettingsPage() {
 
             {/* Email */}
             <section className="space-y-3">
-                <h2 className="text-2xl font-medium font-serif text-gray-900">
+                <h2 id="email" className="text-2xl font-medium font-serif text-gray-900">
                     Email
                 </h2>
                 <SettingsSection>
@@ -323,7 +323,7 @@ export default function SettingsPage() {
 
             {/* Plan */}
             <section className="space-y-3">
-                <h2 className="text-2xl font-medium font-serif text-gray-900">
+                <h2 id="usage-plan" className="text-2xl font-medium font-serif text-gray-900">
                     Usage Plan
                 </h2>
                 <SettingsSection>
@@ -361,7 +361,7 @@ export default function SettingsPage() {
                 modes, where the app owns the identity, keep it. */}
             {authProvider !== "entra" && (
             <section className="space-y-3">
-                <h2 className="text-2xl font-medium font-serif text-red-600">
+                <h2 id="danger-zone" className="text-2xl font-medium font-serif text-red-600">
                     Danger Zone
                 </h2>
                 <SettingsSection>
