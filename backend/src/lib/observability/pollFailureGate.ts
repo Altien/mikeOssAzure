@@ -120,15 +120,34 @@ export function createPollFailureGate(
 
   let currentClass: string | null = null;
   let consecutive = 0;
-  let quietSinceSummary = 0;
-  let lastSummaryAt = 0;
   let retryAt = 0;
+  // Failures kept out of Sentry are counted into one log line per summary
+  // interval. A persisting class and a class flapping back keep their own
+  // count and cadence: the first flap after a report is worth a line at once,
+  // the first repeat of a persisting class is not.
+  const quiet = {
+    persisting: { suppressed: 0, lineAt: 0 },
+    flapping: { suppressed: 0, lineAt: 0 },
+  };
   // Survives success(): the class last sent to Sentry and when, so a flap
   // back into it is recognised as a repeat.
   let lastReportedClass: string | null = null;
   let lastReportedAt = 0;
-  let flapsSinceLine = 0;
-  let lastFlapLineAt = 0;
+
+  const suppress = (
+    track: { suppressed: number; lineAt: number },
+    at: number,
+    delayMs: number,
+    line: (suppressed: number) => string,
+  ): PollFailureVerdict => {
+    track.suppressed += 1;
+    if (at - track.lineAt >= summaryIntervalMs) {
+      log.warn(line(track.suppressed));
+      track.lineAt = at;
+      track.suppressed = 0;
+    }
+    return { report: false, delayMs, consecutive };
+  };
 
   return {
     failure(error) {
@@ -142,39 +161,28 @@ export function createPollFailureGate(
         base * 2 ** Math.min(consecutive - 1, 20),
       );
       retryAt = at + delayMs;
-      if (failureClass !== currentClass) {
-        currentClass = failureClass;
-        quietSinceSummary = 0;
-        lastSummaryAt = at;
-        const repeat =
-          failureClass === lastReportedClass &&
-          at - lastReportedAt < repeatReportIntervalMs;
-        if (!repeat) {
-          lastReportedClass = failureClass;
-          lastReportedAt = at;
-          return { report: true, delayMs, consecutive };
-        }
-        flapsSinceLine += 1;
-        if (at - lastFlapLineAt >= summaryIntervalMs) {
-          log.warn(
-            `${options.label} failing again (${failureClass}) ${Math.round((at - lastReportedAt) / 1000)}s after it was reported; ` +
-              `${flapsSinceLine} recurrence(s) not re-reported; next attempt in ${Math.round(delayMs / 1000)}s`,
-          );
-          lastFlapLineAt = at;
-          flapsSinceLine = 0;
-        }
-        return { report: false, delayMs, consecutive };
-      }
-      quietSinceSummary += 1;
-      if (at - lastSummaryAt >= summaryIntervalMs) {
-        log.warn(
+      const seconds = (ms: number) => Math.round(ms / 1000);
+      if (failureClass === currentClass) {
+        return suppress(quiet.persisting, at, delayMs, (n) =>
           `${options.label} still failing (${failureClass}): ${consecutive} consecutive failures, ` +
-            `${quietSinceSummary} not re-reported since the last line; next attempt in ${Math.round(delayMs / 1000)}s`,
+            `${n} not re-reported since the last line; next attempt in ${seconds(delayMs)}s`,
         );
-        lastSummaryAt = at;
-        quietSinceSummary = 0;
       }
-      return { report: false, delayMs, consecutive };
+      currentClass = failureClass;
+      quiet.persisting.suppressed = 0;
+      quiet.persisting.lineAt = at;
+      const repeat =
+        failureClass === lastReportedClass &&
+        at - lastReportedAt < repeatReportIntervalMs;
+      if (repeat) {
+        return suppress(quiet.flapping, at, delayMs, (n) =>
+          `${options.label} failing again (${failureClass}) ${seconds(at - lastReportedAt)}s after it was reported; ` +
+            `${n} recurrence(s) not re-reported; next attempt in ${seconds(delayMs)}s`,
+        );
+      }
+      lastReportedClass = failureClass;
+      lastReportedAt = at;
+      return { report: true, delayMs, consecutive };
     },
     success() {
       if (currentClass !== null) {
@@ -184,7 +192,7 @@ export function createPollFailureGate(
       }
       currentClass = null;
       consecutive = 0;
-      quietSinceSummary = 0;
+      quiet.persisting.suppressed = 0;
       retryAt = 0;
     },
     ready() {
