@@ -53,11 +53,14 @@ language sql
 stable
 set search_path = public, pg_temp
 as $$
+-- Who is asking. The API passes the account id as text and the ladder only
+-- ever compares it as text; grants are stored lowercased.
 -- Dev divergence: chats.user_id and projects.user_id are text here (Entra /
 -- local ids), so creator checks compare uid (p_user_id as text), exactly as
 -- Dev's chat_access_role/project_access_role do. org_members,
 -- project_org_access_overrides and org_private_content_access are uuid-keyed
--- and use id. Do not "restore" upstream's uuid creator comparison.
+-- and use id (a non-uuid id matches none of them). Do not "restore"
+-- upstream's uuid creator comparison.
 with actor as materialized (
   select
     p_user_id as uid,
@@ -65,6 +68,8 @@ with actor as materialized (
          then p_user_id::uuid end as id,
     case when coalesce(p_user_email, '') <> '' then lower(p_user_email) end as email
 ),
+-- The caller's organizations, plus the one derived fact the private-content
+-- fallback needs (can_access_org_private_content, inlined).
 membership as materialized (
   select m.org_id, m.role,
          (o.kind = 'team' and o.deleted_at is null
@@ -73,6 +78,9 @@ membership as materialized (
   join public.organizations o on o.id = m.org_id
   where m.user_id = (select id from actor)
 ),
+-- Projects worth a verdict. Each indexed lookup is a superset of one branch
+-- of project_access_role, so no reachable project is missed; the verdict
+-- below removes the rest.
 project_candidates as materialized (
   select p.id from public.projects p where p.user_id = (select uid from actor)
   union
@@ -83,6 +91,9 @@ project_candidates as materialized (
   select x.item_id from public.org_private_content_access x
     where x.user_id = (select id from actor) and x.kind = 'project'
 ),
+-- project_access_role, set-based: the same branches in the same order, one
+-- row per candidate. The coalesce is its org_private_access_role fallback
+-- (a private project the caller opened as an owner or permitted admin).
 reachable_projects as materialized (
   select p.id, p.name,
     coalesce(
@@ -115,6 +126,7 @@ reachable_projects as materialized (
   left join public.org_private_content_access x
     on x.org_id = p.org_id and x.user_id = (select id from actor) and x.kind = 'project' and x.item_id = p.id
 ),
+-- Direct chat grants and opened private chats for the caller; both tiny.
 granted_chats as materialized (
   select g.chat_id, g.role from public.chat_access_grants g where g.email = (select email from actor)
 ),
@@ -122,6 +134,9 @@ opened_chats as materialized (
   select x.org_id, x.item_id from public.org_private_content_access x
   where x.user_id = (select id from actor) and x.kind = 'chat'
 )
+-- chat_access_role, set-based, evaluated only for rows the candidate predicate
+-- admits. Branch order mirrors the function; the coalesce is its
+-- org_private_access_role fallback (an opened private standalone chat).
 select c.id, c.project_id, c.user_id::text as user_id, c.title, c.model, c.created_at, c.updated_at,
        rp.name as project_name,
        coalesce(c.user_id = (select uid from actor), false) as is_owner,
@@ -154,6 +169,9 @@ where c.archived_at is null
     or c.updated_at < p_before_updated_at
     or (c.updated_at = p_before_updated_at and c.id > p_before_id)
   )
+  -- Candidates: four indexable facts. The scalar subqueries become InitPlans,
+  -- so the planner can BitmapOr idx_chats_user, idx_chats_project and the
+  -- primary key instead of walking chats in activity order.
   and (c.user_id = (select uid from actor)
     or c.project_id = any (array(select id from reachable_projects where role is not null))
     or c.id = any (array(select chat_id from granted_chats))
