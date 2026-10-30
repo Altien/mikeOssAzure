@@ -129,10 +129,11 @@ export function createPollFailureGate(
     persisting: { suppressed: 0, lineAt: 0 },
     flapping: { suppressed: 0, lineAt: 0 },
   };
-  // Survives success(): the class last sent to Sentry and when, so a flap
-  // back into it is recognised as a repeat.
-  let lastReportedClass: string | null = null;
-  let lastReportedAt = 0;
+  // Survives success(): when each class was last sent to Sentry, so a flap
+  // back into it is a repeat even with other classes reported in between.
+  // Entries outside the window are dropped on every failure, so the map holds
+  // at most the classes seen within one window.
+  const reportedAt = new Map<string, number>();
 
   const suppress = (
     track: { suppressed: number; lineAt: number },
@@ -171,17 +172,17 @@ export function createPollFailureGate(
       currentClass = failureClass;
       quiet.persisting.suppressed = 0;
       quiet.persisting.lineAt = at;
-      const repeat =
-        failureClass === lastReportedClass &&
-        at - lastReportedAt < repeatReportIntervalMs;
-      if (repeat) {
+      for (const [reportedClass, when] of reportedAt) {
+        if (at - when >= repeatReportIntervalMs) reportedAt.delete(reportedClass);
+      }
+      const lastReport = reportedAt.get(failureClass);
+      if (lastReport !== undefined) {
         return suppress(quiet.flapping, at, delayMs, (n) =>
-          `${options.label} failing again (${failureClass}) ${seconds(at - lastReportedAt)}s after it was reported; ` +
+          `${options.label} failing again (${failureClass}) ${seconds(at - lastReport)}s after it was reported; ` +
             `${n} recurrence(s) not re-reported; next attempt in ${seconds(delayMs)}s`,
         );
       }
-      lastReportedClass = failureClass;
-      lastReportedAt = at;
+      reportedAt.set(failureClass, at);
       return { report: true, delayMs, consecutive };
     },
     success() {

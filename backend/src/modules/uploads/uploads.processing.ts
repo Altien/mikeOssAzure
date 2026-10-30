@@ -615,22 +615,24 @@ export async function processUploadJob(
 ): Promise<void> {
   setOperation("documents.upload.complete");
   markStage("claim");
+  // maybeSingle(): zero rows is a missing row, named below, not a PostgREST
+  // PGRST116 error. Database failures still arrive on the error path.
   const { data: job, error: jobError } = await db.from("upload_processing_jobs")
     .select("id, session_id, file_id, attempts, locked_by, claim_token")
-    .eq("id", jobId).eq("status", "running").eq("locked_by", workerId).single();
+    .eq("id", jobId).eq("status", "running").eq("locked_by", workerId).maybeSingle();
   if (jobError || !job || !job.claim_token)
     throw jobError ?? new AppError("upload.job_missing", "upload_job_not_found");
   const typedJob = job as UploadJobRow;
   const { data: session, error: sessionError } = await db.from("upload_sessions")
     .select("id, user_id, user_email, purpose, destination, status")
-    .eq("id", typedJob.session_id).single();
+    .eq("id", typedJob.session_id).maybeSingle();
   if (sessionError || !session) {
     throw sessionError
       ?? new AppError("upload.session_missing", "upload_session_not_found");
   }
   const typedSession = session as UploadSessionRow;
   const { data: file, error: fileError } = await db.from("upload_session_files")
-    .select("*").eq("id", typedJob.file_id).eq("session_id", typedSession.id).single();
+    .select("*").eq("id", typedJob.file_id).eq("session_id", typedSession.id).maybeSingle();
   if (fileError || !file) {
     throw fileError
       ?? new AppError("upload.file_missing", "upload_session_file_not_found");

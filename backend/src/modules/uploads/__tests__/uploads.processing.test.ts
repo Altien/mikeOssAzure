@@ -642,6 +642,50 @@ describe("upload processing", () => {
     });
   });
 
+  it("names a job, session or file row that is no longer there (MIKE-BACKEND-M)", async () => {
+    const job = {
+      id: "job-1",
+      session_id: baseSession.id,
+      file_id: baseFile.id,
+      attempts: 1,
+      locked_by: "worker-1",
+    };
+    const cases: Array<{ results: QueryResult[]; kind: string; message: string }> = [
+      { results: [{ data: null, error: null }], kind: "upload.job_missing", message: "upload_job_not_found" },
+      {
+        results: [{ data: job, error: null }, { data: null, error: null }],
+        kind: "upload.session_missing",
+        message: "upload_session_not_found",
+      },
+      {
+        results: [{ data: job, error: null }, { data: baseSession, error: null }, { data: null, error: null }],
+        kind: "upload.file_missing",
+        message: "upload_session_file_not_found",
+      },
+    ];
+    for (const { results, kind, message } of cases) {
+      const db = scriptedDb(results);
+      const thrown = await processUploadJob(db as never, "job-1", "worker-1").then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(thrown).toBeInstanceOf(Error);
+      expect((thrown as Error).message).toBe(message);
+      expect(diagnosticErrorTags(thrown).error_kind).toBe(kind);
+    }
+    expect(mocks.createFileReadStream).not.toHaveBeenCalled();
+  });
+
+  it("keeps a database failure on the lookup as the failure, with its code", async () => {
+    const db = scriptedDb([{ data: null, error: { code: "57014", message: "canceling statement" } }]);
+    const thrown = await processUploadJob(db as never, "job-1", "worker-1").then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(diagnosticErrorTags(thrown).failure_code).toBe("57014");
+    expect(diagnosticErrorTags(thrown).error_kind).toBeUndefined();
+  });
+
   it("stops before processing when the database lease has been lost", async () => {
     const db = scriptedDb([
       {

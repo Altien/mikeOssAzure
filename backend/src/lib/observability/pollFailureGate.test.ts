@@ -136,6 +136,26 @@ describe("createPollFailureGate", () => {
     expect(g.failure(coded("40P01")).report).toBe(true);
   });
 
+  it("remembers the report time of every class, not only the last one", () => {
+    const now = { t: 0 };
+    const { g } = gate(now, 60_000, 15 * 60_000);
+    expect(g.failure(coded("40P01")).report).toBe(true);
+    now.t += 60_000;
+    g.success();
+    expect(g.failure(coded("ECONNREFUSED")).report).toBe(true);
+    // A, then B, then A again inside the window: A is still a repeat.
+    now.t += 60_000;
+    g.success();
+    expect(g.failure(coded("40P01")).report).toBe(false);
+    // B's own window is measured from B's report (t = 60 s), not from A's.
+    now.t = 60_000 + 14 * 60_000;
+    g.success();
+    expect(g.failure(coded("ECONNREFUSED")).report).toBe(false);
+    now.t = 60_000 + 15 * 60_000;
+    g.success();
+    expect(g.failure(coded("ECONNREFUSED")).report).toBe(true);
+  });
+
   it("gates ticks until the backed-off retry time", () => {
     const now = { t: 0 };
     const { g } = gate(now);
