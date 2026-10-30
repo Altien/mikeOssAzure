@@ -413,6 +413,10 @@ export function useWordAssistantChat({
         });
         if (!requestIsCurrent()) return;
 
+        // Upstream divergence (sync-log: 01bb3ad4): upstream feeds each chunk
+        // to an append-only <EDITS> projector for processLiveRedlines. Dev
+        // never routes prose into the legacy <EDITS> mutation path (see the
+        // client_tools note below), so no projector is kept here.
         let streamedContent = "";
         let assistantCitations: SavedMessage["citations"];
         // Canonical rows for this turn's tool-proposed edits. A live turn

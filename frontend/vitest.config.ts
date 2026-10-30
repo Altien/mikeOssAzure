@@ -31,11 +31,15 @@ export default defineConfig({
         alias: [
             { find: "@mike/model-catalog", replacement: fileURLToPath(new URL("./src/shared/lib/modelCatalog.ts", import.meta.url)) },
             { find: /^react$/, replacement: fileURLToPath(new URL("./node_modules/react/index.js", import.meta.url)) },
+            // JSX compilation adds these imports even when source imports only
+            // React. Resolve both runtimes beside the same frontend React copy.
+            { find: /^react\/(jsx-runtime|jsx-dev-runtime)$/, replacement: fileURLToPath(new URL("./node_modules/react/$1.js", import.meta.url)) },
             { find: /^@sentry\/react$/, replacement: fileURLToPath(new URL("./node_modules/@sentry/react/build/esm/index.js", import.meta.url)) },
             { find: /^@sentry\/nextjs$/, replacement: fileURLToPath(new URL("./node_modules/@sentry/react/build/esm/index.js", import.meta.url)) },
             { find: "@mike/sentry-event", replacement: fileURLToPath(new URL("./src/shared/lib/sentryEvent.ts", import.meta.url)) },
             { find: "@mike/user-error", replacement: fileURLToPath(new URL("./src/shared/lib/userError.ts", import.meta.url)) },
             { find: "@mike/error-notifier", replacement: fileURLToPath(new URL("./src/shared/lib/errorNotifier.ts", import.meta.url)) },
+            { find: "@mike/response-selection-menu-ui", replacement: fileURLToPath(new URL("./src/shared/ui/ResponseSelectionMenuUI.tsx", import.meta.url)) },
             { find: "@mike/toast-store", replacement: fileURLToPath(new URL("./src/shared/lib/toastStore.ts", import.meta.url)) },
             { find: "@mike/toast-ui", replacement: fileURLToPath(new URL("./src/shared/ui/ToastUI.tsx", import.meta.url)) },
             { find: "@mike/secure-uuid", replacement: fileURLToPath(new URL("./src/shared/lib/secureUuid.ts", import.meta.url)) },
