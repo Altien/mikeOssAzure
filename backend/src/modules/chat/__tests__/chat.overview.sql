@@ -34,6 +34,8 @@ declare
   team uuid := gen_random_uuid();      -- caller owns it
   firm uuid := gen_random_uuid();      -- caller is a plain member
   dead uuid := gen_random_uuid();      -- soft-deleted below
+  other uuid := gen_random_uuid();     -- caller is not a member
+  other_project uuid := gen_random_uuid();
   owned_project uuid := gen_random_uuid();
   shared_project uuid := gen_random_uuid();
   team_project uuid := gen_random_uuid();
@@ -68,13 +70,15 @@ begin
   insert into organizations(id,name,created_by,kind) values
     (team,'Synthetic team',caller,'team'),
     (firm,'Synthetic firm',colleague,'team'),
-    (dead,'Deleted firm',caller,'team');
+    (dead,'Deleted firm',caller,'team'),
+    (other,'Unrelated firm',outsider,'team');
   insert into org_members(org_id,user_id,role,can_access_private_content) values
     (team,caller,'owner',false),(team,colleague,'member',false),
     (team,auditor,'admin',true),(team,clerk,'admin',false),
     (firm,colleague,'owner',false),(firm,caller,'member',false),
-    (dead,caller,'owner',false);
-  insert into workspaces values ('all',null),('personal','personal'),('team',team::text),('firm',firm::text);
+    (dead,caller,'owner',false),
+    (other,outsider,'owner',false);
+  insert into workspaces values ('all',null),('personal','personal'),('team',team::text),('firm',firm::text),('other',other::text);
 
   -- Accounts get a personal organization on creation; make sure both exist.
   select id into caller_personal from organizations where personal_user_id=caller;
@@ -101,7 +105,8 @@ begin
     (firm_public,colleague,firm,'Firm public','organization'),
     (firm_denied,colleague,firm,'Firm denied','organization'),
     (firm_private_viewer,colleague,firm,'Firm private, shared','private'),
-    (firm_private,colleague,firm,'Firm private','private');
+    (firm_private,colleague,firm,'Firm private','private'),
+    (other_project,outsider,other,'Unrelated matter','organization');
   update projects set archived_at=now() where id=archived_project;
   insert into project_access_grants(project_id,email,role,created_by)
     values(shared_project,caller||'@example.test','viewer',outsider);
@@ -161,7 +166,41 @@ begin
   insert into chat_access_grants(chat_id,email,role,created_by)
     values(item,caller||'@example.test','editor',colleague);
 
+  -- Across organizations. A project chat cannot carry another organization
+  -- than its project's: chats_sync_project_org restamps it on insert and
+  -- update, so project access and the workspace filter always read the same
+  -- organization. Documented here with deliberately wrong stamps.
+  insert into chats(user_id,project_id,org_id,title)
+    values(colleague,team_project,firm,'Team project, stamped with the firm') returning id into item;
+  insert into chat_cases values(item,'cross-org-project'); insert into expected_visible values('cross-org-project','owner');
+  perform pg_temp.assert_true((select org_id=team from chats where id=item),'a project chat is restamped with its project''s organization');
+  insert into chats(user_id,project_id,org_id,title)
+    values(caller,owned_project,team,'Personal project, stamped with the team') returning id into item;
+  insert into chat_cases values(item,'personal-project-team-stamp'); insert into expected_visible values('personal-project-team-stamp','owner');
+  perform pg_temp.assert_true((select org_id is null from chats where id=item),'a personal project''s chat is restamped as personal');
+  insert into chats(user_id,project_id,org_id,title)
+    values(colleague,team_project,dead,'Team project, stamped with the deleted firm') returning id into item;
+  insert into chat_cases values(item,'deleted-org-stamp'); insert into expected_visible values('deleted-org-stamp','owner');
+  perform pg_temp.assert_true((select org_id=team from chats where id=item),'a dead organization''s stamp cannot stick to a live project''s chat');
+
   -- Hidden from the caller.
+  insert into chats(user_id,project_id,org_id,title)
+    values(caller,other_project,other,'Own chat in a foreign organization project') returning id into item;
+  insert into chat_cases values(item,'creator-foreign-project-hidden');
+  insert into chats(user_id,org_id,title)
+    values(outsider,other,'Foreign team chat, shared by email') returning id into item;
+  insert into chat_cases values(item,'foreign-team-grant-hidden');
+  insert into chat_access_grants(chat_id,email,role,created_by)
+    values(item,caller||'@example.test','editor',outsider);
+  -- (A direct grant on an organization project is rejected by
+  -- validate_direct_access_scope, so that cross-organization path cannot exist.)
+  insert into chats(user_id,project_id,org_id,title)
+    values(outsider,other_project,other,'Foreign organization project') returning id into item;
+  insert into chat_cases values(item,'foreign-project-hidden');
+  insert into chats(user_id,org_id,title)
+    values(colleague,team,'Private, opened under the wrong organization') returning id into item;
+  insert into chat_cases values(item,'opened-wrong-org-hidden');
+  insert into org_private_content_access(org_id,user_id,kind,item_id) values(firm,caller,'chat',item);
   insert into chats(user_id,org_id,title)
     values(colleague,team,'Private unopened') returning id into item;
   insert into chat_cases values(item,'private-hidden');
@@ -202,24 +241,32 @@ select a.label as actor, c.id, c.updated_at, c.org_id, p.name as project_name,
 from chats c left join projects p on p.id=c.project_id cross join actors a;
 
 do $$
+declare mismatches text;
 begin
   -- The oracle itself must say what this file documents, so a change to the
   -- ladder shows up here as a changed expectation, not a silently moved target.
-  perform pg_temp.assert_true(not exists (
-    select 1 from chat_cases k
+  select string_agg(format('%s: verdict %s, documented %s',k.label,coalesce(e.access_role,'hidden'),coalesce(v.role,'hidden')),'; ' order by k.label)
+    into mismatches
+    from chat_cases k
     left join expected_chats e on e.id=k.id and e.actor='caller'
-    full join expected_visible v on v.label=k.label
-    where k.label not in ('more-owned')
-      and (e.access_role is distinct from v.role)
-  ), 'chat_access_role grants the caller exactly the documented cases and roles');
-  perform pg_temp.assert_true((select count(*)=213 from expected_chats where actor='caller' and access_role is not null),
-    'fixture: 13 single cases plus 200 owned chats are visible to the caller');
+    left join expected_visible v on v.label=k.label
+    where k.label not in ('more-owned') and e.access_role is distinct from v.role;
+  perform pg_temp.assert_true(mismatches is null,
+    'chat_access_role grants the caller exactly the documented cases and roles: '||coalesce(mismatches,''));
+  perform pg_temp.assert_true((select count(*)=216 from expected_chats where actor='caller' and access_role is not null),
+    'fixture: 16 single cases plus 200 owned chats are visible to the caller');
   perform pg_temp.assert_true((select count(*)=1 from expected_chats e join chat_cases k on k.id=e.id
     where e.actor='auditor' and k.label='audited' and e.access_role='viewer'),
     'an admin allowed to open private content sees the chat they opened');
   perform pg_temp.assert_true((select count(*)=0 from expected_chats e join chat_cases k on k.id=e.id
     where e.actor='clerk' and k.label in ('audited','private-hidden') and e.access_role is not null),
     'an admin without that permission sees neither private chat');
+  perform pg_temp.assert_true((select count(*)=0 from expected_chats e join chat_cases k on k.id=e.id
+    where e.actor='outsider' and k.label in ('team-direct','firm-public','cross-org-project') and e.access_role is not null),
+    'sharing never reaches outside the organization');
+  perform pg_temp.assert_true((select count(*)=2 from expected_chats e join chat_cases k on k.id=e.id
+    where e.actor='outsider' and k.label in ('creator-foreign-project-hidden','foreign-project-hidden') and e.access_role='owner'),
+    'the foreign organization owner sees the chats in their own project');
 end;
 $$;
 
