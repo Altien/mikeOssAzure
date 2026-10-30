@@ -1,4 +1,5 @@
 import { findDocumentsOutsideWorkspace } from "../../../../lib/documentWorkspace";
+import { loadVersionTextState, cachedTextForModel } from "../../../../lib/documentTextCache";
 import {
   applyTrackedEditsToDocument,
   createDocumentVersion,
@@ -1138,7 +1139,7 @@ export async function getTurnReadIdentity(params: {
     if (active?.storage_path) {
       return {
         // A reused version keeps its id but moves to a new file.
-        key: `${documentId}:${active.id}:${active.storage_path}`,
+        key: `${documentId}:${active.id}:${active.storage_path}:${active.text_revision ?? ""}`,
         docLabel,
         filename: docInfo.filename,
         documentId,
@@ -1195,6 +1196,9 @@ export function clearTurnReadsForDocument(
   }
 }
 
+// Lifetime is one turn's DocStore; retain only the latest read per label.
+const turnDocumentTexts = new WeakMap<DocStore, Map<string, { key: string; text: string }>>();
+
 export async function readDocumentContent(
   docLabel: string,
   docStore: DocStore,
@@ -1224,9 +1228,7 @@ export async function readDocumentContent(
   const documentId = docIndex?.[docLabel]?.document_id;
   const readIdentity =
     opts?.readIdentity ??
-    (emitEvents
-      ? await getTurnReadIdentity({ docLabel, docStore, docIndex, db })
-      : null);
+    await getTurnReadIdentity({ docLabel, docStore, docIndex, db });
   const versionId =
     readIdentity?.versionId ?? docIndex?.[docLabel]?.version_id ?? null;
   const versionNumber =
@@ -1295,6 +1297,27 @@ export async function readDocumentContent(
         ? `[${stored.textless_page_count} page(s) have no text layer and need OCR. Search coverage is incomplete.]\n\n`
         : "";
       return notice + (stored.text ?? "");
+    }
+
+    const cached = turnDocumentTexts.get(docStore)?.get(docLabel);
+    if (readIdentity && cached?.key === readIdentity.key) {
+      emitDocRead();
+      return cached.text;
+    }
+    const remember = (text: string) => {
+      if (readIdentity) {
+        const texts = turnDocumentTexts.get(docStore) ?? new Map();
+        texts.set(docLabel, { key: readIdentity.key, text });
+        turnDocumentTexts.set(docStore, texts);
+      }
+      return text;
+    };
+    if (db && documentId && versionId) {
+      const stored = await loadVersionTextState(db, documentId, versionId, readIdentity?.storagePath);
+      if (stored?.text !== null && stored?.text !== undefined) {
+        emitDocRead();
+        return remember(cachedTextForModel(stored));
+      }
     }
 
     return await withExtractionRequest(async (extract) => {
@@ -1426,7 +1449,7 @@ export async function readDocumentContent(
         `[read_document] DONE filename="${docInfo.filename}" finalTextLength=${text.length} firstChars=${JSON.stringify(text.slice(0, 120))}`,
       );
       emitDocRead();
-      return text;
+      return remember(text);
     });
   } catch (err) {
     devLog(
