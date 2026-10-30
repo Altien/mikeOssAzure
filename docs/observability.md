@@ -67,6 +67,43 @@ because the warning object has already been captured through the backend's
 request-scoped Sentry reporter. Operators can silence Node warning reports
 with --no-warnings or NODE_NO_WARNINGS=1.
 
+### Release identity, source maps and the tunnel
+
+Every runtime tags events with `mike@<version>+<sha12>` (upstream #747,
+MIK-62): `/VERSION` is the product version, passed to the image builds as
+`MIKE_VERSION`, with the commit as `GIT_SHA`. `SENTRY_RELEASE` overrides it.
+A build without them is `mike@0.0.0…` and the backend warns in production.
+The backend computes the release from its image environment and `GET /config`
+returns it as `sentryRelease`, so the bundled web app reports the same
+release. The Word add-in is a separate image, so it bakes
+`REACT_APP_MIKE_VERSION`/`REACT_APP_GIT_SHA` at build. The release is build
+identity, not tenant data, and the DSNs remain runtime-only. `VERSION` records
+the upstream Mike product version this code tracks. Marketplace numbering
+stays in `VERSIONS.md`.
+
+Source maps are uploaded only when `deploy.ps1` or
+`scripts/release-images.sh` is given `SENTRY_ORG`, the projects and a token.
+The token is read from Key Vault first (`sentry-auth-token` in the vault named
+by `KEY_VAULT_NAME`, or the secret named by `SENTRY_AUTH_TOKEN_SECRET_NAME`),
+with `SENTRY_AUTH_TOKEN` as the fallback. `az acr build` has no BuildKit secret
+mounts, so the scripts pass the token with `--secret-build-arg`. It is used only
+in the build stages: the Word plugin and the web `scripts/upload-sourcemaps.mjs`
+upload the maps and then delete them, so no map ships in either image.
+
+The web app's browser SDK posts envelopes to the backend tunnel
+`POST /api/monitoring`, not to Sentry directly. Upstream uses a Next
+`/monitoring` route handler, which the static export cannot host. The tunnel
+answers 204 when `SENTRY_DISABLED=true` or no web DSN is configured. Otherwise
+it rewrites the envelope header to the runtime web DSN (`sentry-frontend-dsn`,
+then `SENTRY_FRONTEND_DSN`), applies `SENTRY_ENVIRONMENT`/`SENTRY_INSTALL` to
+event items, and forwards it, refusing envelopes over 1 MiB. The destination
+never comes from the request. `GET /api/monitoring` returns the rule that
+applied (`disabled`, `runtime` or `none`), never the DSN.
+
+Not carried from #747: the GHCR `publish-images` workflow, compose image
+anchors and image-based db-init. Dev releases through its ACR/marketplace
+pipeline.
+
 
 ### Operation and cause identity (46dc4b5c)
 

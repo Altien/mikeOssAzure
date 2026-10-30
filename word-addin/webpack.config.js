@@ -1,5 +1,9 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 const path = require("path");
+// Release identity shared with the web app and its Next build config.
+const { releaseName } = require(
+  path.resolve(__dirname, "..", "frontend", "src", "shared", "lib", "releaseName.cjs"),
+);
 const fs = require("fs");
 const HtmlWebpackPlugin = require("html-webpack-plugin");
 const webpack = require("webpack");
@@ -126,11 +130,49 @@ module.exports = async (_env, options) => {
     ];
   }
 
+  // Optional source-map upload so Sentry shows readable stack traces for
+  // the minified production bundle. Only when the three upload settings are
+  // present: maps are generated as hidden (no sourceMappingURL comment),
+  // sent to Sentry, then deleted so they never ship in dist/.
+  const sentryUploadConfigured =
+    !isDev &&
+    !!process.env.SENTRY_AUTH_TOKEN &&
+    !!process.env.SENTRY_ORG &&
+    !!process.env.SENTRY_PROJECT;
+  const sentryPlugins = sentryUploadConfigured
+    ? [
+        require("@sentry/webpack-plugin").sentryWebpackPlugin({
+          org: process.env.SENTRY_ORG,
+          project: process.env.SENTRY_PROJECT,
+          authToken: process.env.SENTRY_AUTH_TOKEN,
+          // The same string the pane tags events with (errorReporting.ts),
+          // from the same build arguments, so the maps land on that release.
+          // Dev's pane reads no REACT_APP_SENTRY_RELEASE override, so neither
+          // does the upload (sync-log: 3bcac35a).
+          release: {
+            name: releaseName(
+              undefined,
+              process.env.REACT_APP_MIKE_VERSION,
+              process.env.REACT_APP_GIT_SHA,
+            ),
+          },
+          telemetry: false,
+          sourcemaps: {
+            filesToDeleteAfterUpload: ["dist/**/*.map"],
+          },
+        }),
+      ]
+    : [];
+
   /** @type {import('webpack').Configuration} */
   const config = {
     // Keep readable stack traces locally without publishing application source
     // and embedded source content in production artifacts.
-    devtool: isDev ? "source-map" : false,
+    devtool: isDev
+      ? "source-map"
+      : sentryUploadConfigured
+        ? "hidden-source-map"
+        : false,
     entry: {
       taskpane: "./src/taskpane/index.tsx",
       commands: "./src/commands/commands.ts",
@@ -146,8 +188,9 @@ module.exports = async (_env, options) => {
       extensions: [".ts", ".tsx", ".js", ".jsx"],
       // Upstream divergence (sync-log: 54b6b3a1): upstream searches the
       // nearest node_modules first so its npm-hoisted Sentry build plugin and
-      // runtime SDK can use different versions. Dev has no Sentry webpack
-      // plugin, and pnpm keeps each package's own deps nested, so the add-in's
+      // runtime SDK can use different versions. Dev's build plugin (adopted
+      // with 3bcac35a) is required from the add-in's own pnpm install, which
+      // keeps each package's deps nested, so the add-in's
       // node_modules stays first: shared frontend sources then bundle the
       // add-in's single copy of clsx, Radix, Sentry, etc.
       modules: [path.resolve(__dirname, "node_modules"), "node_modules"],
@@ -287,7 +330,13 @@ module.exports = async (_env, options) => {
         REACT_APP_WEB_APP_URL: isDev
           ? process.env.REACT_APP_WEB_APP_URL || "http://localhost:3000"
           : "",
+        // Release identity (sync-log: 3bcac35a). The DSN stays runtime
+        // (/config); only the build's version and commit are baked, so the
+        // pane tags events with the release its maps were uploaded under.
+        REACT_APP_GIT_SHA: process.env.REACT_APP_GIT_SHA || "",
+        REACT_APP_MIKE_VERSION: process.env.REACT_APP_MIKE_VERSION || "",
       }),
+      ...sentryPlugins,
     ],
     devServer: devServerConfig,
   };

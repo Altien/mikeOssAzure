@@ -36,16 +36,16 @@ vi.mock("@sentry/react", () => ({
 
 import * as Sentry from "@sentry/react";
 import {
+    API_UNREACHABLE_WINDOW_MS,
     browserSentryOptions,
     isReported,
+    markErrorHandled,
     reportApiFailure,
     reportError,
-    scrubEvent,
-    setReportingUser,
-    API_UNREACHABLE_WINDOW_MS,
-    markErrorHandled,
     reportNetworkFailure,
     resetApiUnreachableWindow,
+    scrubEvent,
+    setReportingUser,
     trackPendingRequest,
 } from "./errorReporting";
 import { diagnosticEvent } from "@/shared/lib/sentryPrivacy";
@@ -271,7 +271,7 @@ describe("browserSentryOptions", () => {
         expect(options.enabled).toBe(false);
         expect(options.dsn).toBeUndefined();
         expect(options.environment).toBe("self-hosted");
-        expect(options.release).toBeUndefined();
+        expect(options.release).toBe("mike@0.0.0");
         expect(options.dataCollection).toEqual({
             userInfo: false,
             cookies: false,
@@ -288,17 +288,21 @@ describe("browserSentryOptions", () => {
         expect(options.tracesSampleRate).toBe(0);
         expect(options.beforeSend).toBe(scrubEvent);
         expect(options).not.toHaveProperty("replaysOnErrorSampleRate");
+        // Every envelope goes through the backend tunnel, which applies the
+        // deployment's runtime opt-out and DSN (Dev: POST /api/monitoring).
+        expect(options.tunnel).toBe("/api/monitoring");
     });
 
-    it("reads the DSN, environment, release, and sample rate", () => {
+    it("reads the environment, release, and sample rate while leaving the destination to the tunnel", () => {
+        const dsn = "https://k@o1.ingest.sentry.io/2";
         const options = browserSentryOptions({
-            dsn: " https://k@o1.ingest.sentry.io/2 ",
+            dsn,
             environment: "staging",
             release: "mike@1.0.0",
             tracesSampleRate: "0.25",
         });
         expect(options.enabled).toBe(true);
-        expect(options.dsn).toBe("https://k@o1.ingest.sentry.io/2");
+        expect(options.dsn).toBe(dsn);
         expect(options.environment).toBe("staging");
         expect(options.release).toBe("mike@1.0.0");
         expect(options.tracesSampleRate).toBe(0.25);
@@ -331,10 +335,36 @@ describe("browserSentryOptions", () => {
 });
 
 describe("release tagging", () => {
-    it("uses the browser git sha", () => {
-        expect(browserSentryOptions({ dsn: "https://k@o.ingest.sentry.io/1", gitSha: "abcdef1234567890" }).release).toBe("mike@abcdef123456");
+    it("builds mike@<version>+<sha12> for the browser options", () => {
+        expect(
+            browserSentryOptions({
+                version: "2.1.0",
+                gitSha: "abcdef1234567890",
+            }).release,
+        ).toBe("mike@2.1.0+abcdef123456");
+        expect(
+            browserSentryOptions({ gitSha: "abcdef1234567890" }).release,
+        ).toBe("mike@0.0.0+abcdef123456");
+        // Dev: the runtime /config release (the backend's) is passed explicitly.
+        expect(
+            browserSentryOptions({ release: "mike@2.1.0+0123456789ab", gitSha: "ffff" }).release,
+        ).toBe("mike@2.1.0+0123456789ab");
     });
 });
+
+// Upstream divergence (sync-log: 3bcac35a): Dev's browser SDK posts to the
+// backend tunnel; upstream's Next-server reportingDestination/serverSentryOptions
+// tests moved to backend/src/lib/observability/sentryTunnel.test.ts.
+describe("browser tunnel", () => {
+    it("posts envelopes through the backend tunnel, prefixed with the API base", () => {
+        const dsn = "https://k@o1.ingest.sentry.io/2";
+        expect(browserSentryOptions({ dsn }).tunnel).toBe("/api/monitoring");
+        expect(browserSentryOptions({ dsn, apiBase: "https://api.example" }).tunnel).toBe(
+            "https://api.example/api/monitoring",
+        );
+    });
+});
+
 
 describe("reportNetworkFailure", () => {
     it("is a no-op without a DSN but still marks the error for the console bridge", () => {

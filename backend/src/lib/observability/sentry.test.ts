@@ -63,6 +63,7 @@ import {
   redactText,
   redactUrl,
   isSentryEnabled,
+  releaseName,
   reportError,
   reportMessage,
   resetSentryForTests,
@@ -100,7 +101,8 @@ describe("sentryConfiguration", () => {
     // "production" is not ours.
     expect(config.environment).toBe("self-hosted");
     expect(config.tracesSampleRate).toBe(0);
-    expect(config.release).toBeUndefined();
+    // No MIKE_VERSION or GIT_SHA: a visibly unversioned build, never undefined.
+    expect(config.release).toBe("mike@0.0.0");
   });
 
   it("is off with SENTRY_DISABLED=true, whatever else is set", () => {
@@ -137,6 +139,17 @@ describe("sentryConfiguration", () => {
     expect(config.tracesSampleRate).toBe(1);
   });
 
+  // Upstream divergence (sync-log: 3bcac35a): upstream's baked image defaults
+  // (MIKE_BUILD_SENTRY_DSN/DISABLED) are not carried; the DSN stays runtime-only.
+  it("ignores baked image reporting defaults", () => {
+    const config = sentryConfiguration({
+      MIKE_BUILD_SENTRY_DSN: "https://fork@self.example/9",
+    } as NodeJS.ProcessEnv);
+    expect(config.dsn).toBe(MIKE_SENTRY_DSN.backend);
+    expect(config.dsnSource).toBe("default");
+    expect(config.enabled).toBe(false);
+  });
+
   it("never enables inside a test process unless explicitly allowed", () => {
     const dsn = "https://key@o1.ingest.sentry.io/1";
     expect(
@@ -168,11 +181,22 @@ describe("sentryConfiguration", () => {
     ).toBe(10);
   });
 
-  it("derives the release from GIT_SHA when SENTRY_RELEASE is unset", () => {
+  it("derives mike@<version>+<sha12> from the build args when SENTRY_RELEASE is unset", () => {
+    expect(
+      sentryConfiguration({
+        ...quietEnv,
+        MIKE_VERSION: "2.1.0",
+        GIT_SHA: "0123456789abcdef0123",
+      } as NodeJS.ProcessEnv).release,
+    ).toBe("mike@2.1.0+0123456789ab");
     expect(
       sentryConfiguration({ ...quietEnv, GIT_SHA: "0123456789abcdef0123" } as NodeJS.ProcessEnv)
         .release,
-    ).toBe("mike@0123456789ab");
+    ).toBe("mike@0.0.0+0123456789ab");
+    expect(releaseName(undefined, "v2.1.0-dev.4", "0123456789abcdef0123")).toBe(
+      "mike@2.1.0-dev.4+0123456789ab",
+    );
+    expect(releaseName(undefined, "2.1.0+meta", undefined)).toBe("mike@0.0.0");
     expect(
       sentryConfiguration({
         ...quietEnv,
@@ -832,17 +856,21 @@ describe("operation and stage trail", () => {
     expect(sentryMock.addBreadcrumb).not.toHaveBeenCalled();
   });
 
-  it("announces the release at boot and warns when a production build has none", () => {
+  it("announces the release at boot and warns when a production build is unversioned", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    initSentry("api", { ...dsnEnv, GIT_SHA: "0123456789abcdef0123" } as NodeJS.ProcessEnv);
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("release mike@0123456789ab"));
+    // Dev drift: no hosted fallback DSN, so the explicit DSN stays set.
+    initSentry("api", {
+      ...dsnEnv,
+      MIKE_VERSION: "2.1.0",
+      GIT_SHA: "0123456789abcdef0123",
+    } as NodeJS.ProcessEnv);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("release mike@2.1.0+0123456789ab"));
     expect(warn).not.toHaveBeenCalled();
     resetSentryForTests();
     initSentry("api", { ...dsnEnv, NODE_ENV: "production" } as NodeJS.ProcessEnv);
-    // Dev drift: no hosted fallback DSN; boot logging uses explicit destination.
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("[sentry] enabled for api"));
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("no release"));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("release mike@0.0.0"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("unversioned release"));
   });
 });
 

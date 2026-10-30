@@ -34,4 +34,9 @@ const nextConfig: NextConfig = {
     skipTrailingSlashRedirect: true,
 };
 
+// Upstream divergence (sync-log: 3bcac35a): upstream wraps this config in
+// @sentry/nextjs `withSentryConfig` for release naming and map upload, and its
+// browser SDK tunnels through a Next `/monitoring` route handler. Dev's static
+// export has neither @sentry/nextjs nor route handlers: the tunnel is the
+// backend's POST /api/monitoring, and maps are uploaded after the export.
 export default nextConfig;

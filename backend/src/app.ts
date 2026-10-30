@@ -38,6 +38,7 @@ import {
 import { installRouter } from "./modules/platform/install.routes";
 import { configRouter } from "./modules/platform/config.routes";
 import { diagRouter } from "./modules/platform/diag.routes";
+import { monitoringRouter } from "./modules/platform/monitoring.routes";
 import {
   projectMemoryRouter,
   userMemoryRouter,
@@ -264,6 +265,9 @@ export function buildApp(): express.Express {
   // Parse this return channel before the general 50 MB parser. Its full
   // /api path also gives it a separate limiter budget under static hosting.
   app.post(TOOL_RESULT_PATH, toolResultLimiter, express.json({ limit: "2mb" }));
+  // Browser Sentry tunnel (sync-log: 3bcac35a) reads its own bounded raw
+  // envelope stream, so it mounts before any body parser.
+  app.use("/api/monitoring", monitoringRouter);
   // The filesystem capability upload consumes a bounded stream before JSON parsing.
   app.put("/api/download/signed/:token", blobUploadLimiter, blobUploadHandler);
   const jsonParser = express.json({ limit: JSON_BODY_LIMIT });

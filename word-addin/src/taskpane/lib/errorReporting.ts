@@ -55,6 +55,7 @@ export function addinSentryOptions(
     install?: string;
     environment?: string;
     release?: string;
+    version?: string;
     gitSha?: string;
     tracesSampleRate?: string;
     nodeEnv?: string;
@@ -83,7 +84,7 @@ export function addinSentryOptions(
     dsn: dsn || undefined,
     enabled: dsn.length > 0,
     environment: env.environment?.trim() || "self-hosted",
-    release: releaseName(env.release, env.gitSha),
+    release: releaseName(env.release, env.version, env.gitSha),
     tracesSampleRate: parseSampleRate(env.tracesSampleRate, 0),
     // No session replay: the pane sits next to a privileged document.
     dataCollection,
@@ -106,6 +107,10 @@ export function addinSentryOptions(
 export function initAddinErrorReporting(surface: AddinSurface, runtimeDsn = ""): boolean {
   const options = addinSentryOptions(surface, {
     dsn: runtimeDsn,
+    // The bundle's own release identity, the one its source maps were
+    // uploaded under (webpack.config.js, sync-log: 3bcac35a).
+    version: process.env.REACT_APP_MIKE_VERSION,
+    gitSha: process.env.REACT_APP_GIT_SHA,
     nodeEnv: process.env.NODE_ENV,
   });
   if (!options.enabled) return false;

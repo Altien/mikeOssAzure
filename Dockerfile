@@ -101,5 +101,14 @@ COPY docs/help ./docs/help
 # (see GET /install/scripts/:name). Companion docs live alongside.
 COPY scripts/install ./scripts/install
 
+# Release identity (upstream 3bcac35a, relocated from its backend/Dockerfile):
+# the product version (/VERSION) and the commit this image was built from.
+# Sentry tags backend events, and /config hands the bundled web app,
+# mike@<version>+<sha12> unless SENTRY_RELEASE is set; a build without them
+# is mike@0.0.0. deploy.ps1 and scripts/release-images.sh pass both.
+ARG MIKE_VERSION=
+ARG GIT_SHA=
+ENV MIKE_VERSION=$MIKE_VERSION GIT_SHA=$GIT_SHA
+
 EXPOSE 8080
 CMD ["node", "dist/index.js"]

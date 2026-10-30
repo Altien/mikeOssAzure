@@ -8,7 +8,6 @@
 import * as Sentry from "@sentry/react";
 import { privacyBoundaryIntegration, type Operation } from "@/shared/lib/sentryPrivacy";
 import {
-    MIKE_SENTRY_DSN,
     createEventScrubber,
     normalizeApiPath,
     parseSampleRate,
@@ -17,6 +16,13 @@ import {
 } from "@/shared/lib/sentryEvent";
 
 export type ReportLevel = "fatal" | "error" | "warning";
+
+/**
+ * Where the browser SDK posts envelopes. Upstream serves `/monitoring` from a
+ * Next route handler; Dev's static export has none, so the backend serves it
+ * (backend/src/modules/platform/monitoring.routes.ts, sync-log: 3bcac35a).
+ */
+export const SENTRY_TUNNEL_PATH = "/api/monitoring";
 
 export type ReportContext = {
     tags?: Record<string, string | number | boolean | null | undefined>;
@@ -302,20 +308,28 @@ export function setReportingUser(user: { id: string } | null): void {
 }
 
 /**
- * Browser SDK options. Deployment values arrive through runtime /config;
- * the shared image always keeps the community privacy boundary.
+ * Browser SDK options. Deployment values (DSN, release) arrive through
+ * runtime /config; the shared image always keeps the community privacy
+ * boundary. Envelopes travel through the backend tunnel, which re-applies the
+ * deployment's opt-out and DSN before forwarding.
  */
 export function browserSentryOptions(env: {
     disabled?: string;
     dsn?: string;
+    /** Origin prefix of the backend (NEXT_PUBLIC_API_BASE_URL); "" = same origin. */
+    apiBase?: string;
     install?: string;
     environment?: string;
     release?: string;
+    version?: string;
     gitSha?: string;
     tracesSampleRate?: string;
     nodeEnv?: string;
 }): Sentry.BrowserOptions {
     // Runtime /config supplies this deployment's DSN; an empty value is off.
+    // Upstream divergence (sync-log: 3bcac35a): upstream always initializes
+    // with a placeholder DSN because its bundle is baked at build time. Dev's
+    // DSN is already runtime (/config), so an empty one still means "off".
     const { dsn } = resolveDsn({
         disabled: env.disabled,
         dsn: env.dsn,
@@ -325,7 +339,11 @@ export function browserSentryOptions(env: {
         dsn: dsn || undefined,
         enabled: dsn.length > 0,
         environment: env.environment?.trim() || "self-hosted",
-        release: releaseName(env.release, env.gitSha),
+        release: releaseName(env.release, env.version, env.gitSha),
+        // Every browser envelope goes through the backend tunnel
+        // (POST /api/monitoring), which applies the deployment's runtime
+        // opt-out and DSN before forwarding; the server decides where it goes.
+        tunnel: `${env.apiBase ?? ""}${SENTRY_TUNNEL_PATH}`,
         tracesSampleRate: parseSampleRate(env.tracesSampleRate, 0),
         // Session replay is deliberately NOT enabled: it would record
         // privileged document text on screen.
@@ -357,8 +375,21 @@ export function browserSentryOptions(env: {
     };
 }
 
-export function initBrowserErrorReporting(dsn: string): boolean {
+/**
+ * Start browser reporting with the runtime /config values. The release is
+ * the backend's `mike@<version>+<sha12>` (same image, same build arguments),
+ * so no NEXT_PUBLIC_* release identity is baked into the bundle.
+ *
+ * Upstream divergence (sync-log: 3bcac35a): upstream's reportingDestination()
+ * and serverSentryOptions() run on its Next server. Dev has no Next server;
+ * the same rule lives in the backend tunnel (lib/observability/sentryTunnel.ts).
+ */
+export function initBrowserErrorReporting(dsn: string, release?: string): boolean {
     if (!dsn.trim()) return false;
-    Sentry.init(browserSentryOptions({ dsn }));
+    Sentry.init(browserSentryOptions({
+        dsn,
+        release,
+        apiBase: process.env.NEXT_PUBLIC_API_BASE_URL ?? "",
+    }));
     return true;
 }

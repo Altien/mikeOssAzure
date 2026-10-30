@@ -24,6 +24,8 @@ export type AuthProvider = "supabase" | "local" | "entra";
 
 export interface RuntimeConfig {
     sentryDsn?: string;
+    /** `mike@<version>+<sha12>` of the running image (sync-log: 3bcac35a). */
+    sentryRelease?: string;
     authProvider: AuthProvider;
     tenancyMode?: "single" | "pooled";
     onboardingUrl?: string;
@@ -109,7 +111,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
             .then((next) => {
                 if (cancelled) return;
                 setConfig(next);
-                if (next.sentryDsn) initBrowserErrorReporting(next.sentryDsn);
+                if (next.sentryDsn) initBrowserErrorReporting(next.sentryDsn, next.sentryRelease);
                 writeCachedProvider(next.authProvider);
             })
             .catch((err) => {

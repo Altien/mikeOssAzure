@@ -30,6 +30,7 @@ import { getConfig, getKeyVaultConfig } from "../../lib/config";
 import { controlPlaneUrl } from "../../lib/controlPlaneUrl";
 import { getTenancyMode } from "../../lib/tenancyMode";
 import { entraOAuthConfiguration } from "../../lib/auth/entraConfiguration";
+import { releaseName } from "../../lib/observability/sentry";
 
 export const configRouter = Router();
 
@@ -84,6 +85,11 @@ configRouter.get("/", async (_req, res) => {
     let backendOrigin = "";
     try { backendOrigin = new URL(backendPublicUrl).origin; } catch { /* Missing public URL is surfaced by the Word login path. */ }
 
+    const sentryRelease = releaseName(
+        process.env.SENTRY_RELEASE,
+        process.env.MIKE_VERSION,
+        process.env.GIT_SHA,
+    );
     res.set("Cache-Control", "public, max-age=60");
     res.json({
         authProvider,
@@ -102,5 +108,8 @@ configRouter.get("/", async (_req, res) => {
         frontendOrigin: process.env.FRONTEND_URL || "",
         sentryDsn: frontendTelemetryDsn || process.env.SENTRY_FRONTEND_DSN || "",
         wordSentryDsn: wordTelemetryDsn || process.env.SENTRY_WORD_DSN || "",
+        // The web bundle ships inside this image, so the backend's release
+        // (mike@<version>+<sha12>, sync-log: 3bcac35a) is the bundle's too.
+        sentryRelease,
     });
 });
