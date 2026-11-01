@@ -4,6 +4,7 @@ import { handoverRpcResult } from "../../__tests__/helpers/handoverRpc";
 import type { Db } from "../supabase";
 import { runWithTenant } from "../tenantContext";
 import { makeFakeDb } from "../../test/helpers/fakeDb";
+import { tableDb } from "../../__tests__/helpers/tableDb";
 import {
     acceptInvitation,
     cancelInvitation,
@@ -1843,5 +1844,20 @@ describe("pooled organisation invitations stay inside current tenant membership"
         expect(JSON.stringify(result)).not.toContain("private");
         expect(fake.callsFor("org_invitations").some(call => call.op !== "select")).toBe(false);
         expect(fake.callsFor("audit_events")).toHaveLength(0);
+    });
+});
+
+describe("listOrgResources at scale", () => {
+    it("lists every visible project of an organization past max_rows", async () => {
+        const fake = tableDb({
+            org_members: [{ org_id: "org", user_id: "me", role: "member" }],
+            projects: Array.from({ length: 1200 }, (_, i) => ({
+                id: `p-${String(i).padStart(4, "0")}`, user_id: "someone", org_id: "org",
+                visibility: "organization", archived_at: null, created_at: `2026-01-01T00:${String(i % 60).padStart(2, "0")}:00Z`,
+            })),
+            workflows: [], project_org_access_overrides: [], workflow_org_access_overrides: [],
+        });
+        const result = await listOrgResources(fake.db, { userId: "me", orgId: "org" });
+        expect(result.ok && result.projects.length).toBe(1200);
     });
 });
