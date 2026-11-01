@@ -48,6 +48,7 @@ import { AppError } from "../../lib/appError";
 import { reportError } from "../../lib/observability/sentry";
 import { extractRowColumns, finalizeCell } from "./tabular.extractRow";
 import { type ReviewRow } from "./tabular.rows";
+import { mutateInBatches } from "../../lib/batchedQuery";
 import {
     finishGeneration,
     parseCellContent,
@@ -152,13 +153,12 @@ export async function claimCellsForGeneration(args: {
             }
         }
     }
-    if (existingIds.length) {
-        const { error } = await db
+    await mutateInBatches("generation cell claim", existingIds, (batch) =>
+        db
             .from("tabular_cells")
             .update({ generation_id: generationId })
-            .in("id", existingIds);
-        if (error) throw new Error(error.message);
-    }
+            .in("id", batch),
+    );
     if (inserts.length) {
         const { data, error } = await db
             .from("tabular_cells")
