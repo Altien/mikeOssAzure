@@ -4,7 +4,8 @@
 -- compares the text actor directly and profile joins keep Dev's
 -- up.user_id::text form; membership and private openings keep upstream's uuid
 -- actor. anon maps to web_anon.
-create index if not exists workflow_shares_lower_email_idx on public.workflow_shares(lower(shared_with_email));
+-- Its supporting index is built by 0219_list_candidate_indexes.sql (upstream
+-- 20261101_01; see that file for why Dev builds it transactionally).
 create or replace function public.workflow_list_access(p_user_id text,p_user_email text,p_workspace text default null)
 returns table(workflow_id uuid,role text) language sql stable set search_path=public,pg_temp as $$
   with actor as materialized (

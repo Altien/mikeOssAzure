@@ -8,8 +8,8 @@
 -- Candidate ids are a union of indexed ownership/membership/grant lookups.
 -- The final access ladder is still authoritative; candidates only avoid
 -- asking it about projects that cannot possibly be visible to this actor.
-create index if not exists org_private_content_access_actor_kind_idx
-  on public.org_private_content_access(user_id,kind,org_id,item_id);
+-- Its supporting index is built by 0219_list_candidate_indexes.sql (upstream
+-- 20261101_01; see that file for why Dev builds it transactionally).
 create or replace function public.project_list_access(p_user_id text,p_user_email text,p_workspace text default null)
 returns table(project_id uuid,role text) language sql stable set search_path=public,pg_temp as $$
   with actor as materialized (
