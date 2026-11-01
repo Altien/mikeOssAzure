@@ -131,6 +131,7 @@ import {
     formatUnsupportedDocumentWarning,
     partitionSupportedDocumentFiles,
 } from "@/app/lib/documentUploadValidation";
+import { appendMissingById } from "@/app/lib/idCollections";
 
 /** Drag-handle divider for resizing panels */
 function Divider({ onDrag }: { onDrag: (dx: number) => void }) {
@@ -683,16 +684,11 @@ export default function ProjectAssistantChatPage() {
         if (documents.length === 0) return;
         setProject((current) => {
             if (!current) return current;
-            const nextDocuments = [...(current.documents ?? [])];
-            const knownIds = new Set(
-                nextDocuments.map((document) => document.id),
-            );
-            for (const document of documents) {
-                if (knownIds.has(document.id)) continue;
-                knownIds.add(document.id);
-                nextDocuments.push(document);
-            }
-            return { ...current, documents: nextDocuments };
+            const existing = current.documents ?? [];
+            const nextDocuments = appendMissingById(existing, documents);
+            return nextDocuments === existing
+                ? current
+                : { ...current, documents: nextDocuments };
         });
     }
 
