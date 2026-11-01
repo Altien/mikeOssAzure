@@ -64,7 +64,7 @@ export { createDocumentVersions, activateDocumentVersion, updateDocumentVersion 
 export { runConversionJob, setDocumentTerminalStatus } from "./documents.conversion";
 
 export { handleDocumentExtractText, markDocumentTextFailed, backfillDocumentText } from "./documents.indexing";
-export { findDocumentText, readStoredDocumentText } from "./documents.textSearch";
+export { findDocumentText, readStoredDocumentText, storedDocumentTextCurrent } from "./documents.textSearch";
 export { readCurrentLegacyDocumentText } from "./documents.legacyTextRead";
 
 export { getDocumentStatuses } from "./documents.status";

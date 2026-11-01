@@ -5,6 +5,7 @@ import {
   createDocumentVersion,
   loadCurrentVersionBytes,
   readStoredDocumentText,
+  storedDocumentTextCurrent,
 } from "../../../documents/documents.service";
 
 // Tracked-change editing lives in the documents module; the tool dispatcher
@@ -1268,6 +1269,16 @@ export async function readDocumentContent(
       return docInfo.inline_text;
     }
 
+    const cached = turnDocumentTexts.get(docStore)?.get(docLabel);
+    const remember = (text: string) => {
+      if (readIdentity) {
+        const texts = turnDocumentTexts.get(docStore) ?? new Map();
+        texts.set(docLabel, { key: readIdentity.key, text });
+        turnDocumentTexts.set(docStore, texts);
+      }
+      return text;
+    };
+
     // Search results are bound to a content revision, not just a mutable
     // version id. Recheck access before serving persisted text or any bytes.
     if (docInfo.search_source) {
@@ -1278,16 +1289,28 @@ export async function readDocumentContent(
       const workspace = docInfo.search_source.workspace;
       // References are request-scoped server state. A legacy/unknown scope
       // cannot be rebound to the current UI or model-selected workspace.
+      // Rechecked on every read, including a repeat read served from the turn cache.
       if (typeof workspace !== "string" || !workspace ||
         (await findDocumentsOutsideWorkspace(db,[documentId],
           workspace === "personal" ? null : workspace,{ includeWorkflowAssets: true })).length) {
         emitDocRead();
         return "Document could not be read.";
       }
-      const stored = await readStoredDocumentText(db, {
+      const actor = {
         userId: docInfo.search_source.userId, userEmail: docInfo.search_source.userEmail,
         documentId, versionId,
-      });
+      };
+      // A repeat read in the same turn rechecks access and revision, but does
+      // not transfer the (up to 16 MB) text again: the ready text for an
+      // unchanged revision is the text already held.
+      if (readIdentity && cached?.key === readIdentity.key) {
+        const current = await storedDocumentTextCurrent(db, {
+          ...actor, revision: docInfo.search_source.revision,
+        });
+        emitDocRead();
+        return current ? cached.text : "Document could not be read.";
+      }
+      const stored = await readStoredDocumentText(db, actor);
       if (!stored || stored.revision !== docInfo.search_source.revision || stored.status !== "ready") {
         emitDocRead();
         return "Document could not be read.";
@@ -1296,22 +1319,13 @@ export async function readDocumentContent(
       const notice = stored.textless_page_count
         ? `[${stored.textless_page_count} page(s) have no text layer and need OCR. Search coverage is incomplete.]\n\n`
         : "";
-      return notice + (stored.text ?? "");
+      return remember(notice + (stored.text ?? ""));
     }
 
-    const cached = turnDocumentTexts.get(docStore)?.get(docLabel);
     if (readIdentity && cached?.key === readIdentity.key) {
       emitDocRead();
       return cached.text;
     }
-    const remember = (text: string) => {
-      if (readIdentity) {
-        const texts = turnDocumentTexts.get(docStore) ?? new Map();
-        texts.set(docLabel, { key: readIdentity.key, text });
-        turnDocumentTexts.set(docStore, texts);
-      }
-      return text;
-    };
     if (db && documentId && versionId) {
       const stored = await loadVersionTextState(db, documentId, versionId, readIdentity?.storagePath);
       if (stored?.text !== null && stored?.text !== undefined) {
