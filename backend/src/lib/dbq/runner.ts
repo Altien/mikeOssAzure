@@ -375,20 +375,17 @@ async function runClaimedJob(
 }
 
 /**
- * One poll tick: claim a batch and run every claimed job to completion.
- * Claiming spans tenants, so it goes through `claimDb` (the platform client
- * in production); each job then runs on `db` as its own tenant.
+ * Claim up to `limit` runnable jobs; a failed claim is gated and yields none.
+ * Claiming spans tenants, so `db` here is the platform client in production.
  */
-export async function runDbJobTick(
+async function claimDbJobs(
     db: Db,
-    handlers: DbJobHandlers,
-    failureHooks: Readonly<Record<string, DbJobFailureHook>> = {},
-    claimGate: PollFailureGate = defaultClaimGate,
-    claimDb: Db = db,
-): Promise<number> {
+    limit: number,
+    claimGate: PollFailureGate,
+): Promise<DbJob[]> {
     const tenantCap = tenantConcurrencyCap();
-    const { data, error } = await claimDb.rpc("claim_db_jobs", {
-        p_limit: CLAIM_BATCH,
+    const { data, error } = await db.rpc("claim_db_jobs", {
+        p_limit: limit,
         p_stale_seconds: STALE_SECONDS,
         ...(tenantCap ? { p_tenant_cap: tenantCap } : {}),
     });
@@ -409,10 +406,25 @@ export async function runDbJobTick(
             // reported object, a message string it files as a new event.
             console.error("[dbq] claim failed", failure);
         }
-        return 0;
+        return [];
     }
     claimGate.success();
-    const jobs = (data ?? []) as DbJob[];
+    return (data ?? []) as DbJob[];
+}
+
+/**
+ * One poll tick: claim a batch and run every claimed job to completion.
+ * Claiming spans tenants, so it goes through `claimDb` (the platform client
+ * in production); each job then runs on `db` as its own tenant.
+ */
+export async function runDbJobTick(
+    db: Db,
+    handlers: DbJobHandlers,
+    failureHooks: Readonly<Record<string, DbJobFailureHook>> = {},
+    claimGate: PollFailureGate = defaultClaimGate,
+    claimDb: Db = db,
+): Promise<number> {
+    const jobs = await claimDbJobs(claimDb, CLAIM_BATCH, claimGate);
     // allSettled defensively: processClaimedJob handles its own errors, but
     // one job's unexpected rejection must never abandon the rest of a batch.
     const outcomes = await Promise.allSettled(
@@ -427,6 +439,87 @@ export async function runDbJobTick(
         }
     }
     return jobs.length;
+}
+
+type DbJobPool = {
+    /** Claim jobs for every free slot (no-op while a claim is in flight). */
+    fill(): Promise<void>;
+    /** Jobs currently executing. */
+    readonly running: number;
+    /** Stop refilling and wait for the claim and every running job. */
+    drain(): Promise<void>;
+};
+
+/**
+ * A fixed number of job slots. The old loop claimed a batch and awaited the
+ * whole batch before the next claim, so one three-minute extraction held
+ * four idle slots hostage and throughput collapsed to `CLAIM_BATCH` jobs per
+ * slowest job. Here each finished job frees its slot and immediately asks
+ * for more work, so a slow job only ever occupies its own slot. Concurrency
+ * is still capped at `capacity` per process, as before.
+ */
+function createDbJobPool(
+    db: Db,
+    handlers: DbJobHandlers,
+    failureHooks: Readonly<Record<string, DbJobFailureHook>> = {},
+    opts: { capacity?: number; claimGate?: PollFailureGate; claimDb?: Db } = {},
+): DbJobPool {
+    const capacity = opts.capacity ?? CLAIM_BATCH;
+    const claimGate = opts.claimGate ?? defaultClaimGate;
+    // Claiming spans tenants (platform client); each job runs on `db`.
+    const claimDb = opts.claimDb ?? db;
+    const running = new Set<Promise<void>>();
+    let claiming: Promise<void> | null = null;
+    let stopped = false;
+
+    const fill = (): Promise<void> => {
+        if (claiming) return claiming;
+        const free = capacity - running.size;
+        if (stopped || free <= 0 || !claimGate.ready()) return Promise.resolve();
+        claiming = (async () => {
+            let jobs: DbJob[];
+            try {
+                jobs = await claimDbJobs(claimDb, free, claimGate);
+            } catch (err) {
+                // fill() is also called fire-and-forget from a finishing
+                // job, so it must never reject.
+                reportError(err, { tags: { component: "dbq", stage: "tick" } });
+                console.error("[dbq] tick failed", err);
+                return;
+            }
+            for (const job of jobs) {
+                // processClaimedJob contains its own failures; the catch is
+                // defence so one unexpected rejection cannot leak a slot.
+                const run: Promise<void> = processClaimedJob(db, handlers, job, failureHooks, claimDb)
+                    .catch((err) => {
+                        console.error("[dbq] job transition failed", {
+                            id: job.id,
+                            reason: err instanceof Error ? err.message : "unknown",
+                        });
+                    })
+                    .finally(() => {
+                        running.delete(run);
+                        void fill();
+                    });
+                running.add(run);
+            }
+        })().finally(() => {
+            claiming = null;
+        });
+        return claiming;
+    };
+
+    return {
+        fill,
+        get running() {
+            return running.size;
+        },
+        async drain() {
+            stopped = true;
+            if (claiming) await claiming;
+            await Promise.allSettled([...running]);
+        },
+    };
 }
 
 /**
@@ -527,15 +620,16 @@ export async function runDbJobRetentionSweep(
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
-let inFlight: Promise<unknown> | null = null;
+let pool: DbJobPool | null = null;
 
 export function dbJobsEnabled(): boolean {
     return process.env.DB_JOBS_ENABLED !== "false";
 }
 
 /**
- * Start the poll loop (idempotent). Ticks never overlap: a tick that is
- * still running when the next interval fires simply skips that interval.
+ * Start the poll loop (idempotent). Each interval tops up the job pool's
+ * free slots; claims never overlap, and a finished job refills its own slot
+ * without waiting for the interval.
  */
 export function startDbJobRunner(handlers: DbJobHandlers, failureHooks: Readonly<Record<string, DbJobFailureHook>> = {}): void {
     if (!dbJobsEnabled()) {
@@ -547,19 +641,13 @@ export function startDbJobRunner(handlers: DbJobHandlers, failureHooks: Readonly
     // Claiming and retention span tenants by design (multi-tenant issue 003).
     const platformDb = createPlatformSupabase();
 
-    const tick = () => {
-        // While claims keep failing, skip ticks until the backed-off retry
-        // time instead of hitting the broken dependency every interval.
-        if (inFlight || !defaultClaimGate.ready()) return;
-        inFlight = runDbJobTick(db, handlers, failureHooks, defaultClaimGate, platformDb)
-            .catch((err) => {
-                reportError(err, { tags: { component: "dbq", stage: "tick" } });
-                console.error("[dbq] tick failed", err);
-            })
-            .finally(() => {
-                inFlight = null;
-            });
-    };
+    const jobPool = createDbJobPool(db, handlers, failureHooks, {
+        claimDb: platformDb,
+    });
+    pool = jobPool;
+    // While claims keep failing, fill() skips until the backed-off retry
+    // time instead of hitting the broken dependency every interval.
+    const tick = () => void jobPool.fill();
     pollTimer = setInterval(tick, pollMs());
     pollTimer.unref();
     // First tick shortly after boot so work queued before a restart resumes
@@ -580,13 +668,15 @@ export function startDbJobRunner(handlers: DbJobHandlers, failureHooks: Readonly
     );
 }
 
-/** Stop polling and wait for the in-flight tick to finish (shutdown path). */
+/** Stop polling and wait for the in-flight jobs to finish (shutdown path). */
 export async function stopDbJobRunner(): Promise<void> {
     if (pollTimer) clearInterval(pollTimer);
     if (sweepTimer) clearInterval(sweepTimer);
     pollTimer = null;
     sweepTimer = null;
-    if (inFlight) await inFlight;
+    const draining = pool;
+    pool = null;
+    if (draining) await draining.drain();
 }
 
 /**
