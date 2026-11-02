@@ -956,7 +956,8 @@ export async function streamAiSdk(
       contextNotice(condensed.summarizedTurns, condensed.shortenedToolResults);
     if (notice) {
       fullText += notice;
-      params.callbacks?.onContentDelta?.(notice);
+      if (params.callbacks?.onStopNotice) params.callbacks.onStopNotice(notice);
+      else params.callbacks?.onContentDelta?.(notice);
     }
     log().debug("llm.call.finish", {
       model: config.modelId,
