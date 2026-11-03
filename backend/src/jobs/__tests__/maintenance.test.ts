@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as Sentry from "@sentry/node";
 import type { Db } from "../../lib/supabase";
 import { markStage, resetSentryForTests, scrubEvent, setOperation } from "../../lib/observability/sentry";
@@ -21,7 +21,9 @@ vi.mock("../../modules/orgs/orgs.service", async () => ({
     expireDepartureArchives: (await vi.importActual<typeof import("../../modules/orgs/orgs.retention")>("../../modules/orgs/orgs.retention")).expireDepartureArchives,
     purgeExpiredOrganizations: sweeps.organizations,
 }));
-import { runStaleWorkSweep } from "../maintenance";
+const tenancy = vi.hoisted(() => ({ mode: "single" as "single" | "pooled" }));
+vi.mock("../../lib/tenancyMode", () => ({ getTenancyMode: async () => tenancy.mode }));
+import { runDocumentTextBackfill, runStaleWorkSweep } from "../maintenance";
 
 const PRIVATE = "SYNTHETIC_CLIENT_Jane_Doe_NDA.pdf jane@example.test";
 function database(failureAt?: "load" | "expire") {
@@ -235,4 +237,60 @@ it("runs the stale-cell sweep as each tenant with generating cells when async ex
         if (previous === undefined) delete process.env.ASYNC_TABULAR_EXTRACTION;
         else process.env.ASYNC_TABULAR_EXTRACTION = previous;
     }
+});
+
+describe("runDocumentTextBackfill (the backfill:document-text CLI)", () => {
+    afterEach(() => { tenancy.mode = "single"; });
+
+    it("single mode queues one batch with the request client, as before", async () => {
+        const { currentTenant } = await import("../../lib/tenantContext.js");
+        const seen: (string | undefined)[] = [];
+        sweeps.text.mockImplementation(async () => { seen.push(currentTenant()?.tenantId); return 4; });
+        const { db } = tenantTable({}, { "tenant-a": "active" });
+        const tenantDb = { marker: "request" };
+        await expect(runDocumentTextBackfill({ limit: 500, retryFailed: true },
+            db as unknown as Db, () => tenantDb as unknown as Db))
+            .resolves.toEqual({ queued: 4, tenants: [], failures: [] });
+        expect(sweeps.text).toHaveBeenCalledTimes(1);
+        expect(sweeps.text).toHaveBeenCalledWith(tenantDb, { limit: 500, retryFailed: true });
+        expect(seen).toEqual([undefined]);
+        expect(db.from).not.toHaveBeenCalled();
+    });
+
+    it("pooled mode runs a per-tenant batch as each sweepable tenant", async () => {
+        tenancy.mode = "pooled";
+        const { currentTenant } = await import("../../lib/tenantContext.js");
+        const seen: (string | undefined)[] = [];
+        sweeps.text.mockImplementation(async () => { seen.push(currentTenant()?.tenantId); return seen.length; });
+        const { db } = tenantTable({}, {
+            "tenant-a": "active", "tenant-b": "suspended", "tenant-gone": "offboarding", "tenant-new": "pending",
+        });
+        const tenantDb = { marker: "tenant" };
+        await expect(runDocumentTextBackfill({ limit: 500, retryFailed: false },
+            db as unknown as Db, () => tenantDb as unknown as Db))
+            .resolves.toEqual({
+                queued: 3,
+                tenants: [{ tenantId: "tenant-a", queued: 1 }, { tenantId: "tenant-b", queued: 2 }],
+                failures: [],
+            });
+        expect(seen).toEqual(["tenant-a", "tenant-b"]);
+        // The limit applies per tenant; inline claims use the platform client.
+        expect(sweeps.text).toHaveBeenCalledWith(tenantDb, { limit: 500, retryFailed: false, inlineDb: db });
+    });
+
+    it("pooled mode reports a tenant's failure after the other tenants ran", async () => {
+        tenancy.mode = "pooled";
+        const { currentTenant } = await import("../../lib/tenantContext.js");
+        const boom = new Error("tenant-a down");
+        sweeps.text.mockImplementation(async () => {
+            if (currentTenant()?.tenantId === "tenant-a") throw boom;
+            return 2;
+        });
+        const { db } = tenantTable({}, { "tenant-a": "active", "tenant-b": "active", "tenant-c": "active" });
+        const report = await runDocumentTextBackfill({ limit: 10, retryFailed: false },
+            db as unknown as Db, () => db as unknown as Db);
+        expect(report.queued).toBe(4);
+        expect(report.tenants.map((row) => row.tenantId)).toEqual(["tenant-b", "tenant-c"]);
+        expect(report.failures).toEqual([{ tenantId: "tenant-a", error: boom }]);
+    });
 });

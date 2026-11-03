@@ -5,6 +5,7 @@ import { runIsolated } from "../lib/dbq/jobScope";
 import { reportError, setOperation } from "../lib/observability/sentry";
 import type { Operation } from "../lib/observability/sentryPrivacy";
 import { runWithTenant } from "../lib/tenantContext";
+import { getTenancyMode } from "../lib/tenancyMode";
 import { backfillDocumentText, sweepStaleProcessingDocuments } from "../modules/documents/documents.service";
 import { sweepStaleGeneratingCells } from "../modules/tabular/tabular.service";
 import { expireDepartureArchives, purgeExpiredOrganizations } from "../modules/orgs/orgs.service";
@@ -115,6 +116,43 @@ async function forEachTenant(
     }
     if (firstFailure !== undefined) throw firstFailure;
     return total;
+}
+
+export type DocumentTextBackfillReport = {
+    queued: number;
+    /** Pooled mode only: each sweepable tenant's queued count. */
+    tenants: { tenantId: string; queued: number }[];
+    /** Pooled mode only: tenants whose batch failed, after every other tenant ran. */
+    failures: { tenantId: string; error: unknown }[];
+};
+
+/**
+ * The `backfill:document-text` CLI's batch. Single mode queues as before
+ * (the request client falls back to the install tenant). Multi-tenant
+ * divergence: a pooled install has no install tenant, so under forced RLS a
+ * claim-less call queues nothing; the batch runs as each sweepable tenant,
+ * with the limit applying per tenant, as the maintenance sweep does.
+ */
+export async function runDocumentTextBackfill(
+    options: { limit: number; retryFailed: boolean },
+    db: Db = createPlatformSupabase(),
+    tenantDb: () => Db = createServerSupabase,
+): Promise<DocumentTextBackfillReport> {
+    if (await getTenancyMode() !== "pooled") {
+        return { queued: await backfillDocumentText(tenantDb(), options), tenants: [], failures: [] };
+    }
+    const report: DocumentTextBackfillReport = { queued: 0, tenants: [], failures: [] };
+    for (const tenantId of await sweepableTenants(db)) {
+        try {
+            const queued = await runWithTenant({ tenantId }, () =>
+                backfillDocumentText(tenantDb(), { ...options, inlineDb: db }));
+            report.queued += queued;
+            report.tenants.push({ tenantId, queued });
+        } catch (error) {
+            report.failures.push({ tenantId, error });
+        }
+    }
+    return report;
 }
 
 /** Run recovery/expiry sweeps; errors are contained per sweep. */
