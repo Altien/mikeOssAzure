@@ -77,9 +77,14 @@ export async function processDocumentTextInline(db: Db, versionIds?: string[]) {
     await processClaimedJob(db, { "document.extract_text": handleDocumentExtractText }, job, { "document.extract_text": markDocumentTextFailed });
   }
 }
-export async function backfillDocumentText(db: Db, options: { limit?: number; retryFailed?: boolean } = {}) {
+export async function backfillDocumentText(
+  db: Db,
+  // Multi-tenant: a per-tenant sweep queues with a tenant client but claims
+  // inline (claim_db_job is platform-only) with the platform client.
+  options: { limit?: number; retryFailed?: boolean; inlineDb?: Db } = {},
+) {
   const { data, error } = await db.rpc("backfill_document_text", { p_limit: options.limit ?? 100, p_retry_failed: options.retryFailed ?? false });
   if (error) throw error;
-  await processDocumentTextInline(db);
+  await processDocumentTextInline(options.inlineDb ?? db);
   return Number(data ?? 0);
 }

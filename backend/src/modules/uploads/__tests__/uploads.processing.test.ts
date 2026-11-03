@@ -70,8 +70,11 @@ vi.mock("../../../lib/dbq/enqueue", () => ({
   enqueueStorageCleanup: mocks.enqueueStorageCleanup,
   requestDocumentCleanupDelivery: mocks.requestDocumentCleanupDelivery,
 }));
+// The claim loop claims through the platform client (multi-tenant issue 003);
+// both resolve to the test's fake.
 vi.mock("../../../lib/supabase", () => ({
   createServerSupabase: mocks.createServerSupabase,
+  createPlatformSupabase: mocks.createServerSupabase,
 }));
 
 import {

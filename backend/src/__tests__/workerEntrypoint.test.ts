@@ -20,7 +20,10 @@ async function withStubDb(fn: (url: string) => Promise<void>) {
         res.setHeader("Content-Type", "application/json");
         // Dev drift: upstream #295's document-lifecycle boot gate must see the
         // required contract version before workers start.
-        res.end(req.url?.includes("/rpc/document_lifecycle_version") ? "2" : "[]");
+        // 019: the read-only stamp metadata probe runs before any queue claim.
+        res.end(req.url?.includes("/rpc/document_lifecycle_version") ? "2"
+            : req.url?.includes("/rpc/stamp_runtime_metadata")
+                ? JSON.stringify({ pooled: false, fallback_tenant_id: null, stamp_id: null, region: null, platform_credentials: [] }) : "[]");
     });
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
     try {
@@ -36,10 +39,14 @@ function workerEnv(url: string): Record<string, string> {
     return {
         ...process.env as Record<string, string>,
         AUTH_PROVIDER: "local",
+        TENANCY_MODE: "single",
         QUEUE_DRIVER: "postgres",
         DB_JOBS_POLL_MS: "60000",
         SUPABASE_URL: url,
         SUPABASE_SECRET_KEY: "test-key",
+        // Multi-tenant 008: every PostgREST call is signed per request; there
+        // is no fallback to the static key.
+        JWT_SECRET: secret(4),
         AUTH_SESSION_ENCRYPTION_SECRET: secret(1),
         AUTH_HANDOFF_ENCRYPTION_SECRET: secret(2),
         AUTH_STATE_SECRET: secret(3),
@@ -92,16 +99,16 @@ describe("standalone worker entrypoint", () => {
             const workDir = mkdtempSync(path.join(os.tmpdir(), "worker-dotenv-"));
             const config = workerEnv(url);
             writeFileSync(path.join(workDir, ".env"), [
-                "AUTH_PROVIDER", "QUEUE_DRIVER", "DB_JOBS_POLL_MS",
-                "SUPABASE_URL", "SUPABASE_SECRET_KEY",
+                "AUTH_PROVIDER", "TENANCY_MODE", "QUEUE_DRIVER", "DB_JOBS_POLL_MS",
+                "SUPABASE_URL", "SUPABASE_SECRET_KEY", "JWT_SECRET",
                 "AUTH_SESSION_ENCRYPTION_SECRET", "AUTH_HANDOFF_ENCRYPTION_SECRET",
                 "AUTH_STATE_SECRET",
             ].map(key => `${key}=${config[key]}`).join("\n") + "\n");
             const env = { ...process.env as Record<string, string> };
             for (const key of Object.keys(config)) {
                 if (key in env && [
-                    "AUTH_PROVIDER", "QUEUE_DRIVER", "DB_JOBS_POLL_MS",
-                    "SUPABASE_URL", "SUPABASE_SECRET_KEY",
+                    "AUTH_PROVIDER", "TENANCY_MODE", "QUEUE_DRIVER", "DB_JOBS_POLL_MS",
+                    "SUPABASE_URL", "SUPABASE_SECRET_KEY", "JWT_SECRET",
                     "AUTH_SESSION_ENCRYPTION_SECRET", "AUTH_HANDOFF_ENCRYPTION_SECRET",
                     "AUTH_STATE_SECRET",
                 ].includes(key)) delete env[key];

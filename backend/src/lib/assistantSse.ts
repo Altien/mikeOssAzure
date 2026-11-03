@@ -1,3 +1,4 @@
+import { AsyncResource } from "node:async_hooks";
 import { type Response } from "express";
 
 export function openAssistantSse(res: Response): {
@@ -13,9 +14,11 @@ export function openAssistantSse(res: Response): {
 
   const controller = new AbortController();
   let finished = false;
-  res.on("close", () => {
+  // Bound to the request's async context so abort listeners keep its tenant
+  // (multi-tenant 008); the socket emits `close` from its own context.
+  res.on("close", AsyncResource.bind(() => {
     if (!finished) controller.abort();
-  });
+  }));
 
   return {
     signal: controller.signal,

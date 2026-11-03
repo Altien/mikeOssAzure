@@ -6,7 +6,8 @@ import type {
   UserApiKeys,
 } from "./types";
 import { getKeyVaultConfig } from "../config";
-import { readSecretEnv } from "../envSecrets";
+import { readSecretEnv, resolveProviderSecret } from "../envSecrets";
+import { filterTenantModels, resolveTenantSecret } from "../tenantSettings";
 
 // Deployment-declared models. The static catalog in models.ts covers the
 // hosted providers Mike ships with; this registry is how an operator adds a
@@ -105,23 +106,37 @@ export async function apiKeyForConfiguredModel(
   apiKeys?: UserApiKeys,
 ): Promise<string | null> {
   if (model.apiKeyProvider && isProviderDisabled(model.apiKeyProvider, apiKeys)) return null;
-  if (model.apiKey?.trim()) return model.apiKey.trim();
-  if (model.apiKeyProvider) {
-    const userKey = apiKeys?.[model.apiKeyProvider];
-    if (typeof userKey === "string" && userKey.trim()) return userKey.trim();
-  }
-  if (model.apiKeyEnv?.trim()) {
-    const envName = model.apiKeyEnv.trim();
-    // Operator-controlled env names map to Key Vault's lowercase hyphenated
-    // names where valid. Check the vault before the named env fallback.
-    const vaultName = envName.toLowerCase().replaceAll("_", "-");
-    if (process.env.KEY_VAULT_NAME && /^[a-z][a-z0-9-]{0,126}$/.test(vaultName)) {
-      const vaultValue = (await getKeyVaultConfig(vaultName).catch(() => "")).trim();
-      if (vaultValue && vaultValue !== "__unset__") return vaultValue;
+  // Multi-tenant 014: a tenant's own provider Key Vault reference wins over
+  // the deployment's sources below.
+  const providerNames: Partial<Record<keyof UserApiKeys, string>> = {
+    claude: "anthropic-api-key", gemini: "gemini-api-key", openai: "openai-api-key",
+    kimi: "moonshot-api-key", mistral: "mistral-api-key", openrouter: "openrouter-api-key",
+    vercel: "ai-gateway-api-key", "opencode-go": "opencode-api-key", courtlistener: "courtlistener-api-token",
+  };
+  const name = (model.apiKeyProvider && providerNames[model.apiKeyProvider]) ||
+    model.apiKeyEnv?.toLowerCase().replaceAll("_", "-") ||
+    `model-${model.id.replace(/[^a-z0-9-]/gi, "-").toLowerCase()}-api-key`;
+  return (await resolveTenantSecret(name, async () => {
+    if (model.apiKey?.trim()) return model.apiKey.trim();
+    if (model.apiKeyProvider) {
+      const userKey = apiKeys?.[model.apiKeyProvider];
+      if (typeof userKey === "string" && userKey.trim()) return userKey.trim();
+      const organisationKey = await resolveProviderSecret(name);
+      if (organisationKey) return organisationKey;
     }
-    return readSecretEnv(envName) || null;
-  }
-  return null;
+    if (model.apiKeyEnv?.trim()) {
+      const envName = model.apiKeyEnv.trim();
+      // Operator-controlled env names map to Key Vault's lowercase hyphenated
+      // names where valid. Check the vault before the named env fallback.
+      const vaultName = envName.toLowerCase().replaceAll("_", "-");
+      if (process.env.KEY_VAULT_NAME && /^[a-z][a-z0-9-]{0,126}$/.test(vaultName)) {
+        const vaultValue = (await getKeyVaultConfig(vaultName).catch(() => "")).trim();
+        if (vaultValue && vaultValue !== "__unset__") return vaultValue;
+      }
+      return readSecretEnv(envName);
+    }
+    return "";
+  }, { provider: true })) || null;
 }
 
 /** Whether the declaration names an authentication source that must resolve. */
@@ -140,7 +155,8 @@ export type ConfiguredEndpointSummary = {
 export async function configuredEndpointSummaries(
   apiKeys?: UserApiKeys,
 ): Promise<ConfiguredEndpointSummary[]> {
-  return Promise.all(loadModelRegistry().models.map(async (model) => ({
+  const models = await filterTenantModels(loadModelRegistry().models, (model) => model.id);
+  return Promise.all(models.map(async (model) => ({
     id: model.id,
     label: model.label || model.id,
     location: model.location,

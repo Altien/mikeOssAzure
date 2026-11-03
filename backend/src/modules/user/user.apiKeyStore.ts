@@ -26,6 +26,7 @@ import { type ConnectorOwner, workspaceFilter } from "../../lib/connectorOwner";
 import crypto from "node:crypto";
 import { WEB_SEARCH_BACKENDS, type WebSearchBackend } from "../../lib/webSearch/settings";
 import { loadDeploymentSearchApiKeys } from "../../lib/webSearch/credentials";
+import { tenantModelAllowlist } from "../../lib/tenantSettings";
 import { getConfig } from "../../lib/config";
 import { resolveSecret, resolveProviderSecret, resolveVercelApiKey } from "../../lib/envSecrets";
 import { createServerSupabase, type Db } from "../../lib/supabase";
@@ -60,6 +61,8 @@ export type ApiKeyStatus = Record<ApiKeyProvider, boolean> & {
     sources: Record<ApiKeyProvider, ApiKeySource>;
     enabled: Partial<Record<ApiKeyProvider, boolean>>;
     settings: ProviderSettings;
+    /** Tenant-level model allowlist (multi-tenant tenant settings); absent when unrestricted. */
+    modelAllowlist?: readonly string[] | null;
 };
 
 const ORG_PROVIDERS = ["claude", "gemini", "openai", "kimi", "mistral", "openrouter", "opencode-go", "vercel", "courtlistener", "azure_openai", "bedrock", "azure", "azure-foundry", "vertex", "xai", "custom", ...WEB_SEARCH_BACKENDS] as const;
@@ -80,11 +83,13 @@ export async function getUserApiKeyStatus(userId: string, db: Db = createServerS
         status[provider] = configured && enabled[provider] !== false;
         status.sources[provider] = configured ? "env" : null;
     }
+    const modelAllowlist = await tenantModelAllowlist();
+    if (modelAllowlist !== null) status.modelAllowlist = modelAllowlist;
     return status;
 }
 
 /**
- * Resolve the deployment-wide provider credentials. MikeOssAzure installations
+ * Resolve the tenant/organisation provider credentials. MikeOssAzure installations
  * are organisation-scoped: all users share these Key Vault-backed values and
  * user-facing routes must never replace them with personal credentials.
  */
@@ -362,7 +367,7 @@ export async function setUserApiKey(
             auth_tag: payload.auth_tag,
             updated_at: new Date().toISOString(),
         },
-        { onConflict: "user_id,provider" },
+        { onConflict: "tenant_id,user_id,provider" },
     );
     if (error) {
         throw new Error(
@@ -636,7 +641,7 @@ export async function saveCourtListenerConnection(
 
     const { error } = await db
         .from("user_courtlistener_connections")
-        .upsert(row, { onConflict: "user_id,org_id" });
+        .upsert(row, { onConflict: "tenant_id,user_id,org_id" });
     if (error) throw error;
 }
 

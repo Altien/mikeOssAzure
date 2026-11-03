@@ -13,6 +13,7 @@ import {
   stateHash,
 } from "../mcp/client";
 import { resolveProviderSecret } from "../envSecrets";
+import { hasTenantSecretReference } from "../tenantSettings";
 import { googleDriveOAuthEnv } from "./googleDrive";
 import {
   googleServiceUnavailableMessage,
@@ -87,7 +88,7 @@ export function googleWorkspaceSetupInstructions(
 export async function googleWorkspaceEnv() {
   const clientId = await resolveProviderSecret("google-workspace-oauth-client-id");
   const clientSecret = await resolveProviderSecret("google-workspace-oauth-client-secret");
-  if (clientId || clientSecret) return { clientId, clientSecret };
+  if (clientId || clientSecret || await hasTenantSecretReference("google-workspace-oauth-client-id", "google-workspace-oauth-client-secret")) return { clientId, clientSecret };
   return googleDriveOAuthEnv();
 }
 /**

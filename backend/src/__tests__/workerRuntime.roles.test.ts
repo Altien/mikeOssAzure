@@ -33,10 +33,21 @@ vi.mock("../lib/serverSession", () => ({ initServerSessionKeys: vi.fn(async () =
 vi.mock("../lib/downloadTokens", () => ({ initDownloadSigningSecret: vi.fn(async () => {}) }));
 vi.mock("../lib/storage", () => ({ initStorage: vi.fn(async () => {}) }));
 vi.mock("../lib/manifestSigning", () => ({ initManifestSigningKey: vi.fn(async () => {}), manifestPublicKey: vi.fn() }));
-vi.mock("../lib/supabase", () => ({ createServerSupabase: () => ({
-  from: () => ({ select: () => ({ limit: async () => ({ data: [], error: null }) }) }),
-  rpc: vi.fn(async () => ({ data: false, error: null })),
-}) }));
+vi.mock("../lib/supabase", () => {
+  const client = () => ({
+    from: () => ({ select: () => ({ limit: async () => ({ data: [], error: null }) }) }),
+    rpc: vi.fn(async () => ({ data: false, error: null })),
+  });
+  return { createServerSupabase: client, createPlatformSupabase: client };
+});
+// Multi-tenant startup probes (stamp runtime, install tenant) and the usage
+// ledger flush are covered by their own suites.
+vi.mock("../lib/stampRuntime", () => ({ probeStampRuntime: vi.fn(async () => {}) }));
+vi.mock("../lib/tenantContext", () => ({
+  ensureInstallTenant: vi.fn(async () => {}),
+  runWithTenant: (_ctx: unknown, fn: () => unknown) => fn(),
+}));
+vi.mock("../lib/llm/usage", () => ({ flushLlmUsage: vi.fn(async () => {}) }));
 vi.mock("../lib/observability/sentry", () => ({ reportError: vi.fn() }));
 
 import { startAllWorkers, stopAllWorkers } from "../workerRuntime";

@@ -1,6 +1,12 @@
 import { createServerSupabase, type Db } from "./supabase";
 import { chunkArray } from "./arrays";
 import { safeError } from "./safeError";
+import { currentTenant } from "./tenantContext";
+import { getTenancyMode } from "./tenancyMode";
+
+// Multi-tenant 006: an email is unique only within a tenant. Inside a tenant
+// scope, lookups by email see that tenant's profiles only (RLS, issue 008,
+// enforces the same in the database). Outside a scope there is one tenant.
 
 export type ProfileUserInfo = {
     id: string;
@@ -31,19 +37,23 @@ export function profileAttributionName(
 /**
  * Indexes normalized profile identities by email and user ID.
  * Reads only explicit, caller-authorized roster identities, in bounded batches.
+ * Inside a tenant scope only that tenant's profiles are read (multi-tenant 006).
  */
 export async function loadProfileUsersByEmail(
     db: Db,
     people: { userIds: string[]; emails: string[] },
 ) {
+    const tenantId = currentTenant()?.tenantId;
     const data: { user_id: string; email: string | null; display_name: string | null; profile_photo?: string | null }[] = [];
     for (const [column, values] of [
         ["user_id", people.userIds],
         ["email", people.emails.map(normalizeEmail).filter(Boolean)],
     ] as const) {
         for (const batch of chunkArray([...new Set(values)], 50)) {
-            const result = await db.from("user_profiles")
+            let query = db.from("user_profiles")
                 .select("user_id, email, display_name, profile_photo").in(column, batch);
+            if (tenantId) query = query.eq("tenant_id", tenantId);
+            const result = await query;
             if (result.error) throw result.error;
             data.push(...(result.data ?? []));
         }
@@ -115,13 +125,16 @@ export async function findProfileUserByEmail(db: Db, email: string) {
     const normalized = normalizeEmail(email);
     if (!normalized) return null;
 
-    const { data, error } = await db
+    const tenantId = currentTenant()?.tenantId;
+    let query = db
         .from("user_profiles")
         .select("user_id, email, display_name")
-        .eq("email", normalized)
-        .maybeSingle();
+        .eq("email", normalized);
+    if (tenantId) query = query.eq("tenant_id", tenantId);
+    const { data, error } = await query.maybeSingle();
     if (error) throw error;
     if (!data) return null;
+    if (!(await isCurrentTenantMember(db, data.user_id))) return null;
 
     return {
         id: data.user_id as string,
@@ -130,21 +143,34 @@ export async function findProfileUserByEmail(db: Db, email: string) {
     };
 }
 
+// Historical profiles remain after a move. Pooled sharing must resolve a
+// current membership, including the enterprise admission mirror, not that
+// historical profile. Single-tenant installs retain their profile-based model.
+async function isCurrentTenantMember(db: Db, userId: unknown): Promise<boolean> {
+    if ((await getTenancyMode()) !== "pooled") return true;
+    if (typeof userId !== "string" || !userId.trim()) return false;
+    const { data, error } = await db.rpc("tenant_member_exists", { p_user_id: userId });
+    if (error) throw error;
+    return data === true;
+}
+
 export async function findMissingUserEmails(db: Db, emails: string[]) {
     const normalizedEmails = [...new Set(emails.map(normalizeEmail).filter(Boolean))];
     if (normalizedEmails.length === 0) return [];
 
-    const { data, error } = await db
+    const tenantId = currentTenant()?.tenantId;
+    let query = db
         .from("user_profiles")
-        .select("email")
+        .select("user_id, email")
         .in("email", normalizedEmails);
+    if (tenantId) query = query.eq("tenant_id", tenantId);
+    const { data, error } = await query;
     if (error) throw error;
 
-    const found = new Set(
-        (data ?? [])
-            .map((row) => normalizeEmail(row.email))
-            .filter(Boolean),
-    );
+    const eligible = await Promise.all((data ?? []).map(async (row) =>
+        await isCurrentTenantMember(db, row.user_id) ? normalizeEmail(row.email) : "",
+    ));
+    const found = new Set(eligible.filter(Boolean));
     return normalizedEmails.filter((email) => !found.has(email));
 }
 
@@ -222,7 +248,8 @@ export async function upsertUserProfile(
                     display_name: seedDisplayName,
                 },
                 {
-                    onConflict: "user_id",
+                    // tenant_id comes from the column default (0176/0177).
+                    onConflict: "tenant_id,user_id",
                     ignoreDuplicates: true,
                 },
             );

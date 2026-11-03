@@ -12,6 +12,7 @@
 // its ordering is delicate. Only the NON-streaming logic and the pre-stream
 // DB preparation live here. `prepareChatStream` returns the prepared data the
 // route needs to run the stream; it does not stream.
+import { hydrateDownloadHistory } from "../../lib/downloadHistory";
 import { type Db } from "../../lib/supabase";
 import { withDelegationEvents, withoutEmptyAssistantReservations } from "./engine/index";
 
@@ -146,7 +147,7 @@ export async function getChatMessages(
         .order("created_at", { ascending: true });
 
     return hydrateEditStatuses(
-        withoutEmptyAssistantReservations(messages ?? []),
+        withoutEmptyAssistantReservations(await hydrateDownloadHistory(messages ?? [], db)),
         db,
     );
 }

@@ -929,6 +929,7 @@ async function decomposeRequirement(args: {
   const raw = await args.call({
     model: args.model,
     apiKeys: args.apiKeys,
+    feature: "skill-import",
     maxTokens: 1_500,
     reasoningEffort: "low",
     systemPrompt: `State what each named item does. One entry per input item,
@@ -966,6 +967,7 @@ async function matchAtom(args: {
   const raw = await args.call({
     model: args.model,
     apiKeys: args.apiKeys,
+    feature: "skill-import",
     maxTokens: 1_200,
     // A behavioural comparison against a fixed catalogue; extra reasoning
     // budget invents justifications rather than finding better matches.

@@ -79,7 +79,16 @@ async function runGoogleOAuth(): Promise<void> {
     const loginUrl = new URL(`${API_BASE}/auth/login-provider/microsoft`, window.location.href);
     loginUrl.searchParams.set("requestId", requestId);
     loginUrl.searchParams.set("wordOrigin", window.location.origin);
-    window.location.assign(loginUrl.toString());
+    const config = await loadRuntimeConfig();
+    if (config.tenancyMode === "pooled") {
+      setStatus("Choose how to sign in.");
+      for (const [label, kind] of [["Sign in to Mike", "altien"], ["Sign in with your organisation", "enterprise"]] as const) {
+        const button = document.createElement("button");
+        button.type = "button"; button.textContent = label;
+        button.addEventListener("click", () => { loginUrl.searchParams.set("identity", kind); window.location.assign(loginUrl.toString()); });
+        document.body.append(button);
+      }
+    } else window.location.assign(loginUrl.toString());
     return;
   }
   const requestedId = currentUrl.searchParams.get("requestId");

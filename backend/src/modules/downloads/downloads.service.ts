@@ -13,10 +13,12 @@ import {
     writeBlobFromStream,
 } from "../../lib/storage";
 import {
+    downloadAllowed,
     verifyBlobToken,
     verifyBlobUploadToken,
     verifyDownload,
 } from "../../lib/downloadTokens";
+import { currentTenant, installTenantId, runWithTenant } from "../../lib/tenantContext";
 import {
     failure,
     internalFailure,
@@ -34,6 +36,18 @@ function contentTypeFor(filename: string): string {
 }
 
 /**
+ * Multi-tenant 010: the filesystem adapter signs the tenant's physical object
+ * key, so a non-install tenant's key is `t/{tenantId}/…`. The signed route has
+ * no session, so the transfer runs as the tenant the signed key names (the
+ * HMAC covers the key); an unprefixed key is the install tenant's, as before.
+ * Without this the storage facade would refuse the key as foreign.
+ */
+function asBlobKeyTenant<T>(key: string, work: () => Promise<T>): Promise<T> {
+    const owner = /^t\/([^/]+)\//.exec(key)?.[1];
+    return owner ? runWithTenant({ tenantId: owner }, work) : work();
+}
+
+/**
  * Resolve a filesystem-driver blob token (the fs stand-in for an S3 presigned
  * GET) to its bytes. The token itself is the authorization: it is minted only
  * after an authenticated caller's access check, matching the S3 presigned URLs
@@ -44,7 +58,7 @@ export async function resolveBlobDownload(token: string): Promise<
 > {
     const info = verifyBlobToken(token);
     if (!info) return failure("not_found", "Invalid or expired link");
-    const bytes = await downloadFile(info.path);
+    const bytes = await asBlobKeyTenant(info.path, () => downloadFile(info.path));
     if (!bytes) return failure("not_found", "File not found");
     return ok({
         bytes: Buffer.from(bytes),
@@ -74,7 +88,8 @@ export async function storeBlobUpload(args: {
         return failure("validation", "Upload content type does not match the link");
     }
     try {
-        await writeBlobFromStream(info.path, args.body, info.sizeBytes);
+        await asBlobKeyTenant(info.path, () =>
+            writeBlobFromStream(info.path, args.body, info.sizeBytes));
     } catch (error) {
         // writeBlobFromStream commits only on success, so a failed upload
         // leaves no partial file and any existing blob at the key intact.
@@ -99,8 +114,17 @@ export async function resolveTokenDownload(
     | { ok: true; bytes: Buffer; contentType: string; filename: string }
     | { ok: false; kind: "invalid_link" | "not_found" }
 > {
+    // Issue 011: signature, expiry, then tenant/user binding, all before any
+    // database or storage read. The bytes are then read through the current
+    // tenant's storage (issue 010), which is the token's tenant.
     const info = verifyDownload(args.token);
     if (!info) return { ok: false, kind: "invalid_link" };
+    const allowed = downloadAllowed(info, {
+        tenantId: currentTenant()?.tenantId,
+        userId: args.userId,
+        installTenantId: await installTenantId().catch(() => undefined),
+    });
+    if (!allowed) return { ok: false, kind: "invalid_link" };
 
     const { data: version } = await db
         .from("document_versions")

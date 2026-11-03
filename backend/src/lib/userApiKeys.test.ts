@@ -298,7 +298,7 @@ describe("setUserApiKey — encryption invariants", () => {
       .rejects.toThrow(/Failed to set user_api_keys row for openai/);
   });
 
-  it("uses onConflict='user_id,provider' so a second set replaces the first row", async () => {
+  it("uses onConflict='tenant_id,user_id,provider' so a second set replaces the first row", async () => {
     const { client } = makeClient({ upsert: { error: null } });
     let lastConflict: unknown;
     // Re-wire from() to capture the second argument to upsert.
@@ -313,7 +313,7 @@ describe("setUserApiKey — encryption invariants", () => {
 
     await setUserApiKey("u1", "claude", "sk", client as never);
 
-    expect(lastConflict).toEqual({ onConflict: "user_id,provider" });
+    expect(lastConflict).toEqual({ onConflict: "tenant_id,user_id,provider" });
   });
 });
 

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { makeFakeDb } from "../../../test/helpers/fakeDb";
 
 import { AppError } from "../../appError";
 import {
@@ -260,6 +261,25 @@ describe("direct memory file writes", () => {
       await expect(
         ensureMemoryFile(db as never, "user", "user-1", "org-1"),
       ).rejects.toThrow("Failed to load memory settings");
+    });
+  });
+
+  // A database without workspace memory (before 0122) also predates tenant
+  // ids (0176), so the legacy per-person file keeps the global user key.
+  // Tenant-scoped files come from the ensure_user_memory_file RPC.
+  it("creates the legacy per-person file under the global user key", async () => {
+    const empty = { ...file, id: "destination-memory", content: "", content_sha256: null, revision: 0 };
+    const fake = makeFakeDb((call) => {
+      if (call.op !== "select") return { data: empty };
+      const workspaceLookup = call.filters.some(([method, column]) => method === "is" && column === "org_id");
+      return workspaceLookup
+        ? { data: null, error: { code: "42703", message: "column does not exist" } as { message: string } }
+        : { data: null };
+    });
+    await expect(ensureMemoryFile(fake.db as never, "user", "user-1")).resolves.toEqual(empty);
+    expect(fake.callsFor("memory_files", "upsert")[0]).toMatchObject({
+      payload: { scope: "user", user_id: "user-1", enabled: true },
+      filters: [["options", "", { onConflict: "user_id", ignoreDuplicates: true }]],
     });
   });
 

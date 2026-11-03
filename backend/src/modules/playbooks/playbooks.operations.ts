@@ -1629,6 +1629,7 @@ export async function compilePlaybookImport(
         user: compilationPrompt(structure, name),
         maxTokens: 16_000,
         apiKeys,
+        feature: "playbook",
       }),
       compilationTimeoutMs,
     );
@@ -1649,6 +1650,7 @@ export async function compilePlaybookImport(
             user: compilationRetryPrompt(structure, name, validationError),
             maxTokens: 16_000,
             apiKeys,
+            feature: "playbook",
           }),
           compilationTimeoutMs,
         );
@@ -2178,7 +2180,7 @@ async function applyReviewEdits(args: {
   job?: PlaybookJobIdentity;
 }): Promise<{
   findings: PlaybookFinding[];
-  version: { id: string; number: number; downloadUrl: string } | null;
+  version: { id: string; number: number } | null;
 }> {
   const planned: { index: number; edit: EditInput }[] = [];
   args.findings.forEach((finding, index) => {
@@ -2244,7 +2246,6 @@ async function applyReviewEdits(args: {
     version: {
       id: result.version_id,
       number: result.version_number,
-      downloadUrl: result.download_url,
     },
   };
 }
@@ -2518,6 +2519,7 @@ export async function runPlaybookReview(
           user: prompt,
           maxTokens: 20_000,
           apiKeys: keys,
+          feature: "playbook",
         });
     const parsed = reviewSchema.parse(parseModelJson(raw));
     const normalized = normalizeFindings(
@@ -2578,7 +2580,6 @@ export async function runPlaybookReview(
       editedVersionId: versionId,
       /** For the response that made them; a stored run has only the id. */
       editedVersionNumber: version?.number ?? null,
-      editedDownloadUrl: version?.downloadUrl ?? null,
       reviewMode: work.reviewMode,
       reviewScope: scope,
       status: "completed" as const,
@@ -2646,6 +2647,7 @@ async function completeReviewWithSources(args: {
     tools: [READ_SOURCE_TOOL],
     maxIterations: 8,
     apiKeys: args.apiKeys,
+    feature: "playbook",
     runTools: (calls) =>
       Promise.all(
         calls.map(async (call) => ({

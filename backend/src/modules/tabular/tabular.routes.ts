@@ -12,6 +12,7 @@
 
 import { Router, type Response } from "express";
 import { randomUUID } from "node:crypto";
+import { AsyncResource } from "node:async_hooks";
 import { requireAuth } from "../../middleware/auth";
 import {
     attachStreamRunSse,
@@ -448,7 +449,8 @@ tabularRouter.post("/:reviewId/generate", requireAuth, asyncRoute(async (req, re
     const generationId = randomUUID();
     const asyncPath = process.env.ASYNC_TABULAR_EXTRACTION === "true";
     let leaseHeartbeat: ReturnType<typeof setInterval> | null = null;
-    req.on("aborted", () => requestAbort.abort());
+    // Request context (and tenant) for abort listeners; see lib/assistantSse.ts.
+    req.on("aborted", AsyncResource.bind(() => requestAbort.abort()));
 
     // Pre-lease guards only (review, access, columns, model policy). Row and
     // cell state is deliberately NOT read here — see the note at the lease
@@ -532,9 +534,9 @@ tabularRouter.post("/:reviewId/generate", requireAuth, asyncRoute(async (req, re
     let leaseHandedOff = false;
     let streamFinished = false;
     if (!run) {
-        res.on("close", () => {
+        res.on("close", AsyncResource.bind(() => {
             if (!streamFinished) requestAbort.abort();
-        });
+        }));
     }
     const write = (line: string) => {
         if (run) return run.write(line);
@@ -1099,6 +1101,7 @@ tabularRouter.post("/:reviewId/chat", requireAuth, asyncRoute(async (req, res) =
     try {
         const { fullText, events } = await runLLMStream({
             onActivity: run?.touch,
+            feature: "tabular",
             apiMessages,
             docStore: new Map(),
             docIndex: {},

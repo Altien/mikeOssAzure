@@ -156,12 +156,14 @@ describe("Authority Trace tool dispatch", () => {
     );
   });
 
-  it("returns the export download reference to the model, never the report body", async () => {
+  it("returns export metadata to the model without a token or report body", async () => {
     exportCitationReviewMock.mockResolvedValue({
       ok: true,
       run_id: "run-1",
       export_type: "review",
       filename: "authority-trace-run-1-review.html",
+      document_id: "export-doc",
+      version_id: "export-version",
       download_url: "/download/token.signature",
       citations: { total: 1, anchored: 1, failed: 0 },
     });
@@ -175,8 +177,10 @@ describe("Authority Trace tool dispatch", () => {
     const content = String(result.toolResults[0].content);
     expect(JSON.parse(content)).toMatchObject({
       ok: true,
-      download_url: "/download/token.signature",
     });
+    expect(content).not.toContain("download_url");
+    expect(content).not.toContain("token.signature");
+    expect(result.docsCreated).toEqual([{ filename: "authority-trace-run-1-review.html", document_id: "export-doc", version_id: "export-version", version_number: 1 }]);
     expect(content).not.toContain("<");
     // The export renders an existing run, so it advances no verification.
     expect(result.authorityTraceEvents).toEqual([]);

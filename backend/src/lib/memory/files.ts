@@ -220,6 +220,10 @@ async function ensureOwnerMemoryFile(
         [ownerColumn]: ownerId,
         enabled: true,
       },
+      // The user scope reaches here only on a database without workspace
+      // memory (before 0122), which also predates tenant_id (0176), so its
+      // conflict target is still the global user key. Tenant-scoped user
+      // files are created by ensure_user_memory_file.
       { onConflict: ownerColumn, ignoreDuplicates: true },
     )
     .select("*")

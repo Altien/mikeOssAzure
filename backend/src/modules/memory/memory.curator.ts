@@ -813,6 +813,7 @@ export async function runMemoryCuratorScope(
     await services.stream({
       model: args.model,
       apiKeys: args.apiKeys,
+      feature: "memory",
       maxIterations: 3,
       requireTools: true,
       tools: [MEMORY_CURATOR_WRITE_TOOL],

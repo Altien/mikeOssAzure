@@ -481,12 +481,12 @@ export type AssistantEvent =
   | {
       type: "doc_created";
       filename: string;
-      download_url: string;
+
       document_id?: string;
       version_id?: string;
       version_number?: number | null;
     }
-  | { type: "doc_download"; filename: string; download_url: string }
+  | { type: "doc_download"; filename: string; document_id?: string; version_id?: string | null; version_number?: number | null }
   | {
       type: "doc_replicated";
       /** Source document being copied. */
@@ -506,7 +506,7 @@ export type AssistantEvent =
       version_id: string;
       /** Per-document monotonic Vn; null if backend couldn't determine it. */
       version_number: number | null;
-      download_url: string;
+
       annotations: EditAnnotation[];
     }
   | CaseCitationEvent
@@ -765,4 +765,17 @@ export interface AuditActor {
 export interface AuditActorPage {
   users: AuditActor[];
   nextOffset: number | null;
+}
+
+/** Pooled tenant administration. Credit amounts retain PostgreSQL decimal precision. */
+export type TenantContentKind = "project" | "chat" | "review";
+export interface TenantAdminMember { userId: string; role: "TenantAdmin" | "Member"; displayName: string | null; email: string | null; }
+export interface TenantContentItem { id: string; kind: TenantContentKind; title: string; ownerId: string | null; createdAt: string; projectId?: string | null; }
+export interface TenantAdminContentPage { items: TenantContentItem[]; hasMore: boolean; }
+export interface TenantAdminOverview {
+  tenantId: string;
+  members: TenantAdminMember[];
+  usage: { periodStart: string; totalTokens: number; totalCredits: string; byUser: { userId: string | null; totalTokens: number; totalCredits: string }[] };
+  budget: { monthlyCredits: string | null; perUserCredits: string | null; softThreshold: string | null; usedCredits: string; reservedCredits: string };
+  controlPlaneUrl: string | null;
 }

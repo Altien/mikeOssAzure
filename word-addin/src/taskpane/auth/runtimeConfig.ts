@@ -17,6 +17,7 @@ export type AuthProvider = "supabase" | "local" | "entra";
 export interface RuntimeConfig {
   wordSentryDsn?: string;
   authProvider: AuthProvider;
+  tenancyMode?: "single" | "pooled";
   backendOrigin: string;
   frontendOrigin: string;
   entra: {
@@ -53,6 +54,7 @@ export function loadRuntimeConfig(): Promise<RuntimeConfig> {
     if (!res.ok) throw new Error(`GET /config failed (${res.status})`);
     const body = (await res.json()) as {
       authProvider?: unknown;
+      tenancyMode?: unknown;
       backendOrigin?: unknown;
       frontendOrigin?: unknown;
       wordSentryDsn?: unknown;
@@ -63,6 +65,7 @@ export function loadRuntimeConfig(): Promise<RuntimeConfig> {
       provider === "entra" || provider === "local" ? provider : "supabase";
     return {
       authProvider,
+      tenancyMode: body.tenancyMode === "pooled" ? "pooled" : "single",
       backendOrigin: asString(body.backendOrigin),
       frontendOrigin: asString(body.frontendOrigin),
       wordSentryDsn: asString(body.wordSentryDsn),

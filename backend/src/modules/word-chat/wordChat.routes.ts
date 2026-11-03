@@ -844,6 +844,7 @@ wordChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
     );
     const { events, citations } = await runLLMStream({
       onActivity: run?.touch,
+      feature: "word",
       apiMessages,
       docStore,
       docIndex,

@@ -115,6 +115,7 @@ export async function draftColumnPrompt(
             user: userMessage,
             maxTokens: 512,
             apiKeys: api_keys,
+            feature: "tabular",
         });
         const parsed = JSON.parse(
             raw

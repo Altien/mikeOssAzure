@@ -16,6 +16,10 @@ import {
 } from "./downloads.service";
 
 export const downloadsRouter = Router();
+downloadsRouter.use((_req, res, next) => {
+    res.setHeader("Cache-Control", "private, no-store");
+    next();
+});
 
 // GET /download/signed/:token — the filesystem storage driver's presigned
 // URL. Deliberately unauthenticated, exactly like the S3 presigned URLs it

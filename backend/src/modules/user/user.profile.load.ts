@@ -11,7 +11,7 @@ export async function ensureProfileRow(db: Db, userId: string) {
         .from("user_profiles")
         .upsert(
             { user_id: userId },
-            { onConflict: "user_id", ignoreDuplicates: true },
+            { onConflict: "tenant_id,user_id", ignoreDuplicates: true },
         );
     return error;
 }

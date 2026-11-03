@@ -1,10 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// Multi-tenant: the session-table probe runs as the platform (no tenant yet).
+const probeDb = () => ({
+  from: () => ({ select: () => ({ limit: async () => ({ error: null }) }) }),
+});
 vi.mock("../supabase", () => ({
-  createServerSupabase: () => ({
-    from: () => ({ select: () => ({ limit: async () => ({ error: null }) }) }),
-  }),
+  createServerSupabase: probeDb,
+  createPlatformSupabase: probeDb,
 }));
 
 const canonical = () => randomBytes(32).toString("base64url");

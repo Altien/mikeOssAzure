@@ -74,3 +74,9 @@ it("limits the full /api Word tool-result path independently and parses it at 2 
         else process.env.RATE_LIMIT_GENERAL_MAX = previous;
     }
 });
+
+it("disables the install surface in pooled mode", async () => {
+    const previous = process.env.TENANCY_MODE; process.env.TENANCY_MODE = "pooled";
+    try { expect((await request(buildApp()).get("/install")).status).toBe(404); }
+    finally { if (previous === undefined) delete process.env.TENANCY_MODE; else process.env.TENANCY_MODE = previous; }
+});

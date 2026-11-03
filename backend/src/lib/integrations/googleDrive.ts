@@ -31,6 +31,7 @@ import {
     stateHash,
 } from "../mcp/client";
 import { resolveProviderSecret } from "../envSecrets";
+import { hasTenantSecretReference } from "../tenantSettings";
 import { ConnectorSetupError } from "../mcp/errors";
 import type { Db } from "../supabase";
 import { type ConnectorOwner, workspaceFilter } from "../connectorOwner";
@@ -190,7 +191,7 @@ function assertGoogleDriveAvailable(): void {
 export async function googleDriveOAuthEnv(): Promise<{ clientId?: string; clientSecret?: string }> {
     const dedicatedId = await resolveProviderSecret("google-drive-oauth-client-id");
     const dedicatedSecret = await resolveProviderSecret("google-drive-oauth-client-secret");
-    if (dedicatedId || dedicatedSecret) return { clientId: dedicatedId, clientSecret: dedicatedSecret };
+    if (dedicatedId || dedicatedSecret || await hasTenantSecretReference("google-drive-oauth-client-id", "google-drive-oauth-client-secret")) return { clientId: dedicatedId, clientSecret: dedicatedSecret };
     return {
         clientId: await resolveProviderSecret("google-mcp-oauth-client-id"),
         clientSecret: await resolveProviderSecret("google-mcp-oauth-client-secret"),

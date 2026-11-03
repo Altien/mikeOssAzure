@@ -6,10 +6,12 @@ import { handleExtractionExtract, markExtractionJobFailed } from "../modules/tab
 import { handleMemoryConsolidation, markMemoryConsolidationFailed } from "../modules/memory/memory.service";
 import { handlePlaybookImport, handlePlaybookReview, markPlaybookImportJobFailed, markPlaybookReviewJobFailed } from "../modules/playbooks/playbooks.service";
 import { handleStorageCleanup } from "../lib/dbq/storageCleanup";
+import { handleTenantPurge } from "../modules/tenant-lifecycle/tenant-lifecycle.service";
 import { type DbJobHandlers } from "../lib/dbq/types";
 import { type DbJobFailureHook } from "../lib/dbq/runner";
 
 export const DB_JOB_HANDLERS: DbJobHandlers = {
+  "tenant.purge": handleTenantPurge,
   "audit.chat_turn": handleChatTurnAudit,
   "account.delete": handleAccountDelete,
   "storage.cleanup": handleStorageCleanup,

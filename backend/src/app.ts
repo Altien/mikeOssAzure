@@ -12,6 +12,7 @@ import fs from "node:fs";
 import { chatRouter } from "./modules/chat/chat.routes";
 import { wordChatRouter } from "./modules/word-chat/wordChat.routes";
 import { projectsRouter } from "./modules/projects/projects.routes";
+import { tenantAdminRouter } from "./modules/tenant-admin/tenant-admin.routes";
 import { orgsRouter } from "./modules/orgs/orgs.routes";
 import { projectChatRouter } from "./modules/project-chat/projectChat.routes";
 import { documentsRouter } from "./modules/documents/documents.routes";
@@ -46,6 +47,8 @@ import { handleUnhandledError, protectInternalErrorResponses } from "./middlewar
 import { configuredAllowedOrigins as configuredOrigins } from "./lib/origins";
 import { envInt } from "./lib/runtimeConfig";
 import { requestDiagnostics } from "./middleware/requestDiagnostics";
+import { runWithRequestId } from "./lib/requestContext";
+import { getTenancyMode } from "./lib/tenancyMode";
 
 // ── Rate-limit configuration (from upstream ba6f771) ───────────────────────
 
@@ -267,6 +270,14 @@ export function buildApp(): express.Express {
   // Limit is small — the only field is a token + maybe a few config values.
   app.use(express.urlencoded({ extended: false, limit: "32kb" }));
   app.use(cookieParser());
+  // After the body parsers, whose stream callbacks would drop the scope:
+  // lets the LLM usage ledger (issue 015) record which request made a call.
+  app.use((_req, res, next) =>
+    runWithRequestId(
+      typeof res.locals.requestId === "string" ? res.locals.requestId : undefined,
+      next,
+    ),
+  );
 
   // ── Static frontend bundle (must be set up BEFORE the API routers below) ──
   const PUBLIC_DIR = process.env.FRONTEND_PUBLIC_DIR
@@ -364,6 +375,7 @@ export function buildApp(): express.Express {
   app.use("/api/projects/:projectId/memory", projectMemoryRouter);
   app.use("/api/projects", projectsRouter);
   app.use("/api/orgs", orgsRouter);
+  app.use("/api/tenant-admin", tenantAdminRouter);
   app.use("/api/projects/:projectId/chat", projectChatRouter);
   app.use("/api/single-documents", documentsRouter);
   app.use("/api/library", libraryRouter);
@@ -384,7 +396,12 @@ export function buildApp(): express.Express {
   app.use("/api/auth", authRouter);
   app.use("/api/llm", llmRouter);
   app.use("/api/admin/diagnostics", diagnosticsRouter);
-  app.use("/install", installRouter);
+  app.use("/install", async (_req, res, next) => {
+    try {
+      if (await getTenancyMode() === "pooled") { res.status(404).end(); return; }
+      next();
+    } catch { res.status(503).json({ detail: "Install configuration is unavailable" }); }
+  }, installRouter);
   app.use("/config", configRouter);
   // Keep the OSS operator diagnostic outside the SPA fallback so it remains
   // available while authentication is being configured.

@@ -101,6 +101,7 @@ describe("GET /single-documents/:documentId/file", () => {
       .set("Authorization", "Bearer test");
 
     expect(response.status).toBe(200);
+    expect(response.headers["cache-control"]).toBe("private, no-store");
     expect(response.headers["content-type"]).toBe(
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     );
@@ -131,6 +132,7 @@ describe("GET /single-documents/:documentId/file", () => {
       .set("Authorization", "Bearer test");
 
     expect(response.status).toBe(404);
+    expect(response.headers["cache-control"]).toBe("private, no-store");
     expect(response.body).toEqual({ detail: "Document not found" });
     expect(mocks.loadActiveVersion).not.toHaveBeenCalled();
     expect(mocks.headFile).not.toHaveBeenCalled();

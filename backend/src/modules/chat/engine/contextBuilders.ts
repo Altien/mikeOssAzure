@@ -3,6 +3,7 @@ import { reportError } from "../../../lib/observability/sentry";
 import { responseLanguageName } from "../../../lib/responseLanguages";
 import { deadlineMessage, type StreamStopReason } from "../../../lib/streamRuns";
 import crypto from "crypto";
+import { hydrateDownloadHistory, stripDownloadUrls } from "../../../lib/downloadHistory";
 import type { Db } from "../../../lib/supabase";
 import { listWorkspaceWorkflows } from "../../../lib/workflowWorkspace";
 import { teamOrgIdOf } from "../../../lib/personalOrgs";
@@ -1086,7 +1087,7 @@ export async function loadAssistantMessage(
     }
     return null;
   }
-  return row as StoredAssistantEventRow;
+  return hydrateDownloadHistory(row as StoredAssistantEventRow, db);
 }
 
 export async function appendAssistantEventsToMessage(
@@ -1109,7 +1110,7 @@ export async function appendAssistantEventsToMessage(
     p_chat_id: chatId,
     p_message_id: messageId,
     p_author_user_id: authorUserId,
-    p_events: events,
+    p_events: stripDownloadUrls(events),
     p_citations: citations ?? [],
     ...(continuations?.rows.length ? { p_subagent_runs: continuations.rows, p_user_email: continuations.userEmail ?? null, p_org_id: continuations.orgId } : {}),
   });

@@ -599,7 +599,7 @@ describe("workflows.routes", () => {
 
       expect(res.status).toBe(400);
       expect(res.body.detail).toBe(
-        "future@firm.test does not belong to a Mike user.",
+        "One or more people are not members of your organisation.",
       );
     });
 

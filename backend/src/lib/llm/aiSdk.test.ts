@@ -35,13 +35,14 @@ describe("shared AI SDK step preparation", () => {
         const options = streamTextMock.mock.calls.at(-1)?.[0] as {
             abortSignal: AbortSignal;
             stopWhen: { count: number };
-            prepareStep: (args: { steps: Array<{ toolCalls: Array<{ toolName: string }> }> }) => Record<string, unknown>;
+            prepareStep: (args: { steps: Array<{ toolCalls: Array<{ toolName: string }> }> }) => Promise<Record<string, unknown>>;
         };
         expect(options.abortSignal).toBeInstanceOf(AbortSignal);
         expect(forwardedWhileRunning).toBe(true);
         expect(options.stopWhen.count).toBe(2);
-        expect(options.prepareStep({ steps: [] })).toEqual({});
-        expect(options.prepareStep({ steps: [{ toolCalls: [{ toolName: "courtlistener_read_case" }] }] })).toMatchObject({
+        // 016 awaits credit reservations in prepareStep before any provider request.
+        expect(await options.prepareStep({ steps: [] })).toEqual({});
+        expect(await options.prepareStep({ steps: [{ toolCalls: [{ toolName: "courtlistener_read_case" }] }] })).toMatchObject({
             activeTools: [], toolChoice: "none",
             system: expect.stringContaining("COURTLISTENER CITATION REMINDER"),
         });

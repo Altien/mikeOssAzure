@@ -121,6 +121,7 @@ export async function generateAssistantChatTitle(args: {
                 reasoningEffort: "none",
                 apiKeys: args.apiKeys,
                 abortSignal: controller.signal,
+                feature: "chat-title",
             }),
             controller.signal,
         );

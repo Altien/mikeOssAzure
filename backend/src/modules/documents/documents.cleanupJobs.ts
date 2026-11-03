@@ -86,8 +86,10 @@ async function claimSiblingCleanupJobs(
   });
   if (error) {
     // A database without the kind-filtered claim (code ahead of migration)
-    // drains one row per job: slower, never wrong.
-    logError("dbq/document-cleanup", error, { phase: "coalesce" });
+    // drains one row per job: slower, never wrong. Under forced tenant RLS
+    // (multi-tenant 008) the tenant role may not claim jobs (42501) and
+    // coalescing is simply off.
+    if (error.code !== "42501") logError("dbq/document-cleanup", error, { phase: "coalesce" });
     return [];
   }
   const siblings: ClaimedCleanupJob[] = [];

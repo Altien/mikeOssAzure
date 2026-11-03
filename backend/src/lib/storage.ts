@@ -6,7 +6,8 @@
  * (./storage/s3.ts — Cloudflare R2, RustFS, MinIO). This module owns the
  * policy every backend shares: not-configured degradation (reads return
  * null/empty, writes throw), error logging, StorageOperationError wrapping,
- * Content-Disposition building, and the storage-key layout.
+ * Content-Disposition building, the storage-key layout, and (multi-tenant
+ * issue 010) which tenant location and object key a caller's key maps to.
  *
  * Deployments on a different object store implement StorageAdapter in one
  * file and call setStorageAdapter() at boot; no call sites change.
@@ -14,7 +15,7 @@
 
 import { AppError, type ErrorKind } from "./appError";
 import { bestEffort } from "./observability/sentry";
-import { createConfiguredStorageAdapter } from "./storage/configured";
+import { createConfiguredStorageFactory, type ConfiguredStorageFactory } from "./storage/configured";
 import { StorageCopyInvariantError } from "./storage/adapter";
 import { Readable } from "node:stream";
 import type {
@@ -23,7 +24,11 @@ import type {
 } from "./storage/adapter";
 import { createS3StorageAdapter } from "./storage/s3";
 import { createFilesystemStorageAdapter } from "./storage/filesystem";
+import { createAzureBlobStorageAdapter } from "./storage/azure";
 import { buildContentDisposition } from "./storage/filenames";
+import { safeErrorLog } from "./safeError";
+import { currentTenant, installTenantId } from "./tenantContext";
+import { tenantStorageLocation, type TenantStorageLocation } from "./tenantStorageLocation";
 export { BlobUploadSizeError } from "./storage/filesystem";
 export {
   buildContentDisposition,
@@ -41,14 +46,23 @@ let adapter: StorageAdapter = process.env.STORAGE_DRIVER === "fs"
 export let storageEnabled = adapter.enabled;
 let adapterGeneration = 0;
 let initialization: Promise<void> | undefined;
+/**
+ * Builds adapters for tenant containers on the install's credentials, which
+ * initStorage resolved once outside any tenant scope (issue 010). Unset when
+ * the adapter was injected rather than configured.
+ */
+let configuredFactory: ConfiguredStorageFactory | undefined;
 
 /** Await before API listening, worker claims, or CLI storage work. */
 export function initStorage(): Promise<void> {
   if (!initialization) {
     const generation = adapterGeneration;
-    initialization = createConfiguredStorageAdapter().then((configured) => {
+    initialization = createConfiguredStorageFactory().then((factory) => {
       // An explicit injected adapter wins over an in-flight default bootstrap.
-      if (adapterGeneration === generation) setStorageAdapter(configured);
+      if (adapterGeneration === generation) {
+        setStorageAdapter(factory());
+        configuredFactory = factory;
+      }
     });
   }
   return initialization;
@@ -59,6 +73,9 @@ export function setStorageAdapter(next: StorageAdapter): void {
   adapterGeneration++;
   adapter = next;
   storageEnabled = next.enabled;
+  // Tenant locations are derived from the install's configuration.
+  configuredFactory = undefined;
+  resetTenantStorageProviders();
 }
 
 const STORAGE_FAILURE_KIND = {
@@ -107,8 +124,215 @@ export function assertStorageConfigured(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Tenant routing (multi-tenant issue 010)
+// ---------------------------------------------------------------------------
+//
+// WHERE an object lives comes from the tenant context, never from the key:
+//
+//   - The adapter is `storageFor(tenant)`: the tenant's registered account
+//     and container (tenants.storage_account / storage_container, written by
+//     the control plane), else the install's configured location.
+//   - Keys callers pass are unchanged (`documents/{user}/…`). For the
+//     install's own tenant they are used as-is, so a single-tenant install
+//     keeps today's layout and needs no data copy. Every other tenant's
+//     objects live under `t/{tenantId}/`, added and stripped here, so call
+//     sites and stored storage_path values stay upstream-shaped.
+//   - A key already of the form `t/{x}/…` must name the current tenant; any
+//     other tenant's key is refused before any storage call.
+//   - Work outside a tenant scope runs as the install tenant (single-tenant
+//     installs: scripts, platform sweeps). A pooled stamp has no install
+//     tenant, so there such work is refused: mutating ops throw, reads find
+//     nothing.
+//   - Platform-shared objects (the global workflow catalog, the CourtListener
+//     cache) stay in the install's configured location for every tenant.
+//     Only platform work or the install tenant may write them.
+//   - Filesystem-driver capabilities (writeBlobFromStream/discardBlob) carry
+//     the object key resolved when they were minted, so they are redeemed
+//     on the install's adapter as-is.
+
+const SHARED_PREFIXES = ["mike-workflows/", "courtlistener/"] as const;
+const TENANT_KEY = /^t\/([^/]*)\//;
+const TENANT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+type Access = "read" | "write";
+
+interface ResolvedObject {
+  adapter: StorageAdapter;
+  /** The object key in that adapter. */
+  key: string;
+  /** Prefix added for this tenant (stripped again from listings), if any. */
+  added: string;
+  /** For listings: the tenant whose `t/` keys may be returned. */
+  tenantId?: string;
+}
+
+/** A key or tenant refused by the routing rules above, before any storage call. */
+export class TenantStorageError extends AppError {
+  constructor(reason: string) {
+    super("storage.tenant_check_failed", `Object storage tenant check (${reason}) failed`);
+    this.name = "TenantStorageError";
+  }
+}
+
+const _tenantAdapters = new Map<string, StorageAdapter>();
+let _registryFallbackLogged = false;
+
+async function installTenant(): Promise<string | undefined> {
+  try {
+    return await installTenantId();
+  } catch {
+    return undefined;
+  }
+}
+
+function isSharedKey(key: string): boolean {
+  return SHARED_PREFIXES.some((prefix) => key.startsWith(prefix));
+}
+
+function adapterAt(location: TenantStorageLocation | null, op: string): StorageAdapter {
+  requireStorageConfig();
+  const account = location?.account ?? null;
+  const container = location?.container ?? null;
+  if (!account && !container) return adapter;
+  const cacheKey = `${account ?? ""}/${container ?? ""}`;
+  let built = _tenantAdapters.get(cacheKey);
+  if (!built) {
+    if (account) {
+      // A registered account is always reached with the app's managed
+      // identity, never with the install's connection string or keys.
+      built = createAzureBlobStorageAdapter({
+        accountName: account,
+        containerName: container ?? process.env.AZURE_STORAGE_CONTAINER_NAME,
+      });
+    } else if (configuredFactory) {
+      // A container alone stays on the install's account/endpoint credentials.
+      built = configuredFactory({ containerName: container! });
+    } else {
+      // An injected adapter has no configuration to derive a container from.
+      throw new Error(`Storage location unavailable (cannot ${op})`);
+    }
+    _tenantAdapters.set(cacheKey, built);
+  }
+  return built;
+}
+
+async function adapterForTenant(tenantId: string, isInstall: boolean, op: string): Promise<StorageAdapter> {
+  let location: TenantStorageLocation | null;
+  try {
+    location = await tenantStorageLocation(tenantId);
+  } catch (error) {
+    // Another tenant fails closed rather than land in the install's account.
+    if (!isInstall) throw new Error(`Storage location unavailable (cannot ${op})`, { cause: error });
+    // The install tenant keeps today's configured location when the registry
+    // cannot be read (database before the storage-location migration,
+    // hosted supabase, no database).
+    if (!_registryFallbackLogged) {
+      _registryFallbackLogged = true;
+      console.warn("[storage] tenant storage location unavailable; using the configured location", {
+        error: safeErrorLog(error),
+      });
+    }
+    location = null;
+  }
+  return adapterAt(location, op);
+}
+
+/**
+ * The storage adapter for `tenantId`: its registered account/container, or
+ * the install's configured location when it has none. Cached per location.
+ * Throws when storage is unconfigured or the registry cannot be read for a
+ * tenant other than the install's.
+ */
+export async function storageFor(tenantId: string): Promise<StorageAdapter> {
+  return adapterForTenant(tenantId, tenantId === (await installTenant()), "use storage");
+}
+
+/** Test seam: forget adapters built for tenant locations. */
+export function resetTenantStorageProviders(): void {
+  _tenantAdapters.clear();
+  _registryFallbackLogged = false;
+}
+
+/**
+ * Map a caller's key to the adapter and object key for the current tenant.
+ * Every check that can refuse runs before the registry lookup and before
+ * any storage call.
+ */
+async function resolveObject(key: string, access: Access, op: string): Promise<ResolvedObject> {
+  const install = await installTenant();
+  const tenantId = currentTenant()?.tenantId ?? install;
+
+  if (isSharedKey(key)) {
+    const platformWork = !currentTenant() || tenantId === install;
+    if (access === "write" && !platformWork) throw new TenantStorageError("shared object");
+    return { adapter, key, added: "" };
+  }
+
+  if (!tenantId) {
+    throw new Error(`Storage is not available outside a tenant (cannot ${op})`);
+  }
+  if (!TENANT_ID.test(tenantId)) throw new TenantStorageError("tenant id");
+  const isInstall = tenantId === install;
+
+  let objectKey = key;
+  let added = "";
+  const owner = TENANT_KEY.exec(key);
+  if (owner) {
+    if (owner[1] !== tenantId) throw new TenantStorageError("foreign key");
+  } else if (key.startsWith("t/") || key === "t") {
+    throw new TenantStorageError("malformed key");
+  } else if (!isInstall) {
+    // Unprefixed (legacy-layout) keys belong only to the install tenant.
+    added = `t/${tenantId}/`;
+    objectKey = `${added}${key}`;
+  }
+
+  const target = await adapterForTenant(tenantId, isInstall, op);
+  return { adapter: target, key: objectKey, added, tenantId };
+}
+
+/**
+ * Read-op variant: a key the routing rules refuse (another tenant's `t/`
+ * key, a malformed key) finds nothing instead. Every other failure — no
+ * tenant on a pooled stamp, an unreadable location registry — is
+ * misconfiguration, not absence, and propagates like main's transport
+ * errors: callers such as durable cleanup must not read it as "empty".
+ */
+async function resolveForRead(key: string, op: string): Promise<ResolvedObject | null> {
+  try {
+    return await resolveObject(key, "read", op);
+  } catch (error) {
+    if (error instanceof TenantStorageError) return null;
+    throw error;
+  }
+}
+
+/**
+ * Copy between two adapters (a shared catalog object into a tenant's own
+ * location): bytes through this process, the source ETag still enforced.
+ */
+async function copyAcross(
+  source: ResolvedObject,
+  target: ResolvedObject,
+  sourceEtag: string | undefined,
+): Promise<void> {
+  const meta = await source.adapter.headFile(source.key);
+  if (!meta) throw new StorageOperationError("copy");
+  if (sourceEtag && meta.etag !== sourceEtag) throw new StorageOperationError("source changed");
+  const bytes = await source.adapter.downloadFile(source.key);
+  if (!bytes) throw new StorageOperationError("download");
+  await target.adapter.uploadFile(target.key, bytes, meta.contentType ?? "application/octet-stream");
+  const copied = await target.adapter.headFile(target.key);
+  if (!copied || copied.size !== meta.size) throw new StorageOperationError("copy verification");
+}
+
+// ---------------------------------------------------------------------------
 // Upload
 // ---------------------------------------------------------------------------
+//
+// Every helper below resolves the current tenant's adapter and object key
+// through resolveObject (issue 010). Mutating ops throw on a refusal; read
+// ops (download, list, signed URL) return null / [] instead.
 
 export async function uploadFile(
   key: string,
@@ -116,7 +340,8 @@ export async function uploadFile(
   contentType: string,
 ): Promise<void> {
   requireStorageConfig();
-  await adapter.uploadFile(key, content, contentType);
+  const target = await resolveObject(key, "write", "upload");
+  await target.adapter.uploadFile(target.key, content, contentType);
 }
 
 export async function uploadFileFromPath(
@@ -125,8 +350,9 @@ export async function uploadFileFromPath(
   contentType: string,
 ): Promise<void> {
   requireStorageConfig();
+  const target = await resolveObject(key, "write", "upload");
   try {
-    await adapter.uploadFileFromPath(key, filePath, contentType);
+    await target.adapter.uploadFileFromPath(target.key, filePath, contentType);
   } catch (error) {
     throw new StorageOperationError("upload", { cause: error });
   }
@@ -145,9 +371,10 @@ export async function getSignedUploadUrl(
   expiresIn = 900,
 ): Promise<string | null> {
   if (!adapter.enabled) return null;
+  const target = await resolveObject(key, "write", "sign upload");
   try {
-    return await adapter.getSignedUploadUrl(
-      key,
+    return await target.adapter.getSignedUploadUrl(
+      target.key,
       contentType,
       expectedSizeBytes,
       expiresIn,
@@ -169,8 +396,9 @@ export async function headFile(
 ): Promise<StoredObjectMetadata | null> {
   // Dev: a missing configuration is not evidence an upload/blob is absent.
   requireStorageConfig();
+  const source = await resolveObject(key, "read", "HEAD");
   try {
-    return await adapter.headFile(key);
+    return await source.adapter.headFile(source.key);
   } catch (error) {
     // Thrown, not logged: the caller that catches this reports it, and a
     // console line here filed the same failure a second time.
@@ -184,10 +412,18 @@ export async function copyFile(
   sourceEtag?: string,
 ): Promise<void> {
   requireStorageConfig();
+  const source = await resolveObject(sourceKey, "read", "copy");
+  const target = await resolveObject(targetKey, "write", "copy");
   try {
-    if (sourceEtag === undefined) await adapter.copyFile(sourceKey, targetKey);
-    else await adapter.copyFile(sourceKey, targetKey, sourceEtag);
+    if (source.adapter !== target.adapter) {
+      await copyAcross(source, target, sourceEtag);
+    } else if (sourceEtag === undefined) {
+      await target.adapter.copyFile(source.key, target.key);
+    } else {
+      await target.adapter.copyFile(source.key, target.key, sourceEtag);
+    }
   } catch (error) {
+    if (error instanceof StorageOperationError) throw error;
     if (error instanceof StorageCopyInvariantError) {
       throw new StorageOperationError(error.operation, { cause: error });
     }
@@ -201,8 +437,12 @@ export async function copyFile(
 
 export async function downloadFile(key: string, signal?: AbortSignal): Promise<ArrayBuffer | null> {
   if (!adapter.enabled) return null;
+  const source = await resolveForRead(key, "download");
+  if (!source) return null;
   try {
-    return signal ? await adapter.downloadFile(key, signal) : await adapter.downloadFile(key);
+    return signal
+      ? await source.adapter.downloadFile(source.key, signal)
+      : await source.adapter.downloadFile(source.key);
   } catch (error) {
     // null is "not there" (the adapters translate a missing object); a
     // transport or permission failure is thrown so the caller's handler
@@ -235,8 +475,10 @@ export function createFileReadStream(key: string): Readable {
   return Readable.from(
     (async function* () {
       requireStorageConfig();
+      // A refused key surfaces as its own error, not as a download failure.
+      const source = await resolveObject(key, "read", "download");
       try {
-        const body = await adapter.openReadStream(key);
+        const body = await source.adapter.openReadStream(source.key);
         if (!body) {
           throw new StorageOperationError("download");
         }
@@ -252,9 +494,24 @@ export function createFileReadStream(key: string): Readable {
   );
 }
 
+/**
+ * Read operation — returns [] when storage is unconfigured or the prefix is
+ * refused (another tenant's); a missing tenant or an unreadable location
+ * throws (see resolveForRead). Keys come back
+ * in the caller's form: the tenant prefix added on the way in is stripped,
+ * and the install tenant never sees another tenant's `t/` keys.
+ */
 export async function listFiles(prefix: string): Promise<string[]> {
   if (!adapter.enabled) return [];
-  return adapter.listFiles(prefix);
+  const scope = await resolveForRead(prefix, "list");
+  if (!scope) return [];
+  const keys = await scope.adapter.listFiles(scope.key);
+  const own = scope.tenantId ? `t/${scope.tenantId}/` : null;
+  return keys.flatMap((key) => {
+    if (scope.added) return key.startsWith(scope.added) ? [key.slice(scope.added.length)] : [];
+    if (key.startsWith("t/") && (!own || !key.startsWith(own))) return [];
+    return [key];
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -268,11 +525,12 @@ export async function deleteFile(key: string): Promise<void> {
   // An empty key names no object. Sent anyway, the SDK either rejects it
   // (a missing URI label) or, on some stores, addresses the bucket itself.
   if (!key) return;
+  const target = await resolveObject(key, "write", "delete");
   try {
     // The adapter resolves when the store itself says the object is already
     // gone (see deleteFile in ./storage/adapter.ts), so reaching this catch
     // means the delete genuinely failed.
-    await adapter.deleteFile(key);
+    await target.adapter.deleteFile(target.key);
   } catch (error) {
     // Same shape as HEAD/copy/download failures: the operation is named and
     // the SDK error (with its errno or S3 code) is the cause, which is where
@@ -333,6 +591,8 @@ export async function getSignedUrl(
   downloadFilename?: string,
 ): Promise<string | null> {
   if (!adapter.enabled) return null;
+  const source = await resolveForRead(key, "sign URL");
+  if (!source) return null;
   try {
     // Override the response Content-Disposition so the browser uses this
     // filename on download, instead of the last path segment of the storage
@@ -341,8 +601,8 @@ export async function getSignedUrl(
     const responseContentDisposition = downloadFilename
       ? buildContentDisposition("attachment", downloadFilename)
       : undefined;
-    return await adapter.getSignedUrl(
-      key,
+    return await source.adapter.getSignedUrl(
+      source.key,
       expiresIn,
       responseContentDisposition,
       downloadFilename,
@@ -430,6 +690,10 @@ function storageExtension(filename: string, fallback: string): string {
  * into storage. Only the filesystem driver mints those capabilities (an S3
  * store takes the browser's presigned PUT directly), so a transport without
  * writeBlobFromStream rejects the call rather than silently dropping bytes.
+ *
+ * Multi-tenant: the capability names the object key getSignedUploadUrl
+ * resolved for its tenant when it was minted, and is redeemed without a
+ * tenant context, so the key is used as-is on the install's adapter.
  */
 export async function writeBlobFromStream(
   key: string,
@@ -449,7 +713,11 @@ export async function discardBlob(key: string): Promise<void> {
   await adapter.discardBlob?.(key);
 }
 
-/** Dev's private Blob upload flow stays behind the same adapter seam. */
+/**
+ * Dev's private Blob upload flow stays behind the same adapter seam. The
+ * install's adapter decides the transport; tenant locations keep that kind
+ * (a registered account is Azure, used on Azure installs).
+ */
 export function uploadTransport(): "direct" | "authenticated_parts" {
   requireStorageConfig();
   return adapter.uploadTransport ?? "direct";
@@ -459,11 +727,12 @@ export async function stageUploadPart(
   key: string, blockId: string, body: Readable, length: number, signal?: AbortSignal,
 ): Promise<void> {
   requireStorageConfig();
-  if (adapter.uploadTransport !== "authenticated_parts" || !adapter.stageUploadPart) {
+  const target = await resolveObject(key, "write", "stage part");
+  if (target.adapter.uploadTransport !== "authenticated_parts" || !target.adapter.stageUploadPart) {
     throw new StorageOperationError("stage part transport");
   }
   try {
-    await adapter.stageUploadPart(key, blockId, body, length, signal);
+    await target.adapter.stageUploadPart(target.key, blockId, body, length, signal);
   } catch (error) {
     throw new StorageOperationError("stage part", { cause: error });
   }
@@ -471,11 +740,12 @@ export async function stageUploadPart(
 
 export async function sealUploadParts(key: string, blockIds: string[], contentType: string): Promise<void> {
   requireStorageConfig();
-  if (adapter.uploadTransport !== "authenticated_parts" || !adapter.sealUploadParts) {
+  const target = await resolveObject(key, "write", "seal parts");
+  if (target.adapter.uploadTransport !== "authenticated_parts" || !target.adapter.sealUploadParts) {
     throw new StorageOperationError("seal parts transport");
   }
   try {
-    await adapter.sealUploadParts(key, blockIds, contentType);
+    await target.adapter.sealUploadParts(target.key, blockIds, contentType);
   } catch (error) {
     throw new StorageOperationError("commit parts", { cause: error });
   }

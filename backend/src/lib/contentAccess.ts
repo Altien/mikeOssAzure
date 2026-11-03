@@ -6,6 +6,7 @@
 import type { Db } from "./supabase";
 import { isProjectRole, type ProjectRole } from "./permissions";
 import { findProfileUserByEmail } from "./userLookup";
+import { currentTenant } from "./tenantContext";
 
 const normalizeEmail = (email: string | null | undefined) => {
     const normalized = (email ?? "").trim().toLowerCase();
@@ -92,12 +93,14 @@ export async function getContentGrantRole(
     const email = normalizeEmail(userEmail);
     if (!email) return null;
     const config = GRANT_CONFIG[kind];
-    const { data } = await db
+    let query = db
         .from(config.table)
         .select("role")
         .eq(config.resourceColumn, resourceId)
-        .eq("email", email)
-        .maybeSingle();
+        .eq("email", email);
+    const tenantId = currentTenant()?.tenantId;
+    if (tenantId) query = query.eq("tenant_id", tenantId);
+    const { data } = await query.maybeSingle();
     return isProjectRole((data as { role?: unknown } | null)?.role)
         ? (data as { role: ProjectRole }).role
         : null;
@@ -154,7 +157,7 @@ export async function upsertContentGrant(
             return {
                 ok: false,
                 kind: "validation",
-                detail: `${email} does not belong to a Mike user.`,
+                detail: "That person is not a member of your organisation.",
             };
         if (params.orgId) {
             const { data: membership, error: membershipError } = await db

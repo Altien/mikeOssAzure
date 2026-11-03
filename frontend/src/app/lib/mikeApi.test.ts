@@ -3719,63 +3719,31 @@ describe("dev divergences", () => {
             clickSpy.mockRestore();
         });
 
-        it("absolute (pre-signed) URL: clicks it directly without an authenticated fetch", async () => {
-            fetchMock.mockResolvedValueOnce(
-                jsonResponse({
-                    url: "https://r2.example.test/signed",
-                    filename: "a.pdf",
-                    version_id: null,
-                }),
-            );
-
-            await downloadResolvedDocument("d1", null, "fallback.pdf");
-
-            expect(fetchMock).toHaveBeenCalledTimes(1);
-            expect(clickSpy).toHaveBeenCalledOnce();
-        });
-
-        it("relative (Azure proxy) URL: fetches the bytes through /api with the bearer token", async () => {
-            fetchMock
-                .mockResolvedValueOnce(
-                    jsonResponse({
-                        url: "/single-documents/d1/content",
-                        filename: "",
-                        version_id: "v1",
-                    }),
-                )
-                .mockResolvedValueOnce(
-                    new Response(new Blob(["pdf"]), { status: 200 }),
-                );
-
+        it("downloads by document ID and version with authentication even days later", async () => {
+            fetchMock.mockResolvedValueOnce(new Response(new Blob(["pdf"]), {
+                status: 200,
+                headers: { "content-disposition": 'inline; filename="saved.pdf"' },
+            }));
             await downloadResolvedDocument("d1", "v1", "fallback.pdf");
-
-            expect(fetchMock.mock.calls[0][0]).toBe(
-                "http://localhost:3001/api/single-documents/d1/url?version_id=v1",
-            );
+            expect(fetchMock).toHaveBeenCalledTimes(1);
             const { url, init } = lastFetchCall();
-            expect(url).toBe(
-                "http://localhost:3001/api/single-documents/d1/content",
-            );
-            expect(init.headers).toMatchObject({
-                Authorization: "Bearer token-123",
-            });
+            expect(url).toBe("http://localhost:3001/api/single-documents/d1/file?version_id=v1");
+            expect(init.credentials).toBe("include");
+            expect(init.cache).toBe("no-store");
             expect(clickSpy).toHaveBeenCalledOnce();
         });
 
-        it("relative URL: throws on a non-2xx download", async () => {
-            fetchMock
-                .mockResolvedValueOnce(
-                    jsonResponse({
-                        url: "/single-documents/d1/content",
-                        filename: "a.pdf",
-                        version_id: null,
-                    }),
-                )
-                .mockResolvedValueOnce(new Response("", { status: 404 }));
+        it("uses the current version when none was stored", async () => {
+            fetchMock.mockResolvedValueOnce(new Response(new Blob(["pdf"]), { status: 200 }));
+            await downloadResolvedDocument("d 1", null, "fallback.pdf");
+            expect(lastFetchCall().url).toBe("http://localhost:3001/api/single-documents/d%201/file");
+            expect(clickSpy).toHaveBeenCalledOnce();
+        });
 
-            await expect(
-                downloadResolvedDocument("d1", null, "a.pdf"),
-            ).rejects.toThrow("Download failed: 404");
+        it("throws on a non-2xx file download", async () => {
+            fetchMock.mockResolvedValueOnce(new Response("", { status: 404 }));
+            await expect(downloadResolvedDocument("d1", null, "a.pdf")).rejects.toThrow();
+            expect(clickSpy).not.toHaveBeenCalled();
         });
     });
 

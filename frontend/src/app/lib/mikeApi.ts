@@ -173,6 +173,22 @@ export class MikeApiError extends Error {
 }
 
 export const INTERNAL_ERROR_MESSAGE = "Something went wrong. Please try again.";
+
+// Pooled tenant administration. Credits stay decimal strings across the wire.
+import type { TenantContentKind, TenantAdminOverview, TenantAdminContentPage } from "@mike/contracts";
+export type { TenantContentKind, TenantAdminOverview, TenantContentItem, TenantAdminMember } from "@mike/contracts";
+export function getTenantAdminStatus(): Promise<{ isTenantAdmin: boolean }> {
+    return apiRequest("/tenant-admin/status");
+}
+export function getTenantAdminOverview(): Promise<TenantAdminOverview> {
+    return apiRequest("/tenant-admin/overview");
+}
+export function getTenantAdminContent(kind: TenantContentKind, offset = 0, limit = 50): Promise<TenantAdminContentPage> {
+    return apiRequest(`/tenant-admin/content?${new URLSearchParams({ kind, offset: String(offset), limit: String(limit) })}`);
+}
+export function reassignTenantContent(input: { kind: TenantContentKind; id: string; newOwnerId: string; reason: string }): Promise<{ ok: true }> {
+    return apiRequest("/tenant-admin/reassign", { method: "POST", body: JSON.stringify(input) });
+}
 export const MALFORMED_ERROR_RESPONSE_MESSAGE =
     "The request could not be completed. Please try again.";
 /**
@@ -1278,12 +1294,13 @@ export type ApiKeyState = Record<
         source: ApiKeySource;
         enabled?: boolean;
     }
->;
+> & { modelAllowlist?: readonly string[] | null };
 
 export type ApiKeyStatus = Record<ApiKeyProvider, boolean> & {
     sources?: Partial<Record<ApiKeyProvider, ApiKeySource>>;
     enabled?: Partial<Record<ApiKeyProvider, boolean>>;
     settings?: ApiKeySettings;
+    modelAllowlist?: readonly string[] | null;
 };
 
 export interface ConfiguredModelOption {
@@ -2941,7 +2958,7 @@ interface DocumentEditResolution {
     already_resolved?: boolean;
     status?: "accepted" | "rejected";
     version_id: string | null;
-    download_url: string | null;
+
     remaining_pending?: number;
 }
 
@@ -2964,41 +2981,14 @@ export async function getDocumentUrl(
     return apiRequest("documents.directory", `/single-documents/${documentId}/url${qs}`);
 }
 
-/**
- * Dev-only (OSS-6 divergence, §2.3 item 6): resolve a document/version
- * download URL and trigger a browser download.
- *
- * R2 returns an absolute pre-signed URL the browser can fetch directly. Azure
- * returns a relative backend-proxy path (`/download/<token>`) that sits behind
- * `requireAuth`, so a plain `<a>` click can't authenticate (no Bearer header)
- * and the relative path also misses the `/api` prefix. For that case we fetch
- * with the auth header and save the resulting blob.
- */
+/** Download current document bytes behind the normal authenticated access check. */
 export async function downloadResolvedDocument(
     documentId: string,
     versionId: string | null,
     fallbackFilename: string,
 ): Promise<void> {
-    const { url, filename } = await getDocumentUrl(documentId, versionId);
+    const { blob, filename } = await getDocumentFile(documentId, versionId);
     const name = filename || fallbackFilename;
-
-    // Absolute pre-signed URL (R2): the browser fetches it directly; adding an
-    // Authorization header would only trip CORS on the storage host.
-    if (/^https?:\/\//i.test(url)) {
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = name;
-        a.rel = "noopener";
-        a.click();
-        return;
-    }
-
-    // Relative backend proxy (Azure): authenticate and download the bytes.
-    const authHeaders = await getAuthHeader();
-    const response = await fetch(`${API_BASE}${url}`, { headers: authHeaders, credentials: "include" });
-    bounceIfUnauthorized(response);
-    if (!response.ok) throw new Error(`Download failed: ${response.status}`);
-    const blob = await response.blob();
     const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = blobUrl;

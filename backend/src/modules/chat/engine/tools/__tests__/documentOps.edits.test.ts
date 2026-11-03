@@ -248,7 +248,7 @@ describe("assistant document-edit lifecycle", () => {
         },
       ],
     });
-    if (result.ok) expect(result.download_url).toContain("Renamed.docx");
+    if (result.ok) expect(result).not.toHaveProperty("download_url");
     expect(fake.rpc.mock.calls[0][1].p_version).not.toHaveProperty(
       "version_number",
     );

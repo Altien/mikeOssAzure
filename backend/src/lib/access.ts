@@ -1,9 +1,11 @@
+import { auditedAdminRead } from "./tenantAdminAccess";
 import type { Db } from "./supabase";
 import { chunkArray } from "./arrays";
 import {
     hasOrgPrivateContentAccess,
     listOrgPrivateContentAccess,
 } from "./orgPrivateContent";
+import { currentTenant } from "./tenantContext";
 
 /**
  * Project / document access helpers.
@@ -263,8 +265,8 @@ export async function getOrgRole(
 
 /**
  * The role a direct access grant gives the caller on a project, or null when
- * they hold no grant. Grants are keyed by normalized email so an invitation
- * to share can be honoured before the recipient has an account.
+ * they hold no grant. Grant creation resolves the recipient inside this
+ * tenant; the normalized email remains the stable matching key.
  */
 export async function getProjectGrantRole(
     projectId: string,
@@ -273,12 +275,14 @@ export async function getProjectGrantRole(
 ): Promise<ProjectRole | null> {
     const email = normalizeEmail(userEmail);
     if (!email) return null;
-    const { data } = await db
+    let query = db
         .from("project_access_grants")
         .select("role")
         .eq("project_id", projectId)
-        .eq("email", email)
-        .maybeSingle();
+        .eq("email", email);
+    const tenantId = currentTenant()?.tenantId;
+    if (tenantId) query = query.eq("tenant_id", tenantId);
+    const { data } = await query.maybeSingle();
     const role = (data as { role?: string } | null)?.role;
     return isProjectRole(role) ? role : null;
 }
@@ -370,7 +374,7 @@ export type ProjectAccess =
       }
     | { ok: false };
 
-export async function checkProjectAccess(
+async function normalCheckProjectAccess(
     projectId: string,
     userId: string,
     userEmail: string | null | undefined,
@@ -569,7 +573,7 @@ export type WorkflowAccess =
     | { ok: false };
 
 /** Resolve a workflow through exactly one scope: organization or direct. */
-export async function checkWorkflowAccess(
+async function normalCheckWorkflowAccess(
     workflowId: string,
     userId: string,
     userEmail: string | null | undefined,
@@ -613,12 +617,14 @@ export async function checkWorkflowAccess(
     // Before that constraint a mixed-case row listed for its recipient via
     // get_workflows_overview — which lowers both sides — and then missed
     // here, so the workflow 404'd the moment they opened it.
-    const { data: share, error } = await db
+    let shareQuery = db
         .from("workflow_shares")
         .select("role")
         .eq("workflow_id", workflowId)
-        .eq("shared_with_email", email)
-        .maybeSingle();
+        .eq("shared_with_email", email);
+    const tenantId = currentTenant()?.tenantId;
+    if (tenantId) shareQuery = shareQuery.eq("tenant_id", tenantId);
+    const { data: share, error } = await shareQuery.maybeSingle();
     if (error) return { ok: false };
     const role = (share as { role?: unknown } | null)?.role;
     if (!isProjectRole(role)) return { ok: false };
@@ -639,7 +645,7 @@ export async function checkWorkflowAccess(
  * colleague's document, while that colleague does not gain extra permissions
  * beyond the inherited container role.
  */
-export async function ensureDocAccess(
+async function normalEnsureDocAccess(
     doc: {
         id?: string;
         user_id: string | null;
@@ -652,7 +658,7 @@ export async function ensureDocAccess(
     db: Db,
 ): Promise<ResourceAccess> {
     if (doc.project_id) {
-        const access = await checkProjectAccess(
+        const access = await normalCheckProjectAccess(
             doc.project_id,
             userId,
             userEmail,
@@ -667,7 +673,7 @@ export async function ensureDocAccess(
             : { ok: false };
     }
     if (doc.workflow_id) {
-        const access = await checkWorkflowAccess(
+        const access = await normalCheckWorkflowAccess(
             doc.workflow_id,
             userId,
             userEmail,
@@ -727,7 +733,7 @@ async function ensureSharedRowAccess(
     db: Db,
 ): Promise<ResourceAccess> {
     if (row.project_id) {
-        const access = await checkProjectAccess(
+        const access = await normalCheckProjectAccess(
             row.project_id,
             userId,
             userEmail,
@@ -773,7 +779,7 @@ async function ensureSharedRowAccess(
  * Same shape as `ensureDocAccess`, for tabular_reviews: creator, direct
  * grant, or inherited project access, using one exclusive scope.
  */
-export async function ensureReviewAccess(
+async function normalEnsureReviewAccess(
     review: {
         id: string;
         user_id: string | null;
@@ -797,7 +803,7 @@ export async function ensureReviewAccess(
  * two in lockstep, or a chat becomes openable by URL while staying invisible
  * in the list.
  */
-export async function ensureChatAccess(
+async function normalEnsureChatAccess(
     chat: {
         id: string;
         user_id: string | null;
@@ -1085,4 +1091,33 @@ export async function listAccessibleProjectIds(
         if (role || privateAccess.get("project")?.has(project.id)) ids.add(project.id);
     }
     return [...ids];
+}
+
+/** Audited tenant-admin fallback always derives Viewer, never an ownership/write grant. */
+export async function checkProjectAccess(...args: Parameters<typeof normalCheckProjectAccess>): Promise<ProjectAccess> {
+    const access = await normalCheckProjectAccess(...args);
+    if (access.ok || !await auditedAdminRead(args[3], "project", args[0], args[1])) return access;
+    const { data: project, error } = await args[3].from("projects").select("id,user_id,org_id").eq("id", args[0]).maybeSingle();
+    return !error && project ? { ok: true, isCreator: false, orgRole: null, projectRole: "viewer", project } : { ok: false };
+}
+export async function checkWorkflowAccess(...args: Parameters<typeof normalCheckWorkflowAccess>): Promise<WorkflowAccess> {
+    const access = await normalCheckWorkflowAccess(...args);
+    if (access.ok || !await auditedAdminRead(args[3], "workflow", args[0], args[1])) return access;
+    const { data: workflow, error } = await args[3].from("workflows").select("id,user_id,org_id").eq("id", args[0]).maybeSingle();
+    return !error && workflow ? { ok: true, isCreator: false, orgRole: null, projectRole: "viewer", workflow } : { ok: false };
+}
+export async function ensureDocAccess(...args: Parameters<typeof normalEnsureDocAccess>): Promise<ResourceAccess> {
+    const access = await normalEnsureDocAccess(...args);
+    return access.ok || !await auditedAdminRead(args[3], "document", args[0].id, args[1])
+        ? access : resourceAccessFor("viewer", null, false);
+}
+export async function ensureChatAccess(...args: Parameters<typeof normalEnsureChatAccess>): Promise<ResourceAccess> {
+    const access = await normalEnsureChatAccess(...args);
+    return access.ok || !await auditedAdminRead(args[3], "chat", args[0].id, args[1])
+        ? access : resourceAccessFor("viewer", null, false);
+}
+export async function ensureReviewAccess(...args: Parameters<typeof normalEnsureReviewAccess>): Promise<ResourceAccess> {
+    const access = await normalEnsureReviewAccess(...args);
+    return access.ok || !await auditedAdminRead(args[3], "review", args[0].id, args[1])
+        ? access : resourceAccessFor("viewer", null, false);
 }

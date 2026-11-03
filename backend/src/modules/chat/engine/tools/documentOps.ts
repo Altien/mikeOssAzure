@@ -20,7 +20,6 @@ import { readCurrentLegacyDocumentText } from "../../../documents/documents.serv
 import { enqueueConversion } from "../../../../lib/queue/conversionQueue";
 import { enqueueDbJob } from "../../../../lib/dbq/enqueue";
 import type { Db } from "../../../../lib/supabase";
-import { buildDownloadUrl } from "../../../../lib/downloadTokens";
 import {
   contentSha256,
   loadActiveVersion,
@@ -974,7 +973,6 @@ async function persistGeneratedFile(params: {
     }
   }
 
-  const downloadUrl = buildDownloadUrl(key, filename);
   const { data: docRow, error: docErr } = await db
     .from("documents")
     .insert({
@@ -1036,7 +1034,7 @@ async function persistGeneratedFile(params: {
 
   return {
     filename,
-    download_url: downloadUrl,
+
     document_id: documentId,
     version_id: versionId,
     version_number: 1,
@@ -1683,7 +1681,7 @@ export type DocEditedResult = {
   document_id: string;
   version_id: string;
   version_number: number | null;
-  download_url: string;
+
   annotations: EditAnnotation[];
 };
 
@@ -1706,7 +1704,7 @@ export type TurnReadState = Map<
 
 export type DocCreatedResult = {
   filename: string;
-  download_url: string;
+
   document_id?: string;
   version_id?: string;
   version_number?: number | null;

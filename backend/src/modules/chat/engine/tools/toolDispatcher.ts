@@ -76,7 +76,6 @@ import {
   contentTypeForDocumentType,
   shouldConvertToPdf,
 } from "../../../../lib/documentTypes";
-import { buildDownloadUrl } from "../../../../lib/downloadTokens";
 import { safeErrorLog } from "../../../../lib/safeError";
 import { contentSha256, loadActiveVersion } from "../../../../lib/documentVersions";
 import { type EditInput } from "../../../../lib/docxTrackedChanges";
@@ -516,9 +515,8 @@ export async function runToolCalls(
     fileType: string,
   ) => {
     let newDocLabel: string | null = null;
-    if ("filename" in result && "download_url" in result) {
+    if ("filename" in result && "document_id" in result && "version_id" in result) {
       const dlFilename = result.filename as string;
-      const dlUrl = result.download_url as string;
       const documentId = (result as { document_id?: string }).document_id;
       const versionId = (result as { version_id?: string }).version_id;
       const versionNumber =
@@ -546,7 +544,7 @@ export async function runToolCalls(
         `data: ${JSON.stringify({
           type: "doc_created",
           filename: dlFilename,
-          download_url: dlUrl,
+
           document_id: documentId,
           version_id: versionId,
           version_number: versionNumber,
@@ -554,14 +552,14 @@ export async function runToolCalls(
       );
       docsCreated.push({
         filename: dlFilename,
-        download_url: dlUrl,
+
         document_id: documentId,
         version_id: versionId,
         version_number: versionNumber,
       });
     } else {
       write(
-        `data: ${JSON.stringify({ type: "doc_created", filename: previewFilename, download_url: "" })}\n\n`,
+        `data: ${JSON.stringify({ type: "doc_created", filename: previewFilename })}\n\n`,
       );
     }
 
@@ -753,6 +751,10 @@ export async function runToolCalls(
         authorityTraceState,
         authorityTraceEvents,
         toolResults,
+        onDocumentCreated: (document) => {
+          write(`data: ${JSON.stringify({ type: "doc_created", ...document })}\n\n`);
+          docsCreated.push(document);
+        },
       })
     ) {
       continue;
@@ -1153,7 +1155,6 @@ export async function runToolCalls(
               document_id: indexed.document_id,
               version_id: run.editedVersionId,
               version_number: run.editedVersionNumber,
-              download_url: run.editedDownloadUrl ?? "",
               annotations,
             };
             docsEdited.push(payload);
@@ -1966,7 +1967,7 @@ export async function runToolCalls(
             filename,
             document_id: documentId,
             version_id: "",
-            download_url: "",
+
             annotations: [],
             error,
           })}\n\n`,
@@ -2070,7 +2071,7 @@ export async function runToolCalls(
             document_id: indexed.document_id,
             version_id: result.version_id,
             version_number: result.version_number,
-            download_url: result.download_url,
+
             annotations: result.annotations,
           };
           docsEdited.push(payload);
@@ -2106,7 +2107,7 @@ export async function runToolCalls(
               filename: docInfo.filename,
               document_id: indexed.document_id,
               version_id: "",
-              download_url: "",
+
               annotations: [],
               error: result.error,
             })}\n\n`,
@@ -2366,7 +2367,7 @@ export async function runToolCalls(
                   document_id: string;
                   version_id: string;
                   filename: string;
-                  download_url: string;
+
                 }[] = [];
                 for (let idx = 0; idx < newDocs.length; idx++) {
                   const d = newDocs[idx];
@@ -2421,7 +2422,7 @@ export async function runToolCalls(
                     document_id: d.id,
                     version_id: versionId,
                     filename: d.filename,
-                    download_url: buildDownloadUrl(newKey, d.filename),
+
                   });
                 }
 
@@ -2555,7 +2556,7 @@ export async function runToolCalls(
           `data: ${JSON.stringify({
             type: "doc_created",
             filename: result.filename,
-            download_url: result.download_url,
+
             document_id: result.document_id,
             version_id: result.version_id,
             version_number,
@@ -2563,7 +2564,7 @@ export async function runToolCalls(
         );
         docsCreated.push({
           filename: result.filename,
-          download_url: result.download_url,
+
           document_id: result.document_id,
           version_id: result.version_id,
           version_number,

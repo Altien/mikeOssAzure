@@ -14,7 +14,8 @@
 // backend replicas partition the work safely.
 
 import { AppError } from "../appError";
-import { createServerSupabase } from "../supabase";
+import { createPlatformSupabase, createServerSupabase } from "../supabase";
+import { runWithJobTenant } from "../tenantContext";
 import { jobErrorMessage } from "./jobError";
 import { runIsolated } from "./jobScope";
 import { deleteFile } from "../storage";
@@ -65,6 +66,16 @@ const defaultClaimGate = createDbJobClaimGate();
 
 const CLAIM_BATCH = 5;
 /**
+ * Per-tenant cap on live jobs across every worker and replica (multi-tenant
+ * issue 017, migration 0184), or undefined for no cap. claim_db_jobs always
+ * picks round-robin across tenants; the cap is opt-in so single-tenant
+ * installs claim exactly as before.
+ */
+export function tenantConcurrencyCap(env: NodeJS.ProcessEnv = process.env): number | undefined {
+    const raw = Number.parseInt(env.DBQ_TENANT_CONCURRENCY ?? "", 10);
+    return Number.isFinite(raw) && raw > 0 ? raw : undefined;
+}
+/**
  * A "running" job whose claim is older than this is presumed crashed.
  * Exported because a handler that claims sibling rows of its own kind (the
  * document.cleanup coalescer) has to use the same stale threshold this loop
@@ -75,7 +86,7 @@ export const STALE_SECONDS = 600;
 const DONE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const FAILED_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const SWEEP_EVERY_MS = 60 * 60 * 1000;
-const RETRY_UNTIL_SUCCESS_KINDS = new Set(["storage.cleanup", "document.cleanup"]);
+const RETRY_UNTIL_SUCCESS_KINDS = new Set(["storage.cleanup", "document.cleanup", "tenant.purge"]);
 
 /**
  * Exponential backoff for retries: 30s, 90s, 270s, ... capped at 30 min.
@@ -122,12 +133,20 @@ export class NonRetryableJobError extends AppError {
  *   handler throws NonRetryableJobError -> failed immediately
  *   unknown kind            -> failed immediately (retrying can't fix it)
  * Exported for unit tests; the poll loop below is just claim + fan-in.
+ *
+ * The whole run — handler, lease renewals, the outcome write and any failure
+ * hook — happens as the job's tenant (multi-tenant issue 003), so the
+ * handler's queries carry the same tenant claim as the request that queued it.
+ * Lease renewals and the outcome write (renew/finish/defer_db_job) go through
+ * `controlDb`, the platform client in production: tenant_app may not call the
+ * job-control functions (issue 008).
  */
 async function runClaimedJob(
     db: Db,
     handlers: DbJobHandlers,
     job: DbJob,
-    failureHooks: Readonly<Record<string, DbJobFailureHook>> = {},
+    failureHooks: Readonly<Record<string, DbJobFailureHook>>,
+    controlDb: Db,
 ): Promise<void> {
     // A UUID is stable across PostgREST/JavaScript timestamp precision loss.
     // SQL renews lease_expires_at and finishes only this claim token.
@@ -147,7 +166,7 @@ async function runClaimedJob(
             return;
         }
         renewing = true;
-        void Promise.resolve(db.rpc("renew_db_job", {
+        void Promise.resolve(controlDb.rpc("renew_db_job", {
             ...identity,
             p_lease_seconds: STALE_SECONDS,
         })).then(({ data, error }) => {
@@ -162,7 +181,7 @@ async function runClaimedJob(
         runAt: string | null = null,
     ): Promise<boolean> => {
         if (leaseLost) return false;
-        const { data, error } = await db.rpc("finish_db_job", {
+        const { data, error } = await controlDb.rpc("finish_db_job", {
             ...identity,
             p_status: status,
             p_last_error: lastError,
@@ -250,7 +269,7 @@ async function runClaimedJob(
         const owned = deferred
             ? await (async () => {
                 if (leaseLost) return false;
-                const { data, error } = await db.rpc("defer_db_job", {
+                const { data, error } = await controlDb.rpc("defer_db_job", {
                     ...identity, p_run_at: runAt, p_reason: message,
                 });
                 if (error) throw new Error(`Unable to defer DB job: ${error.message}`);
@@ -309,7 +328,7 @@ async function runClaimedJob(
         // A handler can reject with a PostgREST plain object: give it a stack
         // and keep its code on the cause chain (failure_code), as the claim
         // path does. Errors pass through unchanged.
-        const reportable = asReportableError(err, processClaimedJob);
+        const reportable = asReportableError(err, runClaimedJob);
         if (!deferred) {
             reportError(reportable, {
                 level: spent ? "error" : "warning",
@@ -342,16 +361,23 @@ async function runClaimedJob(
     }
 }
 
-/** One poll tick: claim a batch and run every claimed job to completion. */
+/**
+ * One poll tick: claim a batch and run every claimed job to completion.
+ * Claiming spans tenants, so it goes through `claimDb` (the platform client
+ * in production); each job then runs on `db` as its own tenant.
+ */
 export async function runDbJobTick(
     db: Db,
     handlers: DbJobHandlers,
     failureHooks: Readonly<Record<string, DbJobFailureHook>> = {},
     claimGate: PollFailureGate = defaultClaimGate,
+    claimDb: Db = db,
 ): Promise<number> {
-    const { data, error } = await db.rpc("claim_db_jobs", {
+    const tenantCap = tenantConcurrencyCap();
+    const { data, error } = await claimDb.rpc("claim_db_jobs", {
         p_limit: CLAIM_BATCH,
         p_stale_seconds: STALE_SECONDS,
+        ...(tenantCap ? { p_tenant_cap: tenantCap } : {}),
     });
     if (error) {
         // Table/function missing (migration not applied yet) or transient DB
@@ -377,7 +403,7 @@ export async function runDbJobTick(
     // allSettled defensively: processClaimedJob handles its own errors, but
     // one job's unexpected rejection must never abandon the rest of a batch.
     const outcomes = await Promise.allSettled(
-        jobs.map((job) => processClaimedJob(db, handlers, job, failureHooks)),
+        jobs.map((job) => processClaimedJob(db, handlers, job, failureHooks, claimDb)),
     );
     for (const [index, outcome] of outcomes.entries()) {
         if (outcome.status === "rejected") {
@@ -411,16 +437,19 @@ export async function runDbJobRetentionSweep(
     const exportCutoff = new Date(Date.now() - exportRetentionMs).toISOString();
     const { data: expired } = await db
         .from("db_jobs")
-        .select("id, result")
+        .select("id, result, tenant_id")
         .eq("kind", "export.build")
         .eq("status", "done")
         .lt("finished_at", exportCutoff)
         .limit(100);
-    for (const row of (expired ?? []) as Pick<DbJob, "id" | "result">[]) {
+    for (const row of (expired ?? []) as Pick<DbJob, "id" | "result" | "tenant_id">[]) {
         const path = row.result?.storage_path;
         if (typeof path === "string" && path.length > 0) {
             try {
-                await deleteStoredFile(path);
+                // The sweep runs on the platform client with no tenant; the
+                // storage facade resolves the key prefix and location from
+                // the current tenant, so the delete must run as the row's.
+                await runWithJobTenant(row.tenant_id, () => deleteStoredFile(path));
             } catch (err) {
                 // Keep the row so the next sweep retries the file delete.
                 console.error("[dbq] export artifact delete failed", {
@@ -456,6 +485,7 @@ export async function runDbJobRetentionSweep(
         .eq("status", "failed")
         .neq("kind", "storage.cleanup")
         .neq("kind", "account.delete")
+        .neq("kind", "tenant.purge")
         .neq("kind", "document.cleanup")
         .lt("finished_at", failedCutoff);
 
@@ -488,12 +518,14 @@ export function startDbJobRunner(handlers: DbJobHandlers, failureHooks: Readonly
     }
     if (pollTimer) return;
     const db = createServerSupabase();
+    // Claiming and retention span tenants by design (multi-tenant issue 003).
+    const platformDb = createPlatformSupabase();
 
     const tick = () => {
         // While claims keep failing, skip ticks until the backed-off retry
         // time instead of hitting the broken dependency every interval.
         if (inFlight || !defaultClaimGate.ready()) return;
-        inFlight = runDbJobTick(db, handlers, failureHooks)
+        inFlight = runDbJobTick(db, handlers, failureHooks, defaultClaimGate, platformDb)
             .catch((err) => {
                 reportError(err, { tags: { component: "dbq", stage: "tick" } });
                 console.error("[dbq] tick failed", err);
@@ -509,7 +541,7 @@ export function startDbJobRunner(handlers: DbJobHandlers, failureHooks: Readonly
     setTimeout(tick, 1_000).unref();
 
     const sweep = () =>
-        void runDbJobRetentionSweep(db).catch((err) => {
+        void runDbJobRetentionSweep(platformDb).catch((err) => {
             reportError(err, { tags: { component: "dbq", stage: "retention" } });
             console.error("[dbq] retention sweep failed", err);
         });
@@ -531,7 +563,21 @@ export async function stopDbJobRunner(): Promise<void> {
     if (inFlight) await inFlight;
 }
 
-/** Each canonical claimed job keeps its own diagnostic operation/stage scope. */
-export async function processClaimedJob(db: Db, handlers: DbJobHandlers, job: DbJob, failureHooks: Readonly<Record<string, DbJobFailureHook>> = {}): Promise<void> {
-    return runIsolated(() => runClaimedJob(db, handlers, job, failureHooks));
+/**
+ * Each canonical claimed job keeps its own diagnostic operation/stage scope,
+ * and runs as the job's tenant (multi-tenant issue 003; see runClaimedJob).
+ */
+export async function processClaimedJob(
+    db: Db,
+    handlers: DbJobHandlers,
+    job: DbJob,
+    failureHooks: Readonly<Record<string, DbJobFailureHook>> = {},
+    controlDb: Db = db,
+): Promise<void> {
+    const actor = job.kind === "memory.consolidate" ? job.payload?.actorUserId : job.payload?.userId;
+    const actorUserId = typeof actor === "string" ? actor : undefined;
+    return runIsolated(() =>
+        runWithJobTenant(job.tenant_id, () =>
+            runClaimedJob(db, handlers, job, failureHooks, controlDb),
+            actorUserId));
 }

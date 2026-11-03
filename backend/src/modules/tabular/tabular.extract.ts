@@ -43,6 +43,7 @@ The "summary" field must contain only the extracted value with inline citations 
             user: `Document: ${filename}\n\n${documentText}\n\n---\nInstruction: ${fullPrompt}`,
             maxTokens: 2048,
             apiKeys,
+            feature: "tabular",
         });
     } catch (err) {
         // Reported once, here, under the kind that names the failure; the
@@ -115,6 +116,7 @@ export async function generateChatTitle(
             user: `${contextBlock}Generate a short title (4-6 words) for a chat that starts with the message below. The title should reflect the user's specific question, not the review or project name. Return only the title, no punctuation, no quotes:\n\n${firstUserMessage}`,
             maxTokens: 64,
             apiKeys,
+            feature: "chat-title",
         });
         return raw.trim().slice(0, 80) || null;
     } catch {
@@ -200,6 +202,7 @@ Rules:
             tools: [],
             apiKeys,
             abortSignal,
+            feature: "tabular",
             callbacks: {
                 onActivity,
                 onContentDelta: (delta) => {

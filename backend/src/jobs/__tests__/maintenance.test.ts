@@ -26,12 +26,19 @@ import { runStaleWorkSweep } from "../maintenance";
 const PRIVATE = "SYNTHETIC_CLIENT_Jane_Doe_NDA.pdf jane@example.test";
 function database(failureAt?: "load" | "expire") {
     const cause = { code: "42501", message: PRIVATE, details: PRIVATE, hint: PRIVATE };
-    const query: Record<string, unknown> = {};
-    for (const method of ["select", "lte", "order", "limit"]) query[method] = () => query;
-    query.then = (resolve: (value: unknown) => unknown) =>
-        Promise.resolve({ data: [], error: failureAt === "load" ? cause : null }).then(resolve);
+    // Multi-tenant sweeps first find the tenants with work (select tenant_id,
+    // via the platform client), then run the sweep as each of them.
+    const query = (columns: string) => {
+        const chain: Record<string, unknown> = {};
+        for (const method of ["lte", "order", "limit", "eq", "in", "gt"]) chain[method] = () => chain;
+        chain.then = (resolve: (value: unknown) => unknown) =>
+            Promise.resolve(columns === "tenant_id"
+                ? { data: [{ tenant_id: "tenant-a" }], error: null }
+                : { data: [], error: failureAt === "load" ? cause : null }).then(resolve);
+        return chain;
+    };
     return {
-        from: vi.fn(() => query),
+        from: vi.fn(() => ({ select: (columns: string) => query(columns) })),
         rpc: vi.fn(async () => ({ data: 1, error: failureAt === "expire" ? cause : null })),
     };
 }
@@ -78,7 +85,7 @@ it.each([
         throw new Error(PRIVATE, { cause });
     });
     const db = database(failureAt);
-    await expect(runStaleWorkSweep(db as unknown as Db)).resolves.toEqual({ documents: 0, cells: 0 });
+    await expect(runStaleWorkSweep(db as unknown as Db, () => db as unknown as Db)).resolves.toEqual({ documents: 0, cells: 0 });
     await Sentry.flush(2000);
 
     expect(events).toHaveLength(6);
@@ -110,8 +117,122 @@ it("preserves successful sweep counts and completes archive cleanup", async () =
     sweeps.documents.mockResolvedValue(7);
     sweeps.cells.mockResolvedValue(9);
     const db = database();
-    await expect(runStaleWorkSweep(db as unknown as Db)).resolves.toEqual({ documents: 7, cells: 9 });
-    expect(sweeps.completeCleanup).toHaveBeenCalledWith(db, []);
+    const tenantDb = database();
+    await expect(runStaleWorkSweep(db as unknown as Db, () => tenantDb as unknown as Db)).resolves.toEqual({ documents: 7, cells: 9 });
+    // Tenant-writing sweeps use the tenant client; the plain delete stays platform.
+    expect(sweeps.completeCleanup).toHaveBeenCalledWith(tenantDb, []);
+    expect(sweeps.text).toHaveBeenCalledWith(tenantDb, { inlineDb: db });
+    expect(sweeps.organizations).toHaveBeenCalledWith(tenantDb);
+    expect(tenantDb.rpc).toHaveBeenCalledWith("expire_org_departure_archives", { p_limit: 100 });
     expect(sweeps.subagents).toHaveBeenCalledWith(db);
     expect(warnings).toEqual([]);
+});
+
+it("runs each tenant-writing sweep inside the tenant that has the work", async () => {
+    const { currentTenant } = await import("../../lib/tenantContext.js");
+    const seen: (string | undefined)[] = [];
+    sweeps.organizations.mockImplementation(async () => { seen.push(currentTenant()?.tenantId); return 0; });
+    const db = database();
+    await runStaleWorkSweep(db as unknown as Db, () => db as unknown as Db);
+    expect(seen).toEqual(["tenant-a"]);
+});
+
+// Platform-side tenant discovery: "tenants" answers status (keyset-paged by
+// tenant_id), work tables answer which of the asked-for tenants have rows.
+function tenantTable(rows: Record<string, string[]>, status: Record<string, string>) {
+    const queries: { table: string; filters: unknown[][] }[] = [];
+    const db = {
+        from: vi.fn((table: string) => ({
+            select: () => {
+                const filters: unknown[][] = [];
+                queries.push({ table, filters });
+                const chain: Record<string, unknown> = {};
+                for (const method of ["lte", "order", "limit", "eq", "in", "gt"]) {
+                    chain[method] = (...args: unknown[]) => { filters.push([method, ...args]); return chain; };
+                }
+                chain.then = (resolve: (value: unknown) => unknown) => {
+                    let ids = rows[table] ?? Object.keys(status).sort();
+                    for (const [method, column, value] of filters) {
+                        if (method === "in" && column === "tenant_id") ids = ids.filter((id) => (value as string[]).includes(id));
+                        if (table === "tenants" && method === "in" && column === "status") ids = ids.filter((id) => (value as string[]).includes(status[id]));
+                        if (method === "gt" && column === "tenant_id") ids = ids.filter((id) => id > String(value));
+                    }
+                    const limit = filters.find(([method]) => method === "limit")?.[1] as number | undefined;
+                    return Promise.resolve({ data: ids.slice(0, limit ?? ids.length).map((tenant_id) => ({ tenant_id })), error: null }).then(resolve);
+                };
+                return chain;
+            },
+        })),
+        rpc: vi.fn(async () => ({ data: 0, error: null })),
+    };
+    return { db, queries };
+}
+
+it("finds every sweepable tenant even when one tenant has a backlog over the page size", async () => {
+    const { currentTenant } = await import("../../lib/tenantContext.js");
+    const organizations: (string | undefined)[] = [];
+    const text: (string | undefined)[] = [];
+    sweeps.organizations.mockImplementation(async () => { organizations.push(currentTenant()?.tenantId); return 0; });
+    sweeps.text.mockImplementation(async () => { text.push(currentTenant()?.tenantId); return 0; });
+    const { db, queries } = tenantTable(
+        { organizations: [...Array(1500).fill("tenant-big"), "tenant-small", "tenant-gone", "tenant-held", "tenant-new"] },
+        { "tenant-big": "active", "tenant-small": "active", "tenant-gone": "offboarding",
+            "tenant-held": "suspended", "tenant-new": "pending" },
+    );
+    await runStaleWorkSweep(db as unknown as Db, () => db as unknown as Db);
+    // Suspended tenants keep deadline-driven deletions; offboarding and
+    // pending tenants get no sweep writes.
+    expect(organizations).toEqual(["tenant-big", "tenant-held", "tenant-small"]);
+    // The tenant-level sweep reads the tenants table directly.
+    expect(text).toEqual(["tenant-big", "tenant-held", "tenant-small"]);
+    const organizationPages = queries.filter((query) => query.table === "organizations");
+    expect(organizationPages.length).toBeGreaterThan(1);
+    for (const page of organizationPages) {
+        const asked = page.filters.find(([method, column]) => method === "in" && column === "tenant_id")?.[2] as string[];
+        expect(asked.length).toBeLessThanOrEqual(100);
+    }
+});
+
+it("keyset-pages the tenant list and asks work tables in bounded chunks", async () => {
+    const { currentTenant } = await import("../../lib/tenantContext.js");
+    const seen: (string | undefined)[] = [];
+    sweeps.organizations.mockImplementation(async () => { seen.push(currentTenant()?.tenantId); return 0; });
+    const many = Array.from({ length: 1205 }, (_, index) => `tenant-${String(index).padStart(4, "0")}`);
+    const { db, queries } = tenantTable(
+        { organizations: [many[0]!, many[1100]!, many[1204]!] },
+        Object.fromEntries(many.map((id) => [id, "active"])),
+    );
+    await runStaleWorkSweep(db as unknown as Db, () => db as unknown as Db);
+    expect(seen).toEqual([many[0], many[1100], many[1204]]);
+    const tenantPages = queries.filter((query) => query.table === "tenants");
+    expect(tenantPages.some((page) => page.filters.some(([method]) => method === "gt"))).toBe(true);
+    const organizationPages = queries.filter((query) => query.table === "organizations");
+    for (const page of organizationPages) {
+        const asked = page.filters.find(([method, column]) => method === "in" && column === "tenant_id")?.[2] as string[];
+        expect(asked.length).toBeLessThanOrEqual(100);
+    }
+});
+
+it("runs the stale-cell sweep as each tenant with generating cells when async extraction is on", async () => {
+    const { currentTenant } = await import("../../lib/tenantContext.js");
+    const previous = process.env.ASYNC_TABULAR_EXTRACTION;
+    process.env.ASYNC_TABULAR_EXTRACTION = "true";
+    try {
+        const seen: (string | undefined)[] = [];
+        sweeps.cells.mockImplementation(async () => { seen.push(currentTenant()?.tenantId); return 1; });
+        const { db, queries } = tenantTable(
+            { tabular_cells: ["tenant-a", "tenant-b"] },
+            { "tenant-a": "active", "tenant-b": "active" },
+        );
+        const tenantDb = { marker: "tenant" };
+        await expect(runStaleWorkSweep(db as unknown as Db, () => tenantDb as unknown as Db))
+            .resolves.toMatchObject({ cells: 2 });
+        expect(seen).toEqual(["tenant-a", "tenant-b"]);
+        expect(sweeps.cells).toHaveBeenCalledWith(tenantDb);
+        expect(queries.find((query) => query.table === "tabular_cells")?.filters)
+            .toContainEqual(["eq", "status", "generating"]);
+    } finally {
+        if (previous === undefined) delete process.env.ASYNC_TABULAR_EXTRACTION;
+        else process.env.ASYNC_TABULAR_EXTRACTION = previous;
+    }
 });

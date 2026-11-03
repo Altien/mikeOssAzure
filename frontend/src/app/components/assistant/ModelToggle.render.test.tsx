@@ -62,7 +62,7 @@ function keys(configured: Partial<Record<keyof ApiKeyState, boolean>>) {
                 source: configured[provider] ? "user" : null,
             },
         ]),
-    ) as ApiKeyState;
+    ) as unknown as ApiKeyState;
 }
 
 describe("ModelToggle responsive trigger", () => {

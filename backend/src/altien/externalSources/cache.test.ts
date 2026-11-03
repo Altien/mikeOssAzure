@@ -19,12 +19,17 @@ vi.mock("../../lib/storage", () => ({
 }));
 
 import {
-  createDatabaseExternalSourcePersistence,
+  createDatabaseExternalSourcePersistence as createPersistence,
   ExternalSourceCache,
   type CachedExternalSource,
   type ExternalSourceDocument,
   type ExternalSourceSummary,
 } from "./cache";
+
+import { runWithTenant } from "../../lib/tenantContext";
+
+const createDatabaseExternalSourcePersistence = (args: Parameters<typeof createPersistence>[0]) =>
+  runWithTenant({ tenantId: "test-tenant" }, () => createPersistence(args));
 
 const source: ExternalSourceDocument = {
   id: "courtlistener:cluster:123:opinion:456",
@@ -177,19 +182,19 @@ describe("database external-source persistence", () => {
     expect(result.id).toBe("cache-row-1");
     expect(uploadFileMock).toHaveBeenCalledWith(
       expect.stringMatching(
-        /^documents\/system:external-provenance\/[^/]+\/versions\/[^/]+\.txt$/,
+        /^documents\/system:external-provenance:test-tenant\/[^/]+\/versions\/[^/]+\.txt$/,
       ),
       expect.any(ArrayBuffer),
       "text/plain; charset=utf-8",
     );
     expect(callsFor("projects", "insert")[0]?.payload).toMatchObject({
-      user_id: "system:external-provenance",
+      user_id: "system:external-provenance:test-tenant",
       project_kind: "external_provenance",
       provenance_key: "courtlistener",
     });
     expect(callsFor("documents", "insert")[0]?.payload).toMatchObject({
       project_id: "provenance-project",
-      user_id: "system:external-provenance",
+      user_id: "system:external-provenance:test-tenant",
     });
     // Dev drift: upstream #295 writes versions through the documents
     // lifecycle facade (create_document_version RPC, row in p_version).

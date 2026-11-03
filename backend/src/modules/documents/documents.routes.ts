@@ -106,7 +106,10 @@ documentsRouter.get("/:documentId/display", requireAuth, asyncRoute(async (req, 
 // fetch the file without depending on cross-origin access to signed R2 URLs.
 // The service locates and sizes the object; the stream is opened here so
 // `res` is what applies backpressure to the object-storage read.
-documentsRouter.get("/:documentId/file", requireAuth, asyncRoute(async (req, res) => {
+documentsRouter.get("/:documentId/file", (_req, res, next) => {
+    res.setHeader("Cache-Control", "private, no-store");
+    next();
+}, requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { documentId } = req.params;
@@ -193,6 +196,7 @@ documentsRouter.post("/download-zip", requireAuth, asyncRoute(async (req, res) =
         return stream;
     });
 
+    res.setHeader("Cache-Control", "private, no-store");
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", 'attachment; filename="documents.zip"');
     const archiveStream = zip.generateNodeStream({
@@ -216,7 +220,10 @@ documentsRouter.post("/download-zip", requireAuth, asyncRoute(async (req, res) =
 // GET /single-documents/:documentId/url
 // Optional ?version_id= selects a specific tracked-changes version.
 // Otherwise falls back to documents.current_version_id, else the original upload.
-documentsRouter.get("/:documentId/url", requireAuth, asyncRoute(async (req, res) => {
+documentsRouter.get("/:documentId/url", (_req, res, next) => {
+    res.setHeader("Cache-Control", "private, no-store");
+    next();
+}, requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { documentId } = req.params;

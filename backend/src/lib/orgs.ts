@@ -32,6 +32,8 @@ import type { OrgMemberHandover } from "@mike/contracts";
 import { listOrgPrivateContentAccess } from "./orgPrivateContent";
 import type { Db } from "./supabase";
 import { recordAudit } from "./audit";
+import { findProfileUserByEmail } from "./userLookup";
+import { getTenancyMode } from "./tenancyMode";
 import {
     canManageOrgRole,
     getOrgRole,
@@ -814,6 +816,33 @@ function invitationExpiry(): string {
     ).toISOString();
 }
 
+/** Pooled invitations address current tenant members; single installs keep pre-account invites. */
+async function resolveInvitationRecipient(
+    db: Db,
+    email: string,
+): Promise<
+    | { ok: true; userId: string | null }
+    | Extract<OrgResult<unknown>, { ok: false }>
+> {
+    try {
+        const profile = await findProfileUserByEmail(db, email);
+        if (!profile && await getTenancyMode() === "pooled")
+            return {
+                ok: false,
+                kind: "validation",
+                detail: "That person is not a member of your organisation",
+            };
+        return { ok: true, userId: profile?.id ?? null };
+    } catch (error) {
+        console.error("[orgs] invitation recipient lookup failed", error);
+        return {
+            ok: false,
+            kind: "db_error",
+            detail: "Unable to resolve invitation recipient",
+        };
+    }
+}
+
 export async function createInvitation(
     db: Db,
     params: {
@@ -870,12 +899,9 @@ export async function createInvitation(
 
     // Someone who already belongs here needs no invitation. Resolved through
     // the mirrored profile email so the check never scans auth.users.
-    const { data: profile } = await db
-        .from("user_profiles")
-        .select("user_id")
-        .eq("email", email)
-        .maybeSingle();
-    const existingUserId = (profile as { user_id?: string } | null)?.user_id;
+    const recipient = await resolveInvitationRecipient(db, email);
+    if (!recipient.ok) return recipient;
+    const existingUserId = recipient.userId;
     if (existingUserId) {
         const existingRole = await getOrgRole(
             existingUserId,
@@ -1104,6 +1130,9 @@ export async function resendInvitation(
             kind: "conflict",
             detail: "That invitation has already been answered",
         };
+
+    const recipient = await resolveInvitationRecipient(db, row.email);
+    if (!recipient.ok) return recipient;
 
     const { data: refreshed, error } = await db
         .from("org_invitations")

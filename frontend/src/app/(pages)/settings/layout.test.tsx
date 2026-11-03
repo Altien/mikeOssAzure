@@ -6,6 +6,12 @@ import SettingsLayout from "./layout";
 
 const push = vi.fn();
 let pathname = "/settings/memory";
+let tenancyMode: "single" | "pooled" = "single";
+const adminStatus = vi.hoisted(() => vi.fn());
+
+vi.mock("@/app/contexts/ConfigContext", () => ({
+    useConfig: () => ({ tenancyMode }),
+}));
 
 vi.mock("next/navigation", () => ({
     usePathname: () => pathname,
@@ -22,6 +28,7 @@ vi.mock("@/app/contexts/AuthContext", () => ({
 
 vi.mock("@/app/lib/mikeApi", () => ({
     listMyOrgInvitations: vi.fn(),
+    getTenantAdminStatus: adminStatus,
 }));
 
 // What Privacy & Data may do in the active workspace; everything unless a
@@ -38,6 +45,8 @@ describe("SettingsLayout", () => {
         vi.mocked(listMyOrgInvitations).mockResolvedValue([]);
         dataActions.canExport = true;
         dataActions.canDelete = true;
+        tenancyMode = "single";
+        adminStatus.mockResolvedValue({ isTenantAdmin: false });
     });
 
     it("lists Privacy & Data while it has an export or a delete to offer", () => {
@@ -132,5 +141,28 @@ describe("SettingsLayout", () => {
         );
         await user.click(organizations);
         expect(push).toHaveBeenCalledWith("/settings/organizations");
+    });
+
+    it("keeps Organisation hidden for single-tenant installs", () => {
+        render(<SettingsLayout><div>Settings content</div></SettingsLayout>);
+        expect(screen.queryByRole("button", { name: "Organisation" })).not.toBeInTheDocument();
+        expect(adminStatus).not.toHaveBeenCalled();
+    });
+
+    it("shows Organisation only after pooled admin permission is confirmed", async () => {
+        tenancyMode = "pooled";
+        adminStatus.mockResolvedValue({ isTenantAdmin: true });
+        pathname = "/settings/organisation";
+        render(<SettingsLayout><div>Organisation content</div></SettingsLayout>);
+        expect(await screen.findByRole("button", { name: "Organisation" })).toHaveAttribute("aria-current", "page");
+    });
+
+    it.each([false, "unavailable"])("keeps Organisation hidden when permission is %s", async (result) => {
+        tenancyMode = "pooled";
+        if (result === false) adminStatus.mockResolvedValue({ isTenantAdmin: false });
+        else adminStatus.mockRejectedValue(new Error("unavailable"));
+        render(<SettingsLayout><div>Settings content</div></SettingsLayout>);
+        await waitFor(() => expect(adminStatus).toHaveBeenCalled());
+        expect(screen.queryByRole("button", { name: "Organisation" })).not.toBeInTheDocument();
     });
 });

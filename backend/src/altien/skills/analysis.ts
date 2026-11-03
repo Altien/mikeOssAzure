@@ -156,6 +156,7 @@ export async function analyseSkillInstructions(args: {
   const raw = await call({
     model: args.model,
     apiKeys: args.apiKeys,
+    feature: "skill-import",
     maxTokens: 2_000,
     // Bounded extraction from untrusted text: a long reasoning budget makes
     // the model speculate beyond what the package observably requires.

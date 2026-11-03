@@ -10,7 +10,6 @@ import { privacyBoundaryIntegration, type Operation } from "@/shared/lib/sentryP
 import {
     MIKE_SENTRY_DSN,
     createEventScrubber,
-    installKind,
     normalizeApiPath,
     parseSampleRate,
     releaseName,
@@ -26,13 +25,9 @@ export type ReportContext = {
     fingerprint?: string[];
 };
 
-// NEXT_PUBLIC_* is inlined into the browser bundle at build time; the Next
-// server reads SENTRY_INSTALL at runtime. Anything but "official" is a
-// community install and gets the minimised event shape.
-const install = installKind(
-    process.env.NEXT_PUBLIC_SENTRY_INSTALL ?? process.env.SENTRY_INSTALL,
-);
-const scrubber = createEventScrubber({ install });
+// Tenant-portable bundles always use the privacy-preserving community shape.
+const install = "community";
+const scrubber = createEventScrubber();
 
 /** `beforeSend` for every Sentry client in the web app (browser, server, edge). */
 export const scrubEvent = scrubber.scrubEvent;
@@ -307,9 +302,8 @@ export function setReportingUser(user: { id: string } | null): void {
 }
 
 /**
- * Browser SDK options. `NEXT_PUBLIC_*` values are inlined at build time, so
- * the caller (instrumentation-client.ts) reads them literally and passes
- * them in; everything policy-shaped is decided here.
+ * Browser SDK options. Deployment values arrive through runtime /config;
+ * the shared image always keeps the community privacy boundary.
  */
 export function browserSentryOptions(env: {
     disabled?: string;
@@ -356,7 +350,7 @@ export function browserSentryOptions(env: {
                 runtime: "browser",
                 build_mode: env.nodeEnv,
                 diagnostics_version: "2",
-                install: installKind(env.install),
+                install,
             },
         },
         beforeSend: scrubEvent,

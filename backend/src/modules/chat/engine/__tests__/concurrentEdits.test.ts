@@ -23,7 +23,6 @@ it("lands two concurrent edits to one document, the second on top of the first",
       version_id: reuseVersion?.versionId ?? `v${versionNumber}`,
       version_number: versionNumber,
       storage_path: `edit-${runEditDocument.mock.calls.length}`,
-      download_url: "",
       annotations: [],
       errors: [],
     };

@@ -11,6 +11,7 @@ import {
     runDbJobRetentionSweep,
 } from "../runner";
 import { DbJobDeferredError, type DbJob } from "../types";
+import { currentTenant } from "../../tenantContext";
 
 type Update = {
     table: string;
@@ -312,16 +313,16 @@ describe("processClaimedJob", () => {
         expect(db.updates[0].payload).toMatchObject({ status: "failed" });
     });
 
-    it("keeps storage.cleanup pending with an effectively unbounded retry budget", async () => {
+    it.each(["storage.cleanup", "tenant.purge"])("keeps %s pending with an effectively unbounded retry budget", async kind => {
         const db = makeDb();
         await processClaimedJob(
             db as never,
             {
-                "storage.cleanup": async () => {
+                [kind]: async () => {
                     throw new Error("storage unavailable");
                 },
             },
-            JOB({ kind: "storage.cleanup", attempts: 8, max_attempts: 8 }),
+            JOB({ kind, attempts: 8, max_attempts: 8 }),
         );
         expect(db.updates[0].payload).toMatchObject({ status: "pending" });
     });
@@ -391,6 +392,29 @@ describe("runDbJobRetentionSweep", () => {
         expect(origThen.some((d) => d.id === "e1")).toBe(true);
     });
 
+    // The sweep runs on the platform client with no tenant context, and the
+    // storage facade derives the t/{tenant}/ prefix and location from the
+    // current tenant — so each delete must run as the export row's tenant.
+    it("deletes each expired export artifact as the row's tenant", async () => {
+        const seen: { path: string; tenant: string | undefined }[] = [];
+        const db = makeDb({
+            selectData: [
+                { id: "e1", tenant_id: "tenant-b", result: { storage_path: "exports/u/e1.json" } },
+                { id: "e2", tenant_id: "tenant-c", result: { storage_path: "exports/u/e2.json" } },
+            ],
+        });
+        await runDbJobRetentionSweep(db as never, {
+            deleteStoredFile: async (path) => {
+                seen.push({ path, tenant: currentTenant()?.tenantId });
+            },
+        });
+        expect(seen).toEqual([
+            { path: "exports/u/e1.json", tenant: "tenant-b" },
+            { path: "exports/u/e2.json", tenant: "tenant-c" },
+        ]);
+        expect(currentTenant()).toBeUndefined();
+    });
+
     it("keeps the row when the artifact delete fails, so the next sweep retries", async () => {
         const db = makeDb({
             selectData: [
@@ -438,6 +462,7 @@ describe("runDbJobRetentionSweep", () => {
         expect(failedPurge?.["neq:kind"]).toEqual([
             "storage.cleanup",
             "account.delete",
+            "tenant.purge",
             "document.cleanup",
         ]);
     });

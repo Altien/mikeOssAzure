@@ -367,10 +367,11 @@ describe("blob tokens", () => {
     await loadFsStorage(root);
     const { signBlobToken, signDownload, verifyBlobToken, verifyDownload } =
       await import("../downloadTokens.js");
-    // A permanent token must not pass the blob verifier (it has no expiry),
-    // and a blob token must not pass the permanent verifier — the HMACs are
+    // A document download token must not pass the blob verifier, and a blob
+    // token must not pass the download verifier — the HMACs are
     // domain-separated so one capability can't be replayed as the other.
-    expect(verifyBlobToken(signDownload("p", "f"))).toBeNull();
+    // Download tokens are user-bound (multi-tenant 011), so one is named.
+    expect(verifyBlobToken(signDownload("p", "f", { userId: "user-1" }))).toBeNull();
     expect(verifyDownload(signBlobToken("p", "f", 60))).toBeNull();
   });
 });

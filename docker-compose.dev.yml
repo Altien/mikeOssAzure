@@ -45,15 +45,13 @@ services:
     environment:
       PGRST_DB_URI: postgres://authenticator:devpassword@postgres:5432/mike
       PGRST_DB_SCHEMA: public
-      # Anon role for unauthenticated requests.  Default service_role
-      # mirrors the Azure entra-mode Bicep: when the backend runs in
-      # AUTH_PROVIDER=entra it sends no auth header to PostgREST, so the
-      # anon role is what every request runs under.  In AUTH_PROVIDER=local
-      # mode the backend mints a service_role JWT, which PostgREST honours
-      # over the anon default — so this value is unused on that path.
-      # Override to web_anon if you specifically want to exercise
-      # SELECT-only behaviour for an anonymous browser request.
-      PGRST_DB_ANON_ROLE: ${PGRST_DB_ANON_ROLE:-service_role}
+      # Anon role for unauthenticated requests.  The backend signs every
+      # request in local and entra mode (tenant_app with the tenant claim,
+      # or service_role for platform work; multi-tenant issues 002/008), so
+      # this applies only to a request without a JWT.  web_anon is
+      # SELECT-only and forced RLS shows it no tenant rows.  (Azure entra
+      # mode sets no anon role at all, so such a request is rejected.)
+      PGRST_DB_ANON_ROLE: ${PGRST_DB_ANON_ROLE:-web_anon}
       PGRST_SERVER_PORT: "3000"
       PGRST_JWT_SECRET: ${JWT_SECRET:-local-dev-secret-change-me-please-32chars-min}
     ports:

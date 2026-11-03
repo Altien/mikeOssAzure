@@ -108,7 +108,8 @@ describe("backend architecture", () => {
       expect(() => facadeOf(domain)).not.toThrow();
       const files = readdirSync(join(SRC, "modules", domain));
       expect(
-        files.some((f) => /\.routes\.ts$/.test(f)),
+        // 018: tenant lifecycle is durable platform work with no HTTP surface.
+        files.some((f) => /\.routes\.ts$/.test(f)) || domain === "tenant-lifecycle",
         `modules/${domain} has no *.routes.ts`,
       ).toBe(true);
     }
@@ -202,6 +203,37 @@ describe("backend architecture", () => {
 
   it("rule 7: src/routes/ is gone; HTTP surfaces are modules", () => {
     expect(existsSync(join(SRC, "routes"))).toBe(false);
+  });
+
+  // Multi-tenant issue 004. createPlatformSupabase() sends no tenant and, once
+  // RLS is forced (issue 008), bypasses it. Only work that is cross-tenant by
+  // design may use it; everything else runs inside a tenant context and uses
+  // createServerSupabase(). Each entry says why it is cross-tenant.
+  it("createPlatformSupabase is imported only by the reviewed allowlist", () => {
+    const PLATFORM_ALLOWLIST = new Map<string, string>([
+      ["index.ts", "startup probe: ensure the install tenant exists"],
+      ["workerRuntime.ts", "worker startup probes; stale-work and MCP-refresh sweeps span tenants"],
+      ["lib/dbq/runner.ts", "job claiming and retention sweep span tenants; jobs run as their tenant"],
+      ["workers/appJobsWorker.ts", "claim of a delivered db_jobs row; the job runs as its tenant"],
+      ["modules/uploads/uploads.processing.ts", "upload job claim, its tenant lookup and session retention span tenants"],
+      ["lib/tenantMemberships.ts", "identity membership/directory resolution before a tenant is known"],
+      ["modules/tenant-lifecycle/tenant-lifecycle.service.ts", "fenced offboarding purge: platform-only RPC, never a request operation"],
+      ["lib/serverSession.ts", "auth session store: looked up by token hash before any tenant is known"],
+      ["lib/oauthStateTenant.ts", "OAuth callbacks: the state row, found by its token hash, names the tenant"],
+      ["lib/dbq/lifecycleGuard.ts", "startup probe of the document-lifecycle migration"],
+      ["lib/schemaCheck.ts", "startup check of applied migrations"],
+      ["lib/stampRuntime.ts", "read-only startup metadata and platform credential readiness before any tenant traffic"],
+      ["jobs/maintenance.ts", "stale-work sweep spans tenants"],
+      ["jobs/syncWorkflows.ts", "global workflow catalog sync"],
+      ["scripts/runMigrations.ts", "migration job: global workflow catalog sync"],
+    ]);
+    const importsPlatform = /import\s*(?:type\s+)?\{[^}]*\bcreatePlatformSupabase\b[^}]*\}\s*from/;
+    const importers = PRODUCTION_FILES.filter(
+      (file) => file !== "lib/supabase.ts" && importsPlatform.test(read(file)),
+    );
+    expect(importers.filter((file) => !PLATFORM_ALLOWLIST.has(file))).toEqual([]);
+    // Keep the allowlist honest: an entry nobody needs any more goes.
+    expect([...PLATFORM_ALLOWLIST.keys()].filter((file) => !importers.includes(file))).toEqual([]);
   });
 
   it("document version mutations belong to the documents module", () => {

@@ -1,6 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ownerlessRpcResult } from "../../__tests__/helpers/ownerlessRpc";
 import { handoverRpcResult } from "../../__tests__/helpers/handoverRpc";
+import type { Db } from "../supabase";
+import { runWithTenant } from "../tenantContext";
+import { makeFakeDb } from "../../test/helpers/fakeDb";
 import {
     acceptInvitation,
     cancelInvitation,
@@ -21,6 +24,14 @@ import {
 } from "../orgs";
 
 type Row = Record<string, unknown>;
+
+let savedTenancyMode: string | undefined;
+beforeEach(() => { savedTenancyMode = process.env.TENANCY_MODE; process.env.TENANCY_MODE = "single"; });
+afterEach(() => {
+    if (savedTenancyMode === undefined) delete process.env.TENANCY_MODE;
+    else process.env.TENANCY_MODE = savedTenancyMode;
+    vi.restoreAllMocks();
+});
 
 // Stateful in-memory Supabase fake: unlike the read-only makeDb in
 // access.test.ts, this one actually mutates the seeded tables so
@@ -1756,5 +1767,81 @@ describe("owner and admin tiers", () => {
             }),
         ).resolves.toMatchObject({ ok: true, role: "admin" });
         expect(roleOf(db, "orgadmin1")).toBe("admin");
+    });
+});
+
+describe("pooled organisation invitations stay inside current tenant membership", () => {
+    const invitation = {
+        id: "invite", org_id: "org", email: "recipient@example.test", role: "member",
+        status: "pending", expires_at: "2099-01-01T00:00:00.000Z", invited_by: "admin",
+    };
+    type Operation = "create" | "resend";
+    function fixture(operation: Operation, state: "active" | "cross-tenant" | "moved" | "profile-error" | "membership-error") {
+        return makeFakeDb(call => {
+            if (call.table === "org_members") {
+                const actor = call.filters.some(filter => filter[1] === "user_id" && filter[2] === "admin");
+                return { data: actor ? { role: "admin" } : null };
+            }
+            if (call.table === "user_profiles") {
+                if (state === "profile-error") return { error: { message: "private profile database detail" } };
+                return { data: state === "cross-tenant" ? null : {
+                    user_id: "recipient", email: invitation.email, display_name: "Recipient", tenant_id: "tenant-a",
+                } };
+            }
+            if (call.table === "tenant_member_exists") return state === "membership-error"
+                ? { error: { message: "private membership database detail" } }
+                : { data: state === "active" };
+            if (call.table === "org_invitations") return {
+                data: call.op === "select" ? (operation === "resend" ? invitation : null) : invitation,
+            };
+            return { data: null };
+        });
+    }
+    function act(operation: Operation, db: Db) {
+        return runWithTenant({ tenantId: "tenant-a", userId: "admin" }, () =>
+            operation === "create"
+                ? createInvitation(db, { actorId: "admin", actorEmail: "admin@example.test", orgId: "org", email: " Recipient@Example.Test ", role: "member" })
+                : resendInvitation(db, { actorId: "admin", orgId: "org", invitationId: "invite" }),
+        );
+    }
+    beforeEach(() => { process.env.TENANCY_MODE = "pooled"; });
+
+    it.each<Operation>(["create", "resend"])("refuses %s for a cross-tenant recipient without writing an invitation", async operation => {
+        const fake = fixture(operation, "cross-tenant");
+        expect(await act(operation, fake.db as unknown as Db)).toEqual({
+            ok: false, kind: "validation", detail: "That person is not a member of your organisation",
+        });
+        expect(fake.callsFor("user_profiles")[0].filters).toContainEqual(["eq", "tenant_id", "tenant-a"]);
+        expect(fake.callsFor("user_profiles")[0].filters).toContainEqual(["eq", "email", invitation.email]);
+        expect(fake.callsFor("org_invitations").some(call => call.op !== "select")).toBe(false);
+    });
+    it.each<Operation>(["create", "resend"])("refuses %s for a moved member whose historical profile remains", async operation => {
+        const fake = fixture(operation, "moved");
+        expect(await act(operation, fake.db as unknown as Db)).toMatchObject({ ok: false, kind: "validation", detail: "That person is not a member of your organisation" });
+        expect(fake.callsFor("tenant_member_exists")[0].payload).toEqual({ p_user_id: "recipient" });
+        expect(fake.callsFor("org_invitations").some(call => call.op !== "select")).toBe(false);
+    });
+    it.each<Operation>(["create", "resend"])("keeps %s working for a current member in this tenant", async operation => {
+        const fake = fixture(operation, "active");
+        expect(await act(operation, fake.db as unknown as Db)).toMatchObject({ ok: true, invitation: { id: "invite", email: invitation.email } });
+        expect(fake.callsFor("org_invitations", operation === "create" ? "insert" : "update")).toHaveLength(1);
+    });
+    it.each<Operation>(["create", "resend"])("preserves single-tenant pre-account %s invitations", async operation => {
+        process.env.TENANCY_MODE = "single";
+        const fake = fixture(operation, "cross-tenant");
+        expect(await act(operation, fake.db as unknown as Db)).toMatchObject({ ok: true });
+        expect(fake.callsFor("tenant_member_exists")).toHaveLength(0);
+    });
+    it.each([
+        ["create", "profile-error"], ["resend", "profile-error"],
+        ["create", "membership-error"], ["resend", "membership-error"],
+    ] as const)("fails closed for %s when recipient lookup has a %s", async (operation, state) => {
+        vi.spyOn(console, "error").mockImplementation(() => {});
+        const fake = fixture(operation, state);
+        const result = await act(operation, fake.db as unknown as Db);
+        expect(result).toEqual({ ok: false, kind: "db_error", detail: "Unable to resolve invitation recipient" });
+        expect(JSON.stringify(result)).not.toContain("private");
+        expect(fake.callsFor("org_invitations").some(call => call.op !== "select")).toBe(false);
+        expect(fake.callsFor("audit_events")).toHaveLength(0);
     });
 });

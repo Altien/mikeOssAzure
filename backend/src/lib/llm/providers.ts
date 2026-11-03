@@ -3,6 +3,8 @@ import {
   aiSdkFetch,
   completeAiSdkText,
   streamAiSdk,
+  maxOutputTokensFor,
+  COMPLETION_REASONING_HEADROOM_TOKENS,
   type AiSdkAdapterConfig,
 } from "./aiSdk";
 import {
@@ -47,16 +49,24 @@ import {
 } from "./registry";
 import type {
   ConfiguredModel,
+  LlmFeature,
   Provider,
   ReasoningLevel,
   StreamChatParams,
   StreamChatResult,
   UserApiKeys,
 } from "./types";
+import {
+  meterLlmCall,
+  type LlmCallDescriptor,
+  type LlmUsageMeter,
+} from "./usage";
 import { resolveSecret, resolveProviderSecret, resolveVercelApiKey } from "../envSecrets";
+import { admitTenantLlmCall } from "../tenantRateLimit";
 import { REASONING_LEVELS } from "./types";
 import { vertexAuthClient } from "./vertexAuth";
 import { UserFacingError } from "../safeError";
+import { assertTenantModelAllowed, getTenantSettings, tenantKeyMode } from "../tenantSettings";
 
 const OPENROUTER_BASE_URL =
   process.env.OPENROUTER_BASE_URL?.trim().replace(/\/+$/, "") ||
@@ -75,6 +85,7 @@ type CompleteProviderParams = {
   abortSignal?: AbortSignal;
   apiKeys?: UserApiKeys;
   reasoningEffort?: "none" | "low" | "high" | "max";
+  feature?: LlmFeature;
 };
 
 type RouterProvider = Extract<
@@ -196,6 +207,8 @@ async function createRouterAdapter(
     name: "opencodeGo",
     apiKey: key,
     baseURL: OPENCODE_GO_BASE_URL,
+    // Usage ledger (issue 015): ask for the final usage chunk when streaming.
+    includeUsage: true,
     fetch: aiSdkFetch,
   });
   return {
@@ -333,6 +346,8 @@ async function createAzureFoundryAdapter(
     // header; sending both covers resources that only accept one.
     headers: { "api-key": credentials.apiKey },
     baseURL: `${credentials.endpoint}/openai/v1`,
+    // Usage ledger (issue 015): ask for the final usage chunk when streaming.
+    includeUsage: true,
     fetch: aiSdkFetch,
   });
   return {
@@ -431,6 +446,8 @@ async function createCustomEndpointAdapter(
     name: "custom",
     apiKey: credentials.apiKey,
     baseURL: credentials.baseUrl,
+    // Usage ledger (issue 015): ask for the final usage chunk when streaming.
+    includeUsage: true,
     fetch: customEndpointFetch,
   });
   return {
@@ -473,6 +490,8 @@ async function createConfiguredAdapter(
     baseURL: configured.baseUrl,
     // Omit Authorization entirely for endpoints declared without auth.
     ...(apiKey ? { apiKey } : {}),
+    // Usage ledger (issue 015): ask for the final usage chunk when streaming.
+    includeUsage: true,
     ...(configured.maxTokensField === "max_completion_tokens"
       ? {
           transformRequestBody: (body: Record<string, unknown>) => {
@@ -535,9 +554,9 @@ async function createLegacyAzureAdapter(model: string, apiKeys?: UserApiKeys): P
   const settings = apiKeys?.azureOpenai;
   const endpoint = settings?.endpoint?.trim() || await resolveSecret("azure-openai-endpoint");
   const apiKey = settings?.apiKey?.trim() || await resolveSecret("azure-openai-api-key");
-  const apiVersion = settings?.apiVersion?.trim() || process.env.AZURE_OPENAI_API_VERSION?.trim() || DEFAULT_AZURE_API_VERSION;
+  const apiVersion = settings?.apiVersion?.trim() || await resolveSecret("azure-openai-api-version") || DEFAULT_AZURE_API_VERSION;
   if (!endpoint || !apiKey) throw new Error("Azure OpenAI is not configured for this organisation. Ask an administrator to set its endpoint and API key in /install.");
-  const deployment = azureDeployment(model, settings);
+  const deployment = azureDeployment(model, settings ?? { endpoint, deployment: await resolveSecret("azure-openai-deployment") });
   const { createAzure } = await import("@ai-sdk/azure");
   const azure = createAzure({
     baseURL: `${endpoint.replace(/\/+$/, "").replace(/\/openai$/, "")}/openai`,
@@ -638,6 +657,8 @@ async function createProviderAdapter(
       name: "kimi",
       baseURL: "https://api.moonshot.ai/v1",
       apiKey: await requiredKey("Kimi", "moonshot-api-key", apiKeys?.kimi),
+      // Usage ledger (issue 015): ask for the final usage chunk when streaming.
+      includeUsage: true,
       fetch: aiSdkFetch,
     });
     return { provider, label: "Kimi K3", model: kimi(model), modelId: model };
@@ -671,8 +692,47 @@ async function createProviderAdapter(
   throw new Error(`Unsupported provider for model ${model}`);
 }
 
+/**
+ * Ledger descriptor for one call (issue 015). `apiKeys` here are the
+ * organisation's credentials (getOrganisationApiKeys), not a user's. Tenant
+ * BYO calls carry their configured key mode into the usage ledger.
+ */
+async function llmCall(model: string, feature: LlmFeature | undefined): Promise<LlmCallDescriptor> {
+  let provider: string;
+  try {
+    provider = providerForModel(model);
+  } catch {
+    provider = "unknown";
+  }
+  return {
+    feature: feature ?? "unspecified",
+    provider,
+    model,
+    keyMode: await tenantKeyMode(),
+  };
+}
+
 export async function streamWithProvider(
   params: StreamChatParams,
+): Promise<StreamChatResult> {
+  await assertTenantModelAllowed(params.model);
+  if (await getTenantSettings()) params = { ...params, apiKeys: undefined };
+  // Shared per-tenant limits (issue 017): refused calls never reach the
+  // provider and record no ledger row.
+  await admitTenantLlmCall();
+  // Usage ledger (issue 015): one row per call, including the reasoning
+  // fallback retry below, aborted streams and failures.
+  return meterLlmCall(
+    await llmCall(params.model, params.feature),
+    (meter) => streamWithProviderMetered(params, meter),
+    params.abortSignal,
+    { prompt: { system: params.systemPrompt, messages: params.messages, tools: params.tools }, maxOutputTokens: maxOutputTokensFor(providerForModel(params.model)) },
+  );
+}
+
+async function streamWithProviderMetered(
+  params: StreamChatParams,
+  meter: LlmUsageMeter,
 ): Promise<StreamChatResult> {
   const normalizedParams = {
     ...params,
@@ -703,6 +763,7 @@ export async function streamWithProvider(
     return await streamAiSdk(
       tracked,
       await createProviderAdapter(params.model, params.apiKeys, !!params.providerWebSearch),
+      meter,
     );
   } catch (error) {
     const retryReasoning = fallbackReasoningLevelFromProviderError(
@@ -710,12 +771,16 @@ export async function streamWithProvider(
       normalizedParams.reasoning,
     );
     if (retryReasoning) {
+      meter.discardUnbilledStep();
       return streamAiSdk(
         { ...normalizedParams, reasoning: retryReasoning },
         await createProviderAdapter(params.model, params.apiKeys, !!params.providerWebSearch),
+        meter,
       );
     }
     if (shouldRetryWithoutWebSearch(error, params, streamed)) {
+      // The provider refused the request before any inference ran.
+      meter.discardUnbilledStep();
       params.callbacks?.onWebSearch?.({ kind: "unavailable" });
       return streamAiSdk(
         {
@@ -724,6 +789,7 @@ export async function streamWithProvider(
           providerWebSearch: null,
         },
         await createProviderAdapter(params.model, params.apiKeys),
+        meter,
       );
     }
     throw error;
@@ -793,8 +859,23 @@ export function fallbackReasoningLevelFromProviderError(
 export async function completeWithProvider(
   params: CompleteProviderParams,
 ): Promise<string> {
-  return completeAiSdkText(
-    params,
-    await createProviderAdapter(params.model, params.apiKeys),
+  await assertTenantModelAllowed(params.model);
+  if (await getTenantSettings()) params = { ...params, apiKeys: undefined };
+  await admitTenantLlmCall();
+  // Reserve what completeAiSdkText may ask for, reasoning headroom included.
+  const requestedOutput = params.maxTokens ?? 512;
+  const completionReasoning = normalizeReasoningLevelForModel(params.model, params.reasoningEffort ?? "none");
+  const reservedOutput = completionReasoning && completionReasoning !== "none"
+    ? requestedOutput + COMPLETION_REASONING_HEADROOM_TOKENS : requestedOutput;
+  return meterLlmCall(
+    await llmCall(params.model, params.feature),
+    async (meter) =>
+      completeAiSdkText(
+        params,
+        await createProviderAdapter(params.model, params.apiKeys),
+        meter,
+      ),
+    params.abortSignal,
+    { prompt: { system: params.systemPrompt, user: params.user }, maxOutputTokens: reservedOutput },
   );
 }

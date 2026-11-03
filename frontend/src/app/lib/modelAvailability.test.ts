@@ -228,3 +228,13 @@ it("makes direct Mistral available only with a Mistral key", () => {
     expect(isModelAvailable("mistral-large-4", keys({ openai: true, openrouter: true }))).toBe(false);
     expect(providerLabel("mistral")).toBe("Mistral AI");
 });
+
+
+it("applies the tenant model allowlist to hosted and configured model availability", () => {
+    const tenantKeys = { ...keys({ openai: true }), modelAllowlist: ["gpt-6-luna", "local-qwen"] };
+    expect(isModelAvailable("gpt-6-luna", tenantKeys)).toBe(true);
+    expect(isModelAvailable("gpt-6-astra", tenantKeys)).toBe(false);
+    expect(isModelAvailable("local-qwen", tenantKeys, ["local-qwen"])).toBe(true);
+    expect(isModelAvailable("other-local", tenantKeys, ["other-local"])).toBe(false);
+    expect(isModelAvailable("gpt-6-luna", { ...tenantKeys, modelAllowlist: [] })).toBe(false);
+});

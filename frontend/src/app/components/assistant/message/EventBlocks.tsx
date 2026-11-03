@@ -3,10 +3,7 @@ import { useReasoningDisclosure } from "@/shared/hooks/useReasoningDisclosure";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Download, Loader2 } from "lucide-react";
-import {
-    getBrowserAccessToken,
-    bounceIfUnauthorized,
-} from "@/app/lib/auth-token";
+import { downloadResolvedDocument } from "@/app/lib/mikeApi";
 import { EventDisclosureButton } from "@/app/components/assistant/message/EventDisclosure";
 import type { AssistantEvent } from "../../shared/types";
 import { FileTypeIcon } from "../../shared/FileTypeIcon";
@@ -381,13 +378,15 @@ export function DocReplicatedBlock({
 
 export function DocDownloadBlock({
     filename,
-    download_url,
+    documentId,
+    versionId,
     onOpen,
     isReloading = false,
     versionNumber,
 }: {
     filename: string;
-    download_url: string;
+    documentId: string;
+    versionId?: string | null;
     onOpen?: () => void;
     isReloading?: boolean;
     versionNumber?: number | null;
@@ -404,18 +403,8 @@ export function DocDownloadBlock({
     // older saved download filenames — the version is surfaced as a
     // separate tag now.
     const basename = rawBasename.replace(/\s*\[Edited V\d+\]\s*$/, "").trim();
-    // Only backend-relative URLs are accepted. The download fetch carries
-    // the user's bearer token, so any absolute URL from tool output is
-    // refused to keep the token from leaking off-origin.
-    // Upstream divergence (OSS-6, auth-fetch): `/api` prefix, token from
-    // auth-token (Entra/local/Supabase) and a 401 bounce, instead of
-    // supabase.auth.getSession().
-    const API_BASE =
-        (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") +
-        "/api";
-    const isSafeHref = download_url.startsWith("/");
-    const href = isSafeHref ? `${API_BASE}${download_url}` : null;
     const [busy, setBusy] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
     const handleDownload = async (e?: {
         stopPropagation?: () => void;
@@ -423,25 +412,13 @@ export function DocDownloadBlock({
     }) => {
         e?.stopPropagation?.();
         e?.preventDefault?.();
-        if (busy || isReloading || !href) return;
+        if (busy || isReloading || !documentId) return;
         setBusy(true);
+        setError(null);
         try {
-            const token = await getBrowserAccessToken();
-            const resp = await fetch(href, {
-                credentials: "include",
-                headers: token ? { Authorization: `Bearer ${token}` } : {},
-            });
-            bounceIfUnauthorized(resp);
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const blob = await resp.blob();
-            const blobUrl = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = blobUrl;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+            await downloadResolvedDocument(documentId, versionId ?? null, filename);
+        } catch {
+            setError("Could not download this document. Please try again.");
         } finally {
             setBusy(false);
         }
@@ -463,6 +440,7 @@ export function DocDownloadBlock({
                     >
                         {basename}
                     </p>
+                    {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
                     {hasVersion && (
                         <span className="shrink-0 inline-flex items-center rounded-md border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
                             V{versionNumber}

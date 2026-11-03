@@ -38,7 +38,6 @@ vi.mock("../../../../../lib/supabase", () => ({
 }));
 
 import { buildContentDisposition } from "../../../../../lib/storage";
-import { verifyDownload } from "../../../../../lib/downloadTokens";
 import {
   generateDocx,
   generateExcel,
@@ -92,7 +91,7 @@ const JAPANESE_TITLE = "秘密保持契約書";
 
 type Generated = {
   filename: string;
-  download_url: string;
+
 };
 
 async function generate(extension: "docx" | "xlsx" | "pptx", title: string) {
@@ -106,6 +105,7 @@ async function generate(extension: "docx" | "xlsx" | "pptx", title: string) {
         : await generatePpt(title, SLIDES, "user-1", db as never);
 
   expect(result).not.toHaveProperty("error");
+  expect(result).not.toHaveProperty("download_url");
   const generated = result as Generated;
   const version = db.inserts.find((i) => i.table === "document_versions");
   const upload = uploadFile.mock.calls
@@ -119,9 +119,6 @@ async function generate(extension: "docx" | "xlsx" | "pptx", title: string) {
     versionStoragePath: version?.payload.storage_path,
     uploadedKey: upload![0],
     uploadedBytes: upload![1],
-    tokenFilename: verifyDownload(
-      generated.download_url.replace("/download/", ""),
-    )?.filename,
   };
 }
 
@@ -217,7 +214,6 @@ describe("generated document naming", () => {
 
       expect(out.filename).toBe(expected);
       expect(out.versionFilename).toBe(expected);
-      expect(out.tokenFilename).toBe(expected);
       expect(out.versionStoragePath).toBe(out.uploadedKey);
     },
   );

@@ -315,12 +315,13 @@ describe("browserSentryOptions", () => {
         });
     });
 
-    it("is off with the disabled flag, and marks the official deployment", () => {
+    it("is off with the disabled flag and keeps portable browser privacy", () => {
         const off = browserSentryOptions({ disabled: "true", dsn: "https://k@o1.ingest.sentry.io/2" });
         expect(off.enabled).toBe(false);
         expect(off.dsn).toBeUndefined();
         const official = browserSentryOptions({ install: "official" });
-        expect((official.initialScope as { tags: { install: string } }).tags.install).toBe("official");
+        // 019: deployment identity never changes the portable browser privacy policy.
+        expect((official.initialScope as { tags: { install: string } }).tags.install).toBe("community");
     });
 
     it("defaults the environment to self-hosted, never to NODE_ENV", () => {
@@ -609,4 +610,17 @@ describe("reportNetworkFailure while the page is being left", () => {
 
         expect(Sentry.captureEvent).toHaveBeenCalledOnce();
     });
+});
+
+it("keeps the community privacy boundary even when server install kind is official", async () => {
+    vi.stubEnv("SENTRY_INSTALL", "official");
+    try {
+        vi.resetModules();
+        const { scrubEvent: scrub } = await import("./errorReporting");
+        const event = scrub({ user: { id: "private-user" }, server_name: "customer-host", request: { url: "https://private.example.test/projects" } });
+        expect(event).not.toBeNull();
+        expect(event).not.toHaveProperty("user");
+        expect(event).not.toHaveProperty("server_name");
+        expect(event?.request?.url).toBe("/projects");
+    } finally { vi.unstubAllEnvs(); }
 });

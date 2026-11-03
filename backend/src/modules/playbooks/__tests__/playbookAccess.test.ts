@@ -668,7 +668,6 @@ describe("playbook access and autosave", () => {
         version_id: "v2",
         version_number: 2,
         storage_path: "edited.docx",
-        download_url: "/download",
         annotations: [annotation("e1"), annotation("e2")],
         errors: [],
       });
@@ -723,7 +722,6 @@ describe("playbook access and autosave", () => {
         version_id: "v2",
         version_number: 2,
         storage_path: "edited.docx",
-        download_url: "/download",
         annotations: [annotation("e2")],
         errors: [{ index: 0, reason: "Not found." }],
       });

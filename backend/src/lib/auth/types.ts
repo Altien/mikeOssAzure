@@ -15,7 +15,12 @@ export interface AuthPrincipal {
    * a development-only, email-derived identity.
    */
   emailVerified?: boolean;
+  /** Internal tenant after resolution; directory identity is kept separately. */
   tenantId?: string;
+  directoryId?: string;
+  identityKind?: "altien" | "enterprise";
+  membershipRole?: "TenantAdmin" | "Member";
+  appRoles?: string[];
   groups: string[];
   roles: string[];
   provider: string;

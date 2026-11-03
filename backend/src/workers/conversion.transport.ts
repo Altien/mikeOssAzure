@@ -5,6 +5,7 @@ import { getRedisConnection } from "../lib/queue/connection";
 import { reportError } from "../lib/observability/sentry";
 import { CONVERSION_QUEUE, type ConversionJobData } from "../lib/queue/conversionQueue";
 import { createServerSupabase } from "../lib/supabase";
+import { runWithJobTenant } from "../lib/tenantContext";
 import { runConversionJob, setDocumentTerminalStatus } from "../modules/documents/documents.service";
 
 /** True once a job has exhausted its retries (BullMQ 'failed', no attempts left). */
@@ -21,8 +22,10 @@ export function createConversionWorker(): Worker<ConversionJobData> {
         CONVERSION_QUEUE,
         async (job: Job<ConversionJobData>) => {
             // Own isolation scope per job: runConversionJob names the
-            // operation, and concurrency is 2.
-            await runIsolated(() => runConversionJob(job.data));
+            // operation, and concurrency is 2. The job runs as its tenant
+            // (multi-tenant issue 003).
+            await runIsolated(() =>
+                runWithJobTenant(job.data.tenantId, () => runConversionJob(job.data)));
         },
         {
             connection: getRedisConnection(),
@@ -86,11 +89,11 @@ export function createConversionWorker(): Worker<ConversionJobData> {
             { jobId: job.id, documentId: job.data.documentId, err },
         );
         try {
-            await setDocumentTerminalStatus(
+            await runWithJobTenant(job.data.tenantId, () => setDocumentTerminalStatus(
                 createServerSupabase(),
                 job.data.documentId,
                 "error",
-            );
+            ));
         } catch (updateErr) {
             // The document stays "processing" forever if this write is lost:
             // reported with the terminal stage, logged as the same object.

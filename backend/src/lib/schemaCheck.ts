@@ -1,5 +1,5 @@
 import { readdirSync } from "node:fs";
-import { createServerSupabase } from "./supabase";
+import { createPlatformSupabase } from "./supabase";
 
 /**
  * Warns when the database schema is behind the migrations shipped with this
@@ -11,7 +11,7 @@ import { createServerSupabase } from "./supabase";
  * Reports only; it never migrates and never stops the server.
  */
 export async function checkSchemaVersion(args?: {
-  db?: ReturnType<typeof createServerSupabase>;
+  db?: ReturnType<typeof createPlatformSupabase>;
   migrationsDir?: string;
   log?: (message: string) => void;
 }): Promise<{ pending: string[]; checked: boolean }> {
@@ -28,7 +28,7 @@ export async function checkSchemaVersion(args?: {
   }
   if (!onDisk.length) return { pending: [], checked: false };
 
-  const db = args?.db ?? createServerSupabase();
+  const db = args?.db ?? createPlatformSupabase();
   const applied = await db.from("pgmigrations").select("name");
   if (applied.error) {
     // The table is not readable in every deployment shape. A schema check is

@@ -2,10 +2,10 @@ import { Request, Response, NextFunction } from "express";
 import { validateSupabaseToken } from "../lib/auth/providers/supabase.js";
 import { validateLocalToken } from "../lib/auth/providers/local.js";
 import { validateEntraToken } from "../lib/auth/providers/entra.js";
-import { authorizationEmail } from "../lib/auth/types.js";
+import { authorizationEmail, type AuthPrincipal } from "../lib/auth/types.js";
+import { resolveTenant, runWithTenant, currentTenant, type TenantContext } from "../lib/tenantContext.js";
 import { tenantAccess } from "./tenantAccess.js";
-import { upsertUserProfile } from "../lib/userLookup.js";
-import { createServerSupabase } from "../lib/supabase.js";
+import { initializeAuthenticatedProfile } from "../lib/auth/profileAdmission";
 import { getConfig } from "../lib/config.js";
 import { readServerSession, refreshServerSession } from "../lib/serverSession.js";
 import { requestOriginIsTrusted } from "../lib/origins.js";
@@ -13,6 +13,7 @@ import { renewEntraCredential } from "../lib/auth/providers/entraRefresh.js";
 import { renewSupabaseCredential } from "../lib/auth/providers/supabaseSession.js";
 import { reportError, requestRoutePattern, setCurrentUser } from "../lib/observability/sentry";
 import { AppError, type ErrorKind } from "../lib/appError";
+import { retryAfterSeconds, takeTenantTokens, tenantRateLimits } from "../lib/tenantRateLimit.js";
 
 function reportAuthFailure(req: Request, kind: ErrorKind, cause: unknown): void {
   reportError(new AppError(kind, "Authentication dependency failed", { cause }), {
@@ -41,6 +42,7 @@ export async function requireAuth(
   let token = "";
   let cookieSession = false;
   let sessionUserId: string | null = null;
+  let sessionTenantId: string | undefined;
 
   // An explicit credential has precedence. Invalid or malformed bearer
   // headers never fall back to a different identity in a browser cookie.
@@ -69,7 +71,7 @@ export async function requireAuth(
             return;
           }
           try {
-            const renewed = await refreshServerSession(session, provider === "supabase" ? renewSupabaseCredential : renewEntraCredential);
+            const renewed = await refreshServerSession(session, provider === "supabase" ? renewSupabaseCredential : (refreshToken) => renewEntraCredential(refreshToken, session!.credential));
             const claimedVersion = session.row.version;
             session = await readServerSession(req);
             // A second replica can lose the CAS claim while the owner is
@@ -93,6 +95,7 @@ export async function requireAuth(
         }
         token = session?.credential.accessToken ?? "";
         sessionUserId = session?.credential.userId ?? null;
+        sessionTenantId = session?.credential.tenantId;
       }
     }
   }
@@ -123,59 +126,92 @@ export async function requireAuth(
     return;
   }
 
-  // A revoked cookie is insufficient for Entra: an already-issued bearer
-  // token remains valid at the IdP. The durable tombstone blocks both token
-  // transports before profile seeding or any application write can run.
-  try {
-    const { data: erasure, error: erasureError } = await createServerSupabase()
-      .from("account_erasure_requests")
-      .select("status")
-      .eq("user_id", result.principal.userId)
-      .maybeSingle();
-    if (erasureError) throw erasureError;
-    if (erasure) {
-      res.status(410).json({ detail: "This account has been closed." });
-      return;
-    }
-  } catch (error) {
-    reportAuthFailure(req, "db.query_failed", error);
-    res.status(503).json({ detail: "Account status is unavailable" });
+  // Multi-tenant phase 1 (docs/issues/multi-tenant/001): the tenant comes
+  // from the validated principal only, and everything from here on — the
+  // erasure check, profile seeding, tenantAccess and the route handler that
+  // next() reaches — runs inside its scope (lib/tenantContext.ts). With no
+  // derivable tenant (entra token without `tid`) tenantAccess denies.
+  const principal = result.principal;
+  const authSource = cookieSession ? "cookie" : "bearer";
+  let tenantId: string | undefined;
+  try { tenantId = await resolveTenant(principal); }
+  catch (error) {
+    reportAuthFailure(req, "auth.tenant_resolution_failed", error);
+    res.status(503).json({ detail: "Tenant access is unavailable" });
+    return;
+  }
+  if (sessionTenantId && sessionTenantId !== tenantId) {
+    res.status(401).json({ detail: "Invalid or expired session" }); return;
+  }
+  res.locals.principal = principal;
+  if (!tenantId) {
+    await continueAuthenticated(req, res, next, principal, token, authSource);
+    return;
+  }
+  await runWithTenant({ tenantId, userId: principal.userId }, () =>
+    continueAuthenticated(req, res, next, principal, token, authSource),
+  );
+}
+
+async function continueAuthenticated(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+  principal: AuthPrincipal,
+  token: string,
+  authSource: "cookie" | "bearer",
+): Promise<void> {
+  let admitted = false;
+  let admittedContext: TenantContext | undefined;
+  await tenantAccess(req, res, () => { admitted = true; admittedContext = currentTenant(); });
+  if (!admitted) return;
+  // tenantAccess returns after its callback; re-enter its trusted role scope
+  // for the remaining async auth work and the actual route handler.
+  if (admittedContext?.pooled) {
+    await runWithTenant(admittedContext, () => finishAuthenticated(req, res, next, principal, token, authSource));
+  } else await finishAuthenticated(req, res, next, principal, token, authSource);
+}
+
+async function finishAuthenticated(
+  req: Request, res: Response, next: NextFunction, principal: AuthPrincipal, token: string,
+  authSource: "cookie" | "bearer",
+): Promise<void> {
+  // The erasure tombstone, profile seeding and personal organization run
+  // here, inside the admitted tenant's scope (lib/auth/profileAdmission.ts).
+  const profileError = await initializeAuthenticatedProfile(principal);
+  if (profileError) {
+    if (profileError.failure) reportAuthFailure(req, profileError.failure.kind, profileError.failure.cause);
+    res.status(profileError.status).json({ detail: profileError.detail });
     return;
   }
 
-  res.locals.userId = result.principal.userId;
+  res.locals.userId = principal.userId;
   // Grant/invitation matching input: an unconfirmed address matches nothing
   // (upstream d146998d; see authorizationEmail). The profile mirror below
   // keeps the IdP email for display.
-  res.locals.userEmail = authorizationEmail(result.principal);
+  res.locals.userEmail = authorizationEmail(principal);
   res.locals.token = token;
-  res.locals.principal = result.principal;
-  res.locals.authSource = cookieSession ? "cookie" : "bearer";
-  setCurrentUser(result.principal.userId);
+  res.locals.principal = principal;
+  res.locals.authSource = authSource;
+  setCurrentUser(principal.userId);
 
-  try {
-    await upsertUserProfile(
-      result.principal.userId,
-      result.principal.email,
-      result.principal.displayName,
-    );
-  } catch (error) {
-    reportAuthFailure(req, "db.query_failed", error);
-    res.status(500).json({ detail: "Unable to initialize user profile" });
+  // Shared per-tenant request limit (multi-tenant issue 017), after the
+  // tenant is admitted so an unknown tenant never gets a bucket. Off unless
+  // TENANT_REQUESTS_PER_MINUTE is set.
+  const { requestsPerMinute } = tenantRateLimits();
+  if (requestsPerMinute <= 0) {
+    next();
     return;
   }
-
-  // Upstream divergence (sync-log: 3ca82155): Dev owns profile creation
-  // after validated Entra/local identity and session/tombstone checks. A
-  // personal-org failure must not undo profile initialization or sign-in.
-  try {
-    const { error } = await createServerSupabase().rpc("ensure_personal_organization", {
-      p_user_id: result.principal.userId,
+  {
+    const taken = await takeTenantTokens("requests", 1, requestsPerMinute);
+    if (taken.allowed) {
+      next();
+      return;
+    }
+    res.setHeader("Retry-After", String(retryAfterSeconds(taken.retryAfterMs)));
+    res.status(429).json({
+      detail: "Too many requests for your organisation. Please try again later.",
     });
-    if (error) console.warn("[auth/personal-org] initialization failed", { code: error.code });
-  } catch {
-    console.warn("[auth/personal-org] initialization unavailable");
   }
-
-  await tenantAccess(req, res, next);
 }

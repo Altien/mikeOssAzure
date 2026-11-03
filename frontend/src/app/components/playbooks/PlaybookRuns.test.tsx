@@ -295,7 +295,6 @@ describe("playbook runs", () => {
       ok: true,
       status: "accepted",
       version_id: "v3",
-      download_url: null,
     });
     render(
       <PlaybookRuns playbookId="pb" latestRun={null} {...resultsProps()} />,

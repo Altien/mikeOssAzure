@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { completeText, type UserApiKeys } from "../../lib/llm";
 import { createServerSupabase } from "../../lib/supabase";
+import { currentTenant } from "../../lib/tenantContext";
 import { createDocumentVersion } from "../../modules/documents/documents.service";
 import {
   deleteFile,
@@ -65,8 +66,6 @@ type ExternalSourceRow = {
   summary_status: "pending" | "generated" | "fallback";
   summary_model: string | null;
 };
-
-const EXTERNAL_PROVENANCE_OWNER = "system:external-provenance";
 
 function contentHash(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
@@ -133,6 +132,16 @@ export function createDatabaseExternalSourcePersistence(args: {
   projectId?: string | null;
   db?: ReturnType<typeof createServerSupabase>;
 }): ExternalSourcePersistence {
+  // The tenant is captured here, or failing that when a provenance row or
+  // object is written, so building the persistence for a turn that never
+  // stores an external source needs no tenant; a write outside any tenant
+  // still fails closed.
+  const createdIn = currentTenant()?.tenantId;
+  const provenanceOwner = (): string => {
+    const tenantId = createdIn ?? currentTenant()?.tenantId;
+    if (!tenantId) throw new Error("External-source persistence requires a tenant");
+    return `system:external-provenance:${tenantId}`;
+  };
   const db = args.db ?? createServerSupabase();
   const cacheScope = args.projectId
     ? `project:${args.projectId}`
@@ -192,7 +201,7 @@ export function createDatabaseExternalSourcePersistence(args: {
     const { data, error } = await db
       .from("projects")
       .insert({
-        user_id: EXTERNAL_PROVENANCE_OWNER,
+        user_id: provenanceOwner(),
         name: `${provider.trim() || "External"} sources`,
         visibility: "private",
         project_kind: "external_provenance",
@@ -224,7 +233,7 @@ export function createDatabaseExternalSourcePersistence(args: {
     const documentVersionId = randomUUID();
     const bytes = new TextEncoder().encode(source.text);
     const storagePath = externalSourceStorageKey(
-      EXTERNAL_PROVENANCE_OWNER,
+      provenanceOwner(),
       documentId,
       documentVersionId,
     );
@@ -239,7 +248,7 @@ export function createDatabaseExternalSourcePersistence(args: {
       const { error: documentError } = await db.from("documents").insert({
         id: documentId,
         project_id: provenanceProjectId,
-        user_id: EXTERNAL_PROVENANCE_OWNER,
+        user_id: provenanceOwner(),
         status: "processing",
       });
       if (documentError) throw new Error(documentError.message);
@@ -583,5 +592,6 @@ export function createFastModelExternalSourceSummarizer(args: {
       systemPrompt:
         "Summarize a downloaded external source for an AI agent's orientation. Identify the document's subject, structure, major issues, and where likely-relevant material appears. Be concise and neutral. Do not present the summary as evidence, do not invent details, and do not give instructions about tools.",
       user: `Title: ${source.title}\nProvider: ${source.provider}\n\nSOURCE TEXT:\n${source.text}`,
+      feature: "external-source",
     });
 }

@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   authState,
+  listSkillCatalogMock,
+  importCatalogSkillMock,
   validateSkillZipMock,
   storeSkillSnapshotMock,
   listTenantSkillsMock,
@@ -29,6 +31,8 @@ const {
     roles: ["TenantAdmin"] as string[],
     tenantId: "tenant-1",
   },
+  listSkillCatalogMock: vi.fn(),
+  importCatalogSkillMock: vi.fn(),
   validateSkillZipMock: vi.fn(),
   storeSkillSnapshotMock: vi.fn(),
   listTenantSkillsMock: vi.fn(),
@@ -65,6 +69,10 @@ vi.mock("../../middleware/auth", () => ({
     };
     next();
   },
+}));
+
+vi.mock("./catalog", async (original) => ({
+  ...(await original<typeof import("./catalog")>()), listSkillCatalog: listSkillCatalogMock, importCatalogSkill: importCatalogSkillMock,
 }));
 
 vi.mock("./archive", async (importOriginal) => ({
@@ -140,6 +148,8 @@ function makeApp() {
 
 describe("Skills routes", () => {
   beforeEach(() => {
+    listSkillCatalogMock.mockReset(); listSkillCatalogMock.mockResolvedValue([]);
+    importCatalogSkillMock.mockReset();
     authState.roles = ["TenantAdmin"];
     authState.tenantId = "tenant-1";
     validateSkillZipMock.mockReset();
@@ -362,6 +372,26 @@ describe("Skills routes", () => {
         }),
       }),
     );
+  });
+
+  it("lists the curated catalog and restricts imports to tenant admins", async () => {
+    listSkillCatalogMock.mockResolvedValue([{ id: "review", displayName: "Review" }]);
+    await request(makeApp()).get("/api/altien/skills/catalog").expect(200, { skills: [{ id: "review", displayName: "Review" }] });
+    importCatalogSkillMock.mockResolvedValue({ id: "tenant-copy", skills: [] });
+    await request(makeApp()).post("/api/altien/skills/imports/catalog")
+      .send({ catalogId: "review", tenantId: "other-tenant", url: "https://other.example" }).expect(201);
+    expect(importCatalogSkillMock).toHaveBeenCalledWith({ catalogId: "review", tenantId: "tenant-1", importedBy: "admin-1" });
+    authState.roles = ["Member"];
+    importCatalogSkillMock.mockClear();
+    await request(makeApp()).post("/api/altien/skills/imports/catalog").send({ catalogId: "review" }).expect(403);
+    expect(importCatalogSkillMock).not.toHaveBeenCalled();
+  });
+
+  it("hides catalog provider failures behind a generic error", async () => {
+    importCatalogSkillMock.mockRejectedValue(new Error("private provider diagnostic"));
+    const res = await request(makeApp()).post("/api/altien/skills/imports/catalog").send({ catalogId: "review" }).expect(502);
+    expect(res.body.detail).toBe("The catalog skill could not be imported. Try again later.");
+    expect(res.text).not.toContain("private provider diagnostic");
   });
 
   it("imports a ZIP for a TenantAdmin", async () => {

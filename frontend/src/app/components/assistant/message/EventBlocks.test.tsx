@@ -1,5 +1,5 @@
 import { StrictMode } from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
     AskInputsBlock,
@@ -7,6 +7,9 @@ import {
     DocDownloadBlock,
     ReasoningBlock,
 } from "./EventBlocks";
+
+const download = vi.hoisted(() => vi.fn());
+vi.mock("@/app/lib/mikeApi", () => ({ downloadResolvedDocument: download }));
 
 describe("reasoning scroll fade", () => {
     let frames: Map<number, FrameRequestCallback>;
@@ -133,11 +136,21 @@ describe("reasoning scroll fade", () => {
 });
 
 describe("DocDownloadBlock", () => {
+    beforeEach(() => download.mockReset());
+    it("downloads an old chat card by IDs and shows a generic failure", async () => {
+        download.mockRejectedValueOnce(new Error("provider credential detail"));
+        render(<DocDownloadBlock filename="agreement.docx" documentId="doc-1" versionId="v-2" />);
+        fireEvent.click(screen.getByRole("button", { name: "Download agreement.docx" }));
+        await waitFor(() => expect(download).toHaveBeenCalledWith("doc-1", "v-2", "agreement.docx"));
+        expect(await screen.findByRole("alert")).toHaveTextContent("Could not download this document. Please try again.");
+        expect(screen.queryByText("provider credential detail")).not.toBeInTheDocument();
+    });
     it("shows the file icon without a file-type label", () => {
         const { container } = render(
             <DocDownloadBlock
                 filename="agreement.docx"
-                download_url="/documents/agreement/download"
+                documentId="agreement"
+                versionId="version-2"
                 versionNumber={2}
             />,
         );

@@ -7,6 +7,7 @@ import { getRedisProducerConnection, withRedisTimeout } from "./connection";
 import { redisEnabled } from "../dbq/driver";
 import { enqueueDbJob } from "../dbq/enqueue";
 import { createServerSupabase } from "../supabase";
+import { stampJobTenant } from "../tenantContext";
 
 /** BullMQ queue that runs DOCX/DOC → PDF conversion off the request thread. */
 export const CONVERSION_QUEUE = "document-conversion";
@@ -37,6 +38,11 @@ export interface ConversionJobData {
      * flow, where the document is parked "processing" until conversion ends).
      */
     finalizeDocumentStatus?: boolean;
+    /**
+     * Enqueuing request's tenant, stamped on the BullMQ path only (multi-tenant
+     * issue 003); the worker runs the job as this tenant.
+     */
+    tenantId?: string;
 }
 
 let queue: Queue<ConversionJobData> | null = null;
@@ -118,7 +124,7 @@ export async function enqueueConversion(data: ConversionJobData) {
         // thread, and with the worker connection options a dead Redis makes
         // `add()` pend forever — the request never answers.
         return await withRedisTimeout("conversion enqueue", () =>
-            getConversionQueue().add("convert", data, {
+            getConversionQueue().add("convert", stampJobTenant(data), {
                 jobId: conversionJobId(data.versionId, data.storagePath),
                 attempts: 3,
                 backoff: { type: "exponential", delay: 2000 },

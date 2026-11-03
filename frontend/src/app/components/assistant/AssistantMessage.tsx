@@ -111,7 +111,7 @@ interface Props {
         documentId: string;
         status: "accepted" | "rejected";
         versionId: string | null;
-        downloadUrl: string | null;
+
     }) => void;
     onEditError?: (args: {
         editId: string;
@@ -163,7 +163,7 @@ export function AssistantMessage({
 }: Props) {
     const contentDivRef = useRef<HTMLDivElement | null>(null);
     const [isCopied, setIsCopied] = useState(false);
-    // Per-document override of the download URL, set as Accept/Reject resolves
+    // Per-document override of the download version, set as Accept/Reject resolves
     // each tracked change and produces a new version.
     const [resolvedOverrides, setResolvedOverrides] = useState<
         Record<string, string>
@@ -174,12 +174,12 @@ export function AssistantMessage({
         documentId: string;
         status: "accepted" | "rejected";
         versionId: string | null;
-        downloadUrl: string | null;
+
     }) => {
-        if (args.downloadUrl) {
+        if (args.versionId) {
             setResolvedOverrides((prev) => ({
                 ...prev,
-                [args.documentId]: args.downloadUrl as string,
+                [args.documentId]: args.versionId as string,
             }));
         }
         onEditResolved?.(args);
@@ -1161,7 +1161,7 @@ export function AssistantMessage({
                             > =>
                                 e.type === "doc_edited" &&
                                 !e.isStreaming &&
-                                !!e.download_url,
+                                !!e.document_id && !!e.version_id && !e.error,
                         );
                         const latestByDoc = new Map<
                             string,
@@ -1176,10 +1176,8 @@ export function AssistantMessage({
                             >
                                 <DocDownloadBlock
                                     filename={e.filename}
-                                    download_url={
-                                        resolvedOverrides[e.document_id] ??
-                                        e.download_url
-                                    }
+                                    documentId={e.document_id}
+                                    versionId={resolvedOverrides[e.document_id] ?? e.version_id ?? null}
                                     versionNumber={e.version_number ?? null}
                                     onOpen={
                                         onOpenDocument
@@ -1216,17 +1214,17 @@ export function AssistantMessage({
                 {events &&
                     !isStreaming &&
                     eventsWithDelegated.some(
-                        (e) => e.type === "doc_created" && e.download_url,
+                        (e) => (e.type === "doc_created" || e.type === "doc_download") && e.document_id,
                     ) && (
                         <div className="flex flex-col gap-2 mt-2 mb-3">
                             {(
                                 eventsWithDelegated.filter(
                                     (e) =>
-                                        e.type === "doc_created" &&
-                                        e.download_url,
+                                        (e.type === "doc_created" || e.type === "doc_download") &&
+                                        e.document_id,
                                 ) as Extract<
                                     AssistantEvent,
-                                    { type: "doc_created" }
+                                    { type: "doc_created" | "doc_download" }
                                 >[]
                             ).map((e, i) => {
                                 const documentId = e.document_id;
@@ -1238,7 +1236,8 @@ export function AssistantMessage({
                                     <DocDownloadBlock
                                         key={i}
                                         filename={e.filename}
-                                        download_url={e.download_url}
+                                        documentId={documentId!}
+                                        versionId={versionId}
                                         versionNumber={versionNumber}
                                         onOpen={
                                             canOpen

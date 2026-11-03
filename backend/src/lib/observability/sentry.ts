@@ -1,3 +1,4 @@
+import { redactDownloadPath } from "../downloadRedaction";
 // Sentry error tracking for every backend runtime: the API process, the
 // in-process worker thread, the standalone worker process, and one-shot jobs.
 //
@@ -991,7 +992,7 @@ export function requestRoutePattern(
     return path === "/" && base ? base : `${base}${path}`;
   }
   const concrete = req.originalUrl?.split("?")[0];
-  return concrete ? `${concrete}` : base || undefined;
+  return concrete ? redactDownloadPath(concrete) : base || undefined;
 }
 
 /**

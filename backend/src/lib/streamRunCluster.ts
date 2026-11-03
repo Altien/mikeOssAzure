@@ -4,8 +4,10 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { Client, Pool, type PoolClient } from "pg";
-import { getKeyVaultConfig } from "./config";
+import { streamRunDatabaseUri } from "./postgresSession";
 import { deriveServerRelayKey } from "./serverSession";
+import { PLATFORM_DB_ROLE, postgrestClaims, tenantDbRole } from "./supabase";
+import { currentTenant, runWithTenant } from "./tenantContext";
 
 export type RunRow = {
   id: string;
@@ -29,6 +31,8 @@ type RelayMessage = {
   op?: string;
   data?: unknown;
   ok?: boolean;
+  /** The requester's tenant; the owner serves the request as that tenant. */
+  tenantId?: string;
 };
 type Envelope = {
   v: 1; from: string; to: string; id: string; part: number; total: number;
@@ -83,15 +87,10 @@ export class StreamRunCluster {
   }
 
   static async start(): Promise<StreamRunCluster> {
-    let uri = "";
-    if (process.env.KEY_VAULT_NAME) {
-      try { uri = await getKeyVaultConfig("pgrst-db-uri"); }
-      catch (error) { if (!process.env.STREAM_RUN_DATABASE_URL) throw error; }
-    }
-    uri ||= process.env.STREAM_RUN_DATABASE_URL ?? "";
-    if (!uri) throw new Error("Stream run database URI unavailable");
+    const uri = await streamRunDatabaseUri();
     const parsed = new URL(uri);
-    if (!/^postgres(?:ql)?:$/.test(parsed.protocol)) throw new Error("Stream run database URI must be PostgreSQL");
+    // streamRunDatabaseUri (multi-tenant 019) already validated the scheme
+    // and refused transaction pooling.
     const local = ["localhost", "127.0.0.1", "::1"].includes(parsed.hostname);
     // Upstream desktop 89dc8323 supervises its own direct PostgreSQL on a
     // dedicated loopback port. Remote deployments keep the direct-port guard.
@@ -170,7 +169,17 @@ export class StreamRunCluster {
     if (this.stopped) throw new Error("Stream relay unavailable");
     const client = await this.pool.connect();
     try {
-      await client.query("SET ROLE service_role");
+      // Multi-tenant issues 003 and 008: inside a tenant scope the session
+      // runs as the tenant role with the same request.jwt.claims PostgREST
+      // traffic carries, so column defaults and RLS see the caller's tenant.
+      // Outside one (heartbeat, node keys, retention) it is platform work.
+      // Both are rewritten on every checkout, so they never leak between uses.
+      const tenant = currentTenant();
+      const role = tenant ? await tenantDbRole() : PLATFORM_DB_ROLE;
+      await client.query(`SET ROLE ${role}`);
+      await client.query("select set_config('request.jwt.claims', $1, false)", [
+        JSON.stringify(postgrestClaims(tenant, role)),
+      ]);
       return await fn(client);
     } finally { client.release(); }
   }
@@ -266,12 +275,19 @@ export class StreamRunCluster {
       return;
     }
     if (message.kind !== "request" || !message.op || !this.handler) return;
-    try {
-      const data = await this.handler(message.op, message.data);
-      await this.send(from, { kind: "response", requestId: message.requestId, ok: true, data });
-    } catch {
-      await this.send(from, { kind: "response", requestId: message.requestId, ok: false });
-    }
+    const handler = this.handler;
+    const serve = async () => {
+      try {
+        const data = await handler(message.op!, message.data);
+        await this.send(from, { kind: "response", requestId: message.requestId, ok: true, data });
+      } catch {
+        await this.send(from, { kind: "response", requestId: message.requestId, ok: false });
+      }
+    };
+    // Multi-tenant issue 008: the LISTEN connection has no tenant; the
+    // authenticated (MAC'd) request carries the requester's.
+    const tenantId = typeof message.tenantId === "string" && message.tenantId ? message.tenantId : undefined;
+    await (tenantId ? runWithTenant({ tenantId }, serve) : serve());
   }
 
   async request<T>(to: string, op: string, data: unknown, timeoutMs = 5_000): Promise<T> {
@@ -281,7 +297,8 @@ export class StreamRunCluster {
       timer.unref();
       this.pending.set(requestId, { resolve: resolve as (value: unknown) => void, reject, timer });
     });
-    try { await this.send(to, { kind: "request", requestId, op, data }); }
+    const tenantId = currentTenant()?.tenantId;
+    try { await this.send(to, { kind: "request", requestId, op, data, ...(tenantId ? { tenantId } : {}) }); }
     catch (error) { const entry = this.pending.get(requestId); if (entry) { clearTimeout(entry.timer); this.pending.delete(requestId); entry.reject(error); } }
     return result;
   }

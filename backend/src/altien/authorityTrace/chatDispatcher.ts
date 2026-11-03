@@ -41,6 +41,7 @@ export async function dispatchAuthorityTraceTool(input: {
   authorityTraceState?: AuthorityTraceTurnState;
   authorityTraceEvents: AuthorityTraceEvent[];
   toolResults: unknown[];
+  onDocumentCreated?: (document: { filename: string; document_id: string; version_id: string; version_number: number }) => void;
 }): Promise<boolean> {
   const {
     toolCall,
@@ -117,10 +118,13 @@ export async function dispatchAuthorityTraceTool(input: {
         },
         db,
       );
+      if (result.ok) input.onDocumentCreated?.({ filename: result.filename, document_id: result.document_id, version_id: result.version_id, version_number: 1 });
+      // Credentials never enter model context or durable chat history.
+      const { download_url: _downloadUrl, ...safeResult } = result.ok ? result : { ...result, download_url: undefined };
       toolResults.push({
         role: "tool",
         tool_call_id: toolCall.id,
-        content: JSON.stringify(result),
+        content: JSON.stringify(safeResult),
       } satisfies ToolResult);
     } catch (error) {
       const message =

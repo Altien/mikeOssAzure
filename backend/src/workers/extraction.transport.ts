@@ -5,6 +5,7 @@ import { runIsolated } from "../lib/dbq/jobScope";
 import { getRedisConnection } from "../lib/queue/connection";
 import { reportError } from "../lib/observability/sentry";
 import { EXTRACTION_QUEUE, type ExtractionJobData } from "../lib/queue/extractionQueue";
+import { runWithJobTenant } from "../lib/tenantContext";
 import { extractionJobOperation, runExtractionJob, markExtractionFailed } from "../modules/tabular/tabular.service";
 
 /** Terminal resource refusals and exhausted retries both need cell cleanup. */
@@ -21,10 +22,11 @@ export function createExtractionWorker(): Worker<ExtractionJobData> {
         EXTRACTION_QUEUE,
         async (job: Job<ExtractionJobData>) => {
             // Own isolation scope per job (concurrency is 3); the job body
-            // names its operation (tabular.cell or tabular.row).
+            // names its operation (tabular.cell or tabular.row). The job runs
+            // as its tenant and acting user (multi-tenant issue 003).
             await runIsolated(async () => {
                 try {
-                    await runExtractionJob(job.data);
+                    await runWithJobTenant(job.data.tenantId, () => runExtractionJob(job.data), job.data.userId);
                 } catch (error) {
                     if (error instanceof ExtractionLimitError) throw new UnrecoverableError("document_too_large");
                     throw error;
@@ -86,7 +88,7 @@ export function createExtractionWorker(): Worker<ExtractionJobData> {
             },
         );
         try {
-            await markExtractionFailed(job.data);
+            await runWithJobTenant(job.data.tenantId, () => markExtractionFailed(job.data), job.data.userId);
         } catch (updateErr) {
             // Cells stay "generating" forever if this write is lost: reported
             // with the terminal stage, logged as the same object.

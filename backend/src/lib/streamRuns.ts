@@ -1,4 +1,5 @@
 import type { Response } from "express";
+import { AsyncResource } from "node:async_hooks";
 import { once } from "node:events";
 import { streamRunCluster, type RunRow } from "./streamRunCluster";
 import { streamRunDeadlines } from "./runtimeConfig";
@@ -611,10 +612,11 @@ export function attachStreamRunSse(
             res.end();
         },
     });
-    res.on("close", () => {
+    // Request context (and tenant) for detach; see lib/assistantSse.ts.
+    res.on("close", AsyncResource.bind(() => {
         ended = true;
         detach();
-    });
+    }));
 
     return {
         signal: run.signal,

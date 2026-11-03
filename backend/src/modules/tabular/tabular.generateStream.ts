@@ -30,6 +30,7 @@
 // (`finishGenerationIfIdle`). The two cases where no worker will ever run —
 // nothing outstanding, or every enqueue failing — release the lease here.
 
+import { AsyncResource } from "node:async_hooks";
 import IORedis from "ioredis";
 import type { Response } from "express";
 import { REDIS_URL } from "../../lib/queue/connection";
@@ -256,7 +257,8 @@ async function tailTabularRun(args: {
         resolve(key, update); // "done" | "error"
     };
 
-    res.on("close", abandon);
+    // Request context (and tenant) for abandon; see lib/assistantSse.ts.
+    res.on("close", AsyncResource.bind(abandon));
 
     // Nothing to do — every targeted cell is already done.
     if (pending.size === 0) return void finish();

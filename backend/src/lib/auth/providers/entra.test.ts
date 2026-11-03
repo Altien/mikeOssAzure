@@ -173,6 +173,8 @@ describe("validateEntraToken — JWKS lookup", () => {
 
     expect(mockFetch).toHaveBeenCalledWith(
       `https://login.microsoftonline.com/${TENANT_ID}/discovery/v2.0/keys`,
+      // 012 bounds every issuer JWKS request.
+      { signal: expect.any(AbortSignal) },
     );
   });
 

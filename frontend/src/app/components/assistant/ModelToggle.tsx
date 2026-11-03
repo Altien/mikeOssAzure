@@ -7,7 +7,7 @@ import {
   reasoningLevelsForModel,
   type ReasoningLevel,
 } from "@/shared/ui/ModelToggleUI";
-import { isModelAvailable } from "@/app/lib/modelAvailability";
+import { isModelAvailable, providerKeyStates } from "@/app/lib/modelAvailability";
 import {
   MODELS, mergeConfiguredModelOptions,
   allRouterModelOptions,
@@ -114,7 +114,8 @@ export function ModelToggle({
   const { workspaceId } = useWorkspace();
   const inOrganization =
     workspaceId !== null && workspaceId !== PERSONAL_WORKSPACE;
-  const emptyReason = noModelsReason(apiKeys, selections, inOrganization);
+  const providerKeys = apiKeys ? providerKeyStates(apiKeys) : undefined;
+  const emptyReason = noModelsReason(providerKeys, selections, inOrganization);
   return (
     <ModelToggleUI
       value={value}

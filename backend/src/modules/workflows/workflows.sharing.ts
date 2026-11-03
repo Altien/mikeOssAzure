@@ -322,7 +322,7 @@ export async function shareWorkflow(
     return {
       ok: false,
       kind: "missing_user",
-      detail: `${missingEmails[0]} does not belong to a Mike user.`,
+      detail: "One or more people are not members of your organisation.",
     };
 
   const rows = normalizedEmails.map((email: string) => ({

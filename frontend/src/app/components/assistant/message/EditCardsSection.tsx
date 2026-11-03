@@ -11,7 +11,7 @@ import { applyOptimisticResolution } from "../EditCard";
  * multiple tracked-change proposals. Lets the user resolve every pending
  * edit in one click by firing the per-edit accept/reject endpoint for each
  * pending annotation and forwarding each response to `onResolved` so the
- * parent can bump the viewer version, persist override URLs, etc.
+ * parent can bump the viewer version, update download versions, etc.
  *
  * This intentionally doesn't apply the optimistic DOM mutation that
  * EditCard does — bulk operations touch many edits at once and the real
@@ -39,7 +39,7 @@ function BulkEditActions({
         documentId: string;
         status: "accepted" | "rejected";
         versionId: string | null;
-        downloadUrl: string | null;
+
     }) => void;
     onError?: (args: {
         editId: string;
@@ -95,7 +95,7 @@ function BulkEditActions({
                         documentId: annotation.document_id,
                         status: nextStatus,
                         versionId: data.version_id,
-                        downloadUrl: data.download_url,
+
                     });
                 } catch (e) {
                     console.error("[BulkEditActions] resolve failed", e);
@@ -205,7 +205,7 @@ export function EditCardsSection({
         documentId: string;
         status: "accepted" | "rejected";
         versionId: string | null;
-        downloadUrl: string | null;
+
     }) => void;
     onError?: (args: {
         editId: string;

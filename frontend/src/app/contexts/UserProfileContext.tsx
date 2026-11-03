@@ -184,6 +184,8 @@ function emptyApiKeys(): ApiKeyState {
 function toProfile(data: ApiUserProfile): UserProfile {
     const { apiKeyStatus, ...profile } = data;
     const apiKeys = apiKeyStateFromStatus(apiKeyStatus);
+    // Multi-tenant: a pooled tenant's model allowlist travels with key state.
+    if (Array.isArray(apiKeyStatus.modelAllowlist)) apiKeys.modelAllowlist = apiKeyStatus.modelAllowlist;
 
     return {
         ...profile,
@@ -807,11 +809,15 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 if (!current()) return false;
                 setProfile((prev) => prev && current() ? {
                     ...prev,
-                    apiKeys: Object.fromEntries(API_KEY_PROVIDERS.map((slug) => [slug, {
-                        configured: !!status[slug],
-                        source: status.sources?.[slug] ?? null,
-                        enabled: status.enabled?.[slug] !== false,
-                    }])) as ApiKeyState,
+                    apiKeys: {
+                        ...(Object.fromEntries(API_KEY_PROVIDERS.map((slug) => [slug, {
+                            configured: !!status[slug],
+                            source: status.sources?.[slug] ?? null,
+                            enabled: status.enabled?.[slug] !== false,
+                        }])) as Omit<ApiKeyState, "modelAllowlist">),
+                        // Multi-tenant: keep the pooled tenant's model allowlist.
+                        modelAllowlist: prev.apiKeys.modelAllowlist,
+                    },
                 } : prev);
                 void refreshConfiguredModels();
                 return true;

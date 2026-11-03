@@ -1,6 +1,7 @@
 // PostgREST diagnostics data access. Route files only authenticate and render.
 import { createServerSupabase } from "../../lib/supabase";
 import { getConfig, flushConfigCache } from "../../lib/config";
+import { runWithJobTenant } from "../../lib/tenantContext";
 
 const SENTINEL_USER_ID = "00000000-0000-0000-0000-dddd0000dddd";
 
@@ -40,7 +41,14 @@ async function rawFetch(
     };
 }
 
+// Multi-tenant issue 008: operator tooling has no signed-in user, so it runs
+// as the install's tenant (as it effectively did before RLS) rather than
+// across tenants.
 export async function runDiagnostics(): Promise<TestResult[]> {
+    return runWithJobTenant(null, runDiagnosticTests);
+}
+
+async function runDiagnosticTests(): Promise<TestResult[]> {
     const baseUrl = process.env.SUPABASE_URL ?? "";
     const tests: TestResult[] = [];
 
@@ -359,6 +367,10 @@ export async function runDiagnostics(): Promise<TestResult[]> {
 
 
 export async function inspectRows(table:string, filter:Record<string,unknown>, limit:number): Promise<{rows:Record<string,unknown>[]|null; queryError:string|null}> {
+  return runWithJobTenant(null, () => inspectInstallTenantRows(table, filter, limit));
+}
+
+async function inspectInstallTenantRows(table:string, filter:Record<string,unknown>, limit:number): Promise<{rows:Record<string,unknown>[]|null; queryError:string|null}> {
   try {
     const db=createServerSupabase();
     let q=db.from(table).select("*").limit(limit);

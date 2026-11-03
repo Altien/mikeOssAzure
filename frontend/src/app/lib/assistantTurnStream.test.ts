@@ -1238,14 +1238,14 @@ describe("document frames", () => {
     );
   });
 
-  it("attaches the download link and version to a created document", async () => {
+  it("attaches the document ID and version to a created document", async () => {
     expect(
       await eventsOf([
         { type: "doc_created_start", filename: "answer.docx" },
         {
           type: "doc_created",
           filename: "answer.docx",
-          download_url: "https://dl/1",
+
           document_id: "doc-1",
           version_id: "ver-1",
           version_number: 1,
@@ -1255,7 +1255,7 @@ describe("document frames", () => {
       {
         type: "doc_created",
         filename: "answer.docx",
-        download_url: "https://dl/1",
+
         document_id: "doc-1",
         version_id: "ver-1",
         version_number: 1,
@@ -1269,26 +1269,26 @@ describe("document frames", () => {
     expect(
       await eventsOf([
         { type: "doc_created_start", filename: "answer.docx" },
-        { type: "doc_created", filename: "answer.docx", download_url: "https://dl/1" },
+        { type: "doc_created", filename: "answer.docx" },
       ]),
     ).toEqual([
       {
         type: "doc_created",
         filename: "answer.docx",
-        download_url: "https://dl/1",
+
         isStreaming: false,
       },
       thinking,
     ]);
   });
 
-  it("appends a standalone download link", async () => {
+  it("appends a standalone download identity", async () => {
     expect(
       await eventsOf([
-        { type: "doc_download", filename: "answer.docx", download_url: "https://dl/1" },
+        { type: "doc_download", filename: "answer.docx" },
       ]),
     ).toEqual([
-      { type: "doc_download", filename: "answer.docx", download_url: "https://dl/1" },
+      { type: "doc_download", filename: "answer.docx" },
     ]);
   });
 
@@ -1350,7 +1350,7 @@ describe("document frames", () => {
           document_id: "doc-1",
           version_id: "ver-2",
           version_number: 2,
-          download_url: "https://dl/2",
+
           annotations,
           error: "one edit skipped",
         },
@@ -1362,7 +1362,7 @@ describe("document frames", () => {
         document_id: "doc-1",
         version_id: "ver-2",
         version_number: 2,
-        download_url: "https://dl/2",
+
         annotations,
         error: "one edit skipped",
         isStreaming: false,
@@ -1384,7 +1384,7 @@ describe("document frames", () => {
         document_id: "",
         version_id: "",
         version_number: null,
-        download_url: "",
+
         annotations: [],
         error: undefined,
         isStreaming: false,

@@ -4,20 +4,26 @@ import {
   expect,
   beforeEach,
   afterEach,
+  vi,
 } from "vitest";
 import { createHmac } from "node:crypto";
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import {
-  signDownload,
+  signDownload as rawSignDownload,
   verifyDownload,
-  buildDownloadUrl,
+  buildDownloadUrl as rawBuildDownloadUrl,
 } from "./downloadTokens";
 
 // Backported from the OSS mirror's vitest suite (ddcfbdc), minus the
 // SUPABASE_SECRET_KEY legacy-fallback cases — dev removed that fallback
 // (6239643, following upstream ea48cde). The crash-regression test at the
 // bottom covers a production process exit when no signing secret is loaded.
+
+import { currentTenant } from "./tenantContext";
+
+const signDownload = (path: string, filename: string, options: Parameters<typeof rawSignDownload>[2] = {}) => rawSignDownload(path, filename, { userId: currentTenant()?.userId ?? "user-1", ...options });
+const buildDownloadUrl = (path: string, filename: string) => rawBuildDownloadUrl(path, filename, { userId: currentTenant()?.userId ?? "user-1" });
 
 const SECRET_ENV = "DOWNLOAD_SIGNING_SECRET";
 const NODE_ENV = "NODE_ENV";
@@ -61,7 +67,7 @@ describe("signDownload / verifyDownload — round-trip", () => {
   it("round-trips path and filename verbatim", () => {
     const token = signDownload("tenant-1/doc-1.pdf", "Report.pdf");
 
-    expect(verifyDownload(token)).toEqual({
+    expect(verifyDownload(token)).toMatchObject({
       path: "tenant-1/doc-1.pdf",
       filename: "Report.pdf",
     });
@@ -70,7 +76,7 @@ describe("signDownload / verifyDownload — round-trip", () => {
   it("preserves unicode and spaces in the filename", () => {
     const token = signDownload("p", "résumé final.pdf");
 
-    expect(verifyDownload(token)).toEqual({
+    expect(verifyDownload(token)).toMatchObject({
       path: "p",
       filename: "résumé final.pdf",
     });
@@ -83,9 +89,15 @@ describe("signDownload / verifyDownload — round-trip", () => {
   });
 
   it("produces a deterministic token for the same input under the same secret", () => {
-    expect(signDownload("path", "name.pdf")).toBe(
-      signDownload("path", "name.pdf"),
-    );
+    // Tokens carry an expiry (issue 011): pin the clock so both share it.
+    vi.useFakeTimers({ now: new Date("2026-01-01T00:00:00Z") });
+    try {
+      expect(signDownload("path", "name.pdf")).toBe(
+        signDownload("path", "name.pdf"),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("produces different tokens for different paths (rules out signature reuse)", () => {
@@ -166,7 +178,7 @@ describe("getSecret — resolution (covered through sign+verify)", () => {
 
     delete process.env[SECRET_ENV];
     // Both sign and verify used the dev fallback, so the round-trip holds.
-    expect(verifyDownload(token)).toEqual({ path: "p", filename: "n" });
+    expect(verifyDownload(token)).toMatchObject({ path: "p", filename: "n" });
   });
 
   it("throws in NODE_ENV=production when the secret is not set", () => {
@@ -198,7 +210,7 @@ describe("buildDownloadUrl", () => {
     const url = buildDownloadUrl("tenant-1/doc.pdf", "Report.pdf");
 
     expect(url.startsWith("/download/")).toBe(true);
-    expect(verifyDownload(url.slice("/download/".length))).toEqual({
+    expect(verifyDownload(url.slice("/download/".length))).toMatchObject({
       path: "tenant-1/doc.pdf",
       filename: "Report.pdf",
     });
@@ -228,7 +240,7 @@ const CHILD_SERVER = `
   delete process.env.DOWNLOAD_SIGNING_SECRET;
   const app = express();
   app.get("/url", async (_req, res) => {
-    res.json({ url: buildDownloadUrl("documents/u/d/edits/x.docx", "x.docx") });
+    res.json({ url: buildDownloadUrl("documents/u/d/edits/x.docx", "x.docx", { userId: "user-1" }) });
   });
   app.get("/ok", (_req, res) => res.json({ ok: true }));
   const s = app.listen(0, () => console.log("PORT:" + s.address().port));

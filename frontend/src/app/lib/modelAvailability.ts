@@ -1,11 +1,57 @@
 // The web app's view of key-based model availability. The rules live in the
 // catalog shared with the Word add-in (@/shared/lib/modelCatalog); the web
 // app's ApiKeyState is a ProviderKeyStates.
+import {
+    canonicalModelId,
+    isModelAvailable as isCatalogModelAvailable,
+    isProviderAvailable as isCatalogProviderAvailable,
+    type ModelOption,
+    type ModelProvider,
+    type ProviderKeyStates,
+} from "@/shared/lib/modelCatalog";
+
 export {
     getModelProvider,
-    isModelAvailable,
-    isProviderAvailable,
     modelGroupToProvider,
     providerLabel,
     type ModelProvider,
 } from "@/shared/lib/modelCatalog";
+
+/** Provider key states that may also carry a pooled tenant's model allowlist. */
+export type TenantKeyStates = {
+    readonly [provider: string]:
+        | ProviderKeyStates[string]
+        | readonly string[]
+        | null
+        | undefined;
+    modelAllowlist?: readonly string[] | null;
+};
+
+/** The provider entries alone, for the shared catalog's key-based rules. */
+export function providerKeyStates(apiKeys: TenantKeyStates): ProviderKeyStates {
+    const { modelAllowlist: _allowlist, ...providers } = apiKeys;
+    return providers as ProviderKeyStates;
+}
+
+/**
+ * Multi-tenant divergence: a pooled tenant's settings may restrict the models
+ * its members can use. The backend reports that allowlist on the profile's
+ * apiKeyStatus; a model outside it is unavailable whatever keys exist. The
+ * backend remains authoritative.
+ */
+export function isModelAvailable(
+    modelId: string,
+    apiKeys: TenantKeyStates,
+    discoveredModels?: readonly ModelOption[] | readonly string[],
+): boolean {
+    const allowlist = apiKeys.modelAllowlist;
+    if (allowlist && !allowlist.includes(canonicalModelId(modelId))) return false;
+    return isCatalogModelAvailable(modelId, providerKeyStates(apiKeys), discoveredModels);
+}
+
+export function isProviderAvailable(
+    provider: ModelProvider,
+    apiKeys: TenantKeyStates,
+): boolean {
+    return isCatalogProviderAvailable(provider, providerKeyStates(apiKeys));
+}

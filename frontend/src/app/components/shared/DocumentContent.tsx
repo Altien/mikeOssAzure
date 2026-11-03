@@ -49,7 +49,7 @@ export type DocumentContentMode =
               documentId: string;
               status: "accepted" | "rejected";
               versionId: string | null;
-              downloadUrl: string | null;
+
           }) => void;
           onError?: (args: {
               editId: string;

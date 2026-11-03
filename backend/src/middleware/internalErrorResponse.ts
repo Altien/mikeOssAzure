@@ -1,3 +1,4 @@
+import { redactDownloadPath } from "../lib/downloadRedaction";
 import type {
   ErrorRequestHandler,
   NextFunction,
@@ -73,7 +74,7 @@ export function protectInternalErrorResponses(
           http_route: route,
         },
         // Path only: OAuth callback query strings carry codes and state.
-        extra: { path: req.originalUrl.split("?")[0], body: errorBody ?? body },
+        extra: { path: redactDownloadPath(req.originalUrl.split("?")[0]), body: errorBody ?? body },
         fingerprint: ["sanitized-5xx", req.method, route ?? ""],
       },
     );

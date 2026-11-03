@@ -22,7 +22,10 @@ import {
     noModelsReason as addinNoModelsReason,
 } from "../../../word-addin/src/taskpane/lib/modelCatalog";
 import type { ApiKeyStatus } from "../../../word-addin/src/taskpane/types";
-import { isModelAvailable as webIsModelAvailable } from "../app/lib/modelAvailability";
+import {
+    isModelAvailable as webIsModelAvailable,
+    providerKeyStates,
+} from "../app/lib/modelAvailability";
 import type { ApiKeyState } from "../app/lib/mikeApi";
 import {
     CLAUDE_MAIN_MODELS,
@@ -130,7 +133,7 @@ describe("word add-in model catalog", () => {
                     addinNoModelsReason(addinStatus, scenario.routerModels),
                     scenario.name,
                 )
-                .toBe(noModelsReason(webState, scenario.routerModels));
+                .toBe(noModelsReason(providerKeyStates(webState), scenario.routerModels));
         }
     });
 
@@ -175,7 +178,7 @@ describe("word add-in model catalog", () => {
                         source: provider === configured ? "user" : null,
                     },
                 ]),
-            ) as ApiKeyState;
+            ) as unknown as ApiKeyState;
             for (const id of sharedIds) {
                 expect
                     .soft(

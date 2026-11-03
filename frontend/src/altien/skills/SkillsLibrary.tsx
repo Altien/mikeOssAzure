@@ -21,6 +21,9 @@ import {
     getSkillReview,
     importSkillZip,
     importSkillFromGitHub,
+    importSkillFromCatalog,
+    listSkillCatalog,
+    type SkillCatalogItem,
     listSkills,
     postSkillReviewMessage,
     runSkillVersion,
@@ -74,6 +77,8 @@ export function SkillsLibrary() {
     const [githubPolicy, setGithubPolicy] =
         useState<GitHubSkillImportPolicy | null>(null);
     const [githubUrl, setGithubUrl] = useState("");
+    const [catalogSkills, setCatalogSkills] = useState<SkillCatalogItem[]>([]);
+    const [catalogId, setCatalogId] = useState("");
     const [renameByVersion, setRenameByVersion] = useState<Record<string, string>>({});
     const [developerRequirementByVersion, setDeveloperRequirementByVersion] =
         useState<Record<string, string>>({});
@@ -141,6 +146,7 @@ export function SkillsLibrary() {
 
     useEffect(() => {
         void refresh();
+        void listSkillCatalog().then((result) => setCatalogSkills(result.skills)).catch(() => setCatalogSkills([]));
         void listProjects().then(setProjects).catch(() => setProjects([]));
         void getGitHubSkillImportPolicy()
             .then(setGithubPolicy)
@@ -399,6 +405,15 @@ export function SkillsLibrary() {
         });
     };
 
+    const importCatalog = () => {
+        if (!catalogId) return;
+        void runImport("import", async () => {
+            await importSkillFromCatalog(catalogId);
+            setCatalogId("");
+            await refresh();
+        });
+    };
+
     return (
         // The app shell is md:overflow-hidden, so a page taller than the
         // viewport is clipped unless it scrolls itself. Skill cards grow with
@@ -414,6 +429,10 @@ export function SkillsLibrary() {
                 githubUrl={githubUrl}
                 onGithubUrlChange={setGithubUrl}
                 onImportGitHub={importGitHub}
+                catalogSkills={catalogSkills}
+                catalogId={catalogId}
+                onCatalogIdChange={setCatalogId}
+                onImportCatalog={importCatalog}
             />
 
             {error && (

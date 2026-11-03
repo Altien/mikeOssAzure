@@ -358,6 +358,8 @@ export async function runLLMStream(params: {
       results: NormalizedToolResult[],
     ) => void;
   };
+  /** Usage-ledger tag (multi-tenant issue 015); defaults to "chat". */
+  feature?: import("../../../lib/llm").LlmFeature;
 }): Promise<{
   fullText: string;
   events: AssistantEvent[];
@@ -745,6 +747,8 @@ export async function runLLMStream(params: {
         webSearch,
         includeResearchTools,
         onActivity: params.onActivity,
+        // A subagent's calls are billed to the feature that delegated them.
+        feature: params.feature,
         write: () => {},
         model: spawn.model,
         reasoning: spawn.reasoning,
@@ -842,6 +846,7 @@ export async function runLLMStream(params: {
       providerWebSearch:
         providerSearches > 0 ? { maxSearches: providerSearches } : null,
       finishWithoutToolsOnLastStep: isSubagent,
+      feature: params.feature ?? "chat",
       callbacks: {
         onActivity: params.onActivity,
         onUsage: (usage, finishReason) => {
@@ -1053,7 +1058,7 @@ export async function runLLMStream(params: {
           events.push({
             type: "doc_created",
             filename: dl.filename,
-            download_url: dl.download_url,
+
             document_id: dl.document_id,
             version_id: dl.version_id,
             version_number: dl.version_number ?? null,
@@ -1081,7 +1086,7 @@ export async function runLLMStream(params: {
             document_id: e.document_id,
             version_id: e.version_id,
             version_number: e.version_number,
-            download_url: e.download_url,
+
             annotations: e.annotations,
           });
         }

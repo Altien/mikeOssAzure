@@ -8,7 +8,7 @@ import {
 } from "../lib/queue/appJobsQueue";
 import { processClaimedJob } from "../lib/dbq/runner";
 import { DB_JOB_HANDLERS, DB_JOB_FAILURE_HOOKS } from "../jobs/registry";
-import { createServerSupabase } from "../lib/supabase";
+import { createPlatformSupabase, createServerSupabase } from "../lib/supabase";
 import type { Db, DbJob } from "../lib/dbq/types";
 
 /**
@@ -27,8 +27,11 @@ import type { Db, DbJob } from "../lib/dbq/types";
 export async function runAppJobDelivery(
     data: AppJobDelivery,
     db: Db = createServerSupabase(),
+    claimDb: Db = db,
 ): Promise<void> {
-    const { data: rows, error } = await db.rpc("claim_db_job", {
+    // The claim is cross-tenant (platform client in production); the job then
+    // runs as its own tenant inside processClaimedJob (multi-tenant issue 003).
+    const { data: rows, error } = await claimDb.rpc("claim_db_job", {
         p_id: data.dbJobId,
         p_stale_seconds: 600,
     });
@@ -52,7 +55,7 @@ export async function runAppJobDelivery(
     }
     const job = ((rows ?? []) as DbJob[])[0];
     if (!job) return; // already claimed/finished elsewhere, or not yet due
-    await processClaimedJob(db, DB_JOB_HANDLERS, job, DB_JOB_FAILURE_HOOKS);
+    await processClaimedJob(db, DB_JOB_HANDLERS, job, DB_JOB_FAILURE_HOOKS, claimDb);
 }
 
 let worker: Worker<AppJobDelivery> | null = null;
@@ -62,7 +65,7 @@ export function createAppJobsWorker(): Worker<AppJobDelivery> {
     worker = new Worker<AppJobDelivery>(
         APP_JOBS_QUEUE,
         async (job: Job<AppJobDelivery>) => {
-            await runAppJobDelivery(job.data);
+            await runAppJobDelivery(job.data, createServerSupabase(), createPlatformSupabase());
         },
         {
             connection: getRedisConnection(),

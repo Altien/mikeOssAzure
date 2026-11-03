@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/app/contexts/AuthContext";
+import { useConfig } from "@/app/contexts/ConfigContext";
 import { useOrganizationInvitationCount } from "@/app/hooks/useOrganizationInvitationCount";
 import { useMemberDataActions } from "@/app/hooks/useMemberDataActions";
+import { getTenantAdminStatus } from "@/app/lib/mikeApi";
 import {
     SettingsShell,
     type SettingsShellTab,
@@ -48,6 +50,14 @@ const TABS: SettingsShellTab[] = [
     },
 ];
 
+// Multi-tenant divergence: pooled tenant administration, listed only for a
+// confirmed TenantAdmin in pooled tenancy mode.
+const TENANT_ADMIN_TAB: SettingsShellTab = {
+    id: "organisation",
+    label: "Organisation",
+    href: "/settings/organisation",
+};
+
 export default function SettingsLayout({
     children,
 }: {
@@ -56,6 +66,7 @@ export default function SettingsLayout({
     const router = useRouter();
     const pathname = usePathname();
     const { user, isAuthenticated, authLoading } = useAuth();
+    const { tenancyMode } = useConfig();
     const invitationCount = useOrganizationInvitationCount(
         isAuthenticated && !authLoading ? user?.id : undefined,
     );
@@ -63,6 +74,20 @@ export default function SettingsLayout({
     // owners allow neither exports nor bulk deletes, so it is not listed.
     const { canExport, canDelete } = useMemberDataActions();
     const hidePrivacyData = !canExport && !canDelete;
+    const [organisationAdmin, setOrganisationAdmin] = useState<string | null>(null);
+
+    useEffect(() => {
+        let cancelled = false;
+        setOrganisationAdmin(null);
+        if (tenancyMode === "pooled" && isAuthenticated && !authLoading) {
+            void getTenantAdminStatus().then((status) => {
+                if (!cancelled && status.isTenantAdmin) setOrganisationAdmin(user?.id ?? "");
+            }).catch(() => {
+                // A failed permission check leaves the admin navigation hidden.
+            });
+        }
+        return () => { cancelled = true; };
+    }, [tenancyMode, isAuthenticated, authLoading, user?.id]);
 
     useEffect(() => {
         if (!authLoading && !isAuthenticated) {
@@ -87,11 +112,17 @@ export default function SettingsLayout({
         return children;
     }
 
+    const showTenantAdmin =
+        tenancyMode === "pooled" &&
+        organisationAdmin !== null &&
+        organisationAdmin === (user?.id ?? "");
+    const baseTabs = showTenantAdmin ? [...TABS, TENANT_ADMIN_TAB] : TABS;
+
     return (
         <SettingsShell
             title="Settings"
             navLabel="Settings"
-            tabs={TABS.filter(
+            tabs={baseTabs.filter(
                 (tab) => !(hidePrivacyData && tab.id === "privacy-data"),
             ).map((tab) =>
                 tab.id === "organizations" && invitationCount > 0

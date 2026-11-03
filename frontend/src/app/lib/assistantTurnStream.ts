@@ -1321,7 +1321,7 @@ export async function consumeAssistantTurnStream(
           pushEvent({
             type: "doc_created",
             filename: data.filename as string,
-            download_url: "",
+
             isStreaming: true,
           });
           continue;
@@ -1331,7 +1331,9 @@ export async function consumeAssistantTurnStream(
           pushEvent({
             type: "doc_download",
             filename: data.filename as string,
-            download_url: data.download_url as string,
+            ...(typeof data.document_id === "string" ? { document_id: data.document_id } : {}),
+            ...(typeof data.version_id === "string" ? { version_id: data.version_id } : {}),
+
           });
           continue;
         }
@@ -1347,7 +1349,7 @@ export async function consumeAssistantTurnStream(
                 {
                   type: "doc_created",
                   filename: (e as { filename: string }).filename,
-                  download_url: data.download_url as string,
+
                   isStreaming: false,
                 };
               if (typeof data.document_id === "string") {
@@ -1416,7 +1418,7 @@ export async function consumeAssistantTurnStream(
             filename: data.filename as string,
             document_id: "",
             version_id: "",
-            download_url: "",
+
             annotations: [],
             isStreaming: true,
           });
@@ -1438,7 +1440,7 @@ export async function consumeAssistantTurnStream(
                 typeof data.version_number === "number"
                   ? (data.version_number as number)
                   : null,
-              download_url: (data.download_url as string) ?? "",
+
               annotations: Array.isArray(data.annotations)
                 ? (data.annotations as import("@/app/components/shared/types").EditAnnotation[])
                 : [],

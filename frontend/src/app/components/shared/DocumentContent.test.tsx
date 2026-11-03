@@ -293,7 +293,7 @@ describe.each(["assistant", "project"] as const)(
             resolveEdit.mockResolvedValue({
                 status: "accepted",
                 version_id: "v1",
-                download_url: null,
+
             });
             render(content(surface, { kind: "edit", edit, changeNumber: 3 }));
             expect(screen.getByText("New wording")).toBeVisible();
@@ -323,7 +323,7 @@ describe.each(["assistant", "project"] as const)(
                     documentId: "doc",
                     status: "accepted",
                     versionId: "v1",
-                    downloadUrl: null,
+
                 }),
             );
             expect(resolveEdit).toHaveBeenCalledWith("doc", "edit", "accept");

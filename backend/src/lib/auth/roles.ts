@@ -8,6 +8,8 @@
 // before comparison so operators can self-document the KV value.
 
 import { getConfig } from "../config.js";
+import type { AuthPrincipal } from "./types";
+import { createServerSupabase, type Db } from "../supabase";
 
 export type AppRole = "TenantAdmin" | "Member";
 
@@ -53,4 +55,29 @@ export async function resolveRoles(groups: string[]): Promise<AppRole[]> {
   }
 
   return [];
+}
+
+/** Pooled policy is tenant-owned; install-wide allowlists never apply. */
+export async function resolvePooledRoles(principal: AuthPrincipal, db?: Db): Promise<AppRole[]> {
+  if (principal.identityKind === "altien" || principal.provider === "local") {
+    return principal.membershipRole === "TenantAdmin" ? ["TenantAdmin", "Member"]
+      : principal.membershipRole === "Member" ? ["Member"] : [];
+  }
+  if (principal.identityKind !== "enterprise" || !principal.tenantId) return [];
+  const client = db ?? createServerSupabase();
+  const appRoles = new Set(principal.appRoles ?? []);
+  if (appRoles.has("Mike.Admin") || appRoles.has("Mike Admin")) return ["TenantAdmin", "Member"];
+  if (appRoles.has("Mike.User") || appRoles.has("Mike User")) return ["Member"];
+  // Absence of a role on ONE user is not evidence of a tenant-wide fallback.
+  const { data: tenant, error: tenantError } = await client.from("tenants")
+    .select("enterprise_role_source").eq("tenant_id", principal.tenantId).maybeSingle();
+  if (tenantError) throw new Error("Tenant role policy is unavailable", { cause: tenantError });
+  if (tenant?.enterprise_role_source !== "groups") return [];
+  const { data, error } = await client.from("tenant_group_policies")
+    .select("group_object_id,role").eq("tenant_id", principal.tenantId);
+  if (error) throw new Error("Tenant group policy is unavailable", { cause: error });
+  const groups = new Set((principal.groups ?? []).map(group => group.toLowerCase()));
+  const matched = (data ?? []).filter(policy => groups.has(String(policy.group_object_id).toLowerCase()));
+  if (matched.some(policy => policy.role === "TenantAdmin")) return ["TenantAdmin", "Member"];
+  return matched.some(policy => policy.role === "Member") ? ["Member"] : [];
 }

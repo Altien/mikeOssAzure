@@ -15,12 +15,16 @@ import { closeStreamRunCluster, initStreamRunCluster, streamRunCluster } from ".
 import { installStreamRunRelayHandler } from "./lib/streamRuns";
 import { submitClientToolResult } from "./modules/chat/chat.service";
 import { enforceDocumentLifecycleMigration } from "./lib/dbq/lifecycleGuard";
+import { ensureInstallTenant } from "./lib/tenantContext";
+import { createPlatformSupabase } from "./lib/supabase";
 import { startAllWorkers, stopAllWorkers, WORKER_ROLES, type WorkerRole } from "./workerRuntime";
 import { startRoleThreads, stopRoleThreads } from "./lib/workerRoleThreads";
 import { initSentry } from "./lib/observability/sentry";
 import { getKeyVaultConfig } from "./lib/config";
 import { failBoot, listenOrFail } from "./lib/processLifecycle";
 import { stopExtractionProcess } from "./lib/extraction/isolated";
+import { flushLlmUsage } from "./lib/llm/usage";
+import { probeStampRuntime } from "./lib/stampRuntime";
 
 const PORT = process.env.PORT ?? 3001;
 const HOST = process.env.HOST?.trim() || undefined;
@@ -82,6 +86,10 @@ async function start(): Promise<void> {
   // other database-dependent startup) so a missing migration is reported as
   // such rather than as a stream-run connection failure.
   await enforceDocumentLifecycleMigration();
+  await probeStampRuntime();
+  // Multi-tenant phase 1: the install's tenant row exists before any request
+  // or job writes a row whose tenant_id defaults from the request context.
+  await ensureInstallTenant(createPlatformSupabase());
   await initStreamRunCluster();
   installStreamRunRelayHandler(async (payload) => {
     if (!payload || typeof payload !== "object") return false;
@@ -120,6 +128,8 @@ async function start(): Promise<void> {
       if (workersMode === "inline") await stopAllWorkers();
       await stopExtractionProcess();
       await closeStreamRunCluster();
+      // Usage-ledger rows still in flight (issue 015).
+      await flushLlmUsage();
       await stopRoleThreads(threads);
       clearTimeout(forced);
       console.log(`Graceful shutdown complete (${signal})`);

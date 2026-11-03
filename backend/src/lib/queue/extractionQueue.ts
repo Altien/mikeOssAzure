@@ -4,6 +4,7 @@ import { getRedisProducerConnection, withRedisTimeout } from "./connection";
 import { redisEnabled } from "../dbq/driver";
 import { enqueueDbJob } from "../dbq/enqueue";
 import { createServerSupabase } from "../supabase";
+import { stampJobTenant } from "../tenantContext";
 
 /**
  * BullMQ queue that runs tabular-review cell extraction off the request thread.
@@ -48,6 +49,11 @@ export interface ExtractionJobData {
      * by `.eq("generation_id", generationId)` — match no rows.)
      */
     canceled?: boolean;
+    /**
+     * Enqueuing request's tenant, stamped on the BullMQ path only (multi-tenant
+     * issue 003); the worker runs the job as this tenant.
+     */
+    tenantId?: string;
 }
 
 let queue: Queue<ExtractionJobData> | null = null;
@@ -116,7 +122,7 @@ export async function enqueueExtraction(data: ExtractionJobData) {
     // Deadline-bounded — see enqueueAppJobDelivery: a Redis outage must not
     // hang the /generate request that is enqueuing this row.
     return withRedisTimeout("extraction enqueue", () =>
-        getExtractionQueue().add("extract", data, {
+        getExtractionQueue().add("extract", stampJobTenant(data), {
             jobId: extractionJobId(data.reviewId, data.rowId, data.columnIndex),
             attempts: 3,
             backoff: { type: "exponential", delay: 2000 },

@@ -293,3 +293,19 @@ it("shows a sign-in failure in the popup ahead of the session warning", async ()
         "We could not check your session",
     );
 });
+
+it("offers both pooled identity choices through runtime config", () => {
+  // useConfig is mocked above to return this shared object.
+  const pooled = config as Record<string, unknown>;
+  const previous = { ...pooled };
+  Object.assign(pooled, { authProvider: "entra", tenancyMode: "pooled", demoMode: false, entra: { tenantId: "external", clientId: "browser" } });
+  try {
+    render(<LoginPage />);
+    expect(screen.getByRole("button", { name: "Sign in to Mike" })).toHaveAttribute("type", "button");
+    expect(screen.getByRole("button", { name: "Sign in with your organisation" })).toHaveAttribute("type", "button");
+    expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
+  } finally {
+    for (const key of Object.keys(pooled)) delete pooled[key];
+    Object.assign(pooled, previous);
+  }
+});

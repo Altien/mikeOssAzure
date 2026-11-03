@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:canary": "vitest run --config vitest.canary.config.ts",
     "test:mutation": "stryker run",
     "chat:inspect": "tsx src/scripts/inspect-chat.ts",
     "smoke:skills": "tsx src/scripts/skillsSmoke.ts",

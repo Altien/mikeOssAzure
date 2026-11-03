@@ -42,7 +42,8 @@ import {
   versionStorageKey,
   workflowReferenceKey,
 } from "../../lib/storage";
-import { createServerSupabase, type Db } from "../../lib/supabase";
+import { createPlatformSupabase, createServerSupabase, type Db } from "../../lib/supabase";
+import { runWithJobTenant } from "../../lib/tenantContext";
 import { UPLOAD_VERIFICATION_LEASE_SECONDS } from "./uploads.manifest";
 
 type UploadSessionRow = {
@@ -495,7 +496,7 @@ export async function processUploadJob(
   }
 }
 
-export async function cleanupUploadSessions(db: Db): Promise<void> {
+export async function cleanupUploadSessions(db: Db, tenantDb: Db = db): Promise<void> {
   const now = new Date();
   const nowIso = now.toISOString();
   const { error: expireError } = await db
@@ -530,7 +531,7 @@ export async function cleanupUploadSessions(db: Db): Promise<void> {
 
   const { data: sessions, error: sessionsError } = await db
     .from("upload_sessions")
-    .select("id")
+    .select("id, tenant_id")
     .in("status", ["expired", "cancelled", "error"])
     .is("cleaned_at", null)
     .limit(20);
@@ -540,8 +541,12 @@ export async function cleanupUploadSessions(db: Db): Promise<void> {
     // The RPC queues both immediate and post-signature-expiry prefix sweeps in
     // the same transaction as cleaned_at. Files already processing are left
     // alone; their atomic publish queues their own object cleanup.
-    const { error } = await db.rpc("queue_upload_session_cleanup", { p_session_id: session.id });
-    if (error) throw error;
+    // It is a tenant function: under forced RLS it sees only the claim's
+    // tenant, so it runs as the session's tenant (multi-tenant 008).
+    await runWithJobTenant(session.tenant_id, async () => {
+      const { error } = await tenantDb.rpc("queue_upload_session_cleanup", { p_session_id: session.id });
+      if (error) throw error;
+    });
   }
 
   const retentionCutoff = new Date(
@@ -582,6 +587,14 @@ async function claimNextUploadJob(
   return typeof data === "string" && data ? data : null;
 }
 
+/** The tenant that queued a claimed upload job (migration 0179), if recorded. */
+async function uploadJobTenant(db: Db, jobId: string): Promise<string | null> {
+  const { data, error } = await db.from("upload_processing_jobs")
+    .select("tenant_id").eq("id", jobId).maybeSingle();
+  if (error) throw asReportableError(error, uploadJobTenant);
+  return (data as { tenant_id?: string | null } | null)?.tenant_id ?? null;
+}
+
 function startUploadProcessingWorker(options: {
   maxRunningPerUser: number;
   runCleanup: boolean;
@@ -603,16 +616,19 @@ function startUploadProcessingWorker(options: {
     if (stopped) return;
     try {
       const db = createServerSupabase();
+      // Cleanup and claiming span tenants; the claimed job then runs as the
+      // tenant that queued it (multi-tenant issue 003).
+      const platformDb = createPlatformSupabase();
       if (options.runCleanup && Date.now() - lastCleanupAt >= 60_000) {
         // Own scope: the stages cleanup marks must not land on a later job.
         await Promise.all([
-          runIsolated(() => cleanupUploadSessions(db)),
+          runIsolated(() => cleanupUploadSessions(platformDb, db)),
           cleanupUploadProcessingTempFiles(),
         ]);
         lastCleanupAt = Date.now();
       }
       const jobId = await claimNextUploadJob(
-        db,
+        platformDb,
         workerId,
         options.maxRunningPerUser,
       );
@@ -623,8 +639,12 @@ function startUploadProcessingWorker(options: {
       }
       // Each job in its own Sentry isolation scope: several of these loops
       // share the process, and the operation/stages one job records must not
-      // land on another's failure.
-      await runIsolated(() => processUploadJob(db, jobId, workerId));
+      // land on another's failure. Inside it, the job runs as the tenant that
+      // queued it (multi-tenant issue 003).
+      const tenantId = await uploadJobTenant(platformDb, jobId);
+      await runIsolated(() =>
+        runWithJobTenant(tenantId, () => processUploadJob(db, jobId, workerId)),
+      );
       failures.success();
       schedule(0);
     } catch (thrown) {

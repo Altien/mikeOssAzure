@@ -177,7 +177,7 @@ interface Props {
         documentId: string;
         status: "accepted" | "rejected";
         versionId: string | null;
-        downloadUrl: string | null;
+
     }) => void;
     onEditError?: (args: {
         editId: string;

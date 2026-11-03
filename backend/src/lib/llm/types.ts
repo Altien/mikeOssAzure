@@ -193,7 +193,25 @@ export type StreamChatParams = {
      * limit ends with an answer instead of an unanswered tool call.
      */
     finishWithoutToolsOnLastStep?: boolean;
+    /** What the call is for, recorded in the usage ledger (issue 015). */
+    feature?: LlmFeature;
 };
+
+/**
+ * Usage-ledger feature tag (multi-tenant issue 015). Free text in the
+ * database so a new feature needs no migration; keep this list in step with
+ * the call sites that pass it.
+ */
+export type LlmFeature =
+    | "chat"
+    | "chat-title"
+    | "word"
+    | "tabular"
+    | "memory"
+    | "playbook"
+    | "skill-import"
+    | "external-source"
+    | "unspecified";
 
 export type StreamChatResult = {
     fullText: string;

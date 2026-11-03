@@ -1,3 +1,4 @@
+import { hydrateDownloadHistory } from "../../lib/downloadHistory";
 import { isUuid } from "../../lib/uuid";
 import { wordChatHasWorkspaceAttachments } from "../../lib/wordWorkspace";
 // Business logic + data-access for the word-chat module.
@@ -145,7 +146,7 @@ async function ensureWordDocumentRow(
         client_document_id: clientDocumentId,
         updated_at: new Date().toISOString(),
       },
-      { onConflict: "user_id,client_document_id" },
+      { onConflict: "tenant_id,user_id,client_document_id" },
     )
     .select("id")
     .single();
@@ -302,7 +303,7 @@ export async function getWordChatWithMessages(
     .eq("chat_id", args.chatId)
     .order("created_at", { ascending: true });
   if (error) return serviceFailure("db.query_failed", "Word chat messages load failed", error);
-  const visibleMessages = withoutEmptyAssistantReservations(messages ?? []);
+  const visibleMessages = withoutEmptyAssistantReservations(await hydrateDownloadHistory(messages ?? [], db));
   const assistantMessageIds = visibleMessages.flatMap((message) =>
     message.role === "assistant" && typeof message.id === "string"
       ? [message.id]

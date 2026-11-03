@@ -470,7 +470,7 @@ async function stageAccountStoragePaths(db: Db, userId: string, paths: string[])
         if (batch.length === 0) continue;
         const { error } = await db.from("account_erasure_storage_paths").upsert(
             batch.map((storage_path) => ({ user_id: userId, storage_path })),
-            { onConflict: "user_id,storage_path", ignoreDuplicates: true },
+            { onConflict: "tenant_id,user_id,storage_path", ignoreDuplicates: true },
         );
         await throwIfError(error, "Failed to stage account storage cleanup");
     }

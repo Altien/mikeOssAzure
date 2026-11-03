@@ -202,6 +202,30 @@ describe("replacing a playbook from a Word file", () => {
     expect(newKey.startsWith("playbooks/u1/pb-1/")).toBe(true);
   });
 
+  // Multi-tenant 015: every model call carries its usage-ledger feature tag.
+  it("tags the compilation call as playbook usage", async () => {
+    const { db } = fakeDb(EXISTING);
+    // An invalid first answer exercises the repair call as well.
+    const completeText = vi.fn()
+      .mockResolvedValueOnce("not json")
+      .mockResolvedValue(compiled("Commercial Playbook"));
+
+    await importPlaybookFromFile({
+      userId: "u1",
+      filename: "new.docx",
+      buffer: await sourceDocx(),
+      model: MODEL,
+      playbookId: "pb-1",
+      db,
+      dependencies: { completeText },
+    });
+
+    expect(completeText).toHaveBeenCalledTimes(2);
+    for (const [params] of completeText.mock.calls) {
+      expect(params).toMatchObject({ feature: "playbook" });
+    }
+  });
+
   it("keeps the existing name when the caller sends none", async () => {
     const { db, calls } = fakeDb(EXISTING);
 

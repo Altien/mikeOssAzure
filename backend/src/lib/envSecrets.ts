@@ -16,7 +16,22 @@
 // fallback for secrets the install configurator writes directly (e.g.
 // gemini-api-key, azure-openai-*) where Bicep has no secretRef wiring.
 
-import { getConfig, getKeyVaultConfig } from "./config.js";
+import { getKeyVaultConfig } from "./config.js";
+import { getTenantConfig, resolveTenantSecret } from "./tenantSettings";
+
+const PROVIDER_SECRETS = new Set([
+    "anthropic-api-key", "claude-api-key", "gemini-api-key", "openai-api-key",
+    "moonshot-api-key", "mistral-api-key", "openrouter-api-key", "opencode-api-key",
+    "ai-gateway-api-key", "vercel-ai-gateway-api-key", "courtlistener-api-token",
+    "azure-openai-endpoint", "azure-openai-api-key",
+    // Main's cloud providers (cloudProviders.ts) and xAI: a BYO tenant must not
+    // fall back to the platform's credentials for them either.
+    "aws-bearer-token-bedrock", "bedrock-aws-region", "azure-foundry-api-key",
+    "azure-foundry-endpoint", "google-vertex-credentials-json", "google-vertex-location",
+    "custom-api-key", "custom-base-url", "xai-api-key",
+    // Main's web-search backends (webSearch/credentials.ts).
+    "brave-search-api-key", "tavily-api-key", "deepseek-search-api-key",
+]);
 
 const SECRET_PLACEHOLDER = "__unset__";
 
@@ -40,10 +55,12 @@ export function readSecretEnv(name: string): string {
 // from async contexts (true for all chat / LLM entry points today).
 // Closes 040 Entry 12.
 export async function resolveSecret(kvSecretName: string): Promise<string> {
-    const raw = await getConfig(kvSecretName).catch(() => "");
-    const trimmed = raw.trim();
-    if (!trimmed || trimmed === SECRET_PLACEHOLDER) return "";
-    return trimmed;
+    return resolveTenantSecret(kvSecretName, async () => {
+        const raw = await getTenantConfig(kvSecretName).catch(() => "");
+        const trimmed = raw.trim();
+        if (!trimmed || trimmed === SECRET_PLACEHOLDER) return "";
+        return trimmed;
+    }, { provider: PROVIDER_SECRETS.has(kvSecretName) });
 }
 
 // New router credentials use Key Vault as the source of truth. Check every
@@ -53,18 +70,23 @@ export async function resolveProviderSecret(
     name: string,
     aliases: string[] = [],
 ): Promise<string> {
-    const names = [name, ...aliases];
-    if (process.env.KEY_VAULT_NAME) {
-        for (const secretName of names) {
-            const value = (await getKeyVaultConfig(secretName).catch(() => "")).trim();
-            if (value && value !== SECRET_PLACEHOLDER) return value;
+    // An operator override name (e.g. BRAVE_SEARCH_API_KEY_SECRET_NAME) comes
+    // first with the canonical name as an alias; either marks a provider key.
+    const provider = [name, ...aliases].some((secretName) => PROVIDER_SECRETS.has(secretName));
+    return resolveTenantSecret(name, async () => {
+        const names = [name, ...aliases];
+        if (process.env.KEY_VAULT_NAME) {
+            for (const secretName of names) {
+                const value = (await getKeyVaultConfig(secretName).catch(() => "")).trim();
+                if (value && value !== SECRET_PLACEHOLDER) return value;
+            }
         }
-    }
-    for (const secretName of names) {
-        const value = readSecretEnv(secretName.toUpperCase().replaceAll("-", "_"));
-        if (value) return value;
-    }
-    return "";
+        for (const secretName of names) {
+            const value = readSecretEnv(secretName.toUpperCase().replaceAll("-", "_"));
+            if (value) return value;
+        }
+        return "";
+    }, { provider, aliases });
 }
 
 export async function resolveVercelApiKey(): Promise<string> {

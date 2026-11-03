@@ -1,6 +1,7 @@
 // Dev drift: imported request cases use the canonical /api router mount.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
+import { runWithTenant } from "../../lib/tenantContext";
 import { streamAiSdk } from "../../lib/llm/aiSdk";
 import {
     callStep,
@@ -383,7 +384,7 @@ vi.mock("../../middleware/auth", () => ({
     ) => {
         res.locals.userId = "u1";
         res.locals.userEmail = "u1@test.local";
-        next();
+        runWithTenant({ tenantId: "test-tenant", userId: "u1" }, next);
     },
     requireMfaIfEnrolled: (_req: unknown, _res: unknown, next: () => void) =>
         next(),
@@ -870,12 +871,12 @@ describe("POST /chat — streaming endpoint", () => {
         {
             type: "doc_created",
             filename: "Draft.docx",
-            download_url: "/docx/draft",
+
         },
         {
             type: "doc_download",
             filename: "Draft.docx",
-            download_url: "/docx/draft",
+
         },
         {
             type: "doc_edited",
@@ -883,7 +884,7 @@ describe("POST /chat — streaming endpoint", () => {
             document_id: "document-1",
             version_id: "version-2",
             version_number: 2,
-            download_url: "/docx/draft",
+
             annotations: [],
         },
         {
@@ -2920,7 +2921,7 @@ describe("chat grants, deletion and roster", () => {
 
         expect(res.status).toBe(400);
         expect(res.body.detail).toBe(
-            "future@example.com does not belong to a Mike user.",
+            "That person is not a member of your organisation.",
         );
     });
 

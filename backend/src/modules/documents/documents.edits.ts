@@ -4,11 +4,10 @@
 import { randomUUID } from "node:crypto";
 import { downloadFile, uploadFile, deleteFileBestEffort, versionStorageKey } from "../../lib/storage";
 import { resolveTrackedChange } from "../../lib/docxTrackedChanges";
-import { buildDownloadUrl } from "../../lib/downloadTokens";
 import { contentSha256, loadActiveVersion } from "../../lib/documentVersions";
 import { ensureDocAccess } from "../../lib/access";
 import { can, DOCUMENT_EDIT_FORBIDDEN } from "../../lib/permissions";
-import { downloadFilenameForVersion, type Db } from "./documents.shared";
+import { type Db } from "./documents.shared";
 import { updateDocumentVersion } from "./documents.lifecycle";
 // devLog comes from lib/chat/types (a leaf file — importing the whole chat
 // barrel here just for a logger would be a heavy dependency edge).
@@ -68,22 +67,11 @@ export async function resolveEdit(
             devLog(`[edit-resolution] doc access denied for resolved edit`);
             return { ok: false, detail: "Document not found" };
         }
-        const activeForResolved = await loadActiveVersion(documentId, db);
         const payload = {
             ok: true,
             already_resolved: true,
             status: edit.status,
             version_id: doc.current_version_id ?? null,
-            download_url: activeForResolved
-                ? buildDownloadUrl(
-                      activeForResolved.storage_path,
-                      downloadFilenameForVersion(
-                          activeForResolved.filename,
-                          activeForResolved.version_number,
-                          activeForResolved.source === "assistant_edit",
-                      ),
-                  )
-                : null,
             remaining_pending: 0,
         };
         devLog(`[edit-resolution] returning already-resolved payload`, payload);
@@ -148,14 +136,6 @@ export async function resolveEdit(
         const payload = {
             ok: true,
             version_id: doc.current_version_id,
-            download_url: buildDownloadUrl(
-                latestPath,
-                downloadFilenameForVersion(
-                    active?.filename,
-                    active?.version_number ?? null,
-                    active?.source === "assistant_edit",
-                ),
-            ),
             remaining_pending: 0,
         };
         devLog(`[edit-resolution] returning not-found payload`, payload);
@@ -214,14 +194,6 @@ export async function resolveEdit(
     const payload = {
         ok: true,
         version_id: doc.current_version_id,
-        download_url: buildDownloadUrl(
-            nextPath,
-            downloadFilenameForVersion(
-                active?.filename,
-                active?.version_number ?? null,
-                active?.source === "assistant_edit",
-            ),
-        ),
         remaining_pending: remainingPending ?? 0,
     };
     devLog(`[edit-resolution] returning success payload`, payload);

@@ -11,6 +11,7 @@
 // neither status exists in the shared vocabulary.
 
 import type { Db } from "../../lib/supabase";
+import { filterTenantModels } from "../../lib/tenantSettings";
 import { isSupportedOpenCodeGoModel } from "../../lib/llm/models";
 import { configuredEndpointSummaries } from "../../lib/llm/registry";
 import { getEffectiveApiKeys, getOrganisationApiKeys } from "../user/user.service";
@@ -176,7 +177,7 @@ export async function listOpenRouterModels(
                 },
             ];
         });
-        return { ok: true, models };
+        return { ok: true, models: await filterTenantModels(models, (model) => `openrouter/${model.id}`) };
     } catch (error) {
         return { ok: false, kind: "error", error };
     }
@@ -270,7 +271,7 @@ export async function listVercelModels(
                 },
             ];
         });
-        return { ok: true, models };
+        return { ok: true, models: await filterTenantModels(models, (model) => `vercel/${model.id}`) };
     } catch (error) {
         return { ok: false, kind: "error", error };
     }
@@ -326,7 +327,7 @@ export async function listOpenCodeGoModels(
         const models = [...byId.values()].sort((left, right) =>
             left.label.localeCompare(right.label),
         );
-        return { ok: true, models };
+        return { ok: true, models: await filterTenantModels(models, (model) => `opencode-go/${model.id}`) };
     } catch (error) {
         return { ok: false, kind: "error", error };
     }

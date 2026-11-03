@@ -35,6 +35,7 @@ import { dbJobsEnabled } from "../../lib/dbq/runner";
 import { buildContentDisposition } from "../../lib/storage";
 import { normalizeApiKeyProvider, type ApiKeyProvider } from "./user.apiKeyStore";
 import { completeUserMcpConnectorOAuth } from "../../lib/mcpConnectors";
+import { runWithOAuthStateTenant } from "../../lib/oauthStateTenant";
 import { conciseMcpErrorMessage } from "../../lib/mcp/errors";
 import {
     acceptInvitation,
@@ -827,7 +828,8 @@ userRouter.get("/mcp-connectors/oauth/callback", asyncRoute(async (req, res) => 
         if (error) throw new Error(error);
         if (!state || !code)
             throw new Error("OAuth callback is missing state or code.");
-        const result = await completeUserMcpConnectorOAuth(state, code, db);
+        const result = await runWithOAuthStateTenant("user_mcp_oauth_states", state, () =>
+            completeUserMcpConnectorOAuth(state, code, db));
         res.set(mcpOAuthPopupHeaders(nonce))
             .type("html")
             .send(

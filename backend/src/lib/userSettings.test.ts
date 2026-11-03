@@ -410,7 +410,7 @@ describe("upsertUserProfile — new-user insert", () => {
         display_name: "Ada",
       },
       options: {
-        onConflict: "user_id",
+        onConflict: "tenant_id,user_id",
         ignoreDuplicates: true,
       },
     });
@@ -438,7 +438,7 @@ describe("upsertUserProfile — new-user insert", () => {
         display_name: "Ada Lovelace",
       },
       options: {
-        onConflict: "user_id",
+        onConflict: "tenant_id,user_id",
         ignoreDuplicates: true,
       },
     });
@@ -457,7 +457,7 @@ describe("upsertUserProfile — new-user insert", () => {
       type: "upsert",
       row: { user_id: "u1", email: null, display_name: null },
       options: {
-        onConflict: "user_id",
+        onConflict: "tenant_id,user_id",
         ignoreDuplicates: true,
       },
     });

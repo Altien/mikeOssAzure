@@ -24,9 +24,6 @@ vi.mock("../../../lib/dbq/enqueue", () => dbq);
 vi.mock("../../../lib/docxTrackedChanges", () => docx);
 vi.mock("../../../lib/access", () => access);
 vi.mock("../../../lib/permissions", () => ({ can: () => true }));
-vi.mock("../../../lib/downloadTokens", () => ({
-  buildDownloadUrl: () => "https://example.test/download",
-}));
 vi.mock("../../../lib/documentVersions", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   loadActiveVersion: vi.fn(async () => ({

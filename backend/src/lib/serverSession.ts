@@ -2,7 +2,12 @@ import { AppError } from "./appError";
 import { reportError } from "./observability/sentry";
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import type { Request, Response } from "express";
-import { createServerSupabase } from "./supabase";
+// Multi-tenant issue 004: the session store is auth plumbing. Sessions,
+// handoff tickets and OAuth states are found by an unguessable hash before
+// any tenant is known, and are written from sign-in callbacks that have no
+// tenant scope yet, so the module uses the platform client. Pooled sign-in
+// (issue 012) stamps the tenant on the rows it writes.
+import { createPlatformSupabase } from "./supabase";
 import { getKeyVaultConfig } from "./config";
 import { requestOriginIsWordAddin } from "./origins";
 
@@ -17,6 +22,9 @@ export interface ServerCredential {
   userId: string;
   accessToken: string;
   refreshToken?: string;
+  tenantId?: string;
+  directoryId?: string;
+  identityKind?: "altien" | "enterprise";
 }
 
 interface SessionRow {
@@ -76,7 +84,7 @@ export async function initServerSessionKeys(): Promise<void> {
   handoffKey = handoff;
   stateKey = state;
   // Schema readiness is also required before accepting any cookie traffic.
-  const { error } = await createServerSupabase().from("auth_sessions").select("session_hash").limit(1);
+  const { error } = await createPlatformSupabase().from("auth_sessions").select("session_hash").limit(1);
   if (error) throw new Error("Auth session schema is unavailable");
 }
 
@@ -119,7 +127,7 @@ function scheduleExpiredAuthCleanup(): void {
   const now = Date.now();
   if (now - lastCleanupAt < 5 * 60_000) return;
   lastCleanupAt = now;
-  const db = createServerSupabase();
+  const db = createPlatformSupabase();
   const cutoff = new Date(now).toISOString();
   void Promise.all([
     db.from("auth_sessions").delete().lt("expires_at", cutoff),
@@ -172,8 +180,9 @@ export async function createServerSession(req: Request, res: Response, credentia
   const raw = randomBytes(32).toString("base64url");
   const hash = hashAuthToken(raw);
   const cipher = seal(credential, "session", `${credential.provider}:${credential.userId}:${hash}`);
-  const { error } = await createServerSupabase().from("auth_sessions").insert({
+  const { error } = await createPlatformSupabase().from("auth_sessions").insert({
     session_hash: hash,
+    ...(credential.tenantId ? { tenant_id: credential.tenantId } : {}),
     provider: credential.provider,
     user_id: credential.userId,
     credential_cipher: cipher,
@@ -194,7 +203,7 @@ export async function readServerSession(req: Request): Promise<{ row: SessionRow
   const raw = sessionCookie(req);
   if (!raw) return null;
   const hash = hashAuthToken(raw);
-  const { data, error } = await createServerSupabase().from("auth_sessions")
+  const { data, error } = await createPlatformSupabase().from("auth_sessions")
     .select("session_hash,provider,user_id,credential_cipher,token_expires_at,expires_at,version,revoked_at")
     .eq("session_hash", hash).maybeSingle();
   if (error) throw new Error("Unable to read auth session");
@@ -208,7 +217,7 @@ export async function readServerSession(req: Request): Promise<{ row: SessionRow
 export async function revokeServerSession(req: Request): Promise<void> {
   const raw = sessionCookie(req);
   if (!raw) return;
-  const { error } = await createServerSupabase().rpc("revoke_auth_session", { p_session_hash: hashAuthToken(raw) });
+  const { error } = await createPlatformSupabase().rpc("revoke_auth_session", { p_session_hash: hashAuthToken(raw) });
   if (error) throw new Error("Unable to revoke auth session");
 }
 
@@ -219,7 +228,7 @@ export async function refreshServerSession(
   const { row, credential } = current;
   if (!credential.refreshToken) return false;
   const owner = randomUUID();
-  const db = createServerSupabase();
+  const db = createPlatformSupabase();
   const claim = await db.rpc("claim_auth_session_refresh", {
     p_session_hash: row.session_hash, p_version: row.version, p_owner: owner, p_lease_seconds: 45,
   });
@@ -244,8 +253,9 @@ export async function createAuthHandoff(credential: ServerCredential, targetOrig
   if (!requestId || requestId.length > 128 || ttlSeconds < 30 || ttlSeconds > MAX_HANDOFF_SECONDS) throw new Error("Invalid handoff request");
   const ticket = randomBytes(32).toString("base64url");
   const hash = hashAuthToken(ticket);
-  const { error } = await createServerSupabase().from("auth_handoff_tickets").insert({
+  const { error } = await createPlatformSupabase().from("auth_handoff_tickets").insert({
     ticket_hash: hash,
+    ...(credential.tenantId ? { tenant_id: credential.tenantId } : {}),
     provider: credential.provider,
     user_id: credential.userId,
     credential_cipher: seal(credential, "handoff", `${targetOrigin}:${requestId}:${hash}`),
@@ -261,7 +271,7 @@ export async function createAuthHandoff(credential: ServerCredential, targetOrig
 export async function consumeAuthHandoff(ticket: string, targetOrigin: string, requestId: string): Promise<ServerCredential | null> {
   if (!/^[A-Za-z0-9_-]{40,128}$/.test(ticket)) return null;
   const hash = hashAuthToken(ticket);
-  const { data, error } = await createServerSupabase().rpc("consume_auth_handoff", {
+  const { data, error } = await createPlatformSupabase().rpc("consume_auth_handoff", {
     p_ticket_hash: hash, p_target_origin: targetOrigin, p_request_id: requestId,
   });
   if (error) throw new Error("Unable to consume auth handoff");
@@ -279,15 +289,16 @@ export async function createOAuthState(input: {
   returnUrl: string;
   targetOrigin: string;
   requestId?: string;
+  identityKind?: "altien" | "enterprise";
 }, stateToken?: string): Promise<string> {
   const state = stateToken ?? randomBytes(32).toString("base64url");
   if (!/^[A-Za-z0-9_-]{40,128}$/.test(state)) throw new Error("Invalid OAuth state token");
   const hash = hashOAuthToken(state);
-  const { error } = await createServerSupabase().from("auth_oauth_states").insert({
+  const { error } = await createPlatformSupabase().from("auth_oauth_states").insert({
     state_hash: hash,
     provider: input.provider,
     browser_nonce_hash: hashOAuthToken(input.browserNonce),
-    code_verifier_cipher: seal(input.codeVerifier, "handoff", `${input.targetOrigin}:${hash}`),
+    code_verifier_cipher: seal(input.identityKind ? { codeVerifier: input.codeVerifier, identityKind: input.identityKind } : input.codeVerifier, "handoff", `${input.targetOrigin}:${hash}`),
     return_url: input.returnUrl,
     target_origin: input.targetOrigin,
     request_id: input.requestId ?? null,
@@ -304,10 +315,11 @@ export async function consumeOAuthState(state: string, browserNonce: string): Pr
   returnUrl: string;
   targetOrigin: string;
   requestId: string | null;
+  identityKind?: "altien" | "enterprise";
 } | null> {
   if (!/^[A-Za-z0-9_-]{40,128}$/.test(state) || !/^[A-Za-z0-9_-]{40,128}$/.test(browserNonce)) return null;
   const hash = hashOAuthToken(state);
-  const { data, error } = await createServerSupabase().rpc("consume_auth_oauth_state", {
+  const { data, error } = await createPlatformSupabase().rpc("consume_auth_oauth_state", {
     p_state_hash: hash,
     p_browser_nonce_hash: hashOAuthToken(browserNonce),
   });
@@ -317,9 +329,11 @@ export async function consumeOAuthState(state: string, browserNonce: string): Pr
     target_origin: string; request_id: string | null;
   }[] | null)?.[0];
   if (!row) return null;
+  const verifier = open<string | { codeVerifier: string; identityKind: "altien" | "enterprise" }>(row.code_verifier_cipher, "handoff", `${row.target_origin}:${hash}`);
   return {
     provider: row.provider,
-    codeVerifier: open<string>(row.code_verifier_cipher, "handoff", `${row.target_origin}:${hash}`),
+    codeVerifier: typeof verifier === "string" ? verifier : verifier.codeVerifier,
+    ...(typeof verifier === "string" ? {} : { identityKind: verifier.identityKind }),
     returnUrl: row.return_url,
     targetOrigin: row.target_origin,
     requestId: row.request_id,

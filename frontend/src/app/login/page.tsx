@@ -278,7 +278,15 @@ export default function LoginPage() {
                                 const next = new URL("/onboarding/profile", window.location.origin).toString();
                                 window.location.assign(`${base}/api/auth/login-provider/microsoft?returnUrl=${encodeURIComponent(next)}`);
                             }}
-                        >Sign in with Microsoft</PillButtonUI>}
+                        >{config.tenancyMode === "pooled" ? "Sign in to Mike" : "Sign in with Microsoft"}</PillButtonUI>}
+                        {config.authProvider === "entra" && config.tenancyMode === "pooled" && <PillButtonUI
+                            type="button" tone="white" size="normal" className="w-full"
+                            onClick={() => {
+                                const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+                                const next = new URL("/onboarding/profile", window.location.origin).toString();
+                                window.location.assign(`${base}/api/auth/login-provider/microsoft?identity=enterprise&returnUrl=${encodeURIComponent(next)}`);
+                            }}
+                        >Sign in with your organisation</PillButtonUI>}
                         {config.authProvider === "supabase" && <><AuthDividerUI />
                         <GoogleAuthButton
                             onError={(nextError) => { setLoginMode(null); setError(nextError); }}
