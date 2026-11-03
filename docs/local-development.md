@@ -12,6 +12,8 @@ Create a project and add public or synthetic documents to check the complete wor
 
 The local stack is a single install, like every normal install: leave `TENANCY_MODE` unset (or `single`). See [Tenancy mode](deployment.md#tenancy-mode).
 
+To check a running local-auth API and its upload worker end to end, run `SMOKE_API_URL=http://localhost:3001 node scripts/single-install-smoke.mjs`. It checks health, `/config` and `/install`, signs in, creates a project, uploads a PDF through an upload session, waits for the worker to process it, then lists and downloads it. Add `SMOKE_CHAT=1 SMOKE_CHAT_MODEL=<model id>` for one chat turn when a provider key is configured. Run it against Azure Blob storage (Azurite locally): the filesystem driver (`STORAGE_DRIVER=fs`) reports no content type or ETag, so upload-session verification fails with `content_type_mismatch`.
+
 
 ### Optional Supabase authentication recovery
 
