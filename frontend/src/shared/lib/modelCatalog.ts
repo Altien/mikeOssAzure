@@ -88,6 +88,19 @@ export function canonicalModelId(id: string): string {
   return LEGACY_MODEL_IDS[id] ?? id;
 }
 
+/**
+ * Multi-tenant divergence: a pooled tenant's settings may restrict its
+ * members to a model allowlist, reported on the API key status. Null or
+ * absent means unrestricted; an empty list permits no model. The backend
+ * remains authoritative (assertTenantModelAllowed).
+ */
+export function isModelAllowedByTenant(
+  modelId: string,
+  allowlist: readonly string[] | null | undefined,
+): boolean {
+  return !allowlist || allowlist.includes(canonicalModelId(modelId));
+}
+
 // ---------------------------------------------------------------------------
 // Routers and their Model Selections
 // ---------------------------------------------------------------------------

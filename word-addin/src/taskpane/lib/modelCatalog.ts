@@ -11,6 +11,7 @@ import { getModelProvider, providerLabel } from "@mike/model-catalog";
 // of Office globals and add-in-only packages: tests in frontend/src/wordAddin
 // import this file across packages.
 import {
+  isModelAllowedByTenant,
   isModelAvailable as isModelAvailableForKeys,
   noModelsReason as noModelsReasonForKeys,
   unavailableModelMessage as unavailableModelMessageForKeys,
@@ -22,7 +23,12 @@ import type { ApiKeyStatus } from "../types";
 
 /** GET /user/api-keys' flat map in the shape the shared rules read. */
 export function providerKeyStates(status: ApiKeyStatus): ProviderKeyStates {
-  const { sources: _sources, enabled = {}, ...configured } = status;
+  const {
+    sources: _sources,
+    modelAllowlist: _modelAllowlist,
+    enabled = {},
+    ...configured
+  } = status;
   const providers = new Set([
     ...Object.keys(configured),
     ...Object.keys(enabled),
@@ -38,6 +44,18 @@ export function providerKeyStates(status: ApiKeyStatus): ProviderKeyStates {
   );
 }
 
+/**
+ * Multi-tenant divergence: the tenant model allowlist on the key status
+ * (shared rule, as in the web app). It applies to every picker row,
+ * including configured and local models; unknown status fails open.
+ */
+export function isModelAllowed(
+  modelId: string,
+  status: ApiKeyStatus | null,
+): boolean {
+  return isModelAllowedByTenant(modelId, status?.modelAllowlist);
+}
+
 export function isModelAvailable(
   modelId: string,
   status: ApiKeyStatus | null,
@@ -46,7 +64,9 @@ export function isModelAvailable(
   // Unknown status fails OPEN: the backend authoritatively rejects a model
   // it cannot serve, so blocking sends here on a flaky WKWebView request
   // would brick the composer for requests the backend would happily accept.
-  return !status || isModelAvailableForKeys(modelId, providerKeyStates(status), configuredModelIds);
+  if (!status) return true;
+  if (!isModelAllowed(modelId, status)) return false;
+  return isModelAvailableForKeys(modelId, providerKeyStates(status), configuredModelIds);
 }
 
 /** Why the composer cannot send with a model the picker does not offer. */

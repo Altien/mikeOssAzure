@@ -262,4 +262,6 @@ export interface ApiKeyStatus {
       "user" | "env" | null
     >
   >;
+  /** Pooled tenant's model allowlist; absent when unrestricted. */
+  modelAllowlist?: readonly string[] | null;
 }

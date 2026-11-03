@@ -13,7 +13,7 @@ import {
   type ModelOption,
   type RouterSelections,
 } from "@mike/model-catalog";
-import { isModelAvailable } from "../../lib/modelCatalog";
+import { isModelAllowed, isModelAvailable } from "../../lib/modelCatalog";
 
 export function ModelToggle({
   value,
@@ -71,7 +71,8 @@ export function ModelToggle({
       ...localOptions,
     ]).filter(
       (model) =>
-        model.source === "Configured" || model.group === "Local" || isModelAvailable(model.id, keyStatus),
+        isModelAllowed(model.id, keyStatus) &&
+        (model.source === "Configured" || model.group === "Local" || isModelAvailable(model.id, keyStatus)),
     );
   }, [keyStatus, azureModels, routerSelections, configuredModels]);
   const selected = models.find((model) => model.id === value);

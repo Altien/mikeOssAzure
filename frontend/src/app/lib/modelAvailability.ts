@@ -2,7 +2,7 @@
 // catalog shared with the Word add-in (@/shared/lib/modelCatalog); the web
 // app's ApiKeyState is a ProviderKeyStates.
 import {
-    canonicalModelId,
+    isModelAllowedByTenant,
     isModelAvailable as isCatalogModelAvailable,
     isProviderAvailable as isCatalogProviderAvailable,
     type ModelOption,
@@ -44,8 +44,7 @@ export function isModelAvailable(
     apiKeys: TenantKeyStates,
     discoveredModels?: readonly ModelOption[] | readonly string[],
 ): boolean {
-    const allowlist = apiKeys.modelAllowlist;
-    if (allowlist && !allowlist.includes(canonicalModelId(modelId))) return false;
+    if (!isModelAllowedByTenant(modelId, apiKeys.modelAllowlist)) return false;
     return isCatalogModelAvailable(modelId, providerKeyStates(apiKeys), discoveredModels);
 }
 
