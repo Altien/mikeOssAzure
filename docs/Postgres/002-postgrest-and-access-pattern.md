@@ -96,7 +96,9 @@ never from request input. Local mode signs the same way with `JWT_SECRET`.
   `web_anon`, which forced RLS shows no tenant rows.
 - **Upgrade order:** an entra install must have `PGRST_JWT_SECRET` wired (the
   002 infra redeploy) before running a backend with 008; image-only updates
-  from before 002's infra change fail every database call.
+  from before 002's infra change fail every database call. The upgrade
+  script (`scripts/install/upgrade-marketplace.ps1`, from 1.0.14) applies
+  both PostgREST changes in a safe order.
 - Rollback without a schema change: `tenant-rls-enforced=false` (Key Vault or
   env `TENANT_RLS_ENFORCED`) makes tenant traffic send `service_role` again.
 
