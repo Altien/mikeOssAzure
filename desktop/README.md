@@ -1,5 +1,11 @@
 # Mike desktop
 
+> **Not supported in this fork.** Altien does not ship, test or support the
+> desktop app; customers use the Azure deployment. The code is kept unchanged
+> only because it is upstream Mike, so upstream merges stay simple. Known and
+> not fixed: in the local workspace every upload fails `content_type_mismatch`,
+> because the filesystem storage driver reports no content type or ETag.
+
 The Electron shell hosts the existing Mike web product. It provides native
 menus and shortcuts, window persistence, fenced OAuth popups, context menus
 and downloads. It can connect to an explicitly chosen deployment or supervise

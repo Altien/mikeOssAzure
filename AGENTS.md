@@ -84,6 +84,8 @@ This project is based on an upstream open-source repository. Prefer the smallest
 API, worker and storage CLI bootstraps await `initStorage()` before serving or
 claiming work; this resolves credentials through the existing Key Vault-first
 boundary. Desktop uses the same API/worker bootstrap with the filesystem driver.
+The desktop app is upstream code that this fork does not ship or support (see
+`desktop/README.md`); keep it mergeable, but do not spend work fixing it.
 `setStorageAdapter()` supports explicit boot-time injection and updates the live
 `storageEnabled` binding. Callers continue importing only the facade.
 

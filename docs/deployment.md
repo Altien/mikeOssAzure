@@ -100,7 +100,7 @@ catalogue usable; do not bypass the job during deployment.
 
 ## Tenancy mode
 
-Every normal install (Azure Marketplace, desktop, local stack) is one
+Every normal install (Azure Marketplace, local stack) is one
 single system: tenancy mode `single`. You do not have to configure it. The
 backend selects `single` when neither `TENANCY_MODE` nor `KEY_VAULT_NAME` is
 set, and when the Key Vault has no `tenancy-mode` secret. A Key Vault that
