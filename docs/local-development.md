@@ -10,6 +10,8 @@ Start application packages in separate terminals with pnpm --dir backend dev and
 
 Create a project and add public or synthetic documents to check the complete workflow. See [Safe local testing](safe-local-testing.md) and [Troubleshooting](troubleshooting.md).
 
+The local stack is a single install, like every normal install: leave `TENANCY_MODE` unset (or `single`). See [Tenancy mode](deployment.md#tenancy-mode).
+
 
 ### Optional Supabase authentication recovery
 

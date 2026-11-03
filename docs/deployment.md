@@ -98,6 +98,42 @@ must finish before the database switches active catalogue rows. A failed
 download, upload or replacement fails the job and leaves the previous active
 catalogue usable; do not bypass the job during deployment.
 
+## Tenancy mode
+
+Every normal install (Azure Marketplace, desktop, local stack) is one
+single system: tenancy mode `single`. You do not have to configure it. The
+backend selects `single` when neither `TENANCY_MODE` nor `KEY_VAULT_NAME` is
+set, and when the Key Vault has no `tenancy-mode` secret. A Key Vault that
+cannot be read (unreachable, access denied, outage) stops startup instead of
+falling back to `single`.
+
+`pooled` (many customer tenants on one regional stamp) is opt-in. Set the
+`tenancy-mode` Key Vault secret or the `TENANCY_MODE` environment variable to
+`pooled`; the environment variable wins over the secret. Pooled stamps also
+need the stamp, identity and control-plane configuration in the
+[regional stamp runtime contract](multi-tenant/regional-stamp-runtime.md).
+
+The mode is fixed at deployment time. The migration job records it in the
+database (`app.install_tenancy`). The API and worker start only if their mode
+agrees with the database, and they keep that mode until restart, so editing
+the secret later changes nothing. Deployment setup refuses to turn a pooled
+database back into a single install. Changing the mode means a redeploy, not
+a configuration edit.
+
+What `single` means:
+
+- One install tenant owns all data: `DEFAULT_TENANT_ID` (default `default`)
+  with local or Supabase sign-in, or the Entra directory tenant ID with Entra
+  sign-in. The API and worker register it at startup with local or Supabase
+  sign-in; with Entra the existing tenant onboarding creates it.
+- Forced row-level security stays on as defence in depth. Single installs keep
+  the `TENANT_RLS_ENFORCED=false` rollback switch; pooled startup refuses it.
+- No multi-tenant setup is needed or used: no control plane, stamp ID or
+  region, credit prices or budgets, or tenant-admin roles. Model calls are
+  recorded in the usage ledger but never reserve or spend credits. The
+  `/install` operator surface stays available; pooled stamps return 404 for
+  it.
+
 ## Runtime configuration and credentials
 
 The frontend is statically exported and reads public identity/API configuration at runtime. Follow the deployment runbook for routing its assets and the backend /config endpoint; do not replace this with a Next.js production server or bake secrets into browser bundles.

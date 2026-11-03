@@ -12,6 +12,11 @@ The [regional runtime contract](regional-stamp-runtime.md) and
 [control-plane contract](control-plane-contract.md) describe the implemented
 deployment and provisioning boundaries.
 
+Pooled tenancy is opt-in. Every normal install (Marketplace, desktop, local)
+runs in tenancy mode `single`, the default when no `tenancy-mode` Key Vault
+secret or `TENANCY_MODE` is set. Single installs need none of the pooled
+setup in this folder. See [Tenancy mode](../deployment.md#tenancy-mode).
+
 ## Index
 
 | # | Title | Summary |
