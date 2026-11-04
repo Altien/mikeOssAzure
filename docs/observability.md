@@ -7,7 +7,13 @@ standalone worker reads the same Key Vault secret and fallback. Web and Word
 browser bundles use `@sentry/react` and receive public, write-only DSNs from
 `GET /config`: `sentry-frontend-dsn` / `sentry-word-dsn` from Key Vault first,
 then `SENTRY_FRONTEND_DSN` / `SENTRY_WORD_DSN`. An empty value disables
-reporting. Neither bundle contains an upstream or maintainer DSN. The static
+reporting. A development build (the backend run from its TypeScript source,
+`tsx watch src/index.ts`; `next dev`; the add-in's webpack dev server) is
+likewise off unless a DSN is set on purpose, and `SENTRY_DISABLED=false` does
+not change that. When one does report, its `environment` is `development`
+instead of the default `self-hosted`; an explicit `SENTRY_ENVIRONMENT` always
+wins. The compiled backend image is never a development build, whatever
+`NODE_ENV` it runs with. Neither bundle contains an upstream or maintainer DSN. The static
 web export has no Next.js server or API gateway; API failures are correlated
 at the Express `/api` boundary with `X-Request-ID`.
 
