@@ -12,7 +12,8 @@ import {
     NonRetryableJobError,
     processClaimedJob,
     retryDelayMs,
-    runDbJobTick,
+    createDbJobPool,
+    createDbJobClaimGate,
     startDbJobRunner,
     stopDbJobRunner,
     runDbJobRetentionSweep,
@@ -158,6 +159,19 @@ const JOB = (over: Partial<DbJob> = {}): DbJob => ({
     created_at: "2026-08-21T00:00:00Z",
     ...over,
 });
+
+
+/** One claim through the production pool, then wait for the claimed jobs. */
+async function claimAndRun(
+    db: unknown,
+    handlers: Parameters<typeof createDbJobPool>[1],
+    failureHooks: Parameters<typeof createDbJobPool>[2] = {},
+    claimGate = createDbJobClaimGate(),
+) {
+    const pool = createDbJobPool(db as never, handlers, failureHooks, { claimGate });
+    await pool.fill();
+    await pool.drain();
+}
 
 describe("retryDelayMs", () => {
     it("backs off exponentially and caps at 30 minutes", () => {
@@ -370,7 +384,7 @@ describe("processClaimedJob", () => {
     });
 });
 
-describe("runDbJobTick", () => {
+describe("job pool claim and run", () => {
     it("survives a claim failure (e.g. migration not applied) without throwing", async () => {
         const db = makeDb({
             rpc: async () => ({
@@ -378,14 +392,14 @@ describe("runDbJobTick", () => {
                 error: { message: "relation db_jobs does not exist" },
             }),
         });
-        await expect(runDbJobTick(db as never, {})).resolves.toBe(0);
+        await expect(claimAndRun(db, {})).resolves.toBeUndefined();
     });
 
     it("processes every claimed job even when one handler rejects unexpectedly", async () => {
         const jobs = [JOB({ id: "a" }), JOB({ id: "b" })];
         const db = makeDb({ rpc: async (name) => ({ data: name === "claim_db_jobs" ? jobs : true, error: null }) });
         const seen: string[] = [];
-        await runDbJobTick(db as never, {
+        await claimAndRun(db, {
             "test.kind": async (_db, job) => {
                 seen.push(job.id);
                 if (job.id === "a") throw new Error("boom");

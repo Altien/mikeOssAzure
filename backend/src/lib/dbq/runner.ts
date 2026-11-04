@@ -396,7 +396,7 @@ async function claimDbJobs(
         // asReportableError keeps the PostgREST object as the cause, so its
         // `code` (PGRST202 = RPC missing) reaches failure_code and the issue
         // title says why; re-wrapping `error.message` in a new Error lost it.
-        const failure = asReportableError(error, runDbJobTick);
+        const failure = asReportableError(error, claimDbJobs);
         if (claimGate.failure(failure).report) {
             reportError(failure, {
                 tags: { component: "dbq", stage: "claim" },
@@ -412,36 +412,7 @@ async function claimDbJobs(
     return (data ?? []) as DbJob[];
 }
 
-/**
- * One poll tick: claim a batch and run every claimed job to completion.
- * Claiming spans tenants, so it goes through `claimDb` (the platform client
- * in production); each job then runs on `db` as its own tenant.
- */
-export async function runDbJobTick(
-    db: Db,
-    handlers: DbJobHandlers,
-    failureHooks: Readonly<Record<string, DbJobFailureHook>> = {},
-    claimGate: PollFailureGate = defaultClaimGate,
-    claimDb: Db = db,
-): Promise<number> {
-    const jobs = await claimDbJobs(claimDb, CLAIM_BATCH, claimGate);
-    // allSettled defensively: processClaimedJob handles its own errors, but
-    // one job's unexpected rejection must never abandon the rest of a batch.
-    const outcomes = await Promise.allSettled(
-        jobs.map((job) => processClaimedJob(db, handlers, job, failureHooks, claimDb)),
-    );
-    for (const [index, outcome] of outcomes.entries()) {
-        if (outcome.status === "rejected") {
-            console.error("[dbq] job transition failed", {
-                id: jobs[index]?.id,
-                reason: outcome.reason instanceof Error ? outcome.reason.message : "unknown",
-            });
-        }
-    }
-    return jobs.length;
-}
-
-type DbJobPool = {
+export type DbJobPool = {
     /** Claim jobs for every free slot (no-op while a claim is in flight). */
     fill(): Promise<void>;
     /** Jobs currently executing. */
@@ -458,7 +429,7 @@ type DbJobPool = {
  * for more work, so a slow job only ever occupies its own slot. Concurrency
  * is still capped at `capacity` per process, as before.
  */
-function createDbJobPool(
+export function createDbJobPool(
     db: Db,
     handlers: DbJobHandlers,
     failureHooks: Readonly<Record<string, DbJobFailureHook>> = {},
