@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import { validateSupabaseToken } from "../lib/auth/providers/supabase.js";
+import { isRefusedSupabaseSession, validateSupabaseToken } from "../lib/auth/providers/supabase.js";
 import { validateLocalToken } from "../lib/auth/providers/local.js";
 import { validateEntraToken } from "../lib/auth/providers/entra.js";
 import { authorizationEmail, type AuthPrincipal } from "../lib/auth/types.js";
@@ -7,7 +7,7 @@ import { resolveTenant, runWithTenant, currentTenant, type TenantContext } from 
 import { tenantAccess } from "./tenantAccess.js";
 import { initializeAuthenticatedProfile } from "../lib/auth/profileAdmission";
 import { getConfig } from "../lib/config.js";
-import { readServerSession, refreshServerSession } from "../lib/serverSession.js";
+import { clearServerSessionCookie, readServerSession, refreshServerSession, revokeServerSession } from "../lib/serverSession.js";
 import { requestOriginIsTrusted } from "../lib/origins.js";
 import { renewEntraCredential } from "../lib/auth/providers/entraRefresh.js";
 import { renewSupabaseCredential } from "../lib/auth/providers/supabaseSession.js";
@@ -90,6 +90,18 @@ export async function requireAuth(
               return;
             }
           } catch (error) {
+            // Upstream b9f0ead8, adapted: GoTrue refused the session's refresh
+            // token (revoked or already used). The visitor must sign in again,
+            // which is a 401 the client already handles, not a server failure.
+            // Revoke the dead server session and clear its cookie so the next
+            // request does not present it again. An unreachable GoTrue is not
+            // a refusal and keeps the reported 503 below.
+            if (provider === "supabase" && isRefusedSupabaseSession(error)) {
+              try { await revokeServerSession(req); } catch { /* the cookie is cleared regardless */ }
+              clearServerSessionCookie(req, res);
+              res.status(401).json({ code: "session_expired", detail: "Invalid or expired session" });
+              return;
+            }
             reportAuthFailure(req, "auth.session_lookup_failed", error);
             res.status(503).json({ detail: "Auth session is unavailable" });
             return;

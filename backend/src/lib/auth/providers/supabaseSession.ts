@@ -52,7 +52,9 @@ export async function createCredentialClient(credential: ServerCredential) {
 export async function renewSupabaseCredential(refreshToken: string) {
   const auth = client();
   const result = await auth.auth.refreshSession({ refresh_token: refreshToken });
-  if (result.error || !result.data.session) throw new Error("Supabase refresh failed");
+  // The auth-js error stays the cause so requireAuth can tell a refused
+  // refresh token (sign in again) from GoTrue being unreachable (upstream b9f0ead8).
+  if (result.error || !result.data.session) throw new Error("Supabase refresh failed", { cause: result.error ?? undefined });
   return {
     accessToken: result.data.session.access_token,
     refreshToken: result.data.session.refresh_token,
