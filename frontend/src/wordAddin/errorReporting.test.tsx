@@ -17,6 +17,7 @@ import {
     networkFailure,
     requestOrigin,
 } from "../../../word-addin/src/taskpane/lib/networkError";
+import { addinSentryOptions } from "../../../word-addin/src/taskpane/lib/errorReporting";
 import {
     notifyError,
     notifySessionCheckFailed,
@@ -222,5 +223,30 @@ describe("an unreachable session check", () => {
         await act(async () => { screen.getByRole("button", { name: "Retry" }).click(); });
         expect(recheck).toHaveBeenCalledTimes(2);
         expect(screen.queryByRole("alert")).toBeNull();
+    });
+});
+
+// The add-in's webpack dev server (`npm start`, NODE_ENV=development) is a
+// contributor's machine, not an install: it must not report to the Mike
+// project, and when a developer points it at a DSN of their own the events
+// say "development".
+describe("addinSentryOptions for development builds", () => {
+    it("is off by default, even with the example's REACT_APP_SENTRY_DISABLED=false", () => {
+        expect(addinSentryOptions("taskpane", { nodeEnv: "development", disabled: "false" }).enabled).toBe(false);
+        // Upstream divergence (sync-log: 161dc3ba): Dev bakes no Mike-project
+        // DSN (MIKE_SENTRY_DSN.wordAddin is empty; the DSN is runtime /config),
+        // so a production build without one is off too, labelled as an install.
+        const production = addinSentryOptions("taskpane", { nodeEnv: "production" });
+        expect(production).toMatchObject({ enabled: false, environment: "self-hosted" });
+    });
+
+    it("reports as development to a DSN set on purpose, unless an environment is set", () => {
+        const dsn = "http://mike@localhost:9999/1";
+        expect(addinSentryOptions("taskpane", { nodeEnv: "development", dsn })).toMatchObject({
+            enabled: true,
+            dsn,
+            environment: "development",
+        });
+        expect(addinSentryOptions("taskpane", { nodeEnv: "development", dsn, environment: "staging" }).environment).toBe("staging");
     });
 });
