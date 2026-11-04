@@ -490,7 +490,7 @@ export function PdfView({
                                 canvas.height = viewport.height;
                                 const ctx = canvas.getContext("2d");
                                 if (!ctx) return;
-                
+
                                 const task = page.render({
                                     canvas,
                                     canvasContext: ctx,
@@ -514,7 +514,7 @@ export function PdfView({
                                         renderTaskRef.current = null;
                                 }
                                 if (isStale()) return;
-                
+
                                 const textLayerDiv = document.createElement("div");
                                 textLayerDiv.className = "pdf-text-layer";
                                 textLayerDiv.style.position = "absolute";
@@ -524,7 +524,7 @@ export function PdfView({
                                 textLayerDiv.style.height = `${viewport.height}px`;
                                 configurePdfTextLayer(textLayerDiv, scale);
                                 wrapper.appendChild(textLayerDiv);
-                
+
                                 // One branch renders the layer, the other yields the item
                                 // geometry the layer discards. Both must be consumed or the
                                 // tee stalls on backpressure.
@@ -534,7 +534,7 @@ export function PdfView({
                                     }>
                                 ).tee();
                                 const geometry = collectTextItemGeometry(geometryStream);
-                
+
                                 const textLayer = new lib.TextLayer({
                                     textContentSource: layerStream,
                                     container: textLayerDiv,
@@ -549,7 +549,7 @@ export function PdfView({
                                 const readingOrder = computeReadingOrder(textDivs, collected);
                                 if (!sourceTextRef.current.has(pageNum)) sourceTextRef.current.set(pageNum, Promise.resolve(normalizedPageText(collected)));
                                 if (isStale()) return;
-                
+
                                 entry.textDivs = textDivs;
                                 entry.readingOrder = readingOrder;
                             });
