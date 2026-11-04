@@ -57,6 +57,7 @@ import {
     UploadBatchError,
     createControlRequestRetryPolicy,
     failedUploadMessage,
+    uploadOutcomeNeedsRetry,
     firstUploadResult,
     uploadFilesWithSessionCore,
     type UploadOutcome,
@@ -105,7 +106,7 @@ import type {
 import type { ChatDetailSkillBinding } from "@/altien/skillRuntime/api";
 
 export { UploadBatchError };
-export { failedUploadMessage };
+export { failedUploadMessage, uploadOutcomeNeedsRetry };
 export type {
     UploadOutcome,
     UploadProgress,
