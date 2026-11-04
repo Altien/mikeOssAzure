@@ -13,26 +13,41 @@
 // row keyed on user_id = '00000000-0000-0000-0000-DDDD0000DDDD'. If
 // either fails partway, re-running the page will retry deletion.
 //
-// Auth: gated by passing ?token=<install-bootstrap-token> matching
-// the KV secret of the same name. If that secret doesn't exist in KV,
-// the page is accessible without a token (dev convenience). Production
-// deployments should always have the bootstrap token set.
+// Auth (issue 025): the HTML pages fail closed. With no DIAGNOSTICS_TOKEN
+// configured they respond 404, in every environment; otherwise ?token= must
+// match it. Set the env var on a revision only while diagnosing, because the
+// token travels in the URL. The chat inspector below uses application
+// authentication on each route instead.
 
-import { Router, type Request, type Response } from "express";
+import { createHash, timingSafeEqual } from "node:crypto";
+import { Router, type NextFunction, type Request, type Response } from "express";
 import { chatInspectorRouter } from "../../altien/diagnostics/chatInspector";
 import { inspectRows, runDiagnostics, type TestResult } from "./platform.service";
 
 export const diagnosticsRouter = Router();
 diagnosticsRouter.use(chatInspectorRouter);
 
-async function checkAuth(req: Request): Promise<{ ok: boolean; reason?: string }> {
-    const provided = (req.query.token as string | undefined) ?? "";
-    const expected = process.env.DIAGNOSTICS_TOKEN ?? "";
-    if (!expected) return { ok: true };  // open if no token configured
-    if (provided !== expected) {
-        return { ok: false, reason: "Missing or invalid ?token= parameter" };
+function tokenMatches(provided: unknown, expected: string): boolean {
+    if (typeof provided !== "string") return false;
+    // Hashing gives equal lengths, which timingSafeEqual requires.
+    const providedHash = createHash("sha256").update(provided).digest();
+    const expectedHash = createHash("sha256").update(expected).digest();
+    return timingSafeEqual(providedHash, expectedHash);
+}
+
+function requireDiagnosticsToken(req: Request, res: Response, next: NextFunction): void {
+    const expected = (process.env.DIAGNOSTICS_TOKEN ?? "").trim();
+    if (!expected) {
+        res.status(404).send("Not found");
+        return;
     }
-    return { ok: true };
+    if (!tokenMatches(req.query.token, expected)) {
+        res.status(401).send(
+            `<html><body style="font-family:monospace;padding:2rem"><h1>401 Unauthorized</h1><p>Missing or invalid ?token= parameter</p></body></html>`,
+        );
+        return;
+    }
+    next();
 }
 
 function escape(s: string): string {
@@ -98,16 +113,7 @@ ${tests
 </html>`;
 }
 
-diagnosticsRouter.get("/postgrest", async (req: Request, res: Response) => {
-    const auth = await checkAuth(req);
-    if (!auth.ok) {
-        return void res
-            .status(401)
-            .send(
-                `<html><body style="font-family:monospace;padding:2rem"><h1>401 Unauthorized</h1><p>${auth.reason}</p></body></html>`,
-            );
-    }
-
+diagnosticsRouter.get("/postgrest", requireDiagnosticsToken, async (_req: Request, res: Response) => {
     try {
         const tests = await runDiagnostics();
         res.set("Content-Type", "text/html; charset=utf-8");
@@ -146,16 +152,7 @@ const INSPECT_ALLOWLIST = new Set<string>([
 
 const INSPECT_LIMIT_MAX = 100;
 
-diagnosticsRouter.get("/inspect", async (req: Request, res: Response) => {
-    const auth = await checkAuth(req);
-    if (!auth.ok) {
-        return void res
-            .status(401)
-            .send(
-                `<html><body style="font-family:monospace;padding:2rem"><h1>401 Unauthorized</h1><p>${auth.reason}</p></body></html>`,
-            );
-    }
-
+diagnosticsRouter.get("/inspect", requireDiagnosticsToken, async (req: Request, res: Response) => {
     const table = (req.query.table as string | undefined)?.trim() ?? "";
     const filterRaw = (req.query.filter as string | undefined) ?? "{}";
     const limitRaw = (req.query.limit as string | undefined) ?? "20";
