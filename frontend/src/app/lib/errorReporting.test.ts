@@ -334,6 +334,20 @@ describe("browserSentryOptions", () => {
     });
 });
 
+// MIKE-FRONTEND-2, 9, N, S: `next dev` checkouts reported to the Mike
+// project as environment=self-hosted, indistinguishable from installs.
+// Upstream divergence (sync-log: 576c70a7): Dev has no Next server, so
+// upstream's reportingDestination/serverSentryOptions cases do not apply
+// (sync-log 3bcac35a); Dev has no baked default DSN either. Only the browser
+// environment label is adopted.
+describe("development builds", () => {
+    it("report as environment development unless SENTRY_ENVIRONMENT says otherwise", () => {
+        expect(browserSentryOptions({ nodeEnv: "development" }).environment).toBe("development");
+        expect(browserSentryOptions({ nodeEnv: "production" }).environment).toBe("self-hosted");
+        expect(browserSentryOptions({ nodeEnv: "development", environment: "staging" }).environment).toBe("staging");
+    });
+});
+
 describe("release tagging", () => {
     it("builds mike@<version>+<sha12> for the browser options", () => {
         expect(

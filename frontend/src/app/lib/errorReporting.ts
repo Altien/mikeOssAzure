@@ -10,6 +10,7 @@ import {
     privacyBoundaryIntegration,
     type Operation,
     createEventScrubber,
+    sentryEnvironment,
     normalizeApiPath,
     parseSampleRate,
     releaseName,
@@ -339,7 +340,9 @@ export function browserSentryOptions(env: {
     return {
         dsn: dsn || undefined,
         enabled: dsn.length > 0,
-        environment: env.environment?.trim() || "self-hosted",
+        // A `next dev` build says "development" unless an explicit
+        // environment is configured (upstream 576c70a7).
+        environment: sentryEnvironment(env.environment, env.nodeEnv === "development"),
         release: releaseName(env.release, env.version, env.gitSha),
         // Every browser envelope goes through the backend tunnel
         // (POST /api/monitoring), which applies the deployment's runtime
@@ -391,6 +394,7 @@ export function initBrowserErrorReporting(dsn: string, release?: string): boolea
         dsn,
         release,
         apiBase: process.env.NEXT_PUBLIC_API_BASE_URL ?? "",
+        nodeEnv: process.env.NODE_ENV,
     }));
     return true;
 }
