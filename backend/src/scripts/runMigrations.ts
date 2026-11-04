@@ -8,6 +8,7 @@ import { syncWorkflowCatalog } from "../lib/workflowCatalogSync";
 import { resolveProviderSecret } from "../lib/envSecrets";
 import { getMigrationDatabaseUrl } from "../lib/deploymentDatabase";
 import { deployStampRuntime } from "../lib/stampDeployment";
+import { assertInstallTenantGate } from "./installTenantGate";
 import { assertDirectMigrationConnection, parseMigrationCommand, runMigrationCommand } from "./migrationLedger";
 
 
@@ -164,7 +165,9 @@ async function main() {
   const client = new Client({ connectionString: databaseUrl, application_name: "mike-migrate" });
   try {
     await client.connect();
-    process.exitCode = await runMigrationCommand(client, command);
+    process.exitCode = await runMigrationCommand(client, command, "migrations", console, {
+      beforeApply: (pending) => assertInstallTenantGate(client, pending),
+    });
   } finally {
     await client.end().catch(() => {});
   }
