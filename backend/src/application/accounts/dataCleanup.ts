@@ -9,7 +9,8 @@ import { chunkArray } from "../../lib/arrays";
 import { wipeMemoryFiles } from "../../lib/memory/files";
 import { listPersonalOrgIds } from "../../lib/personalOrgs";
 import { deleteOrgContent } from "../organizations/purgeContent";
-import { throwIfError, uniqueStrings } from "../../lib/serviceData";
+import { throwIfError } from "../../lib/serviceData";
+import { uniqueIds } from "../../lib/batchedQuery";
 
 const DELETE_BATCH_SIZE = 500;
 
@@ -31,7 +32,7 @@ async function wipeMemoryForOwners(
     scope: "user" | "project",
     ownerIds: string[],
 ) {
-    const uniqueOwnerIds = uniqueStrings(ownerIds);
+    const uniqueOwnerIds = uniqueIds(ownerIds);
     if (uniqueOwnerIds.length === 0) return;
     const ownerColumn = scope === "user" ? "user_id" : "project_id";
 
@@ -69,10 +70,10 @@ async function partitionOwnedProjects(
     await throwIfError(error, "Failed to load user projects");
     const rows = (data ?? []) as { id: string | null; org_id?: string | null }[];
     return {
-        personal: uniqueStrings(
+        personal: uniqueIds(
             rows.filter((row) => !row.org_id).map((row) => row.id),
         ),
-        org: uniqueStrings(rows.filter((row) => !!row.org_id).map((row) => row.id)),
+        org: uniqueIds(rows.filter((row) => !!row.org_id).map((row) => row.id)),
     };
 }
 
@@ -116,7 +117,7 @@ async function orgProjectIdsHoldingUserContent(
             `Failed to load ${PROJECT_CONTENT_TABLES[index]} projects`,
         );
         candidateIds.push(
-            ...uniqueStrings(
+            ...uniqueIds(
                 ((result.data ?? []) as { project_id: string | null }[]).map(
                     (row) => row.project_id,
                 ),
@@ -124,7 +125,7 @@ async function orgProjectIdsHoldingUserContent(
         );
     }
 
-    const unique = uniqueStrings(candidateIds);
+    const unique = uniqueIds(candidateIds);
     if (unique.length === 0) return [];
 
     const orgProjectIds: string[] = [];
@@ -135,7 +136,7 @@ async function orgProjectIdsHoldingUserContent(
             .in("id", batch);
         await throwIfError(error, "Failed to classify projects holding content");
         orgProjectIds.push(
-            ...uniqueStrings(
+            ...uniqueIds(
                 (
                     (data ?? []) as {
                         id: string | null;
@@ -147,7 +148,7 @@ async function orgProjectIdsHoldingUserContent(
             ),
         );
     }
-    return uniqueStrings(orgProjectIds);
+    return uniqueIds(orgProjectIds);
 }
 
 /**
@@ -200,8 +201,8 @@ async function getDocumentIdsForAccountDeletion(
     // A workflow asset (documents.workflow_id) belongs to its workflow. When
     // the workflow is organization-owned it survives this deletion, and an
     // asset stripped from a surviving workflow is a workflow that silently
-    // stopped working â€” so those documents are kept (and detached) too.
-    const workflowIds = uniqueStrings(
+    // stopped working — so those documents are kept (and detached) too.
+    const workflowIds = uniqueIds(
         candidates.map((row) => row.workflow_id ?? null),
     );
     const survivingWorkflowIds = new Set<string>();
@@ -220,13 +221,13 @@ async function getDocumentIdsForAccountDeletion(
     }
 
     const keep = new Set([
-        ...uniqueStrings(
+        ...uniqueIds(
             ((orgProjectDocs.data ?? []) as DocRow[]).map((row) => row.id),
         ),
-        ...uniqueStrings(
+        ...uniqueIds(
             candidates.filter((row) => !!row.org_id).map((row) => row.id),
         ),
-        ...uniqueStrings(
+        ...uniqueIds(
             candidates
                 .filter(
                     (row) =>
@@ -237,7 +238,7 @@ async function getDocumentIdsForAccountDeletion(
         ),
     ]);
 
-    return uniqueStrings(candidates.map((row) => row.id)).filter(
+    return uniqueIds(candidates.map((row) => row.id)).filter(
         (id) => !keep.has(id),
     );
 }
@@ -334,7 +335,7 @@ async function detachChildrenOfSurvivingContent(db: Db, userId: string) {
             .eq("user_id", userId);
         await throwIfError(error, `Failed to load ${label}`);
 
-        const parentIds = uniqueStrings(
+        const parentIds = uniqueIds(
             ((data ?? []) as Record<string, string | null>[]).map(
                 (row) => row[fk],
             ),
@@ -351,7 +352,7 @@ async function detachChildrenOfSurvivingContent(db: Db, userId: string) {
                 .in("id", batch);
             await throwIfError(parentError, `Failed to classify ${label}`);
             survivors.push(
-                ...uniqueStrings(
+                ...uniqueIds(
                     (
                         (parents ?? []) as {
                             id: string | null;
@@ -366,7 +367,7 @@ async function detachChildrenOfSurvivingContent(db: Db, userId: string) {
         if (survivors.length === 0) continue;
 
         for (const batch of chunkArray(
-            uniqueStrings(survivors),
+            uniqueIds(survivors),
             DELETE_BATCH_SIZE,
         )) {
             const { error: detachError } = await (db as any)
@@ -479,7 +480,7 @@ async function deleteStagedAccountStorage(db: Db, userId: string) {
     const { data, error } = await db.from("account_erasure_storage_paths")
         .select("storage_path").eq("user_id", userId);
     await throwIfError(error, "Failed to load staged account storage cleanup");
-    const paths = uniqueStrings((data ?? []).map((row) => row.storage_path));
+    const paths = uniqueIds((data ?? []).map((row) => row.storage_path));
     const claimed = await claimedStoragePaths(db, paths);
     // A surviving organization document owns its bytes even if a stale
     // account-deletion attempt staged the same storage key earlier.
@@ -746,7 +747,7 @@ async function deleteUserTabularReviewChats(
 
     const reviewsInWorkspace = new Set<string>();
     for (const batch of chunkArray(
-        uniqueStrings(rows.map((row) => row.review_id)),
+        uniqueIds(rows.map((row) => row.review_id)),
         DELETE_BATCH_SIZE,
     )) {
         const reviews = db.from("tabular_reviews").select("id").in("id", batch);
@@ -762,7 +763,7 @@ async function deleteUserTabularReviewChats(
     await deleteByIds(
         db,
         "tabular_review_chats",
-        uniqueStrings(
+        uniqueIds(
             rows
                 .filter((row) => !!row.review_id && reviewsInWorkspace.has(row.review_id))
                 .map((row) => row.id),
@@ -782,7 +783,7 @@ export async function deleteAllUserTabularReviews(
         : owned.is("org_id", null));
     await throwIfError(reviewsError, "Failed to load tabular reviews");
 
-    const reviewIds = uniqueStrings(
+    const reviewIds = uniqueIds(
         ((reviews ?? []) as { id: string | null }[]).map((row) => row.id),
     );
     if (reviewIds.length === 0) return 0;
@@ -815,7 +816,7 @@ async function handOverOrgPlaybooks(db: Db, userId: string) {
         .not("org_id", "is", null);
     await throwIfError(error, "Failed to load organization playbooks");
 
-    const orgIds = uniqueStrings(
+    const orgIds = uniqueIds(
         ((data ?? []) as { org_id?: string | null }[]).map(
             (row) => row.org_id ?? null,
         ),
@@ -939,7 +940,7 @@ export async function deleteUserAccountData(
     // Retention follows the organization's projects, not this user's. Their
     // own org projects must be kept AND detached; a colleague's org project
     // they contributed to must be kept without changing hands.
-    const orgProjectIds = uniqueStrings([
+    const orgProjectIds = uniqueIds([
         ...createdOrgProjectIds,
         ...(await orgProjectIdsHoldingUserContent(db, userId)),
     ]);
