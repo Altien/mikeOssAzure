@@ -144,23 +144,30 @@ class InvalidPdfFileError extends Error {
 const PDF_HEADER_SIGNATURE = Buffer.from("%PDF-");
 // ISO 32000 lets a reader accept the header anywhere in the first 1024 bytes
 // (Annex H, implementation note 13), and pdf.js — which renders and page-counts
-// these files downstream — scans exactly that window. Mirroring it means a
-// file the viewer can open is never refused here as "not a PDF".
+// these files downstream — scans exactly that window.
 const PDF_HEADER_SEARCH_WINDOW_BYTES = 1024;
 
-// A bounded signature search, not a parser: it rejects bytes that cannot be a
-// PDF (a renamed .txt, a ZIP, a truncated or empty file), not malformed PDFs.
-async function validatePdfHeader(filePath: string): Promise<void> {
+async function hasPdfSignature(filePath: string): Promise<boolean> {
   const handle = await open(filePath, "r");
   try {
     const window = Buffer.alloc(PDF_HEADER_SEARCH_WINDOW_BYTES);
     const { bytesRead } = await handle.read(window, 0, window.length, 0);
-    if (window.subarray(0, bytesRead).indexOf(PDF_HEADER_SIGNATURE) === -1) {
-      throw new InvalidPdfFileError();
-    }
+    return window.subarray(0, bytesRead).indexOf(PDF_HEADER_SIGNATURE) !== -1;
   } finally {
     await handle.close();
   }
+}
+
+// Refuse bytes that cannot be a PDF (a renamed .txt, a ZIP, a truncated or
+// empty file) before anything is written for them. The signature search is
+// the cheap path; when it misses, the decision is handed to the same parser
+// that renders the file downstream, because pdf.js keeps going without a
+// header and rebuilds the cross-reference table by scanning, so a file it
+// can open must never be refused here as "not a PDF".
+async function validatePdfFile(filePath: string): Promise<void> {
+  if (await hasPdfSignature(filePath)) return;
+  if ((await countPdfPages(filePath)) !== null) return;
+  throw new InvalidPdfFileError();
 }
 
 /**
@@ -561,7 +568,7 @@ async function prepareUploadFile(
   const artifact = await requireSealedFile(file);
   const slug = claimToken.replace(/-/g, "");
   try {
-    if (file.file_type === "pdf") await validatePdfHeader(artifact.filePath);
+    if (file.file_type === "pdf") await validatePdfFile(artifact.filePath);
     // An email is stored as the Markdown it converts to. size_bytes stays that
     // of the sealed upload, which the publish RPC checks against the manifest;
     // publishEmailParts corrects it once the row exists.
