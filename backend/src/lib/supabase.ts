@@ -223,6 +223,22 @@ function postgrestFetchWrapper(opts: { provider: "entra" | "local"; platform: bo
 }
 
 /**
+ * The Authorization value the request client would send now, for operator
+ * diagnostics that call PostgREST with raw fetch. Null on hosted Supabase or
+ * with no signing secret; PostgREST then reports that call as it is.
+ */
+export async function postgrestRequestAuthorization(): Promise<string | null> {
+  const provider = getAuthProvider();
+  if (provider !== "entra" && provider !== "local") return null;
+  const secret = await postgrestSigningSecret(provider);
+  if (!secret) return null;
+  const installTenant = currentTenant() ? undefined : await installTenantId().catch(() => undefined);
+  const tenant = currentTenant() ?? (installTenant ? { tenantId: installTenant } : undefined);
+  const claims = postgrestClaims(tenant, await tenantDbRole());
+  return `Bearer ${signPostgrestJwt(claims, secret)}`;
+}
+
+/**
  * Server-side PostgREST client implemented with supabase-js.
  * - supabase mode: service-role JWT via SUPABASE_SECRET_KEY; default
  *   supabase-js fetch (sends to /rest/v1/<table>, which is what hosted

@@ -1,5 +1,5 @@
 // PostgREST diagnostics data access. Route files only authenticate and render.
-import { createServerSupabase } from "../../lib/supabase";
+import { createServerSupabase, postgrestRequestAuthorization } from "../../lib/supabase";
 import { getConfig, flushConfigCache } from "../../lib/config";
 import { runWithJobTenant } from "../../lib/tenantContext";
 
@@ -19,6 +19,15 @@ export type TestResult = {
     notes?: string;
 };
 
+// Raw on purpose (no supabase-js path rewriting), but signed like the request
+// client: entra PostgREST rejects a request without a JWT.
+async function signedFetch(url: string, init?: RequestInit): Promise<Response> {
+    const headers = new Headers(init?.headers);
+    const authorization = await postgrestRequestAuthorization();
+    if (authorization) headers.set("Authorization", authorization);
+    return fetch(url, { ...init, headers });
+}
+
 async function rawFetch(
     url: string,
     init?: RequestInit,
@@ -28,7 +37,7 @@ async function rawFetch(
     headers: Record<string, string>;
     body: string;
 }> {
-    const resp = await fetch(url, init);
+    const resp = await signedFetch(url, init);
     const headers: Record<string, string> = {};
     resp.headers.forEach((v, k) => {
         headers[k] = v;
@@ -192,7 +201,7 @@ async function runDiagnosticTests(): Promise<TestResult[]> {
     // ── F. Raw INSERT roundtrip (insert + verify + delete) with sentinel user
     try {
         // Insert
-        const insertResp = await fetch(`${baseUrl}/user_profiles`, {
+        const insertResp = await signedFetch(`${baseUrl}/user_profiles`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -219,7 +228,7 @@ async function runDiagnosticTests(): Promise<TestResult[]> {
             });
         } else {
             // Delete
-            const deleteResp = await fetch(
+            const deleteResp = await signedFetch(
                 `${baseUrl}/user_profiles?user_id=eq.${SENTINEL_USER_ID}`,
                 { method: "DELETE", headers: { Prefer: "return=minimal" } },
             );
