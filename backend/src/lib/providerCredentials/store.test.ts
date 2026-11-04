@@ -1,22 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const secrets = vi.hoisted(() => ({ values: new Map<string, string>() }));
-vi.mock("../../../lib/envSecrets", () => ({
+vi.mock("../envSecrets", () => ({
   resolveSecret: vi.fn(async (name: string) => secrets.values.get(name) ?? ""),
   resolveProviderSecret: vi.fn(async (name: string) => secrets.values.get(name) ?? ""),
   resolveVercelApiKey: vi.fn(async () => secrets.values.get("ai-gateway-api-key") ?? ""),
 }));
 
 const allowlist = vi.hoisted(() => ({ value: null as string[] | null, memberKeyModels: null as string[] | null }));
-vi.mock("../../../lib/tenantSettings", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../../lib/tenantSettings")>()),
+vi.mock("../tenantSettings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../tenantSettings")>()),
   tenantModelAllowlist: vi.fn(async () => allowlist.value),
   getTenantSettings: vi.fn(async () => allowlist.memberKeyModels && { member_key_models: allowlist.memberKeyModels }),
 }));
 
-import { getApiKeyStatusFor, getUserApiKeyStatus, normalizeApiKeyProvider, orgKeyOwner } from "../../../lib/providerCredentials/store";
-import { saveApiKey } from "../user.apiKeys";
-import { freezeTenancyMode, resetFrozenTenancyModeForTests } from "../../../lib/tenancyMode";
+import { getApiKeyStatusFor, getUserApiKeyStatus, normalizeApiKeyProvider, orgKeyOwner } from "./store";
+// Dev: the personal/pooled save policy is exercised alongside the store it guards.
+import { saveApiKey } from "../../modules/user/user.apiKeys";
+import { freezeTenancyMode, resetFrozenTenancyModeForTests } from "../tenancyMode";
 
 function profilePreferenceDb() {
   const from = vi.fn((table: string) => {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { orgKeyOwner, saveApiKeyForOwner, userKeyOwner } from "../../../lib/providerCredentials/index";
-import type { Db } from "../../../lib/supabase";
+import { orgKeyOwner, saveApiKeyForOwner, userKeyOwner } from "./index";
+import type { Db } from "../supabase";
 
 // Upstream divergence (sync-log: db8d42c3): owner-aware interfaces are
 // retained, but managed deployments never persist personal/org secret rows.
