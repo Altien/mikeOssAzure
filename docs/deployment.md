@@ -98,6 +98,49 @@ must finish before the database switches active catalogue rows. A failed
 download, upload or replacement fails the job and leaves the previous active
 catalogue usable; do not bypass the job during deployment.
 
+### Upgrade order and rollback
+
+<!-- Upstream dbc3c927 (PR #749 upgrade notes), adapted: Dev upgrades through
+the numbered migration runner and the Azure db-migrate job, not migrate.sh,
+schema.sql or Compose's db-init/workflow-sync services. -->
+For the SQL/backend/web/Word performance changes in upstream PR #749, upgrade
+an existing installation in this order:
+
+1. Back up the database and retain the currently deployed image tags or Git
+   commit. Let active assistant turns finish before restarting their backend;
+   their resumable stream buffers live in that process.
+2. Apply the pending numbered migrations (`pnpm --dir backend migrate:dev up`,
+   or the `db-migrate` job), then run `status` and require no pending files.
+   The new project-directory search requires `search_project_directory`, and
+   paginated participation requires the new `get_projects_overview` argument.
+   Starting the new backend before these migrations makes those requests fail.
+3. Make sure PostgREST's schema cache was reloaded and the workflow catalogue
+   synced (the `db-migrate` job does both), then deploy the backend and any
+   separate workers.
+4. Deploy the frontend and Word add-in. Check project-directory search,
+   document conversion completion, and reopening an existing Word chat.
+
+Manually or independently hosted components need the same ordering. A new
+frontend can poll an older backend using individual document reads when its
+batch endpoint is unavailable. Older API clients can still request
+`/api/projects?include=documents` without pagination; new clients should send
+`limit` and `offset` explicitly.
+
+The migrations in this release retain the previous backend's project RPC call
+shapes. A backend rollback leaves the migration history and schema in place;
+do not delete `public.pgmigrations` rows or replay old migrations to undo an
+application deployment. Validate a rollback against a copy of the database
+before using it on a deployment that has accepted new writes.
+
+Word's released device-only database remains at IndexedDB version 4, so an
+older pane can still save an answer after another pane loads the new code.
+Existing v4 databases retain their history-listing path; fresh v4 databases
+include the optional recency index. PR preview builds used version 5: the new
+add-in can read those databases in place, but a rollback to a released v4-only
+bundle cannot. Keep a compatible add-in build for those devices. Do not clear
+browser/add-in storage to resolve a version error: device-only chats have no
+durable server copy.
+
 ## Tenancy mode
 
 Every normal install (Azure Marketplace, local stack) is one
