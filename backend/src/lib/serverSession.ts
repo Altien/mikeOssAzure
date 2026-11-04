@@ -221,6 +221,14 @@ export async function revokeServerSession(req: Request): Promise<void> {
   if (error) throw new Error("Unable to revoke auth session");
 }
 
+// Upstream divergence (sync-log: eb31091a): upstream single-flights GoTrue
+// refreshes per process with a fetch wrapper (lib/authRefresh.ts) on the
+// per-request @supabase/ssr clients, so a page-load fan-out does not race one
+// rotating refresh token. Dev never builds those clients: the browser holds an
+// opaque session cookie that never rotates, and this CAS claim
+// (claim_auth_session_refresh) already lets exactly one request, on any
+// replica, renew the credential while the others wait (middleware/auth.ts).
+// Do not add upstream's authRefresh.ts / authSession.ts here.
 export async function refreshServerSession(
   current: { row: SessionRow; credential: ServerCredential },
   renew: (refreshToken: string) => Promise<{ accessToken: string; refreshToken?: string; expiresAt: Date }>,
