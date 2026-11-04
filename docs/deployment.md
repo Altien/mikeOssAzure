@@ -115,6 +115,25 @@ and operation, so its event count does not measure how often it happens. Run
 `pnpm --dir backend migrate:dev up` or the `db-migrate` job (which also reloads
 the PostgREST schema cache), and restart the backend.
 
+### Before upgrading: secrets copied from the template
+
+The backend refuses to start when `DOWNLOAD_SIGNING_SECRET` or
+`USER_API_KEYS_ENCRYPTION_SECRET` still holds the `backend/.env.example`
+placeholder, or any value shorter than 32 characters. A deployment that copied
+the template verbatim was running with publicly known secrets: download and
+blob tokens could be forged, and user-supplied provider API keys were
+encrypted under a key derived from a public string. The startup error names
+the variable; generate a real value for each and restart:
+
+```bash
+openssl rand -hex 32   # once per variable
+```
+
+Both variables may also be left unset: the download and API-key features then
+fail on first use, as before. Changing `USER_API_KEYS_ENCRYPTION_SECRET` on an
+install that already stored user API keys makes those keys unreadable, so
+users will have to enter them again.
+
 ### Upgrade order and rollback
 
 <!-- Upstream dbc3c927 (PR #749 upgrade notes), adapted: Dev upgrades through
