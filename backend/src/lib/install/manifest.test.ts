@@ -75,7 +75,7 @@ describe("Application Insights install manifest item", () => {
             fixedBy: {
                 type: "external-script",
                 scriptName: "upgrade-marketplace.ps1",
-                argsTemplate: "-ResourceGroup <rg>",
+                argsTemplate: "-ResourceGroup <rg> -TargetVersion <target-version>",
             },
         });
     });

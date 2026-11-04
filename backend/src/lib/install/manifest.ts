@@ -711,7 +711,9 @@ const items: ManifestItem[] = [
         fixedBy: {
             type: "external-script",
             scriptName: "upgrade-marketplace.ps1",
-            argsTemplate: "-ResourceGroup <rg>",
+            // -TargetVersion is mandatory. The operator supplies the release they
+            // are moving to; the placeholder stays visible until they do.
+            argsTemplate: "-ResourceGroup <rg> -TargetVersion <target-version>",
         },
     },
 ];
