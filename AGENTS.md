@@ -13,7 +13,8 @@ before the API listens or a worker claims jobs. `backend/src/application/` owns
 cross-domain account, purge and export workflows: routes and the job registry
 may call it, domain modules never import it, and `lib/` imports neither
 modules nor `application/`. `dependencyCycles.test.ts` fails CI on any
-source import cycle.
+source import cycle across the applications, the shared `packages/` sources
+and every local file they reach.
 
 `backend/src/__tests__/architecture.test.ts` enforces these boundaries.
 Document-version mutations belong to the documents module and use its
