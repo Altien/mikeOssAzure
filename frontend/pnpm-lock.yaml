@@ -154,7 +154,7 @@ importers:
         version: 26.6.4
       '@types/office-js':
         specifier: ^1.0.615
-        version: 1.0.616
+        version: 1.0.615
       '@types/office-runtime':
         specifier: ^1.0.40
         version: 1.0.40
@@ -3185,8 +3185,8 @@ packages:
   '@types/node@26.6.4':
     resolution: {integrity: sha512-ldVPDCzj7fsaGZrLB0NuHuTvJcsNasysBAqMolr/cgxrLd1xbqxIr3XJiPnHHJUCxj5sNF1vnRj9aWnrVh5Jcg==}
 
-  '@types/office-js@1.0.616':
-    resolution: {integrity: sha512-cN/beGXZYMLbDQRsJ9ggJpySyitNDr3MdVXAx/8cI/Hi9+qD+GU+PnMN6ouwz9tpkdKjMvyBvU+v4vRJVw7FGA==}
+  '@types/office-js@1.0.615':
+    resolution: {integrity: sha512-pSEiguAVkoQxSY+by3hYHo8s1Y/idmlvmpgJ1GLa5JOJrBUbtoNf5rpS3oUkaMvGrprezZ9oq9Rx3HQjLhLmbg==}
 
   '@types/office-runtime@1.0.40':
     resolution: {integrity: sha512-eFEhqFnYP5xmkZKtVz0Mk3AsD/sLADkhQqGbG1IWylfC2rj+5ZjOZEmD7k5j77vTcMYN0hF1cQy9OW984HCh0g==}
@@ -10106,7 +10106,7 @@ snapshots:
     dependencies:
       undici-types: 8.9.0
 
-  '@types/office-js@1.0.616': {}
+  '@types/office-js@1.0.615': {}
 
   '@types/office-runtime@1.0.40': {}
 
