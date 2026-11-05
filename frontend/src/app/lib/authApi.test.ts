@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.hoisted(() => { process.env.NEXT_PUBLIC_API_BASE_URL = ""; });
+import { describeError } from "@mike/client";
+import { isReported } from "@/app/lib/errorReporting";
 import {
     AuthApiError,
     challengeAndVerifyMfa,
@@ -63,6 +65,7 @@ describe("cookie auth client", () => {
             const error = await login(user.email, "nope").catch((e) => e);
 
             expect(reporting.reportApiFailure).toHaveBeenCalledWith({
+                operation: "auth.signin",
                 path: "/api/auth/login",
                 method: "POST",
                 status: 500,
@@ -70,6 +73,33 @@ describe("cookie auth client", () => {
                 requestId: "req-1",
                 error,
             });
+        });
+
+        // MIK-125: the backend answers an unreachable GoTrue with 503
+        // upstream_unavailable and has already filed the one event for it.
+        it("does not report a 503 the backend already reported, and shows its fixed sentence", async () => {
+            fetchMock.mockResolvedValue(
+                new Response(
+                    JSON.stringify({
+                        code: "upstream_unavailable",
+                        detail: "server text",
+                        request_id: "req-2",
+                    }),
+                    { status: 503, headers: { "Content-Type": "application/json" } },
+                ),
+            );
+
+            const error = await getAuthSession().catch((e) => e);
+
+            expect(error).toMatchObject({
+                status: 503,
+                code: "upstream_unavailable",
+                requestId: "req-2",
+                message: "The server is temporarily unreachable. Please try again shortly.",
+            });
+            expect(reporting.reportApiFailure).not.toHaveBeenCalled();
+            // Marked, so a screen's notifyError does not file it either.
+            expect(isReported(error)).toBe(true);
         });
 
         it("does not report a 4xx: it is the auth server's answer", async () => {

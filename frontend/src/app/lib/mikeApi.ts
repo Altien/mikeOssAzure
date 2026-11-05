@@ -40,7 +40,8 @@ import {
 } from "@/app/lib/auth-token";
 import { isPanelDocument } from "@/app/components/shared/types";
 import { authenticatedFetch, currentAuthEpoch } from "@/app/lib/authEvents";
-import { markErrorHandled, reportApiFailure, reportError, reportNetworkFailure, trackPendingRequest } from "@/app/lib/errorReporting";
+import { reportApiFailure, reportError, reportNetworkFailure, trackPendingRequest } from "@/app/lib/errorReporting";
+import { reportServerFailure, reportedUpstreamMessage } from "@/app/lib/reportedUpstream";
 const apiFetch = async (input: RequestInfo | URL, init?: RequestInit, operation?: Operation): Promise<Response> => {
     const release = trackPendingRequest();
     try {
@@ -193,43 +194,16 @@ export function reassignTenantContent(input: { kind: TenantContentKind; id: stri
 }
 export const MALFORMED_ERROR_RESPONSE_MESSAGE =
     "The request could not be completed. Please try again.";
-/**
- * The backend's answer when its database is missing a migration (PGRST202/
- * 204/205, 42P01). Unlike other 5xx it tells the user something actionable
- * — contact whoever runs the server — so it is shown instead of the generic
- * fallback (see userFacingApiError).
- */
-export const SCHEMA_OUT_OF_DATE_CODE = "schema_out_of_date";
-export const SCHEMA_OUT_OF_DATE_MESSAGE =
-    "The server's database needs an update before this can load. Please contact your administrator.";
-/**
- * The Next gateway's answer (503, Retry-After) when it cannot reach the
- * backend at all (ECONNREFUSED and friends). The gateway reports it once
- * per outage; the user can only wait and retry.
- *
- * Dev divergence (sync-log: 4428944d): the static export has no Next
- * gateway, so Dev's Express backend never emits this code; it is kept for
- * parity with upstream's shared message table.
- */
-export const UPSTREAM_UNAVAILABLE_CODE = "upstream_unavailable";
-export const UPSTREAM_UNAVAILABLE_MESSAGE =
-    "The server is temporarily unreachable. Please try again shortly.";
-/**
- * 5xx codes that the server side (backend or gateway) has already reported
- * to Sentry, and that carry a message worth showing instead of the generic
- * fallback. The browser shows the message and does not report them again.
- */
-const REPORTED_UPSTREAM_MESSAGES: Readonly<Record<string, string>> = {
-    [SCHEMA_OUT_OF_DATE_CODE]: SCHEMA_OUT_OF_DATE_MESSAGE,
-    [UPSTREAM_UNAVAILABLE_CODE]: UPSTREAM_UNAVAILABLE_MESSAGE,
-};
-
-/** The fixed user-facing message for a server-reported code, or null. */
-export function reportedUpstreamMessage(code: string): string | null {
-    return Object.hasOwn(REPORTED_UPSTREAM_MESSAGES, code)
-        ? REPORTED_UPSTREAM_MESSAGES[code]
-        : null;
-}
+// The 5xx codes the server side already reported, and their fixed messages,
+// live with the reporting rule that uses them (reportedUpstream.ts); they are
+// re-exported here because API consumers know them as mikeApi's answers.
+export {
+    SCHEMA_OUT_OF_DATE_CODE,
+    SCHEMA_OUT_OF_DATE_MESSAGE,
+    UPSTREAM_UNAVAILABLE_CODE,
+    UPSTREAM_UNAVAILABLE_MESSAGE,
+    reportedUpstreamMessage,
+} from "@/app/lib/reportedUpstream";
 
 // Upstream divergence (sync-log: 3a10943): kept for API parity with
 // upstream, but dev's backend never emits mfa_verification_required —
@@ -397,24 +371,10 @@ async function toApiError(
             requestId,
         });
         const code = typeof parsed.code === "string" ? parsed.code : null;
+        // A code the backend or gateway already reported carries our fixed
+        // sentence for it (never the body's `detail`); reportServerFailure
+        // below only marks it, so no screen files it a second time.
         const upstreamMessage = code ? reportedUpstreamMessage(code) : null;
-        if (upstreamMessage) {
-            // The backend (schema_out_of_date) or the gateway
-            // (upstream_unavailable) has already reported this failure once,
-            // with detail the browser cannot see. A browser copy would be one
-            // more event per endpoint per page view for the same incident —
-            // the per-route fan-out again — so it is only marked: a screen's
-            // console.error of it is not bridged either. The message is
-            // ours, not the body's `detail`.
-            const upstreamError = new MikeApiError({
-                status: response.status,
-                code,
-                requestId,
-                message: upstreamMessage,
-            });
-            markErrorHandled(upstreamError);
-            return upstreamError;
-        }
         const apiError = new MikeApiError({
             status: response.status,
             code,
@@ -428,17 +388,18 @@ async function toApiError(
             // already has the right sentence for "the server did not tell us
             // what went wrong"; this arm now uses it too.
             message:
-                response.status >= 500
+                upstreamMessage ??
+                (response.status >= 500
                     ? INTERNAL_ERROR_MESSAGE
                     : typeof parsed.detail === "string" && parsed.detail
                       ? parsed.detail
-                      : MALFORMED_ERROR_RESPONSE_MESSAGE,
+                      : MALFORMED_ERROR_RESPONSE_MESSAGE),
         });
         // 4xx are intentional answers (validation, permissions) and are
         // shown to the user; 5xx are failures worth an alert, correlated to
         // the backend's own event by request id.
         if (response.status >= 500) {
-            reportApiFailure({
+            reportServerFailure({
                 operation,
                 path,
                 method,
