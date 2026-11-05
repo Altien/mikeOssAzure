@@ -15,6 +15,7 @@ import { reportError, requestRoutePattern, setCurrentUser } from "../lib/observa
 import { AppError, type ErrorKind } from "../lib/appError";
 import { retryAfterSeconds, takeTenantTokens, tenantRateLimits } from "../lib/tenantRateLimit.js";
 import { sendUpstreamUnavailable } from "../lib/httpError";
+import { noteUpstreamReachable } from "../lib/upstreamOutage";
 
 function reportAuthFailure(req: Request, kind: ErrorKind, cause: unknown): void {
   reportError(new AppError(kind, "Authentication dependency failed", { cause }), {
@@ -122,11 +123,14 @@ export async function requireAuth(
     // GoTrue could not be reached, so nobody could say whether the session
     // is valid. A 401 here would make the web app sign the user out of a
     // session that is fine; 503 upstream_unavailable tells it to wait.
+    // The handler that would name this request's flow never runs, so the
+    // event is named after what failed: the session lookup.
     sendUpstreamUnavailable(
       res,
       new AppError("auth.supabase_unavailable", "session lookup could not reach GoTrue", {
         cause: result.upstreamFailure,
       }),
+      { operation: "auth.session" },
     );
     return;
   }
@@ -134,6 +138,8 @@ export async function requireAuth(
     res.status(result.status).json({ detail: result.detail });
     return;
   }
+  // GoTrue answered: an outage reported earlier is over.
+  if (provider === "supabase") noteUpstreamReachable();
   if (sessionUserId && result.principal.userId !== sessionUserId) {
     res.status(401).json({ detail: "Invalid or expired session" });
     return;
