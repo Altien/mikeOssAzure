@@ -46,6 +46,26 @@ const AUTH_SYNC_STORAGE_KEY = "mike-auth-state-change";
 const SESSION_ERROR_MESSAGE =
     "We could not check your session. Please try again.";
 const EXPIRED_SESSION_MESSAGE = "Your session expired. Please log in again.";
+/** Retry delays for a session check the server could not answer. */
+const SESSION_RETRY_BASE_MS = 1_000;
+const SESSION_RETRY_MAX_MS = 30_000;
+
+/**
+ * Did the session check fail because the server could not answer (a 5xx such
+ * as 503 upstream_unavailable while GoTrue or the API is down, or no response
+ * at all), rather than answer "no session"? Then nobody knows whether the
+ * user is signed in, and treating them as signed out would send a working
+ * session to the login page. A 401 never gets here: getAuthSession answers
+ * null for it.
+ */
+function isTransientSessionFailure(error: unknown): boolean {
+    // An AuthApiError carries the HTTP status (read by shape, so a test that
+    // mocks the auth client needs no class).
+    const status = (error as { status?: unknown } | null)?.status;
+    if (typeof status === "number") return status >= 500;
+    // fetch rejects with a TypeError when no response arrives.
+    return error instanceof TypeError;
+}
 
 type AuthSyncMessage = {
     state: "signed-in" | "signed-out";
@@ -117,26 +137,89 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return nextUser;
     }, [applySessionUser]);
 
-    const checkBackgroundSession = useCallback(() => {
-        const generation = authGeneration.current;
-        const reportFailure = (error: unknown) => {
-            if (generation !== authGeneration.current) return;
-            setAuthError(SESSION_ERROR_MESSAGE);
-            // Sign-in screens show `authError` themselves, with their own
-            // Retry; a toast there repeated it and then contradicted the
-            // form's next error.
-            if (isOnAuthRoute()) return;
-            notifyError(error, {
-                action: "check your session", dedupeKey: "auth-session",
-                onRetry: async () => {
-                    if (generation !== authGeneration.current) return;
-                    try { await fetchAndApplySession(); }
-                    catch (retryError) { reportFailure(retryError); }
-                },
-            });
-        };
-        return fetchAndApplySession().catch(reportFailure);
-    }, [fetchAndApplySession]);
+    // Background session checks (focus, tab visibility, another tab signing
+    // in) have no screen of their own: without this the user sees a silently
+    // stale session, so the failure gets a toast with a real Retry.
+    // Upstream divergence (sync-log: f1e8dffa): Dev keeps its generation
+    // fences around upstream's retrying check: a toast Retry or a pending
+    // backoff retry from an ended session (sign-out, invalidation, another
+    // tab) never runs against the next one.
+    const checkSessionRef = useRef<(notify: boolean) => Promise<void>>(
+        async () => {},
+    );
+    const reportSessionFailure = useCallback((error: unknown, generation: number) => {
+        if (generation !== authGeneration.current) return;
+        setAuthError(SESSION_ERROR_MESSAGE);
+        // Sign-in screens show `authError` themselves, with their own
+        // Retry; a toast there repeated it and then contradicted the
+        // form's next error.
+        if (isOnAuthRoute()) return;
+        notifyError(error, {
+            action: "check your session",
+            dedupeKey: "auth-session",
+            onRetry: () => {
+                if (generation !== authGeneration.current) return;
+                void checkSessionRef.current(true);
+            },
+        });
+    }, []);
+
+    // A check the server could not answer keeps the auth state it had (the
+    // signed-in user, or "still loading" on a fresh page load, which keeps
+    // the app's loader up instead of redirecting to the login page) and is
+    // retried with backoff until the server answers. One notice per failing
+    // streak: the retries update it silently.
+    const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const retryAttemptRef = useRef(0);
+    const checkSession = useCallback(
+        async (notify: boolean) => {
+            if (retryTimerRef.current !== null) {
+                clearTimeout(retryTimerRef.current);
+                retryTimerRef.current = null;
+            }
+            const generation = authGeneration.current;
+            try {
+                await fetchAndApplySession();
+                retryAttemptRef.current = 0;
+                setAuthLoading(false);
+            } catch (error) {
+                // fetchAndApplySession only throws for the current generation.
+                const firstOfStreak = retryAttemptRef.current === 0;
+                if (isTransientSessionFailure(error)) {
+                    const delay = Math.min(
+                        SESSION_RETRY_MAX_MS,
+                        SESSION_RETRY_BASE_MS * 2 ** retryAttemptRef.current,
+                    );
+                    retryAttemptRef.current += 1;
+                    retryTimerRef.current = setTimeout(() => {
+                        retryTimerRef.current = null;
+                        if (generation !== authGeneration.current) {
+                            retryAttemptRef.current = 0;
+                            return;
+                        }
+                        void checkSessionRef.current(false);
+                    }, delay);
+                } else {
+                    retryAttemptRef.current = 0;
+                    setAuthLoading(false);
+                }
+                if (notify || firstOfStreak) reportSessionFailure(error, generation);
+                else if (generation === authGeneration.current) setAuthError(SESSION_ERROR_MESSAGE);
+            }
+        },
+        [fetchAndApplySession, reportSessionFailure],
+    );
+
+    useEffect(() => {
+        checkSessionRef.current = checkSession;
+    }, [checkSession]);
+
+    useEffect(
+        () => () => {
+            if (retryTimerRef.current !== null) clearTimeout(retryTimerRef.current);
+        },
+        [],
+    );
 
     useEffect(() => {
         clearLegacyBrowserAuthStorage();
@@ -160,7 +243,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
             authGeneration.current += 1;
             advanceAuthEpoch();
-            void checkBackgroundSession();
+            void checkSession(true);
         };
 
         const onChannelMessage = (event: MessageEvent<AuthSyncMessage>) => {
@@ -196,10 +279,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         };
         const onVisibilityChange = () => {
             if (document.visibilityState !== "visible") return;
-            void checkBackgroundSession();
+            void checkSession(false);
         };
         const onFocus = () => {
-            void checkBackgroundSession();
+            void checkSession(false);
         };
 
         channel?.addEventListener("message", onChannelMessage);
@@ -208,8 +291,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         window.addEventListener("focus", onFocus);
         document.addEventListener("visibilitychange", onVisibilityChange);
 
-        void checkBackgroundSession()
-            .finally(() => setAuthLoading(false));
+        // Through the ref (assigned by the effect above, which runs first):
+        // the check only sets state after its request settles.
+        void checkSessionRef.current(true);
 
         return () => {
             channel?.removeEventListener("message", onChannelMessage);
@@ -226,7 +310,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 onVisibilityChange,
             );
         };
-    }, [applySessionUser, broadcastAuthState, checkBackgroundSession]);
+    }, [applySessionUser, broadcastAuthState, checkSession]);
 
     const refreshSession = useCallback(async () => {
         const generation = authGeneration.current;
