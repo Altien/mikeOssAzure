@@ -18,6 +18,7 @@ import {
   executeGoogleWorkspaceToolCall,
 } from "../../../../lib/integrations/googleWorkspace";
 import { log } from "../../../../lib/logging/root";
+import { diagnosticErrorTags } from "../../../../lib/observability/sentryPrivacy";
 import { documentSearchFailure } from "./documentSearchErrors";
 import { findDocumentText, createDocumentVersions } from "../../../documents/documents.service";
 import {
@@ -965,7 +966,16 @@ export async function runToolCalls(
             failure.error_code === "search_timeout" ? "warning" : undefined,
           );
         }
-        console.warn("[run_tools] find_documents failed", failure.error_code);
+        // The category, plus the allowlisted failure_code (a SQLSTATE or
+        // network code, never database text): reportError sends nothing on an
+        // install without Sentry, so this line is all its operator has to
+        // tell a 42883 from a 23505.
+        const failureCode =
+          result.kind === "error" ? diagnosticErrorTags(result.error).failure_code : undefined;
+        console.warn("[run_tools] find_documents failed", {
+          category: failure.error_code,
+          ...(failureCode === undefined ? {} : { failure_code: failureCode }),
+        });
         finishSearch(failure);
         toolResults.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify({
           ok: false, ...failure,
