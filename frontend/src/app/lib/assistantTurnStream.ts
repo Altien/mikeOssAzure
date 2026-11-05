@@ -2,7 +2,7 @@
 
 import { streamChatTurn } from "@/app/lib/mikeApi";
 import { readSseFrames } from "@/app/lib/sse";
-import { isAbortError } from "@/shared/lib/userError";
+import { isAbortError } from "@mike/client";
 import { isPanelDocument } from "@/app/components/shared/types";
 import { handleAuthorityTraceStreamEvent } from "@/altien/authorityTrace/events";
 import type { AssistantEvent, Citation } from "@/app/components/shared/types";
