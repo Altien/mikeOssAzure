@@ -1,3 +1,8 @@
+import {
+  UPSTREAM_UNAVAILABLE_CODE,
+  UPSTREAM_UNAVAILABLE_MESSAGE,
+  sendInternalError,
+} from "../../lib/httpError";
 import { AppError } from "../../lib/appError";
 import { reportError, setOperation } from "../../lib/observability/sentry";
 import { createHash, createHmac, randomBytes } from "node:crypto";
@@ -28,12 +33,31 @@ import { ssoConfiguration, ssoDomainSchema } from "../../lib/ssoConfig";
 import { readServerSession } from "../../lib/serverSession";
 import { authProvider, credentialsSchema, signupSchema, passwordSchema } from "./auth.service";
 
-import { describeAuthProviderError, describeAuthValidationIssues } from "./auth.messages";
+import { describeAuthProviderError, describeAuthValidationIssues, isAuthUpstreamFailure } from "./auth.messages";
 
 function authError(res: Response, error: unknown, fallback: string) {
   const wire = describeAuthProviderError(error, fallback);
-  if (wire.status >= 500) reportError(new AppError("auth.session_lookup_failed", "Authentication provider failed", { cause: error }), { tags: { component: "http", http_status: wire.status } });
-  res.status(wire.status).json({ code: wire.code, detail: wire.detail });
+  if (wire.status < 500) {
+    return res.status(wire.status).json({ code: wire.code, detail: wire.detail });
+  }
+  // A server-side failure goes through sendInternalError, the one place a
+  // 5xx becomes a Sentry event: reported once, logged, and marked so the
+  // response sanitizer does not file it again. GoTrue being unreachable or
+  // answering 5xx is an outage the user can only wait out, so it is a 503
+  // with the same `upstream_unavailable` code the gateway uses; clients show
+  // "try again shortly" and do not report it a second time.
+  const failure = new AppError(
+    "auth.session_lookup_failed",
+    "Authentication provider failed",
+    { cause: error },
+  );
+  if (isAuthUpstreamFailure(error)) {
+    return sendInternalError(res, failure, 503, {
+      code: UPSTREAM_UNAVAILABLE_CODE,
+      detail: UPSTREAM_UNAVAILABLE_MESSAGE,
+    });
+  }
+  return sendInternalError(res, failure);
 }
 
 export const authRouter = Router();
