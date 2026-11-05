@@ -158,6 +158,11 @@ async function admit(req: Request, res: Response, credential: ServerCredential, 
     sendUpstreamUnavailable(res, new AppError("auth.supabase_unavailable", "session lookup could not reach GoTrue", { cause: result.upstreamFailure }));
     return false;
   }
+  if (!result.ok && result.status === 500) {
+    // Upstream 156d0fde, adapted: a GoTrue failure of its own is a reported 500.
+    sendInternalError(res, new AppError("auth.supabase_unavailable", "session lookup failed in GoTrue", { cause: result.failure }));
+    return false;
+  }
   if (!result.ok || result.principal.userId !== credential.userId) {
     res.status(result.ok ? 401 : result.status).json({ detail: result.ok ? "Invalid authentication credential" : result.detail }); return false;
   }

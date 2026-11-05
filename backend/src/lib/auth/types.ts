@@ -29,7 +29,12 @@ export interface AuthPrincipal {
 
 export type AuthValidationResult =
   | { ok: true; principal: AuthPrincipal }
-  | { ok: false; status: 401 | 403; detail: string }
+  // `code: "session_expired"`: GoTrue refused the session (upstream 156d0fde),
+  // so the caller also drops a cookie session that carried it.
+  | { ok: false; status: 401 | 403; detail: string; code?: "session_expired" }
+  // Upstream 156d0fde, adapted: GoTrue answered with a failure of its own
+  // (a 500 from its database): our bug to fix, a reported 500, not a sign-out.
+  | { ok: false; status: 500; detail: string; failure: unknown }
   // Upstream 08bdc1d9, adapted: the identity provider (GoTrue, in supabase
   // mode) could not be reached, so nobody can say whether the session is
   // valid. Callers answer 503 upstream_unavailable, never a 401 sign-out.

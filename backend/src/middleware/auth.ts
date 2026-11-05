@@ -14,7 +14,7 @@ import { renewSupabaseCredential } from "../lib/auth/providers/supabaseSession.j
 import { reportError, requestRoutePattern, setCurrentUser } from "../lib/observability/sentry";
 import { AppError, type ErrorKind } from "../lib/appError";
 import { retryAfterSeconds, takeTenantTokens, tenantRateLimits } from "../lib/tenantRateLimit.js";
-import { sendUpstreamUnavailable } from "../lib/httpError";
+import { sendInternalError, sendUpstreamUnavailable } from "../lib/httpError";
 import { noteUpstreamReachable } from "../lib/upstreamOutage";
 
 function reportAuthFailure(req: Request, kind: ErrorKind, cause: unknown): void {
@@ -144,6 +144,29 @@ export async function requireAuth(
       }),
       { operation: "auth.session" },
     );
+    return;
+  }
+  if (!result.ok && result.status === 500) {
+    // Upstream 156d0fde: GoTrue answered with a failure of its own (a 500
+    // from its database, a malformed token response): our bug to fix, not a
+    // sign-out.
+    sendInternalError(
+      res,
+      new AppError("auth.supabase_unavailable", "session lookup failed in GoTrue", {
+        cause: result.failure,
+      }),
+    );
+    return;
+  }
+  if (!result.ok && result.code === "session_expired") {
+    // Upstream 156d0fde, adapted: GoTrue refused the session. On the cookie
+    // path, revoke Dev's server session and clear its cookie so the next
+    // request does not present it again.
+    if (cookieSession) {
+      try { await revokeServerSession(req); } catch { /* the cookie is cleared regardless */ }
+      clearServerSessionCookie(req, res);
+    }
+    res.status(401).json({ code: "session_expired", detail: result.detail });
     return;
   }
   if (!result.ok) {

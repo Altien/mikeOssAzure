@@ -38,6 +38,17 @@ export async function validateSupabaseToken(
   if (!data.user && isAuthUpstreamFailure(error)) {
     return { ok: false, status: 503, detail: "Authentication provider is unreachable", upstreamFailure: error };
   }
+  // Upstream 156d0fde, adapted: classify the failure from the error getUser
+  // returns. A refused session is a 401 the client treats as signed out; a
+  // GoTrue 500 is a reported server failure; anything else (no user at all)
+  // keeps the plain 401.
+  if (!data.user && isRefusedSupabaseSession(error)) {
+    return { ok: false, status: 401, detail: "Invalid or expired session", code: "session_expired" };
+  }
+  if (!data.user && error && typeof error === "object" && "__isAuthError" in error
+    && typeof (error as { status?: unknown }).status === "number" && (error as { status: number }).status >= 500) {
+    return { ok: false, status: 500, detail: "Authentication provider failed", failure: error };
+  }
   if (!data.user) {
     return { ok: false, status: 401, detail: "Invalid or expired token" };
   }
