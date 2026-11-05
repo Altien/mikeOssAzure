@@ -153,6 +153,11 @@ async function admit(req: Request, res: Response, credential: ServerCredential, 
     : credential.provider === "local"
       ? await validateLocalToken(credential.accessToken)
       : await validateSupabaseToken(credential.accessToken);
+  if (!result.ok && result.status === 503) {
+    // Upstream 08bdc1d9, adapted: an unreachable GoTrue is an outage, not a refusal.
+    sendUpstreamUnavailable(res, new AppError("auth.supabase_unavailable", "session lookup could not reach GoTrue", { cause: result.upstreamFailure }));
+    return false;
+  }
   if (!result.ok || result.principal.userId !== credential.userId) {
     res.status(result.ok ? 401 : result.status).json({ detail: result.ok ? "Invalid authentication credential" : result.detail }); return false;
   }

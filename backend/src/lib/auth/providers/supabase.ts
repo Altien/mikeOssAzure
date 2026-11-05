@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import type { AuthValidationResult } from "../types.js";
+import { isAuthUpstreamFailure } from "../../authUpstream";
 
 export async function validateSupabaseToken(
   token: string,
@@ -14,7 +15,11 @@ export async function validateSupabaseToken(
   const admin = createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false },
   });
-  const { data } = await admin.auth.getUser(token);
+  // auth-js returns, rather than throws, the error behind a missing user.
+  const { data, error } = await admin.auth.getUser(token);
+  if (!data.user && isAuthUpstreamFailure(error)) {
+    return { ok: false, status: 503, detail: "Authentication provider is unreachable", upstreamFailure: error };
+  }
   if (!data.user) {
     return { ok: false, status: 401, detail: "Invalid or expired token" };
   }

@@ -29,7 +29,11 @@ export interface AuthPrincipal {
 
 export type AuthValidationResult =
   | { ok: true; principal: AuthPrincipal }
-  | { ok: false; status: 401 | 403; detail: string };
+  | { ok: false; status: 401 | 403; detail: string }
+  // Upstream 08bdc1d9, adapted: the identity provider (GoTrue, in supabase
+  // mode) could not be reached, so nobody can say whether the session is
+  // valid. Callers answer 503 upstream_unavailable, never a 401 sign-out.
+  | { ok: false; status: 503; detail: string; upstreamFailure: unknown };
 
 /**
  * The email `res.locals.userEmail` carries. It is an AUTHORIZATION input,

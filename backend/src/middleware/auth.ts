@@ -14,6 +14,7 @@ import { renewSupabaseCredential } from "../lib/auth/providers/supabaseSession.j
 import { reportError, requestRoutePattern, setCurrentUser } from "../lib/observability/sentry";
 import { AppError, type ErrorKind } from "../lib/appError";
 import { retryAfterSeconds, takeTenantTokens, tenantRateLimits } from "../lib/tenantRateLimit.js";
+import { sendUpstreamUnavailable } from "../lib/httpError";
 
 function reportAuthFailure(req: Request, kind: ErrorKind, cause: unknown): void {
   reportError(new AppError(kind, "Authentication dependency failed", { cause }), {
@@ -117,6 +118,18 @@ export async function requireAuth(
     return;
   }
 
+  if (!result.ok && result.status === 503) {
+    // GoTrue could not be reached, so nobody could say whether the session
+    // is valid. A 401 here would make the web app sign the user out of a
+    // session that is fine; 503 upstream_unavailable tells it to wait.
+    sendUpstreamUnavailable(
+      res,
+      new AppError("auth.supabase_unavailable", "session lookup could not reach GoTrue", {
+        cause: result.upstreamFailure,
+      }),
+    );
+    return;
+  }
   if (!result.ok) {
     res.status(result.status).json({ detail: result.detail });
     return;
