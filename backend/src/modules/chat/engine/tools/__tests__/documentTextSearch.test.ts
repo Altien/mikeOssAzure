@@ -132,16 +132,25 @@ it.each(["returned", "thrown", "invalid"])("completes a %s search failure withou
   // The model's own bad arguments are answered in the tool result, not filed.
   expect(mocks.reportError).toHaveBeenCalledTimes(mode === "invalid" ? 0 : 1);
 });
+const postgrestError = (code: string) => ({
+  code, message: "private database message", details: "private row values", hint: "private query",
+});
 it.each([
-  ["PGRST202", "schema_out_of_date", "database needs an update"],
-  ["42P01", "schema_out_of_date", "database needs an update"],
-  ["57014", "search_timeout", "took too long"],
-  ["ECONNRESET", "search_unavailable", "temporarily unavailable"],
-  ["private-code", "internal_error", "could not be completed"],
-])("preserves the safe reason for database failure %s in logs, events and the tool result", async (code, category, message) => {
-  const fake = scriptedDb([{ rpc: "find_document_text", error: {
-    code, message: "private database message", details: "private row values", hint: "private query",
-  } }]);
+  ["PGRST202", postgrestError("PGRST202"), "PGRST202", "schema_out_of_date", "database needs an update"],
+  ["42P01", postgrestError("42P01"), "42P01", "schema_out_of_date", "database needs an update"],
+  ["57014", postgrestError("57014"), "57014", "search_timeout", "took too long"],
+  ["ECONNRESET", postgrestError("ECONNRESET"), "ECONNRESET", "search_unavailable", "temporarily unavailable"],
+  // supabase-js's own answer when its fetch to the gateway is refused: a
+  // plain result error with code '' and the undici code only in `details`.
+  ["a refused gateway (blank code)", {
+    code: "", message: "TypeError: fetch failed", hint: "",
+    details: "TypeError: fetch failed\n\nCaused by: Error: connect ECONNREFUSED private.host:8000 (ECONNREFUSED)",
+  }, "ECONNREFUSED", "search_unavailable", "temporarily unavailable"],
+  // The same with no usable cause code: the fixed fetch message alone.
+  ["a failed fetch with no code", { message: "TypeError: fetch failed" }, "fetch_failed", "search_unavailable", "temporarily unavailable"],
+  ["private-code", postgrestError("private-code"), undefined, "internal_error", "could not be completed"],
+])("preserves the safe reason for database failure %s in logs, events and the tool result", async (_label, error, failureCode, category, message) => {
+  const fake = scriptedDb([{ rpc: "find_document_text", error }]);
   mocks.find.mockImplementationOnce(findDocumentText);
   const { frames, result } = await searchActivity(fake.db);
   fake.done();
@@ -158,11 +167,11 @@ it.each([
   expect(reported).toBeInstanceOf(AppError);
   expect(diagnosticErrorTags(reported)).toMatchObject({
     error_kind: "chat.document_search_failed",
-    ...(code === "private-code" ? {} : { failure_code: code }),
+    ...(failureCode === undefined ? {} : { failure_code: failureCode }),
   });
   expect(context.level).toBe(["search_timeout", "search_unavailable"].includes(category) ? "warning" : undefined);
   expect(warn).toHaveBeenCalledWith("[run_tools] find_documents failed", {
-    category, ...(code === "private-code" ? {} : { failure_code: code }),
+    category, ...(failureCode === undefined ? {} : { failure_code: failureCode }),
   });
   expect(JSON.stringify({ frames, result, logs: warn.mock.calls })).not.toContain("private");
 });
