@@ -6,7 +6,7 @@
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastViewportUI, clearToasts } from "@mike/ui";
-import { describeError } from "@mike/client";
+import { MIKE_SENTRY_DSN, describeError } from "@mike/client";
 import {
     MikeApiError,
     parseApiErrorBody,
