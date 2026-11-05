@@ -13,7 +13,8 @@ likewise off unless a DSN is set on purpose, and `SENTRY_DISABLED=false` does
 not change that. When one does report, its `environment` is `development`
 instead of the default `self-hosted`; an explicit `SENTRY_ENVIRONMENT` always
 wins. The compiled backend image is never a development build, whatever
-`NODE_ENV` it runs with. Neither bundle contains an upstream or maintainer DSN. The static
+`NODE_ENV` it runs with; the rule is `backend/src/lib/buildMode.ts`, and the
+backend's `build_mode` tag follows it rather than `NODE_ENV`. Neither bundle contains an upstream or maintainer DSN. The static
 web export has no Next.js server or API gateway; API failures are correlated
 at the Express `/api` boundary with `X-Request-ID`.
 
