@@ -41,7 +41,7 @@ import {
 import { isPanelDocument } from "@/app/components/shared/types";
 import { authenticatedFetch, currentAuthEpoch } from "@/app/lib/authEvents";
 import { reportApiFailure, reportError, reportNetworkFailure, trackPendingRequest } from "@/app/lib/errorReporting";
-import { reportServerFailure, reportedUpstreamMessage } from "@/app/lib/reportedUpstream";
+import { reportedUpstreamMessage } from "@mike/client";
 const apiFetch = async (input: RequestInfo | URL, init?: RequestInit, operation?: Operation): Promise<Response> => {
     const release = trackPendingRequest();
     try {
@@ -195,15 +195,15 @@ export function reassignTenantContent(input: { kind: TenantContentKind; id: stri
 export const MALFORMED_ERROR_RESPONSE_MESSAGE =
     "The request could not be completed. Please try again.";
 // The 5xx codes the server side already reported, and their fixed messages,
-// live with the reporting rule that uses them (reportedUpstream.ts); they are
-// re-exported here because API consumers know them as mikeApi's answers.
+// are shared with the Word add-in (packages/client); they are re-exported
+// here because API consumers know them as mikeApi's answers.
 export {
     SCHEMA_OUT_OF_DATE_CODE,
     SCHEMA_OUT_OF_DATE_MESSAGE,
     UPSTREAM_UNAVAILABLE_CODE,
     UPSTREAM_UNAVAILABLE_MESSAGE,
     reportedUpstreamMessage,
-} from "@/app/lib/reportedUpstream";
+} from "@mike/client";
 
 // Upstream divergence (sync-log: 3a10943): kept for API parity with
 // upstream, but dev's backend never emits mfa_verification_required —
@@ -372,7 +372,7 @@ async function toApiError(
         });
         const code = typeof parsed.code === "string" ? parsed.code : null;
         // A code the backend or gateway already reported carries our fixed
-        // sentence for it (never the body's `detail`); reportServerFailure
+        // sentence for it (never the body's `detail`); reportApiFailure
         // below only marks it, so no screen files it a second time.
         const upstreamMessage = code ? reportedUpstreamMessage(code) : null;
         const apiError = new MikeApiError({
@@ -399,7 +399,7 @@ async function toApiError(
         // shown to the user; 5xx are failures worth an alert, correlated to
         // the backend's own event by request id.
         if (response.status >= 500) {
-            reportServerFailure({
+            reportApiFailure({
                 operation,
                 path,
                 method,

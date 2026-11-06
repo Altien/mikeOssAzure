@@ -14,6 +14,7 @@ import {
     normalizeApiPath,
     parseSampleRate,
     releaseName,
+    reportedUpstreamMessage,
     resolveDsn,
 } from "@mike/client";
 
@@ -84,11 +85,20 @@ export function markErrorHandled(error: unknown): void {
 }
 
 /**
- * A backend 5xx seen from the browser. The request id is the same one the
- * backend attached to its own event, so the two sides of one failure can be
- * matched in Sentry by searching `request_id:<id>`.
+ * A backend 5xx seen from the browser, reported immediately with the
+ * operation known by its caller. The request id is the same one the backend
+ * attached to its own event, so the two sides of one failure can be matched
+ * in Sentry by searching `request_id:<id>`.
+ *
+ * Same rule as the Word add-in's reportApiFailure: a code the backend or the
+ * Next gateway already reported (`upstream_unavailable`,
+ * `schema_out_of_date`) is only marked, so neither this nor a screen's later
+ * notifyError or console.error files the incident a second time.
+ *
+ * Dev divergence (sync-log: 4428944d): the static export has no Next
+ * gateway, so in Dev only the Express backend emits these codes
+ * (`upstream_unavailable` from a Supabase-provider auth outage).
  */
-/** Report an API failure immediately with the operation known by its caller. */
 export function reportApiFailure(failure: {
     path: string;
     status: number;
@@ -100,6 +110,7 @@ export function reportApiFailure(failure: {
 }): string | null {
     if (isReported(failure.error)) return null;
     markReported(failure.error);
+    if (reportedUpstreamMessage(failure.code)) return null;
     if (!Sentry.isEnabled()) return null;
     const route = normalizeApiPath(failure.path);
     const method = failure.method ?? "GET";
