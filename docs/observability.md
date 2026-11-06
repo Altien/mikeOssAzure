@@ -14,8 +14,11 @@ not change that. When one does report, its `environment` is `development`
 instead of the default `self-hosted`; an explicit `SENTRY_ENVIRONMENT` always
 wins. The compiled backend image is never a development build, whatever
 `NODE_ENV` it runs with; the rule is `backend/src/lib/buildMode.ts`, and the
-backend's `build_mode` tag follows it rather than `NODE_ENV`. Neither bundle contains an upstream or maintainer DSN. The static
-web export has no Next.js server or API gateway; API failures are correlated
+backend's `build_mode` tag follows it rather than `NODE_ENV`.
+`SENTRY_SOURCE_RUN_IS_INSTALL=true` declares a source run in production an
+install: with a DSN set it then reports as `self-hosted` with
+`build_mode=production`, like the compiled image. Neither bundle contains an
+upstream or maintainer DSN. The static web export has no Next.js server or API gateway; API failures are correlated
 at the Express `/api` boundary with `X-Request-ID`.
 
 The backend, web app, and Word add-in use an outbound allowlist before events

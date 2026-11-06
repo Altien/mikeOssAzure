@@ -1123,6 +1123,32 @@ describe("development builds", () => {
     });
   });
 
+  // The opt-in for a self-hoster running the source in production: the run
+  // reports exactly like the compiled image. Without it, the same run is off.
+  it("report like an install when SENTRY_SOURCE_RUN_IS_INSTALL=true", () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    // Upstream divergence (sync-log: d281a677): Dev bakes no Mike DSN
+    // (MIKE_SENTRY_DSN.backend is empty), so a source run without a DSN stays
+    // off even when declared an install; the opt-in is observable through the
+    // environment and build_mode of a source run that has a deployment DSN.
+    const env = { NODE_ENV: "production", SENTRY_DISABLED: "false" } as NodeJS.ProcessEnv;
+    expect(initSentry("api", env, true)).toBe(false);
+    resetSentryForTests();
+    expect(initSentry("api", { ...env, SENTRY_SOURCE_RUN_IS_INSTALL: "TRUE" } as NodeJS.ProcessEnv, true)).toBe(false);
+    expect(MIKE_SENTRY_DSN.backend).toBe("");
+
+    const dsn = "http://mike@localhost:9999/1";
+    resetSentryForTests();
+    expect(initSentry("api", { ...env, SENTRY_DSN: dsn } as NodeJS.ProcessEnv, true)).toBe(true);
+    expect(vi.mocked(Sentry.init).mock.calls.at(-1)![0]!).toMatchObject({ environment: "development" });
+
+    resetSentryForTests();
+    expect(initSentry("api", { ...env, SENTRY_DSN: dsn, SENTRY_SOURCE_RUN_IS_INSTALL: "TRUE" } as NodeJS.ProcessEnv, true)).toBe(true);
+    const options = vi.mocked(Sentry.init).mock.calls.at(-1)![0]!;
+    expect(options).toMatchObject({ dsn, environment: "self-hosted" });
+    expect(options.initialScope).toMatchObject({ tags: { build_mode: "production" } });
+  });
+
   it("report as environment development to a DSN set on purpose, unless SENTRY_ENVIRONMENT says otherwise", () => {
     const dsn = "http://mike@localhost:9999/1";
     expect(sentryConfiguration({ SENTRY_DSN: dsn } as NodeJS.ProcessEnv, true)).toMatchObject({
