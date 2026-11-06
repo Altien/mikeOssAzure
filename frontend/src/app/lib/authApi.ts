@@ -1,4 +1,4 @@
-import { reportNetworkFailure } from "@/app/lib/errorReporting";
+import { markErrorHandled, reportNetworkFailure } from "@/app/lib/errorReporting";
 import {
     reportServerFailure,
     reportedUpstreamMessage,
@@ -47,10 +47,16 @@ export class AuthApiError extends Error {
 
 const AUTH_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") + "/api/auth";
 
+/**
+ * `report: false` marks a failure handled instead of sending it: a caller
+ * retrying the same request (AuthContext's session check during an outage)
+ * reports the first failure of its streak, not every attempt.
+ */
 async function authRequest<T>(
     operation: Operation,
     path: string,
     init?: RequestInit,
+    { report = true }: { report?: boolean } = {},
 ): Promise<T> {
     const url = `${AUTH_BASE}${path}`;
     const method = init?.method ?? "GET";
@@ -69,7 +75,8 @@ async function authRequest<T>(
         // Same rule as mikeApi: a request that never got a response is one
         // "API unreachable" event per outage, never one per auth screen. An
         // abort is the caller's doing, not an outage.
-        if (!isAbortError(error)) {
+        if (!report) markErrorHandled(error);
+        else if (!isAbortError(error)) {
             reportNetworkFailure(error, { method, url });
         }
         throw error;
@@ -101,7 +108,8 @@ async function authRequest<T>(
         // the backend attached to its own event, unless the backend or the
         // gateway already reported it (upstream_unavailable when GoTrue or
         // the API is down, schema_out_of_date).
-        if (response.status >= 500) {
+        if (!report) markErrorHandled(error);
+        else if (response.status >= 500) {
             reportServerFailure({
                 operation,
                 path: url,
@@ -118,9 +126,13 @@ async function authRequest<T>(
     return response.json() as Promise<T>;
 }
 
-export async function getAuthSession(): Promise<AuthUser | null> {
+export async function getAuthSession(
+    options: { report?: boolean } = {},
+): Promise<AuthUser | null> {
     try {
-        return (await authRequest<{ user: AuthUser }>("auth.session", "/session")).user;
+        return (
+            await authRequest<{ user: AuthUser }>("auth.session", "/session", undefined, options)
+        ).user;
     } catch (error) {
         if (error instanceof AuthApiError && error.status === 401) return null;
         throw error;

@@ -21,8 +21,12 @@ import {
 } from "@/app/lib/authApi";
 import { AUTH_SESSION_INVALIDATED_EVENT, advanceAuthEpoch } from "@/app/lib/authEvents";
 import { setReportingUser } from "@/app/lib/errorReporting";
-import { isOnAuthRoute, notifyError } from "@/app/lib/userFacingError";
-import { clearToasts } from "@mike/ui";
+import {
+    describeError,
+    isOnAuthRoute,
+    notifyError,
+} from "@/app/lib/userFacingError";
+import { clearToasts, dismissToastsWithKey } from "@mike/ui";
 
 type User = AuthUser;
 
@@ -45,26 +49,38 @@ const AUTH_SYNC_CHANNEL = "mike-auth-state";
 const AUTH_SYNC_STORAGE_KEY = "mike-auth-state-change";
 const SESSION_ERROR_MESSAGE =
     "We could not check your session. Please try again.";
+const SESSION_TOAST_KEY = "auth-session";
 const EXPIRED_SESSION_MESSAGE = "Your session expired. Please log in again.";
 /** Retry delays for a session check the server could not answer. */
 const SESSION_RETRY_BASE_MS = 1_000;
 const SESSION_RETRY_MAX_MS = 30_000;
 
 /**
- * Did the session check fail because the server could not answer (a 5xx such
- * as 503 upstream_unavailable while GoTrue or the API is down, or no response
- * at all), rather than answer "no session"? Then nobody knows whether the
- * user is signed in, and treating them as signed out would send a working
- * session to the login page. A 401 never gets here: getAuthSession answers
- * null for it.
+ * Kinds (from the shared describeError) that mean the server could not
+ * answer: no response, offline, a timeout or gateway 504, a 502/503 or the
+ * `upstream_unavailable` code while GoTrue or the API is down.
+ */
+const TRANSIENT_SESSION_KINDS: ReadonlySet<string> = new Set([
+    "network",
+    "offline",
+    "timeout",
+    "unavailable",
+]);
+
+/**
+ * Did the session check fail because the server could not answer, rather
+ * than answer "no session"? Then nobody knows whether the user is signed in,
+ * and treating them as signed out would send a working session to the login
+ * page, so the check is retried. A 500 internal_error (a bug, which a retry
+ * will not fix), a 503 schema_out_of_date (a migration the operator must
+ * apply) and a coding error thrown here are not transient: they end the
+ * loading state and show the notice once. A 401 never gets here:
+ * getAuthSession answers null for it.
  */
 function isTransientSessionFailure(error: unknown): boolean {
-    // An AuthApiError carries the HTTP status (read by shape, so a test that
-    // mocks the auth client needs no class).
-    const status = (error as { status?: unknown } | null)?.status;
-    if (typeof status === "number") return status >= 500;
-    // fetch rejects with a TypeError when no response arrives.
-    return error instanceof TypeError;
+    const described = describeError(error);
+    if (described.code === "schema_out_of_date") return false;
+    return TRANSIENT_SESSION_KINDS.has(described.kind);
 }
 
 type AuthSyncMessage = {
@@ -120,10 +136,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setReportingUser(user ? { id: user.id } : null);
     }, [user]);
 
-    const fetchAndApplySession = useCallback(async () => {
+    const fetchAndApplySession = useCallback(async (report = true) => {
         const generation = authGeneration.current;
         if (!sessionRequestRef.current || sessionRequestRef.current.generation !== generation) {
-            const promise = getAuthSession().finally(() => {
+            const promise = getAuthSession({ report }).finally(() => {
                 if (sessionRequestRef.current?.generation === generation) sessionRequestRef.current = null;
             });
             sessionRequestRef.current = { generation, promise };
@@ -156,7 +172,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (isOnAuthRoute()) return;
         notifyError(error, {
             action: "check your session",
-            dedupeKey: "auth-session",
+            dedupeKey: SESSION_TOAST_KEY,
             onRetry: () => {
                 if (generation !== authGeneration.current) return;
                 void checkSessionRef.current(true);
@@ -167,40 +183,59 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // A check the server could not answer keeps the auth state it had (the
     // signed-in user, or "still loading" on a fresh page load, which keeps
     // the app's loader up instead of redirecting to the login page) and is
-    // retried with backoff until the server answers. One notice per failing
-    // streak: the retries update it silently.
-    const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const retryAttemptRef = useRef(0);
+    // retried with backoff until the server answers. One chain of retries
+    // at a time, one report and one notice per failing streak: the retries
+    // are marked handled and update the notice silently.
+    //
+    // `generation` counts checks: only the newest one may apply its outcome
+    // and schedule the next retry, so a focus event during a pending retry
+    // cannot start a second chain. `disposed` stops scheduling once the
+    // provider unmounts (reset on mount for StrictMode's remount).
+    const retryRef = useRef({
+        timer: null as ReturnType<typeof setTimeout> | null,
+        attempt: 0,
+        generation: 0,
+        disposed: false,
+    });
     const checkSession = useCallback(
         async (notify: boolean) => {
-            if (retryTimerRef.current !== null) {
-                clearTimeout(retryTimerRef.current);
-                retryTimerRef.current = null;
+            const retry = retryRef.current;
+            if (retry.timer !== null) {
+                clearTimeout(retry.timer);
+                retry.timer = null;
             }
+            // Two fences: `generation` is Dev's auth generation (a sign-out,
+            // invalidation or another tab ends it); `check` is upstream's
+            // check counter (only the newest check may apply or schedule).
             const generation = authGeneration.current;
+            const check = ++retry.generation;
+            const firstOfStreak = retry.attempt === 0;
             try {
-                await fetchAndApplySession();
-                retryAttemptRef.current = 0;
+                await fetchAndApplySession(firstOfStreak);
+                if (check !== retry.generation) return;
+                // The streak is over: its sticky notice no longer applies.
+                if (!firstOfStreak) dismissToastsWithKey(SESSION_TOAST_KEY);
+                retry.attempt = 0;
                 setAuthLoading(false);
             } catch (error) {
                 // fetchAndApplySession only throws for the current generation.
-                const firstOfStreak = retryAttemptRef.current === 0;
+                if (check !== retry.generation || retry.disposed) return;
                 if (isTransientSessionFailure(error)) {
                     const delay = Math.min(
                         SESSION_RETRY_MAX_MS,
-                        SESSION_RETRY_BASE_MS * 2 ** retryAttemptRef.current,
+                        SESSION_RETRY_BASE_MS * 2 ** retry.attempt,
                     );
-                    retryAttemptRef.current += 1;
-                    retryTimerRef.current = setTimeout(() => {
-                        retryTimerRef.current = null;
+                    retry.attempt += 1;
+                    retry.timer = setTimeout(() => {
+                        retry.timer = null;
                         if (generation !== authGeneration.current) {
-                            retryAttemptRef.current = 0;
+                            retry.attempt = 0;
                             return;
                         }
                         void checkSessionRef.current(false);
                     }, delay);
                 } else {
-                    retryAttemptRef.current = 0;
+                    retry.attempt = 0;
                     setAuthLoading(false);
                 }
                 if (notify || firstOfStreak) reportSessionFailure(error, generation);
@@ -214,12 +249,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         checkSessionRef.current = checkSession;
     }, [checkSession]);
 
-    useEffect(
-        () => () => {
-            if (retryTimerRef.current !== null) clearTimeout(retryTimerRef.current);
-        },
-        [],
-    );
+    useEffect(() => {
+        const retry = retryRef.current;
+        retry.disposed = false;
+        return () => {
+            retry.disposed = true;
+            // Checks still in flight are now stale: none may schedule.
+            retry.generation += 1;
+            retry.attempt = 0;
+            if (retry.timer !== null) clearTimeout(retry.timer);
+            retry.timer = null;
+        };
+    }, []);
 
     useEffect(() => {
         clearLegacyBrowserAuthStorage();
