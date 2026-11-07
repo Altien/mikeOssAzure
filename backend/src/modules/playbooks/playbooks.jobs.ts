@@ -47,6 +47,8 @@ import {
 import { isStagedPlaybookImportKey } from "./playbooks.staging";
 import { reportPlaybookFailure } from "./playbooks.reporting";
 
+import { DocumentReviewRetryableError } from "../documents/documents.service";
+
 export const PLAYBOOK_REVIEW_JOB = "playbook.review";
 export const PLAYBOOK_IMPORT_JOB = "playbook.import";
 
@@ -124,7 +126,12 @@ async function untilRecorded(
     await work();
   } catch (error) {
     if (error instanceof PlaybookClaimLostError) return;
-    const row = await loadRow(db, table, id);
+    let row: Record<string, unknown> | null;
+    try { row = await loadRow(db, table, id); }
+    catch (readError) {
+      // Preserve the retry marker through a failed reconciliation read.
+      throw error instanceof DocumentReviewRetryableError ? error : readError;
+    }
     if (!row || row.status !== "running") return;
     throw error;
   }

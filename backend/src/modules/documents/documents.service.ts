@@ -67,3 +67,5 @@ export { findDocumentText, readStoredDocumentText, storedDocumentTextCurrent } f
 export { readCurrentLegacyDocumentText } from "./documents.legacyTextRead";
 
 export { getDocumentStatuses } from "./documents.status";
+
+export { prepareDocumentReviewEdits, publishDocumentReview, DocumentReviewRetryableError } from "./documents.reviewPublication";

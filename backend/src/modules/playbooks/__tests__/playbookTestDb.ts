@@ -87,6 +87,7 @@ export function database(
       return { data: result, error: null };
     };
     const query = {
+      throwOnError: () => query,
       select: () => query,
       eq: (key: string, value: unknown) => {
         predicates.push((row) => row[key] === value);
@@ -158,8 +159,9 @@ export function database(
   // Model the canonical queue/domain transaction used by these unit tests.
   // PostgreSQL integration fixtures separately exercise the real locks/CAS.
   const rpcs: { name: string; args: Row }[] = [];
-  const rpc = async (name: string, args: Row) => {
+  const rpc = async (name: string, args: Row): Promise<{ data: unknown; error: unknown }> => {
     rpcs.push({ name, args });
+    if (name === "publish_playbook_review") return publish(name, args);
     const result = (data: unknown) => ({ data, error: null });
     const jobs = tables.db_jobs ?? [];
     const job = jobs.find((row) => row.id === (args.p_job_id ?? args.p_id));
@@ -259,5 +261,109 @@ export function database(
     return result({ result: "stale" });
   };
 
+  // Dev: a fenced (worker-claimed) review publishes through the same
+  // mutate_playbook_job model; an in-process review uses upstream's model.
+  const publish = publicationRpc(tables, writes, rpc);
   return { db: { from, rpc } as unknown as Db, writes, tables, rpcs };
+}
+
+// Sequential contract model only. PostgreSQL tests establish the actual
+// publication transaction, rollback and concurrent winner behavior.
+export function publicationRpc(
+  tables: Record<string, Row[]>,
+  writes: { table: string; op: string; payload: Row }[] = [],
+  queue?: (name: string, args: Row) => Promise<{ data: unknown; error: unknown }>,
+) {
+  return async (name: string, args: Row): Promise<{ data: unknown; error: unknown }> => {
+    if (name !== "publish_playbook_review") throw new Error(`Unexpected RPC: ${name}`);
+    const identity = args.p_job_identity as Row | null | undefined;
+    if (identity) return fencedPublication(tables, args, identity, queue!);
+    const run = tables.playbook_runs.find((row) => row.id === args.p_run_id && row.user_id === args.p_user_id);
+    if (!run) return { data: { disposition: "missing" }, error: null };
+    if (run.status !== "running") return { data: {
+      disposition: run.status === "completed" ? "existing" : "terminal", run: structuredClone(run),
+    }, error: null };
+    let disposition = "published";
+    let versionId: unknown = null;
+    const findings = structuredClone(args.p_findings) as Row[];
+    const version = args.p_version as Row | null;
+    if (version) {
+      const doc = (tables.documents ?? []).find((row) => row.id === args.p_document_id);
+      const source = (tables.document_versions ?? []).find((row) => row.id === args.p_expected_version_id);
+      if (!doc || run.document_id !== doc.id || doc.current_version_id !== source?.id ||
+        source?.storage_path !== args.p_expected_storage_path || source?.deleted_at) disposition = "source_changed";
+      else {
+        const number = (tables.document_versions ?? []).filter((row) => row.document_id === doc.id).length + 1;
+        versionId = version.id;
+        tables.document_versions.push({ ...version, document_id: doc.id, version_number: number, deleted_at: null });
+        for (const item of args.p_edits as Row[]) {
+          const { finding_index, reason, ...edit } = item;
+          (tables.document_edits ??= []).push({ ...edit, document_id: doc.id, version_id: versionId, status: "pending" });
+          const { id, ...fields } = edit;
+          findings[Number(finding_index)].edit = { ...fields, kind: "edit", edit_id: id,
+            document_id: doc.id, version_id: versionId, version_number: number, reason, status: "pending" };
+        }
+        doc.current_version_id = versionId;
+      }
+    }
+    const payload = { status: "completed", summary: args.p_summary, findings_json: findings,
+      edited_version_id: versionId, completed_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+    Object.assign(run, payload);
+    writes.push({ table: "playbook_runs", op: "update", payload });
+    return { data: { disposition, run: structuredClone(run) }, error: null };
+  };
+}
+
+const claimLost = { data: null, error: { code: "40001", message: "playbook_claim_lost" } };
+
+/**
+ * Dev's job mode, sequentially: the claim fence, the document check, the
+ * version/edits/activation, then mutate_playbook_job review_publish (access,
+ * completion, audit). A refusal at review_publish rolls the version back.
+ */
+async function fencedPublication(
+  tables: Record<string, Row[]>,
+  args: Row,
+  identity: Row,
+  queue: (name: string, args: Row) => Promise<{ data: unknown; error: unknown }>,
+): Promise<{ data: unknown; error: unknown }> {
+  const fence = { p_job_id: identity.id, p_attempt: identity.attempt, p_token: identity.token, p_domain_id: args.p_run_id };
+  const checked = (await queue("mutate_playbook_job", { ...fence, p_operation: "check" })).data as Row;
+  if (checked?.result !== "current") return claimLost;
+  const run = (tables.playbook_runs ?? []).find((row) => row.id === args.p_run_id && row.user_id === args.p_user_id);
+  if (!run) return { data: { disposition: "missing" }, error: null };
+  if (run.status !== "running") return { data: {
+    disposition: run.status === "completed" ? "existing" : "terminal", run: structuredClone(run),
+  }, error: null };
+  const before = structuredClone({ versions: tables.document_versions, edits: tables.document_edits,
+    documents: tables.documents });
+  const findings = structuredClone(args.p_findings) as Row[];
+  const version = args.p_version as Row | null;
+  let versionId: unknown = null;
+  if (version) {
+    const doc = (tables.documents ?? []).find((row) => row.id === args.p_document_id);
+    const source = (tables.document_versions ?? []).find((row) => row.id === args.p_expected_version_id);
+    if (!doc || run.document_id !== doc.id || doc.current_version_id !== source?.id ||
+      source?.storage_path !== args.p_expected_storage_path || source?.deleted_at)
+      return { data: { disposition: "conflict" }, error: null };
+    const number = (tables.document_versions ?? []).filter((row) => row.document_id === doc.id).length + 1;
+    versionId = version.id;
+    (tables.document_versions ??= []).push({ ...version, document_id: doc.id, version_number: number, deleted_at: null });
+    for (const item of args.p_edits as Row[]) {
+      const { finding_index, reason, id: _ignored, ...edit } = item;
+      const id = randomUUID();
+      (tables.document_edits ??= []).push({ ...edit, id, document_id: doc.id, version_id: versionId, status: "pending" });
+      findings[Number(finding_index)].edit = { ...edit, kind: "edit", edit_id: id,
+        document_id: doc.id, version_id: versionId, version_number: number, reason, status: "pending" };
+    }
+    doc.current_version_id = versionId;
+  }
+  const published = (await queue("mutate_playbook_job", { ...fence, p_operation: "review_publish",
+    p_values: { summary: args.p_summary, findings_json: findings, edited_version_id: versionId } })).data as Row;
+  if (published?.result === "forbidden" || published?.result === "conflict") {
+    Object.assign(tables, { document_versions: before.versions, document_edits: before.edits, documents: before.documents });
+    return { data: { disposition: published.result }, error: null };
+  }
+  if (published?.result !== "published") return claimLost;
+  return { data: { disposition: "published", run: structuredClone(run) }, error: null };
 }
