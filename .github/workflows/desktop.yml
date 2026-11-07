@@ -120,10 +120,13 @@ jobs:
         uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
         with:
           path: desktop/local-stack/bin
-          key: local-stack-bin-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop/scripts/fetch-local-stack.sh', 'desktop/scripts/fetch-service-notices.mjs') }}
+          key: local-stack-bin-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop/scripts/fetch-local-stack.sh', 'desktop/scripts/fetch-service-notices.mjs', 'desktop/scripts/relocate-postgrest.mjs') }}
 
       - name: Fetch Postgres and PostgREST and their notices
         run: pnpm --dir desktop run local:fetch
+
+      - name: Audit fetched PostgREST and test relocation
+        run: MIKE_NATIVE_BIN="$PWD/desktop/local-stack/bin" node --test desktop/src/local/postgrest-linkage.test.js
 
       # backend tsc + offline workflow bundle + Next static export, with the
       # same isolated environment the release build uses (env -i inside the
@@ -143,6 +146,12 @@ jobs:
         run: |
           pnpm --dir desktop run local:stage
           pnpm --dir desktop run dist:local
+
+      # Inspect the shipped binary itself, without repairing a test copy.
+      - name: Audit packaged PostgREST linkage
+        run: |
+          MAC_DIST_DIR=$(node -p 'process.arch === "arm64" ? "mac-arm64" : "mac"')
+          MIKE_NATIVE_BIN="$PWD/desktop/dist/$MAC_DIST_DIR/Mike.app/Contents/Resources/local-stack/bin" node --test --test-name-pattern='actual PostgREST input' desktop/src/local/postgrest-linkage.test.js
 
       - name: Packaged first-run + returning-user e2e
         run: pnpm --dir desktop run e2e:local

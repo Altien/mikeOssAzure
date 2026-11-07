@@ -86,6 +86,22 @@ uses its soffice binary when installed. Email-based password recovery and
 cloud synchronisation do not apply to the local cookie-session provider.
 Back up the entire local directory, including pgdata and secrets, together.
 
+## Native PostgREST linkage
+
+local:fetch and local:stage relocate the pinned macOS PostgREST binary to
+@loader_path/pg/lib/libpq.5.dylib, including cached downloads, so it needs no
+Homebrew or DYLD_* override. The helper rejects unexpected non-system
+dependencies, audits the bundled dependency closure and applies a verified
+ad-hoc signature for development. Run it before release packaging; signed
+releases are never patched in place. To check fetched, staged or packaged output:
+
+```bash
+MIKE_NATIVE_BIN="$PWD/desktop/local-stack/bin" node --test desktop/src/local/postgrest-linkage.test.js
+```
+
+Without MIKE_NATIVE_BIN this native test skips in the ordinary unit suite.
+desktop.yml runs it after the native fetch and again, read-only, on the packaged app.
+
 ## Migration safety
 
 Desktop calls the compiled canonical migrationLedger helper from the backend.

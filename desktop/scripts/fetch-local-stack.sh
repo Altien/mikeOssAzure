@@ -73,6 +73,9 @@ else
   echo "    already present, skipping"
 fi
 
+# Repair cached binaries too; never rely on a host Homebrew installation.
+node scripts/relocate-postgrest.mjs "$DEST"
+
 # Notices are independent of the binary cache, so older cached installations
 # acquire them too. All files come from the exact pinned upstream versions.
 node scripts/fetch-service-notices.mjs "$DEST/notices" \
