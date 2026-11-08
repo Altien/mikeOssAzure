@@ -32,6 +32,7 @@ import {
     requestIdOf,
     runLLMStream,
     stripTransientAssistantEvents,
+    throwIfTurnStopped,
     writeApprovedConnectorFrames,
     PROJECT_EXTRA_TOOLS,
     parseChatMessages,
@@ -261,7 +262,7 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                       })
                 : Promise.resolve();
 
-            const { events, citations } = await runLLMStream({
+            const { fullText, events, citations } = await runLLMStream({
                 onActivity: run?.touch,
                 apiMessages,
                 docStore,
@@ -295,6 +296,7 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                 nonce,
                 emitDone: false,
             });
+            throwIfTurnStopped(stream.signal, { fullText, events });
 
             const persistedEvents = stripTransientAssistantEvents(events);
             if (askInputsResponse) {

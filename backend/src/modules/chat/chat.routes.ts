@@ -32,6 +32,7 @@ import {
     isMeaningfulTextlessAssistantOutput,
     runLLMStream,
     stripTransientAssistantEvents,
+    throwIfTurnStopped,
     writeApprovedConnectorFrames,
     parseChatMessages,
     parseOptionalAskInputsResponse,
@@ -795,6 +796,7 @@ chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                 // populated.
                 emitDone: false,
             });
+            throwIfTurnStopped(stream.signal, { fullText, events });
 
             devLog("[chat/stream] LLM stream finished", {
                 fullTextLen: fullText?.length ?? 0,

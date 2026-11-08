@@ -224,6 +224,22 @@ export class AssistantStreamAbortError extends AssistantStreamError {
   }
 }
 
+/**
+ * Treat a turn as stopped when its signal fired after `runLLMStream` had
+ * already returned: a deadline or Stop that lands during citation
+ * verification, or while a provider or tool ignored the abort. The run has
+ * told its readers the turn is over (and may have force-finished it), so the
+ * route must take its stop path rather than persist, title and curate the
+ * turn as a completed answer.
+ */
+export function throwIfTurnStopped(
+  signal: AbortSignal,
+  result: { fullText: string; events: AssistantEvent[] },
+): void {
+  if (signal.aborted)
+    throw new AssistantStreamAbortError(result.fullText, result.events);
+}
+
 class AssistantStreamAskInputsPause extends Error {
   constructor() {
     super("Waiting for user input.");

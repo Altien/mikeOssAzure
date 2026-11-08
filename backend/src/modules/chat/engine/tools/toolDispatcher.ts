@@ -485,9 +485,14 @@ export async function runToolCalls(
      * two writes to one document never start from the same version.
      */
     documentLocks?: KeyedLock;
-    signal?: AbortSignal;
     /** A subagent scoped to its docStore's documents: searches stay inside them. */
     documentsScoped?: boolean;
+    /**
+     * The turn's abort signal. Calls run one after another, so a turn stopped
+     * by Stop or a stream deadline starts none of the batch's remaining tools
+     * (their document edits, creations and connector writes included).
+     */
+    signal?: AbortSignal;
   } = {},
 ): Promise<{
   toolResults: unknown[];
@@ -659,6 +664,8 @@ export async function runToolCalls(
   let connectorOwner: ConnectorOwner | undefined;
   const toolStarts: ToolStart[] = [];
   for (const tc of toolCalls) {
+    // runLLMStream throws its abort as soon as this returns.
+    if (options.signal?.aborted) break;
     toolStarts.push({ id: tc.id, name: tc.function.name, at: Date.now() });
     let args: Record<string, unknown> = {};
     try {
