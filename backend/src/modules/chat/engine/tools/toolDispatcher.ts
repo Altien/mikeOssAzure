@@ -661,11 +661,16 @@ export async function runToolCalls(
     args.scope === "document" &&
     !!resolveDocLabel(String(args.doc_id ?? ""), docStore, docIndex);
 
+  // Checked before each call and again right before a write that first awaits
+  // something (a document lock held by another call of the answer, connector
+  // planning, a source download): a turn stopped during that wait must not
+  // start the write after its readers were told it is over. runLLMStream
+  // throws its abort as soon as this returns.
+  const stopped = () => options.signal?.aborted === true;
   let connectorOwner: ConnectorOwner | undefined;
   const toolStarts: ToolStart[] = [];
   for (const tc of toolCalls) {
-    // runLLMStream throws its abort as soon as this returns.
-    if (options.signal?.aborted) break;
+    if (stopped()) break;
     toolStarts.push({ id: tc.id, name: tc.function.name, at: Date.now() });
     let args: Record<string, unknown> = {};
     try {
@@ -721,6 +726,7 @@ export async function runToolCalls(
         args,
         db,
       );
+      if (stopped()) break;
       if (plan.type === "approval" && options.connectorApprovals) {
         // Nothing runs now. The turn pauses on this item, and the user's
         // decision continues it (see connectorApprovals.ts).
@@ -1205,7 +1211,15 @@ export async function runToolCalls(
       } else {
         // The live Word document has no stored id; its request-local label
         // still serializes reviews of the same document within this turn.
-        const release = await documentLocks.acquire(indexed?.document_id ?? docId, signal);
+        // Dev's lock takes the signal: a stop ends the wait, and the stopped
+        // review never starts (same outcome as the recheck below).
+        const release = await documentLocks
+          .acquire(indexed?.document_id ?? docId, signal)
+          .catch((error: unknown) => {
+            if (stopped()) return null;
+            throw error;
+          });
+        if (!release) break;
         try {
           const isDocx = docInfo.file_type === "docx";
           // A Word document is read from its file by the review itself; other
@@ -1215,6 +1229,8 @@ export async function runToolCalls(
             : await readDocumentContent(docId, docStore, write, docIndex, db, {
                 emitEvents: false,
               });
+          // The review saves its suggestions as a new version.
+          if (stopped()) break;
           const run = await reviewWithPlaybook({
             userId,
             userEmail: options.userEmail,
@@ -2109,8 +2125,11 @@ export async function runToolCalls(
             reason: e.reason ? String(e.reason) : undefined,
           }),
         );
+        // Dev's lock also takes the signal, so a stop ends the wait itself
+        // (not only when the lock frees); either way the stopped edit never
+        // starts and the batch returns with the events it already has.
         const result = await documentLocks.run(indexed.document_id, async () => {
-          signal?.throwIfAborted();
+          if (stopped()) return null;
           const edited = await runEditDocument({
             documentId: indexed.document_id,
             userId,
@@ -2127,7 +2146,11 @@ export async function runToolCalls(
             });
           }
           return edited;
-        }, signal);
+        }, signal).catch((error: unknown) => {
+          if (stopped()) return null;
+          throw error;
+        });
+        if (!result) break;
         log().debug("doc.edit", {
           documentId: indexed.document_id,
           edits: edits.length,
@@ -2344,6 +2367,8 @@ export async function runToolCalls(
               sourceInfo.file_type,
             );
 
+            // Nothing is written before this point.
+            if (stopped()) break;
             // Parallel uploads: the doc bytes (and PDF
             // rendition if any) for every new copy.
             const uploadJobs: Promise<unknown>[] = [];
