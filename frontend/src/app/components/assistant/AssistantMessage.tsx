@@ -615,6 +615,7 @@ function AssistantMessageImpl({
                     copies={event.copies}
                     isStreaming={!!event.isStreaming}
                     hasError={!!event.error}
+                    interrupted={!!event.interrupted}
                     showConnector={showConnector}
                     onOpenCopy={
                         !event.isStreaming && onOpenDocument
@@ -637,6 +638,7 @@ function AssistantMessageImpl({
                     filename={event.filename}
                     isStreaming={event.isStreaming}
                     hasError={!!event.error}
+                    interrupted={!!event.interrupted}
                     showConnector={showConnector}
                     onClick={
                         !event.isStreaming &&

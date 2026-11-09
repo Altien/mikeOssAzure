@@ -302,6 +302,8 @@ export type AssistantEvent =
       }[];
       error?: string;
       isStreaming?: boolean;
+      /** Client-only: the turn ended before this step reported a result. */
+      interrupted?: boolean;
     })
   | WireActivity<"workflow_applied">
   | (Omit<
@@ -312,6 +314,8 @@ export type AssistantEvent =
       annotations: EditAnnotation[];
       error?: string;
       isStreaming?: boolean;
+      /** Client-only: the turn ended before this step reported a result. */
+      interrupted?: boolean;
     })
   | (Omit<
       WireActivity<"courtlistener_search_case_law">,

@@ -558,7 +558,6 @@ export async function runToolCalls(
   const externalSources =
     externalSourceCache ?? new ExternalSourceCache();
   const documentLocks = options.documentLocks ?? createKeyedLock();
-  const signal = options.signal;
   const groupedFindInCaseSearches = toolCalls
     .filter((tc) => tc.function.name === COURTLISTENER_TOOL_NAMES.findInCase)
     .map((tc) => {
@@ -1211,14 +1210,12 @@ export async function runToolCalls(
       } else {
         // The live Word document has no stored id; its request-local label
         // still serializes reviews of the same document within this turn.
-        // Dev's lock takes the signal: a stop ends the wait, and the stopped
-        // review never starts (same outcome as the recheck below).
-        const release = await documentLocks
-          .acquire(indexed?.document_id ?? docId, signal)
-          .catch((error: unknown) => {
-            if (stopped()) return null;
-            throw error;
-          });
+        // A stop while this waits behind another review of the document
+        // ends the wait: the review is not started.
+        const release = await documentLocks.acquireUnlessAborted(
+          indexed?.document_id ?? docId,
+          options.signal,
+        );
         if (!release) break;
         try {
           const isDocx = docInfo.file_type === "docx";
@@ -2119,40 +2116,40 @@ export async function runToolCalls(
             reason: e.reason ? String(e.reason) : undefined,
           }),
         );
-        // Dev's lock also takes the signal, so a stop ends the wait itself
-        // (not only when the lock frees); either way the stopped edit never
-        // starts and the batch returns with the events it already has.
-        const result = await documentLocks.run(indexed.document_id, async () => {
-          if (stopped()) return null;
-          // Announce the edit only once it is about to run: a turn stopped
-          // while this call waited on the lock must not leave an "Editing"
-          // card behind.
-          write(
-            `data: ${JSON.stringify({
-              type: "doc_edited_start",
-              filename: docInfo.filename,
-            })}\n\n`,
-          );
-          const edited = await runEditDocument({
-            documentId: indexed.document_id,
-            userId,
-            userEmail: options.userEmail ?? null,
-            edits,
-            db,
-            reuseVersion: turnEditState?.get(indexed.document_id),
-          });
-          if (edited.ok) {
-            turnEditState?.set(indexed.document_id, {
-              versionId: edited.version_id,
-              versionNumber: edited.version_number,
-              storagePath: edited.storage_path,
+        // A stop while this waits behind another edit of the document ends
+        // the wait (runUnlessAborted resolves to null): the edit is skipped.
+        const result = await documentLocks.runUnlessAborted(
+          indexed.document_id,
+          options.signal,
+          async () => {
+            if (stopped()) return null;
+            // Announce the edit only once it is about to run: a turn stopped
+            // while this call waited on the lock must not leave an "Editing"
+            // card behind.
+            write(
+              `data: ${JSON.stringify({
+                type: "doc_edited_start",
+                filename: docInfo.filename,
+              })}\n\n`,
+            );
+            const edited = await runEditDocument({
+              documentId: indexed.document_id,
+              userId,
+              userEmail: options.userEmail ?? null,
+              edits,
+              db,
+              reuseVersion: turnEditState?.get(indexed.document_id),
             });
-          }
-          return edited;
-        }, signal).catch((error: unknown) => {
-          if (stopped()) return null;
-          throw error;
-        });
+            if (edited.ok) {
+              turnEditState?.set(indexed.document_id, {
+                versionId: edited.version_id,
+                versionNumber: edited.version_number,
+                storagePath: edited.storage_path,
+              });
+            }
+            return edited;
+          },
+        );
         if (!result) break;
         log().debug("doc.edit", {
           documentId: indexed.document_id,
