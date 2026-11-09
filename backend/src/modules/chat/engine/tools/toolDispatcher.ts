@@ -2110,12 +2110,6 @@ export async function runToolCalls(
           content: JSON.stringify({ error: err }),
         });
       } else {
-        write(
-          `data: ${JSON.stringify({
-            type: "doc_edited_start",
-            filename: docInfo.filename,
-          })}\n\n`,
-        );
         const edits: EditInput[] = (editsRaw as Record<string, unknown>[]).map(
           (e) => ({
             find: String(e.find ?? ""),
@@ -2130,6 +2124,15 @@ export async function runToolCalls(
         // starts and the batch returns with the events it already has.
         const result = await documentLocks.run(indexed.document_id, async () => {
           if (stopped()) return null;
+          // Announce the edit only once it is about to run: a turn stopped
+          // while this call waited on the lock must not leave an "Editing"
+          // card behind.
+          write(
+            `data: ${JSON.stringify({
+              type: "doc_edited_start",
+              filename: docInfo.filename,
+            })}\n\n`,
+          );
           const edited = await runEditDocument({
             documentId: indexed.document_id,
             userId,
