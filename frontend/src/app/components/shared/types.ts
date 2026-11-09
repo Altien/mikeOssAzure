@@ -230,12 +230,14 @@ type WireActivity<T extends WireAssistantEvent["type"]> = Extract<
   { type: T }
 >;
 type WireDelegation = WireActivity<"delegation">;
+/** Client-only: the turn ended before this step reported a result. */
+type Interruptible = { interrupted?: boolean };
 export type AssistantEvent =
   | WireActivity<"text_card">
   | AuthorityTraceAssistantEvent
-  | (WireActivity<"doc_search"> & { isStreaming?: boolean })
-  | (WireActivity<"web_search"> & { isStreaming?: boolean })
-  | (WireActivity<"web_read"> & { isStreaming?: boolean })
+  | (WireActivity<"doc_search"> & { isStreaming?: boolean } & Interruptible)
+  | (WireActivity<"web_search"> & { isStreaming?: boolean } & Interruptible)
+  | (WireActivity<"web_read"> & { isStreaming?: boolean } & Interruptible)
   | WireActivity<"web_sources">
   | WireActivity<"response_details">
   | (Omit<WireDelegation, "events" | "status" | "model" | "effort"> & {
@@ -246,7 +248,7 @@ export type AssistantEvent =
       effort?: WireDelegation["effort"];
       isStreaming?: boolean;
       activity?: string;
-    })
+    } & Interruptible)
   | (Omit<WireActivity<"reasoning">, "isStreaming"> & { isStreaming?: boolean })
   | (Omit<WireActivity<"error">, "safe_to_display"> & {
       safe_to_display?: boolean;
@@ -259,7 +261,7 @@ export type AssistantEvent =
   | (Omit<WireActivity<"mcp_tool_call">, "error" | "isStreaming"> & {
       error?: string;
       isStreaming?: boolean;
-    })
+    } & Interruptible)
   | AskInputsEvent
   | AskInputsResponseEvent
   | { type: "thinking"; isStreaming?: boolean }
@@ -271,7 +273,7 @@ export type AssistantEvent =
       version_id?: string | null;
       version_number?: number | null;
       isStreaming?: boolean;
-    })
+    } & Interruptible)
   | (Omit<
       WireActivity<"doc_find">,
       "document_id" | "version_id" | "version_number" | "isStreaming"
@@ -280,7 +282,7 @@ export type AssistantEvent =
       version_id?: string | null;
       version_number?: number | null;
       isStreaming?: boolean;
-    })
+    } & Interruptible)
   | (Omit<
       WireActivity<"doc_created">,
       "document_id" | "version_id" | "version_number" | "isStreaming"
@@ -322,7 +324,7 @@ export type AssistantEvent =
   | (Omit<
       WireActivity<"courtlistener_search_case_law">,
       "result_count" | "error" | "isStreaming"
-    > & { result_count?: number; error?: string; isStreaming?: boolean })
+    > & { result_count?: number; error?: string; isStreaming?: boolean } & Interruptible)
   | (Omit<
       WireActivity<"courtlistener_get_cases">,
       "case_count" | "opinion_count" | "cases" | "error" | "isStreaming"
@@ -338,7 +340,7 @@ export type AssistantEvent =
       }[];
       error?: string;
       isStreaming?: boolean;
-    })
+    } & Interruptible)
   | (Omit<
       WireActivity<"courtlistener_find_in_case">,
       | "total_matches"
@@ -361,7 +363,7 @@ export type AssistantEvent =
       }[];
       error?: string;
       isStreaming?: boolean;
-    })
+    } & Interruptible)
   | (Omit<
       WireActivity<"courtlistener_read_case">,
       "case_name" | "citation" | "opinion_count" | "error" | "isStreaming"
@@ -371,7 +373,7 @@ export type AssistantEvent =
       opinion_count?: number;
       error?: string;
       isStreaming?: boolean;
-    })
+    } & Interruptible)
   | (Omit<
       WireActivity<"courtlistener_verify_citations">,
       "citation_count" | "match_count" | "error" | "isStreaming"
@@ -380,7 +382,7 @@ export type AssistantEvent =
       match_count?: number;
       error?: string;
       isStreaming?: boolean;
-    })
+    } & Interruptible)
   | (Omit<
       WireActivity<"case_citation">,
       "pdfUrl" | "dateFiled" | "document"
