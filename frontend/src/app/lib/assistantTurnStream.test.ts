@@ -520,6 +520,7 @@ describe("error frames", () => {
   it("ends tool steps still in progress, as a deadline's error ends the turn", async () => {
     expect(
       await eventsOf([
+        { type: "doc_created_start", filename: "memo.docx" },
         { type: "doc_replicate_start", filename: "answer.docx", count: 2 },
         { type: "doc_edited_start", filename: "brief.docx" },
         {
@@ -529,6 +530,8 @@ describe("error frames", () => {
         },
       ]),
     ).toEqual([
+      // Dev's doc_created carries no download_url (private Blob transport).
+      { type: "doc_created", filename: "memo.docx", interrupted: true },
       { type: "doc_replicated", filename: "answer.docx", count: 2, interrupted: true },
       {
         type: "doc_edited",

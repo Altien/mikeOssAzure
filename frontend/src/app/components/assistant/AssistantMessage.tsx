@@ -585,6 +585,7 @@ function AssistantMessageImpl({
                     key={globalIdx}
                     filename={event.filename}
                     isStreaming={event.isStreaming}
+                    interrupted={!!event.interrupted}
                     showConnector={showConnector}
                     onClick={
                         !event.isStreaming &&
