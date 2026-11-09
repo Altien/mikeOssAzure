@@ -60,6 +60,12 @@ export async function applyTrackedEditsToDocument(params: {
     versionNumber: number;
     storagePath: string;
   };
+  /**
+   * The assistant turn's signal. Checked once the edit is computed and before
+   * anything is written: a turn stopped while the source was downloading
+   * publishes no new version.
+   */
+  signal?: AbortSignal;
 }): Promise<
   | {
       ok: true;
@@ -152,6 +158,10 @@ export async function applyTrackedEditsToDocument(params: {
     editedBytes.byteOffset,
     editedBytes.byteOffset + editedBytes.byteLength,
   ) as ArrayBuffer;
+
+  if (params.signal?.aborted) {
+    return { ok: false, error: "The turn was stopped before the edit was saved." };
+  }
 
   if (params.job) {
     if (!params.expectedVersion || reuseVersion) return { ok: false, error: "A fenced review requires its original document version." };
