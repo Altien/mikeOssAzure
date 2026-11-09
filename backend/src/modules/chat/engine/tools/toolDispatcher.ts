@@ -1,4 +1,4 @@
-import type { ConnectorApprovalItem, DocumentSearchEvent, TextCardEvent } from "@mike/contracts";
+import type { ConnectorApprovalItem, DocumentSearchEvent } from "@mike/contracts";
 import { textCardEvent } from "./textCard";
 import { internalFailure } from "../../../../lib/serviceResult";
 import { canUseWorkflowInWorkspace } from "../../../../lib/workflowWorkspace";
@@ -29,10 +29,8 @@ import {
 import { normalizeCaseDocument } from "../../../../lib/sourceDocuments";
 import {
   COURTLISTENER_TOOL_NAMES,
-  type CaseCitationEvent,
   type CourtlistenerToolEvent,
 } from "./courtlistenerTools";
-import type { AuthorityTraceEvent } from "../../../../altien/authorityTrace/chatTools";
 import {
   dispatchAuthorityTraceTool,
   type AuthorityTraceTurnState,
@@ -43,16 +41,17 @@ import {
 import type {
   VerificationArtifact,
 } from "../../../../altien/authorityTrace/core/service";
-import {
-  executeMcpToolCall,
-  type McpToolEvent,
-} from "../../../../lib/mcpConnectors";
+import { executeMcpToolCall } from "../../../../lib/mcpConnectors";
 import {
   APPROVAL_UNAVAILABLE_MESSAGE,
   addApprovalItems,
   planConnectorToolCall,
 } from "./connectorApprovals";
 import { createKeyedLock, type KeyedLock } from "./documentLocks";
+import {
+  emptyToolCallBatchResult,
+  type ToolCallBatchResult,
+} from "./toolBatchResult";
 import {
   GOOGLE_DRIVE_TOOL_PREFIX,
   executeGoogleDriveToolCall,
@@ -97,8 +96,6 @@ import {
   type DocEditedResult,
   type TurnEditState,
   type TurnReadState,
-  type DocCreatedResult,
-  type DocReplicatedResult,
   type TextMatch,
 } from "./documentOps";
 import { writeProjectDocument } from "./projectDocumentWrites";
@@ -493,62 +490,34 @@ export async function runToolCalls(
      * (their document edits, creations and connector writes included).
      */
     signal?: AbortSignal;
+    /**
+     * Where to collect the batch's results. They are added as each call
+     * completes, so if a later call rejects, the caller still knows which
+     * edits, creations and other results already happened.
+     */
+    results?: ToolCallBatchResult;
   } = {},
-): Promise<{
-  toolResults: unknown[];
-  docsRead: {
-    filename: string;
-    document_id?: string;
-    version_id?: string | null;
-    version_number?: number | null;
-  }[];
-  docsFound: {
-    filename: string;
-    document_id?: string;
-    version_id?: string | null;
-    version_number?: number | null;
-    query: string;
-    total_matches: number;
-  }[];
-  docsCreated: DocCreatedResult[];
-  documentSearchEvents: DocumentSearchEvent[];
-  docsReplicated: DocReplicatedResult[];
-  workflowsApplied: { workflow_id: string; title: string }[];
-  docsEdited: DocEditedResult[];
-  askInputsEvents: AskInputsEvent[];
-  textCardEvents: TextCardEvent[];
-  courtlistenerEvents: CourtlistenerToolEvent[];
-  caseCitationEvents: CaseCitationEvent[];
-  mcpEvents: McpToolEvent[];
-  authorityTraceEvents: AuthorityTraceEvent[];
-}> {
-  const toolResults: unknown[] = [];
-  const docsRead: {
-    filename: string;
-    document_id?: string;
-    version_id?: string | null;
-    version_number?: number | null;
-  }[] = [];
-  const docsFound: {
-    filename: string;
-    document_id?: string;
-    version_id?: string | null;
-    version_number?: number | null;
-    query: string;
-    total_matches: number;
-  }[] = [];
-  const docsCreated: DocCreatedResult[] = [];
-  const documentSearchEvents: DocumentSearchEvent[] = [];
-  const docsReplicated: DocReplicatedResult[] = [];
-  const workflowsApplied: { workflow_id: string; title: string }[] = [];
-  const docsEdited: DocEditedResult[] = [];
-  const askInputsEvents: AskInputsEvent[] = [];
-  const textCardEvents: TextCardEvent[] = [];
-  const courtlistenerEvents: CourtlistenerToolEvent[] = [];
-  const caseCitationEvents: CaseCitationEvent[] = [];
-  const mcpEvents: McpToolEvent[] = [];
+): Promise<ToolCallBatchResult> {
+  // Filled in place as each call completes, so a caller that passed
+  // `results` still has what finished when a later call rejects.
+  const results = options.results ?? emptyToolCallBatchResult();
+  const {
+    toolResults,
+    docsRead,
+    docsFound,
+    docsCreated,
+    documentSearchEvents,
+    docsReplicated,
+    workflowsApplied,
+    docsEdited,
+    askInputsEvents,
+    textCardEvents,
+    courtlistenerEvents,
+    caseCitationEvents,
+    mcpEvents,
+    authorityTraceEvents,
+  } = results;
   const approvalItems: ConnectorApprovalItem[] = [];
-  const authorityTraceEvents: AuthorityTraceEvent[] = [];
   const courtState: CourtlistenerTurnState =
     courtlistenerState ??
     {
@@ -2772,20 +2741,5 @@ export async function runToolCalls(
 
   addApprovalItems(askInputsEvents, approvalItems);
 
-  return {
-    toolResults,
-    docsRead,
-    docsFound,
-    docsCreated,
-    documentSearchEvents,
-    docsReplicated,
-    workflowsApplied,
-    docsEdited,
-    askInputsEvents,
-    textCardEvents,
-    courtlistenerEvents,
-    caseCitationEvents,
-    mcpEvents,
-    authorityTraceEvents,
-  };
+  return results;
 }
