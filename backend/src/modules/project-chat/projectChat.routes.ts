@@ -208,6 +208,10 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
         // A holder, not a `let`: it is assigned inside the title promise's
         // catch, which TypeScript's flow analysis cannot see.
         const titleOutcome: { failure: { error: unknown } | null } = { failure: null };
+        // Where the finished answer was saved, once it was. A stop that is seen
+        // only after the save marks that answer as stopped instead of saving it
+        // a second time.
+        let savedAnswer: { messageId: string; eventCount: number } | null = null;
         try {
             write(
                 `data: ${JSON.stringify({
@@ -309,6 +313,12 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                     citations,
                 );
                 completedTurnPersisted = appended;
+                if (appended) {
+                    savedAnswer = {
+                        messageId: askInputsResponse.assistant_message_id,
+                        eventCount: persistedEvents.length,
+                    };
+                }
             } else {
                 const saved = await insertAssistantMessage(db, {
                     chatId,
@@ -337,6 +347,12 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                     write("data: [DONE]\n\n");
                     return;
                 }
+                if (assistantMessageId) {
+                    savedAnswer = {
+                        messageId: assistantMessageId,
+                        eventCount: persistedEvents.length,
+                    };
+                }
             }
             await subagentRuns.flush();
 
@@ -359,6 +375,12 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                     );
                 }
             }
+
+            // The answer is saved, but the turn may have been stopped while it was
+            // being saved (or while the title was awaited). Past this point the
+            // turn completes, so a stop seen here still ends it as stopped: no
+            // memory consolidation, and the stored answer gets the stop label.
+            throwIfTurnStopped(stream.signal, { fullText, events });
 
             // A completed, durable assistant turn is the debounce trigger for the
             // asynchronous memory curator. ask_inputs is a pause, so continuations
@@ -426,18 +448,19 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                         buildCitations: (fullText) =>
                             extractCitations(fullText, docIndex),
                     });
-                    const saved = askInputsResponse
-                        ? null
-                        : await insertAssistantMessage(db, {
-                              chatId,
-                              assistantMessageId,
-                              events: partial.events,
-                              citations: partial.citations,
-                              authorUserId: userId,
-                              inputMessageId,
-                          });
-                    const saveError = saved && !saved.ok ? saved.error : null;
-                    if (askInputsResponse) {
+                    let saveError: unknown | null = null;
+                    if (savedAnswer) {
+                        // The finished answer is already stored: add only what
+                        // marks it as stopped (the label after its events).
+                        await appendAssistantEventsToMessage(
+                            db,
+                            chatId,
+                            savedAnswer.messageId,
+                            userId,
+                            partial.events.slice(savedAnswer.eventCount),
+                            [],
+                        );
+                    } else if (askInputsResponse) {
                         await appendAssistantEventsToMessage(
                             db,
                             chatId,
@@ -446,6 +469,16 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                             partial.events,
                             partial.citations,
                         );
+                    } else {
+                        const saved = await insertAssistantMessage(db, {
+                            chatId,
+                            assistantMessageId,
+                            events: partial.events,
+                            citations: partial.citations,
+                            authorUserId: userId,
+                            inputMessageId,
+                        });
+                        if (!saved.ok) saveError = saved.error;
                     }
                     if (saveError) {
                         logAssistantMessageFailure({

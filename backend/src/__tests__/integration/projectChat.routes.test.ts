@@ -20,6 +20,7 @@ const {
   scheduleMemoryConsolidation,
   dbInserts,
   dbRpcCalls,
+  dbControl,
 } = vi.hoisted(() => ({
     runLLMStream: vi.fn(),
     checkProjectAccess: vi.fn(),
@@ -36,6 +37,8 @@ const {
   }),
   dbInserts: [] as { table: string; value: unknown }[],
   dbRpcCalls: [] as { name: string; args: Record<string, unknown> }[],
+  // Holds the insert of the assistant's answer open until a test releases it.
+  dbControl: { assistantInsertGate: null as Promise<void> | null },
 }));
 
 function makeQuery(table: string) {
@@ -65,8 +68,12 @@ function makeQuery(table: string) {
     "contains",
     ];
     for (const m of chain) q[m] = vi.fn(() => q);
+  let assistantInsert = false;
   q.insert = vi.fn((value: unknown) => {
     dbInserts.push({ table, value });
+    assistantInsert =
+      table === "chat_messages" &&
+      (value as { role?: unknown }).role === "assistant";
     return q;
   });
     q.single = vi.fn(() => Promise.resolve(result));
@@ -74,7 +81,12 @@ function makeQuery(table: string) {
   q.then = (
     resolve: (v: unknown) => unknown,
     reject?: (e: unknown) => unknown,
-  ) => Promise.resolve(result).then(resolve, reject);
+  ) => {
+    const gate = assistantInsert ? dbControl.assistantInsertGate : null;
+    return (gate ?? Promise.resolve())
+      .then(() => result)
+      .then(resolve, reject);
+  };
     return q;
 }
 
@@ -237,7 +249,7 @@ vi.mock("../../lib/streamRuns", async load => ({
   ...await load<typeof import("../../lib/streamRuns")>(),
   streamRunFenceArgs: (runId: string) => ({ p_run_id: runId, p_owner_token: "test-owner-token", p_fence: "1" }),
 }));
-import { resetAssistantTurnRunsForTests } from "../../lib/assistantTurnRuns";
+import { getActiveAssistantTurn, resetAssistantTurnRunsForTests } from "../../lib/assistantTurnRuns";
 import { spotlight } from "../../modules/chat/engine/index";
 import { createServerSupabase } from "../../lib/supabase";
 import { DEFAULT_WEB_SEARCH_SETTINGS } from "../../lib/webSearch";
@@ -253,6 +265,7 @@ describe("POST /projects/:projectId/chat", () => {
         vi.clearAllMocks();
     dbInserts.length = 0;
     dbRpcCalls.length = 0;
+    dbControl.assistantInsertGate = null;
         buildMessages.mockReturnValue([]);
         buildProjectDocContext.mockResolvedValue({
             docIndex: {},
@@ -292,6 +305,63 @@ describe("POST /projects/:projectId/chat", () => {
         // The guard fires before any LLM stream.
         expect(runLLMStream).not.toHaveBeenCalled();
     });
+
+    it.each([
+        ["user", { type: "content", text: "Cancelled by user." }, '"type":"cancelled"'],
+        ["idle", { type: "error", safe_to_display: true }, '"type":"error"'],
+    ] as const)(
+        "ends a turn stopped (%s) while its finished answer is being saved as stopped",
+        async (reason, label, outcome) => {
+            const { getAssistantTurnRun } =
+                await import("../../lib/assistantTurnRuns.js");
+            let releaseSave!: () => void;
+            dbControl.assistantInsertGate = new Promise<void>((resolve) => {
+                releaseSave = resolve;
+            });
+            runLLMStream.mockResolvedValue({
+                fullText: "Done",
+                events: [{ type: "content", text: "Done" }],
+                citations: [],
+            });
+            const assistantInserts = () =>
+                dbInserts.filter(
+                    ({ table, value }) =>
+                        table === "chat_messages" &&
+                        (value as { role?: string }).role === "assistant",
+                );
+
+            const response = request(app)
+                .post("/api/projects/p1/chat")
+                .set("Authorization", "Bearer test")
+                .send(VALID_BODY)
+                .then((res) => res);
+            await vi.waitFor(() => {
+                expect(assistantInserts()).toHaveLength(1);
+            });
+            getAssistantTurnRun(getActiveAssistantTurn("chat-1")!.id)!.stop(reason);
+            releaseSave();
+            const text = (await response).text;
+
+            expect(text).toContain(outcome);
+            expect(text.split("data: [DONE]").length - 1).toBe(1);
+            // Inserted once as the finished answer, then marked as stopped.
+            const inserted = assistantInserts();
+            expect(inserted).toHaveLength(1);
+            expect(
+                dbRpcCalls.filter(({ name }) => name.startsWith("append_chat_")),
+            ).toEqual([
+                {
+                    name: "append_chat_assistant_events",
+                    args: expect.objectContaining({
+                        p_message_id: (inserted[0].value as { id: string }).id,
+                        p_events: [expect.objectContaining(label)],
+                        p_citations: [],
+                    }),
+                },
+            ]);
+            expect(scheduleMemoryConsolidation).not.toHaveBeenCalled();
+        },
+    );
 
     describe("stream deadline", () => {
         const IDLE_MS = 30_000;
