@@ -21,7 +21,7 @@ import { isDevelopmentBuild } from "../buildMode";
 import * as Sentry from "@sentry/node";
 import { retainExceptionTypes, diagnosticRoute, diagnosticErrorTags, privacyBoundaryIntegration, type Operation, type Stage } from "./sentryPrivacy";
 
-import { eventBudget, repeatEventLimit } from "./sentryVolume";
+import { eventBudget, eventBudgetLimits } from "./sentryVolume";
 
 export type SentryRole = "api" | "worker" | "worker-thread" | "job";
 
@@ -687,7 +687,7 @@ export function sentryConfiguration(
     // sending transactions.
     tracesSampleRate: parseRate(env.SENTRY_TRACES_SAMPLE_RATE, 0),
     debug: env.SENTRY_DEBUG === "true",
-    repeatEventsPerDay: repeatEventLimit(env.SENTRY_MAX_REPEAT_EVENTS_PER_DAY, resolved.source === "default"),
+    ...eventBudgetLimits(env.SENTRY_MAX_REPEAT_EVENTS_PER_DAY, dsn, Object.values(MIKE_SENTRY_DSN)),
   };
 }
 
@@ -914,7 +914,7 @@ export function initSentry(
     // Bodies are stripped in beforeSend as well; not collecting them at all
     // means they never sit in memory on the event either.
     integrations: [
-      privacyBoundaryIntegration({ acceptEvent: eventBudget({ repeatEventsPerDay: config.repeatEventsPerDay }) }),
+      privacyBoundaryIntegration({ acceptEvent: eventBudget({ repeatEventsPerDay: config.repeatEventsPerDay, eventsPerDay: config.eventsPerDay }) }),
       // Dev (sync-log: f4cf97c7): upstream relies on dataCollection.httpBodies
       // alone in SDK v11. Dev also keeps the integration's own body limit
       // (v11 renamed maxIncomingRequestBodySize to maxRequestBodySize).

@@ -153,9 +153,10 @@ always passes; repeats send at occurrences 2, 4, 8, … (tagged `occurrence`),
 resetting after one quiet hour. The backend SDK and the browser tunnel
 (`POST /api/monitoring`) read `SENTRY_MAX_REPEAT_EVENTS_PER_DAY`: a nonnegative
 integer caps **repeat** events per day per budget, and `0` keeps only first
-observations, severity changes and diagnostic probes. Dev has no default
-destination, so blank means no daily repeat cap; power-of-two sampling still
-applies. The add-in gets the power-of-two sampling but no daily cap: Dev bakes
+observations, severity changes and diagnostic probes. Upstream's hard ceiling
+of 50 events a day (at most 25 repeats) applies only to a DSN matching a
+built-in Mike project; Dev bakes none, so blank means no daily cap here.
+Power-of-two sampling still applies. The add-in gets the power-of-two sampling but no daily cap: Dev bakes
 no `REACT_APP_SENTRY_*` settings into the bundle. Budgets are per process,
 thread or task pane and are bounded to 1,000 recent keys. The former
 `SENTRY_MAX_EVENTS_PER_ISSUE_PER_MINUTE` throttle is retired.

@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import { browserReportBudget, reportingDestination, rewriteEnvelope, tunnelDecision, type TunnelEnv } from "./sentryTunnel";
+import { diagnosticEvent } from "./sentryPrivacy";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -201,4 +202,24 @@ it("applies the runtime destination's repeat policy in the tunnel", () => {
     const own = browserReportBudget({ ...env, SENTRY_MAX_REPEAT_EVENTS_PER_DAY: undefined, SENTRY_FRONTEND_DSN: "https://other@sentry.example/43" });
     expect(rewriteEnvelope(raw, { dsn: OWN_DSN }, own)!.byteLength).toBeGreaterThan(0);
     expect(rewriteEnvelope(raw, { dsn: OWN_DSN }, own)!.byteLength).toBeGreaterThan(0);
+});
+
+// Dev (sync-log: bd719ea6): Dev bakes no Mike-project DSN, so the shared
+// project's 50-event ceiling never applies to a runtime DSN; the Mike-DSN
+// cases are not carried. A custom project stays uncapped, and the canary
+// never survives the final envelope reconstruction.
+it("caps explicitly configured Mike destinations after final envelope reconstruction", () => {
+    for (const env of [
+        { SENTRY_FRONTEND_DSN: "https://custom@sentry.invalid/73" },
+    ] as TunnelEnv[]) {
+        const accepts = browserReportBudget(env);
+        const raw = envelope([{}, { type: "event" }, diagnosticEvent({ message: "PRIVATE_QUOTA_CANARY", tags: { diagnostic_test: "true" } })]);
+        let sent = 0;
+        for (let n = 0; n < 60; n++) {
+            const out = rewriteEnvelope(raw, { dsn: OWN_DSN }, accepts)!;
+            if (out.byteLength) sent++;
+            expect(new TextDecoder().decode(out)).not.toContain("PRIVATE_QUOTA_CANARY");
+        }
+        expect(sent).toBe(60);
+    }
 });

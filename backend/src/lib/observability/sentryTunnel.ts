@@ -8,8 +8,8 @@
 // here. Dev's rule has no baked NEXT_PUBLIC_* DSN and no community default:
 // the web DSN is runtime-only (Key Vault `sentry-frontend-dsn`, then
 // SENTRY_FRONTEND_DSN), exactly what GET /config serves.
-import { installKind, resolveDsn, type InstallKind } from "./sentry";
-import { eventBudget, repeatEventLimit } from "./sentryVolume";
+import { MIKE_SENTRY_DSN, installKind, resolveDsn, type InstallKind } from "./sentry";
+import { eventBudget, eventBudgetLimits } from "./sentryVolume";
 
 /** The env the destination rule reads; the caller resolves the Key Vault DSN. */
 export type TunnelEnv = {
@@ -204,13 +204,13 @@ export function rewriteEnvelope(
 
 // One bounded budget per tunnel process, reset only when destination/policy changes.
 let browserBudget: { key: string; accepts: ReturnType<typeof eventBudget> } | undefined;
-// Dev divergence (sync-log: b8490837): Dev has no "default" (community)
-// destination, so the repeat cap applies only when SENTRY_MAX_REPEAT_EVENTS_PER_DAY
-// is set; an explicit runtime DSN otherwise owns its volume policy.
+// Dev (sync-log: b8490837/bd719ea6): Dev's MIKE_SENTRY_DSN values are empty,
+// so no runtime DSN matches a shared Mike project: the repeat cap applies only
+// when SENTRY_MAX_REPEAT_EVENTS_PER_DAY is set, and there is no daily ceiling.
 export function browserReportBudget(env: TunnelEnv): ReturnType<typeof eventBudget> {
     const destination = reportingDestination(env);
-    const limit = repeatEventLimit(env.SENTRY_MAX_REPEAT_EVENTS_PER_DAY, false);
-    const key = `${destination.dsn}:${limit}`;
-    if (browserBudget?.key !== key) browserBudget = { key, accepts: eventBudget({ repeatEventsPerDay: limit }) };
+    const limits = eventBudgetLimits(env.SENTRY_MAX_REPEAT_EVENTS_PER_DAY, destination.dsn, Object.values(MIKE_SENTRY_DSN));
+    const key = `${destination.dsn}:${limits.repeatEventsPerDay}:${limits.eventsPerDay}`;
+    if (browserBudget?.key !== key) browserBudget = { key, accepts: eventBudget(limits) };
     return browserBudget.accepts;
 }
