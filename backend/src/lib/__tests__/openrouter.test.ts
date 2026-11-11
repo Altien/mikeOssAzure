@@ -711,6 +711,7 @@ describe("OpenCode Go LLM adapter", () => {
     });
 
     it("names OpenCode Go when no key is configured", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
         await expect(
             completeWithProvider({
                 model: "opencode-go/glm-5",
@@ -719,6 +720,11 @@ describe("OpenCode Go LLM adapter", () => {
         ).rejects.toThrow(
             "OpenCode Go is not configured for this organisation",
         );
+        // The Key Vault secret is the operator's: the log, not the user's message.
+        expect(warn).toHaveBeenCalledWith(
+            expect.stringContaining("Key Vault secret"),
+        );
+        warn.mockRestore();
     });
 
     it("uses the Messages endpoint for Qwen and MiniMax models", async () => {

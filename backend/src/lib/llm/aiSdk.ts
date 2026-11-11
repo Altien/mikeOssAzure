@@ -1,3 +1,4 @@
+import { installProviderWarningLogger } from "./warnings";
 import { normalizeReasoningLevelForModel, reasoningLevelsForModel } from "./models";
 import type { LanguageModel, ToolSet } from "ai" with {
   "resolution-mode": "import",
@@ -15,7 +16,7 @@ import type {
 } from "./types";
 import type { WebSource } from "@mike/contracts";
 import { providerDeadlines } from "./providerDeadlines";
-import { asProviderStallError, providerFailureKind, providerFailureStatus, streamErrorMessage, toProviderStreamError } from "./providerErrors";
+import { asProviderStallError, providerFailureKind, providerFailureStatus, streamErrorMessage, toProviderStreamError, withKeySource, type ProviderKeySource } from "./providerErrors";
 import { log } from "../logging/root";
 import { createRawLlmStreamRecorder, logRawLlmStream } from "./rawStreamLog";
 import type { LlmUsageMeter } from "./usage";
@@ -31,6 +32,8 @@ import {
   planningRestartNotice,
   recoveryReasoningLevel,
 } from "./lengthContinuation";
+
+installProviderWarningLogger();
 
 /**
  * Per-step output limit, or undefined to leave it to the provider.
@@ -256,6 +259,12 @@ export type AiSdkAdapterConfig = {
   label: string;
   model: Exclude<LanguageModel, string>;
   modelId: string;
+  /**
+   * Whose key this adapter sends: a user's own, or the deployment's
+   * environment key. Recorded on a failure so a refusal of the operator's
+   * key is reported and a user's is not (providerFailureLevel).
+   */
+  keySource?: ProviderKeySource;
   /** Some protocol-compatible gateways reject reasoning request fields. */
   supportsReasoning?: boolean;
   /** OpenAI's CourtListener tools require an extra instruction after use. */
@@ -1016,24 +1025,31 @@ export async function completeAiSdkText(
   );
   const requested = params.maxTokens ?? 512;
   await meter?.beforeStep({ system: params.systemPrompt, user: params.user });
-  const result = await generateText({
-    model: config.model,
-    system: params.systemPrompt,
-    prompt: params.user,
-    abortSignal: params.abortSignal,
-    maxOutputTokens: withinCreditReservation(
-      config.supportsReasoning !== false && completionReasoning && completionReasoning !== "none"
-        ? requested + COMPLETION_REASONING_HEADROOM_TOKENS : requested,
-      meter,
-    ),
-    ...(meter?.reservation ? { maxRetries: 0 } : {}),
-    reasoning: config.provider === "kimi" || config.supportsReasoning === false
-      ? undefined
-      : completionReasoning === "max" ? "xhigh" : completionReasoning,
-    ...(config.provider === "kimi" && params.reasoningEffort
-      ? { providerOptions: { kimi: { reasoningEffort: params.reasoningEffort === "none" ? "low" : params.reasoningEffort } } }
-      : {}),
-  });
+  let result: Awaited<ReturnType<typeof generateText>>;
+  try {
+    result = await generateText({
+      model: config.model,
+      system: params.systemPrompt,
+      prompt: params.user,
+      abortSignal: params.abortSignal,
+      maxOutputTokens: withinCreditReservation(
+        config.supportsReasoning !== false && completionReasoning && completionReasoning !== "none"
+          ? requested + COMPLETION_REASONING_HEADROOM_TOKENS : requested,
+        meter,
+      ),
+      ...(meter?.reservation ? { maxRetries: 0 } : {}),
+      reasoning: config.provider === "kimi" || config.supportsReasoning === false
+        ? undefined
+        : completionReasoning === "max" ? "xhigh" : completionReasoning,
+      ...(config.provider === "kimi" && params.reasoningEffort
+        ? { providerOptions: { kimi: { reasoningEffort: params.reasoningEffort === "none" ? "low" : params.reasoningEffort } } }
+        : {}),
+    });
+  } catch (error) {
+    // Upstream 2ada45fb: the provider's own error, unconverted (callers
+    // classify it), with whose key was sent recorded on it for the reporting level.
+    throw withKeySource(error, config.keySource, config.provider);
+  }
   meter?.addStep(result.totalUsage ?? result.usage, result.response?.id);
   return result.text;
 }

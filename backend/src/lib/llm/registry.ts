@@ -1,5 +1,6 @@
 import { isProviderDisabled } from "./providerPreferences";
 import type {
+  ApiKeyName,
   CommitteeModel,
   ConfiguredModel,
   Provider,
@@ -187,7 +188,7 @@ export function replaysReasoning(id: string): boolean {
 // covered by the static catalog in models.ts and by the router prefixes
 // (openrouter/, vercel/, opencode-go/), so a configured entry for one of them
 // would be a second, subtly different way to say the same thing.
-const USER_API_KEY_PROVIDERS = new Set<keyof UserApiKeys>([
+const USER_API_KEY_PROVIDERS = new Set<ApiKeyName>([
   "claude",
   "gemini",
   "openai",
@@ -251,7 +252,7 @@ function parseConfiguredModel(value: unknown): ConfiguredModel | null {
     apiKey === null ||
     (apiKeyProvider !== undefined &&
       (typeof apiKeyProvider !== "string" ||
-        !USER_API_KEY_PROVIDERS.has(apiKeyProvider as keyof UserApiKeys))) ||
+        !USER_API_KEY_PROVIDERS.has(apiKeyProvider as ApiKeyName))) ||
     (record.tolerateTextToolCalls !== undefined &&
       typeof record.tolerateTextToolCalls !== "boolean") ||
     (record.replayReasoning !== undefined &&
@@ -273,7 +274,7 @@ function parseConfiguredModel(value: unknown): ConfiguredModel | null {
     ...(apiKeyEnv ? { apiKeyEnv } : {}),
     ...(apiKey ? { apiKey } : {}),
     ...(apiKeyProvider
-      ? { apiKeyProvider: apiKeyProvider as keyof UserApiKeys }
+      ? { apiKeyProvider: apiKeyProvider as ApiKeyName }
       : {}),
     ...(typeof record.tolerateTextToolCalls === "boolean"
       ? { tolerateTextToolCalls: record.tolerateTextToolCalls }

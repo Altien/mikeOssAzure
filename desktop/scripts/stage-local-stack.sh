@@ -20,6 +20,10 @@ mkdir -p "$APP/backend"
 node desktop/scripts/stage-source-notices.mjs "$APP" desktop/local-stack/bin/notices
 cp -R backend/dist "$APP/backend/dist"
 cp backend/package.json backend/pnpm-lock.yaml "$APP/backend/"
+# The supervisor checks Electron's Node against the backend's engines floor
+# with the backend's own script before it spawns the backend.
+mkdir -p "$APP/backend/scripts"
+cp backend/scripts/check-node-version.cjs "$APP/backend/scripts/"
 cp -R backend/migrations "$APP/backend/migrations"
 (cd "$APP/backend" && pnpm install --prod --frozen-lockfile --ignore-workspace)
 cp -R frontend/out "$APP/backend/public"

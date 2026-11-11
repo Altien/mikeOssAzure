@@ -47,7 +47,8 @@ const apiFetch = async (input: RequestInfo | URL, init?: RequestInit, operation?
     try {
         return await authenticatedFetch(input, init);
     } catch (error) {
-        if (init?.signal?.aborted || (typeof error === "object" && error !== null && "name" in error && error.name === "AbortError")) throw error;
+        // Upstream 2ada45fb: only our own signal marks an expected abort; abort reasons may be arbitrary values.
+        if (init?.signal?.aborted) throw error;
         reportNetworkFailure(error, { method: init?.method ?? "GET", url: String(input), operation });
         throw error;
     } finally {
@@ -160,18 +161,21 @@ export class MikeApiError extends Error {
     status: number;
     code: string | null;
     requestId: string | null;
+    reportingOwner?: "backend";
 
     constructor(args: {
         message: string;
         status: number;
         code?: string | null;
         requestId?: string | null;
+        reportingOwner?: "backend";
     }) {
         super(args.message);
         this.name = "MikeApiError";
         this.status = args.status;
         this.code = args.code ?? null;
         this.requestId = args.requestId ?? null;
+        this.reportingOwner = args.reportingOwner;
     }
 }
 
@@ -298,14 +302,7 @@ export async function uploadFilesWithSession<T>(args: {
         transport: {
             apiRequest: <R>(path: string, init?: RequestInit) => apiRequest<R>("upload_session.control", path, init),
             fetchStorage: (...fetchArgs) => fetch(...fetchArgs),
-            onStorageFailure: ({ error, status, network }) => reportError(error, {
-                ...(network ? { level: "warning" as const } : {}),
-                tags: {
-                    component: "mike-api", operation: "upload_session.storage", http_method: "PUT",
-                    ...(status !== undefined ? { http_status: status } : {}),
-                    ...(network ? { network: true } : {}),
-                },
-            }),
+            reportStorageFailure: reportError,
             shouldRetryControlRequest: createControlRequestRetryPolicy(
                 (error) =>
                     error instanceof MikeApiError
@@ -356,6 +353,7 @@ async function toApiError(
     const text = await response.text();
     try {
         const parsed = JSON.parse(text) as {
+            reporting_owner?: unknown;
             detail?: unknown;
             code?: unknown;
             request_id?: unknown;
@@ -379,6 +377,7 @@ async function toApiError(
             status: response.status,
             code,
             requestId,
+            ...(parsed.reporting_owner === "backend" ? { reportingOwner: "backend" as const } : {}),
             // A 4xx whose body carries no usable `detail` is a malformed
             // error response, and it is treated as one. `API error: 409` used
             // to be produced here instead — and because a 4xx message is the
@@ -407,6 +406,7 @@ async function toApiError(
                 code: apiError.code,
                 requestId,
                 error: apiError,
+                reportingOwner: apiError.reportingOwner,
             });
         }
         return apiError;
@@ -431,6 +431,7 @@ async function toApiError(
                 status: response.status,
                 requestId: apiError.requestId,
                 error: apiError,
+                reportingOwner: apiError.reportingOwner,
             });
         }
         return apiError;
@@ -927,7 +928,8 @@ export interface UserProfile extends RouterProfileLists {
     responseDetailsVisible?: boolean;
     darkMode: boolean;
     projectMemoryDefault: boolean;
-    apiKeyStatus: ApiKeyStatus;
+    /** Absent only when a forked server or a proxy/misroute answers; see `hasApiKeyStatus`. */
+    apiKeyStatus?: ApiKeyStatus;
 }
 
 /** Uploads a cropped profile-photo data URL, or removes the current photo when passed null. */

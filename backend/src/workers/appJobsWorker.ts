@@ -1,5 +1,5 @@
 import { Worker, type Job } from "bullmq";
-import { getRedisConnection } from "../lib/queue/connection";
+import { getRedisConnection, watchQueueErrors } from "../lib/queue/connection";
 import { reportError } from "../lib/observability/sentry";
 import { asReportableError } from "../lib/httpError";
 import {
@@ -74,6 +74,7 @@ export function createAppJobsWorker(): Worker<AppJobDelivery> {
             maxStalledCount: 2,
         },
     );
+    watchQueueErrors(worker, "worker");
     worker.on("failed", (job, err) => {
         // Only infrastructure errors land here (processClaimedJob contains
         // handler errors itself); the db_jobs row stays claimable.

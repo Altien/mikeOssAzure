@@ -2,7 +2,11 @@
   "name": "mike-backend",
   "version": "0.3.0-azure.1",
   "private": true,
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "scripts": {
+    "predev": "node scripts/check-node-version.cjs",
     "dev": "tsx watch --import ./dev-log.mjs src/index.ts",
     "dev:nolog": "tsx watch src/index.ts",
     "build": "tsc",
@@ -17,6 +21,7 @@
     "chat:inspect": "tsx src/scripts/inspect-chat.ts",
     "smoke:skills": "tsx src/scripts/skillsSmoke.ts",
     "check:matching": "tsx src/scripts/capabilityMatchCheck.ts",
+    "prestart": "node scripts/check-node-version.cjs",
     "start": "node --enable-source-maps dist/index.js",
     "migrate": "node dist/scripts/runMigrations.js",
     "migrate:dev": "tsx src/scripts/runMigrations.ts",
@@ -96,9 +101,11 @@
     "@types/html-to-text": "9.0.4",
     "@types/multer": "^1.4.13",
     "@types/node": "^26.6.6",
+    "@types/semver": "^7.8.0",
     "@types/supertest": "^7.2.1",
     "@vitest/coverage-v8": "^5.1.0",
     "only-allow": "^1.2.1",
+    "semver": "^7.8.5",
     "supertest": "^7.3.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",

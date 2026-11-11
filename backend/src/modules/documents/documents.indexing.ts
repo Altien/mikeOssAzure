@@ -1,10 +1,10 @@
 import { setOperation } from "../../lib/observability/sentry";
 import { createHash } from "node:crypto";
 import { downloadFile } from "../../lib/storage";
-import { EXTRACTION_MAX_BYTES, ExtractionBusyError, ExtractionLimitError, withBackgroundExtraction } from "../../lib/extraction/isolated";
+import { EXTRACTION_MAX_BYTES, ExtractionBusyError, ExtractionLimitError, ExtractionParseError, withBackgroundExtraction } from "../../lib/extraction/isolated";
 import { withClaimCancellation } from "../../lib/extraction/claimCancellation";
 import { DbJobDeferredError, type Db, type DbJob } from "../../lib/dbq/types";
-import { processClaimedJob, STALE_SECONDS } from "../../lib/dbq/runner";
+import { NonRetryableJobError, processClaimedJob, STALE_SECONDS } from "../../lib/dbq/runner";
 
 export { extractDocumentText } from "../../lib/extraction/documentText";
 
@@ -40,6 +40,10 @@ export async function handleDocumentExtractText(db: Db, job: DbJob): Promise<voi
           await assertCurrent();
           extracted = await extract("documentText", raw, { fileType: version.file_type || version.filename?.split(".").pop() || "", signal });
         } catch (error) {
+          // Upstream 2ada45fb: the source hash matched, so the parser saw the same
+          // bytes it will see on every retry: an unreadable file fails once, not
+          // three times. The runner's failure hook marks the text failed.
+          if (error instanceof ExtractionParseError) throw new NonRetryableJobError("document_text_unreadable", { cause: error, reportLevel: "warning" });
           if (!(error instanceof ExtractionLimitError)) throw error;
           await markDocumentTextFailed(db, job, "too_large", true); return;
         }

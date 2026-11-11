@@ -156,7 +156,7 @@ describe("API operation identity before capture", () => {
         state.enabled = true;
         vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 500 })));
         await expect(downloadDocumentsZip(["document-id"])).rejects.toBeInstanceOf(MikeApiError);
-        expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
+        expect(Sentry.captureException).toHaveBeenCalledTimes(1);
         expect(state.scopes[0].setTag).toHaveBeenCalledWith("operation", "documents.directory");
         expect(state.scopes[0].setTag).toHaveBeenCalledWith("http_method", "POST");
         expect(state.scopes[0].setFingerprint).toHaveBeenCalledWith(["api-5xx", "POST", "/single-documents/download-zip", "500"]);
@@ -170,12 +170,12 @@ describe("API operation identity before capture", () => {
         })));
         const error = await updateWorkflow("workflow-id", { skill_md: "# Workflow" }).catch((error: unknown) => error);
         expect(error).toBeInstanceOf(MikeApiError);
-        expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
+        expect(Sentry.captureException).toHaveBeenCalledTimes(1);
         expect(state.scopes[0].setTag).toHaveBeenCalledWith("operation", "workflows.run");
         await vi.advanceTimersByTimeAsync(1000);
         notifyError(error, { operation: "workflows.run" });
-        expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
-        expect(Sentry.captureException).not.toHaveBeenCalled();
+        expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+        expect(Sentry.captureMessage).not.toHaveBeenCalled();
         expect(state.scopes[0].setTag).toHaveBeenCalledWith("request_id", "req-workflow");
     });
 
@@ -183,9 +183,9 @@ describe("API operation identity before capture", () => {
         state.enabled = true;
         const error = new Error("x");
         const failure = { path: "/x", status: 500, error, operation: "new_feature.run" };
-        expect(reportApiFailure(failure)).toBe("msg-1");
+        expect(reportApiFailure(failure)).toBe("exc-1");
         expect(reportApiFailure(failure)).toBeNull();
-        expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
+        expect(Sentry.captureException).toHaveBeenCalledTimes(1);
         expect(isReported(error)).toBe(true);
     });
 });
@@ -242,7 +242,7 @@ describe("reportApiFailure", () => {
             state.enabled = true;
             const apiError = new Error("already reported");
             expect(
-                reportApiFailure({ path: "/x", status: 503, code, error: apiError }),
+                reportApiFailure({ path: "/x", status: 503, code, error: apiError, reportingOwner: "backend" }),
             ).toBeNull();
             expect(Sentry.captureMessage).not.toHaveBeenCalled();
             // Marked, so a screen's later notifyError does not file it either.
@@ -681,4 +681,11 @@ it("keeps the community privacy boundary even when server install kind is offici
         expect(event).not.toHaveProperty("server_name");
         expect(event?.request?.url).toBe("/projects");
     } finally { vi.unstubAllEnvs(); }
+});
+
+it("reports an unowned 503 even with a recognized code, preserving the original Error", () => {
+    state.enabled = true;
+    const failure = new Error("private transport detail");
+    reportApiFailure({ path: "/chat", status: 503, code: "upstream_unavailable", error: failure });
+    expect(Sentry.captureException).toHaveBeenCalledWith(failure);
 });

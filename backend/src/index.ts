@@ -31,6 +31,7 @@ import { failBoot, listenOrFail } from "./lib/processLifecycle";
 import { stopExtractionProcess } from "./lib/extraction/isolated";
 import { flushLlmUsage } from "./lib/llm/usage";
 import { probeStampRuntime } from "./lib/stampRuntime";
+import { storagePublicEndpointWarnings } from "./lib/runtimeConfig";
 
 const PORT = process.env.PORT ?? 3001;
 const HOST = process.env.HOST?.trim() || undefined;
@@ -111,6 +112,11 @@ async function start(): Promise<void> {
   });
   await initDownloadSigningSecret();
   await initStorage();
+  // Upstream 2ada45fb: name a storage endpoint browsers cannot reach (R2/S3
+  // driver only reads these variables; Azure Blob installs leave them unset).
+  for (const warning of storagePublicEndpointWarnings()) {
+    console.warn(`[storage] ${warning}`);
+  }
   await initManifestSigningKey();
   const signingKey = manifestPublicKey();
   if (signingKey) console.log(`Export manifests signed with key ${signingKey.key_id}`);

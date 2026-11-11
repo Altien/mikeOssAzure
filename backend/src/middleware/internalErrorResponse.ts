@@ -38,6 +38,7 @@ export function protectInternalErrorResponses(
     const publicBody = {
       code: INTERNAL_ERROR_CODE,
       detail: INTERNAL_ERROR_MESSAGE,
+      reporting_owner: "backend",
       ...(requestId ? { request_id: requestId } : {}),
     };
     const errorBody =
@@ -47,7 +48,7 @@ export function protectInternalErrorResponses(
     const hasUnexpectedFields =
       errorBody &&
       Object.keys(errorBody).some(
-        (key) => !["code", "detail", "request_id"].includes(key),
+        (key) => !["code", "detail", "request_id", "reporting_owner"].includes(key),
       );
     // sendInternalError already reported this failure and wrote a fixed
     // public body (internal_error, or an intentional 503 such as
@@ -61,16 +62,8 @@ export function protectInternalErrorResponses(
       typeof errorBody.code === "string" &&
       typeof errorBody.detail === "string"
     ) {
-      return originalJson(body);
+      return originalJson({ ...errorBody, reporting_owner: "backend" });
     }
-    if (
-      errorBody?.code === INTERNAL_ERROR_CODE &&
-      errorBody.detail === INTERNAL_ERROR_MESSAGE &&
-      !hasUnexpectedFields
-    ) {
-      return originalJson(publicBody);
-    }
-
     const route = requestRoutePattern(req);
     if (!failureAlreadyReported(res)) {
       // A handler wrote its own 5xx body instead of going through

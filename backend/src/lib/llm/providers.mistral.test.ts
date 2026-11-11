@@ -153,11 +153,11 @@ describe("direct Mistral adapter", () => {
     vi.stubEnv("KEY_VAULT_NAME", "");
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    // Dev: the credential is organisation-owned, so the error names the Key
-    // Vault secret an administrator sets in /install, not an env var.
+    // Dev: the credential is organisation-owned, so the error sends the user
+    // to an administrator; the Key Vault secret goes to the server log.
     await expect(
       completeWithProvider({ model: "mistral-small-2603", user: "Title" }),
-    ).rejects.toThrow("mistral-api-key");
+    ).rejects.toThrow("Mistral is not configured for this organisation.");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

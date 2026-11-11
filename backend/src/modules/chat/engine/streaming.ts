@@ -18,8 +18,9 @@ import {
   sameProviderModels,
 } from "../../../lib/modelSelection";
 import { InvalidApiKeyError } from "../../../lib/llm/apiKeyErrors";
-import { markStage, reportError } from "../../../lib/observability/sentry";
-import { providerFailureKind } from "../../../lib/llm/providerErrors";
+import { markStage, markErrorHandled, reportError } from "../../../lib/observability/sentry";
+import { isUserProviderRefusal, providerFailureKind } from "../../../lib/llm/providerErrors";
+import { reportModelFailure } from "../../../lib/llm/providerFailureReport";
 import { safeError } from "../../../lib/safeError";
 import type { Db } from "../../../lib/supabase";
 import type { StreamRunWriteOptions } from "../../../lib/streamRuns";
@@ -1199,11 +1200,6 @@ export async function runLLMStream(params: {
       // any console.error, is what lets the console bridge recognise every
       // later log of it — this line's, and the route's log of the
       // AssistantStreamError below, whose `cause` is `err` — as already sent.
-      // A UserFacingError (rejected or missing API key, model not allowed)
-      // is the user's configuration rather than our bug: still one event, so
-      // operators see a rejected key with its provider_error tag, but a
-      // warning, not an error. (Left unreported, the console bridge filed it
-      // anyway, at error level, as MIKE-BACKEND-E.)
       // The kind says what the provider did (rejected the key, rate limited,
       // unavailable) so one cause is one issue; the provider's own error
       // stays underneath as the cause, where provider_error and
@@ -1215,18 +1211,15 @@ export async function runLLMStream(params: {
           : new AppError(providerFailureKind(err), "Model stream failed", {
               cause: err,
             });
-      // A subagent's run is its own flow inside the turn's request: name it
-      // on the event so a failing delegate is not filed under the answer.
-      reportError(failure, {
-        tags: {
-          component: "chat-stream",
-          ...(isSubagent ? { operation: "chat.subagent" as const } : {}),
-        },
-        ...(safeToDisplay ? { level: "warning" as const } : {}),
-      });
-      // The sanitized copy has no object identity for console deduplication.
-      // The original failure was explicitly reported above.
-      console.warn("[chat/stream] model stream failed", safeErrorLog(failure));
+      if (safeToDisplay && isUserProviderRefusal(err)) {
+        // This turn returns the remedy to the owner of the rejected account.
+        markErrorHandled(failure);
+        console.warn("[chat/stream] model account refused", safeErrorLog(failure));
+      } else {
+        reportModelFailure(failure, {
+          tags: { component: "chat-stream", ...(isSubagent ? { operation: "chat.subagent" as const } : {}) },
+        }, "[chat/stream] model stream failed");
+      }
       const message = safeToDisplay ? err.message : ASSISTANT_ERROR_MESSAGE;
       events.push({
         type: "error",

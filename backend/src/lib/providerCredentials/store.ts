@@ -35,6 +35,7 @@ import { createServerSupabase, type Db } from "../supabase";
 import { envBedrockCredentials, envAzureCredentials, envAzureFoundryCredentials, envVertexCredentials, envVertexServiceAccountKey, envCustomEndpointCredentials } from "../llm/cloudProviders";
 import { resolveManagedProvider, type ManagedProvider } from "../llm/managedProviders";
 import type { ProviderSettings, AzureOpenaiSettings, UserApiKeys } from "../llm";
+import type { ApiKeyName } from "../llm/types";
 
 import type { ApiKeyOwner, ApiKeyProvider, ApiKeyStatus, PooledKeyStatus } from "./types";
 export type {
@@ -176,7 +177,7 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
         resolveManagedProvider("meta"),
     ]);
 
-    return {
+    const keys: UserApiKeys = {
         ...await loadDeploymentSearchApiKeys(),
         claude: claude || null,
         gemini: gemini || null,
@@ -214,6 +215,16 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
                   }
                 : null,
     };
+    // Upstream 2ada45fb: say whose key each provider holds, so a rejected key
+    // is owned by whoever must fix it. Dev divergence: every key here is the
+    // organisation's operator-managed (Key Vault/environment) credential, so
+    // all of them are "env" (deployment-owned); pooled member keys travel in
+    // memberKeys and stay the member's.
+    keys.keySources = {};
+    for (const [name, value] of Object.entries(keys)) {
+        if (typeof value === "string" && value) keys.keySources[name as ApiKeyName] = "env";
+    }
+    return keys;
 }
 
 export async function getProviderEnabled(
@@ -253,6 +264,7 @@ export async function getUserExecutionApiKeys(
             keys.azureOpenai = null;
         } else {
             keys[provider] = null;
+            if (keys.keySources) delete keys.keySources[provider];
         }
     }
     keys.disabledProviders = [
@@ -627,6 +639,9 @@ export async function getEffectiveApiKeys(userId: string, orgId?: string | null,
     const keys = await getUserExecutionApiKeys(userId, db);
     const courtlistener = await managedCourtListenerForOwner({ userId, orgId: orgId ?? null }, db);
     keys.courtlistener = courtlistener.key;
+    const keySources = (keys.keySources ??= {});
+    if (courtlistener.key) keySources.courtlistener = "env";
+    else delete keySources.courtlistener;
     // CourtListener now has its own workspace switch; other provider masks remain.
     keys.disabledProviders = (keys.disabledProviders ?? []).filter((provider) => provider !== "courtlistener");
     if (await getTenancyMode() === "pooled") keys.memberKeys = await getMemberApiKeys(userId, db);
