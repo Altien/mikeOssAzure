@@ -2429,9 +2429,10 @@ export async function runPlaybookReview(
     const stopped = signal?.aborted === true;
     if (!stopped && !isPlaybookRefusal(error))
       reportPlaybookFailure(error, { ...report, stage });
-    // Preparation/publishing infrastructure errors remain retryable. In
-    // particular, a failed publication response is not proof of rollback:
-    // the transaction may still be in flight. Never stamp that run failed.
+    // A failed publication response is not proof of rollback: the
+    // transaction may still be in flight. Never stamp that run failed. A
+    // failure while preparing the edits is certain (nothing was published)
+    // and is recorded below like any other failure.
     if (error instanceof DocumentReviewRetryableError) throw error;
     // Not console.error: see recordImportFailure.
     console.warn("[playbooks] review failed", { runId, error: safeError(error) });
