@@ -2072,6 +2072,7 @@ async function applyReviewEdits(args: {
   expectedVersion: { id: string; storagePath: string };
   findings: PlaybookFinding[];
   job?: PlaybookJobIdentity;
+  signal?: AbortSignal;
 }): Promise<{
   findings: PlaybookFinding[];
   version: { id: string; number: number } | null;
@@ -2119,10 +2120,17 @@ async function applyReviewEdits(args: {
     job: args.job,
     edits: planned.map((item) => item.edit),
     db: args.db,
+    // Checked again after the source downloads, just before the write.
+    signal: args.signal,
   });
-  // A reader who cannot edit, or text that cannot be found, keeps the review
-  // as text alone.
-  if (!result.ok) return { findings: args.findings, version: null };
+  if (!result.ok) {
+    // Refused because the turn stopped meanwhile: the review is stopped, not
+    // kept as text. (A version written before the stop is kept and recorded.)
+    args.signal?.throwIfAborted();
+    // A reader who cannot edit, or text that cannot be found, keeps the
+    // review as text alone.
+    return { findings: args.findings, version: null };
+  }
   const failed = new Set(result.errors.map((error) => error.index));
   const applied = planned.filter((_, index) => !failed.has(index));
   const findings = [...args.findings];
@@ -2290,7 +2298,7 @@ export async function beginPlaybookReview(args: PlaybookReviewRequest) {
  */
 export async function startPlaybookReview(args: PlaybookReviewRequest) {
   const { run, work, apiKeys, db } = await beginPlaybookReview(args);
-  return { run, done: runPlaybookReview(db, work, apiKeys) };
+  return { run, done: runPlaybookReview(db, work, apiKeys, args.signal) };
 }
 
 /**
@@ -2321,6 +2329,8 @@ export async function runPlaybookReview(
   db: Db,
   work: PlaybookReviewWork,
   apiKeys?: UserApiKeys,
+  /** The asking chat turn's; see PlaybookReviewRequest.signal. */
+  signal?: AbortSignal,
 ) {
   const { runId } = work;
   const stopHeartbeat = keepPlaybookWorkAttended(db, "playbook_runs", runId, work.job);
@@ -2358,6 +2368,7 @@ export async function runPlaybookReview(
           apiKeys: keys,
           prompt,
           sources,
+          signal,
         })
       : await completeText({
           model: work.model,
@@ -2366,6 +2377,7 @@ export async function runPlaybookReview(
           maxTokens: 20_000,
           apiKeys: keys,
           feature: "playbook",
+          abortSignal: signal,
         });
     const parsed = reviewSchema.parse(parseModelJson(raw));
     const normalized = normalizeFindings(
@@ -2381,6 +2393,9 @@ export async function runPlaybookReview(
         : normalized;
     stage = "review.apply_edits";
     markStage(stage);
+    // A provider can finish its answer after the turn was stopped: a stopped
+    // review saves nothing, neither a new version nor a completed run.
+    signal?.throwIfAborted();
     const { findings, version } =
       work.documentId && work.expectedVersion
         ? await applyReviewEdits({
@@ -2391,6 +2406,7 @@ export async function runPlaybookReview(
             expectedVersion: work.expectedVersion,
             findings: reviewed,
             job: work.job,
+            signal,
           })
         : { findings: reviewed, version: null };
     const versionId = version?.id ?? null;
@@ -2441,7 +2457,11 @@ export async function runPlaybookReview(
       jobKind: "playbook.review" as const,
       ids: { run_id: runId, playbook_id: work.playbookId },
     };
-    if (!isPlaybookRefusal(error)) reportPlaybookFailure(error, { ...report, stage });
+    // A review its chat turn stopped did not fail: it was cut short on
+    // purpose, so it is not reported, and its run says to run it again.
+    const stopped = signal?.aborted === true;
+    if (!stopped && !isPlaybookRefusal(error))
+      reportPlaybookFailure(error, { ...report, stage });
     // Not console.error: see recordImportFailure.
     console.warn("[playbooks] review failed", { runId, error: safeError(error) });
     const completedAt = new Date().toISOString();
@@ -2450,7 +2470,7 @@ export async function runPlaybookReview(
       .from("playbook_runs")
       .update({
         status: "failed",
-        error: runFailureMessage(error),
+        error: stopped ? INTERRUPTED_RUN_ERROR : runFailureMessage(error),
         completed_at: completedAt,
         updated_at: completedAt,
       })
@@ -2484,6 +2504,7 @@ async function completeReviewWithSources(args: {
   apiKeys: UserApiKeys;
   prompt: string;
   sources: PlaybookSourceRow[];
+  signal?: AbortSignal;
 }): Promise<string> {
   const known = new Set(args.sources.map((source) => source.id));
   const result = await streamChatWithTools({
@@ -2494,6 +2515,7 @@ async function completeReviewWithSources(args: {
     maxIterations: 8,
     apiKeys: args.apiKeys,
     feature: "playbook",
+    abortSignal: args.signal,
     runTools: (calls) =>
       Promise.all(
         calls.map(async (call) => ({
