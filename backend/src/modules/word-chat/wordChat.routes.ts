@@ -47,7 +47,7 @@ import {
   submitClientToolResult,
   throwIfTurnStopped,
 } from "../chat/chat.service";
-import { enqueueChatTurnAudit } from "../../lib/audit";
+import { enqueueChatTurnAudit, stoppedTurnAuditStatus } from "../../lib/audit";
 import { setOperation, isReported, markReportedLog, reportError } from "../../lib/observability/sentry";
 import {
   persistWordDocumentEdits,
@@ -999,7 +999,7 @@ wordChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
           surface: "word",
           title: chatTitle ?? activeDocumentName ?? null,
           model: selectedModel,
-          status: run?.stopReason && run.stopReason !== "user" ? "failed" : "cancelled",
+          status: stoppedTurnAuditStatus(run?.stopReason),
         },
         null,
       );
