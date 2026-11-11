@@ -147,8 +147,9 @@ Unknown database job kinds use jobs.dispatch inside the same isolated canonical 
 ### Repeat budget
 
 Volume policy is separate from `privacyBoundaryIntegration`, which always
-rebuilds the outbound allowlist. Issues are keyed on the final diagnostic
-fingerprint, exception type, top frame and severity. The first observation
+rebuilds the outbound allowlist. Pinned fingerprints use their complete
+controlled fingerprint and severity; fingerprints containing `{{ default }}`
+also use exception type and top frame. The first observation
 always passes; repeats send at occurrences 2, 4, 8, … (tagged `occurrence`),
 resetting after one quiet hour. The backend SDK and the browser tunnel
 (`POST /api/monitoring`) read `SENTRY_MAX_REPEAT_EVENTS_PER_DAY`: a nonnegative
