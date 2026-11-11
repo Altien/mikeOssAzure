@@ -1,4 +1,5 @@
 import { redactDownloadPath } from "../lib/downloadRedaction";
+import { BACKEND_REPORTING_OWNER } from "../lib/reportedUpstreamCodes";
 import type {
   ErrorRequestHandler,
   NextFunction,
@@ -38,7 +39,7 @@ export function protectInternalErrorResponses(
     const publicBody = {
       code: INTERNAL_ERROR_CODE,
       detail: INTERNAL_ERROR_MESSAGE,
-      reporting_owner: "backend",
+      reporting_owner: BACKEND_REPORTING_OWNER,
       ...(requestId ? { request_id: requestId } : {}),
     };
     const errorBody =
@@ -62,7 +63,7 @@ export function protectInternalErrorResponses(
       typeof errorBody.code === "string" &&
       typeof errorBody.detail === "string"
     ) {
-      return originalJson({ ...errorBody, reporting_owner: "backend" });
+      return originalJson({ ...errorBody, reporting_owner: BACKEND_REPORTING_OWNER });
     }
     const route = requestRoutePattern(req);
     if (!failureAlreadyReported(res)) {

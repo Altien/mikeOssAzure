@@ -1,3 +1,4 @@
+import { BACKEND_REPORTING_OWNER } from "./reportedUpstreamCodes";
 import type { Response } from "express";
 import { safeErrorLog } from "./safeError";
 import { markReportedLog, reportError, requestRoutePattern } from "./observability/sentry";
@@ -189,7 +190,7 @@ export function sendInternalError(
     : (answer ?? { code: INTERNAL_ERROR_CODE, detail: INTERNAL_ERROR_MESSAGE });
   return res.status(status).json({
     ...body,
-    reporting_owner: "backend",
+    reporting_owner: BACKEND_REPORTING_OWNER,
     ...(requestId ? { request_id: requestId } : {}),
   });
 }

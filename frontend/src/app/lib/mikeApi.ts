@@ -1,5 +1,6 @@
 import { notifyTabularReviewsChanged } from "@/app/lib/tabularReviewChanges";
 import type { RouterProfileLists } from "@mike/client";
+import { BACKEND_REPORTING_OWNER } from "@mike/client";
 import type { Operation } from "@mike/client";
 import { settleWithConcurrency } from "@mike/client";
 import type {
@@ -161,14 +162,14 @@ export class MikeApiError extends Error {
     status: number;
     code: string | null;
     requestId: string | null;
-    reportingOwner?: "backend";
+    reportingOwner?: typeof BACKEND_REPORTING_OWNER;
 
     constructor(args: {
         message: string;
         status: number;
         code?: string | null;
         requestId?: string | null;
-        reportingOwner?: "backend";
+        reportingOwner?: typeof BACKEND_REPORTING_OWNER;
     }) {
         super(args.message);
         this.name = "MikeApiError";
@@ -377,7 +378,7 @@ async function toApiError(
             status: response.status,
             code,
             requestId,
-            ...(parsed.reporting_owner === "backend" ? { reportingOwner: "backend" as const } : {}),
+            ...(parsed.reporting_owner === BACKEND_REPORTING_OWNER ? { reportingOwner: BACKEND_REPORTING_OWNER } : {}),
             // A 4xx whose body carries no usable `detail` is a malformed
             // error response, and it is treated as one. `API error: 409` used
             // to be produced here instead — and because a 4xx message is the

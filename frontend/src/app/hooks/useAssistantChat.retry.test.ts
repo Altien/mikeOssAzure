@@ -498,7 +498,7 @@ describe("useAssistantChat retry", () => {
  * undiagnosed; 401 is #779's refresh race), so it is sent at warning level.
  */
 describe("useAssistantChat turn-failure reporting", () => {
-    const refusal = (status: number, code: string) =>
+    const refusal = (status: number, code?: string) =>
         new Response(JSON.stringify({ code, detail: "Refused.", request_id: "r1", ...(code === "upstream_unavailable" ? { reporting_owner: "backend" } : {}) }), {
             status,
             headers: { "Content-Type": "application/json" },
@@ -512,7 +512,8 @@ describe("useAssistantChat turn-failure reporting", () => {
     };
 
     it.each([
-        [403, "forbidden"],
+        [403, undefined],
+        [404, undefined],
         [404, "turn_not_found"],
         [409, "turn_in_progress"],
         [413, "payload_too_large"],
@@ -529,20 +530,15 @@ describe("useAssistantChat turn-failure reporting", () => {
         expect(reportErrorMock).not.toHaveBeenCalled();
     });
 
-    // Review of #775: these must stay visible, and under the component the
-    // existing issues (1X, 12, 3V, 2X, 2A, G) and saved searches use.
+    // This boundary displays the server's actual 4xx response, even when
+    // it has no machine code. Transport failures are tested separately.
     it.each([
         [400, "validation_failed"],
         [422, "missing_api_key"],
-    ])("reports a %i refusal once, at warning level", async (status, code) => {
+    ])("handles a %i refusal without filing an issue", async (status, code) => {
         fetchMock.mockResolvedValueOnce(refusal(status, code));
         await failTurn();
-        expect(reportErrorMock).toHaveBeenCalledTimes(1);
-        expect(reportErrorMock.mock.calls[0]?.[0]).toMatchObject({ status, code });
-        expect(reportErrorMock.mock.calls[0]?.[1]).toMatchObject({
-            level: "warning",
-            tags: { component: "assistant-chat", operation: "chat.turn", project: false, error_code: code, request_id: "r1" },
-        });
+        expect(reportErrorMock).not.toHaveBeenCalled();
     });
 
     // Dev divergence (sync-log: 2ada45fb): Dev's authenticated fetch turns a

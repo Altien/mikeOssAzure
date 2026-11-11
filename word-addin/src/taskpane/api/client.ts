@@ -1,3 +1,4 @@
+import { BACKEND_REPORTING_OWNER } from "@mike/client";
 import type {
   ApiKeyStatus,
   Document,
@@ -72,14 +73,14 @@ export class MikeApiError extends Error {
   readonly status: number;
   readonly code: string | null;
   readonly requestId: string | null;
-  readonly reportingOwner?: "backend";
+  readonly reportingOwner?: typeof BACKEND_REPORTING_OWNER;
 
   constructor(args: {
     message: string;
     status: number;
     code?: string | null;
     requestId?: string | null;
-    reportingOwner?: "backend";
+    reportingOwner?: typeof BACKEND_REPORTING_OWNER;
   }) {
     super(args.message);
     this.name = "MikeApiError";
@@ -91,7 +92,7 @@ export class MikeApiError extends Error {
 }
 
 export interface ParsedApiError {
-  reportingOwner?: "backend";
+  reportingOwner?: typeof BACKEND_REPORTING_OWNER;
   message: string;
   code: string | null;
   requestId: string | null;
@@ -114,7 +115,7 @@ export function parseApiErrorBody(args: {
   let code: string | null = null;
   let requestId = args.requestId ?? null;
   let detail: string | null = null;
-  let reportingOwner: "backend" | undefined;
+  let reportingOwner: typeof BACKEND_REPORTING_OWNER | undefined;
 
   try {
     const parsed = JSON.parse(args.body) as {
@@ -124,7 +125,7 @@ export function parseApiErrorBody(args: {
       request_id?: unknown;
       error?: { code?: unknown; message?: unknown; request_id?: unknown };
     };
-    reportingOwner = parsed.reporting_owner === "backend" ? "backend" : undefined;
+    reportingOwner = parsed.reporting_owner === BACKEND_REPORTING_OWNER ? BACKEND_REPORTING_OWNER : undefined;
     code =
       typeof parsed.error?.code === "string"
         ? parsed.error.code

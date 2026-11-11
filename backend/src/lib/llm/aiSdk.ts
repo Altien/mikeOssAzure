@@ -1,6 +1,6 @@
 import { installProviderWarningLogger } from "./warnings";
 import { normalizeReasoningLevelForModel, reasoningLevelsForModel } from "./models";
-import type { LanguageModel, ToolSet } from "ai" with {
+import type { LanguageModel, LanguageModelMiddleware, ToolSet } from "ai" with {
   "resolution-mode": "import",
 };
 import type * as AiSdk from "ai" with { "resolution-mode": "import" };
@@ -16,7 +16,16 @@ import type {
 } from "./types";
 import type { WebSource } from "@mike/contracts";
 import { providerDeadlines } from "./providerDeadlines";
-import { asProviderStallError, providerFailureKind, providerFailureStatus, streamErrorMessage, toProviderStreamError, withKeySource, type ProviderKeySource } from "./providerErrors";
+import {
+  asProviderStallError,
+  isDeterministicProviderQuota,
+  providerFailureKind,
+  providerFailureStatus,
+  streamErrorMessage,
+  toProviderStreamError,
+  withKeySource,
+  type ProviderKeySource,
+} from "./providerErrors";
 import { log } from "../logging/root";
 import { createRawLlmStreamRecorder, logRawLlmStream } from "./rawStreamLog";
 import type { LlmUsageMeter } from "./usage";
@@ -34,6 +43,25 @@ import {
 } from "./lengthContinuation";
 
 installProviderWarningLogger();
+
+/** Keep SDK retry backoff for throttling, but don't repeat a proven account refusal. */
+function quotaRefusalRetries(): LanguageModelMiddleware {
+  const attempt = async <T>(call: () => PromiseLike<T>): Promise<T> => {
+    try { return await call(); }
+    catch (error) {
+      if (isDeterministicProviderQuota(error) && error instanceof Error) {
+        // APICallError exposes this flag to the SDK retry loop. Preserve the
+        // actual exception, provider response, stack and cause for its owner.
+        Object.defineProperty(error, "isRetryable", { value: false, configurable: true });
+      }
+      throw error;
+    }
+  };
+  return {
+    wrapGenerate: ({ doGenerate }) => attempt(doGenerate),
+    wrapStream: ({ doStream }) => attempt(doStream),
+  };
+}
 
 /**
  * Per-step output limit, or undefined to leave it to the provider.
@@ -711,7 +739,7 @@ export async function streamAiSdk(
     const result = startStream({
       model: sdk.wrapLanguageModel({
         model: config.model,
-        middleware: providerDeadlines(params.callbacks?.onActivity),
+        middleware: [providerDeadlines(params.callbacks?.onActivity), quotaRefusalRetries()],
       }),
       system: params.systemPrompt,
       messages: cacheHints.messages,
@@ -1015,7 +1043,7 @@ export async function completeAiSdkText(
   config: AiSdkAdapterConfig,
   meter?: LlmUsageMeter,
 ): Promise<string> {
-  const { generateText } = await import("ai");
+  const { generateText, wrapLanguageModel } = await import("ai");
   // Upstream 2f30082a: lightweight completions disable reasoning by default
   // ("none", moved to the nearest supported level). Dev keeps an explicit
   // caller effort (Altien skills ask for "low").
@@ -1028,7 +1056,7 @@ export async function completeAiSdkText(
   let result: Awaited<ReturnType<typeof generateText>>;
   try {
     result = await generateText({
-      model: config.model,
+      model: wrapLanguageModel({ model: config.model, middleware: quotaRefusalRetries() }),
       system: params.systemPrompt,
       prompt: params.user,
       abortSignal: params.abortSignal,

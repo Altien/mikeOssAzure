@@ -1,3 +1,4 @@
+import { BACKEND_REPORTING_OWNER } from "../../lib/reportedUpstreamCodes";
 import { sendInternalError } from "../../lib/httpError";
 import { registerStreamRunToolCall, requestStreamRunStop } from "../../lib/streamRuns";
 import { streamRunCluster } from "../../lib/streamRunCluster";
@@ -46,7 +47,7 @@ import {
   submitClientToolResult,
 } from "../chat/chat.service";
 import { enqueueChatTurnAudit } from "../../lib/audit";
-import { setOperation } from "../../lib/observability/sentry";
+import { setOperation, isReported, markReportedLog, reportError } from "../../lib/observability/sentry";
 import {
   persistWordDocumentEdits,
   WORD_EDIT_FORMATS,
@@ -906,7 +907,7 @@ wordChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
           type: "error",
           message:
             "The response was generated but could not be saved. Keep this document open and review its tracked changes in Word.",
-          reporting_owner: "backend",
+          reporting_owner: BACKEND_REPORTING_OWNER,
           ...(requestId ? { request_id: requestId } : {}),
         })}\n\n`,
       );
@@ -1007,7 +1008,12 @@ wordChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
       write("data: [DONE]\n\n");
       return;
     }
-    console.error("[word-chat] stream error", safeErrorLog(error));
+    if (!isReported(error)) {
+        reportError(error, { tags: { operation: "word_chat.turn", stage: "chat-stream" } });
+    }
+    // Dev logs a sanitized copy of the now-reported error; mark it so the
+    // Sentry console integration does not file it a second time.
+    console.error("[word-chat] stream error", markReportedLog(safeErrorLog(error)));
     const errorPayload = assistantStreamErrorPayload(error, requestId);
     const message = errorPayload.message;
     const errorEvents =

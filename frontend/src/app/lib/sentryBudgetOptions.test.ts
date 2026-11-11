@@ -11,7 +11,7 @@ it.each(["addin"] as const)("%s caps an explicit Mike DSN but leaves custom proj
         const integrations = options.integrations;
         if (!Array.isArray(integrations)) throw new Error("Expected explicit integrations");
         const integration = integrations.find(item => item.name === "MikePrivacyBoundary");
-        const send = vi.fn(async (_envelope: unknown) => ({ statusCode: 200 }));
+        const send = vi.fn<(envelope: unknown) => Promise<{ statusCode: number }>>(async () => ({ statusCode: 200 }));
         const transport = { send };
         // Drive the configured final transport, not a separately constructed budget.
         (integration as unknown as { setup(client: unknown): void }).setup({ getTransport: () => transport });
@@ -20,3 +20,9 @@ it.each(["addin"] as const)("%s caps an explicit Mike DSN but leaves custom proj
         expect(JSON.stringify(send.mock.calls)).not.toContain("PRIVATE_QUOTA_CANARY");
     }
 });
+
+// Dev (sync-log: 91783e05): upstream's "bounds legacy-server 503 copies"
+// case drives the shared Mike-project DSN budget through serverSentryOptions
+// and MIKE_SENTRY_DSN. Dev has no Next server and bakes no Mike-project DSN
+// (custom projects stay uncapped, above), so the case is not carried; the
+// repeat-budget behaviour itself is covered in packages/client sentryVolume.test.ts.

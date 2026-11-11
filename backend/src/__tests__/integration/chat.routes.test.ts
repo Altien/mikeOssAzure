@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 import { runWithTenant } from "../../lib/tenantContext";
+import { isReported } from "../../lib/observability/sentry";
 import { streamAiSdk } from "../../lib/llm/aiSdk";
 import {
     callStep,
@@ -1495,7 +1496,8 @@ describe("POST /chat — streaming endpoint", () => {
     });
 
     it("surfaces a stream failure as an in-stream error event, not an HTTP error", async () => {
-        runLLMStream.mockRejectedValue(new Error("upstream LLM failure"));
+        const original = new Error("upstream LLM failure");
+        runLLMStream.mockRejectedValue(original);
 
         const res = await request(app)
             .post("/api/chat")
@@ -1507,6 +1509,8 @@ describe("POST /chat — streaming endpoint", () => {
         expect(res.status).toBe(200);
         expect(res.text).toContain('"type":"error"');
         expect(res.text).toContain("[DONE]");
+        expect(isReported(original)).toBe(true);
+        expect(res.text).toContain('"reporting_owner":"backend"');
         // The terminal frame carries the request id (the X-Request-ID header)
         // so the user can quote the one handle that finds this failure.
         const errorFrame = JSON.parse(
