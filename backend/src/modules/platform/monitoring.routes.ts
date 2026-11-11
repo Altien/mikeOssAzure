@@ -16,6 +16,7 @@ import { Router, type Request } from "express";
 import { getKeyVaultConfig } from "../../lib/config";
 import {
     MAX_ENVELOPE_BYTES,
+    browserReportBudget,
     reportingDestination,
     rewriteEnvelope,
     tunnelDecision,
@@ -31,6 +32,7 @@ async function tunnelEnv(): Promise<TunnelEnv> {
         SENTRY_FRONTEND_DSN: vaultDsn || process.env.SENTRY_FRONTEND_DSN,
         SENTRY_ENVIRONMENT: process.env.SENTRY_ENVIRONMENT,
         SENTRY_INSTALL: process.env.SENTRY_INSTALL,
+        SENTRY_MAX_REPEAT_EVENTS_PER_DAY: process.env.SENTRY_MAX_REPEAT_EVENTS_PER_DAY,
     };
 }
 
@@ -61,7 +63,8 @@ async function readBounded(req: Request): Promise<ReadResult> {
 let warnedUnreachable = false;
 
 monitoringRouter.post("/", async (req, res) => {
-    const decision = tunnelDecision(await tunnelEnv());
+    const env = await tunnelEnv();
+    const decision = tunnelDecision(env);
     if (decision.kind === "drop") {
         // Drain so the browser's keep-alive connection is not left half-read.
         req.resume();
@@ -79,8 +82,9 @@ monitoringRouter.post("/", async (req, res) => {
     if (read.kind === "too-large") { res.status(413).end(); return; }
     if (read.kind === "failed" || read.body.byteLength === 0) { res.status(400).end(); return; }
 
-    const envelope = rewriteEnvelope(read.body, decision);
+    const envelope = rewriteEnvelope(read.body, decision, browserReportBudget(env));
     if (!envelope) { res.status(400).end(); return; }
+    if (envelope.byteLength === 0) { res.status(204).end(); return; }
 
     try {
         const upstream = await fetch(decision.url, {

@@ -144,6 +144,46 @@ Unknown database job kinds use jobs.dispatch inside the same isolated canonical 
 - Real-SDK transport tests cover both install modes, including new unregistered
   labels, dependency-provided names/kinds, cause payloads and automatic captures.
 
+### Repeat budget
+
+Volume policy is separate from `privacyBoundaryIntegration`, which always
+rebuilds the outbound allowlist. Issues are keyed on the final diagnostic
+fingerprint, exception type, top frame and severity. The first observation
+always passes; repeats send at occurrences 2, 4, 8, … (tagged `occurrence`),
+resetting after one quiet hour. The backend SDK and the browser tunnel
+(`POST /api/monitoring`) read `SENTRY_MAX_REPEAT_EVENTS_PER_DAY`: a nonnegative
+integer caps **repeat** events per day per budget, and `0` keeps only first
+observations, severity changes and diagnostic probes. Dev has no default
+destination, so blank means no daily repeat cap; power-of-two sampling still
+applies. The add-in gets the power-of-two sampling but no daily cap: Dev bakes
+no `REACT_APP_SENTRY_*` settings into the bundle. Budgets are per process,
+thread or task pane and are bounded to 1,000 recent keys. The former
+`SENTRY_MAX_EVENTS_PER_ISSUE_PER_MINUTE` throttle is retired.
+
+### Reporting ownership
+
+Capture the original exception at the boundary that knows the operation and
+whether recovery failed. A known UI code, HTTP status or `AbortError` name is
+not evidence that another owner handled the failure. Expected outcomes are
+marked explicitly with `markErrorHandled` at that boundary. The registry means
+the reporting decision was made; it does not guarantee delivery to Sentry.
+Keep unowned terminal failures visible, including response-body failures after
+`fetch` resolves and plain proxy errors without a Mike ownership marker.
+
+Development reporting stays off unless a destination is explicitly configured;
+opted-in errors are not filtered using compiler or framework filenames.
+
+Console capture is a fallback. Its primary exception determines identity and
+deduplication; contextual errors alongside it cannot hide or relabel it. Prefer
+`reportError(original, context)` followed by logging the same object. Preserve
+causes, code locations, operation/stage and safe correlation IDs. Tests should
+inspect final SDK envelopes for diagnostic usefulness and privacy.
+
+The job runner owns retry/terminal reporting. `NonRetryableJobError` retains a
+cause and accepts a terminal `reportLevel`: `error` by default, `warning`, or
+`null` only for an outcome the handler has deliberately handled. Quiet outcomes
+are registered so a later automatic copy cannot resurrect them.
+
 ### Client reporting contract
 
 - `describeError`, `userFacingApiError` and the add-in's `userMessage` only

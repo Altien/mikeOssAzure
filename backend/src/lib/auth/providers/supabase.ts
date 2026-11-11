@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import type { AuthValidationResult } from "../types.js";
-import { isAuthUpstreamFailure } from "../../authUpstream";
+import { authErrorShape, isAuthUpstreamFailure } from "../../authUpstream";
 
 /**
  * Did GoTrue refuse this session (a refresh token revoked or already used,
@@ -45,8 +45,9 @@ export async function validateSupabaseToken(
   if (!data.user && isRefusedSupabaseSession(error)) {
     return { ok: false, status: 401, detail: "Invalid or expired session", code: "session_expired" };
   }
-  if (!data.user && error && typeof error === "object" && "__isAuthError" in error
-    && typeof (error as { status?: unknown }).status === "number" && (error as { status: number }).status >= 500) {
+  // Upstream b8490837 moved requireAuth's authErrorShape into authUpstream.ts.
+  const failureStatus = data.user ? undefined : authErrorShape(error)?.status;
+  if (failureStatus !== undefined && failureStatus >= 500) {
     return { ok: false, status: 500, detail: "Authentication provider failed", failure: error };
   }
   if (!data.user) {

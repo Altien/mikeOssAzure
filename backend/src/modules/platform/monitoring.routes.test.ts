@@ -29,6 +29,8 @@ const post = (body: string, headers: Record<string, string> = {}) =>
     .set({ "content-type": "text/plain;charset=UTF-8", ...headers })
     .send(body);
 
+let testBudget = 0;
+
 describe("POST /api/monitoring", () => {
   const fetchMock = vi.fn();
 
@@ -41,6 +43,11 @@ describe("POST /api/monitoring", () => {
     vi.stubEnv("SENTRY_FRONTEND_DSN", "");
     vi.stubEnv("SENTRY_ENVIRONMENT", "");
     vi.stubEnv("SENTRY_INSTALL", "");
+    // The tunnel's repeat budget (sync-log: b8490837) is per process and
+    // keyed by destination and limit: a distinct large limit per test gives
+    // each test a fresh budget, so identical events are not sampled away.
+    testBudget += 1;
+    vi.stubEnv("SENTRY_MAX_REPEAT_EVENTS_PER_DAY", String(1_000 + testBudget));
   });
 
   afterEach(() => {
@@ -68,7 +75,7 @@ describe("POST /api/monitoring", () => {
     expect(parsedLines(new Uint8Array(init.body as ArrayBuffer))).toEqual([
       { dsn: OWN_DSN },
       { type: "event" },
-      { event_id: "c".repeat(32), environment: "production" },
+      { event_id: "c".repeat(32), environment: "production", tags: { occurrence: 1 } },
     ]);
   });
 

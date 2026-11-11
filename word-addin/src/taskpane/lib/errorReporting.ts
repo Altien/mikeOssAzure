@@ -12,6 +12,8 @@
 import * as Sentry from "@sentry/react";
 import {
   privacyBoundaryIntegration,
+  eventBudget,
+  repeatEventLimit,
   MIKE_SENTRY_DSN,
   createEventScrubber,
   installKind,
@@ -44,6 +46,7 @@ export const scrubEvent = scrubber.scrubEvent;
 // Reporting callers and automatic-capture deduplication share one registry.
 const markReported = scrubber.markReported;
 export const isReported = scrubber.isReported;
+export const markErrorHandled = scrubber.markReported;
 
 
 /** `service`/`surface` distinguish the pane from its ribbon and OAuth pages. */
@@ -61,13 +64,14 @@ export function addinSentryOptions(
     gitSha?: string;
     tracesSampleRate?: string;
     nodeEnv?: string;
+    maxRepeatEventsPerDay?: string;
   },
 ): Sentry.BrowserOptions {
   // Runtime /config supplies this deployment's DSN; an empty value is off.
   // webpack sets NODE_ENV from --mode: the dev server is "development",
   // `npm run build` (every image) is "production".
   const development = env.nodeEnv === "development";
-  const { dsn } = resolveDsn({
+  const { dsn, source } = resolveDsn({
     disabled: env.disabled,
     dsn: env.dsn,
     fallback: MIKE_SENTRY_DSN.wordAddin,
@@ -95,7 +99,7 @@ export function addinSentryOptions(
     // No session replay: the pane sits next to a privileged document.
     dataCollection,
     attachStacktrace: true,
-    integrations: [privacyBoundaryIntegration(), Sentry.captureConsoleIntegration({ levels: ["error"] })],
+    integrations: [privacyBoundaryIntegration({ acceptEvent: eventBudget({ repeatEventsPerDay: repeatEventLimit(env.maxRepeatEventsPerDay, source === "default") }) }), Sentry.captureConsoleIntegration({ levels: ["error"] })],
     initialScope: {
       tags: {
         service: "mike-word-addin",
@@ -118,6 +122,10 @@ export function initAddinErrorReporting(surface: AddinSurface, runtimeDsn = ""):
     version: process.env.REACT_APP_MIKE_VERSION,
     gitSha: process.env.REACT_APP_GIT_SHA,
     nodeEnv: process.env.NODE_ENV,
+    // Dev divergence (sync-log: b8490837): upstream bakes
+    // REACT_APP_SENTRY_MAX_REPEAT_EVENTS_PER_DAY. Dev bakes no REACT_APP_SENTRY_*
+    // settings (the DSN is runtime /config), so the pane keeps power-of-two
+    // repeat sampling with no daily cap (an explicit DSN's default).
   });
   if (!options.enabled) return false;
   Sentry.init(options);

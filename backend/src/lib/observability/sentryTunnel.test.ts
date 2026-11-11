@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { reportingDestination, rewriteEnvelope, tunnelDecision, type TunnelEnv } from "./sentryTunnel";
+import { browserReportBudget, reportingDestination, rewriteEnvelope, tunnelDecision, type TunnelEnv } from "./sentryTunnel";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -189,4 +189,16 @@ describe("rewriteEnvelope", () => {
             }),
         ).toBeNull();
     });
+});
+
+it("applies the runtime destination's repeat policy in the tunnel", () => {
+    // Dev: the runtime browser DSN is SENTRY_FRONTEND_DSN (no community default).
+    const env: TunnelEnv = { SENTRY_FRONTEND_DSN: "https://budget@sentry.example/42", SENTRY_MAX_REPEAT_EVENTS_PER_DAY: "0" };
+    const accepts = browserReportBudget(env);
+    const raw = envelope([{ dsn: "placeholder" }, { type: "event" }, { tags: { component: "budget-test" } }]);
+    expect(rewriteEnvelope(raw, { dsn: OWN_DSN }, accepts)!.byteLength).toBeGreaterThan(0);
+    expect(rewriteEnvelope(raw, { dsn: OWN_DSN }, accepts)!.byteLength).toBe(0);
+    const own = browserReportBudget({ ...env, SENTRY_MAX_REPEAT_EVENTS_PER_DAY: undefined, SENTRY_FRONTEND_DSN: "https://other@sentry.example/43" });
+    expect(rewriteEnvelope(raw, { dsn: OWN_DSN }, own)!.byteLength).toBeGreaterThan(0);
+    expect(rewriteEnvelope(raw, { dsn: OWN_DSN }, own)!.byteLength).toBeGreaterThan(0);
 });

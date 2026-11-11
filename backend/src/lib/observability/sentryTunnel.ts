@@ -9,6 +9,7 @@
 // the web DSN is runtime-only (Key Vault `sentry-frontend-dsn`, then
 // SENTRY_FRONTEND_DSN), exactly what GET /config serves.
 import { installKind, resolveDsn, type InstallKind } from "./sentry";
+import { eventBudget, repeatEventLimit } from "./sentryVolume";
 
 /** The env the destination rule reads; the caller resolves the Key Vault DSN. */
 export type TunnelEnv = {
@@ -17,6 +18,8 @@ export type TunnelEnv = {
     SENTRY_FRONTEND_DSN?: string;
     SENTRY_ENVIRONMENT?: string;
     SENTRY_INSTALL?: string;
+    /** Optional daily cap on repeat browser reports (blank: no cap). */
+    SENTRY_MAX_REPEAT_EVENTS_PER_DAY?: string;
 };
 
 export type ReportingDestination = {
@@ -137,6 +140,7 @@ function parseJsonObject(bytes: Uint8Array): Record<string, unknown> | null {
 export function rewriteEnvelope(
     raw: Uint8Array,
     patch: { dsn: string; environment?: string; install?: string },
+    acceptEvent?: (event: Record<string, unknown>) => boolean,
 ): Uint8Array | null {
     const headerEnd = lineEnd(raw, 0);
     const header = parseJsonObject(raw.subarray(0, headerEnd));
@@ -164,7 +168,7 @@ export function rewriteEnvelope(
         if (payloadEnd > raw.length) return null;
         let payload = raw.subarray(payloadStart, payloadEnd);
 
-        if (itemHeader.type === "event" && (patch.environment || patch.install)) {
+        if (itemHeader.type === "event" && (patch.environment || patch.install || acceptEvent)) {
             const event = parseJsonObject(payload);
             if (!event) return null;
             if (patch.environment) event.environment = patch.environment;
@@ -176,6 +180,7 @@ export function rewriteEnvelope(
                 tags.install = patch.install;
                 event.tags = tags;
             }
+            if (acceptEvent && !acceptEvent(event)) { cursor = payloadEnd + 1; continue; }
             payload = encoder.encode(JSON.stringify(event));
             if (typeof declared === "number") itemHeader.length = payload.byteLength;
         }
@@ -183,6 +188,7 @@ export function rewriteEnvelope(
         cursor = payloadEnd + 1;
     }
 
+    if (acceptEvent && parts.length === 1) return new Uint8Array();
     const total = parts.reduce((sum, part) => sum + part.byteLength + 1, 0);
     const out = new Uint8Array(total);
     let offset = 0;
@@ -195,3 +201,16 @@ export function rewriteEnvelope(
     return out;
 }
 
+
+// One bounded budget per tunnel process, reset only when destination/policy changes.
+let browserBudget: { key: string; accepts: ReturnType<typeof eventBudget> } | undefined;
+// Dev divergence (sync-log: b8490837): Dev has no "default" (community)
+// destination, so the repeat cap applies only when SENTRY_MAX_REPEAT_EVENTS_PER_DAY
+// is set; an explicit runtime DSN otherwise owns its volume policy.
+export function browserReportBudget(env: TunnelEnv): ReturnType<typeof eventBudget> {
+    const destination = reportingDestination(env);
+    const limit = repeatEventLimit(env.SENTRY_MAX_REPEAT_EVENTS_PER_DAY, false);
+    const key = `${destination.dsn}:${limit}`;
+    if (browserBudget?.key !== key) browserBudget = { key, accepts: eventBudget({ repeatEventsPerDay: limit }) };
+    return browserBudget.accepts;
+}
