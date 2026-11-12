@@ -1,11 +1,9 @@
 import type { Readable } from "node:stream";
+import { storageReadTimeoutMs } from "./timeouts";
 
 /** Whole-object source I/O deadline; parser execution has its own clock/slot. */
 export function storageDownloadSignal(caller?: AbortSignal): AbortSignal {
-  const value = Number(process.env.STORAGE_DOWNLOAD_TIMEOUT_MS);
-  const milliseconds = Number.isSafeInteger(value) && value > 0 && value <= 2_147_483_647
-    ? value : 120_000;
-  const deadline = AbortSignal.timeout(milliseconds);
+  const deadline = AbortSignal.timeout(storageReadTimeoutMs());
   return caller ? AbortSignal.any([caller, deadline]) : deadline;
 }
 

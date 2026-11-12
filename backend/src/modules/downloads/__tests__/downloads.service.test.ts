@@ -4,12 +4,18 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import type { Db } from "../../../lib/supabase";
 
 const mocks = vi.hoisted(() => ({
-  downloadFile: vi.fn(),
+  headFile: vi.fn(),
+  openFileStream: vi.fn(),
   ensureDocAccess: vi.fn(),
   from: vi.fn(),
 }));
 
-vi.mock("../../../lib/storage", () => ({ downloadFile: mocks.downloadFile }));
+// Upstream de138f6d: downloads answer from a HEAD and stream the object later.
+vi.mock("../../../lib/storage", () => ({
+  headFile: mocks.headFile,
+  openFileStream: mocks.openFileStream,
+  TenantStorageError: class TenantStorageError extends Error {},
+}));
 vi.mock("../../../lib/access", () => ({ ensureDocAccess: mocks.ensureDocAccess }));
 
 let service: typeof import("../downloads.service");
@@ -52,8 +58,9 @@ beforeEach(() => {
       : query({ id: "doc-1", user_id: "user-1", project_id: null, org_id: null, workflow_id: null }));
   mocks.ensureDocAccess.mockReset();
   mocks.ensureDocAccess.mockResolvedValue({ ok: true });
-  mocks.downloadFile.mockReset();
-  mocks.downloadFile.mockResolvedValue(new TextEncoder().encode("pdf").buffer);
+  mocks.headFile.mockReset();
+  mocks.headFile.mockResolvedValue({ size: 3, etag: '"e"', contentType: null });
+  mocks.openFileStream.mockReset();
 });
 
 afterEach(() => vi.useRealTimers());
@@ -63,8 +70,8 @@ describe("resolveTokenDownload (bound tokens)", () => {
     const ctx = { tenantId: "tenant-a", userId: "user-1" };
     const token = tenant.runWithTenant(ctx, () => tokens.signDownload(PATH, "a.pdf"));
     const result = await download(token, ctx);
-    expect(result).toMatchObject({ ok: true, filename: "a.pdf" });
-    expect(mocks.downloadFile).toHaveBeenCalledWith(PATH);
+    expect(result).toMatchObject({ ok: true, download: { filename: "a.pdf", size: 3, etag: '"e"' } });
+    expect(mocks.headFile).toHaveBeenCalledWith(PATH);
   });
 
   it("rejects an expired token before any read", async () => {
@@ -74,7 +81,7 @@ describe("resolveTokenDownload (bound tokens)", () => {
     vi.setSystemTime(new Date("2026-01-01T00:01:00Z"));
     expect(await download(token, ctx)).toEqual({ ok: false, kind: "invalid_link" });
     expect(mocks.from).not.toHaveBeenCalled();
-    expect(mocks.downloadFile).not.toHaveBeenCalled();
+    expect(mocks.headFile).not.toHaveBeenCalled();
   });
 
   it("rejects tenant B's token for a caller in tenant A before any read", async () => {
@@ -83,7 +90,7 @@ describe("resolveTokenDownload (bound tokens)", () => {
     const result = await download(token, { tenantId: "tenant-a", userId: "user-1" });
     expect(result).toEqual({ ok: false, kind: "invalid_link" });
     expect(mocks.from).not.toHaveBeenCalled();
-    expect(mocks.downloadFile).not.toHaveBeenCalled();
+    expect(mocks.headFile).not.toHaveBeenCalled();
   });
 
   it("rejects another user's token in the same tenant", async () => {
@@ -98,7 +105,7 @@ describe("resolveTokenDownload (bound tokens)", () => {
     const ctx = { tenantId: "tenant-a", userId: "user-1" };
     const token = tenant.runWithTenant(ctx, () => tokens.signDownload(PATH, "a.pdf"));
     expect(await download(token, ctx)).toEqual({ ok: false, kind: "not_found" });
-    expect(mocks.downloadFile).not.toHaveBeenCalled();
+    expect(mocks.headFile).not.toHaveBeenCalled();
   });
 
   it("accepts an old-format token for the install tenant only", async () => {
@@ -134,21 +141,31 @@ describe("resolveBlobDownload (filesystem presigned GET)", () => {
   it("reads a tenant-prefixed key as the tenant the signed key names", async () => {
     const key = `t/tenant-b/${PATH}`;
     let seenTenant: string | undefined;
-    mocks.downloadFile.mockImplementation(async () => {
+    mocks.headFile.mockImplementation(async () => {
       seenTenant = tenant.currentTenant()?.tenantId;
-      return new TextEncoder().encode("pdf").buffer;
+      return { size: 3, etag: null, contentType: null };
     });
     const result = await service.resolveBlobDownload(tokens.signBlobToken(key, "b.pdf", 60));
     expect(result).toMatchObject({ ok: true });
-    expect(mocks.downloadFile).toHaveBeenCalledWith(key);
+    expect(mocks.headFile).toHaveBeenCalledWith(key);
     expect(seenTenant).toBe("tenant-b");
+    // The deferred open runs as that tenant too.
+    let openTenant: string | undefined;
+    mocks.openFileStream.mockImplementation(async () => {
+      openTenant = tenant.currentTenant()?.tenantId;
+      return null;
+    });
+    if (!result.ok) throw new Error("expected ok");
+    await result.data.open(new AbortController().signal);
+    expect(mocks.openFileStream).toHaveBeenCalledWith(key, expect.anything());
+    expect(openTenant).toBe("tenant-b");
   });
 
   it("reads an unprefixed key with no added tenant scope", async () => {
     let seenTenant: string | undefined = "unset";
-    mocks.downloadFile.mockImplementation(async () => {
+    mocks.headFile.mockImplementation(async () => {
       seenTenant = tenant.currentTenant()?.tenantId;
-      return new TextEncoder().encode("pdf").buffer;
+      return { size: 3, etag: null, contentType: null };
     });
     await service.resolveBlobDownload(tokens.signBlobToken(PATH, "a.pdf", 60));
     expect(seenTenant).toBeUndefined();

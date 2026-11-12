@@ -176,11 +176,22 @@ export function createS3StorageAdapter(options: S3StorageOptions = {}): StorageA
       }
     },
 
-    async openReadStream(key) {
+    async openReadStream(key, options) {
+      const abortSignal = options?.signal;
       const response = (await client().send(
         new GetObjectCommand({ Bucket: bucket, Key: key }),
+        abortSignal ? { abortSignal } : undefined,
       )) as any;
-      return (response.Body as AsyncIterable<Uint8Array> | undefined) ?? null;
+      const body = response.Body;
+      if (!body) return null;
+      // The SDK's signal covers the request; once the body is flowing, tear
+      // the socket down here so an abort never leaves it half-read.
+      if (abortSignal) {
+        const stop = () => body.destroy?.(abortSignal.reason);
+        if (abortSignal.aborted) stop();
+        else abortSignal.addEventListener("abort", stop, { once: true });
+      }
+      return body as AsyncIterable<Uint8Array>;
     },
 
     async headFile(key) {

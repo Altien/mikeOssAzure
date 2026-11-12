@@ -77,10 +77,20 @@ export function createAzureBlobStorageAdapter(options: AzureStorageOptions): Sto
       }
     },
 
-    async openReadStream(key) {
+    async openReadStream(key, options) {
+      // Upstream de138f6d: an abort releases the read — the SDK's signal
+      // covers the request, and a body already flowing is destroyed here.
+      const abortSignal = options?.signal;
       try {
-        const response = await container().getBlobClient(key).download(0);
-        return (response.readableStreamBody as Readable | undefined) ?? null;
+        const response = await container().getBlobClient(key)
+          .download(0, undefined, abortSignal ? { abortSignal } : undefined);
+        const body = (response.readableStreamBody as Readable | undefined) ?? null;
+        if (body && abortSignal) {
+          const stop = () => body.destroy(abortSignal.reason);
+          if (abortSignal.aborted) stop();
+          else abortSignal.addEventListener("abort", stop, { once: true });
+        }
+        return body;
       } catch (error) {
         if (isMissingBlob(error)) return null;
         throw error;
