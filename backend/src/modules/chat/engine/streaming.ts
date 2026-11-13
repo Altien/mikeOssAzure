@@ -81,6 +81,7 @@ import {
   createCitation,
   CITATIONS_OPEN_TAG,
   limitCitationPayload,
+  withoutEmbeddedSourceText,
 } from "./citations";
 import { runToolCalls } from "./tools/toolDispatcher";
 import {
@@ -1363,7 +1364,8 @@ export async function runLLMStream(params: {
         getCachedCaseOpinionTexts(courtlistenerTurnState, clusterId, externalSourceCache),
     );
   }
-  citations = limitCitationPayload(citations);
+  // Verified against the full text above; only the reference leaves the turn.
+  citations = withoutEmbeddedSourceText(limitCitationPayload(citations));
   devLog("[chat/stream] final citations", {
     hasCitationsBlock: citationDiagnostics.hasBlock,
     citationsBlockLength: citationDiagnostics.rawLength,

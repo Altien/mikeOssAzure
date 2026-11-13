@@ -67,7 +67,6 @@ export interface DocumentContentProps {
     document: PanelDocument;
     mode: DocumentContentMode;
     isReloading?: boolean;
-    compactActions?: boolean;
     /** The host's tab strip already names the document; hide the title row's copy. */
     hideTitle?: boolean;
     /** Assistant default: start with editing locked and the DOCX toolbar hidden. */
@@ -103,7 +102,6 @@ export function DocumentContent({
     document,
     mode,
     isReloading = false,
-    compactActions,
     hideTitle,
     showToolbarToggle = false,
     canEdit = false,
@@ -119,19 +117,7 @@ export function DocumentContent({
     cacheBytes = true,
     onVersionChange,
 }: DocumentContentProps) {
-    const contentRef = useRef<HTMLDivElement>(null);
-    const [narrow, setNarrow] = useState(false);
     const [toolbarVisible, setToolbarVisible] = useState(!showToolbarToggle);
-    useEffect(() => {
-        const element = contentRef.current;
-        if (!element || typeof ResizeObserver === "undefined") return;
-        const observer = new ResizeObserver(([entry]) => {
-            if (entry.contentRect.width > 0)
-                setNarrow(entry.contentRect.width < 600);
-        });
-        observer.observe(element);
-        return () => observer.disconnect();
-    }, []);
     const [saveState, setSaveState] = useState<DocxSaveState | null>(null);
     const onSaveStateChange = useCallback(
         (_documentId: string, state: DocxSaveState | null) =>
@@ -243,13 +229,12 @@ export function DocumentContent({
     }, [editFocusKey, mode]);
 
     return (
-        <div ref={contentRef} className="flex h-full min-h-0 flex-col">
+        <div className="flex h-full min-h-0 flex-col">
             <DocumentAnnotationLayer
                 title={
                     <DocumentTitleRow
                         document={resolvedDocument}
                         isReloading={isReloading}
-                        compactActions={compactActions ?? narrow}
                         hideTitle={hideTitle}
                         saveState={saveState}
                         onVersionChange={onVersionChange}
