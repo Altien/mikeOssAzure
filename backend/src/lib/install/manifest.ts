@@ -50,6 +50,22 @@ type CheckKvSecretOpts = {
 // Any other thrown error IS an unexpected failure (KV unreachable,
 // auth denied, etc.) and surfaces its message so we can diagnose.
 // Closes 040 Entry 1 problem 1.
+const NOT_CONFIGURED_DETAIL = "Not yet configured.";
+const FORMAT_FAILED_PREFIX = "Format check failed";
+
+/**
+ * Whether a failed item really read the setting and found it absent or unusable,
+ * as opposed to not being able to read it (a Key Vault outage, for example).
+ */
+export function isConclusiveAbsence(result: CheckResult): boolean {
+    return result.detail === NOT_CONFIGURED_DETAIL || isFormatFailure(result);
+}
+
+/** A failed item that read a value, which did not have the expected form. */
+export function isFormatFailure(result: CheckResult): boolean {
+    return result.detail?.startsWith(FORMAT_FAILED_PREFIX) ?? false;
+}
+
 function isSecretNotFound(err: unknown): boolean {
     if (!err || typeof err !== "object") return false;
     const e = err as { code?: unknown; statusCode?: unknown };
@@ -62,11 +78,11 @@ async function checkKvSecret(
 ): Promise<CheckResult> {
     try {
         const value = await getConfig(name);
-        if (!value) return { status: "fail", detail: "Not yet configured." };
+        if (!value) return { status: "fail", detail: NOT_CONFIGURED_DETAIL };
         if (opts.format && !opts.format.test(value)) {
             return {
                 status: "fail",
-                detail: `Format check failed${opts.formatHint ? ` (expected ${opts.formatHint})` : ""}.`,
+                detail: `${FORMAT_FAILED_PREFIX}${opts.formatHint ? ` (expected ${opts.formatHint})` : ""}.`,
             };
         }
         // Show the current value on pass so operators can verify it's
@@ -77,7 +93,7 @@ async function checkKvSecret(
         return { status: "pass", detail: formatter(value) };
     } catch (err) {
         if (isSecretNotFound(err)) {
-            return { status: "fail", detail: "Not yet configured." };
+            return { status: "fail", detail: NOT_CONFIGURED_DETAIL };
         }
         return {
             status: "fail",
@@ -717,6 +733,10 @@ const items: ManifestItem[] = [
         },
     },
 ];
+
+export function manifestItemsInSection(section: ManifestItem["section"]): ManifestItem[] {
+    return items.filter((i) => i.section === section);
+}
 
 export function findManifestItem(id: string): ManifestItem | undefined {
     return items.find((i) => i.id === id);

@@ -4,10 +4,11 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { Client, Pool, type PoolClient } from "pg";
-import { streamRunDatabaseUri } from "./postgresSession";
+import { sessionUsesTls, streamRunDatabaseUri } from "./postgresSession";
 import { deriveServerRelayKey } from "./serverSession";
 import { PLATFORM_DB_ROLE, postgrestClaims, tenantDbRole } from "./supabase";
 import { currentTenant, runWithTenant } from "./tenantContext";
+import { streamRunRoleFailure, tenantProbeContext } from "./tenantDatabaseProbe";
 
 export type RunRow = {
   id: string;
@@ -96,8 +97,7 @@ export class StreamRunCluster {
     // dedicated loopback port. Remote deployments keep the direct-port guard.
     const desktopLocal = local && process.env.AUTH_PROVIDER === "local";
     if (parsed.port && parsed.port !== "5432" && !desktopLocal) throw new Error("Stream run database requires direct PostgreSQL port 5432");
-    // Loopback is the local docker-compose Postgres, which has no TLS.
-    const ssl = !local;
+    const ssl = sessionUsesTls(uri);
     const cluster = new StreamRunCluster(uri, ssl);
     await cluster.initialize();
     return cluster;
@@ -122,11 +122,32 @@ export class StreamRunCluster {
       );
       await c.query("select id from public.stream_runs limit 1");
     });
+    await this.probeTenantRole();
     this.pulse = setInterval(() => { void this.heartbeat().catch(() => {
       // A transient pool fault must not silently disable the listener;
       // ownership renewals independently fail closed while PostgreSQL is down.
     }); }, 5_000);
     this.pulse.unref();
+  }
+
+  /**
+   * The work above is platform work and proves service_role only, while every
+   * run a tenant starts here uses the tenant role. Read-only; zero rows is fine.
+   */
+  private async probeTenantRole(): Promise<void> {
+    const scope = await tenantProbeContext();
+    // withClient has already switched role by the time it calls back.
+    let step: "role-switch" | "table-read" = "role-switch";
+    try {
+      await runWithTenant(scope, () => this.withClient((c) => {
+        step = "table-read";
+        return c.query("select id from public.stream_runs limit 1");
+      }));
+    } catch (error) {
+      const failure = await streamRunRoleFailure(await tenantDbRole(), error, step);
+      await this.close();
+      throw failure;
+    }
   }
 
   private async connectListener(listener: Client): Promise<void> {

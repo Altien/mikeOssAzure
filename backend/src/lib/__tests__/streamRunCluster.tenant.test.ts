@@ -4,13 +4,21 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { queries } = vi.hoisted(() => ({ queries: [] as Array<{ sql: string; params?: unknown[] }> }));
+const { queries, denied } = vi.hoisted(() => ({
+  queries: [] as Array<{ sql: string; params?: unknown[] }>,
+  denied: { sql: "", code: "42501" as string | undefined, asRole: "" },
+}));
 
 vi.mock("pg", () => {
   class FakeClient {
+    role = "";
     async connect() {}
     async query(sql: string, params?: unknown[]) {
       queries.push({ sql, params });
+      if (sql.startsWith("SET ROLE ")) this.role = sql.slice("SET ROLE ".length);
+      if (denied.sql && sql === denied.sql && (!denied.asRole || this.role === denied.asRole)) {
+        throw Object.assign(new Error("raw driver text postgres://login:hunter2@db/mike"), { code: denied.code });
+      }
       return { rows: [], rowCount: 0 };
     }
     on() { return this; }
@@ -25,6 +33,7 @@ vi.mock("pg", () => {
 });
 
 import { StreamRunCluster } from "../streamRunCluster";
+import { resetPostgrestJwtState } from "../supabase";
 import { currentTenant, runWithTenant } from "../tenantContext";
 
 let cluster: StreamRunCluster | null = null;
@@ -32,6 +41,10 @@ afterEach(async () => {
   await cluster?.close();
   cluster = null;
   queries.length = 0;
+  denied.sql = "";
+  denied.code = "42501";
+  denied.asRole = "";
+  vi.unstubAllEnvs();
 });
 
 function claimsSetBefore(marker: string): Record<string, unknown> {
@@ -70,6 +83,75 @@ describe("StreamRunCluster tenant claims", () => {
       queries.slice(0, queries.findIndex((q) => q.sql === marker)).reverse().find((q) => q.sql.startsWith("SET ROLE"))?.sql;
     expect(roleBefore("-- inside")).toBe("SET ROLE tenant_app");
     expect(roleBefore("-- outside")).toBe("SET ROLE service_role");
+  });
+
+  it("proves the tenant role at startup, read-only, not just service_role", async () => {
+    cluster = await StreamRunCluster.startForTests("postgres://localhost:5432/mike", Buffer.alloc(32, 7));
+    const role = queries.findIndex((q) => q.sql === "SET ROLE tenant_app");
+    expect(role).toBeGreaterThan(-1);
+    expect(queries.slice(role).map((q) => q.sql)).toContain("select id from public.stream_runs limit 1");
+    expect(queries.filter((q) => q.sql.startsWith("SET ROLE tenant_app")).length).toBe(1);
+  });
+
+  it("fails startup with guidance and only the code when the login lacks the tenant role", async () => {
+    denied.sql = "SET ROLE tenant_app";
+    const start = StreamRunCluster.startForTests("postgres://localhost:5432/mike", Buffer.alloc(32, 7));
+    const error = await start.catch((caught: Error) => caught) as Error;
+    expect(error.message).toContain("role tenant_app");
+    expect(error.message).toContain("code 42501");
+    expect(error.message).toContain("GRANT tenant_app TO <login>");
+    expect(error.message).toContain("tenant-rls-enforced=false");
+    expect(error.message).not.toContain("hunter2");
+    expect(error.cause).toBeUndefined();
+  });
+
+  it("says the role lacks a table grant when the read is refused after the role switch", async () => {
+    denied.sql = "select id from public.stream_runs limit 1";
+    denied.asRole = "tenant_app";
+    const start = StreamRunCluster.startForTests("postgres://localhost:5432/mike", Buffer.alloc(32, 7));
+    const error = await start.catch((caught: Error) => caught) as Error;
+    expect(error.message).toContain("role tenant_app could not read public.stream_runs (code 42501)");
+    expect(error.message).toContain("run the migration job");
+    expect(error.message).toContain("GRANT SELECT, INSERT, UPDATE, DELETE ON public.stream_runs TO tenant_app");
+    expect(error.message).not.toContain("could not use role");
+    expect(error.message).not.toContain("GRANT tenant_app TO");
+    expect(error.message).not.toContain("tenant-rls-enforced");
+  });
+
+  it("says the role may not exist on a 22023 at the switch, as the PostgREST path does", async () => {
+    denied.sql = "SET ROLE tenant_app";
+    denied.code = "22023";
+    const start = StreamRunCluster.startForTests("postgres://localhost:5432/mike", Buffer.alloc(32, 7));
+    const error = await start.catch((caught: Error) => caught) as Error;
+    expect(error.message).toContain("could not switch to role tenant_app (code 22023)");
+    expect(error.message).toContain("Role tenant_app may not exist in this database. Run the migration job.");
+    expect(error.message).not.toContain("GRANT");
+    expect(error.message).not.toContain("tenant-rls-enforced");
+  });
+
+  it.each(["ECONNRESET", "57P01", "08006", undefined])(
+    "does not blame the role, or offer a grant or rollback, for a connection failure (%s)",
+    async (code) => {
+      denied.sql = "SET ROLE tenant_app";
+      denied.code = code;
+      const start = StreamRunCluster.startForTests("postgres://localhost:5432/mike", Buffer.alloc(32, 7));
+      const error = await start.catch((caught: Error) => caught) as Error;
+      expect(error.message).toContain("stream-run connection failed");
+      expect(error.message).toContain(`code ${code ?? "no code"}`);
+      expect(error.message).not.toContain("could not use role");
+      expect(error.message).not.toContain("GRANT");
+      expect(error.message).not.toContain("tenant-rls-enforced");
+      expect(error.message).not.toContain("hunter2");
+    },
+  );
+
+  it("does not ask for tenant_app under the rollback switch", async () => {
+    vi.stubEnv("TENANT_RLS_ENFORCED", "false");
+    resetPostgrestJwtState();
+    denied.sql = "SET ROLE tenant_app";
+    cluster = await StreamRunCluster.startForTests("postgres://localhost:5432/mike", Buffer.alloc(32, 7));
+    expect(queries.map((q) => q.sql)).not.toContain("SET ROLE tenant_app");
+    resetPostgrestJwtState();
   });
 
   it("serves a relayed request as the requester's tenant", async () => {

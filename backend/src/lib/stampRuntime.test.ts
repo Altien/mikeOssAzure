@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ values: {} as Record<string,string>, vault: vi.fn(), databaseUri: vi.fn(), configFailure: false }));
+const mocks = vi.hoisted(() => ({ values: {} as Record<string,string>, vault: vi.fn(), databaseUri: vi.fn(), configFailure: false, tenantProbe: vi.fn() }));
+// The tenant role probe has its own suite (tenantDatabaseProbe.test.ts).
+vi.mock("./tenantDatabaseProbe", () => ({ probeTenantPostgrestPath: mocks.tenantProbe }));
 vi.mock("./config", () => ({
   getConfig: async (name: string) => {
     if (mocks.configFailure) throw new Error("Vault is unavailable");
@@ -24,6 +26,7 @@ beforeEach(() => {
   resetFrozenTenancyModeForTests();
   mocks.values = { "tenancy-mode":"pooled","auth-provider":"local","stamp-id":"stamp-a","stamp-region":"uksouth" };
   mocks.configFailure = false;
+  mocks.tenantProbe.mockReset().mockResolvedValue(undefined);
   mocks.databaseUri.mockReset().mockResolvedValue("postgresql://session-owner@db:5432/mike");
   mocks.vault.mockReset().mockRejectedValue(Object.assign(new Error("Missing"),{statusCode:404}));
   metadata = { pooled:true,fallback_tenant_id:null,stamp_id:"stamp-a",region:"uksouth",platform_credentials:[] };
@@ -67,6 +70,12 @@ describe("stamp startup gate",()=>{
   it.each([{stamp_id:"different"},{region:"eastus"},{fallback_tenant_id:"default"}])("refuses a pooled identity/fallback mismatch: %j",async change=>{
     Object.assign(metadata,change);
     await expect(probeStampRuntime(db())).rejects.toThrow("identity or fallback");
+  });
+  it("stops startup when the tenant role check fails, before freezing the mode",async()=>{
+    mocks.tenantProbe.mockRejectedValueOnce(new Error("Tenant database check failed"));
+    await expect(probeStampRuntime(db())).rejects.toThrow("Tenant database check failed");
+    mocks.values["tenancy-mode"]="single";
+    expect(await getTenancyMode()).toBe("single");
   });
   it("refuses pooled RLS rollback",async()=>{
     mocks.values["tenant-rls-enforced"]="false";

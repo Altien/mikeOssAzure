@@ -3,6 +3,9 @@ import { createServerSupabase, postgrestRequestAuthorization } from "../../lib/s
 import { getConfig, flushConfigCache } from "../../lib/config";
 import { runWithJobTenant } from "../../lib/tenantContext";
 
+export { runHealthChecks } from "./platform.health";
+export type { HealthResult, HealthStatus } from "./platform.shared";
+
 const SENTINEL_USER_ID = "00000000-0000-0000-0000-dddd0000dddd";
 
 export type TestResult = {

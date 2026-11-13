@@ -35,6 +35,16 @@ function getAuthProvider() {
   return (process.env.AUTH_PROVIDER ?? "supabase").toLowerCase();
 }
 
+/**
+ * Whether these clients sign per-request PostgREST JWTs (entra, local). Hosted
+ * Supabase sends its static service-role key instead, so the database role of
+ * tenant traffic there does not come from tenantDbRole().
+ */
+export function usesSignedPostgrest(): boolean {
+  const provider = getAuthProvider();
+  return provider === "entra" || provider === "local";
+}
+
 // ── Per-request PostgREST JWT (multi-tenant issues 002 and 008) ─────────────
 // The one cached client stays; what changes is the fetch wrapper below. For
 // every request it mints a short-lived HS256 token carrying the current

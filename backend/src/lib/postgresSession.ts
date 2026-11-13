@@ -12,6 +12,11 @@ export function validatePostgresSessionUri(uri: string, localDevelopment = false
   return uri;
 }
 
+/** Loopback is the local docker-compose Postgres, which has no TLS. */
+export function sessionUsesTls(uri: string): boolean {
+  return !["localhost", "127.0.0.1", "::1"].includes(new URL(uri).hostname);
+}
+
 /** Pooled stamps use a separate session URI, never the PostgREST pool URI. */
 export async function streamRunDatabaseUri(): Promise<string> {
   const pooled = await getTenancyMode() === "pooled";

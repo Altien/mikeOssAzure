@@ -1,6 +1,19 @@
 import { readdirSync } from "node:fs";
 import { createPlatformSupabase } from "./supabase";
 
+/** Migration names shipped with this build, sorted; empty if this layout has none. */
+export function shippedMigrations(migrationsDir = "migrations"): string[] {
+  try {
+    return readdirSync(migrationsDir)
+      .filter((name) => name.toLowerCase().endsWith(".sql"))
+      .map((name) => name.replace(/\.sql$/i, ""))
+      .sort();
+  } catch {
+    // No migrations directory in this layout — nothing to compare against.
+    return [];
+  }
+}
+
 /**
  * Warns when the database schema is behind the migrations shipped with this
  * build. Nothing migrates on boot — that is deliberate, because several
@@ -16,16 +29,7 @@ export async function checkSchemaVersion(args?: {
   log?: (message: string) => void;
 }): Promise<{ pending: string[]; checked: boolean }> {
   const log = args?.log ?? console.warn;
-  let onDisk: string[];
-  try {
-    onDisk = readdirSync(args?.migrationsDir ?? "migrations")
-      .filter((name) => name.toLowerCase().endsWith(".sql"))
-      .map((name) => name.replace(/\.sql$/i, ""))
-      .sort();
-  } catch {
-    // No migrations directory in this layout — nothing to compare against.
-    return { pending: [], checked: false };
-  }
+  const onDisk = shippedMigrations(args?.migrationsDir);
   if (!onDisk.length) return { pending: [], checked: false };
 
   const db = args?.db ?? createPlatformSupabase();

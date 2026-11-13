@@ -13,16 +13,26 @@
 // row keyed on user_id = '00000000-0000-0000-0000-DDDD0000DDDD'. If
 // either fails partway, re-running the page will retry deletion.
 //
-// Auth (issue 025): the HTML pages fail closed. With no DIAGNOSTICS_TOKEN
-// configured they respond 404, in every environment; otherwise ?token= must
-// match it. Set the env var on a revision only while diagnosing, because the
-// token travels in the URL. The chat inspector below uses application
-// authentication on each route instead.
+// Auth (issue 025): the HTML pages fail closed. /postgrest and /inspect use
+// DIAGNOSTICS_TOKEN: with it unset they respond 404, in every environment;
+// otherwise ?token= must match it. Set it on a revision only while diagnosing,
+// because that token travels in the URL. The health page at /diag uses
+// DIAGNOSTICS_HEALTH_TOKEN, a passphrase typed into a form, so it is never in a
+// URL; it is 404 too while that env var is unset. The chat inspector below uses
+// application authentication on each route instead.
 
 import { createHash, timingSafeEqual } from "node:crypto";
 import { Router, type NextFunction, type Request, type Response } from "express";
+import rateLimit, { MemoryStore } from "express-rate-limit";
 import { chatInspectorRouter } from "../../altien/diagnostics/chatInspector";
-import { inspectRows, runDiagnostics, type TestResult } from "./platform.service";
+import {
+    inspectRows,
+    runDiagnostics,
+    runHealthChecks,
+    type HealthResult,
+    type HealthStatus,
+    type TestResult,
+} from "./platform.service";
 
 export const diagnosticsRouter = Router();
 diagnosticsRouter.use(chatInspectorRouter);
@@ -35,20 +45,24 @@ function tokenMatches(provided: unknown, expected: string): boolean {
     return timingSafeEqual(providedHash, expectedHash);
 }
 
-function requireDiagnosticsToken(req: Request, res: Response, next: NextFunction): void {
-    const expected = (process.env.DIAGNOSTICS_TOKEN ?? "").trim();
-    if (!expected) {
-        res.status(404).send("Not found");
-        return;
-    }
-    if (!tokenMatches(req.query.token, expected)) {
-        res.status(401).send(
-            `<html><body style="font-family:monospace;padding:2rem"><h1>401 Unauthorized</h1><p>Missing or invalid ?token= parameter</p></body></html>`,
-        );
-        return;
-    }
-    next();
+function requireTokenFrom(envName: string) {
+    return (req: Request, res: Response, next: NextFunction): void => {
+        const expected = (process.env[envName] ?? "").trim();
+        if (!expected) {
+            res.status(404).send("Not found");
+            return;
+        }
+        if (!tokenMatches(req.query.token, expected)) {
+            res.status(401).send(
+                `<html><body style="font-family:monospace;padding:2rem"><h1>401 Unauthorized</h1><p>Missing or invalid ?token= parameter</p></body></html>`,
+            );
+            return;
+        }
+        next();
+    };
 }
+
+const requireDiagnosticsToken = requireTokenFrom("DIAGNOSTICS_TOKEN");
 
 function escape(s: string): string {
     return s
@@ -124,6 +138,198 @@ diagnosticsRouter.get("/postgrest", requireDiagnosticsToken, async (_req: Reques
         );
     }
 });
+
+// General health page. Read-only, unlike /postgrest. It answers "what is wrong
+// with this install?" without Entra sign-in, because an expired client secret
+// breaks sign-in and /install too. Only its own passphrase protects it.
+// DIAGNOSTICS_HEALTH_TOKEN is separate on purpose: turning this page on must not
+// also unlock /postgrest, which writes, or /inspect, which returns rows.
+//
+//   GET  /diag                                          the passphrase form
+//   POST /diag  passphrase=<DIAGNOSTICS_HEALTH_TOKEN>[&format=json]  the report
+const STATUS_ORDER: HealthStatus[] = ["fail", "warn", "info", "skip", "pass"];
+
+function healthSummary(checks: HealthResult[]): Record<HealthStatus, number> {
+    const summary: Record<HealthStatus, number> = { fail: 0, warn: 0, info: 0, skip: 0, pass: 0 };
+    for (const check of checks) summary[check.status] += 1;
+    return summary;
+}
+
+function renderHealthCheck(check: HealthResult): string {
+    const label = check.status.toUpperCase();
+    const remediation = check.remediation ? `<div class="notes">${escape(check.remediation)}</div>` : "";
+    return `
+<div class="test ${check.status}">
+  <h2><span class="badge ${check.status}">${label}</span> &nbsp; ${escape(check.title)}</h2>
+  <div class="meta">${escape(check.detail)}</div>
+  ${remediation}
+  <div class="id">${escape(check.id)}</div>
+</div>`;
+}
+
+function renderHealthHtml(checks: HealthResult[], generatedAt: string): string {
+    const summary = healthSummary(checks);
+    const counts = STATUS_ORDER.map((status) => `${summary[status]} ${status}`).join(", ");
+    const needsAttention = STATUS_ORDER
+        .filter((status) => status === "fail" || status === "warn")
+        .flatMap((status) => checks.filter((check) => check.status === status));
+    const attention = needsAttention.length
+        ? `<h2 class="group">Needs attention</h2>${needsAttention.map(renderHealthCheck).join("")}`
+        : "";
+    const groups = [...new Set(checks.map((check) => check.group))];
+    const allChecks = groups.map((group) => {
+        const rows = checks.filter((check) => check.group === group).map(renderHealthCheck).join("");
+        return `<h2 class="group">${escape(group)}</h2>${rows}`;
+    }).join("");
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="referrer" content="no-referrer">
+<title>Mike health</title>
+<style>
+body { font-family: ui-monospace, Menlo, Consolas, monospace; max-width: 1100px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+h1 { font-size: 1.4rem; }
+.summary { padding: 0.75rem 1rem; background: #f6f8fa; border-radius: 6px; margin-bottom: 1.5rem; }
+.group { font-size: 1.1rem; margin: 1.5rem 0 0.75rem; }
+.test { border-left: 4px solid #ccc; padding: 0.75rem 1rem; margin-bottom: 1rem; background: #fafafa; }
+.test.pass { border-color: #2da44e; }
+.test.fail { border-color: #cf222e; background: #fff5f5; }
+.test.warn { border-color: #bf8700; background: #fffbea; }
+.test.info { border-color: #0969da; }
+.test h2 { margin: 0 0 0.25rem; font-size: 1rem; }
+.test .meta { font-size: 0.85rem; color: #444; }
+.test .notes { font-size: 0.85rem; color: #cf222e; margin-top: 0.5rem; font-weight: 500; }
+.test .id { font-size: 0.75rem; color: #888; margin-top: 0.25rem; }
+.badge { display: inline-block; padding: 0 0.5rem; border-radius: 3px; font-size: 0.7rem; font-weight: bold; vertical-align: middle; color: white; background: #6e7781; }
+.badge.pass { background: #2da44e; }
+.badge.fail { background: #cf222e; }
+.badge.warn { background: #bf8700; }
+.badge.info { background: #0969da; }
+</style>
+</head>
+<body>
+<h1>Mike health</h1>
+<div class="summary">${counts}. Generated ${escape(generatedAt)}.</div>
+${attention}
+${allChecks}
+</body>
+</html>`;
+}
+
+function renderDiagForm(wrongPassphrase: boolean): string {
+    const refusal = wrongPassphrase ? `<p class="refusal">Wrong passphrase</p>` : "";
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="referrer" content="no-referrer">
+<title>Mike health</title>
+<style>
+body { font-family: ui-monospace, Menlo, Consolas, monospace; max-width: 32rem; margin: 2rem auto; padding: 0 1rem; color: #222; }
+h1 { font-size: 1.4rem; }
+label { display: block; margin-bottom: 0.5rem; }
+input { font-family: inherit; font-size: 1rem; padding: 0.4rem; width: 100%; box-sizing: border-box; margin-bottom: 1rem; }
+button { font-family: inherit; padding: 0.5rem 1rem; background: #0969da; color: white; border: 0; border-radius: 4px; cursor: pointer; }
+.refusal { color: #cf222e; font-weight: 500; }
+</style>
+</head>
+<body>
+<h1>Mike health</h1>
+${refusal}
+<form method="post" action="/diag">
+  <label for="passphrase">Passphrase</label>
+  <input id="passphrase" name="passphrase" type="password" autocomplete="off" required autofocus>
+  <button type="submit">Check this install</button>
+</form>
+</body>
+</html>`;
+}
+
+/** Mounted in app.ts ahead of the limiters and body parsers, so it covers their refusals too. */
+export function setHealthHeaders(_req: Request, res: Response, next: NextFunction): void {
+    res.set("Cache-Control", "no-store");
+    res.set("Referrer-Policy", "no-referrer");
+    next();
+}
+
+function healthPassphrase(): string {
+    return (process.env.DIAGNOSTICS_HEALTH_TOKEN ?? "").trim();
+}
+
+function requireHealthPassphraseConfigured(_req: Request, res: Response, next: NextFunction): void {
+    if (!healthPassphrase()) {
+        res.status(404).send("Not found");
+        return;
+    }
+    next();
+}
+
+async function sendHealthReport(req: Request, res: Response): Promise<void> {
+    let checks: HealthResult[];
+    try {
+        checks = await runHealthChecks({ requestHost: req.hostname });
+    } catch {
+        // The service isolates each check; this is the page's own last resort.
+        checks = [{
+            id: "page",
+            group: "Page",
+            title: "Health page",
+            status: "fail",
+            detail: "The checks could not run.",
+            remediation: "Read the backend's console logs from the same time, then reload this page.",
+        }];
+    }
+    const generatedAt = new Date().toISOString();
+    if (req.body?.format === "json") {
+        res.json({ generatedAt, summary: healthSummary(checks), checks });
+        return;
+    }
+    res.set("Content-Type", "text/html; charset=utf-8");
+    res.send(renderHealthHtml(checks, generatedAt));
+}
+
+const DIAG_LIMIT_KEY = "diag";
+
+/** A factory so each buildApp() gets its own failure count. */
+export function createDiagRouter(): Router {
+    const router = Router();
+    // A passphrase people can remember is one people can guess. One constant key,
+    // because the budget is for guesses at the one passphrase, from anywhere.
+    // ponytail: the memory store is per replica, so the real limit is 10 x replicas.
+    const attempts = new MemoryStore();
+    const wrongPassphraseLimiter = rateLimit({
+        windowMs: 15 * 60 * 1000,
+        limit: 10,
+        store: attempts,
+        keyGenerator: () => DIAG_LIMIT_KEY,
+        legacyHeaders: false,
+        message: `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Mike health</title></head><body style="font-family:monospace;padding:2rem"><p>Too many wrong passphrases. Wait 15 minutes, then try again.</p></body></html>`,
+    });
+
+    router.get("/", requireHealthPassphraseConfigured, (_req: Request, res: Response) => {
+        res.send(renderDiagForm(false));
+    });
+
+    router.post(
+        "/",
+        requireHealthPassphraseConfigured,
+        wrongPassphraseLimiter,
+        async (req: Request, res: Response) => {
+            if (!tokenMatches(req.body?.passphrase, healthPassphrase())) {
+                res.status(401).send(renderDiagForm(true));
+                return;
+            }
+            // Before the checks, not on `finish`, which never fires if the client
+            // disconnects: reloading during a slow report is not a wrong guess.
+            await attempts.decrement(DIAG_LIMIT_KEY);
+            await sendHealthReport(req, res);
+        },
+    );
+
+    return router;
+}
 
 // Read-only table inspector. Lets us answer "what's actually stored in
 // row X?" without adding console.log + redeploying.

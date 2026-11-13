@@ -29,7 +29,11 @@ import { auditRouter } from "./modules/audit/audit.routes";
 import { authRouter } from "./modules/auth/auth.routes";
 import { uploadSessionsRouter } from "./modules/uploads/uploads.routes";
 import { llmRouter } from "./modules/platform/llm.routes";
-import { diagnosticsRouter } from "./modules/platform/diagnostics.routes";
+import {
+  createDiagRouter,
+  diagnosticsRouter,
+  setHealthHeaders,
+} from "./modules/platform/diagnostics.routes";
 import { installRouter } from "./modules/platform/install.routes";
 import { configRouter } from "./modules/platform/config.routes";
 import { diagRouter } from "./modules/platform/diag.routes";
@@ -216,6 +220,10 @@ export function buildApp(): express.Express {
     }),
   );
 
+  // Here, not on the router, so the general limiter's and the body parsers'
+  // refusals on this page carry the headers too.
+  app.use("/diag", setHealthHeaders);
+
   const allowedOrigins = configuredAllowedOrigins();
 
   app.use(
@@ -396,6 +404,7 @@ export function buildApp(): express.Express {
   app.use("/api/auth", authRouter);
   app.use("/api/llm", llmRouter);
   app.use("/api/admin/diagnostics", diagnosticsRouter);
+  app.use("/diag", createDiagRouter());
   app.use("/install", async (_req, res, next) => {
     try {
       if (await getTenancyMode() === "pooled") { res.status(404).end(); return; }

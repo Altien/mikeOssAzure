@@ -15,9 +15,17 @@ export async function optionalStampConfig(name: string): Promise<string | undefi
   }
 }
 
+/** A required setting has no value, as opposed to a Key Vault failure reading it. */
+export class MissingStampConfigError extends Error {
+  constructor(readonly setting: string) {
+    super("Stamp runtime requires " + setting);
+    this.name = "MissingStampConfigError";
+  }
+}
+
 export async function requiredStampConfig(name: string): Promise<string> {
   const value = await optionalStampConfig(name);
-  if (!value) throw new Error("Stamp runtime requires " + name);
+  if (!value) throw new MissingStampConfigError(name);
   return value;
 }
 

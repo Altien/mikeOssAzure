@@ -223,6 +223,7 @@ describe("backend architecture", () => {
       ["lib/dbq/lifecycleGuard.ts", "startup probe of the document-lifecycle migration"],
       ["lib/schemaCheck.ts", "startup check of applied migrations"],
       ["lib/stampRuntime.ts", "read-only startup metadata and platform credential readiness before any tenant traffic"],
+      ["modules/platform/platform.healthDatabase.ts", "passphrase-gated read-only health page: install metadata, tenant counts and the job queue span tenants"],
       ["jobs/maintenance.ts", "stale-work sweep spans tenants"],
       ["jobs/syncWorkflows.ts", "global workflow catalog sync"],
       ["scripts/runMigrations.ts", "migration job: global workflow catalog sync"],

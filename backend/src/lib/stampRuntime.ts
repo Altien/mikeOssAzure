@@ -5,6 +5,7 @@ import { optionalStampConfig, readStampConfiguration, requiredStampConfig, type 
 import { streamRunDatabaseUri } from "./postgresSession";
 import { externalIdentityConfiguration } from "./auth/entraConfiguration";
 import { getConfiguredModel } from "./llm/registry";
+import { probeTenantPostgrestPath } from "./tenantDatabaseProbe";
 
 export interface PlatformCredentialRequirement { tier: string | null; provider: string; model: string }
 export interface StampRuntimeMetadata {
@@ -99,6 +100,8 @@ export async function probeStampRuntime(db: Db = createPlatformSupabase()): Prom
   } else if (metadata.fallback_tenant_id !== null && metadata.fallback_tenant_id !== config.fallbackTenantId) {
     throw new Error("Single-install tenant does not match the deployed database");
   }
+  // The call above proves service_role only; tenant requests use their own role.
+  await probeTenantPostgrestPath();
   freezeTenancyMode(config.mode);
   return metadata;
 }

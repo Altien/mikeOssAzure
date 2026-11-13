@@ -19,6 +19,10 @@ vi.mock("../lib/supabase", async (importOriginal) => {
   };
 });
 
+// The tenant role probe is a real database call by design; its own suite covers
+// it, and this file's tripwires guard the paths below against any other call.
+vi.mock("../lib/tenantDatabaseProbe", () => ({ probeTenantPostgrestPath: vi.fn(async () => {}) }));
+
 import { buildApp } from "../app";
 import type { Db } from "../lib/supabase";
 import { readStampConfiguration } from "../lib/stampConfiguration";
