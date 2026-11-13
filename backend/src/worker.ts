@@ -19,6 +19,7 @@ import { installStructuredLogging } from "./lib/logging/install";
 const logging = installStructuredLogging({ proc: "worker" });
 import { log } from "./lib/logging/root";
 import { readTenantDebugSwitches } from "./lib/logging/tenantDebugStore";
+import { extractionLauncherWarnings } from "./lib/runtimeConfig";
 import { startAllWorkers, stopAllWorkers } from "./workerRuntime";
 import { flushSentry, reportError } from "./lib/observability/sentry";
 import { initSentry } from "./lib/observability/sentry";
@@ -27,6 +28,10 @@ import { getKeyVaultConfig } from "./lib/config";
 // The Postgres poller unrefs its timers so an inline API can shut down
 // naturally. A standalone worker must retain a live event-loop reference.
 const keepAlive = setInterval(() => {}, 60_000);
+// Extraction jobs run the parser here when the API runs WORKERS_MODE=none.
+for (const warning of extractionLauncherWarnings()) {
+    console.warn(`[extraction] ${warning}`);
+}
 void getKeyVaultConfig("sentry-dsn").catch(() => "").then((dsn) => {
     if (dsn) process.env.SENTRY_DSN = dsn;
     initSentry("worker");

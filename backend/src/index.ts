@@ -31,7 +31,7 @@ import { failBoot, listenOrFail } from "./lib/processLifecycle";
 import { stopExtractionProcess } from "./lib/extraction/isolated";
 import { flushLlmUsage } from "./lib/llm/usage";
 import { probeStampRuntime } from "./lib/stampRuntime";
-import { storagePublicEndpointWarnings } from "./lib/runtimeConfig";
+import { extractionLauncherWarnings, storagePublicEndpointWarnings } from "./lib/runtimeConfig";
 
 const PORT = process.env.PORT ?? 3001;
 const HOST = process.env.HOST?.trim() || undefined;
@@ -116,6 +116,9 @@ async function start(): Promise<void> {
   // driver only reads these variables; Azure Blob installs leave them unset).
   for (const warning of storagePublicEndpointWarnings()) {
     console.warn(`[storage] ${warning}`);
+  }
+  for (const warning of extractionLauncherWarnings()) {
+    console.warn(`[extraction] ${warning}`);
   }
   await initManifestSigningKey();
   const signingKey = manifestPublicKey();
