@@ -14,7 +14,7 @@ import { Readable } from "node:stream";
 import JSZip from "jszip";
 import { Document, Packer, Paragraph } from "docx";
 import { EXTRACTION_OPS } from "../../../lib/extraction/ops";
-import { ExtractionBusyError, ExtractionLimitError, withExtractionSlot } from "../../../lib/extraction/isolated";
+import { ExtractionBusyError, ExtractionLimitError, withExtractionRequest, withExtractionSlot } from "../../../lib/extraction/isolated";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { diagnosticErrorTags } from "../../../lib/observability/sentryPrivacy";
 import { MAX_EMAIL_NESTING_DEPTH } from "../../../lib/email";
@@ -972,11 +972,41 @@ describe("upload processing", () => {
     await vi.waitFor(() => expect(mocks.createFileReadStream).toHaveBeenCalled());
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(settled).not.toHaveBeenCalled();
+    expect(mocks.copyFile).not.toHaveBeenCalled();
     release();
     await held;
     await upload;
     expect(failures).toEqual([null]);
     expect(mocks.copyFile).toHaveBeenCalledOnce();
+  });
+
+  // Upstream 4e6f5c45: validation goes through the background admission gate,
+  // so a batch of uploads cannot fill the parser queue and refuse interactive
+  // parses. Ported onto dev's claim-token job harness.
+  it("leaves room in the parser queue for an interactive parse while a DOCX batch waits", async () => {
+    // Nine validations against a held parser: more than the parser queue
+    // admits. Only one may sit in that queue; an interactive request arriving
+    // meanwhile must be queued (and served first), not refused as busy.
+    const bytes = await minimalDocxBytes();
+    let release!: () => void;
+    const held = withExtractionSlot({}, () => new Promise<void>((resolve) => { release = resolve; }));
+    const jobs = Array.from({ length: 9 }, () => docxPackageJob(bytes));
+    const uploads = jobs.map(({ db }) => processUploadJob(db as never, "job-1", "worker-1"));
+    const order: string[] = [];
+    void uploads[0]!.then(() => order.push("upload"), () => order.push("upload"));
+    await vi.waitFor(() => expect(mocks.createFileReadStream).toHaveBeenCalledTimes(9));
+    const interactive = withExtractionRequest(async () => { order.push("interactive"); });
+    const refused = vi.fn();
+    void interactive.catch(refused);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(refused).not.toHaveBeenCalled();
+    release();
+    await held;
+    await interactive;
+    const outcomes = await Promise.allSettled(uploads);
+    expect(outcomes.map((outcome) => outcome.status)).toEqual(Array(9).fill("fulfilled"));
+    expect(jobs.map(({ failures }) => failures)).toEqual(Array(9).fill([null]));
+    expect(order[0]).toBe("interactive");
   });
 
   // Upstream 5e986237: still busy after the wait → requeued through dev's
