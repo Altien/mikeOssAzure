@@ -42,8 +42,10 @@ export async function handleDocumentExtractText(db: Db, job: DbJob): Promise<voi
         } catch (error) {
           // Upstream 2ada45fb: the source hash matched, so the parser saw the same
           // bytes it will see on every retry: an unreadable file fails once, not
-          // three times. The runner's failure hook marks the text failed.
-          if (error instanceof ExtractionParseError) throw new NonRetryableJobError("document_text_unreadable", { cause: error, reportLevel: "warning" });
+          // three times. The runner's failure hook marks the text failed. The bytes
+          // are the user's (corrupt, encrypted) and nothing in Mike can fix them,
+          // so the runner logs this instead of reporting it (upstream 441e8864).
+          if (error instanceof ExtractionParseError) throw new NonRetryableJobError("document_text_unreadable", { cause: error, reportLevel: null });
           if (!(error instanceof ExtractionLimitError)) throw error;
           await markDocumentTextFailed(db, job, "too_large", true); return;
         }
