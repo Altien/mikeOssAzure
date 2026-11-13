@@ -19,7 +19,7 @@ import { redactDownloadPath } from "../downloadRedaction";
 
 import { isDevelopmentBuild } from "../buildMode";
 import * as Sentry from "@sentry/node";
-import { retainExceptionTypes, diagnosticRoute, diagnosticErrorTags, privacyBoundaryIntegration, type Operation, type Stage } from "./sentryPrivacy";
+import { restoreDomExceptionType, retainExceptionTypes, diagnosticRoute, diagnosticErrorTags, privacyBoundaryIntegration, type Operation, type Stage } from "./sentryPrivacy";
 
 import { eventBudget, eventBudgetLimits } from "./sentryVolume";
 
@@ -807,6 +807,8 @@ export function scrubEvent(
       }
     }
   }
+
+  restoreDomExceptionType(event, reportSource);
 
   event.tags = {
     ...event.tags,
