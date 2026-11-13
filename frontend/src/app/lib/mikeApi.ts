@@ -197,7 +197,7 @@ export function getTenantAdminContent(kind: TenantContentKind, offset = 0, limit
 export function reassignTenantContent(input: { kind: TenantContentKind; id: string; newOwnerId: string; reason: string }): Promise<{ ok: true }> {
     return apiRequest("/tenant-admin/reassign", { method: "POST", body: JSON.stringify(input) });
 }
-export const MALFORMED_ERROR_RESPONSE_MESSAGE =
+const MALFORMED_ERROR_RESPONSE_MESSAGE =
     "The request could not be completed. Please try again.";
 // The 5xx codes the server side already reported, and their fixed messages,
 // are shared with the Word add-in (packages/client); they are re-exported
