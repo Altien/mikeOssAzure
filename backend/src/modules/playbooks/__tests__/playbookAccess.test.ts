@@ -11,6 +11,7 @@ vi.mock("../../../lib/llm", async (original) => ({
 vi.mock("../../../lib/providerCredentials/index", () => ({ getUserApiKeys }));
 const docs = vi.hoisted(() => ({
   prepareDocumentReviewEdits: vi.fn(),
+  deleteFileBestEffort: vi.fn(),
   loadCurrentVersionBytes: vi.fn(),
   loadActiveVersion: vi.fn(),
   extractDocxBodyText: vi.fn(),
@@ -19,6 +20,10 @@ vi.mock("../../documents/documents.service", async (original) => ({
   ...(await original<typeof import("../../documents/documents.service")>()),
   prepareDocumentReviewEdits: docs.prepareDocumentReviewEdits,
   loadCurrentVersionBytes: docs.loadCurrentVersionBytes,
+}));
+vi.mock("../../../lib/storage", async (original) => ({
+  ...(await original<typeof import("../../../lib/storage")>()),
+  deleteFileBestEffort: docs.deleteFileBestEffort,
 }));
 vi.mock("../../../lib/documentVersions", async (original) => ({
   ...(await original<typeof import("../../../lib/documentVersions")>()),
@@ -727,7 +732,7 @@ describe("playbook access and autosave", () => {
           });
         } else {
           // The download and the tracked changes finish after the stop: the
-          // prepared edit is never published.
+          // prepared upload is then discarded, never published.
           docs.prepareDocumentReviewEdits.mockImplementationOnce(async () => {
             turn.abort();
             return prepared(["e1"]);
@@ -737,10 +742,16 @@ describe("playbook access and autosave", () => {
         await expect(review(db, { signal: turn.signal })).rejects.toThrow();
 
         expect(completeText.mock.lastCall?.[0].abortSignal).toBe(turn.signal);
-        // A review stopped while the model answers never prepares an edit.
+        // A review stopped while the model answers never prepares an edit; one
+        // stopped during the download prepares it, then deletes that upload.
         expect(docs.prepareDocumentReviewEdits).toHaveBeenCalledTimes(
           moment === "the model answers" ? 0 : 1,
         );
+        expect(docs.deleteFileBestEffort).toHaveBeenCalledTimes(
+          moment === "the model answers" ? 0 : 1,
+        );
+        if (moment === "the document downloads")
+          expect(docs.deleteFileBestEffort).toHaveBeenCalledWith("edited.docx", expect.any(String));
         // Nothing reached the publication RPC: the source version stands alone.
         expect(tables.document_versions).toHaveLength(1);
         expect(tables.playbook_runs[0]).toMatchObject({

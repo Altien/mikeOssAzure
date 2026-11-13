@@ -68,4 +68,4 @@ export { readCurrentLegacyDocumentText } from "./documents.legacyTextRead";
 
 export { getDocumentStatuses } from "./documents.status";
 
-export { prepareDocumentReviewEdits, publishDocumentReview, DocumentReviewRetryableError } from "./documents.reviewPublication";
+export { prepareDocumentReviewEdits, publishDocumentReview, discardUnpublishedReviewUpload, DocumentReviewRetryableError } from "./documents.reviewPublication";

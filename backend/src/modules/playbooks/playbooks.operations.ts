@@ -54,6 +54,7 @@ import { extractDocxBodyText, type EditInput } from "../../lib/docxTrackedChange
 import { loadActiveVersion } from "../../lib/documentVersions";
 import {
   prepareDocumentReviewEdits,
+  discardUnpublishedReviewUpload,
   DocumentReviewRetryableError,
   publishDocumentReview,
   loadCurrentVersionBytes,
@@ -2367,8 +2368,14 @@ export async function runPlaybookReview(
           documentId: work.documentId, expectedVersion: work.expectedVersion, findings: reviewed,
         })
       : null;
-    // The download can finish after the stop too: nothing is published.
-    signal?.throwIfAborted();
+    // The download can finish after the stop too. This is the last point
+    // before publication (#853's write-time check, moved here for #819's
+    // publish step): nothing has been published, so the upload prepared
+    // meanwhile is deleted.
+    if (signal?.aborted) {
+      if (prepared) await discardUnpublishedReviewUpload(prepared);
+      signal.throwIfAborted();
+    }
     stage = "review.save";
     markStage(stage);
     // Dev: a worker-claimed review publishes under its db_jobs claim fence;
