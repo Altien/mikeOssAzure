@@ -32,6 +32,11 @@ describe("pooled tenant roles", () => {
     expect(await resolvePooledRoles(principal({ identityKind: "altien", membershipRole: "Member", appRoles: ["Mike.Admin"] }), fake.db as unknown as Db)).toEqual(["Member"]);
     expect(await resolvePooledRoles(principal({ appRoles: ["PlatformAdmin", "AltienAdmin"] }), fake.db as unknown as Db)).toEqual([]);
   });
+  it("gives a named Microsoft member exactly its membership role", async () => {
+    const fake = makeFakeDb(() => { throw new Error("A named member needs no policy query"); });
+    expect(await resolvePooledRoles(principal({ membershipRole: "TenantAdmin" }), fake.db as unknown as Db)).toEqual(["TenantAdmin", "Member"]);
+    expect(await resolvePooledRoles(principal({ membershipRole: "Member", appRoles: ["Mike.Admin"] }), fake.db as unknown as Db)).toEqual(["Member"]);
+  });
   it("fails closed when the tenant policy cannot be read", async () => {
     const fake = makeFakeDb(() => ({ error: { message: "unavailable" } }));
     await expect(resolvePooledRoles(principal(), fake.db as unknown as Db)).rejects.toThrow("Tenant role policy is unavailable");

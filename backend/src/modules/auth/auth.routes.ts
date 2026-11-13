@@ -152,7 +152,7 @@ async function admit(req: Request, res: Response, credential: ServerCredential, 
     return true;
   };
   const tenantId = await resolveTenant(principal);
-  if (!tenantId && onboardingRedirect && principal.identityKind === "altien" && await getTenancyMode() === "pooled") {
+  if (!tenantId && onboardingRedirect && principal.identityKind && await getTenancyMode() === "pooled") {
     const raw = await getConfig("pooled-onboarding-url").catch(() => "");
     if (raw) {
       const target = new URL(raw);

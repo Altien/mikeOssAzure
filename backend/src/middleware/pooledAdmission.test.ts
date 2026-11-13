@@ -5,16 +5,16 @@ import request from "supertest";
 import { makeFakeDb } from "../test/helpers/fakeDb";
 import type { AuthPrincipal } from "../lib/auth/types";
 
-const mocks = vi.hoisted(() => ({ db: null as unknown, membership: vi.fn(), source: vi.fn(), mirror: vi.fn(), profile: vi.fn(), session: vi.fn(), state: vi.fn(), consumeState: vi.fn(), provider: "entra", principal: null as AuthPrincipal | null }));
+const mocks = vi.hoisted(() => ({ db: null as unknown, membership: vi.fn(), named: vi.fn(), source: vi.fn(), mirror: vi.fn(), profile: vi.fn(), session: vi.fn(), state: vi.fn(), consumeState: vi.fn(), provider: "entra", externalClientId: "external-browser", principal: null as AuthPrincipal | null }));
 vi.mock("../lib/config", () => ({ getConfig: async (name: string) => ({
   "tenancy-mode": "pooled", "auth-provider": mocks.provider, "pooled-onboarding-url": "https://onboarding.example.test/",
   "altien-entra-tenant-id": "external", "altien-entra-authority": "https://external.ciamlogin.com/external",
   "altien-entra-issuer": "https://external.ciamlogin.com/external/v2.0/", "altien-entra-jwks-uri": "https://external.ciamlogin.com/keys",
-  "altien-entra-client-id": "external-browser", "altien-entra-backend-client-id": "external-api",
+  "altien-entra-client-id": mocks.externalClientId, "altien-entra-backend-client-id": "external-api",
   "entra-client-id": "enterprise-browser", "entra-backend-client-id": "enterprise-api",
 } as Record<string, string>)[name] || "" }));
 vi.mock("../lib/supabase", () => ({ createServerSupabase: () => mocks.db, createPlatformSupabase: () => mocks.db }));
-vi.mock("../lib/tenantMemberships", () => ({ findTenantMembership: mocks.membership, findIdentitySourceTenant: mocks.source, mirrorEnterpriseMembership: mocks.mirror }));
+vi.mock("../lib/tenantMemberships", () => ({ findTenantMembership: mocks.membership, findDirectoryMembership: mocks.named, findIdentitySourceTenant: mocks.source, mirrorEnterpriseMembership: mocks.mirror }));
 vi.mock("../lib/userLookup", () => ({ upsertUserProfile: mocks.profile }));
 vi.mock("../lib/serverSession", () => ({
   readServerSession: vi.fn(async () => null), createServerSession: mocks.session,
@@ -36,7 +36,8 @@ beforeEach(() => {
   saved = Object.fromEntries(env.map(key => [key, process.env[key]]));
   process.env.TENANCY_MODE = "pooled"; process.env.AUTH_PROVIDER = "entra"; process.env.NODE_ENV = "test";
   process.env.JWT_SECRET = "local-test-secret"; process.env.FRONTEND_URL = "https://app.example.test";
-  mocks.provider = "entra"; status = "active"; erased = false;
+  mocks.provider = "entra"; mocks.externalClientId = "external-browser"; status = "active"; erased = false;
+  mocks.named.mockReset().mockResolvedValue(undefined);
   mocks.principal = { userId: "same-user", email: "u@example.test", provider: "entra", identityKind: "altien", directoryId: "external", groups: [], roles: [] };
   mocks.membership.mockReset().mockResolvedValue({ tenantId: "tenant-a", role: "Member" });
   mocks.source.mockReset().mockResolvedValue("tenant-a");
@@ -115,8 +116,35 @@ it("binds each OAuth login choice to its authority, client and encrypted state",
   expect(mocks.state.mock.calls[0][0]).toMatchObject({ identityKind: "altien" });
   const enterprise = await request(app()).get("/api/auth/login-provider/microsoft?identity=enterprise");
   expect(enterprise.status).toBe(302); const enterpriseUrl = new URL(enterprise.headers.location);
-  expect(enterpriseUrl.pathname).toBe("/organizations/oauth2/v2.0/authorize"); expect(enterpriseUrl.searchParams.get("client_id")).toBe("enterprise-browser");
+  expect(enterpriseUrl.pathname).toBe("/common/oauth2/v2.0/authorize"); expect(enterpriseUrl.searchParams.get("client_id")).toBe("enterprise-browser");
   expect(mocks.state.mock.calls[1][0]).toMatchObject({ identityKind: "enterprise" });
+});
+it("makes Microsoft the default and only login when External ID is not configured", async () => {
+  mocks.externalClientId = "";
+  const res = await request(app()).get("/api/auth/login-provider/microsoft");
+  expect(res.status).toBe(302); const url = new URL(res.headers.location);
+  expect(url.hostname).toBe("login.microsoftonline.com"); expect(url.pathname).toBe("/common/oauth2/v2.0/authorize");
+  expect(url.searchParams.get("client_id")).toBe("enterprise-browser");
+  expect(mocks.state.mock.calls[0][0]).toMatchObject({ identityKind: "enterprise" });
+});
+it("admits a named Microsoft member with its membership role, without app roles or mirroring", async () => {
+  mocks.principal = { ...mocks.principal!, identityKind: "enterprise", directoryId: "personal", appRoles: ["Mike.Admin"] };
+  mocks.named.mockResolvedValue({ tenantId: "tenant-a", role: "Member" });
+  const res = await request(app()).get("/private").set("Authorization", "Bearer test");
+  expect(res.status).toBe(200); expect(res.body).toEqual({ tenant: "tenant-a", roles: ["Member"] });
+  expect(mocks.named).toHaveBeenCalledWith("personal", "same-user");
+  expect(mocks.source).not.toHaveBeenCalled(); expect(mocks.mirror).not.toHaveBeenCalled();
+});
+it("sends a Microsoft user with no tenant to onboarding (API 403 and browser callback redirect)", async () => {
+  mocks.principal = { ...mocks.principal!, identityKind: "enterprise", directoryId: "unlinked" };
+  mocks.source.mockResolvedValue(undefined);
+  const api = await request(app()).get("/private").set("Authorization", "Bearer test");
+  expect(api.status).toBe(403); expect(api.body).toMatchObject({ code: "onboarding_required", onboardingUrl: "https://onboarding.example.test/" });
+  mocks.consumeState.mockResolvedValue({ provider: "microsoft", codeVerifier: "verifier", identityKind: "enterprise", returnUrl: "https://app.example.test/assistant" });
+  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ access_token: "validated-token", expires_in: 3600 }) })));
+  const callback = await request(app()).get("/api/auth/openid-callback/microsoft?code=code&state=state").set("Cookie", "mike-oauth-browser=nonce");
+  expect(callback.status).toBe(302); expect(callback.headers.location).toBe("https://onboarding.example.test/");
+  expect(mocks.session).not.toHaveBeenCalled(); expect(mocks.profile).not.toHaveBeenCalled(); expect(fixture.calls).toEqual([]);
 });
 it("redirects a valid External ID callback without membership to onboarding without a session", async () => {
   mocks.membership.mockResolvedValue(undefined);

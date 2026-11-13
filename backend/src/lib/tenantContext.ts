@@ -26,7 +26,7 @@ import type { AuthPrincipal } from "./auth/types";
 import { getConfig } from "./config";
 import type { Db } from "./supabase";
 import { getTenancyMode } from "./tenancyMode";
-import { findTenantMembership, findIdentitySourceTenant } from "./tenantMemberships";
+import { findDirectoryMembership, findTenantMembership, findIdentitySourceTenant } from "./tenantMemberships";
 
 export interface TenantContext {
   /** `tenants.tenant_id` — the internal tenant key. */
@@ -189,7 +189,12 @@ export async function resolveTenant(principal: AuthPrincipal): Promise<string | 
     principal.tenantId = undefined;
     principal.membershipRole = undefined;
     if (principal.provider === "entra" && principal.identityKind === "enterprise") {
-      principal.tenantId = directoryId ? await findIdentitySourceTenant(directoryId) : undefined;
+      // A named member (exact directory + object ID) first; otherwise the
+      // directory link, with roles from app roles or group policy.
+      const membership = directoryId ? await findDirectoryMembership(directoryId, principal.userId) : undefined;
+      principal.membershipRole = membership?.role;
+      principal.tenantId = membership ? membership.tenantId
+        : directoryId ? await findIdentitySourceTenant(directoryId) : undefined;
     } else if ((principal.provider === "entra" && principal.identityKind === "altien")
       || (principal.provider === "local" && process.env.NODE_ENV !== "production")) {
       const membership = await findTenantMembership(principal.userId);

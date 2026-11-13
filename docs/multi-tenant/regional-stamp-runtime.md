@@ -23,7 +23,8 @@ No customer identifiers or credentials are committed or baked into browser JS.
 | FRONTEND_URL / frontend-url | Public web HTTPS origin |
 | WORD_ADDIN_URL / word-addin-url | Public Word HTTPS origin and registered broker redirect |
 | POOLED_ONBOARDING_URL / pooled-onboarding-url | Control-plane onboarding HTTPS URL |
-| ALTIEN_ENTRA_* and ENTRA_* | Both pooled identity paths, including server OAuth credentials; see [pooled authentication](../pooled-authentication.md) |
+| ENTRA_* | Microsoft sign-in (work and personal accounts), including server OAuth credentials; see [pooled authentication](../pooled-authentication.md) |
+| ALTIEN_ENTRA_* | Optional External ID path; validated only when ALTIEN_ENTRA_CLIENT_ID is set |
 | AUTH_STATE_SECRET, AUTH_SESSION_ENCRYPTION_SECRET, AUTH_HANDOFF_ENCRYPTION_SECRET | Independently provisioned durable keys; normal startup probes verify them |
 | DOWNLOAD_SIGNING_SECRET | Durable link-signing key, through the existing startup initializer |
 | STREAM_RUN_DATABASE_URL or Key Vault postgres-session-uri | Direct/session PostgreSQL runtime connection for LISTEN; never the PostgREST transaction pool |
@@ -151,8 +152,9 @@ Maintaining the 25-month runway ahead of time avoids this failure.
   Preserve the legacy single-install pgrst-db-uri session source; pooled
   stamps use the separate postgres-session-uri secret.
 - Publish approved immutable credit prices and tenant budgets, verify every
-  enabled platform tier credential, and test both External ID and linked
-  enterprise sign-in paths before onboarding paying tenants.
+  enabled platform tier credential, and test named-member Microsoft sign-in
+  (work and personal accounts), linked-directory sign-in and, when configured,
+  External ID before onboarding paying tenants.
 - Keep secrets in the vault/deployment store, rotate them through a controlled
   rollout, monitor startup/maintenance failures, and test backup/restore
   procedures. Never restore a shared database over unrelated tenants to

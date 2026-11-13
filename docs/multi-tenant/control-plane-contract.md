@@ -10,7 +10,7 @@ continue to use their existing request and platform roles.
 ## Permissions
 
 The login has no role memberships, schema creation, content-table privileges,
-sequence rights or application-function rights beyond the thirteen signatures
+sequence rights or application-function rights beyond the fourteen signatures
 below. Four views provide narrowly projected metadata. Application table names
 and other functions are implementation details, not an integration API.
 
@@ -38,10 +38,11 @@ existing platform `service_role`. Ordinary request roles cannot execute them.
 | `cp_set_group_policies(p_tenant_id, p_policies jsonb)` | Replaces group policies with an array of `{groupObjectId: UUID string, role: TenantAdmin or Member}`. Empty array clears policies. Revokes observed member sessions. |
 | `cp_set_enterprise_role_source(p_tenant_id, p_source)` | Explicitly selects app_roles or groups. Mike.Admin/Mike.User app roles remain authoritative; groups are an explicitly configured fallback. Revokes observed member sessions. |
 | `cp_add_member(p_tenant_id, p_user_id, p_role default 'Member')` | Adds an identity as TenantAdmin or Member. Duplicate identities fail instead of silently moving. |
+| `cp_add_directory_member(p_tenant_id, p_directory_id, p_object_id, p_role default 'Member')` | Adds a named Microsoft member (work or personal account): the token's verified `tid` and `oid`, both GUIDs, stored lower-cased. Sign-in admits that exact person with this role before any directory link. Raises 23503 for an unknown tenant, 23505 if the person already has a membership, 22023 for invalid input. Revokes the person's sessions. |
 | `cp_remove_member(p_user_id)` | Removes membership and revokes sessions. The last admin cannot strand other members. |
 | `cp_move_member(p_user_id, p_to_tenant)` | Starts fresh as Member in an active destination, retaining verified identity provenance. Revokes sessions. Content, blobs and billing stay in the source tenant. |
-| `cp_set_member_role(p_user_id, p_role)` | Updates standard/local membership role, protects the last admin and revokes sessions on change. Enterprise roles must be changed in Entra. |
-| `cp_link_identity_source(p_tid, p_tenant_id)` | Links one enterprise directory to a tenant. A directory cannot silently relink. |
+| `cp_set_member_role(p_user_id, p_role)` | Updates standard/local/named Microsoft membership role, protects the last admin and revokes sessions on change. Directory-linked enterprise roles must be changed in Entra. |
+| `cp_link_identity_source(p_tid, p_tenant_id)` | Links one enterprise directory to a tenant. A directory cannot silently relink. The personal-account directory `9188040d-6c67-4c5b-b112-36a304b66dad` is refused (22023). |
 | `cp_unlink_identity_source(p_tid)` | Removes the enterprise directory link. |
 
 Except for metadata/status changes, offboarding tenants reject new configuration

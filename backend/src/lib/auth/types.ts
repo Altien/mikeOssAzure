@@ -19,6 +19,7 @@ export interface AuthPrincipal {
   tenantId?: string;
   directoryId?: string;
   identityKind?: "altien" | "enterprise";
+  /** Set by resolveTenant only from a named membership row (never a mirrored enterprise row). */
   membershipRole?: "TenantAdmin" | "Member";
   appRoles?: string[];
   groups: string[];

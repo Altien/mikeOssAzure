@@ -3,7 +3,7 @@ import { createPlatformSupabase, type Db } from "./supabase";
 import { freezeTenancyMode } from "./tenancyMode";
 import { optionalStampConfig, readStampConfiguration, requiredStampConfig, type StampConfiguration } from "./stampConfiguration";
 import { streamRunDatabaseUri } from "./postgresSession";
-import { externalIdentityConfiguration } from "./auth/entraConfiguration";
+import { externalIdentityConfiguration, externalIdentityConfigured } from "./auth/entraConfiguration";
 import { getConfiguredModel } from "./llm/registry";
 import { isManagedProvider, MANAGED_PROVIDERS, type ManagedProvider } from "./llm/managedProviders";
 import { probeTenantPostgrestPath } from "./tenantDatabaseProbe";
@@ -83,8 +83,10 @@ async function validateCloudConfiguration(config: StampConfiguration, metadata: 
   requireHttps(await requiredStampConfig("frontend-url"), "frontend URL", true);
   requireHttps(await requiredStampConfig("word-addin-url"), "Word add-in URL", true);
   requireHttps(await requiredStampConfig("pooled-onboarding-url"), "onboarding URL");
-  await externalIdentityConfiguration();
-  for (const name of ["altien-entra-client-secret", "entra-client-id", "entra-client-secret", "entra-backend-client-id"]) {
+  // External ID is optional; without it pooled sign-in is Microsoft only.
+  const externalId = await externalIdentityConfigured();
+  if (externalId) await externalIdentityConfiguration();
+  for (const name of [...(externalId ? ["altien-entra-client-secret"] : []), "entra-client-id", "entra-client-secret", "entra-backend-client-id"]) {
     await requiredStampConfig(name);
   }
   const jwt = await requiredStampConfig("postgrest-jwt-secret");

@@ -18,6 +18,8 @@ export interface RuntimeConfig {
   wordSentryDsn?: string;
   authProvider: AuthProvider;
   tenancyMode?: "single" | "pooled";
+  /** Pooled only: the Altien External ID sign-in path is configured. */
+  externalIdSignIn?: boolean;
   backendOrigin: string;
   frontendOrigin: string;
   entra: {
@@ -55,6 +57,7 @@ export function loadRuntimeConfig(): Promise<RuntimeConfig> {
     const body = (await res.json()) as {
       authProvider?: unknown;
       tenancyMode?: unknown;
+      externalIdSignIn?: unknown;
       backendOrigin?: unknown;
       frontendOrigin?: unknown;
       wordSentryDsn?: unknown;
@@ -66,6 +69,7 @@ export function loadRuntimeConfig(): Promise<RuntimeConfig> {
     return {
       authProvider,
       tenancyMode: body.tenancyMode === "pooled" ? "pooled" : "single",
+      externalIdSignIn: body.externalIdSignIn === true,
       backendOrigin: asString(body.backendOrigin),
       frontendOrigin: asString(body.frontendOrigin),
       wordSentryDsn: asString(body.wordSentryDsn),

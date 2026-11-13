@@ -8,10 +8,20 @@ a pooled request to single mode. Regional startup validation is specified in 019
 ## Identity configuration
 
 All values are server runtime configuration. No new NEXT_PUBLIC variables are
-used. GET /config publishes tenancyMode, onboardingUrl, and the public
-External ID client/authority/scope for clients. Secrets stay on the server.
+used. GET /config publishes tenancyMode, onboardingUrl, externalIdSignIn and
+the default path's public client/authority/scope for clients. Secrets stay on
+the server.
 
-For the Altien-owned External ID directory configure:
+Customers sign in with Microsoft: work accounts and personal Microsoft
+accounts. The Altien External ID directory is optional. It is switched off
+when ALTIEN_ENTRA_CLIENT_ID / altien-entra-client-id is absent or empty. Then
+Microsoft is the only identity path. The web login page and the Word dialog
+show one "Sign in with Microsoft" button. /config publishes the Microsoft
+client with the `common` authority and `externalIdSignIn: false`, with no
+External ID value. Pooled startup validation does not read the altien
+settings. A Key Vault failure while reading the client ID still fails closed.
+
+When the External ID directory is used, configure:
 
 | Server / Key Vault name | Value |
 | --- | --- |
@@ -32,35 +42,56 @@ a tenant GUID host in the issuer even when the authority uses its tenant name:
 Metadata endpoint discovery is described in
 [Microsoft OIDC documentation](https://learn.microsoft.com/en-us/entra/identity-platform/v2-protocols-oidc).
 
-Enterprise uses the existing ENTRA_CLIENT_ID, ENTRA_CLIENT_SECRET,
-ENTRA_BACKEND_CLIENT_ID, and optional ENTRA_AUTH_SCOPES; its app registration
-must accept organisational directories and v2 API tokens. Login uses the
-organizations authority. Validation requires the exact
-https://login.microsoftonline.com/{tid}/v2.0 issuer, the enterprise API
-audience, and a linked directory. This follows Microsoft's
+Microsoft sign-in (the "enterprise" identity kind in code) uses the existing
+ENTRA_CLIENT_ID, ENTRA_CLIENT_SECRET, ENTRA_BACKEND_CLIENT_ID, and optional
+ENTRA_AUTH_SCOPES. Its app registration must accept organisational directories
+and personal Microsoft accounts, and must issue v2 API tokens. Login uses the
+`common` authority. Refresh and logout use the verified directory's own
+authority. For a personal account that is the consumers tenant,
+9188040d-6c67-4c5b-b112-36a304b66dad.
+Validation requires the exact https://login.microsoftonline.com/{tid}/v2.0
+issuer, including the consumers tid, and the enterprise API audience. Keys come
+from the one shared `common` key set. Each key's issuer template must match the
+token's tid. Validation does not consult the database. Admission follows the
+rules below. This follows Microsoft's
 [multitenant issuer guidance](https://learn.microsoft.com/en-us/entra/identity-platform/access-tokens#validate-the-issuer).
 Both app registrations need the backend web/Word callback redirects used by the
 single-tenant broker.
 
 ## Admission and sessions
 
-- The default Microsoft login path is External ID; ?identity=enterprise
-  selects enterprise. Web and Word expose both choices in pooled mode.
-  Word uses the server PKCE dialog for pooled identities.
+- With External ID configured, it is the default Microsoft login path, and
+  ?identity=enterprise selects Microsoft. Web and Word then show both choices.
+  Without External ID, Microsoft is the default and only path. Word uses
+  the server PKCE dialog for pooled identities.
 - The selected identity path is encrypted in OAuth state. Callback validation
   must agree with that path. The verified directory and path are encrypted
   with server-held credentials and reused for refresh and logout.
-- External ID resolves only through tenant_memberships; enterprise resolves
-  only through tenant_identity_sources. These lookups are uncached.
-  The internal tenant replaces principal.tenantId; directoryId retains
-  the verified identity directory.
-- No External ID membership returns 403 with code: onboarding_required
-  and the configured onboardingUrl. The browser OAuth callback redirects
+- External ID resolves only through its tenant_memberships row
+  (identity_kind 'altien').
+- A Microsoft sign-in first looks for a named membership. That is a
+  tenant_memberships row with identity_kind 'microsoft', user_id equal to the
+  token's oid, and directory_id equal to the verified tid (lower-cased). The
+  control plane writes these rows with cp_add_directory_member. Tenant and
+  role come from that row. Rows mirrored by mirror_enterprise_member
+  (identity_kind 'enterprise') are auth metadata only and never count. If
+  there is no named membership, the tenant comes from tenant_identity_sources.
+  The role then comes from app roles or tenant_group_policies, and admission
+  is mirrored as before.
+- A personal account (consumers tid) is admitted only through a named
+  membership. The consumers directory never resolves through
+  tenant_identity_sources, and cp_link_identity_source refuses to link it.
+- These lookups are uncached. The internal tenant replaces
+  principal.tenantId, and directoryId keeps the verified identity directory.
+- Any pooled sign-in that resolves no tenant gets a 403 with
+  code: onboarding_required and the configured onboardingUrl. This covers
+  External ID and Microsoft alike. The browser OAuth callback redirects
   there without creating a session or reading tenant content.
 - The resolved tenant must exist and be active before erasure/profile queries
-  or profile seeding. External ID uses its membership role. Enterprise must
-  match that tenant's tenant_group_policies (TenantAdmin or Member)
-  before a profile is created; app-role support is added in 022.
+  or profile seeding. A named membership (External ID or Microsoft) gives its
+  role: TenantAdmin grants TenantAdmin+Member, and Member grants Member.
+  Directory-linked Microsoft users must match Mike.Admin/Mike.User app roles
+  or the tenant's tenant_group_policies before a profile is created.
 - Browser sessions and Word handoffs are stamped with the admitted tenant.
   Existing cookies are checked against fresh resolution; a move cannot
   keep a cookie pinned to the old tenant.

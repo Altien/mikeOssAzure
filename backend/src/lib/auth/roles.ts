@@ -59,7 +59,9 @@ export async function resolveRoles(groups: string[]): Promise<AppRole[]> {
 
 /** Pooled policy is tenant-owned; install-wide allowlists never apply. */
 export async function resolvePooledRoles(principal: AuthPrincipal, db?: Db): Promise<AppRole[]> {
-  if (principal.identityKind === "altien" || principal.provider === "local") {
+  // A named membership (External ID, local, or a named Microsoft member) sets
+  // membershipRole in resolveTenant; app roles and group policy never apply to it.
+  if (principal.identityKind === "altien" || principal.provider === "local" || principal.membershipRole) {
     return principal.membershipRole === "TenantAdmin" ? ["TenantAdmin", "Member"]
       : principal.membershipRole === "Member" ? ["Member"] : [];
   }

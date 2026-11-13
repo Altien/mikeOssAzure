@@ -48,7 +48,8 @@ export async function tenantAccess(
   const userId: string = principal?.userId ?? "unknown";
 
   if (!tenantId) {
-    if (pooled && (principal?.identityKind === "altien" || (principal?.provider === "local" && process.env.NODE_ENV !== "production"))) {
+    // Every pooled identity path (External ID, Microsoft, local) that resolves no tenant is sent to onboarding.
+    if (pooled && (principal?.identityKind || (principal?.provider === "local" && process.env.NODE_ENV !== "production"))) {
       const onboardingUrl = await getConfig("pooled-onboarding-url").catch(() => "");
       res.status(403).json({ code: "onboarding_required", detail: "Join an organisation to continue.", ...(onboardingUrl ? { onboardingUrl } : {}) });
       return;
@@ -122,7 +123,8 @@ export async function tenantAccess(
     return;
   }
 
-  if (pooled && principal.identityKind === "enterprise") {
+  // Mirror only directory-link admissions; a named member's row is already authoritative.
+  if (pooled && principal.identityKind === "enterprise" && !principal.membershipRole) {
     try {
       if (!principal.directoryId) throw new Error("Missing verified directory");
       await mirrorEnterpriseMembership(tenantId, userId, principal.directoryId, roles.includes("TenantAdmin") ? "TenantAdmin" : "Member");

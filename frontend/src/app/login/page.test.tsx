@@ -298,12 +298,27 @@ it("offers both pooled identity choices through runtime config", () => {
   // useConfig is mocked above to return this shared object.
   const pooled = config as Record<string, unknown>;
   const previous = { ...pooled };
-  Object.assign(pooled, { authProvider: "entra", tenancyMode: "pooled", demoMode: false, entra: { tenantId: "external", clientId: "browser" } });
+  Object.assign(pooled, { authProvider: "entra", tenancyMode: "pooled", externalIdSignIn: true, demoMode: false, entra: { tenantId: "external", clientId: "browser" } });
   try {
     render(<LoginPage />);
     expect(screen.getByRole("button", { name: "Sign in to Mike" })).toHaveAttribute("type", "button");
     expect(screen.getByRole("button", { name: "Sign in with your organisation" })).toHaveAttribute("type", "button");
     expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
+  } finally {
+    for (const key of Object.keys(pooled)) delete pooled[key];
+    Object.assign(pooled, previous);
+  }
+});
+
+it("offers one Microsoft button when pooled External ID is not configured", () => {
+  const pooled = config as Record<string, unknown>;
+  const previous = { ...pooled };
+  Object.assign(pooled, { authProvider: "entra", tenancyMode: "pooled", externalIdSignIn: false, demoMode: false, entra: { tenantId: "common", clientId: "browser" } });
+  try {
+    render(<LoginPage />);
+    expect(screen.getByRole("button", { name: "Sign in with Microsoft" })).toHaveAttribute("type", "button");
+    expect(screen.queryByRole("button", { name: "Sign in to Mike" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sign in with your organisation" })).not.toBeInTheDocument();
   } finally {
     for (const key of Object.keys(pooled)) delete pooled[key];
     Object.assign(pooled, previous);

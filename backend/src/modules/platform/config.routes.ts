@@ -67,10 +67,14 @@ configRouter.get("/", async (_req, res) => {
         ]);
     }
     let authority: string | undefined;
+    let externalIdSignIn = false;
     if (authProvider === "entra" && tenancyMode === "pooled") {
+        // The default identity path: External ID when configured, otherwise
+        // Microsoft (`common`), in which case no External ID value is published.
         try {
-            const cfg = await entraOAuthConfiguration("altien");
+            const cfg = await entraOAuthConfiguration();
             tenantId = cfg.tenantId; clientId = cfg.clientId; backendClientId = cfg.backendId; authority = cfg.authority;
+            externalIdSignIn = cfg.kind === "altien";
         } catch { res.status(503).json({ detail: "Runtime configuration is unavailable" }); return; }
     }
     const apiScope = backendClientId
@@ -85,7 +89,7 @@ configRouter.get("/", async (_req, res) => {
         authProvider,
         tenancyMode,
         controlPlaneUrl: tenancyMode === "pooled" ? await controlPlaneUrl() : null,
-        ...(tenancyMode === "pooled" ? { onboardingUrl: await configValue("pooled-onboarding-url") } : {}),
+        ...(tenancyMode === "pooled" ? { onboardingUrl: await configValue("pooled-onboarding-url"), externalIdSignIn } : {}),
         demoMode: process.env.DEMO_MODE?.toLowerCase() === "true",
         // OSS-6 (decisions 4, 7): upstream bakes this into the bundle as
         // NEXT_PUBLIC_WORKFLOW_CONTRIBUTIONS_ENABLED; dev serves it at

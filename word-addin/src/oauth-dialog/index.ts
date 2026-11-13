@@ -81,8 +81,12 @@ async function runGoogleOAuth(): Promise<void> {
     loginUrl.searchParams.set("wordOrigin", window.location.origin);
     const config = await loadRuntimeConfig();
     if (config.tenancyMode === "pooled") {
-      setStatus("Choose how to sign in.");
-      for (const [label, kind] of [["Sign in to Mike", "altien"], ["Sign in with your organisation", "enterprise"]] as const) {
+      // Without External ID, Microsoft (work or personal account) is the only choice.
+      const choices = config.externalIdSignIn
+        ? [["Sign in to Mike", "altien"], ["Sign in with your organisation", "enterprise"]] as const
+        : [["Sign in with Microsoft", "enterprise"]] as const;
+      setStatus(config.externalIdSignIn ? "Choose how to sign in." : "Sign in to continue.");
+      for (const [label, kind] of choices) {
         const button = document.createElement("button");
         button.type = "button"; button.textContent = label;
         button.addEventListener("click", () => { loginUrl.searchParams.set("identity", kind); window.location.assign(loginUrl.toString()); });

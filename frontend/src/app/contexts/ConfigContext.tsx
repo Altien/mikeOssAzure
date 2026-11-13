@@ -27,6 +27,8 @@ export interface RuntimeConfig {
     authProvider: AuthProvider;
     tenancyMode?: "single" | "pooled";
     onboardingUrl?: string;
+    // Pooled only: true when the Altien External ID sign-in path is configured.
+    externalIdSignIn?: boolean;
     controlPlaneUrl?: string | null;
     demoMode: boolean;
     // OSS-6 (decisions 4, 7): server WORKFLOW_CONTRIBUTIONS_ENABLED, served at

@@ -2,8 +2,7 @@ import { createPublicKey, createVerify } from "node:crypto";
 import type { AuthValidationResult } from "../types.js";
 import { getConfig } from "../../config.js";
 import { getTenancyMode } from "../../tenancyMode";
-import { externalIdentityConfiguration, type EntraIdentityKind } from "../entraConfiguration";
-import { findIdentitySourceTenant } from "../../tenantMemberships";
+import { externalIdentityConfiguration, externalIdentityConfigured, type EntraIdentityKind } from "../entraConfiguration";
 
 interface JwtHeader {
   alg?: unknown;
@@ -65,9 +64,11 @@ function nowEpochSeconds() {
 const JWKS_TTL_MS = 5 * 60 * 1000;
 const cache = new Map<string, { fetchedAt: number; keys: JwkKey[] }>();
 
-async function getJwks(issuer: string, jwksUri: string): Promise<JwkKey[]> {
+// Keyed by key-set URI: every pooled Microsoft directory shares the one
+// `common` key set, so an arbitrary token `tid` never causes a fetch.
+async function getJwks(jwksUri: string): Promise<JwkKey[]> {
   const now = Date.now();
-  const cached = cache.get(issuer);
+  const cached = cache.get(jwksUri);
   if (cached && now - cached.fetchedAt < JWKS_TTL_MS) return cached.keys;
 
   const response = await fetch(jwksUri, { signal: AbortSignal.timeout(15_000) });
@@ -78,7 +79,7 @@ async function getJwks(issuer: string, jwksUri: string): Promise<JwkKey[]> {
   const body = (await response.json()) as { keys?: unknown };
   const keys = Array.isArray(body.keys) ? (body.keys as JwkKey[]) : [];
   if (cache.size >= 100) cache.delete(cache.keys().next().value!);
-  cache.set(issuer, { fetchedAt: now, keys });
+  cache.set(jwksUri, { fetchedAt: now, keys });
   return keys;
 }
 
@@ -150,9 +151,9 @@ export async function validateEntraToken(token: string): Promise<AuthValidationR
   let jwksUri = `https://login.microsoftonline.com/${tenantId}/discovery/v2.0/keys`;
   if (pooled) {
     try {
-      const external = await externalIdentityConfiguration();
+      const external = await externalIdentityConfigured() ? await externalIdentityConfiguration() : undefined;
       const tid = asString(claims.tid);
-      if (tid === external.tenantId) {
+      if (external && tid === external.tenantId) {
         if (claims.iss !== external.issuer) return { ok: false, status: 401, detail: "Invalid issuer" };
         identityKind = "altien";
         tenantId = external.tenantId;
@@ -163,16 +164,20 @@ export async function validateEntraToken(token: string): Promise<AuthValidationR
         if (!tid || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(tid)) return { ok: false, status: 401, detail: "Invalid tenant" };
         issuer = `https://login.microsoftonline.com/${tid}/v2.0`;
         if (claims.iss !== issuer) return { ok: false, status: 401, detail: "Invalid issuer" };
-        if (!backendClientId || !(await findIdentitySourceTenant(tid))) return { ok: false, status: 403, detail: "TENANT_UNKNOWN" };
+        // Work and personal (consumers tenant) accounts alike. Admission is
+        // decided after validation: a named member, else a linked directory,
+        // else onboarding (tenantContext.resolveTenant / tenantAccess).
+        if (!backendClientId) return { ok: false, status: 401, detail: "Server auth is not configured" };
         identityKind = "enterprise";
         tenantId = tid;
-        jwksUri = `https://login.microsoftonline.com/${tid}/discovery/v2.0/keys`;
+        // One shared key set; each key's issuer template is checked against this tid below.
+        jwksUri = "https://login.microsoftonline.com/common/discovery/v2.0/keys";
       }
     } catch { return { ok: false, status: 401, detail: "Server auth is not configured" }; }
   }
 
   try {
-    const keys = await getJwks(issuer, jwksUri);
+    const keys = await getJwks(jwksUri);
     const jwk = keys.find((key) => key.kid === kid && key.kty === "RSA") as JsonWebKey | undefined;
     const keyIssuer = (jwk as JwkKey | undefined)?.issuer?.replace("{tenantid}", tenantId);
     if (!jwk || !jwk.n || !jwk.e || (pooled && keyIssuer && keyIssuer !== issuer)) {

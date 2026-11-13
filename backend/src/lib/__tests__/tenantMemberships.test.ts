@@ -1,7 +1,32 @@
 import { describe, expect, it } from "vitest";
 import type { Db } from "../supabase";
 import { makeFakeDb } from "../../test/helpers/fakeDb";
-import { findIdentitySourceTenant, findTenantMembership, mirrorEnterpriseMembership } from "../tenantMemberships";
+import { CONSUMER_DIRECTORY_ID, findDirectoryMembership, findIdentitySourceTenant, findTenantMembership, mirrorEnterpriseMembership } from "../tenantMemberships";
+
+describe("named Microsoft members", () => {
+  const row = (extra: Record<string, unknown> = {}) => makeFakeDb(() => ({ data: { tenant_id: "tenant", role: "TenantAdmin", identity_kind: "microsoft", directory_id: "directory", ...extra } }));
+  it("admits the exact verified directory and object ID with the row's role", async () => {
+    const fake = row();
+    expect(await findDirectoryMembership(" DIRECTORY ", "oid", fake.db as unknown as Db)).toEqual({ tenantId: "tenant", role: "TenantAdmin" });
+    expect(fake.calls[0].filters).toContainEqual(["eq", "user_id", "oid"]);
+  });
+  it("never admits a row mirrored by mirror_enterprise_member", async () => {
+    expect(await findDirectoryMembership("directory", "oid", row({ identity_kind: "enterprise" }).db as unknown as Db)).toBeUndefined();
+  });
+  it("never admits on object ID alone when the directory differs", async () => {
+    expect(await findDirectoryMembership("other-directory", "oid", row().db as unknown as Db)).toBeUndefined();
+  });
+  it("admits a personal account only through a named membership, never a directory link", async () => {
+    const link = makeFakeDb(() => ({ data: { tenant_id: "linked" } }));
+    expect(await findIdentitySourceTenant(CONSUMER_DIRECTORY_ID.toUpperCase(), link.db as unknown as Db)).toBeUndefined();
+    expect(link.calls).toHaveLength(0);
+    expect(await findDirectoryMembership(CONSUMER_DIRECTORY_ID, "oid", row({ directory_id: CONSUMER_DIRECTORY_ID, role: "Member" }).db as unknown as Db))
+      .toEqual({ tenantId: "tenant", role: "Member" });
+  });
+  it("is not an External ID membership", async () => {
+    expect(await findTenantMembership("oid", row().db as unknown as Db)).toBeUndefined();
+  });
+});
 
 describe("tenant membership resolver", () => {
   it("resolves the current membership afresh after a move", async () => {

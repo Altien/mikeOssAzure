@@ -80,6 +80,9 @@ declare global {
 export default function LoginPage() {
     const router = useRouter();
     const config = useConfig();
+    // Pooled stamps offer the External ID choice only when it is configured;
+    // otherwise Microsoft (work or personal account) is the single sign-in.
+    const externalIdSignIn = config.tenancyMode === "pooled" && config.externalIdSignIn === true;
     const {
         isAuthenticated,
         authLoading,
@@ -278,8 +281,8 @@ export default function LoginPage() {
                                 const next = new URL("/onboarding/profile", window.location.origin).toString();
                                 window.location.assign(`${base}/api/auth/login-provider/microsoft?returnUrl=${encodeURIComponent(next)}`);
                             }}
-                        >{config.tenancyMode === "pooled" ? "Sign in to Mike" : "Sign in with Microsoft"}</PillButtonUI>}
-                        {config.authProvider === "entra" && config.tenancyMode === "pooled" && <PillButtonUI
+                        >{externalIdSignIn ? "Sign in to Mike" : "Sign in with Microsoft"}</PillButtonUI>}
+                        {config.authProvider === "entra" && externalIdSignIn && <PillButtonUI
                             type="button" tone="white" size="normal" className="w-full"
                             onClick={() => {
                                 const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";

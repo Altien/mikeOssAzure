@@ -96,6 +96,11 @@ describe("stamp startup gate",()=>{
     await expect(probeStampRuntime(db())).resolves.toMatchObject({pooled:true});
     expect(mocks.databaseUri).toHaveBeenCalledOnce();
   });
+  it("accepts a Microsoft-only pooled runtime without any External ID setting",async()=>{
+    cloud();
+    for(const name of Object.keys(mocks.values))if(name.startsWith("altien-entra-"))delete mocks.values[name];
+    await expect(probeStampRuntime(db())).resolves.toMatchObject({pooled:true});
+  });
   it("requires deployment URLs and managed identity in production",async()=>{
     cloud();delete mocks.values["frontend-url"];
     await expect(probeStampRuntime(db())).rejects.toThrow("frontend-url");

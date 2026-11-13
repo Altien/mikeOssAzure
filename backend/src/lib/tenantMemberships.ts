@@ -9,20 +9,48 @@ export interface TenantMembership {
   role: TenantMemberRole;
 }
 
-export async function findTenantMembership(userId: string, db: Db = createPlatformSupabase()): Promise<TenantMembership | undefined> {
+/** Microsoft's personal-account (consumers) directory: never a linked organisation. */
+export const CONSUMER_DIRECTORY_ID = "9188040d-6c67-4c5b-b112-36a304b66dad";
+
+async function readMembership(userId: string, db: Db) {
   const { data, error } = await db.from("tenant_memberships")
-    .select("tenant_id,role,identity_kind").eq("user_id", userId).maybeSingle();
+    .select("tenant_id,role,identity_kind,directory_id").eq("user_id", userId).maybeSingle();
   if (error) throw new Error("Tenant membership is unavailable", { cause: error });
-  if (!data || data.identity_kind !== "altien") return undefined;
-  if (typeof data.tenant_id !== "string" || !data.tenant_id.trim() || !["TenantAdmin", "Member"].includes(data.role)) {
+  return data;
+}
+
+function membership(data: { tenant_id?: unknown; role?: unknown }): TenantMembership {
+  if (typeof data.tenant_id !== "string" || !data.tenant_id.trim() || !["TenantAdmin", "Member"].includes(data.role as string)) {
     throw new Error("Invalid tenant membership");
   }
   return { tenantId: data.tenant_id, role: data.role as TenantMemberRole };
 }
 
+export async function findTenantMembership(userId: string, db: Db = createPlatformSupabase()): Promise<TenantMembership | undefined> {
+  const data = await readMembership(userId, db);
+  if (!data || data.identity_kind !== "altien") return undefined;
+  return membership(data);
+}
+
+/**
+ * A named Microsoft member (cp_add_directory_member): the exact verified
+ * directory and object ID. Rows mirrored by mirror_enterprise_member
+ * (identity_kind 'enterprise') are auth metadata only and never match.
+ */
+export async function findDirectoryMembership(directoryId: string, userId: string, db: Db = createPlatformSupabase()): Promise<TenantMembership | undefined> {
+  const directory = directoryId.trim().toLowerCase();
+  if (!directory) return undefined;
+  const data = await readMembership(userId, db);
+  if (!data || data.identity_kind !== "microsoft" || data.directory_id !== directory) return undefined;
+  return membership(data);
+}
+
 export async function findIdentitySourceTenant(tid: string, db: Db = createPlatformSupabase()): Promise<string | undefined> {
+  const directory = tid.trim().toLowerCase();
+  // Personal accounts are admitted only through a named membership.
+  if (directory === CONSUMER_DIRECTORY_ID) return undefined;
   const { data, error } = await db.from("tenant_identity_sources")
-    .select("tenant_id").eq("tid", tid.trim().toLowerCase()).maybeSingle();
+    .select("tenant_id").eq("tid", directory).maybeSingle();
   if (error) throw new Error("Tenant identity source is unavailable", { cause: error });
   if (!data) return undefined;
   if (typeof data.tenant_id !== "string" || !data.tenant_id.trim()) throw new Error("Invalid tenant identity source");
