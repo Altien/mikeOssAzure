@@ -112,6 +112,30 @@ describe("GET /api/models/openrouter", () => {
         vi.clearAllMocks();
     });
 
+    it("lists administrator-entered models for every picker, with no address or key", async () => {
+        vi.stubEnv("KEY_VAULT_NAME", "");
+        vi.stubEnv("META_BASE_URL", "");
+        vi.stubEnv("TOKENJUICE_API_KEY", "");
+        vi.stubEnv("META_API_KEY", "secret-meta-value");
+        vi.stubEnv("META_MODELS", "muse-spark-1.1");
+        try {
+            const response = await request(app).get("/api/models/configured");
+            expect(response.status).toBe(200);
+            expect(response.body.models).toContainEqual({
+                id: "meta/muse-spark-1.1",
+                label: "muse-spark-1.1",
+                group: "Meta (Muse)",
+                location: "cloud",
+                source: "Configured",
+            });
+            expect(response.text).not.toContain("secret-meta-value");
+            expect(response.text).not.toContain("api.meta.ai");
+            expect(response.text).not.toContain("tokenjuice");
+        } finally {
+            vi.unstubAllEnvs();
+        }
+    });
+
     it("returns only usable models without exposing endpoint credentials", async () => {
         const response = await request(app).get("/api/models/configured");
 

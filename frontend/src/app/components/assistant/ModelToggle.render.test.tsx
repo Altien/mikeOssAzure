@@ -275,6 +275,28 @@ describe("ModelToggle availability states", () => {
         expect(screen.getByText("Configured")).toBeInTheDocument();
     });
 
+    it("offers an administrator-entered model under its provider, with no personal setup", async () => {
+        configuredModels.push({
+            id: "meta/muse-spark-1.1",
+            label: "muse-spark-1.1",
+            group: "Meta (Muse)",
+            location: "cloud",
+            source: "Configured",
+        });
+        render(
+            <ModelToggle
+                value="meta/muse-spark-1.1"
+                onChange={vi.fn()}
+                apiKeys={keys({})}
+            />,
+        );
+
+        const trigger = screen.getByRole("button", { name: "Choose model" });
+        expect(trigger).toHaveTextContent("muse-spark-1.1");
+        await userEvent.click(trigger);
+        expect(screen.getByText("Meta (Muse)")).toBeInTheDocument();
+    });
+
     it("renders a neutral disabled trigger while keys are loading", () => {
         render(
             <ModelToggle

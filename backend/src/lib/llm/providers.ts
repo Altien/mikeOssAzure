@@ -20,6 +20,7 @@ import {
 import { guardedFetch } from "../mcp/client";
 import { isBlockedDestinationError } from "../blockedDestination";
 import { localModelToleranceMiddleware } from "./localModelMiddleware";
+import { MANAGED_PROVIDERS, resolveManagedModel } from "./managedProviders";
 import { providerFailureResponse } from "./providerErrors";
 import {
   ACCOUNT_MODEL_LABELS,
@@ -409,6 +410,7 @@ async function createVertexAdapter(
 async function customEndpointFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
+  blockedMessage = CUSTOM_ENDPOINT_BLOCKED_MESSAGE,
 ): Promise<Response> {
   try {
     return await aiSdkFetch(input, init, (url, options) =>
@@ -420,7 +422,7 @@ async function customEndpointFetch(
     // so say so instead of surfacing an internal error (or retrying it as a
     // network failure).
     if (isBlockedDestinationError(error)) {
-      throw new UserFacingError(CUSTOM_ENDPOINT_BLOCKED_MESSAGE, {
+      throw new UserFacingError(blockedMessage, {
         cause: error,
       });
     }
@@ -454,6 +456,40 @@ async function createCustomEndpointAdapter(
     provider: "custom",
     label: "OpenAI-compatible endpoint",
     model: client(customEndpointModelId(model)),
+    modelId: model,
+    supportsReasoning: false,
+  };
+}
+
+const MANAGED_ENDPOINT_BLOCKED_MESSAGE =
+  "This provider's base URL does not resolve to a public address. Ask an administrator to correct it, or select another model.";
+
+/**
+ * Organisation settings only: these providers never take a personal key.
+ *
+ * A BYO tenant's address is its own input to a shared stamp, so it gets the same
+ * egress guard as a custom endpoint. Everywhere else the address comes from the
+ * deployment's administrator, who may legitimately name a private gateway.
+ */
+async function createManagedAdapter(model: string): Promise<AiSdkAdapterConfig> {
+  const resolved = await resolveManagedModel(model);
+  if (!resolved.ok) throw new UserFacingError(resolved.detail);
+  const guarded = (await tenantKeyMode()) === "byo";
+  const { createOpenAICompatible } = await import("@ai-sdk/openai-compatible");
+  const client = createOpenAICompatible({
+    name: resolved.provider,
+    apiKey: resolved.apiKey,
+    baseURL: resolved.baseUrl,
+    // Usage ledger (issue 015): ask for the final usage chunk when streaming.
+    includeUsage: true,
+    fetch: guarded
+      ? (input, init) => customEndpointFetch(input, init, MANAGED_ENDPOINT_BLOCKED_MESSAGE)
+      : aiSdkFetch,
+  });
+  return {
+    provider: resolved.provider,
+    label: MANAGED_PROVIDERS[resolved.provider].label,
+    model: client(resolved.upstreamModel),
     modelId: model,
     supportsReasoning: false,
   };
@@ -671,6 +707,7 @@ async function createProviderAdapter(
   }
   if (provider === "vertex") return createVertexAdapter(model, apiKeys);
   if (provider === "custom") return createCustomEndpointAdapter(model, apiKeys);
+  if (provider === "tokenjuice" || provider === "meta") return createManagedAdapter(model);
 
   if (provider === "xai") {
     const { createXai } = await import("@ai-sdk/xai");

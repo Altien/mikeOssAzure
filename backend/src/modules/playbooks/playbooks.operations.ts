@@ -40,6 +40,8 @@ import {
 import type { Provider } from "../../lib/llm/types";
 import { getEffectiveRouterModels, resolveRequestedModel } from "../../lib/routerModels";
 import { configuredEndpointSummaries } from "../../lib/llm/registry";
+import { managedProviderCatalog } from "../../lib/llm/managedProviders";
+import { filterTenantModels } from "../../lib/tenantSettings";
 import { hasApiKeyForModel } from "../../lib/modelSelection";
 import { getUserApiKeys, getEffectiveApiKeys } from "../user/user.service";
 import { uploadFile } from "../../lib/storage";
@@ -568,6 +570,8 @@ const PROVIDER_DISPLAY_NAMES: Record<Provider, string> = {
   vertex: "Google Vertex AI",
   xai: "xAI",
   custom: "OpenAI-compatible endpoint",
+  tokenjuice: "TokenJuice",
+  meta: "Meta (Muse)",
   "openai-compatible": "Configured endpoint",
   azureOpenai: "Azure OpenAI",
 };
@@ -636,12 +640,17 @@ async function availablePlaybookModels(
   ]
     .filter((modelId): modelId is string => typeof modelId === "string")
     .map((modelId) => LEGACY_MODEL_IDS[modelId] ?? modelId);
-  const [configured, routerModels] = await Promise.all([configuredEndpointSummaries(apiKeys), getEffectiveRouterModels(userId, orgId, db)]);
+  const [configured, routerModels, managedModels] = await Promise.all([
+    configuredEndpointSummaries(apiKeys),
+    getEffectiveRouterModels(userId, orgId, db),
+    managedProviderCatalog().then((catalog) => filterTenantModels(catalog, (model) => model.id)),
+  ]);
   const candidateIds = [
     ...new Set([
       ...builtInModelIds(),
       ...profileModelIds,
       ...configured.filter((model) => model.available).map((model) => model.id),
+      ...managedModels.map((model) => model.id),
       ...Object.values(routerModels).flat(),
       ...(apiKeys.azureOpenai?.deployment ? [`aoai:${apiKeys.azureOpenai.deployment}`] : []),
       ...(typeof profile?.title_model === "string"

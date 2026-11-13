@@ -21,6 +21,8 @@ export type Provider =
     | "vertex"
     | "xai"
     | "custom"
+    | "tokenjuice"
+    | "meta"
 ;
 
 export const REASONING_LEVELS = [
@@ -119,6 +121,9 @@ export type UserApiKeys = {
     xai?: string | null;
     /** The key for the user's own OpenAI-compatible endpoint. */
     custom?: string | null;
+    /** Set only when key, base URL and model names are all configured. */
+    tokenjuice?: string | null;
+    meta?: string | null;
     courtlistener?: string | null;
     azureOpenai?: AzureOpenaiSettings | null;
     /** Search API keys for Mike's own web search (see lib/webSearch). */
@@ -142,6 +147,8 @@ export type ProviderSettings = {
     "azure-foundry"?: { endpoint: string } | null;
     vertex?: { location: string } | null;
     custom?: { baseUrl: string } | null;
+    tokenjuice?: { models: string[] } | null;
+    meta?: { models: string[] } | null;
 };
 
 // Azure OpenAI needs endpoint, API key, deployment and API version. The

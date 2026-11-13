@@ -38,7 +38,7 @@ export function ApiKeyBanner(): React.ReactElement | null {
     getApiKeyStatus()
       .then((status: ApiKeyStatus) => {
         if (cancelled) return;
-        const anyConfigured = status.claude || status.gemini || status.openai || status.azure_openai || status.mistral;
+        const anyConfigured = status.claude || status.gemini || status.openai || status.azure_openai || status.mistral || status.tokenjuice || status.meta;
         setMissingKey(!anyConfigured);
       })
       .catch(() => {

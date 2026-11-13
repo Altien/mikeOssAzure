@@ -171,6 +171,8 @@ function emptyApiKeys(): ApiKeyState {
         vertex: { configured: false, source: null },
         xai: { configured: false, source: null },
         custom: { configured: false, source: null },
+        tokenjuice: { configured: false, source: null },
+        meta: { configured: false, source: null },
         courtlistener: { configured: false, source: null },
         kimi: { configured: false, source: null },
         azure_openai: { configured: false, source: null },

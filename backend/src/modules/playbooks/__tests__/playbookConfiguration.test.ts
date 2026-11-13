@@ -1,11 +1,16 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../../../lib/supabase";
 
-const { getUserApiKeys } = vi.hoisted(() => ({ getUserApiKeys: vi.fn() }));
+const { getUserApiKeys, filterTenantModels } = vi.hoisted(() => ({ getUserApiKeys: vi.fn(), filterTenantModels: vi.fn() }));
 
 vi.mock("../../user/user.service", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../user/user.service")>()),
   getUserApiKeys,
+}));
+
+vi.mock("../../../lib/tenantSettings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../lib/tenantSettings")>()),
+  filterTenantModels,
 }));
 
 import { playbookConfiguration } from "../playbooks.operations";
@@ -22,6 +27,7 @@ function dbWithProfile(profile: Record<string, string | null>): Db {
 
 describe("playbookConfiguration", () => {
   beforeEach(() => {
+    filterTenantModels.mockReset().mockImplementation(async (models: readonly unknown[]) => [...models]);
     getUserApiKeys.mockResolvedValue({
       claude: "sk-ant",
       gemini: "gm",
@@ -63,5 +69,49 @@ describe("playbookConfiguration", () => {
     );
 
     expect(config.defaultModel).toBe("gemini-3.8-flash");
+  });
+
+  describe("administrator-entered providers", () => {
+    beforeEach(() => {
+      vi.stubEnv("KEY_VAULT_NAME", "");
+      vi.stubEnv("TOKENJUICE_API_KEY", "org-key");
+      vi.stubEnv("TOKENJUICE_BASE_URL", "https://tj.example.test/v1");
+      vi.stubEnv("TOKENJUICE_MODELS", "juice-large");
+      vi.stubEnv("META_API_KEY", "");
+      vi.stubEnv("META_MODELS", "");
+    });
+    afterEach(() => vi.unstubAllEnvs());
+
+    it("offers a configured model alongside the others", async () => {
+      const config = await playbookConfiguration("u1", dbWithProfile({}));
+
+      expect(config.availableModelIds).toContain("tokenjuice/juice-large");
+      expect(config.availableModelIds).toContain("claude-sonnet-5-5");
+    });
+
+    it("offers and defaults to it on an install with only that provider", async () => {
+      getUserApiKeys.mockResolvedValue({});
+
+      const config = await playbookConfiguration("u1", dbWithProfile({}));
+
+      expect(config.availableModelIds).toEqual(["tokenjuice/juice-large"]);
+      expect(config.defaultModel).toBe("tokenjuice/juice-large");
+    });
+
+    it("leaves it out when its settings are incomplete", async () => {
+      vi.stubEnv("TOKENJUICE_MODELS", "");
+
+      const config = await playbookConfiguration("u1", dbWithProfile({}));
+
+      expect(config.availableModelIds).not.toContain("tokenjuice/juice-large");
+    });
+
+    it("leaves it out for a tenant whose allowlist does not name it", async () => {
+      filterTenantModels.mockImplementation(async () => []);
+
+      const config = await playbookConfiguration("u1", dbWithProfile({}));
+
+      expect(config.availableModelIds).not.toContain("tokenjuice/juice-large");
+    });
   });
 });

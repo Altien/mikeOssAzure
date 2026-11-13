@@ -443,6 +443,7 @@ describe("getConfiguredProviders", () => {
       // Dev drift: the storage metadata vocabulary now includes cloud/search providers.
       brave: false, deepseek: false, tavily: false, bedrock: false, azure: false,
       "azure-foundry": false, vertex: false, xai: false, custom: false,
+      tokenjuice: false, meta: false,
       claude: true,
       gemini: false,
       openai: false,
@@ -478,6 +479,7 @@ describe("getConfiguredProviders", () => {
       // Dev drift: the storage metadata vocabulary now includes cloud/search providers.
       brave: false, deepseek: false, tavily: false, bedrock: false, azure: false,
       "azure-foundry": false, vertex: false, xai: false, custom: false,
+      tokenjuice: false, meta: false,
       claude: true,
       gemini: false,
       openai: true,
@@ -503,6 +505,7 @@ describe("getConfiguredProviders", () => {
       // Dev drift: the storage metadata vocabulary now includes cloud/search providers.
       brave: false, deepseek: false, tavily: false, bedrock: false, azure: false,
       "azure-foundry": false, vertex: false, xai: false, custom: false,
+      tokenjuice: false, meta: false,
       claude: false,
       gemini: false,
       openai: false,

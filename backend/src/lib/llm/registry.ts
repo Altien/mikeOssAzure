@@ -209,7 +209,7 @@ function optionalString(
   return value.trim();
 }
 
-function validBaseUrl(value: string): boolean {
+export function validBaseUrl(value: string): boolean {
   try {
     const parsed = new URL(value);
     return (

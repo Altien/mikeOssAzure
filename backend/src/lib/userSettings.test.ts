@@ -242,6 +242,21 @@ describe("getUserModelSettings — fast model resolution chain", () => {
     expect(result.fast_model).toBe("kimi-k3");
   });
 
+  it("falls back to the first listed model of an administrator-entered provider", async () => {
+    readEncryptedApiKeysMock.mockResolvedValueOnce({
+      ...emptyKeys,
+      meta: "meta-key",
+      providerSettings: { meta: { models: ["muse-spark-1.1", "muse-spark-2"] } },
+    });
+    const { client } = makeClient({
+      selectSingle: { data: { fast_model: null, tabular_model: null } },
+    });
+
+    const result = await getUserModelSettings("u1", client as never);
+
+    expect(result.fast_model).toBe("meta/muse-spark-1.1");
+  });
+
   // Dev drift: upstream d08e2d2b requires both an API key and a deployment.
   it("falls back to aoai:<deployment> when only the org azure_openai config is set", async () => {
     readEncryptedApiKeysMock.mockResolvedValueOnce({

@@ -3,6 +3,15 @@
 // and how the operator fixes it when the check fails (`fixedBy`).
 
 import { getConfig } from "../config";
+import { isSecretNotFound } from "../secretNotFound";
+import {
+    isValidManagedModelList,
+    MANAGED_BASE_URL_PATTERN,
+    MANAGED_MODELS_PATTERN,
+    MANAGED_PROVIDERS,
+    type ManagedProvider,
+} from "../llm/managedProviders";
+import { validBaseUrl } from "../llm/registry";
 import { checkRedirectUris } from "./checks/redirectUris";
 import { checkInstallerAccessRevoked } from "./checks/installerAccess";
 import {
@@ -41,6 +50,8 @@ type CheckKvSecretOpts = {
      */
     redacted?: boolean;
     displayValue?: (raw: string) => string;
+    /** A format check a regular expression cannot say; fails like `format`. */
+    valid?: (raw: string) => boolean;
 };
 
 // Azure SDK throws a RestError with code 'SecretNotFound' (HTTP 404)
@@ -66,12 +77,6 @@ export function isFormatFailure(result: CheckResult): boolean {
     return result.detail?.startsWith(FORMAT_FAILED_PREFIX) ?? false;
 }
 
-function isSecretNotFound(err: unknown): boolean {
-    if (!err || typeof err !== "object") return false;
-    const e = err as { code?: unknown; statusCode?: unknown };
-    return e.code === "SecretNotFound" || e.statusCode === 404;
-}
-
 async function checkKvSecret(
     name: string,
     opts: CheckKvSecretOpts = {},
@@ -79,7 +84,7 @@ async function checkKvSecret(
     try {
         const value = await getConfig(name);
         if (!value) return { status: "fail", detail: NOT_CONFIGURED_DETAIL };
-        if (opts.format && !opts.format.test(value)) {
+        if ((opts.format && !opts.format.test(value)) || (opts.valid && !opts.valid(value))) {
             return {
                 status: "fail",
                 detail: `${FORMAT_FAILED_PREFIX}${opts.formatHint ? ` (expected ${opts.formatHint})` : ""}.`,
@@ -100,6 +105,26 @@ async function checkKvSecret(
             detail: err instanceof Error ? err.message : String(err),
         };
     }
+}
+
+/** Green only once the provider would run: key, base URL and model names. */
+async function checkManagedProvider(provider: ManagedProvider): Promise<CheckResult> {
+    const { keySecret, baseUrlSecret, modelsSecret, defaultBaseUrl } = MANAGED_PROVIDERS[provider];
+    const key = await checkKvSecret(keySecret, { redacted: true });
+    if (key.status !== "pass") return key;
+    const baseUrl = await checkKvSecret(baseUrlSecret, {
+        valid: validBaseUrl,
+        formatHint: "http(s) URL with no credentials, query or fragment",
+    });
+    const usingDefault = !!defaultBaseUrl && isConclusiveAbsence(baseUrl) && !isFormatFailure(baseUrl);
+    if (baseUrl.status !== "pass" && !usingDefault) return baseUrl;
+    const models = await checkKvSecret(modelsSecret, {
+        valid: isValidManagedModelList,
+        formatHint: "comma-separated model names",
+    });
+    if (models.status !== "pass") return models;
+    const address = usingDefault ? `${defaultBaseUrl} (default)` : baseUrl.detail ?? "";
+    return { status: "pass", detail: `${address} · ${models.detail ?? ""} · key set` };
 }
 
 const items: ManifestItem[] = [
@@ -295,6 +320,90 @@ const items: ManifestItem[] = [
                     "Organisation-wide key for direct Mistral models. " +
                     "Create one in Mistral Studio (console.mistral.ai).",
             }],
+        },
+    },
+    {
+        // Dev divergence (llm/managedProviders.ts): nothing about this provider
+        // is published, so its address and model names are entered here.
+        id: "ai-tokenjuice-key",
+        label: "TokenJuice",
+        section: "AI providers",
+        required: false,
+        check: () => checkManagedProvider("tokenjuice"),
+        fixedBy: {
+            type: "in-app-form",
+            submitTo: "kv",
+            fields: [
+                {
+                    name: "tokenjuice-api-key",
+                    label: "TokenJuice API key",
+                    type: "password",
+                    required: true,
+                    helpText: "Organisation-wide TokenJuice key shared by this Mike installation.",
+                },
+                {
+                    name: "tokenjuice-base-url",
+                    label: "TokenJuice base URL",
+                    type: "url",
+                    placeholder: "https://…/v1",
+                    required: true,
+                    pattern: MANAGED_BASE_URL_PATTERN,
+                    valid: validBaseUrl,
+                    helpText: "The address of TokenJuice's OpenAI-compatible API, up to and including its version path, as TokenJuice gives it to you.",
+                },
+                {
+                    name: "tokenjuice-models",
+                    label: "TokenJuice model names",
+                    type: "text",
+                    placeholder: "model-a, model-b",
+                    required: true,
+                    pattern: MANAGED_MODELS_PATTERN,
+                    valid: isValidManagedModelList,
+                    helpText: "Comma-separated, exactly as TokenJuice names them. These are the models everyone in this installation can pick.",
+                },
+            ],
+        },
+    },
+    {
+        // Dev divergence (llm/managedProviders.ts, where the default URL's
+        // second-hand source is recorded): Meta's Model API, Muse Spark family.
+        id: "ai-meta-key",
+        label: "Meta (Muse)",
+        section: "AI providers",
+        required: false,
+        check: () => checkManagedProvider("meta"),
+        fixedBy: {
+            type: "in-app-form",
+            submitTo: "kv",
+            fields: [
+                {
+                    name: "meta-api-key",
+                    label: "Meta API key",
+                    type: "password",
+                    required: true,
+                    helpText: "Organisation-wide Meta Model API key shared by this Mike installation.",
+                },
+                {
+                    name: "meta-base-url",
+                    label: "Meta base URL (optional)",
+                    type: "url",
+                    placeholder: MANAGED_PROVIDERS.meta.defaultBaseUrl,
+                    required: false,
+                    pattern: MANAGED_BASE_URL_PATTERN,
+                    valid: validBaseUrl,
+                    helpText: `Leave empty to use ${MANAGED_PROVIDERS.meta.defaultBaseUrl}. Check that address against what Meta gave you: it has not been confirmed against Meta's own documentation.`,
+                },
+                {
+                    name: "meta-models",
+                    label: "Meta model names",
+                    type: "text",
+                    placeholder: "muse-spark-1.1",
+                    required: true,
+                    pattern: MANAGED_MODELS_PATTERN,
+                    valid: isValidManagedModelList,
+                    helpText: "Comma-separated, exactly as Meta names them. These are the models everyone in this installation can pick.",
+                },
+            ],
         },
     },
     {

@@ -18,6 +18,7 @@ import {
 } from "../../lib/llm/registry";
 import { getUserModelSettings } from "../user/user.service";
 import { resolveRequestedModel } from "../../lib/routerModels";
+import { isManagedProvider, resolveManagedModel } from "../../lib/llm/managedProviders";
 import { TABULAR_MODEL_REQUIRED_DETAIL, hasApiKeyForModel } from "../../lib/modelSelection";
 import { UserFacingError } from "../../lib/safeError";
 import type { Db } from "../../lib/supabase";
@@ -120,6 +121,8 @@ function providerLabel(provider: Provider): string {
     if (provider === "vertex") return "Google Vertex AI";
     if (provider === "xai") return "xAI";
     if (provider === "custom") return "OpenAI-compatible endpoint";
+    if (provider === "tokenjuice") return "TokenJuice";
+    if (provider === "meta") return "Meta (Muse)";
     if (provider === "openai-compatible") return "Configured endpoint";
     return "Gemini";
 }
@@ -139,6 +142,8 @@ const SERVER_KEY_SECRETS: Record<Exclude<Provider, "azureOpenai" | "openai-compa
     vertex: "google-vertex-credentials-json",
     xai: "xai-api-key",
     custom: "custom-api-key",
+    tokenjuice: "tokenjuice-api-key",
+    meta: "meta-api-key",
 };
 
 export type MissingApiKey = {
@@ -165,6 +170,11 @@ export async function missingModelApiKey(
         const configured = apiKeys.azureOpenai;
         if (configured?.endpoint?.trim() && configured.apiKey?.trim() && configured.deployment?.trim()) return null;
         return { provider, model, detail: "Azure OpenAI is not configured for this organisation. Ask an administrator to configure its endpoint, API key and deployment on /install." };
+    }
+    // These name whichever setting is missing, and it may not be the key.
+    if (isManagedProvider(provider)) {
+        const managed = await resolveManagedModel(model);
+        return managed.ok ? null : { provider, model, detail: managed.detail };
     }
     // Use the same awaited credential and companion-setting policy as chat.
     if (await hasApiKeyForModel(model, apiKeys)) return null;

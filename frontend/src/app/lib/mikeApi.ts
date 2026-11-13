@@ -1271,6 +1271,8 @@ export type ApiKeyProvider =
     | "vertex"
     | "xai"
     | "custom"
+    | "tokenjuice"
+    | "meta"
     | "azure_openai"
     | WebSearchBackend;
 export type ApiKeySource = "user" | "org" | "env" | null;
@@ -1306,7 +1308,8 @@ export type ApiKeyStatus = Record<ApiKeyProvider, boolean> & {
 export interface ConfiguredModelOption {
     id: string;
     label: string;
-    group: "Configured";
+    /** "Configured", or an administrator-entered provider's own name. */
+    group: string;
     location: "cloud" | "local";
     source: "Configured";
 }

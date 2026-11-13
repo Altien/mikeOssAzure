@@ -5,6 +5,7 @@ import { optionalStampConfig, readStampConfiguration, requiredStampConfig, type 
 import { streamRunDatabaseUri } from "./postgresSession";
 import { externalIdentityConfiguration } from "./auth/entraConfiguration";
 import { getConfiguredModel } from "./llm/registry";
+import { isManagedProvider, MANAGED_PROVIDERS, type ManagedProvider } from "./llm/managedProviders";
 import { probeTenantPostgrestPath } from "./tenantDatabaseProbe";
 
 export interface PlatformCredentialRequirement { tier: string | null; provider: string; model: string }
@@ -28,6 +29,12 @@ const providerSecrets: Record<string, string[]> = {
   vercel: ["ai-gateway-api-key", "vercel-ai-gateway-api-key"], "opencode-go": ["opencode-api-key"],
   courtlistener: ["courtlistener-api-token"],
 };
+
+/** Every setting one of the administrator-entered providers needs to run. */
+function managedProviderRequirements(provider: ManagedProvider): string[] {
+  const { keySecret, baseUrlSecret, modelsSecret, defaultBaseUrl } = MANAGED_PROVIDERS[provider];
+  return [keySecret, modelsSecret, ...(defaultBaseUrl ? [] : [baseUrlSecret])];
+}
 
 /** Same vault-first tier/global order as inference, but outages are not swallowed. */
 async function credentialAvailable(names: string[], tier: string | null): Promise<boolean> {
@@ -56,7 +63,13 @@ async function validatePlatformCredential(requirement: PlatformCredentialRequire
     else if (configured.apiKeyEnv) names = [configured.apiKeyEnv.toLowerCase().replaceAll("_", "-")];
     else return; // An explicitly configured unauthenticated endpoint is supported.
   }
-  if (provider === "azureOpenai") {
+  if (isManagedProvider(provider)) {
+    let complete = true;
+    for (const name of managedProviderRequirements(provider)) {
+      complete = complete && await credentialAvailable([name], tier);
+    }
+    if (complete) return;
+  } else if (provider === "azureOpenai") {
     if (await credentialAvailable(["azure-openai-api-key"], tier)
       && await credentialAvailable(["azure-openai-endpoint"], tier)) return;
   } else if (names && await credentialAvailable(names, tier)) return;

@@ -31,6 +31,7 @@ import { getConfig } from "../../lib/config";
 import { resolveSecret, resolveProviderSecret, resolveVercelApiKey } from "../../lib/envSecrets";
 import { createServerSupabase, type Db } from "../../lib/supabase";
 import { envBedrockCredentials, envAzureCredentials, envAzureFoundryCredentials, envVertexCredentials, envVertexServiceAccountKey, envCustomEndpointCredentials } from "../../lib/llm/cloudProviders";
+import { resolveManagedProvider, type ManagedProvider } from "../../lib/llm/managedProviders";
 import type { ProviderSettings, AzureOpenaiSettings, UserApiKeys } from "../../lib/llm";
 
 // `openrouter` and `courtlistener` added with upstream 44e868e
@@ -53,6 +54,8 @@ export type ApiKeyProvider =
     | "vertex"
     | "xai"
     | "custom"
+    | "tokenjuice"
+    | "meta"
     | "azure_openai"
     | WebSearchBackend;
 
@@ -65,7 +68,7 @@ export type ApiKeyStatus = Record<ApiKeyProvider, boolean> & {
     modelAllowlist?: readonly string[] | null;
 };
 
-const ORG_PROVIDERS = ["claude", "gemini", "openai", "kimi", "mistral", "openrouter", "opencode-go", "vercel", "courtlistener", "azure_openai", "bedrock", "azure", "azure-foundry", "vertex", "xai", "custom", ...WEB_SEARCH_BACKENDS] as const;
+const ORG_PROVIDERS = ["claude", "gemini", "openai", "kimi", "mistral", "openrouter", "opencode-go", "vercel", "courtlistener", "azure_openai", "bedrock", "azure", "azure-foundry", "vertex", "xai", "custom", "tokenjuice", "meta", ...WEB_SEARCH_BACKENDS] as const;
 
 export function normalizeApiKeyProvider(value: unknown): ApiKeyProvider | null {
     return typeof value === "string" && (ORG_PROVIDERS as readonly string[]).includes(value)
@@ -115,6 +118,8 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
         vertexKey,
         xai,
         custom,
+        tokenjuice,
+        meta,
     ] = await Promise.all([
         resolveSecret("anthropic-api-key"),
         resolveSecret("gemini-api-key"),
@@ -138,6 +143,8 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
         envVertexServiceAccountKey(),
         resolveProviderSecret("xai-api-key"),
         envCustomEndpointCredentials(),
+        resolveManagedProvider("tokenjuice"),
+        resolveManagedProvider("meta"),
     ]);
 
     return {
@@ -157,7 +164,11 @@ export async function getOrganisationApiKeys(): Promise<UserApiKeys> {
         vertex: cloudVertex ? vertexKey : null,
         xai: xai || null,
         custom: custom?.apiKey ?? null,
+        tokenjuice: tokenjuice.ok ? tokenjuice.apiKey : null,
+        meta: meta.ok ? meta.apiKey : null,
         providerSettings: {
+            tokenjuice: tokenjuice.ok ? { models: tokenjuice.models } : null,
+            meta: meta.ok ? { models: meta.models } : null,
             bedrock: cloudBedrock ? { region: cloudBedrock.region } : null,
             azure: cloudAzure ? { endpoint: cloudAzure.endpoint } : null,
             "azure-foundry": cloudFoundry ? { endpoint: cloudFoundry.endpoint } : null,
@@ -430,6 +441,8 @@ export async function getConfiguredProviders(
         vertex: false,
         xai: false,
         custom: false,
+        tokenjuice: false,
+        meta: false,
     };
     for (const row of (rows ?? []) as { provider: ApiKeyProvider }[]) {
         configured[row.provider] = true;
@@ -531,10 +544,21 @@ async function requireOrgKeyMembership(userId: string, orgId: string, db: Db): P
         throw new Error("workspace_not_found");
 }
 
+/** A restricted tenant is not shown model names outside its allowlist. */
+async function settingsWithinTenantAllowlist(settings: ProviderSettings): Promise<ProviderSettings> {
+    const allowed = await tenantModelAllowlist();
+    if (allowed === null) return settings;
+    const within = (provider: ManagedProvider) => {
+        const current = settings[provider];
+        return current && { models: current.models.filter((name) => allowed.includes(`${provider}/${name}`)) };
+    };
+    return { ...settings, tokenjuice: within("tokenjuice"), meta: within("meta") };
+}
+
 export async function getApiKeyStatusFor(owner: ApiKeyOwner, db: Db = createServerSupabase()): Promise<ApiKeyStatus> {
     if (owner.kind === "user") return getUserApiKeyStatus(owner.id, db);
     const keys = await getOrganisationApiKeys();
-    const status = { sources: {}, enabled: {}, settings: keys.providerSettings ?? {} } as ApiKeyStatus;
+    const status = { sources: {}, enabled: {}, settings: await settingsWithinTenantAllowlist(keys.providerSettings ?? {}) } as ApiKeyStatus;
     for (const provider of ORG_PROVIDERS) {
         const configured = provider === "azure_openai"
             ? !!(keys.azureOpenai?.apiKey && keys.azureOpenai?.endpoint) : !!keys[provider];

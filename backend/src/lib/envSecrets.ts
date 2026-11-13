@@ -17,6 +17,7 @@
 // gemini-api-key, azure-openai-*) where Bicep has no secretRef wiring.
 
 import { getKeyVaultConfig } from "./config.js";
+import { isSecretNotFound } from "./secretNotFound";
 import { getTenantConfig, resolveTenantSecret } from "./tenantSettings";
 
 const PROVIDER_SECRETS = new Set([
@@ -31,6 +32,10 @@ const PROVIDER_SECRETS = new Set([
     "custom-api-key", "custom-base-url", "xai-api-key",
     // Main's web-search backends (webSearch/credentials.ts).
     "brave-search-api-key", "tavily-api-key", "deepseek-search-api-key",
+    // Administrator-entered providers (llm/managedProviders.ts): a BYO tenant
+    // must not reach the platform's key, address or model list either.
+    "tokenjuice-api-key", "tokenjuice-base-url", "tokenjuice-models",
+    "meta-api-key", "meta-base-url", "meta-models",
 ]);
 
 const SECRET_PLACEHOLDER = "__unset__";
@@ -66,9 +71,14 @@ export async function resolveSecret(kvSecretName: string): Promise<string> {
 // New router credentials use Key Vault as the source of truth. Check every
 // vault alias before falling back to revision environment or local settings.
 // Existing getConfig/resolveSecret callers retain their env-first semantics.
+//
+// A failed vault read is treated as absent. A caller that would substitute a
+// default for an absent value passes `failOnUnreadable`, which throws on any
+// failure other than a confirmed absence.
 export async function resolveProviderSecret(
     name: string,
     aliases: string[] = [],
+    { failOnUnreadable = false }: { failOnUnreadable?: boolean } = {},
 ): Promise<string> {
     // An operator override name (e.g. BRAVE_SEARCH_API_KEY_SECRET_NAME) comes
     // first with the canonical name as an alias; either marks a provider key.
@@ -77,7 +87,11 @@ export async function resolveProviderSecret(
         const names = [name, ...aliases];
         if (process.env.KEY_VAULT_NAME) {
             for (const secretName of names) {
-                const value = (await getKeyVaultConfig(secretName).catch(() => "")).trim();
+                const raw = await getKeyVaultConfig(secretName).catch((error: unknown) => {
+                    if (failOnUnreadable && !isSecretNotFound(error)) throw error;
+                    return "";
+                });
+                const value = raw.trim();
                 if (value && value !== SECRET_PLACEHOLDER) return value;
             }
         }
@@ -86,7 +100,7 @@ export async function resolveProviderSecret(
             if (value) return value;
         }
         return "";
-    }, { provider, aliases });
+    }, { provider, aliases, failOnUnreadable });
 }
 
 export async function resolveVercelApiKey(): Promise<string> {

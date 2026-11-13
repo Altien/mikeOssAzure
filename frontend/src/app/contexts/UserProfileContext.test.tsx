@@ -233,6 +233,8 @@ describe("UserProfileContext: bootstrap fetch on mount", () => {
             // Dev (OSS-6 §2.3 item 3): organisation Kimi + Azure OpenAI.
             kimi: { configured: true, source: "env", enabled: true },
             azure_openai: { configured: true, source: "env", enabled: true },
+            tokenjuice: { configured: false, source: null, enabled: true },
+            meta: { configured: false, source: null, enabled: true },
         });
     });
 

@@ -423,14 +423,18 @@ export type ModelProvider =
   | RouterSlug
   | "ollama"
   | "kimi"
-  | "azureOpenai";
+  | "azureOpenai"
+  // Dev divergence: named by an administrator on /install. Their rows come
+  // from GET /models/configured, not from this catalog or a router's list.
+  | "tokenjuice"
+  | "meta";
 
 /** Key providers that serve chat models (CourtListener does not). */
 const MODEL_KEY_PROVIDERS = [
   "claude",
   "gemini",
   "openai",
-  "mistral", "kimi", "azure_openai",
+  "mistral", "kimi", "azure_openai", "tokenjuice", "meta",
   ...ROUTER_SLUGS,
 ] as const;
 
@@ -469,6 +473,8 @@ export function modelGroupToProvider(group: ModelOption["group"]): ModelProvider
 export function getModelProvider(modelId: string, extraModels?: readonly ModelOption[]): ModelProvider | null {
   if (modelId.startsWith("aoai:")) return "azureOpenai";
   if (modelId.startsWith("ollama/")) return "ollama"; // dynamic, not in the static list
+  if (modelId.startsWith("tokenjuice/")) return "tokenjuice";
+  if (modelId.startsWith("meta/")) return "meta";
   const router = routerForModelId(modelId);
   if (router) return router;
   const model = SETTINGS_MODELS.find(
@@ -532,6 +538,8 @@ const PROVIDER_NAMES: Record<
   vertex: { name: "Google Vertex AI" },
   xai: { name: "xAI" },
   custom: { name: "OpenAI-compatible endpoint" },
+  tokenjuice: { name: "TokenJuice" },
+  meta: { name: "Meta (Muse)" },
   ollama: { name: "Local", product: "Ollama" },
 };
 

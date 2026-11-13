@@ -404,6 +404,8 @@ describe("the whole page, against fake services", () => {
       GEMINI_API_KEY: "",
       OPENROUTER_API_KEY: "",
       OPENCODE_API_KEY: "",
+      TOKENJUICE_API_KEY: "",
+      META_API_KEY: "",
       COURTLISTENER_API_TOKEN: "",
       DIAGNOSTICS_HEALTH_TOKEN: SENTINELS.diagnosticsToken,
     }).forEach(([name, value]) => vi.stubEnv(name, value));
@@ -1144,6 +1146,27 @@ describe("the whole page, against fake services", () => {
       expect(result.status).toBe("warn");
       expect(result.detail).toContain("Configured: Anthropic API key.");
       expect(result.detail).toContain("Present but invalid format: OpenRouter API key.");
+    });
+
+    it("names TokenJuice and Meta, as configured only once complete and without their values", async () => {
+      vi.stubEnv("TOKENJUICE_API_KEY", "secret-tokenjuice-value");
+      vi.stubEnv("TOKENJUICE_MODELS", "juice-large");
+      vi.stubEnv("TOKENJUICE_BASE_URL", "");
+      vi.stubEnv("META_API_KEY", "secret-meta-value");
+      vi.stubEnv("META_MODELS", "muse-spark-1.1");
+      vi.stubEnv("META_BASE_URL", "");
+      const partial = await check();
+      expect(partial.detail).toMatch(/Configured: [^.]*Meta \(Muse\)/);
+      expect(partial.detail).toMatch(/Not configured: [^.]*TokenJuice/);
+      vi.stubEnv("TOKENJUICE_BASE_URL", "ftp://tj.example.test");
+      expect((await check()).detail).toContain("Present but invalid format: TokenJuice.");
+      resetHealthRunForTests();
+      vi.stubEnv("TOKENJUICE_BASE_URL", "https://tj.example.test/v1");
+      const complete = await check();
+      expect(complete.detail).toMatch(/Configured: [^.]*TokenJuice/);
+      for (const value of ["secret-tokenjuice-value", "secret-meta-value", "tj.example.test", "juice-large"]) {
+        expect(complete.detail).not.toContain(value);
+      }
     });
 
     it("treats a vault's 404 as a real absence", async () => {

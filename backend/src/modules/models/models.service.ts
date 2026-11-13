@@ -14,6 +14,7 @@ import type { Db } from "../../lib/supabase";
 import { filterTenantModels } from "../../lib/tenantSettings";
 import { isSupportedOpenCodeGoModel } from "../../lib/llm/models";
 import { configuredEndpointSummaries } from "../../lib/llm/registry";
+import { managedProviderCatalog } from "../../lib/llm/managedProviders";
 import { getEffectiveApiKeys, getOrganisationApiKeys } from "../user/user.service";
 
 export type CatalogPricing = {
@@ -33,7 +34,8 @@ export type CatalogModel = {
 export type ConfiguredCatalogModel = {
     id: string;
     label: string;
-    group: "Configured";
+    /** "Configured", or an administrator-entered provider's own name. */
+    group: string;
     location: "cloud" | "local";
     source: "Configured";
 };
@@ -104,7 +106,7 @@ export async function listConfiguredModels(
     _userId: string,
 ): Promise<ConfiguredCatalogModel[]> {
     const apiKeys = await getOrganisationApiKeys();
-    return (await configuredEndpointSummaries(apiKeys)).flatMap((model) =>
+    const configured = (await configuredEndpointSummaries(apiKeys)).flatMap((model) =>
         model.available
             ? [
                   {
@@ -117,6 +119,17 @@ export async function listConfiguredModels(
               ]
             : [],
     );
+    // This is the list every picker already reads with no per-user setup, so
+    // administrator-entered providers join it rather than the router lists.
+    const managed = await filterTenantModels(await managedProviderCatalog(), (model) => model.id);
+    return [
+        ...configured,
+        ...managed.map((model) => ({
+            ...model,
+            location: "cloud" as const,
+            source: "Configured" as const,
+        })),
+    ];
 }
 
 /**

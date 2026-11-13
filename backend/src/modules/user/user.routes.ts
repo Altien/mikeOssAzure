@@ -548,6 +548,8 @@ const ORGANISATION_CREDENTIALS: Record<
     vertex: { label: "Google Vertex AI", secretNames: ["google-vertex-credentials-json", "google-vertex-location"] },
     xai: { label: "xAI", secretNames: ["xai-api-key"] },
     custom: { label: "OpenAI-compatible endpoint", secretNames: ["custom-api-key", "custom-base-url"] },
+    tokenjuice: { label: "TokenJuice", secretNames: ["tokenjuice-api-key", "tokenjuice-base-url", "tokenjuice-models"] },
+    meta: { label: "Meta (Muse)", secretNames: ["meta-api-key", "meta-base-url", "meta-models"] },
     azure_openai: {
         label: "Azure OpenAI",
         secretNames: ["azure-openai-endpoint", "azure-openai-api-key"],
@@ -613,6 +615,10 @@ userRouter.patch(
             !provider ||
             provider === "courtlistener" ||
             isWebSearchBackend(provider) ||
+            // set_user_provider_enabled (0108) has no such preference for
+            // them; adding one would take a migration. Settings shows no switch.
+            provider === "tokenjuice" ||
+            provider === "meta" ||
             typeof req.body?.enabled !== "boolean"
         ) {
             return void res.status(400).json({ detail: "A supported provider and boolean enabled value are required." });

@@ -14,6 +14,8 @@ export const API_KEY_PROVIDERS: readonly ApiKeyProvider[] = [
     "vertex",
     "xai",
     "custom",
+    "tokenjuice",
+    "meta",
     "courtlistener",
     "kimi",
     "azure_openai",

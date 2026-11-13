@@ -14,6 +14,7 @@ import {
 import { resolveProviderSecret, resolveSecret } from "./envSecrets";
 import { getOrganisationApiKeys, getUserApiKeyStatus } from "../modules/user/user.apiKeyStore";
 import { apiKeyForConfiguredModel, configuredEndpointSummaries, resetModelRegistryCache } from "./llm/registry";
+import { resolveManagedProvider } from "./llm/managedProviders";
 import { completeWithProvider, streamWithProvider } from "./llm/providers";
 import { flushLlmUsage, setLlmUsageSink, type LlmUsageEvent } from "./llm/usage";
 import { googleDriveOAuthEnv } from "./integrations/googleDrive";
@@ -75,6 +76,29 @@ describe("tenant configuration", () => {
     expect(fake.calls).toEqual([]);
     await expect(asTenant("a", () => resolveProviderSecret("openai-api-key"))).rejects.toThrow("Unable to read tenant configuration");
     expect(await resolveProviderSecret("openai-api-key")).toBe("platform-openai");
+  });
+
+  it.each([
+    "tokenjuice-api-key", "tokenjuice-base-url", "tokenjuice-models",
+    "meta-api-key", "meta-base-url", "meta-models",
+  ])("keeps the platform's %s from a BYO tenant", async (name) => {
+    secrets.set(name, "platform-value");
+    rows.set("byo", settings({ key_mode: "byo" }));
+    rows.set("platform", settings());
+
+    expect(await asTenant("byo", () => resolveProviderSecret(name))).toBe("");
+    expect(await asTenant("platform", () => resolveProviderSecret(name))).toBe("platform-value");
+  });
+
+  it("gives a BYO tenant none of the platform's administrator-entered providers", async () => {
+    secrets.set("meta-api-key", "platform-key");
+    secrets.set("meta-models", "muse-spark-1.1");
+    rows.set("byo", settings({ key_mode: "byo" }));
+
+    const resolved = await asTenant("byo", () => resolveManagedProvider("meta"));
+
+    expect(resolved).toMatchObject({ ok: false });
+    expect(JSON.stringify(resolved)).not.toContain("platform-key");
   });
 
   it("uses only each BYO tenant's references, including when a caller supplies another key", async () => {

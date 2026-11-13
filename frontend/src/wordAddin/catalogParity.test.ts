@@ -152,12 +152,16 @@ describe("word add-in model catalog", () => {
             "vertex",
             "xai",
             "custom",
+            "tokenjuice",
+            "meta",
         ] as const;
         const sharedIds = [
             ...MODELS.map((model) => model.id),
             "openrouter/openai/gpt-5.4",
             "vercel/openai/gpt-5.4",
             "opencode-go/glm-5",
+            "tokenjuice/juice-large",
+            "meta/muse-spark-1.1",
             ...BYOK_PROBES,
         ];
         for (const configured of providers) {

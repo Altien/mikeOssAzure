@@ -195,6 +195,8 @@ export function providerForModel(model: string): Provider {
     if (model.startsWith("vertex/")) return "vertex";
     if (model.startsWith("xai/")) return "xai";
     if (model.startsWith("custom/")) return "custom";
+    if (model.startsWith("tokenjuice/")) return "tokenjuice";
+    if (model.startsWith("meta/")) return "meta";
     if (model.startsWith("claude")) return "claude";
     if (model.startsWith("gemini")) return "gemini";
     if (model.startsWith("kimi-")) return "kimi";
@@ -208,7 +210,14 @@ export function isAllowedModelId(id: string): boolean {
     // Static models are listed in ALL_MODELS; AOAI ids are accepted by
     // prefix because deployment names are user-defined and only known
     // at runtime via deployment discovery.
-    return ALL_MODELS.has(id) || getConfiguredModel(id) !== null || (/^opencode-go\/[^\s]+$/.test(id) || isSafeAccountModel(id)) || id.startsWith(AZURE_OPENAI_PREFIX) || /^(?:openrouter|vercel)\/[^\s/]+\/[^\s]+$/.test(id);
+    return ALL_MODELS.has(id) || getConfiguredModel(id) !== null || (/^opencode-go\/[^\s]+$/.test(id) || isSafeAccountModel(id)) || id.startsWith(AZURE_OPENAI_PREFIX) || /^(?:openrouter|vercel)\/[^\s/]+\/[^\s]+$/.test(id) || isManagedModelShape(id);
+}
+
+// Dev divergence: named by an administrator on /install. This is shape only;
+// resolveManagedModel (managedProviders.ts) decides whether the name may run.
+function isManagedModelShape(id: string): boolean {
+    const name = /^(?:tokenjuice|meta)\/(.+)$/.exec(id)?.[1];
+    return name !== undefined && isSafeAccountModelId("custom", name);
 }
 
 // Renamed/retired static ids → their current equivalents. Stored preferences

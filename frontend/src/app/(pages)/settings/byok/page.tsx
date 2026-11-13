@@ -93,7 +93,11 @@ export default function ByokPage() {
                 onOpen={hasSavedKey ? open : undefined}
                 action={
                     hasSavedKey ? (
-                        renderToggle(field, `${field.name} provider`)
+                        field.noPersonalSwitch ? (
+                            <span className="text-sm text-gray-500">Configured</span>
+                        ) : (
+                            renderToggle(field, `${field.name} provider`)
+                        )
                     ) : (
                         <PillButtonUI
                             tone="blue"

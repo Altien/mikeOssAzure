@@ -4,6 +4,7 @@
 import { getConfig, getKeyVaultConfig } from "./config";
 import { currentTenant } from "./tenantContext";
 import { createServerSupabase } from "./supabase";
+import { isSecretNotFound } from "./secretNotFound";
 
 export type TenantSettings = {
   key_mode: "platform" | "byo";
@@ -88,12 +89,19 @@ export async function hasTenantSecretReference(...names: string[]): Promise<bool
  * Explicit refs never fall through to platform secrets. BYO provider calls
  * also fail closed when a ref is absent; connector clients inherit install
  * defaults independently of the LLM key mode. Only names live in Postgres.
+ *
+ * A failed vault read reads as absent, unless `failOnUnreadable` asks for it to
+ * throw: a caller with a default must not take a read failure for "not set".
  */
 export async function resolveTenantSecret(
   name: string,
   fallback: () => Promise<string>,
-  options: { provider?: boolean; aliases?: string[] } = {},
+  options: { provider?: boolean; aliases?: string[]; failOnUnreadable?: boolean } = {},
 ): Promise<string> {
+  const readVault = (secretName: string) => getKeyVaultConfig(secretName).catch((error: unknown) => {
+    if (options.failOnUnreadable && !isSecretNotFound(error)) throw error;
+    return "";
+  });
   const settings = await getTenantSettings();
   const names = [name, ...(options.aliases ?? [])];
   const ref = options.provider && settings?.key_mode !== "byo" ? undefined
@@ -101,7 +109,7 @@ export async function resolveTenantSecret(
   if (ref !== undefined) {
     const prefix = `tenant-${currentTenant()!.tenantId}-`;
     if (!/^[a-zA-Z][a-zA-Z0-9-]{0,126}$/.test(ref) || !ref.startsWith(prefix)) throw new Error("Invalid tenant credential reference");
-    return usable(await getKeyVaultConfig(ref).catch(() => ""));
+    return usable(await readVault(ref));
   }
   // A partially configured tenant OAuth client must not combine its client ID
   // with the platform client secret (or silently select another client).
@@ -111,7 +119,7 @@ export async function resolveTenantSecret(
   if (options.provider && settings?.tier) {
     const tierName = `platform-${settings.tier}-${name}`;
     if (process.env.KEY_VAULT_NAME) {
-      const value = usable(await getKeyVaultConfig(tierName).catch(() => ""));
+      const value = usable(await readVault(tierName));
       if (value) return value;
     }
     const value = usable(process.env[tierName.toUpperCase().replaceAll("-", "_")] ?? "");

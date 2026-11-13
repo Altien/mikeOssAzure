@@ -181,7 +181,8 @@ export async function getAzureModels(): Promise<AzureModelOption[]> {
 export interface ConfiguredModelOption {
   id: string;
   label: string;
-  group: "Configured";
+  /** "Configured", or an administrator-entered provider's own name. */
+  group: string;
   location: "cloud" | "local";
   source: "Configured";
 }

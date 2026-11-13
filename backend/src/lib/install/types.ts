@@ -18,6 +18,8 @@ export type FormField = {
     type: "text" | "password" | "url";
     placeholder?: string;
     pattern?: string;
+    /** Server-side check for what a pattern cannot say; runs after `pattern`. */
+    valid?: (value: string) => boolean;
     required?: boolean;
     /** When set, renders a <select> with these values instead of <input>. */
     options?: string[];

@@ -37,10 +37,16 @@ import type { LlmUsageMeter } from "./usage";
  * model-aware maximum for it and Moonshot's server default when `max_tokens`
  * is omitted is not verified to exceed Dev's previous limit, so dropping the
  * cap could truncate long answers. Azure OpenAI follows upstream (unset).
+ *
+ * Dev divergence: TokenJuice and Meta (Muse) keep it for the same reason. Their
+ * server defaults are unknown too, and silently cutting off a long answer is
+ * worse than a visible error from a provider whose ceiling is lower.
  */
 const PROVIDERS_KEEPING_LEGACY_OUTPUT_LIMIT: ReadonlySet<Provider> = new Set<Provider>([
   "opencode-go",
   "kimi",
+  "tokenjuice",
+  "meta",
 ]);
 
 export function maxOutputTokensFor(provider: Provider, adapterDefault?: number): number | undefined {

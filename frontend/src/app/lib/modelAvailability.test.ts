@@ -223,6 +223,22 @@ describe("dev providers: kimi and azureOpenai", () => {
     });
 });
 
+// Dev divergence: their rows come from GET /models/configured, which lists them
+// only once key, base URL and model names are all set on /install.
+describe("administrator-entered providers", () => {
+    it("names each provider, whatever its model is called", () => {
+        expect(getModelProvider("tokenjuice/gpt-custom")).toBe("tokenjuice");
+        expect(getModelProvider("meta/muse-spark-1.1")).toBe("meta");
+        expect(providerLabel("tokenjuice")).toBe("TokenJuice");
+        expect(providerLabel("meta")).toBe("Meta (Muse)");
+    });
+
+    it("trusts the configured catalog, and needs no router selection", () => {
+        expect(isModelAvailable("meta/muse-spark-1.1", keys({}), ["meta/muse-spark-1.1"])).toBe(true);
+        expect(isModelAvailable("meta/other", keys({}), ["meta/muse-spark-1.1"])).toBe(false);
+    });
+});
+
 it("makes direct Mistral available only with a Mistral key", () => {
     expect(isModelAvailable("mistral-large-4", keys({ mistral: true }))).toBe(true);
     expect(isModelAvailable("mistral-large-4", keys({ openai: true, openrouter: true }))).toBe(false);

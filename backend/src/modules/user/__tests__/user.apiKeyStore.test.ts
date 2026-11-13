@@ -7,7 +7,13 @@ vi.mock("../../../lib/envSecrets", () => ({
   resolveVercelApiKey: vi.fn(async () => secrets.values.get("ai-gateway-api-key") ?? ""),
 }));
 
-import { getUserApiKeyStatus, normalizeApiKeyProvider } from "../user.apiKeyStore";
+const allowlist = vi.hoisted(() => ({ value: null as string[] | null }));
+vi.mock("../../../lib/tenantSettings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../lib/tenantSettings")>()),
+  tenantModelAllowlist: vi.fn(async () => allowlist.value),
+}));
+
+import { getApiKeyStatusFor, getUserApiKeyStatus, normalizeApiKeyProvider, orgKeyOwner } from "../user.apiKeyStore";
 import { saveApiKey } from "../user.apiKeys";
 
 function profilePreferenceDb() {
@@ -24,7 +30,47 @@ function profilePreferenceDb() {
 }
 
 describe("organisation provider credentials", () => {
-  beforeEach(() => secrets.values.clear());
+  beforeEach(() => {
+    secrets.values.clear();
+    allowlist.value = null;
+  });
+
+  describe("administrator-entered model names in organisation settings", () => {
+    beforeEach(() => {
+      secrets.values.set("tokenjuice-api-key", "org-key");
+      secrets.values.set("tokenjuice-base-url", "https://tj.example.test/v1");
+      secrets.values.set("tokenjuice-models", "juice-large, juice-small");
+      secrets.values.set("meta-api-key", "org-key");
+      secrets.values.set("meta-models", "muse-spark-1.1, muse-private");
+    });
+
+    it("shows every name when the tenant has no allowlist", async () => {
+      const { settings } = await getApiKeyStatusFor(orgKeyOwner("org-1"), {} as never);
+      expect(settings.tokenjuice?.models).toEqual(["juice-large", "juice-small"]);
+      expect(settings.meta?.models).toEqual(["muse-spark-1.1", "muse-private"]);
+    });
+
+    it("hides names outside a restricted tenant's allowlist", async () => {
+      allowlist.value = ["tokenjuice/juice-small", "meta/muse-spark-1.1", "juice-large", "gpt-6.1-sol"];
+
+      const status = await getApiKeyStatusFor(orgKeyOwner("org-1"), {} as never);
+
+      expect(status.settings.tokenjuice?.models).toEqual(["juice-small"]);
+      expect(status.settings.meta?.models).toEqual(["muse-spark-1.1"]);
+      expect(JSON.stringify(status)).not.toContain("muse-private");
+      expect(JSON.stringify(status)).not.toContain("juice-large");
+    });
+
+    it("shows no names under an empty allowlist, and leaves an unconfigured provider empty", async () => {
+      allowlist.value = [];
+      secrets.values.delete("meta-api-key");
+
+      const { settings } = await getApiKeyStatusFor(orgKeyOwner("org-1"), {} as never);
+
+      expect(settings.tokenjuice?.models).toEqual([]);
+      expect(settings.meta ?? null).toBeNull();
+    });
+  });
 
   it("accepts supported providers without admitting arbitrary names", () => {
     for (const provider of ["claude", "gemini", "openai", "kimi", "mistral", "openrouter", "opencode-go", "vercel", "courtlistener", "azure_openai"])
@@ -56,6 +102,25 @@ describe("organisation provider credentials", () => {
     const tables = db.from.mock.calls.map(([table]) => table);
     expect(tables).not.toContain("user_api_keys");
     expect(tables).not.toContain("org_api_keys");
+  });
+
+  it("reports an administrator-entered provider only when complete, and never its values", async () => {
+    const db = profilePreferenceDb();
+    secrets.values.set("tokenjuice-api-key", "secret-tokenjuice-value");
+    secrets.values.set("tokenjuice-models", "juice-large");
+    secrets.values.set("meta-api-key", "secret-meta-value");
+    const partial = await getUserApiKeyStatus("entra|tenant|user", db as never);
+    expect(partial).toMatchObject({ tokenjuice: false, meta: false });
+    expect(partial.sources).toMatchObject({ tokenjuice: null, meta: null });
+
+    secrets.values.set("tokenjuice-base-url", "https://tj.example.test/v1");
+    secrets.values.set("meta-models", "muse-spark-1.1");
+    const status = await getUserApiKeyStatus("entra|tenant|user", db as never);
+    expect(status).toMatchObject({ tokenjuice: true, meta: true });
+    expect(status.sources).toMatchObject({ tokenjuice: "env", meta: "env" });
+    const wire = JSON.stringify(status);
+    for (const value of ["secret-tokenjuice-value", "secret-meta-value", "tj.example.test", "juice-large", "muse-spark"])
+      expect(wire).not.toContain(value);
   });
 
   it("refuses a personal provider key without writing any database row", async () => {

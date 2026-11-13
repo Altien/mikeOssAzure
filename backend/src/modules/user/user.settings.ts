@@ -58,6 +58,10 @@ function fallbackTitleModel(apiKeys: UserApiKeys, routerModels: RouterModelSelec
     if (apiKeys.claude?.trim()) return "claude-haiku-4-5";
     if (apiKeys.kimi?.trim()) return "kimi-k3";
     if (apiKeys.azureOpenai?.apiKey?.trim() && apiKeys.azureOpenai.deployment?.trim()) return `aoai:${apiKeys.azureOpenai.deployment}`;
+    for (const provider of ["tokenjuice", "meta"] as const) {
+        const first = apiKeys.providerSettings?.[provider]?.models[0];
+        if (apiKeys[provider]?.trim() && first) return `${provider}/${first}`;
+    }
     for (const slug of ROUTER_SLUGS) {
         const first = routerModels[slug][0];
         if (apiKeys[slug]?.trim() && first) return `${slug}/${first}`;

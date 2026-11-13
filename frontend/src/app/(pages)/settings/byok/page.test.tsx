@@ -49,6 +49,36 @@ describe("organisation model providers", () => {
         expect(screen.queryByRole("button", { name: /^Save$/ })).not.toBeInTheDocument();
         expect(screen.queryByRole("button", { name: /^Clear$/ })).not.toBeInTheDocument();
     });
+    it("shows TokenJuice and Meta read-only: status, a route to /install, no key input or switch", async () => {
+        server.use(http.get("*/api/user/profile", () => HttpResponse.json(profileWith({
+            ...STATUS,
+            tokenjuice: true,
+            meta: false,
+            sources: { ...STATUS.sources, tokenjuice: "env", meta: null },
+        }))));
+        const user = userEvent.setup();
+        renderPage();
+        const manage = await screen.findByRole("button", { name: "Manage TokenJuice" });
+        expect(screen.queryByRole("switch", { name: "TokenJuice provider" })).not.toBeInTheDocument();
+        expect(screen.getByText("Configured")).toBeInTheDocument();
+        await user.click(manage);
+        expect(screen.getByRole("link", { name: "Open organisation setup" }))
+            .toHaveAttribute("href", expect.stringContaining("/install"));
+        expect(screen.queryByRole("switch", { name: "Use TokenJuice" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+        expect(document.querySelector('input[type="password"]')).toBeNull();
+        expect(screen.queryByRole("button", { name: /^Save$/ })).not.toBeInTheDocument();
+    });
+    it("offers Meta's route to /install while it is not configured, with no key input", async () => {
+        server.use(http.get("*/api/user/profile", () => HttpResponse.json(profileWith(STATUS))));
+        const user = userEvent.setup();
+        renderPage();
+        await user.click(await screen.findByRole("button", { name: "Add Meta (Muse)" }));
+        expect(screen.getByRole("link", { name: "Open organisation setup" }))
+            .toHaveAttribute("href", expect.stringContaining("/install"));
+        expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+        expect(document.querySelector('input[type="password"]')).toBeNull();
+    });
     it("changes only a personal enablement preference and keeps the configured card", async () => {
         let body: unknown;
         server.use(

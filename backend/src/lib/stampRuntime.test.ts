@@ -112,6 +112,40 @@ describe("stamp startup gate",()=>{
     await expect(probeStampRuntime(db())).resolves.toMatchObject({pooled:true});
     expect(mocks.vault).toHaveBeenCalledWith("platform-standard-openai-api-key");
   });
+  describe("administrator-entered providers",()=>{
+    function vaultHolding(values:Record<string,string>){
+      mocks.vault.mockImplementation(async(name:string)=>{
+        if(name in values)return values[name];
+        throw Object.assign(new Error("Missing"),{statusCode:404});
+      });
+    }
+    it("needs Meta's key and model names, but not its optional base URL",async()=>{
+      cloud();metadata.platform_credentials=[{tier:"standard",provider:"meta",model:"meta/muse-spark-1.1"}];
+      vaultHolding({"meta-api-key":"org-key"});
+      await expect(probeStampRuntime(db())).rejects.toThrow("provider meta");
+      vaultHolding({"meta-models":"muse-spark-1.1"});
+      await expect(probeStampRuntime(db())).rejects.toThrow("provider meta");
+      vaultHolding({"meta-api-key":"org-key","meta-models":"muse-spark-1.1"});
+      await expect(probeStampRuntime(db())).resolves.toMatchObject({pooled:true});
+    });
+    it("also needs TokenJuice's base URL, which has no default",async()=>{
+      cloud();metadata.platform_credentials=[{tier:"standard",provider:"tokenjuice",model:"tokenjuice/juice-large"}];
+      vaultHolding({"tokenjuice-api-key":"org-key","tokenjuice-models":"juice-large"});
+      await expect(probeStampRuntime(db())).rejects.toThrow("provider tokenjuice");
+      vaultHolding({"tokenjuice-api-key":"org-key","tokenjuice-models":"juice-large","tokenjuice-base-url":"https://tj.example.test/v1"});
+      await expect(probeStampRuntime(db())).resolves.toMatchObject({pooled:true});
+    });
+    it("accepts a tier's own settings",async()=>{
+      cloud();metadata.platform_credentials=[{tier:"standard",provider:"meta",model:"meta/muse-spark-1.1"}];
+      vaultHolding({"platform-standard-meta-api-key":"tier-key","platform-standard-meta-models":"muse-spark-1.1"});
+      await expect(probeStampRuntime(db())).resolves.toMatchObject({pooled:true});
+    });
+    it("does not suppress a vault outage on these settings",async()=>{
+      cloud();metadata.platform_credentials=[{tier:"standard",provider:"meta",model:"meta/muse-spark-1.1"}];
+      mocks.vault.mockRejectedValue(new Error("Credential vault unavailable"));
+      await expect(probeStampRuntime(db())).rejects.toThrow("Credential vault unavailable");
+    });
+  });
   it("does not suppress a credential-vault outage",async()=>{
     cloud();metadata.platform_credentials=[{tier:"standard",provider:"openai",model:"example-model"}];
     mocks.vault.mockRejectedValue(new Error("Credential vault unavailable"));
