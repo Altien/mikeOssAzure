@@ -28,6 +28,7 @@ import { createServerSupabase } from "../../lib/supabase";
 import {
   AssistantStreamError,
   assistantStreamErrorPayload,
+  buildStoppedAssistantEvent,
   buildStoppedAssistantMessage,
   extractCitations,
   isAbortError,
@@ -841,7 +842,6 @@ wordChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
   // persisting the same edits a second time.
   let normalizedAnswer: {
     events: unknown[];
-    rawCount: number;
     citations: unknown[];
   } | null = null;
 
@@ -900,11 +900,11 @@ wordChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
     // provider or tool that ignored the abort) must not be saved as a
     // completed answer: the abort handler below stores the stop outcome.
     throwIfTurnStopped(stream.signal, { fullText, events });
-    const answerEvents = stripTransientAssistantEvents(events);
-    const persistedEvents = await normalizeAssistantEvents(answerEvents);
+    const persistedEvents = await normalizeAssistantEvents(
+      stripTransientAssistantEvents(events),
+    );
     normalizedAnswer = {
       events: persistedEvents,
-      rawCount: answerEvents.length,
       citations,
     };
     const saveError = await updateAssistantMessage(
@@ -1004,27 +1004,29 @@ wordChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
         null,
       );
       if (error instanceof AssistantStreamError) {
-        const partial = buildStoppedAssistantMessage({
-          stopReason: run?.stopReason,
-          fullText: error.fullText,
-          events: error.events,
-          buildCitations: (fullText) =>
-            extractCitations(fullText, docIndex, docStore),
-        });
-        // Once the answer was normalized, keep those events and add only the
-        // stop label; normalizing again would persist its Word edits twice.
+        // Reuse persisted edit references; normalizing the raw answer again
+        // would write its Word edits a second time.
+        const partial = normalizedAnswer
+          ? {
+              events: [
+                ...normalizedAnswer.events,
+                buildStoppedAssistantEvent(run?.stopReason),
+              ],
+              citations: normalizedAnswer.citations,
+            }
+          : buildStoppedAssistantMessage({
+              stopReason: run?.stopReason,
+              fullText: error.fullText,
+              events: error.events,
+              buildCitations: (fullText) =>
+                extractCitations(fullText, docIndex, docStore),
+            });
         const partialEvents = normalizedAnswer
-          ? [
-              ...normalizedAnswer.events,
-              ...partial.events.slice(normalizedAnswer.rawCount),
-            ]
+          ? partial.events
           : await normalizeAssistantEvents(partial.events);
-        const partialCitations = normalizedAnswer
-          ? normalizedAnswer.citations
-          : partial.citations;
         const saveError = await updateAssistantMessage(
           partialEvents.length ? partialEvents : null,
-          partialCitations.length ? partialCitations : null,
+          partial.citations.length ? partial.citations : null,
         );
         if (saveError) {
           logAssistantMessageFailure({
