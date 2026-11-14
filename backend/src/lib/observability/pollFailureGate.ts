@@ -73,6 +73,9 @@ function readField(value: object, key: string): unknown {
 }
 
 /** A log-safe identity for "the same failure again". */
+/** What a proxy answers when the service behind it is not there. */
+const GATEWAY_AWAY_STATUSES = new Set([502, 503, 504]);
+
 export function pollFailureClass(error: unknown): string {
   if (!error || typeof error !== "object") {
     return `${typeof error}#${hashText(String(error))}`;
@@ -93,10 +96,26 @@ export function pollFailureClass(error: unknown): string {
     seen.add(current);
     const code = readField(current, "code");
     // A gateway that has lost its upstream answers a non-2xx with no
-    // PostgREST body, which supabase-js surfaces with every field blank. A
-    // real PostgREST or SQL error always names a code and a message, so the
-    // blank shape can only be the dependency being away.
-    if (code === "" && readField(current, "message") === "") return UNREACHABLE_CLASS;
+    // PostgREST body. supabase-js surfaces that with every field blank, and
+    // postgrest-js, given an empty or non-JSON body, as { message: body }
+    // with no `code` at all. A real PostgREST or SQL error always names a
+    // code and a message, so a blank message with no code can only be the
+    // dependency being away; so is a bare 502/503/504 whose body is the
+    // gateway's own HTML (the status is attached by withResponseStatus).
+    if (code === "" || code === undefined || code === null) {
+      const status = readField(current, "status");
+      const cause = readField(current, "cause");
+      if (cause === undefined && readField(current, "message") === "") {
+        return UNREACHABLE_CLASS;
+      }
+      if (
+        cause === undefined &&
+        typeof status === "number" &&
+        GATEWAY_AWAY_STATUSES.has(status)
+      ) {
+        return UNREACHABLE_CLASS;
+      }
+    }
     if (typeof code === "string" && SAFE_CODE.test(code)) {
       return DEPENDENCY_UNREACHABLE_CODES.has(code) ? UNREACHABLE_CLASS : `${name}:${code}`;
     }

@@ -97,6 +97,39 @@ describe("createPollFailureGate", () => {
     ]);
   });
 
+  it("treats a gateway answer with no PostgREST body as the same outage", () => {
+    const { g } = gate({ t: 0 });
+    const wrap = (cause: object) =>
+      new Error("Dependency failure (non-Error value)", { cause });
+    const outage = [
+      // postgrest-js, given an empty 503 body: { message: "" }, no `code`.
+      wrap({ message: "" }),
+      // The same with the status attached by withResponseStatus.
+      wrap({ message: "", status: 503 }),
+      // The gateway's own HTML error page.
+      wrap({ message: "<html><h1>502 Bad Gateway</h1></html>", status: 502 }),
+      coded("ECONNREFUSED"),
+    ];
+    expect(outage.map((error) => g.failure(error).report)).toEqual([
+      true, false, false, false,
+    ]);
+  });
+
+  it("does not fold a coded error or a 4xx with no code into the outage", () => {
+    const wrap = (cause: object) =>
+      new Error("Dependency failure (non-Error value)", { cause });
+    expect(pollFailureClass(wrap({ message: "denied", status: 403 }))).not.toBe(
+      pollFailureClass(coded("ECONNREFUSED")),
+    );
+    expect(pollFailureClass(wrap({ code: "42501", message: "", status: 503 }))).toBe(
+      "Error:42501",
+    );
+    // A blank Error that wraps a coded cause is classified by the cause.
+    expect(pollFailureClass(new Error("", { cause: { code: "42P01", message: "x" } }))).toBe(
+      "Error:42P01",
+    );
+  });
+
   it("still reports a connectivity failure that follows a schema failure", () => {
     const { g } = gate({ t: 0 });
     expect(g.failure(coded("PGRST202")).report).toBe(true);
