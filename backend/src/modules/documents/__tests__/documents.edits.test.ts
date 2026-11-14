@@ -167,20 +167,15 @@ describe("resolving a tracked edit", () => {
 
   it("answers 409 when every attempt loses the swap", async () => {
     arrange();
-    const fake = scriptedDb([
-      { table: "document_edits", data: PENDING_EDIT },
-      { table: "documents", data: DOC },
-      // Another writer changed storage_path while the resolved bytes uploaded.
-      { table: "document_versions", op: "update", data: null },
+    // Another writer changed storage_path while each attempt's bytes uploaded.
+    const lostAttempt = [
       { table: "document_edits", data: PENDING_EDIT },
       { table: "documents", data: DOC },
       { table: "document_versions", op: "update", data: null },
-      { table: "document_edits", data: PENDING_EDIT },
-      { table: "documents", data: DOC },
-      { table: "document_versions", op: "update", data: null },
-    ]);
+    ] as const;
+    const fake = scriptedDb(Array.from({ length: 5 }, () => lostAttempt).flat());
     expect(await run(fake.db)).toEqual({ ok: false, status: 409, detail: "This document changed. Reopen the latest version and try again." });
-    expect(storage.uploadFile).toHaveBeenCalledTimes(3);
+    expect(storage.uploadFile).toHaveBeenCalledTimes(5);
     expect(storage.deleteFileBestEffort.mock.calls).toEqual(storage.uploadFile.mock.calls.map(([key]) => [key, "edit-resolution-conflict"]));
     expect(fake.calls.some(call => call.table === "document_edits" && call.op === "update")).toBe(false);
     fake.done();

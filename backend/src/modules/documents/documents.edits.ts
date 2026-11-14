@@ -21,7 +21,12 @@ type ResolveEditResult =
     | { ok: true; body: Record<string, unknown> }
     | { ok: false; detail: string; status?: number; error?: unknown };
 
-const RESOLVE_ATTEMPTS = 3;
+// Each lost swap means exactly one competing review landed, so N reviews fired
+// together need up to N attempts. Five covers a burst of clicks; the short,
+// jittered pause keeps the losers from retrying in step with each other
+// (the same shape as Kubernetes client-go's retry.DefaultRetry).
+const RESOLVE_ATTEMPTS = 5;
+const RETRY_PAUSE_MS = 15;
 const VERSION_CONFLICT = {
     ok: false,
     status: 409,
@@ -42,6 +47,11 @@ export async function resolveEdit(
     for (let attempt = 1; attempt <= RESOLVE_ATTEMPTS; attempt++) {
         const result = await resolveEditOnce(mode, documentId, editId, userId, userEmail, db, attempt > 1);
         if (result !== "retry") return result;
+        if (attempt < RESOLVE_ATTEMPTS) {
+            await new Promise((resolve) =>
+                setTimeout(resolve, RETRY_PAUSE_MS * attempt * (0.5 + Math.random())),
+            );
+        }
     }
     return VERSION_CONFLICT;
 }
