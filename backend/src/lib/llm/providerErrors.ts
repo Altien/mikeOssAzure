@@ -2,6 +2,7 @@ import { types as nodeTypes } from "node:util";
 import { UserFacingError } from "../safeError";
 import type { ErrorKind } from "../appError";
 import { asInvalidApiKeyError, InvalidApiKeyError } from "./apiKeyErrors";
+import { ContextTooLargeError, contextTooLargeMessage, isContextLengthText } from "./contextBudget";
 
 type ProviderContext = { label: string; modelId: string };
 
@@ -124,6 +125,14 @@ function accessFailureMessage(
   return null;
 }
 
+/** The provider refused the request for exceeding the model's context window. */
+export function isContextLengthRejection(error: unknown): boolean {
+  const apiError = findApiCallError(error);
+  if (!apiError || ![400, 413, 422].includes(apiError.statusCode)) return false;
+  const body = typeof apiError.responseBody === "string" ? apiError.responseBody : "";
+  return isContextLengthText(`${apiError.message} ${body}`);
+}
+
 export function streamErrorMessage(error: unknown, label: string): string {
   if (error instanceof Error && error.message) return error.message;
   if (typeof error === "string" && error.trim()) return error;
@@ -165,6 +174,14 @@ export function toProviderStreamError(
 ): Error {
   const stalled = asProviderStallError(error, context);
   if (stalled) return stalled;
+  // Too large for the context window, found before the call or by the provider.
+  for (let current = error, depth = 0; current && depth < 8; depth++) {
+    if (current instanceof ContextTooLargeError) return new UserFacingError(current.message, { cause: error });
+    current = (current as { cause?: unknown }).cause;
+  }
+  if (isContextLengthRejection(error)) {
+    return new UserFacingError(contextTooLargeMessage(context.label, context.modelId), { cause: error });
+  }
   const apiError = findApiCallError(error);
   const invalidKey = asInvalidApiKeyError(apiError ?? error, context.label);
   if (invalidKey) return invalidKey;

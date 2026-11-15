@@ -18,6 +18,13 @@ import { providerDeadlines } from "./providerDeadlines";
 import { asProviderStallError, streamErrorMessage, toProviderStreamError } from "./providerErrors";
 import { createRawLlmStreamRecorder, logRawLlmStream } from "./rawStreamLog";
 import type { LlmUsageMeter } from "./usage";
+import {
+  contextNotice,
+  estimateTokens,
+  fitMessagesToBudget,
+  inputBudgetFor,
+  type SummaryRequest,
+} from "./contextBudget";
 import { continueAfterLength } from "./lengthContinuation";
 
 /**
@@ -585,6 +592,27 @@ export async function streamAiSdk(
   const maxIterations = params.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   let lastFinishReason: string | undefined;
   let lastRawFinishReason: string | undefined;
+  const maxOutputTokens = withinCreditReservation(
+    maxOutputTokensFor(
+      config.provider,
+      config.defaultMaxOutputTokens?.(params.reasoning),
+    ),
+    meter,
+  );
+  // Keep each step inside the model's context window (contextBudget.ts).
+  // Counts accumulate across steps for the closing notice.
+  const inputBudget = inputBudgetFor(config.modelId, maxOutputTokens);
+  const toolTokens = estimateTokens(params.tools ?? []);
+  const condensed = { summarizedTurns: 0, shortenedToolResults: 0 };
+  const summarize = async ({ system, prompt, maxOutputTokens: maxTokens }: SummaryRequest) => {
+    const summary = await completeAiSdkText(
+      { systemPrompt: system, user: prompt, maxTokens, abortSignal: internalAbort.signal },
+      config,
+      meter,
+    );
+    params.callbacks?.onActivity?.();
+    return summary;
+  };
   // A reply cut off mid-text at the output limit is continued by the same
   // model (lengthContinuation.ts). Each continuation is one tool-free step
   // with the same options, so its prepareStep/onStepFinish metering, output
@@ -624,13 +652,7 @@ export async function streamAiSdk(
         ? { providerOptions }
         : {}),
       tools,
-      maxOutputTokens: withinCreditReservation(
-        maxOutputTokensFor(
-          config.provider,
-          config.defaultMaxOutputTokens?.(params.reasoning),
-        ),
-        meter,
-      ),
+      maxOutputTokens,
       // Budget holds cover one wire request per step; opaque SDK retries could
       // spend twice without another reservation when a response is lost.
       ...(meter?.reservation ? { maxRetries: 0 } : {}),
@@ -658,11 +680,23 @@ export async function streamAiSdk(
         },
         onStepFinish: ({ usage, response }: { usage: Parameters<LlmUsageMeter["addStep"]>[0]; response?: { id?: string } }) => meter.addStep(usage, response?.id),
       } : {}),
-      prepareStep: async ({ steps, stepNumber, messages, instructions }: { steps: Array<{ toolCalls: Array<{ toolName: string }> }>; stepNumber: number; messages: unknown[]; instructions?: unknown }) => {
+      prepareStep: async ({ steps, stepNumber, messages, instructions }: { steps: Array<{ toolCalls: Array<{ toolName: string }> }>; stepNumber: number; messages: AiSdk.ModelMessage[]; instructions?: unknown }) => {
         const system = config.courtlistenerCitationReminder && usesCourtlistenerTool(steps)
           ? `${params.systemPrompt}\n\n${COURTLISTENER_CITATION_REMINDER}` : instructions ?? params.systemPrompt;
-        await meter?.beforeStep({ system, messages, tools: params.tools ?? [] });
+        const fitted = await fitMessagesToBudget({
+          messages,
+          fixedTokens: estimateTokens(system) + toolTokens,
+          budget: inputBudget,
+          label: config.label,
+          modelId: config.modelId,
+          summarize,
+        });
+        condensed.summarizedTurns += fitted.summarizedTurns;
+        condensed.shortenedToolResults += fitted.shortenedToolResults;
+        await meter?.beforeStep({ system, messages: fitted.messages, tools: params.tools ?? [] });
         return ({
+        // The override carries forward, so later steps start from it.
+        ...(fitted.messages !== messages ? { messages: fitted.messages } : {}),
         ...(steps.length >= Math.max(0, maxIterations)
           ? { activeTools: [], toolChoice: "none" as const }
           : {}),
@@ -831,12 +865,14 @@ export async function streamAiSdk(
     // function returns whatever text happened to accumulate. That renders as
     // a bare "Completed in N steps" with no answer and no error, which is
     // indistinguishable from the model having nothing to say. Name it instead.
-    const notice = stopNotice(
-      iteration,
-      maxIterations,
-      lastFinishReason,
-      lastRawFinishReason,
-    );
+    const notice =
+      stopNotice(
+        iteration,
+        maxIterations,
+        lastFinishReason,
+        lastRawFinishReason,
+      ) +
+      contextNotice(condensed.summarizedTurns, condensed.shortenedToolResults);
     if (notice) {
       fullText += notice;
       params.callbacks?.onContentDelta?.(notice);
