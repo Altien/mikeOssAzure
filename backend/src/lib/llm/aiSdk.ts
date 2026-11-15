@@ -316,7 +316,25 @@ export type AiSdkAdapterConfig = {
   defaultMaxOutputTokens?: (
     reasoning: StreamChatParams["reasoning"],
   ) => number | undefined;
+  /**
+   * Provider options every request from this adapter carries, chat and
+   * one-shot alike: the data-retention settings chosen in providers.ts.
+   */
+  requestProviderOptions?: StreamTextProviderOptions;
 };
+
+/** Per-namespace merge: a later set's fields win within a namespace. */
+function mergeProviderOptions(
+  ...sets: Array<StreamTextProviderOptions | undefined>
+): StreamTextProviderOptions {
+  const merged: StreamTextProviderOptions = {};
+  for (const set of sets) {
+    for (const [namespace, options] of Object.entries(set ?? {})) {
+      merged[namespace] = { ...merged[namespace], ...options };
+    }
+  }
+  return merged;
+}
 
 type PendingToolExecution = {
   call: NormalizedToolCall;
@@ -652,9 +670,9 @@ export async function streamAiSdk(
     bedrockCachePoint: config.bedrockCachePoint,
     sourceCachePoint: config.anthropicCachePoint || config.bedrockCachePoint,
   });
-  const providerOptions: StreamTextProviderOptions = {
-    ...(cacheHints.providerOptions ?? {}),
-    ...(config.provider === "openrouter"
+  const providerOptions = mergeProviderOptions(
+    cacheHints.providerOptions,
+    config.provider === "openrouter"
       ? {
           // OpenRouter's adapter does not consume AI SDK's call-level
           // `reasoning` option. Its per-request namespace is merged into the
@@ -663,8 +681,9 @@ export async function streamAiSdk(
             reasoning: { effort: params.reasoning ?? "none" },
           },
         }
-      : {}),
-  };
+      : undefined,
+    config.requestProviderOptions,
+  );
   const rawStreamRecorder = createRawLlmStreamRecorder({
     provider: config.provider,
     model: config.modelId,
@@ -1097,6 +1116,14 @@ export async function completeAiSdkText(
     params.reasoningEffort ?? "none",
   );
   const requested = params.maxTokens ?? 512;
+  const kimiEffortOptions: StreamTextProviderOptions | undefined =
+    config.provider === "kimi" && params.reasoningEffort
+      ? { kimi: { reasoningEffort: params.reasoningEffort === "none" ? "low" : params.reasoningEffort } }
+      : undefined;
+  const completionProviderOptions =
+    kimiEffortOptions || config.requestProviderOptions
+      ? mergeProviderOptions(kimiEffortOptions, config.requestProviderOptions)
+      : undefined;
   await meter?.beforeStep({ system: params.systemPrompt, user: params.user });
   let result: Awaited<ReturnType<typeof generateText>>;
   try {
@@ -1114,8 +1141,10 @@ export async function completeAiSdkText(
       reasoning: config.provider === "kimi" || config.supportsReasoning === false
         ? undefined
         : completionReasoning === "max" ? "xhigh" : completionReasoning,
-      ...(config.provider === "kimi" && params.reasoningEffort
-        ? { providerOptions: { kimi: { reasoningEffort: params.reasoningEffort === "none" ? "low" : params.reasoningEffort } } }
+      // Upstream ba187ea8: the adapter's data-retention options ride on every
+      // one-shot request too, merged per namespace with dev's Kimi effort.
+      ...(completionProviderOptions
+        ? { providerOptions: completionProviderOptions }
         : {}),
     });
   } catch (error) {

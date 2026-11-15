@@ -103,6 +103,36 @@ const ROUTER_LABELS: Record<RouterProvider, string> = {
 };
 
 /**
+ * Per-request settings asking a provider not to keep, or train on, what Mike
+ * sends it: lawyers' prompts and document text. Only providers whose API has
+ * such a request field are listed; for the others (Anthropic, Gemini,
+ * Vertex, Bedrock, Mistral) retention is set by the account's terms, not by
+ * the request.
+ *
+ * - OpenAI, Azure OpenAI and xAI Responses APIs store every response unless
+ *   told not to. With store=false the SDKs ask for reasoning encrypted and
+ *   hand it back inline on the next tool step instead of by stored id.
+ * - OpenRouter routes only to upstreams that do not collect user data, and
+ *   the Vercel AI Gateway only to providers that do not train on prompts;
+ *   either can leave a model with no eligible upstream.
+ */
+const NO_RETENTION_OPTIONS: Partial<
+  Record<Provider, AiSdkAdapterConfig["requestProviderOptions"]>
+> = {
+  openai: { openai: { store: false } },
+  azure: { azure: { store: false } },
+  xai: { xai: { store: false } },
+  openrouter: { openrouter: { provider: { data_collection: "deny" } } },
+  vercel: { gateway: { disallowPromptTraining: true } },
+};
+
+function noRetentionOptions(
+  provider: Provider,
+): AiSdkAdapterConfig["requestProviderOptions"] {
+  return NO_RETENTION_OPTIONS[provider];
+}
+
+/**
  * A provider with no key (upstream 2ada45fb). The user is told who can fix
  * it; the Key Vault secret that would fix it is the operator's configuration,
  * so it goes to the server log, never into a message every user can read.
@@ -676,6 +706,16 @@ async function createLegacyAzureAdapter(model: string, apiKeys?: UserApiKeys): P
 }
 
 async function createProviderAdapter(
+  model: string,
+  apiKeys?: UserApiKeys,
+  nativeWebSearch = false,
+): Promise<AiSdkAdapterConfig> {
+  const adapter = await buildProviderAdapter(model, apiKeys, nativeWebSearch);
+  const requestProviderOptions = noRetentionOptions(adapter.provider);
+  return requestProviderOptions ? { ...adapter, requestProviderOptions } : adapter;
+}
+
+async function buildProviderAdapter(
   model: string,
   apiKeys?: UserApiKeys,
   nativeWebSearch = false,
