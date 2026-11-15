@@ -70,6 +70,7 @@ import { vertexAuthClient } from "./vertexAuth";
 import { UserFacingError } from "../safeError";
 import { assertTenantModelAllowed, getTenantSettings, tenantSuppliesProvider } from "../tenantSettings";
 import { memberApiKeysFor } from "./memberKeys";
+import { providerDataRetentionAllowed } from "../runtimeConfig";
 
 const OPENROUTER_BASE_URL =
   process.env.OPENROUTER_BASE_URL?.trim().replace(/\/+$/, "") ||
@@ -107,7 +108,7 @@ const ROUTER_LABELS: Record<RouterProvider, string> = {
  * sends it: lawyers' prompts and document text. Only providers whose API has
  * such a request field are listed; for the others (Anthropic, Gemini,
  * Vertex, Bedrock, Mistral) retention is set by the account's terms, not by
- * the request.
+ * the request. LLM_PROVIDER_DATA_RETENTION=allow sends none of these.
  *
  * - OpenAI, Azure OpenAI and xAI Responses APIs store every response unless
  *   told not to. With store=false the SDKs ask for reasoning encrypted and
@@ -129,7 +130,9 @@ const NO_RETENTION_OPTIONS: Partial<
 function noRetentionOptions(
   provider: Provider,
 ): AiSdkAdapterConfig["requestProviderOptions"] {
-  return NO_RETENTION_OPTIONS[provider];
+  return providerDataRetentionAllowed()
+    ? undefined
+    : NO_RETENTION_OPTIONS[provider];
 }
 
 /**
