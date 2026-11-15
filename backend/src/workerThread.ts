@@ -9,6 +9,9 @@ import "dotenv/config";
 import "./telemetry";
 import { installProcessGuards } from "./lib/processGuards";
 installProcessGuards();
+// Dev divergence (sync-log: 86549414): upstream's src/instrument.ts hook.
+import { installErrorLogRedaction } from "./lib/log";
+installErrorLogRedaction();
 import { installStructuredLogging } from "./lib/logging/install";
 const logging = installStructuredLogging({ proc: "worker-thread" });
 import { log } from "./lib/logging/root";

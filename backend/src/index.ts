@@ -5,6 +5,11 @@ import { Worker as ThreadWorker } from "node:worker_threads";
 import path from "node:path";
 import { installProcessGuards } from "./lib/processGuards";
 installProcessGuards();
+// Dev divergence (sync-log: 86549414): Dev has no src/instrument.ts; each
+// entrypoint installs upstream's provider-error log redaction before anything
+// can log (provider errors carry the prompt and the provider's response).
+import { installErrorLogRedaction } from "./lib/log";
+installErrorLogRedaction();
 // After telemetry (App Insights' console patch) and before initSentry (its
 // console.error wrapper): docs/structured-logging.md.
 import { installStructuredLogging } from "./lib/logging/install";

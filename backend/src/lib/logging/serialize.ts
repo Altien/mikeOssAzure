@@ -1,8 +1,33 @@
 // JSON-safe serialisation for log records (docs/structured-logging.md,
 // "Record format"). Nothing here throws on odd input: getters that throw,
 // cycles, bigint, buffers and deep graphs all become placeholders.
+import { inspect } from "node:util";
 import { redactSensitiveText } from "../safeError";
 import type { LogRecord, SerializedError } from "./types";
+
+// Upstream divergence (sync-log: 86549414): upstream redacts AI SDK errors in
+// log output through an Error.prototype[inspect.custom] hook (lib/log.ts
+// installErrorLogRedaction), because console.* formats with util.inspect.
+// Dev's console bridge serialises errors here instead, so an AI SDK error's
+// message, stack header and cause (prompt, model output, provider reply) would
+// bypass that hook. Marked errors take the hook's rendering as their message
+// and nothing else; without the hook installed (tests), a fixed placeholder.
+const AI_SDK_ERROR_MARKERS = [Symbol.for("vercel.ai.error"), Symbol.for("vercel.ai.gateway.error")];
+
+function providerErrorRendering(error: Error): string | undefined {
+  const marked = error as unknown as Record<symbol, unknown>;
+  if (!AI_SDK_ERROR_MARKERS.some((marker) => marked[marker] === true)) return undefined;
+  try {
+    const hook = marked[inspect.custom];
+    if (typeof hook === "function") {
+      const rendered: unknown = hook.call(error, 2, { ...inspect.defaultOptions, colors: false, depth: 2 }, inspect);
+      if (typeof rendered === "string") return rendered;
+    }
+  } catch {
+    // Fall through to the placeholder.
+  }
+  return "AI provider error (provider text withheld)";
+}
 
 export const MAX_STRING_CHARS = 2_000;
 export const MAX_STACK_CHARS = 4_000;
@@ -36,6 +61,10 @@ function isErrorLike(value: unknown): value is Error {
 export function serializeError(error: unknown, withCause = true): SerializedError {
   if (!isErrorLike(error)) {
     return { name: "NonError", message: safeText(stringify(error)) };
+  }
+  const providerRendering = providerErrorRendering(error);
+  if (providerRendering !== undefined) {
+    return { name: safeText(String(read(error, "name") ?? "Error"), 200), message: safeText(providerRendering, MAX_STACK_CHARS) };
   }
   const out: SerializedError = {
     name: safeText(String(read(error, "name") ?? "Error"), 200),
