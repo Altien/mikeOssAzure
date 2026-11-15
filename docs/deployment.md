@@ -143,7 +143,9 @@ failing` log line at most once a minute.
 
 <!-- Upstream divergence (sync-log: 135dadd2, 88539c64): upstream's backend
 refuses to start when DOWNLOAD_SIGNING_SECRET or USER_API_KEYS_ENCRYPTION_SECRET
-still holds a .env.example placeholder. Dev does not run that startup check:
+still holds a .env.example placeholder and, since 9be593f8, when either is
+unset in production or a Supabase key is a published demo key. Dev does not
+run that startup check:
 these secrets live in Key Vault and Dev's .env.example carries no placeholders.
 Keep this section Key Vault-shaped; the rotation effects below are upstream's. -->
 
