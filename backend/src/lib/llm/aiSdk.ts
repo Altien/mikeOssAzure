@@ -18,6 +18,7 @@ import { providerDeadlines } from "./providerDeadlines";
 import { asProviderStallError, streamErrorMessage, toProviderStreamError } from "./providerErrors";
 import { createRawLlmStreamRecorder, logRawLlmStream } from "./rawStreamLog";
 import type { LlmUsageMeter } from "./usage";
+import { continueAfterLength } from "./lengthContinuation";
 
 /**
  * Per-step output limit, or undefined to leave it to the provider.
@@ -584,9 +585,35 @@ export async function streamAiSdk(
   const maxIterations = params.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   let lastFinishReason: string | undefined;
   let lastRawFinishReason: string | undefined;
+  // A reply cut off mid-text at the output limit is continued by the same
+  // model (lengthContinuation.ts). Each continuation is one tool-free step
+  // with the same options, so its prepareStep/onStepFinish metering, output
+  // cap, abort signal and deadline middleware apply exactly as to any step.
+  const startStream = (options: Parameters<typeof sdk.streamText>[0]) => {
+    const first = sdk.streamText(options);
+    const stream = continueAfterLength(first, (messages) => {
+      const steps = messages.map((message) => ({
+        toolCalls: Array.isArray(message.content)
+          ? (message.content as Array<{ type: string; toolName: string }>).filter((c) => c.type === "tool-call")
+          : [],
+      }));
+      const system = config.courtlistenerCitationReminder && usesCourtlistenerTool(steps)
+        ? `${params.systemPrompt}\n\n${COURTLISTENER_CITATION_REMINDER}` : options.system;
+      // The cast only bridges AI SDK's prompt-or-messages union.
+      return sdk.streamText({
+        ...options,
+        system,
+        messages,
+        activeTools: [],
+        toolChoice: "none",
+        stopWhen: sdk.stepCountIs(1),
+      } as typeof options);
+    }, cacheHints.messages);
+    return { stream };
+  };
 
   try {
-    const result = sdk.streamText({
+    const result = startStream({
       model: sdk.wrapLanguageModel({
         model: config.model,
         middleware: providerDeadlines(params.callbacks?.onActivity),

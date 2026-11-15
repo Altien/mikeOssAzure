@@ -49,6 +49,93 @@ describe("shared AI SDK step preparation", () => {
     });
 });
 
+describe("continuing a reply cut off at the output limit", () => {
+  type Part = Record<string, unknown> & { type: string };
+  const usage = { inputTokens: 10, outputTokens: 5 };
+  const step = (parts: Part[], finishReason: string): Part[] => [
+    { type: "start-step" },
+    ...parts,
+    { type: "finish-step", finishReason, usage, response: { id: "r" } },
+  ];
+  const reply = (parts: Part[]) => ({
+    stream: { async *[Symbol.asyncIterator]() { yield* parts; } },
+    responseMessages: Promise.resolve([{ role: "assistant", content: "partial" }]),
+  });
+  const text = (value: string): Part => ({ type: "text-delta", text: value });
+  const config = { provider: "openai" as const, label: "OpenAI", model: {} as never, modelId: "gpt-5.4" };
+
+  async function run(replies: Part[][]) {
+    streamTextMock.mockReset();
+    for (const parts of replies) streamTextMock.mockImplementationOnce(() => reply(parts));
+    const deltas: string[] = [];
+    const meter = { observeOutput: vi.fn(), addStep: vi.fn(), beforeStep: vi.fn() };
+    const result = await streamAiSdk({
+      model: "gpt-5.4", systemPrompt: "Base", messages: [{ role: "user", content: "Draft it" }],
+      callbacks: { onContentDelta: (delta) => deltas.push(delta) },
+    }, config, meter as never);
+    const calls = streamTextMock.mock.calls.map(([options]) => options as {
+      messages: Array<{ role: string; content: unknown }>;
+      activeTools?: unknown[];
+      stopWhen: { count: number };
+    });
+    return { result, deltas, meter, calls };
+  }
+
+  it("joins a reply that stops for length and then finishes into one answer with no notice", async () => {
+    const { result, deltas, meter, calls } = await run([
+      step([text("Clause 1 ")], "length"),
+      step([text("and Clause 2.")], "stop"),
+    ]);
+    expect(result.fullText).toBe("Clause 1 and Clause 2.");
+    expect(deltas.join("")).toBe(result.fullText);
+    expect(calls).toHaveLength(2);
+    expect(calls[1].messages.at(-1)).toEqual({
+      role: "user",
+      content: expect.stringContaining("Continue exactly where you stopped"),
+    });
+    expect(calls[1]).toMatchObject({ activeTools: [], toolChoice: "none", stopWhen: { count: 1 } });
+    expect(meter.addStep).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows the notice once when the continuations run out", async () => {
+    const { result, meter, calls } = await run([
+      step([text("a")], "length"),
+      step([text("b")], "length"),
+      step([text("c")], "length"),
+      step([text("d")], "length"),
+    ]);
+    expect(calls).toHaveLength(4);
+    expect(result.fullText.startsWith("abcd")).toBe(true);
+    expect(result.fullText.match(/output limit/g)).toHaveLength(1);
+    expect(meter.addStep).toHaveBeenCalledTimes(4);
+  });
+
+  it("does not continue a reply cut off in the middle of a tool call", async () => {
+    const { result, calls } = await run([
+      step([text("Editing. "), { type: "tool-input-start", id: "t1", toolName: "edit" }], "length"),
+    ]);
+    expect(calls).toHaveLength(1);
+    expect(result.fullText).toMatch(/output limit/);
+  });
+
+  it("keeps the reservation hooks on every continuation", async () => {
+    streamTextMock.mockReset();
+    streamTextMock
+      .mockImplementationOnce(() => reply(step([text("a")], "length")))
+      .mockImplementationOnce(() => reply(step([text("b")], "stop")));
+    const meter = {
+      observeOutput: vi.fn(), addStep: vi.fn(), beforeStep: vi.fn(),
+      reservation: { maxOutputTokens: 100 },
+    };
+    await streamAiSdk({ model: "gpt-5.4", systemPrompt: "Base", messages: [] }, config, meter as never);
+    const [first, second] = streamTextMock.mock.calls.map(([options]) => options as Record<string, unknown>);
+    for (const key of ["prepareStep", "onStepFinish", "onChunk", "abortSignal", "maxOutputTokens", "maxRetries"]) {
+      expect(second[key]).toBe(first[key]);
+    }
+    expect(second.maxOutputTokens).toBe(100);
+  });
+});
+
 describe("maxOutputTokensFor", () => {
   afterEach(() => {
     delete process.env.LLM_MAX_OUTPUT_TOKENS;
