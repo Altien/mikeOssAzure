@@ -211,7 +211,7 @@ export async function workspaceStatus(
         connected: false,
         writeEnabled: false,
         enabled: true,
-        requireWriteApproval: false,
+        requireWriteApproval: true,
         readOnly: false,
       };
     throw error;

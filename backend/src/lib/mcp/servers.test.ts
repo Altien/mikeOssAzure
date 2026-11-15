@@ -169,7 +169,13 @@ describe("MCP write approvals", () => {
 
     const writeTool = () => ({ ...makeTool(), requires_confirmation: true });
 
-    it("runs write tools directly unless the connector asks for permission", async () => {
+    it("asks before a write tool when the connector has no recorded choice", async () => {
+        const db = makeDb(writeTool(), makeConnector(), []);
+        const plan = await planMcpToolCall(personalConnectorOwner("user-1"), "evil_do_thing", { a: 1 }, db);
+        expect(plan.type).toBe("approval");
+    });
+
+    it("runs write tools directly when the user turned approval off", async () => {
         const db = makeDb(
             writeTool(),
             { ...makeConnector(), require_write_approval: false },
@@ -180,14 +186,11 @@ describe("MCP write approvals", () => {
         ).toEqual({ type: "run" });
     });
 
-    // Dev divergence (sync-log: 2ec7cfc1): only an explicit false skips
-    // approval; a missing setting (unmigrated row) still holds the write.
-    it("holds a write for approval when the setting is absent", async () => {
-        const db = makeDb(writeTool(), makeConnector(), []);
+    it("runs read tools directly when the connector has no recorded choice", async () => {
+        const db = makeDb(makeTool(), makeConnector(), []);
         expect(
-            (await planMcpToolCall(personalConnectorOwner("user-1"), "evil_do_thing", { a: 1 }, db))
-                .type,
-        ).toBe("approval");
+            await planMcpToolCall(personalConnectorOwner("user-1"), "evil_do_thing", {}, db),
+        ).toEqual({ type: "run" });
     });
 
     it("runs read tools directly even when the connector asks for permission", async () => {

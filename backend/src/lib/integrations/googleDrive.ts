@@ -518,7 +518,7 @@ export async function getGoogleDriveStatus(
                 schemaReady: false,
                 enabled: true,
                 writeEnabled: false,
-                requireWriteApproval: false,
+                requireWriteApproval: true,
                 readOnly: false,
                 pickerAvailable: available && await googleDrivePickerAvailable(null),
                 tools: googleDriveToolList(null),
