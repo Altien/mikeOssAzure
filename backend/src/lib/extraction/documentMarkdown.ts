@@ -5,6 +5,7 @@ import { docxToPdf, normalizeDocxZipPaths } from "../convert";
 import {
     isPresentationDocumentType,
     isSpreadsheetDocumentType,
+    isTextDocumentType,
     isWordDocumentType,
 } from "../documentTypes";
 import { extractPresentationText } from "../officeText";
@@ -24,6 +25,8 @@ export async function extractDocumentMarkdown(
     const normalizedType = (fileType ?? "").toLowerCase();
     if (normalizedType === "pdf") return extractPdfMarkdown(buf);
     if (normalizedType === "docx") return extractDocxMarkdown(buf);
+    // A text document (an imported email, a written note) is its own text.
+    if (isTextDocumentType(normalizedType)) return new TextDecoder().decode(buf);
     if (isSpreadsheetDocumentType(normalizedType)) {
         // SheetJS handles .xlsx/.xlsm/.xls directly, no PDF detour.
         return spreadsheetToLLMText(Buffer.from(buf));

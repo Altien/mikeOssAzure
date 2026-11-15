@@ -26,6 +26,23 @@ function documentRequest(fileCount: number, sizeBytes = 1024) {
 }
 
 describe("parseUploadSessionRequest", () => {
+  it("records an email as a new Markdown document under a stand-in type the database admits", () => {
+    const request = documentRequest(1);
+    request.files[0].filename = "Re contract.eml";
+    expect(parseUploadSessionRequest(request, USER_ID, SESSION_ID).files[0]).toMatchObject({
+      filename: "Re contract.eml.md",
+      file_type: "pdf",
+      content_type: "message/rfc822",
+    });
+  });
+  it("refuses an email as a version of an existing document", () => {
+    const request = {
+      purpose: "document_version_create",
+      destination: { document_id: USER_ID },
+      files: [{ ...documentRequest(1).files[0], filename: "Re contract.eml" }],
+    };
+    expect(() => parseUploadSessionRequest(request, USER_ID, SESSION_ID)).toThrow(/new document/);
+  });
   it("accepts an explicit PDF-generation opt-out for replacements and rejects non-booleans", () => {
     const request = {
       purpose: "document_version_replace",

@@ -10,7 +10,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { Transform } from "node:stream";
@@ -31,7 +31,20 @@ import {
   type PollFailureGate,
 } from "../../lib/observability/pollFailureGate";
 import { asReportableError } from "../../lib/httpError";
-import { shouldConvertToPdf } from "../../lib/documentTypes";
+import {
+  contentTypeForDocumentType,
+  contentTypeForTextDocumentType,
+  EMAIL_UPLOAD_CONTENT_TYPE,
+  isTextDocumentType,
+  shouldConvertToPdf,
+} from "../../lib/documentTypes";
+import {
+  emailDocumentFilename,
+  emailToMarkdown,
+  newEmailImportBudget,
+  type EmailAttachmentDocument,
+  type EmailImportBudget,
+} from "../../lib/email";
 import { countPagesWithoutText } from "../../lib/pdfText";
 import { uploadJobWallClockMs } from "../../lib/runtimeConfig";
 import {
@@ -44,6 +57,7 @@ import {
 } from "../../lib/storage";
 import { createPlatformSupabase, createServerSupabase, type Db } from "../../lib/supabase";
 import { runWithJobTenant } from "../../lib/tenantContext";
+import { createDocumentVersion, updateDocumentVersion } from "../documents/documents.service";
 import { UPLOAD_VERIFICATION_LEASE_SECONDS } from "./uploads.manifest";
 
 type UploadSessionRow = {
@@ -205,10 +219,10 @@ async function countTextlessPdfPages(filePath: string): Promise<number | null> {
 // Dev's worker only prepares claim-specific objects and a payload; the claim-
 // fenced finish_upload_processing_job RPC publishes them (0098, 0104).
 async function pdfPageMetrics(
-  file: UploadFileRow,
+  fileType: string,
   filePath: string,
 ): Promise<{ page_count: number | null; textless_page_count: number | null }> {
-  if (file.file_type !== "pdf") return { page_count: null, textless_page_count: null };
+  if (fileType !== "pdf") return { page_count: null, textless_page_count: null };
   return {
     page_count: await countPdfPages(filePath),
     textless_page_count: await countTextlessPdfPages(filePath),
@@ -347,31 +361,203 @@ async function requireSealedFile(
 // Prepare immutable, claim-specific storage objects before publishing any
 // document/reference row. A reclaimed worker may finish its copy or PDF work,
 // but only the current claim can publish these paths in one database RPC.
+/** Bytes stored as a document's source, with their storage content type. */
+function storedContentType(fileType: string): string {
+  return isTextDocumentType(fileType)
+    ? contentTypeForTextDocumentType(fileType)
+    : contentTypeForDocumentType(fileType);
+}
+
+type PreparedUpload = {
+  payload: Record<string, unknown>;
+  /** Work that needs the published document row; runs once publishing succeeded. */
+  afterPublish?: (result: unknown) => Promise<void>;
+};
+
+type EmailUpload = {
+  /** The Markdown the email became, on local disk. */
+  filePath: string;
+  size: number;
+  sha256: string;
+  attachments: EmailAttachmentDocument[];
+  budget: EmailImportBudget;
+};
+
+async function convertUploadedEmail(file: UploadFileRow, artifact: SealedFileArtifact): Promise<EmailUpload> {
+  markStage("conversion");
+  // The manifest named the document "<email>.md"; attachments are named after the email.
+  const emailFilename = file.filename.replace(/\.md$/i, "");
+  const budget = newEmailImportBudget();
+  const email = await emailToMarkdown(await readFile(artifact.filePath),
+    { emailFilename, budget });
+  const bytes = Buffer.from(email.markdown, "utf8");
+  const filePath = join(artifact.directory, "email.md");
+  await writeFile(filePath, bytes);
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  return { filePath, size: bytes.byteLength, sha256, attachments: email.attachments, budget };
+}
+
+/** Where a published document sits, copied onto the documents made from its email. */
+type DocumentPlacement = Record<
+  "user_id" | "project_id" | "folder_id" | "library_kind" | "library_folder_id" | "workflow_id" | "org_id",
+  unknown
+>;
+
+type EmailImport = {
+  db: Db;
+  session: UploadSessionRow;
+  placement: DocumentPlacement;
+  budget: EmailImportBudget;
+};
+
+/**
+ * Import email attachments as documents of their own beside the email. A
+ * nested email becomes Markdown and its own attachments follow, one level
+ * deeper, within the same budget. One unreadable attachment does not stop
+ * the others.
+ */
+async function importEmailAttachments(
+  context: EmailImport,
+  attachments: EmailAttachmentDocument[],
+  depth: number,
+): Promise<void> {
+  for (const attachment of attachments) {
+    try {
+      if (attachment.fileType !== "eml") {
+        await storeEmailAttachment(context, attachment);
+        continue;
+      }
+      const email = await emailToMarkdown(attachment.content,
+        { emailFilename: attachment.filename, budget: context.budget, depth });
+      await storeEmailAttachment(context, {
+        filename: emailDocumentFilename(attachment.filename),
+        fileType: "md",
+        content: Buffer.from(email.markdown, "utf8"),
+      });
+      await importEmailAttachments(context, email.attachments, depth + 1);
+    } catch (error) {
+      reportError(error, {
+        level: "warning",
+        tags: { component: "upload-worker", stage: "email-attachment", file_type: attachment.fileType },
+        fingerprint: ["upload-email-attachment-failed", attachment.fileType],
+      });
+      console.error("[upload-worker] email attachment import failed", {
+        sessionId: context.session.id, fileType: attachment.fileType, error,
+      });
+    }
+  }
+}
+
+/** One attachment stored with the conversion and page metrics an upload of it would get. */
+async function storeEmailAttachment(
+  { db, session, placement }: EmailImport,
+  attachment: EmailAttachmentDocument,
+): Promise<void> {
+  const userId = placement.user_id as string;
+  const documentId = randomUUID();
+  const versionId = randomUUID();
+  const slug = versionId.replace(/-/g, "");
+  const directory = await mkdtemp(join(uploadProcessingTempRoot(), "mike-upload-"));
+  try {
+    const filePath = join(directory, `source.${attachment.fileType}`);
+    await writeFile(filePath, attachment.content);
+    const sourcePath = versionStorageKey(userId, documentId, slug, attachment.filename);
+    await uploadFileFromPath(sourcePath, filePath, storedContentType(attachment.fileType));
+    const pdfPath = await buildPdfRendition({ sourceFilePath: filePath, workingDirectory: directory,
+      fileType: attachment.fileType, userId, documentId, versionSlug: slug, sourceStoragePath: sourcePath });
+    const metrics = await pdfPageMetrics(attachment.fileType, filePath);
+    const sha256 = createHash("sha256").update(attachment.content).digest("hex");
+    const { error: documentError } = await db.from("documents")
+      .insert({ ...placement, id: documentId, status: "ready" });
+    if (documentError) throw documentError;
+    const { error: versionError } = await createDocumentVersion(db, {
+      id: versionId, document_id: documentId, storage_path: sourcePath, pdf_storage_path: pdfPath,
+      source: "upload", filename: attachment.filename, file_type: attachment.fileType,
+      size_bytes: attachment.content.byteLength, ...metrics, content_sha256: sha256,
+    });
+    if (versionError) {
+      await db.from("documents").delete().eq("id", documentId);
+      throw versionError;
+    }
+    await recordAudit(db, {
+      userId: session.user_id, userEmail: session.user_email,
+      action: "document.uploaded", title: attachment.filename,
+      surface: session.destination.scope === "project" ? "project" : "assistant",
+      projectId: (placement.project_id as string | null) ?? null,
+      documentId,
+    });
+  } finally {
+    await removeTemporaryArtifact(directory);
+  }
+}
+
+/**
+ * Finish an uploaded email once its Markdown document is published: give the
+ * version its real type and size (the manifest could only record a stand-in),
+ * then import each attachment as a document in the same place.
+ */
+async function publishEmailParts(
+  db: Db,
+  session: UploadSessionRow,
+  file: UploadFileRow,
+  email: EmailUpload,
+  result: unknown,
+): Promise<void> {
+  const documentId = file.resource_id;
+  const { error: versionError } = await updateDocumentVersion(db, documentId, file.id,
+    { file_type: "md", size_bytes: email.size });
+  if (versionError) throw versionError;
+  const published = (result ?? {}) as Record<string, unknown>;
+  const { error: resultError } = await db.from("upload_session_files")
+    .update({ result: { ...published, file_type: "md", size_bytes: email.size } })
+    .eq("id", file.id);
+  if (resultError) throw resultError;
+
+  const { data: placement, error: placementError } = await db.from("documents")
+    .select("user_id, project_id, folder_id, library_kind, library_folder_id, workflow_id, org_id")
+    .eq("id", documentId).single();
+  if (placementError || !placement) throw placementError ?? new Error("document_not_found");
+  const context = { db, session, placement: placement as DocumentPlacement, budget: email.budget };
+  await importEmailAttachments(context, email.attachments, 1);
+}
+
 async function prepareUploadFile(
   db: Db,
   session: UploadSessionRow,
   file: UploadFileRow,
   claimToken: string,
-): Promise<Record<string, unknown>> {
+): Promise<PreparedUpload> {
   const artifact = await requireSealedFile(file);
   const slug = claimToken.replace(/-/g, "");
   try {
+    // An email is stored as the Markdown it converts to. size_bytes stays that
+    // of the sealed upload, which the publish RPC checks against the manifest;
+    // publishEmailParts corrects it once the row exists.
+    const email = file.content_type === EMAIL_UPLOAD_CONTENT_TYPE
+      ? await convertUploadedEmail(file, artifact) : null;
+    if (email && session.purpose !== "document_create") throw new Error("email_upload_purpose");
     if (session.purpose === "document_create") {
       const scope = session.destination.scope as "standalone" | "project" | "library";
       const documentId = file.resource_id;
+      const sourceFilePath = email?.filePath ?? artifact.filePath;
+      const fileType = email ? "md" : file.file_type;
       const sourcePath = versionStorageKey(session.user_id, documentId, slug, file.filename);
-      await copyFile(file.sealed_storage_path, sourcePath);
-      const pdfPath = await buildPdfRendition({ sourceFilePath: artifact.filePath,
-        workingDirectory: artifact.directory, fileType: file.file_type,
+      if (email) await uploadFileFromPath(sourcePath, email.filePath, storedContentType("md"));
+      else await copyFile(file.sealed_storage_path, sourcePath);
+      const pdfPath = await buildPdfRendition({ sourceFilePath,
+        workingDirectory: artifact.directory, fileType,
         userId: session.user_id, documentId, versionSlug: slug, sourceStoragePath: sourcePath });
-      return { kind: session.purpose, source_path: sourcePath, pdf_path: pdfPath,
-        size_bytes: artifact.size, sha256: artifact.sha256,
-        ...(await pdfPageMetrics(file, artifact.filePath)),
+      const payload = { kind: session.purpose, source_path: sourcePath, pdf_path: pdfPath,
+        size_bytes: artifact.size, sha256: email?.sha256 ?? artifact.sha256,
+        ...(await pdfPageMetrics(fileType, sourceFilePath)),
         project_id: scope === "project" ? session.destination.project_id : null,
         folder_id: scope === "project" ? (file.target_folder_id ?? session.destination.folder_id ?? null) : null,
         library_kind: scope === "library" ? session.destination.library_kind : "file",
         library_folder_id: scope === "library" ? (file.target_folder_id ?? session.destination.folder_id ?? null) : null,
       };
+      const afterPublish = email
+        ? (result: unknown) => publishEmailParts(db, session, file, email, result) : undefined;
+      return { payload, afterPublish };
     }
     if (session.purpose === "document_version_create" || session.purpose === "document_version_replace") {
       const documentId = session.destination.document_id as string;
@@ -387,11 +573,11 @@ async function prepareUploadFile(
       const pdfPath = skipPdf ? null : await buildPdfRendition({ sourceFilePath: artifact.filePath,
         workingDirectory: artifact.directory, fileType: file.file_type,
         userId: session.user_id, documentId, versionSlug: slug, sourceStoragePath: sourcePath });
-      return { kind: session.purpose, ...baseline, source_path: sourcePath, pdf_path: pdfPath,
+      return { payload: { kind: session.purpose, ...baseline, source_path: sourcePath, pdf_path: pdfPath,
         size_bytes: artifact.size, sha256: artifact.sha256,
-        ...(await pdfPageMetrics(file, artifact.filePath)),
+        ...(await pdfPageMetrics(file.file_type, artifact.filePath)),
         filename: session.purpose === "document_version_create"
-          ? ((session.destination.filename as string | undefined)?.trim() || file.filename) : file.filename };
+          ? ((session.destination.filename as string | undefined)?.trim() || file.filename) : file.filename } };
     }
     const workflowId = session.destination.workflow_id as string;
     const { data: workflow, error: workflowError } = await db.from("workflows")
@@ -403,8 +589,8 @@ async function prepareUploadFile(
     const sourcePath = workflowReferenceKey(ownerId, workflowId, referenceId,
       `${artifact.sha256}-${slug}`, file.filename);
     await copyFile(file.sealed_storage_path, sourcePath);
-    return { kind: session.purpose, source_path: sourcePath,
-      size_bytes: artifact.size, sha256: artifact.sha256, owner_id: ownerId };
+    return { payload: { kind: session.purpose, source_path: sourcePath,
+      size_bytes: artifact.size, sha256: artifact.sha256, owner_id: ownerId } };
   } finally {
     await removeTemporaryArtifact(artifact.directory);
   }
@@ -455,10 +641,10 @@ export async function processUploadJob(
   heartbeat.unref();
   try {
     await renew();
-    let payload: Record<string, unknown>;
+    let prepared: PreparedUpload;
     try {
       markStage("process-file");
-      payload = await prepareUploadFile(db, typedSession, typedFile, typedJob.claim_token);
+      prepared = await prepareUploadFile(db, typedSession, typedFile, typedJob.claim_token);
     } catch (error) {
       // A stale editor save cannot succeed on retry (sync 6e3ef6fa).
       if (error instanceof ChangedDocumentError) {
@@ -476,7 +662,7 @@ export async function processUploadJob(
       throw new Error("upload_job_wall_clock_exceeded");
     }
     await renew();
-    const published = await finish(payload, null);
+    const published = await finish(prepared.payload, null);
     // The publish RPC lost its compare-and-swap and recorded the terminal
     // document_changed outcome itself.
     if (published.status === "error") return;
@@ -489,6 +675,21 @@ export async function processUploadJob(
         projectId: typedSession.destination.scope === "project"
           ? typedSession.destination.project_id as string : null,
         documentId: typedFile.resource_id,
+      });
+    }
+    if (prepared.afterPublish) {
+      // The job is complete and its lease released; nothing left to renew.
+      clearInterval(heartbeat);
+      markStage("after-publish");
+      await prepared.afterPublish(published.result).catch((error: unknown) => {
+        reportError(error, {
+          level: "warning",
+          tags: { component: "upload-worker", stage: "after-publish" },
+          fingerprint: ["upload-after-publish-failed"],
+        });
+        console.error("[upload-worker] post-publish work failed", {
+          jobId, sessionId: typedSession.id, fileId: typedFile.id, error,
+        });
       });
     }
   } finally {

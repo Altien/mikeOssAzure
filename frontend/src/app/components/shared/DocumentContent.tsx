@@ -5,6 +5,7 @@ import { PdfView } from "./views/PdfView";
 import { DocxView } from "./views/DocxView";
 import type { DocxCloseGuard, DocxSaveState } from "./views/DocxRenderer.types";
 import { SpreadsheetView } from "./views/SpreadsheetView";
+import { TextView } from "./views/TextView";
 import {
     CitationQuotesSection,
     documentQuoteId,
@@ -18,7 +19,10 @@ import { useResolvedPanelDocument } from "../assistant/useResolvedPanelDocument"
 import type { DocumentVersion } from "@/app/lib/mikeApi";
 import { DocumentTitleRow } from "./DocumentTitleRow";
 import { DocumentAnnotationLayer } from "./DocumentAnnotationLayer";
-import { resolveDocumentViewType } from "@/app/lib/documentViewType";
+import {
+    isTextDocumentFilename,
+    resolveDocumentViewType,
+} from "@/app/lib/documentViewType";
 
 /**
  * Discriminated-union describing which header annotation the viewer is showing.
@@ -153,6 +157,7 @@ export function DocumentContent({
         filename: resolvedDocument.title,
         fileType: resolvedDocument.type,
     });
+    const isText = !isCase && isTextDocumentFilename(resolvedDocument.title);
     const citation = mode.kind === "citation" ? mode.citation : null;
     const firstSelectableQuoteIndex =
         mode.kind === "citation"
@@ -310,6 +315,14 @@ export function DocumentContent({
                         error={documentError}
                         onRetry={retryDocument}
                         onClearQuote={() => setActiveCitationQuoteId(null)}
+                    />
+                ) : isText ? (
+                    <TextView
+                        documentId={documentId}
+                        versionId={versionId}
+                        filename={resolvedDocument.title}
+                        refetchKey={refetchKey}
+                        rounded={false}
                     />
                 ) : viewType === "docx" ? (
                     <DocxView

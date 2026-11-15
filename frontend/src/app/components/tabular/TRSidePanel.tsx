@@ -30,6 +30,7 @@ import { getPillClass } from "./pillUtils";
 import { PdfView } from "../shared/views/PdfView";
 import { SpreadsheetView } from "../shared/views/SpreadsheetView";
 import { DocxView } from "../shared/views/DocxView";
+import { TextView } from "../shared/views/TextView";
 import { FileTypeIcon } from "../shared/FileTypeIcon";
 import { DocumentPaneTitle } from "../shared/DocumentPaneTitle";
 import { SubfolderSvgIcon } from "../shared/FolderSvgIcon";
@@ -42,7 +43,10 @@ import {
 } from "@/app/components/ui/liquid-surface";
 import { CloseButton } from "@/shared/ui/CloseButton";
 import { CitationPillUI } from "@/shared/ui/CitationPillUI";
-import { resolveDocumentViewType } from "@/app/lib/documentViewType";
+import {
+    isTextDocumentFilename,
+    resolveDocumentViewType,
+} from "@/app/lib/documentViewType";
 
 interface Props {
     cell: TabularCell;
@@ -162,6 +166,7 @@ export function TRSidePanel({
         fileType: doc?.file_type,
         preferPdfForWord: Boolean(doc?.pdf_storage_path),
     });
+    const documentIsText = isTextDocumentFilename(doc?.filename);
     const [documentPaneOpen, setDocumentPaneOpen] = useState(
         displayDocument && !!doc,
     );
@@ -375,7 +380,13 @@ export function TRSidePanel({
                             />
                         </div>
                     )}
-                    {documentViewType === "docx" ? (
+                    {documentIsText ? (
+                        <TextView
+                            rounded="top-right"
+                            documentId={doc.id}
+                            filename={doc.filename}
+                        />
+                    ) : documentViewType === "docx" ? (
                         <DocxView
                             rounded="top-right"
                             documentId={doc.id}

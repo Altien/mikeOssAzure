@@ -2,8 +2,10 @@ import {
   mkdir,
   mkdtemp,
   readdir,
+  readFile,
   rm,
   utimes,
+  writeFile,
 } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -11,6 +13,7 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { diagnosticErrorTags } from "../../../lib/observability/sentryPrivacy";
+import { MAX_EMAIL_NESTING_DEPTH } from "../../../lib/email";
 
 const mocks = vi.hoisted(() => ({
   setOperation: vi.fn(),
@@ -26,6 +29,14 @@ const mocks = vi.hoisted(() => ({
   requestDocumentCleanupDelivery: vi.fn(),
   reportError: vi.fn((_error: unknown, _context?: unknown) => null),
   countPagesWithoutText: vi.fn(async (_buf: ArrayBuffer): Promise<number | null> => null),
+  createDocumentVersion: vi.fn(),
+  updateDocumentVersion: vi.fn(),
+}));
+
+vi.mock("../../documents/documents.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../documents/documents.service")>()),
+  createDocumentVersion: mocks.createDocumentVersion,
+  updateDocumentVersion: mocks.updateDocumentVersion,
 }));
 
 vi.mock("../../../lib/pdfText", async (importOriginal) => ({
@@ -337,6 +348,165 @@ describe("upload processing", () => {
     await processUploadJob(db as never, "job-1", "worker-1");
     expect(payload).toMatchObject({ kind: "document_create", textless_page_count: expected });
     expect(mocks.countPagesWithoutText).toHaveBeenCalledTimes(fileType === "pdf" ? 1 : 0);
+  });
+
+  describe("an uploaded email", () => {
+    const claimToken = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const emailFile = {
+      ...baseFile,
+      filename: "Deal.eml.md",
+      file_type: "pdf",
+      content_type: "message/rfc822",
+    };
+    const placement = {
+      user_id: baseSession.user_id, project_id: "55555555-5555-4555-8555-555555555555",
+      folder_id: "66666666-6666-4666-8666-666666666666", library_kind: "file",
+      library_folder_id: null, workflow_id: null, org_id: null,
+    };
+
+    function part(filename: string, contentType: string, body: string): string {
+      return [
+        `Content-Type: ${contentType}; name="${filename}"`,
+        `Content-Disposition: attachment; filename="${filename}"`,
+        "Content-Transfer-Encoding: base64",
+        "",
+        Buffer.from(body).toString("base64"),
+      ].join("\r\n");
+    }
+
+    function emlPart(filename: string, raw: string): string {
+      return ["Content-Type: message/rfc822", `Content-Disposition: attachment; filename="${filename}"`, "", raw].join("\r\n");
+    }
+
+    function message(subject: string, parts: string[]): string {
+      const boundary = `b-${subject.replace(/\W/g, "")}`;
+      const lines = [
+        "From: ann@example.com", "To: bob@example.com", `Subject: ${subject}`, "MIME-Version: 1.0",
+        `Content-Type: multipart/mixed; boundary="${boundary}"`, "",
+        `--${boundary}`, "Content-Type: text/plain; charset=utf-8", "", `Body of ${subject}`,
+      ];
+      for (const item of parts) lines.push(`--${boundary}`, item);
+      lines.push(`--${boundary}--`, "");
+      return lines.join("\r\n");
+    }
+
+    async function runEmail(raw: string) {
+      const bytes = Buffer.from(raw);
+      mocks.createFileReadStream.mockImplementation(() => Readable.from([bytes]));
+      const stored: Array<{ key: string; contentType: string; content: Buffer }> = [];
+      mocks.uploadFileFromPath.mockImplementation(async (key: string, path: string, contentType: string) => {
+        stored.push({ key, contentType, content: await readFile(path) });
+      });
+      mocks.officeFileToPdf.mockImplementation(async (_input: string, directory: string) => {
+        const output = join(directory, "converted.pdf");
+        await writeFile(output, "%PDF-1.4\n%%EOF\n");
+        return output;
+      });
+      mocks.updateDocumentVersion.mockResolvedValue({ data: { id: emailFile.id }, error: null });
+      mocks.createDocumentVersion.mockImplementation(async (_db: unknown, version: Record<string, unknown>) =>
+        ({ data: { ...version, version_number: 1 }, error: null }));
+      const file = { ...emailFile, expected_size_bytes: bytes.byteLength };
+      const db = scriptedDb([
+        { data: { id: "job-1", session_id: baseSession.id, file_id: file.id, attempts: 1, locked_by: "worker-1", claim_token: claimToken }, error: null },
+        { data: baseSession, error: null },
+        { data: file, error: null },
+        { data: null, error: null }, // upload_session_files result update
+        { data: placement, error: null }, // the published email's placement
+      ]);
+      let payload: Record<string, unknown> | undefined;
+      db.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
+        if (name === "renew_upload_processing_job") return { data: true, error: null };
+        if (name === "finish_upload_processing_job") {
+          payload = args.p_payload as Record<string, unknown>;
+          return { data: { status: "completed", result: { id: file.resource_id, file_type: "pdf" } }, error: null };
+        }
+        throw new Error("unexpected RPC: " + name);
+      });
+      await processUploadJob(db as never, "job-1", "worker-1");
+      return { db, stored, payload: payload!, size: bytes.byteLength };
+    }
+
+    it("stores the Markdown it converts to and gives the version its real type and size", async () => {
+      const { db, stored, payload, size } = await runEmail(message("Deal", []));
+
+      const markdown = stored.find((item) => item.key === payload.source_path)!;
+      expect(markdown.contentType).toBe("text/markdown; charset=utf-8");
+      expect(markdown.content.toString()).toContain("Body of Deal");
+      expect(payload).toMatchObject({
+        kind: "document_create", pdf_path: null, page_count: null, size_bytes: size,
+        sha256: createHash("sha256").update(markdown.content).digest("hex"),
+      });
+      expect(String(payload.source_path)).toMatch(/\.md$/);
+      expect(mocks.copyFile).not.toHaveBeenCalled();
+      expect(mocks.updateDocumentVersion).toHaveBeenCalledWith(db, emailFile.resource_id, emailFile.id,
+        { file_type: "md", size_bytes: markdown.content.byteLength });
+      const resultUpdate = db.calls.find((call) => call.table === "upload_session_files" && call.operation === "update");
+      expect(resultUpdate?.payload).toEqual({
+        result: { id: emailFile.resource_id, file_type: "md", size_bytes: markdown.content.byteLength },
+      });
+      expect(mocks.createDocumentVersion).not.toHaveBeenCalled();
+    });
+
+    it("imports each supported attachment as a document beside the email", async () => {
+      const inner = message("Inner", [part("schedule.pdf", "application/pdf", "%PDF-1.4 inner")]);
+      const raw = message("Deal", [
+        part("SPA.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx bytes"),
+        part("cover.pdf", "application/pdf", "%PDF-1.4 cover"),
+        part("tool.exe", "application/octet-stream", "MZ"),
+        emlPart("Fwd.eml", inner),
+      ]);
+      const { db, stored, payload } = await runEmail(raw);
+
+      const emailMarkdown = stored.find((item) => item.key === payload.source_path)!.content.toString();
+      expect(emailMarkdown).toContain('SPA.docx (10 B): imported as document "Deal.eml - SPA.docx"');
+      expect(emailMarkdown).toContain("tool.exe (2 B): not imported: unsupported type");
+      expect(emailMarkdown).toContain('imported as document "Deal.eml - Fwd.eml.md"');
+
+      const versions = mocks.createDocumentVersion.mock.calls.map(([, version]) => version as Record<string, unknown>);
+      expect(versions.map((version) => [version.filename, version.file_type])).toEqual([
+        ["Deal.eml - SPA.docx", "docx"],
+        ["Deal.eml - cover.pdf", "pdf"],
+        ["Deal.eml - Fwd.eml.md", "md"],
+        ["Deal.eml - Fwd.eml - schedule.pdf", "pdf"],
+      ]);
+      for (const version of versions) {
+        expect(version.source).toBe("upload");
+        const source = stored.find((item) => item.key === version.storage_path)!;
+        expect(version.size_bytes).toBe(source.content.byteLength);
+        expect(version.content_sha256).toBe(createHash("sha256").update(source.content).digest("hex"));
+      }
+      // The Word attachment gets the PDF rendition an upload would; a PDF is its own.
+      expect(versions[0].pdf_storage_path).toEqual(expect.stringContaining("converted"));
+      expect(versions[1].pdf_storage_path).toBe(versions[1].storage_path);
+      expect(stored.find((item) => item.key === versions[2].storage_path)!.content.toString())
+        .toContain('schedule.pdf (14 B): imported as document "Deal.eml - Fwd.eml - schedule.pdf"');
+
+      const inserted = db.calls.filter((call) => call.table === "documents" && call.operation === "insert");
+      expect(inserted).toHaveLength(4);
+      for (const call of inserted) expect(call.payload).toMatchObject({ ...placement, status: "ready" });
+      // The email and each of its four documents.
+      expect(mocks.recordAudit).toHaveBeenCalledTimes(5);
+    });
+
+    it("imports emails nested inside emails no deeper than the cap", async () => {
+      let raw = message("Level5", []);
+      for (let level = 4; level >= 0; level -= 1) {
+        const subject = `Level${level}`;
+        raw = message(subject, [emlPart(`l${level + 1}.eml`, raw)]);
+      }
+      const { stored } = await runEmail(raw);
+
+      const versions = mocks.createDocumentVersion.mock.calls.map(([, version]) => version as Record<string, unknown>);
+      expect(versions.map((version) => version.filename)).toEqual([
+        "Deal.eml - l1.eml.md",
+        "Deal.eml - l1.eml - l2.eml.md",
+        "Deal.eml - l1.eml - l2.eml - l3.eml.md",
+      ]);
+      expect(versions).toHaveLength(MAX_EMAIL_NESTING_DEPTH);
+      const deepest = stored.find((item) => item.key === versions.at(-1)!.storage_path)!;
+      expect(deepest.content.toString()).toContain("l4.eml (");
+      expect(deepest.content.toString()).toContain("not imported: emails nested too deeply");
+    });
   });
 
   it("sends a failed file to the atomic retry RPC without publishing domain rows", async () => {

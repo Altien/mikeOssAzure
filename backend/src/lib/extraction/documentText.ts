@@ -3,7 +3,7 @@ import { extractPdfTextForIndex } from "../pdfText";
 import { docxToPdf } from "../convert";
 import { extractPresentationText } from "../officeText";
 import { spreadsheetToLLMText } from "../spreadsheet";
-import { isSpreadsheetDocumentType, requiresLibreOfficeTextExtraction } from "../documentTypes";
+import { isSpreadsheetDocumentType, isTextDocumentType, requiresLibreOfficeTextExtraction } from "../documentTypes";
 
 /** Complete text, using the same accepted DOCX view as the edit matcher. */
 export async function extractDocumentText(raw: ArrayBuffer, fileType: string) {
@@ -21,6 +21,9 @@ export async function extractDocumentText(raw: ArrayBuffer, fileType: string) {
     text = spreadsheetToLLMText(Buffer.from(raw));
   } else if (type === "pptx") {
     text = await extractPresentationText(Buffer.from(raw));
+  } else if (isTextDocumentType(type)) {
+    // A text document (an imported email, a written note) is its own text.
+    text = new TextDecoder().decode(raw);
   } else {
     throw new Error("document_text_unsupported_format");
   }
