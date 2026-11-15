@@ -1,5 +1,6 @@
 import path from "node:path";
 import type { NextConfig } from "next";
+import { securityHeaders } from "./src/app/lib/securityHeaders";
 
 // The repository root: the parent of this directory, here and in the Docker
 // image (dev's root Dockerfile mirrors the layout at /app/frontend and
@@ -62,6 +63,21 @@ const nextConfig: NextConfig = {
     // Upstream divergence (317a8f05): upstream's `redirects()` /account ->
     // /settings is NOT carried -- unsupported under `output: "export"`. Dev has
     // client pages at (pages)/account/** that router.replace to /settings/**.
+    // Do not advertise the framework and version in every response.
+    poweredByHeader: false,
+    // Upstream 84805159. Dev divergence: these apply only to `next dev`;
+    // `output: "export"` ignores headers() (Next logs a warning). In
+    // production the backend's static-frontend block sends the same set
+    // (backend/src/lib/frontendSecurityHeaders.ts, kept equal to
+    // src/app/lib/securityHeaders.ts by its drift test).
+    async headers() {
+        return [
+            {
+                source: "/:path*",
+                headers: securityHeaders(process.env.NODE_ENV === "production"),
+            },
+        ];
+    },
     skipTrailingSlashRedirect: true,
 };
 

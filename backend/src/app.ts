@@ -55,6 +55,7 @@ import { envInt } from "./lib/runtimeConfig";
 import { requestDiagnostics } from "./middleware/requestDiagnostics";
 import { runWithRequestId } from "./lib/requestContext";
 import { getTenancyMode } from "./lib/tenancyMode";
+import { sendFrontendSecurityHeaders } from "./lib/frontendSecurityHeaders";
 
 // ── Rate-limit configuration (from upstream ba6f771) ───────────────────────
 
@@ -462,6 +463,9 @@ export function buildApp(): express.Express {
 
   if (FRONTEND_BUNDLED) {
     console.log(`Serving static frontend from ${PUBLIC_DIR}`);
+    // Upstream 84805159: the web app's own security headers (next.config.ts
+    // `headers()` upstream; unsupported by dev's static export).
+    app.use(sendFrontendSecurityHeaders(isProduction));
     app.use(express.static(PUBLIC_DIR, { extensions: ["html"] }));
 
     app.get("*", (req, res, next) => {
