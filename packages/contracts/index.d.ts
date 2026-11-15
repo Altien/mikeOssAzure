@@ -558,6 +558,9 @@ export type AssistantEvent =
       /**
        * Machine-readable cause, when the client can offer a specific remedy.
        * "invalid_api_key": the provider rejected the caller's key.
+       * "provider_account_refused": the provider refused the account behind
+       * a key the user or their organization owns (out of credits, a model
+       * or plan it lacks); only that owner can fix it.
        */
       code?: AssistantErrorCode;
       /**
@@ -570,7 +573,7 @@ export type AssistantEvent =
       reporting_owner?: ReportingOwner;
     };
 
-export type AssistantErrorCode = "invalid_api_key";
+export type AssistantErrorCode = "invalid_api_key" | "provider_account_refused";
 
 export type WordEditApplyMode = "direct" | "approval";
 
