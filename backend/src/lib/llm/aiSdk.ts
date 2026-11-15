@@ -30,23 +30,13 @@ import type { LlmUsageMeter } from "./usage";
  *
  * OpenCode Go keeps the previous 16,384: its Messages models (MiniMax, Qwen)
  * go through the Anthropic adapter, which does not recognise them and would
- * otherwise fall back to 4,096.
+ * otherwise fall back to 4,096. There the number raises the limit.
  *
- * Dev divergence (sync-log: 171d6f95): Kimi (Moonshot, through
- * `@ai-sdk/openai-compatible`) also keeps 16,384. No adapter fills in a
- * model-aware maximum for it and Moonshot's server default when `max_tokens`
- * is omitted is not verified to exceed Dev's previous limit, so dropping the
- * cap could truncate long answers. Azure OpenAI follows upstream (unset).
- *
- * Dev divergence: TokenJuice and Meta (Muse) keep it for the same reason. Their
- * server defaults are unknown too, and silently cutting off a long answer is
- * worse than a visible error from a provider whose ceiling is lower.
+ * Kimi, TokenJuice and Meta (OpenAI-compatible) send no limit, like the rest:
+ * a fixed 16,384 cut long drafts short on models that allow far more.
  */
 const PROVIDERS_KEEPING_LEGACY_OUTPUT_LIMIT: ReadonlySet<Provider> = new Set<Provider>([
   "opencode-go",
-  "kimi",
-  "tokenjuice",
-  "meta",
 ]);
 
 export function maxOutputTokensFor(provider: Provider, adapterDefault?: number): number | undefined {

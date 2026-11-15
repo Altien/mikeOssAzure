@@ -82,7 +82,7 @@ describe("administrator-entered providers", () => {
     expect(sent.body.model).toBe("vendor/juice-small");
   });
 
-  it("asks for the legacy output limit unless an operator overrides it", async () => {
+  it("sends no output limit unless an operator sets one", async () => {
     stubAll({ ...TOKENJUICE, ...META });
     async function streamedLimit(model: string) {
       const fetchMock = vi.fn(async () => new Response(
@@ -94,8 +94,8 @@ describe("administrator-entered providers", () => {
       return sentRequest(fetchMock as never).body.max_tokens;
     }
 
-    expect(await streamedLimit("tokenjuice/juice-large")).toBe(16_384);
-    expect(await streamedLimit("meta/muse-spark-1.1")).toBe(16_384);
+    expect(await streamedLimit("tokenjuice/juice-large")).toBeUndefined();
+    expect(await streamedLimit("meta/muse-spark-1.1")).toBeUndefined();
 
     vi.stubEnv("LLM_MAX_OUTPUT_TOKENS", "2048");
     expect(await streamedLimit("meta/muse-spark-1.1")).toBe(2048);
