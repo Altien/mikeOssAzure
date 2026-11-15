@@ -1,6 +1,8 @@
 import { formatWithOptions } from "node:util";
-import { APICallError } from "ai";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import type { APICallError as ApiCallErrorClass } from "ai" with {
+  "resolution-mode": "import",
+};
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { AppError } from "./appError";
 import { installErrorLogRedaction, logError } from "./log";
 import { reportModelFailure } from "./llm/providerFailureReport";
@@ -13,6 +15,12 @@ installErrorLogRedaction();
 // What a lawyer's prompt looks like on the way to a provider: document text
 // inside the request body, echoed back in the provider's response body.
 const SENTINEL = "PRIVILEGED-DOC-TEXT-7f3a";
+
+// The AI SDK is ESM-only; this CommonJS test loads it the way the backend does.
+let APICallError: typeof ApiCallErrorClass;
+beforeAll(async () => {
+  ({ APICallError } = await import("ai"));
+});
 
 function providerError() {
   const body = {
@@ -36,9 +44,9 @@ function providerError() {
 }
 
 /** Exactly the text Node's console would write for the captured calls. */
-function captured(spy: ReturnType<typeof vi.spyOn>): string {
+function captured(spy: { mock: { calls: unknown[][] } }): string {
   return spy.mock.calls
-    .map((args) => formatWithOptions({ colors: false }, ...(args as unknown[])))
+    .map((args) => formatWithOptions({ colors: false }, ...args))
     .join("\n");
 }
 
