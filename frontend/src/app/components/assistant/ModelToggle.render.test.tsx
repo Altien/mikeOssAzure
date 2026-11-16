@@ -275,6 +275,34 @@ describe("ModelToggle availability states", () => {
         expect(screen.getByText("Configured")).toBeInTheDocument();
     });
 
+    it("warns while a free managed model is selected and links to own-key settings", async () => {
+        configuredModels.push({
+            id: "tokenjuice/free-model",
+            label: "free-model",
+            group: "TokenJuice",
+            location: "cloud",
+            source: "Configured",
+            free: true,
+        });
+        render(
+            <ModelToggle
+                value="tokenjuice/free-model"
+                onChange={vi.fn()}
+                apiKeys={keys({})}
+            />,
+        );
+
+        await userEvent.click(
+            screen.getByRole("button", { name: "Choose model" }),
+        );
+        expect(screen.getByRole("note")).toHaveTextContent(
+            "This is a free or discounted AI model because the provider stores your prompts and responses in full and may use them for training. Use a key of your own or upgrade to a paid plan.",
+        );
+        expect(
+            screen.getByRole("link", { name: "a key of your own" }),
+        ).toHaveAttribute("href", "/settings/byok");
+    });
+
     it("offers an administrator-entered model under its provider, with no personal setup", async () => {
         configuredModels.push({
             id: "meta/muse-spark-1.1",

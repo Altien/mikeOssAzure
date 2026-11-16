@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect } from "react";
+import Link from "next/link";
 import {
   ModelToggleUI,
   nearestReasoningLevelForModel,
   reasoningLevelsForModel,
+  type ModelToggleNotice,
   type ReasoningLevel,
 } from "@/shared/ui/ModelToggleUI";
 import { isModelAvailable, providerKeyStates } from "@/app/lib/modelAvailability";
@@ -27,6 +29,19 @@ import {
 import { useConfiguredModels } from "@/app/hooks/useConfiguredModels";
 
 export type { ReasoningLevel };
+
+const FREE_MODEL_NOTICE: ModelToggleNotice = {
+  tag: "Free",
+  text: "This is a free or discounted AI model because the provider stores your prompts and responses in full and may use them for training. Use a key of your own or upgrade to a paid plan.",
+  content: (
+    <>
+      This is a free or discounted AI model because the provider stores your
+      prompts and responses in full and may use them for training. Use{" "}
+      <Link href="/settings/byok">a key of your own</Link> or upgrade to a
+      paid plan.
+    </>
+  ),
+};
 
 interface Props {
   value: string;
@@ -73,7 +88,9 @@ export function ModelToggle({
 }: Props) {
   const { modelOptions: extraModels } = useAoaiDeployments();
   const selections = routerSelections ?? routerModels;
-  const configuredModels = useConfiguredModels();
+  const configuredModels = useConfiguredModels().map((model) =>
+    model.free ? { ...model, notice: FREE_MODEL_NOTICE } : model,
+  );
   const models = mergeConfiguredModelOptions(configuredModels, [
     ...MODELS,
     ...allRouterModelOptions(selections),

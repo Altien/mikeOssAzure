@@ -1312,6 +1312,8 @@ export interface ConfiguredModelOption {
     group: string;
     location: "cloud" | "local";
     source: "Configured";
+    /** A managed model priced at zero on the tenant's price version. */
+    free?: boolean;
 }
 
 export interface RouterCatalogModel {

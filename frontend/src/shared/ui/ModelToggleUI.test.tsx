@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ModelToggleUI, type ModelToggleOption } from "./ModelToggleUI";
 
@@ -37,6 +38,46 @@ describe("ModelToggleUI as a form field", () => {
         expect(screen.getByRole("button", { name: "Choose model" })).not.toHaveClass(
             "bg-app-surface-active",
         );
+    });
+
+    it("shows the selected model's notice in the open menu and on the trigger", async () => {
+        const user = userEvent.setup();
+        const notice = { tag: "Free", text: "The provider keeps your prompts." };
+        render(
+            <ModelToggleUI
+                value="managed/free"
+                onChange={vi.fn()}
+                models={[...models, { id: "managed/free", label: "Free Model", group: "Managed", notice }]}
+            />,
+        );
+        const trigger = screen.getByRole("button", { name: "Choose model" });
+        expect(trigger).toHaveTextContent("Free");
+        expect(trigger.getAttribute("title")).toContain(notice.text);
+
+        await user.click(trigger);
+        expect(screen.getByRole("note")).toHaveTextContent(notice.text);
+        expect(screen.getByRole("menu")).toHaveAccessibleDescription(notice.text);
+        expect(screen.getByRole("menuitem", { name: /Free Model/ })).toHaveTextContent("Free");
+    });
+
+    it("shows no notice while a model without one is selected", async () => {
+        const user = userEvent.setup();
+        render(
+            <ModelToggleUI
+                value="claude-opus-5-5"
+                onChange={vi.fn()}
+                models={[
+                    ...models,
+                    { id: "managed/free", label: "Free Model", group: "Anthropic", notice: { tag: "Free", text: "Kept." } },
+                ]}
+            />,
+        );
+        const trigger = screen.getByRole("button", { name: "Choose model" });
+        expect(trigger.getAttribute("title")).not.toContain("Kept.");
+        await user.click(trigger);
+        expect(screen.queryByRole("note")).not.toBeInTheDocument();
+        // The free row is still tagged in the list.
+        expect(screen.getByRole("menuitem", { name: /Free Model/ })).toHaveTextContent("Free");
     });
 
     it("shows the empty state flat too", () => {

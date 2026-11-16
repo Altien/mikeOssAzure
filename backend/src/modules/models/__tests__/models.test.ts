@@ -3,7 +3,7 @@ import express from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getUserApiKeys, getOrgWorkKeys, memberOf, guardedFetch } = vi.hoisted(
+const { getUserApiKeys, getOrgWorkKeys, memberOf, guardedFetch, tenant } = vi.hoisted(
     () => ({
         getUserApiKeys: vi.fn(),
         // The keys an organization's work runs on, by organization id.
@@ -11,10 +11,22 @@ const { getUserApiKeys, getOrgWorkKeys, memberOf, guardedFetch } = vi.hoisted(
         // The organizations user-1 belongs to.
         memberOf: { ids: [] as string[] },
         guardedFetch: vi.fn(),
+        tenant: { current: undefined as { tenantId: string } | undefined },
     }),
 );
 
 vi.mock("../../../lib/mcp/client", () => ({ guardedFetch }));
+
+vi.mock("../../../lib/tenantContext", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../../../lib/tenantContext")>()),
+    currentTenant: () => tenant.current,
+}));
+
+// No tenant model policy: every listed model stays.
+vi.mock("../../../lib/tenantSettings", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../../../lib/tenantSettings")>()),
+    filterTenantModels: async <T,>(models: readonly T[]) => [...models],
+}));
 
 vi.mock("../../../middleware/auth", () => ({
     requireAuth: (
@@ -60,6 +72,8 @@ vi.mock("../../user/user.service", () => ({
 }));
 
 import { modelsRouter } from "../models.routes";
+import { listConfiguredModels } from "../models.service";
+import type { Db } from "../../../lib/supabase";
 import {
     INTERNAL_ERROR_CODE,
     INTERNAL_ERROR_MESSAGE,
@@ -752,5 +766,61 @@ describe("catalog loaders separate Mike's own failures from the provider's", () 
         const response = await request(app).get("/api/models/bedrock");
         expect(response.status).toBe(200);
         expect(fetchMock.mock.calls[0][0]).toBe("https://bedrock.us-iso-east-1.c2s.ic.gov/foundation-models?byOutputModality=TEXT");
+    });
+});
+
+describe("configured managed models carry the tenant's free price", () => {
+    const rpc = vi.fn();
+    const db = { rpc } as unknown as Db;
+    beforeEach(() => {
+        getUserApiKeys.mockResolvedValue({});
+        vi.stubEnv("KEY_VAULT_NAME", "");
+        vi.stubEnv("META_BASE_URL", "");
+        vi.stubEnv("TOKENJUICE_API_KEY", "");
+        vi.stubEnv("META_API_KEY", "secret-meta-value");
+        vi.stubEnv("META_MODELS", "free-one,paid-one");
+        tenant.current = { tenantId: "tenant-a" };
+    });
+    afterEach(() => {
+        tenant.current = undefined;
+        vi.unstubAllEnvs();
+        vi.clearAllMocks();
+    });
+    const managed = async () =>
+        (await listConfiguredModels(db, "user-1")).filter((model) => model.id.startsWith("meta/"));
+    const freeIds = async () =>
+        (await managed()).filter((model) => model.free).map((model) => model.id);
+
+    it("flags only the model whose price row is zero on the tenant's version", async () => {
+        // tenant_free_models() returns only all-zero rows on the tenant's version.
+        rpc.mockResolvedValue({ data: [{ provider: "meta", model: "meta/free-one" }], error: null });
+        const models = await managed();
+        expect(rpc).toHaveBeenCalledWith("tenant_free_models");
+        expect(models.find((model) => model.id === "meta/free-one")).toMatchObject({ free: true });
+        expect(models.find((model) => model.id === "meta/paid-one")).not.toHaveProperty("free");
+    });
+
+    it("flags nothing when the tenant has no price version or no zero-price row", async () => {
+        rpc.mockResolvedValue({ data: [], error: null });
+        expect(await freeIds()).toEqual([]);
+    });
+
+    it("flags nothing and skips the lookup when there is no tenant", async () => {
+        tenant.current = undefined;
+        expect(await freeIds()).toEqual([]);
+        expect(rpc).not.toHaveBeenCalled();
+    });
+
+    it("still lists every model, unflagged, when the lookup fails", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        rpc.mockResolvedValue({ data: null, error: { message: "permission denied" } });
+        const models = await managed();
+        expect(models.map((model) => model.id)).toEqual(["meta/free-one", "meta/paid-one"]);
+        expect(models.some((model) => model.free)).toBe(false);
+        expect(warn).toHaveBeenCalled();
+
+        rpc.mockRejectedValue(new Error("network down"));
+        expect(await freeIds()).toEqual([]);
+        warn.mockRestore();
     });
 });

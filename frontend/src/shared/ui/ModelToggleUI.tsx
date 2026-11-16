@@ -34,6 +34,17 @@ export interface ModelToggleOption {
   group: ModelToggleGroup;
   /** Provider route; direct/local/configured sources only show for duplicates. */
   source?: string;
+  /** A warning the user should see while this model is selected. */
+  notice?: ModelToggleNotice;
+}
+
+export interface ModelToggleNotice {
+  /** Short tag on the model's row and the trigger, e.g. "Free". */
+  tag: string;
+  /** Plain-text notice, for the trigger's tooltip. */
+  text: string;
+  /** Rich form shown in the open menu, e.g. with links; defaults to `text`. */
+  content?: React.ReactNode;
 }
 
 export const REASONING_LEVELS = [
@@ -205,6 +216,8 @@ export function ModelToggleUI({
   const [open, setOpen] = React.useState(false);
   const reasoningInputRef = React.useRef<HTMLInputElement>(null);
   const selected = models.find((model) => model.id === value);
+  const notice = selected?.notice;
+  const noticeId = React.useId();
   const [expandedGroup, setExpandedGroup] =
     React.useState<ModelToggleGroup | null>(null);
   const availableGroups = orderedModelGroups(models).flatMap((group) => {
@@ -270,9 +283,11 @@ export function ModelToggleUI({
               ? "Checking API keys"
               : models.length === 0
                 ? "No API key configured"
-                : selectedAvailable
-                  ? `Choose model — ${label}`
-                  : "API key missing for selected model"
+                : !selectedAvailable
+                  ? "API key missing for selected model"
+                  : notice
+                    ? `Choose model — ${label}. ${notice.text}`
+                    : `Choose model — ${label}`
           }
           disabled={loading}
           className={
@@ -303,6 +318,11 @@ export function ModelToggleUI({
               >
                 {label}
               </span>
+              {notice && selectedAvailable && (
+                <span className="shrink-0 text-[10px] font-medium text-amber-700">
+                  {notice.tag}
+                </span>
+              )}
               <ChevronDown
                 className={`h-3 w-3 shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
               />
@@ -314,7 +334,8 @@ export function ModelToggleUI({
         side={modalInput || toolbar ? "bottom" : "top"}
         align={modalInput || toolbar ? "start" : "end"}
         sideOffset={modalInput ? 4 : 8}
-        className={`flex max-h-[min(320px,60vh)] flex-col overflow-hidden rounded-2xl text-gray-700 ${modalInput ? "w-[var(--radix-dropdown-menu-trigger-width)]" : "w-56"}`}
+        aria-describedby={notice ? noticeId : undefined}
+        className={`flex max-h-[min(320px,60vh)] flex-col overflow-hidden rounded-2xl text-gray-700 ${modalInput ? "w-[var(--radix-dropdown-menu-trigger-width)]" : notice ? "w-64" : "w-56"}`}
       >
         <div
           className={`-mr-1.5 min-h-0 flex-1 overflow-y-auto pr-1.5 ${DROPDOWN_ROWS_CLASS}`}
@@ -366,12 +387,33 @@ export function ModelToggleUI({
                             {model.source}
                           </span>
                         )}
+                      {model.notice && (
+                        <span className="shrink-0 text-right text-[10px] font-medium text-amber-700">
+                          {model.notice.tag}
+                        </span>
+                      )}
                     </DropdownItem>
                   ))}
               </React.Fragment>
             );
           })}
         </div>
+        {notice && (
+          <div className="shrink-0">
+            <DropdownSeparator />
+            {/* A link in the notice leaves the page, so the menu closes with it. */}
+            <p
+              id={noticeId}
+              role="note"
+              className="px-2.5 py-2 text-[11px] leading-snug text-amber-800 [overflow-wrap:anywhere] [&_a]:underline"
+              onClick={(event) => {
+                if ((event.target as HTMLElement).closest("a")) setOpen(false);
+              }}
+            >
+              {notice.content ?? notice.text}
+            </p>
+          </div>
+        )}
         {reasoningLevel !== undefined && onReasoningChange && (
           <div className="shrink-0">
             <DropdownSeparator />

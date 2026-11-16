@@ -14,7 +14,8 @@ import type { Db } from "../../lib/supabase";
 import { filterTenantModels } from "../../lib/tenantSettings";
 import { isSupportedOpenCodeGoModel } from "../../lib/llm/models";
 import { configuredEndpointSummaries } from "../../lib/llm/registry";
-import { managedProviderCatalog } from "../../lib/llm/managedProviders";
+import { managedProviderCatalog, managedProviderForModel } from "../../lib/llm/managedProviders";
+import { currentTenant } from "../../lib/tenantContext";
 import { getEffectiveApiKeys, getOrganisationApiKeys } from "../user/user.service";
 
 export type CatalogPricing = {
@@ -38,6 +39,8 @@ export type ConfiguredCatalogModel = {
     group: string;
     location: "cloud" | "local";
     source: "Configured";
+    /** Managed model priced at zero on the tenant's price version. */
+    free?: true;
 };
 
 export type CatalogFailure =
@@ -102,7 +105,7 @@ async function upstreamFailure(
  * module service interface but never used to read a personal key row.
  */
 export async function listConfiguredModels(
-    _db: Db,
+    db: Db,
     _userId: string,
 ): Promise<ConfiguredCatalogModel[]> {
     const apiKeys = await getOrganisationApiKeys();
@@ -122,14 +125,42 @@ export async function listConfiguredModels(
     // This is the list every picker already reads with no per-user setup, so
     // administrator-entered providers join it rather than the router lists.
     const managed = await filterTenantModels(await managedProviderCatalog(), (model) => model.id);
+    const free = managed.length > 0 ? await freeManagedModels(db) : new Set<string>();
     return [
         ...configured,
         ...managed.map((model) => ({
             ...model,
             location: "cloud" as const,
             source: "Configured" as const,
+            ...(free.has(model.id) ? { free: true as const } : {}),
         })),
     ];
+}
+
+/**
+ * Model ids priced at zero on the current tenant's price version, read
+ * through the tenant-scoped tenant_free_models() definer function. No tenant
+ * or no price version yields none; a failed lookup is logged and yields none
+ * so the picker still lists every model.
+ */
+async function freeManagedModels(db: Db): Promise<Set<string>> {
+    if (!currentTenant()) return new Set();
+    try {
+        const { data, error } = await db.rpc("tenant_free_models");
+        if (error) throw error;
+        const rows = (data ?? []) as Array<{ provider?: unknown; model?: unknown }>;
+        return new Set(
+            rows.flatMap((row) =>
+                typeof row.model === "string" &&
+                managedProviderForModel(row.model) === row.provider
+                    ? [row.model]
+                    : [],
+            ),
+        );
+    } catch (error) {
+        console.warn("[models] free model lookup failed", error);
+        return new Set();
+    }
 }
 
 /**
