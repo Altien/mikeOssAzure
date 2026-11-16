@@ -1,4 +1,4 @@
-import { normalizeReasoningLevelForModel } from "./models";
+import { normalizeReasoningLevelForModel, reasoningLevelsForModel } from "./models";
 import type { LanguageModel, ToolSet } from "ai" with {
   "resolution-mode": "import",
 };
@@ -25,7 +25,11 @@ import {
   inputBudgetFor,
   type SummaryRequest,
 } from "./contextBudget";
-import { continueAfterLength } from "./lengthContinuation";
+import {
+  continueAfterLength,
+  planningRestartNotice,
+  recoveryReasoningLevel,
+} from "./lengthContinuation";
 
 /**
  * Per-step output limit, or undefined to leave it to the provider.
@@ -613,13 +617,35 @@ export async function streamAiSdk(
     params.callbacks?.onActivity?.();
     return summary;
   };
+  // Steps run by earlier calls of this turn, so a recovery call's step loop
+  // stays inside the same tool-round bound.
+  let stepsBefore = 0;
+  let planningRestarts = 0;
+  const closeOpenReasoningBlocks = () => {
+    for (const id of openReasoningBlocks) {
+      openReasoningBlocks.delete(id);
+      params.callbacks?.onReasoningBlockEnd?.();
+    }
+  };
+  // Reasoning for a recovery call: lowered, never switched on or off.
+  const recoveryReasoning = recoveryReasoningLevel(
+    params.reasoning,
+    reasoningLevelsForModel(config.modelId),
+    "none",
+  );
   // A reply cut off mid-text at the output limit is continued by the same
   // model (lengthContinuation.ts). Each continuation is one tool-free step
   // with the same options, so its prepareStep/onStepFinish metering, output
   // cap, abort signal and deadline middleware apply exactly as to any step.
+  // A reply cut off while still planning is recovered: the same options and
+  // tools (deliverables such as generate_docx are tool calls), with the steps
+  // left in this turn's bound and reasoning lowered where that is safe.
   const startStream = (options: Parameters<typeof sdk.streamText>[0]) => {
     const first = sdk.streamText(options);
-    const stream = continueAfterLength(first, (messages) => {
+    const stream = continueAfterLength(first, (messages, kind) => {
+      // A cut-off reasoning block may never have received its end part, and
+      // the next call can reuse its id; close it so the UI starts afresh.
+      closeOpenReasoningBlocks();
       const steps = messages.map((message) => ({
         toolCalls: Array.isArray(message.content)
           ? (message.content as Array<{ type: string; toolName: string }>).filter((c) => c.type === "tool-call")
@@ -627,6 +653,26 @@ export async function streamAiSdk(
       }));
       const system = config.courtlistenerCitationReminder && usesCourtlistenerTool(steps)
         ? `${params.systemPrompt}\n\n${COURTLISTENER_CITATION_REMINDER}` : options.system;
+      if (kind === "recover") {
+        planningRestarts += 1;
+        stepsBefore = iteration;
+        const lowerReasoning = options.reasoning !== undefined && recoveryReasoning !== params.reasoning;
+        const reasoningOptions = lowerReasoning
+          ? {
+              reasoning: recoveryReasoning as typeof options.reasoning,
+              ...(config.provider === "openrouter"
+                ? { providerOptions: { ...options.providerOptions, openrouter: { reasoning: { effort: recoveryReasoning } } } }
+                : {}),
+            }
+          : {};
+        return sdk.streamText({
+          ...options,
+          ...reasoningOptions,
+          system,
+          messages,
+          stopWhen: sdk.stepCountIs(Math.max(1, Math.max(0, maxIterations) + 1 - stepsBefore)),
+        } as typeof options);
+      }
       // The cast only bridges AI SDK's prompt-or-messages union.
       return sdk.streamText({
         ...options,
@@ -697,10 +743,10 @@ export async function streamAiSdk(
         return ({
         // The override carries forward, so later steps start from it.
         ...(fitted.messages !== messages ? { messages: fitted.messages } : {}),
-        ...(steps.length >= Math.max(0, maxIterations)
+        ...(stepsBefore + steps.length >= Math.max(0, maxIterations)
           ? { activeTools: [], toolChoice: "none" as const }
           : {}),
-        ...(params.finishWithoutToolsOnLastStep && stepNumber === maxIterations - 1
+        ...(params.finishWithoutToolsOnLastStep && stepsBefore + stepNumber === maxIterations - 1
           ? { toolChoice: "none" as const } : {}),
         ...(config.courtlistenerCitationReminder && usesCourtlistenerTool(steps)
           ? { system: `${params.systemPrompt}\n\n${COURTLISTENER_CITATION_REMINDER}` }
@@ -856,10 +902,7 @@ export async function streamAiSdk(
       }
     }
 
-    for (const id of openReasoningBlocks) {
-      openReasoningBlocks.delete(id);
-      params.callbacks?.onReasoningBlockEnd?.();
-    }
+    closeOpenReasoningBlocks();
     // A run halted by stopWhen, or cut off at the output ceiling, otherwise
     // ends exactly like a finished one: streamText just stops and this
     // function returns whatever text happened to accumulate. That renders as
@@ -872,6 +915,7 @@ export async function streamAiSdk(
         lastFinishReason,
         lastRawFinishReason,
       ) +
+      planningRestartNotice(planningRestarts) +
       contextNotice(condensed.summarizedTurns, condensed.shortenedToolResults);
     if (notice) {
       fullText += notice;
