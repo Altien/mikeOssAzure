@@ -43,6 +43,8 @@ export const FIXTURE_KEYS = [
   "playbookSource",
   "playbookImport",
   "orgArchive",
+  // Dev: support reports (0200).
+  "supportReport",
 ] as const;
 
 export type FixtureKey = (typeof FIXTURE_KEYS)[number];
@@ -100,6 +102,12 @@ export async function seedTenant(
     await run("insert into chats (id, user_id, title) values ($1, $2, $3)", [ids.chat, u, `${m} chat`]);
     await run("insert into chat_messages (id, chat_id, role, content) values ($1, $2, 'user', $3)", [ids.chatMessage, ids.chat, JSON.stringify(`${m} message`)]);
     await run("insert into chat_access_grants (chat_id, email, role) values ($1, $2, 'viewer')", [ids.chat, granteeEmail]);
+    const answerId = randomUUID();
+    await run("insert into chat_messages (id, chat_id, role, content) values ($1, $2, 'assistant', $3)", [answerId, ids.chat, JSON.stringify(`${m} answer`)]);
+    await run(
+      "insert into support_reports (id, user_id, chat_id, message_id, description) values ($1, $2, $3, $4, $5)",
+      [ids.supportReport, u, ids.chat, answerId, `${m} support report`],
+    );
     await run(
       "insert into tabular_reviews (id, user_id, title, columns_config, document_ids) values ($1, $2, $3, '[]', $4)",
       [ids.review, u, `${m} review`, JSON.stringify([ids.document])],

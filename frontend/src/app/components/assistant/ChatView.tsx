@@ -1175,6 +1175,15 @@ export function AssistantChatColumn({
                                                                 : undefined
                                                         }
                                                         citations={msg.citations}
+                                                        reportIssue={
+                                                            chatId && msg.id
+                                                                ? {
+                                                                      chatId,
+                                                                      messageId: msg.id,
+                                                                      hasProject: !!permissionChat?.project_id,
+                                                                  }
+                                                                : undefined
+                                                        }
                                                         onAuthorityTraceOpen={openAuthorityTrace}
                                                         citationStatus={
                                                             msg.citationStatus

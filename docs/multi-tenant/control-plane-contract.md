@@ -10,7 +10,7 @@ continue to use their existing request and platform roles.
 ## Permissions
 
 The login has no role memberships, schema creation, content-table privileges,
-sequence rights or application-function rights beyond the fourteen signatures
+sequence rights or application-function rights beyond the nineteen signatures
 below. Four views provide narrowly projected metadata. Application table names
 and other functions are implementation details, not an integration API.
 
@@ -85,6 +85,27 @@ Budget policy updates never clear counters or reservations. A missing budget
 refuses pooled platform-paid calls; BYO continues without platform credits. Price
 publication remains a separate service-role operator operation, not a
 control-plane grant. See [credit policy](credit-policy.md).
+
+## Support reports
+
+A user can report an issue with one assistant response and, by ticking one box,
+allow support to inspect the conversation up to and including that response and
+the documents of its project (or, without a project, the documents attached to
+the chat up to that response) for 14 days. The database enforces consent, the
+cut-off, expiry and withdrawal; the report ID alone determines the tenant. The
+`p_actor` argument (nonempty, at most 200 characters) names the support person
+and is recorded with every read except the listing in an append-only access log.
+
+| Function | Behaviour |
+| --- | --- |
+| `cp_list_support_reports(p_since timestamptz default null, p_tenant_id default null, p_limit integer default 100)` | Reports created after `p_since`, oldest first, at most 500: report_id, tenant_id, user_id, chat_id, project_id, message_id, description, allow_conversation, allow_documents, created_at, access_expires_at, withdrawn_at, access_live. |
+| `cp_read_support_report(p_report_id uuid, p_actor)` | `jsonb`: the report (with consent_text) and a content-free trace of the chat up to the response (message shape, stream runs, audit status, usage, credit reservations). Needs no consent. |
+| `cp_read_support_conversation(p_report_id uuid, p_actor)` | The chat's messages up to and including the reported response. Needs live conversation consent. |
+| `cp_list_support_documents(p_report_id uuid, p_actor)` | The in-scope documents' current-version metadata and text status. Needs live document consent. |
+| `cp_read_support_document(p_report_id uuid, p_document_id uuid, p_actor)` | `jsonb`: one in-scope document's metadata, blob paths and extracted text when ready. Needs live document consent. |
+
+Errors: 22023 invalid actor, 23503 unknown report or out-of-scope document,
+42501 missing consent, withdrawn or expired access.
 
 ## Read-only views
 

@@ -930,6 +930,15 @@ export function ProjectChatPanel({
                                         }
                                         isError={!!msg.error}
                                         citations={msg.citations}
+                                        reportIssue={
+                                            activeChatId && msg.id
+                                                ? {
+                                                      chatId: activeChatId,
+                                                      messageId: msg.id,
+                                                      hasProject: true,
+                                                  }
+                                                : undefined
+                                        }
                                         citationStatus={msg.citationStatus}
                                         activeCitation={activeCitation}
                                         onCitationClick={onCitationClick}

@@ -4182,6 +4182,22 @@ export async function updateQuickAction(
     });
 }
 
+/** Report an issue with one assistant response; see ReportIssueModal. */
+export async function createSupportReport(payload: {
+    chat_id: string;
+    message_id: string;
+    description: string;
+    allow_conversation: boolean;
+    allow_documents: boolean;
+    consent_text: string;
+}): Promise<{ id: string; access_expires_at: string | null }> {
+    return apiRequest("support.report_issue", "/support-reports", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+}
+
 export async function listWorkflowAddons(): Promise<WorkflowAddon[]> {
     return apiRequest<WorkflowAddon[]>("workflows.import_addon", "/workflow-addons");
 }

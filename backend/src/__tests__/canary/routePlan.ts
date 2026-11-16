@@ -119,6 +119,7 @@ export function paramFixture(path: string, param: string): FixtureKey | undefine
     case "referenceId": return "workflowReference";
     case "assetId": return under("/api/workflows/") ? "workflowAsset" : undefined;
     case "quickActionId": return "quickAction";
+    case "reportId": return "supportReport";
     case "folderId": return under("/api/library/") ? "libraryFolder" : "projectFolder";
     case "orgId": return "org";
     case "invitationId": return "orgInvitation";

@@ -20,6 +20,7 @@ import { libraryRouter } from "./modules/library/library.routes";
 import { tabularRouter } from "./modules/tabular/tabular.routes";
 import { workflowsRouter } from "./modules/workflows/workflows.routes";
 import { quickActionsRouter } from "./modules/quick-actions/quickActions.routes";
+import { supportRouter } from "./modules/support/support.routes";
 import { workflowAddonsRouter } from "./modules/workflows/workflowAddons.routes";
 import { userRouter } from "./modules/user/user.routes";
 import { modelsRouter } from "./modules/models/models.routes";
@@ -390,6 +391,7 @@ export function buildApp(): express.Express {
   app.use("/api/tabular-review", tabularRouter);
   app.use("/api/workflows", workflowsRouter);
   app.use("/api/quick-actions", quickActionsRouter);
+  app.use("/api/support-reports", supportRouter);
   app.use("/api/workflow-addons", workflowAddonsRouter);
   app.use("/api/models", modelsRouter);
   app.use("/api/user", userRouter);

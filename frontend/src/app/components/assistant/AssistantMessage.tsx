@@ -3,7 +3,7 @@
 import { TextCardUI } from "@/shared/ui/TextCardUI";
 import { useRef, useState, type ReactNode } from "react";
 import type { WebSource } from "@mike/contracts";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, Flag } from "lucide-react";
 import type {
     AssistantEvent,
     Citation,
@@ -15,6 +15,7 @@ import { notifyError } from "@/app/lib/userFacingError";
 import { useOptionalUserProfile } from "@/app/contexts/UserProfileContext";
 import { EditCard } from "./EditCard";
 import { PreResponseWrapper } from "./PreResponseWrapper";
+import { ReportIssueModal } from "./ReportIssueModal";
 import { ResponseStatus, type StatusState } from "./message/ResponseStatus";
 import { DocSearchBlock } from "./message/DocSearchBlock";
 import {
@@ -135,6 +136,8 @@ interface Props {
     resolvedEditStatuses?: Record<string, "accepted" | "rejected">;
     /** Dev (OSS-6, authority trace): opens the Authority Trace panel. */
     onAuthorityTraceOpen?: (runId: string) => void;
+    /** Dev: enables "Report issue" for a saved response. */
+    reportIssue?: { chatId: string; messageId: string; hasProject: boolean };
 }
 
 export function AssistantMessage({
@@ -160,9 +163,11 @@ export function AssistantMessage({
     isEditReloading,
     resolvedEditStatuses,
     onAuthorityTraceOpen,
+    reportIssue,
 }: Props) {
     const contentDivRef = useRef<HTMLDivElement | null>(null);
     const [isCopied, setIsCopied] = useState(false);
+    const [isReportOpen, setIsReportOpen] = useState(false);
     // Per-document override of the download version, set as Accept/Reject resolves
     // each tracked change and produces a new version.
     const [resolvedOverrides, setResolvedOverrides] = useState<
@@ -1296,6 +1301,26 @@ export function AssistantMessage({
                                 <Copy className="h-3 w-3" />
                             )}
                         </button>
+                    )}
+                    {!isStreaming && !awaitingInput && reportIssue && (
+                        <>
+                            <button
+                                type="button"
+                                aria-label="Report issue"
+                                title="Report issue"
+                                className="p-1.5 rounded text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+                                onClick={() => setIsReportOpen(true)}
+                            >
+                                <Flag className="h-3 w-3" />
+                            </button>
+                            <ReportIssueModal
+                                open={isReportOpen}
+                                chatId={reportIssue.chatId}
+                                messageId={reportIssue.messageId}
+                                hasProject={reportIssue.hasProject}
+                                onClose={() => setIsReportOpen(false)}
+                            />
+                        </>
                     )}
                     {!isStreaming && answerDetails?.type === "response_details" && (
                         <span className="ml-auto min-w-0 text-right font-serif text-sm text-gray-400 [overflow-wrap:anywhere]">
