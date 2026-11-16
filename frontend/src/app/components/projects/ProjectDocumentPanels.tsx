@@ -170,6 +170,7 @@ export const ProjectDocumentPanels = memo(function ProjectDocumentPanels({
                         <DocumentContent
                             document={panelDocument}
                             mode={mode}
+                            hideTitle
                             canEdit={canEdit && documentPermissions?.(tab.documentId).canEdit === true}
                             onVersionChange={
                                 onVersionChange

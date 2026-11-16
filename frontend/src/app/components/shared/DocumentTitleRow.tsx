@@ -33,7 +33,10 @@ export function DocumentTitleRow({
     onVersionChange,
     toolbarVisible,
     onToggleToolbar,
+    hideTitle = false,
 }: {
+    /** The host already names the document (a tab strip): keep the title for screen readers only. */
+    hideTitle?: boolean;
     document: PanelDocument;
     isReloading: boolean;
     compactActions: boolean;
@@ -56,7 +59,7 @@ export function DocumentTitleRow({
                 so top-aligning left the title floating above them. */}
             <div className="flex items-center gap-3">
                 <div className="flex min-w-0 flex-1 items-center gap-2">
-                    <span className="shrink-0">
+                    <span className={hideTitle ? "sr-only" : "shrink-0"}>
                         {document.type === "case" ||
                         document.type === "legislation" ? (
                             <SvgAssetIcon
@@ -79,7 +82,11 @@ export function DocumentTitleRow({
                     </span>
                     <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                         <h2
-                            className="min-w-0 break-words text-xs font-normal text-foreground"
+                            className={
+                                hideTitle
+                                    ? "sr-only"
+                                    : "min-w-0 break-words text-xs font-normal text-foreground"
+                            }
                             title={document.title}
                         >
                             {document.title}

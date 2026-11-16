@@ -259,11 +259,11 @@ it("detects content changes to the same current version, including a pinned curr
 });
 
 
-it.each(["Draft.docx", "Brief.pdf", "Budget.xlsx", "Slides.pptx", "Legacy.doc"])("renders %s with the shared compact title bar", (filename) => {
+it.each(["Draft.docx", "Brief.pdf", "Budget.xlsx", "Slides.pptx", "Legacy.doc"])("renders %s with the shared title bar's actions, leaving the name to the tab", (filename) => {
     render(panels([{ documentId: "file", filename }], "file"));
-    expect(screen.getByRole("heading", { name: filename })).toHaveClass("text-xs", "font-normal");
+    // The tab strip already shows the file name, so the title bar keeps it for screen readers only.
+    expect(screen.getByRole("heading", { name: filename })).toHaveClass("sr-only");
     expect(screen.getByRole("button", { name: "Download" })).toBeVisible();
-    expect(screen.getByRole("tabpanel").querySelector('img[src*="/icons/file-types/"]')).toHaveClass("h-3.5", "w-3.5");
 });
 
 it("retains the live DOCX export for the title and tab download actions", async () => {

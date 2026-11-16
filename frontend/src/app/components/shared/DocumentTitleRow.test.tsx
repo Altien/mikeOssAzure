@@ -77,3 +77,11 @@ it("reports a save failure in a warning popup that returns if a retry fails agai
         "Your changes could not be saved.",
     );
 });
+
+it("keeps the title for screen readers only when the host's tab already names the document", () => {
+    render(
+        <DocumentTitleRow document={document} isReloading={false} compactActions hideTitle />,
+    );
+    expect(screen.getByRole("heading", { name: "Agreement.docx" })).toHaveClass("sr-only");
+    expect(screen.getByRole("button", { name: /download/i })).toBeInTheDocument();
+});

@@ -68,6 +68,8 @@ export interface DocumentContentProps {
     mode: DocumentContentMode;
     isReloading?: boolean;
     compactActions?: boolean;
+    /** The host's tab strip already names the document; hide the title row's copy. */
+    hideTitle?: boolean;
     /** Assistant default: start with editing locked and the DOCX toolbar hidden. */
     showToolbarToggle?: boolean;
     /**
@@ -102,6 +104,7 @@ export function DocumentContent({
     mode,
     isReloading = false,
     compactActions,
+    hideTitle,
     showToolbarToggle = false,
     canEdit = false,
     active = true,
@@ -247,6 +250,7 @@ export function DocumentContent({
                         document={resolvedDocument}
                         isReloading={isReloading}
                         compactActions={compactActions ?? narrow}
+                        hideTitle={hideTitle}
                         saveState={saveState}
                         onVersionChange={onVersionChange}
                         onDownload={() => localDownload.current?.()}
