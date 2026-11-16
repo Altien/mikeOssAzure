@@ -1633,7 +1633,8 @@ export default function ProjectAssistantChatPage() {
                 >
                     <AuthorityTraceTabItem trace={authorityTrace} tabItemRefs={authorityTraceTabRefs} />
                 </ProjectDocumentTabs>
-                <div className="relative min-h-0 flex-1">
+                {/* A flex column, so the panels' flex-1 gives them a height; as a plain block they collapsed to 0 and every document showed blank. */}
+                <div className="relative flex min-h-0 flex-1 flex-col">
                 <ProjectDocumentPanels
                     canEdit={canEditContent}
                     documentPermissions={documentPermissions}
