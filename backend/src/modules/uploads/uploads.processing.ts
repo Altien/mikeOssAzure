@@ -57,6 +57,8 @@ import {
 } from "../../lib/storage";
 import { createPlatformSupabase, createServerSupabase, type Db } from "../../lib/supabase";
 import { runWithJobTenant } from "../../lib/tenantContext";
+import { withLogContext } from "../../lib/logging/contextLight";
+import { log } from "../../lib/logging/root";
 import { createDocumentVersion, updateDocumentVersion } from "../documents/documents.service";
 import { UPLOAD_VERIFICATION_LEASE_SECONDS } from "./uploads.manifest";
 
@@ -639,8 +641,14 @@ export async function processUploadJob(
     void renew().catch((error) => console.error("[upload-worker] heartbeat failed", { jobId, error }));
   }, UPLOAD_WORKER_HEARTBEAT_MS);
   heartbeat.unref();
+  const uploadEvent = (outcome: string) => log().debug("upload.job", {
+    uploadJobId: jobId, attempts: typedJob.attempts, sessionId: typedSession.id,
+    purpose: typedSession.purpose, format: typedFile.file_type, outcome,
+    durationMs: Date.now() - startedAt,
+  });
   try {
     await renew();
+    uploadEvent("start");
     let prepared: PreparedUpload;
     try {
       markStage("process-file");
@@ -648,6 +656,7 @@ export async function processUploadJob(
     } catch (error) {
       // A stale editor save cannot succeed on retry (sync 6e3ef6fa).
       if (error instanceof ChangedDocumentError) {
+        uploadEvent("document_changed");
         await finish(null, "document_changed");
         return;
       }
@@ -655,14 +664,17 @@ export async function processUploadJob(
         jobId, sessionId: typedSession.id, fileId: typedFile.id,
         purpose: typedSession.purpose, error,
       });
+      uploadEvent("processing_failed");
       await finish(null, "processing_failed");
       return;
     }
     if (Date.now() - startedAt >= uploadJobWallClockMs()) {
+      uploadEvent("wall_clock_exceeded");
       throw new Error("upload_job_wall_clock_exceeded");
     }
     await renew();
     const published = await finish(prepared.payload, null);
+    uploadEvent(published.status === "completed" ? "published" : "publish_refused");
     // The publish RPC lost its compare-and-swap and recorded the terminal
     // document_changed outcome itself.
     if (published.status === "error") return;
@@ -844,7 +856,8 @@ function startUploadProcessingWorker(options: {
       // queued it (multi-tenant issue 003).
       const tenantId = await uploadJobTenant(platformDb, jobId);
       await runIsolated(() =>
-        runWithJobTenant(tenantId, () => processUploadJob(db, jobId, workerId)),
+        runWithJobTenant(tenantId, () =>
+          withLogContext({ jobId }, () => processUploadJob(db, jobId, workerId))),
       );
       failures.success();
       schedule(0);

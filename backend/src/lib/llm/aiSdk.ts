@@ -15,7 +15,8 @@ import type {
 } from "./types";
 import type { WebSource } from "@mike/contracts";
 import { providerDeadlines } from "./providerDeadlines";
-import { asProviderStallError, streamErrorMessage, toProviderStreamError } from "./providerErrors";
+import { asProviderStallError, providerFailureKind, providerFailureStatus, streamErrorMessage, toProviderStreamError } from "./providerErrors";
+import { log } from "../logging/root";
 import { createRawLlmStreamRecorder, logRawLlmStream } from "./rawStreamLog";
 import type { LlmUsageMeter } from "./usage";
 import {
@@ -686,6 +687,17 @@ export async function streamAiSdk(
     return { stream };
   };
 
+  const callStartedAt = Date.now();
+  log().debug("llm.call.start", {
+    model: config.modelId,
+    provider: config.provider,
+    maxIterations,
+    maxOutputTokens,
+    inputBudget,
+    toolCount: Object.keys(tools ?? {}).length,
+    reasoning: params.reasoning ?? null,
+    metered: !!meter?.reservation,
+  });
   try {
     const result = startStream({
       model: sdk.wrapLanguageModel({
@@ -729,9 +741,10 @@ export async function streamAiSdk(
       prepareStep: async ({ steps, stepNumber, messages, instructions }: { steps: Array<{ toolCalls: Array<{ toolName: string }> }>; stepNumber: number; messages: AiSdk.ModelMessage[]; instructions?: unknown }) => {
         const system = config.courtlistenerCitationReminder && usesCourtlistenerTool(steps)
           ? `${params.systemPrompt}\n\n${COURTLISTENER_CITATION_REMINDER}` : instructions ?? params.systemPrompt;
+        const fixedTokens = estimateTokens(system) + toolTokens;
         const fitted = await fitMessagesToBudget({
           messages,
-          fixedTokens: estimateTokens(system) + toolTokens,
+          fixedTokens,
           budget: inputBudget,
           label: config.label,
           modelId: config.modelId,
@@ -739,6 +752,17 @@ export async function streamAiSdk(
         });
         condensed.summarizedTurns += fitted.summarizedTurns;
         condensed.shortenedToolResults += fitted.shortenedToolResults;
+        // Logged here, not in contextBudget.ts, which stays import-free.
+        if (fitted.messages !== messages && log().debugEnabled()) {
+          log().debug("llm.context_fit", {
+            model: config.modelId,
+            budget: inputBudget,
+            fixedTokens,
+            totalTokens: fixedTokens + estimateTokens(fitted.messages),
+            shortenedToolResults: fitted.shortenedToolResults,
+            summarizedTurns: fitted.summarizedTurns,
+          });
+        }
         await meter?.beforeStep({ system, messages: fitted.messages, tools: params.tools ?? [] });
         return ({
         // The override carries forward, so later steps start from it.
@@ -859,6 +883,14 @@ export async function streamAiSdk(
           }
           lastFinishReason = part.finishReason;
           lastRawFinishReason = part.rawFinishReason;
+          log().debug("llm.step.finish", {
+            model: config.modelId,
+            step: iteration,
+            inputTokens: part.usage.inputTokens,
+            outputTokens: part.usage.outputTokens,
+            finishReason: part.finishReason,
+            rawFinishReason: part.rawFinishReason,
+          });
           // Usage ledger (issue 015): one provider request per step.
           if (!meter?.reservation) meter?.addStep(part.usage, part.response?.id);
           break;
@@ -894,6 +926,11 @@ export async function streamAiSdk(
           const stalled = params.abortSignal?.aborted
             ? null
             : asProviderStallError(part.reason, config);
+          log().debug("llm.stream_abort", {
+            model: config.modelId,
+            stalled: !!stalled,
+            callerAborted: !!params.abortSignal?.aborted,
+          });
           if (stalled) throw stalled;
           const error = new Error(part.reason || "Stream aborted.");
           error.name = "AbortError";
@@ -921,6 +958,16 @@ export async function streamAiSdk(
       fullText += notice;
       params.callbacks?.onContentDelta?.(notice);
     }
+    log().debug("llm.call.finish", {
+      model: config.modelId,
+      steps: iteration,
+      finishReason: lastFinishReason,
+      planningRestarts,
+      summarizedTurns: condensed.summarizedTurns,
+      shortenedToolResults: condensed.shortenedToolResults,
+      outputChars: fullText.length,
+      durationMs: Date.now() - callStartedAt,
+    });
     await rawStreamRecorder?.flush("completed");
     return { fullText };
   } catch (error) {
@@ -930,6 +977,16 @@ export async function streamAiSdk(
     const fatal = runToolsFailure.first
       ? guardAbortShaped(rethrowable(runToolsFailure.first.error, config.label))
       : guardAbortShaped(streamFailure(error, config));
+    if (log().debugEnabled()) {
+      log().debug("llm.provider_error", {
+        model: config.modelId,
+        provider: config.provider,
+        errorType: fatal instanceof Error ? fatal.name : typeof fatal,
+        failureKind: runToolsFailure.first ? null : providerFailureKind(fatal),
+        httpStatus: providerFailureStatus(fatal),
+        toolFailure: !!runToolsFailure.first,
+      });
+    }
     await rawStreamRecorder?.flush("error", fatal);
     throw fatal;
   } finally {

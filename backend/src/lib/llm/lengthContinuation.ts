@@ -16,6 +16,7 @@
  * Provider-neutral: this module only looks at AI SDK stream part shapes and
  * passes message arrays through, apart from dropping a cut-off step.
  */
+import { log } from "../logging/root";
 
 /**
  * Automatic continuations and recoveries allowed per response, together.
@@ -218,6 +219,14 @@ export async function* continueAfterLength<Part extends { type: string }, M exte
       maxContinuations,
     });
     if (!kind) return;
+    log().debug("llm.length_followup", {
+      kind,
+      used,
+      max: maxContinuations,
+      finishReason,
+      endedWriting: endedInText,
+      toolCallInStep,
+    });
     const response = await current.responseMessages;
     messages = kind === "continue"
       ? continuationMessages<M | ContinueRequest>(messages, response)

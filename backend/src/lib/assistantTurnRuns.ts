@@ -10,6 +10,7 @@ import {
     startStreamRun,
     type StreamRun,
 } from "./streamRuns";
+import { log } from "./logging/root";
 
 /**
  * Server-owned assistant turns.
@@ -139,6 +140,10 @@ export async function claimAssistantTurnRun(args: Parameters<typeof startAssista
             ...(args.persistChat !== undefined ? { persistChat: args.persistChat } : {}),
         },
         forcedStopFrames: [`data: ${JSON.stringify({ type: "cancelled" })}\n\n`, "data: [DONE]\n\n"],
+    });
+    log().with({ chatId: args.chatId, runId: args.id }).debug("turn.claim", {
+        surface: args.surface ?? "chat",
+        claimed: !!run,
     });
     return run ? turnView(run) : null;
 }

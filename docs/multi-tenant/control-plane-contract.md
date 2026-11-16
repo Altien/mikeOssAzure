@@ -10,7 +10,7 @@ continue to use their existing request and platform roles.
 ## Permissions
 
 The login has no role memberships, schema creation, content-table privileges,
-sequence rights or application-function rights beyond the nineteen signatures
+sequence rights or application-function rights beyond the twenty-one signatures
 below. Four views provide narrowly projected metadata. Application table names
 and other functions are implementation details, not an integration API.
 
@@ -25,7 +25,7 @@ to no PUBLIC execute. `app.tenant_rls_gaps()` includes the control-plane ACL gat
 ## Mutations
 
 All arguments use PostgreSQL `text` unless shown otherwise. Functions return
-`void`, run atomically, use fixed search paths and are also available to the
+`void` (except `cp_set_tenant_debug`, which returns its end time), run atomically, use fixed search paths and are also available to the
 existing platform `service_role`. Ordinary request roles cannot execute them.
 
 | Function | Behaviour |
@@ -44,6 +44,8 @@ existing platform `service_role`. Ordinary request roles cannot execute them.
 | `cp_set_member_role(p_user_id, p_role)` | Updates standard/local/named Microsoft membership role, protects the last admin and revokes sessions on change. Directory-linked enterprise roles must be changed in Entra. |
 | `cp_link_identity_source(p_tid, p_tenant_id)` | Links one enterprise directory to a tenant. A directory cannot silently relink. The personal-account directory `9188040d-6c67-4c5b-b112-36a304b66dad` is refused (22023). |
 | `cp_unlink_identity_source(p_tid)` | Removes the enterprise directory link. |
+| `cp_set_tenant_debug(p_tenant_id, p_minutes integer default 120)` | Turns debug logging on for the tenant until `now() + p_minutes` and returns that end as `timestamptz`. Calling again sets a new end from now. Any tenant status is accepted. Raises 22023 if `p_minutes` is null or outside 1–1440, 23503 for an unknown tenant. Takes effect within 30 s on every replica and worker. See [structured logging](../structured-logging.md). |
+| `cp_clear_tenant_debug(p_tenant_id)` | Turns debug logging off. Idempotent. Raises 23503 for an unknown tenant. |
 
 Except for metadata/status changes, offboarding tenants reject new configuration
 and content writes. Membership/directory changes retain the existing one-tenant

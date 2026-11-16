@@ -225,6 +225,7 @@ describe("backend architecture", () => {
       ["lib/stampRuntime.ts", "read-only startup metadata and platform credential readiness before any tenant traffic"],
       ["modules/platform/platform.healthDatabase.ts", "passphrase-gated read-only health page: install metadata, tenant counts and the job queue span tenants"],
       ["jobs/maintenance.ts", "stale-work sweep spans tenants"],
+      ["lib/logging/tenantDebugStore.ts", "debug-log switch poll reads every tenant's debug_log_until"],
       ["jobs/syncWorkflows.ts", "global workflow catalog sync"],
       ["scripts/runMigrations.ts", "migration job: global workflow catalog sync"],
     ]);

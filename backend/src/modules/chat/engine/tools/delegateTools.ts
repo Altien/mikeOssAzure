@@ -13,6 +13,8 @@ import type {
     TokenUsage,
 } from "../../../../lib/llm";
 import { REASONING_LEVELS, type ReasoningLevel } from "../../../../lib/llm/types";
+import { log } from "../../../../lib/logging/root";
+import { safeError } from "../../../../lib/safeError";
 import { DELEGATION_MODEL_TIERS, subagentModelFor } from "../../../../lib/modelSelection";
 import { CITATIONS_OPEN_TAG } from "../citations";
 import { spotlight, withDocumentList } from "../contextBuilders";
@@ -615,8 +617,19 @@ export async function runDelegateCall(
         task,
     };
     ctx.write(frame({ type: "delegation_start", ...identity }));
+    log().debug("delegate.start", {
+        delegationId: identity.delegation_id,
+        continuedFrom: continuedFrom ?? null,
+        model,
+        effort,
+        tier,
+        maxSteps: preset.steps,
+        timeoutMs: preset.timeoutMs,
+        documents: documents?.length ?? null,
+    });
 
     const stopper = subagentStopper(ctx.signal, preset.timeoutMs);
+    let errorCategory: string | null = null;
     let usage: DelegationEvent["usage"];
     let question: string | undefined;
     const records: SubagentRecord[] = [];
@@ -679,9 +692,19 @@ export async function runDelegateCall(
         outcome = partialRun(error);
         const reason = stopper.reason();
         status = reason === "parent" ? "cancelled" : reason ? "incomplete" : "failed";
+        errorCategory = safeError(error).category;
     } finally {
         stopper.dispose();
     }
+    log().debug("delegate.finish", {
+        delegationId: identity.delegation_id,
+        status,
+        stopReason: stopper.reason() ?? null,
+        inputTokens: usage?.input_tokens ?? null,
+        outputTokens: usage?.output_tokens ?? null,
+        records: records.length,
+        errorCategory,
+    });
 
     const brief = briefOf(proseOf(outcome.fullText));
     // The answer puts these to the user and holds the one stored copy.

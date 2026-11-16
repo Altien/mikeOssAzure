@@ -6,6 +6,7 @@ import { reportError } from "../lib/observability/sentry";
 import { CONVERSION_QUEUE, type ConversionJobData } from "../lib/queue/conversionQueue";
 import { createServerSupabase } from "../lib/supabase";
 import { runWithJobTenant } from "../lib/tenantContext";
+import { withLogContext } from "../lib/logging/contextLight";
 import { runConversionJob, setDocumentTerminalStatus } from "../modules/documents/documents.service";
 
 /** True once a job has exhausted its retries (BullMQ 'failed', no attempts left). */
@@ -25,7 +26,8 @@ export function createConversionWorker(): Worker<ConversionJobData> {
             // operation, and concurrency is 2. The job runs as its tenant
             // (multi-tenant issue 003).
             await runIsolated(() =>
-                runWithJobTenant(job.data.tenantId, () => runConversionJob(job.data)));
+                runWithJobTenant(job.data.tenantId, () =>
+                    withLogContext({ jobId: job.id }, () => runConversionJob(job.data))));
         },
         {
             connection: getRedisConnection(),

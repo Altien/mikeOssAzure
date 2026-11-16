@@ -9,6 +9,8 @@ import { deriveServerRelayKey } from "./serverSession";
 import { PLATFORM_DB_ROLE, postgrestClaims, tenantDbRole } from "./supabase";
 import { currentTenant, runWithTenant } from "./tenantContext";
 import { streamRunRoleFailure, tenantProbeContext } from "./tenantDatabaseProbe";
+import { withLogContext } from "./logging/contextLight";
+import { log } from "./logging/root";
 
 export type RunRow = {
   id: string;
@@ -297,14 +299,18 @@ export class StreamRunCluster {
     }
     if (message.kind !== "request" || !message.op || !this.handler) return;
     const handler = this.handler;
-    const serve = async () => {
+    const runId = (message.data as { id?: unknown } | null | undefined)?.id;
+    const handle = async () => {
       try {
         const data = await handler(message.op!, message.data);
+        log().debug("relay.dispatch", { op: message.op, ok: true });
         await this.send(from, { kind: "response", requestId: message.requestId, ok: true, data });
       } catch {
+        log().debug("relay.dispatch", { op: message.op, ok: false });
         await this.send(from, { kind: "response", requestId: message.requestId, ok: false });
       }
     };
+    const serve = () => (typeof runId === "string" ? withLogContext({ runId }, handle) : handle());
     // Multi-tenant issue 008: the LISTEN connection has no tenant; the
     // authenticated (MAC'd) request carries the requester's.
     const tenantId = typeof message.tenantId === "string" && message.tenantId ? message.tenantId : undefined;
@@ -336,12 +342,17 @@ export class StreamRunCluster {
           (lease_expires_at<=clock_timestamp() or lifetime_expires_at<=clock_timestamp() or
            (stop_deadline_at is not null and stop_deadline_at<=clock_timestamp()))`, [args.key]);
         const occupied = await c.query("select id from public.stream_runs where run_key=$1 and state in ('running','stopping')", [args.key]);
-        if (occupied.rowCount) { await c.query("commit"); return null; }
+        if (occupied.rowCount) {
+          await c.query("commit");
+          log().debug("streamrun.claim", { surface: args.surface, claimed: false });
+          return null;
+        }
         const inserted = await c.query<RunRow>(`insert into public.stream_runs
           (id,run_key,surface,user_id,meta,owner_instance,owner_token,state,lease_expires_at,lifetime_expires_at)
           values($1,$2,$3,$4,$5,$6,$7,'running',clock_timestamp()+interval '30 seconds',clock_timestamp()+interval '30 minutes') returning *`,
           [args.id, args.key, args.surface, args.userId, args.meta, this.instanceId, token]);
         await c.query("commit");
+        log().debug("streamrun.claim", { surface: args.surface, claimed: true });
         return inserted.rows[0];
       } catch (error) { await c.query("rollback"); throw error; }
     });

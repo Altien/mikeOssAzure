@@ -15,6 +15,10 @@ import "dotenv/config";
 import "./telemetry";
 import { installProcessGuards } from "./lib/processGuards";
 installProcessGuards();
+import { installStructuredLogging } from "./lib/logging/install";
+const logging = installStructuredLogging({ proc: "worker" });
+import { log } from "./lib/logging/root";
+import { readTenantDebugSwitches } from "./lib/logging/tenantDebugStore";
 import { startAllWorkers, stopAllWorkers } from "./workerRuntime";
 import { flushSentry, reportError } from "./lib/observability/sentry";
 import { initSentry } from "./lib/observability/sentry";
@@ -28,7 +32,9 @@ void getKeyVaultConfig("sentry-dsn").catch(() => "").then((dsn) => {
     initSentry("worker");
     return startAllWorkers();
 }).then(() => {
+    logging.debugSwitches.start(readTenantDebugSwitches);
     console.log("Mike worker process running");
+    log().info("process.start", {});
 }).catch((error) => {
     console.error("Worker initialization failed", error);
     clearInterval(keepAlive);
@@ -40,6 +46,8 @@ async function shutdown(signal: string) {
     if (shuttingDown) return;
     shuttingDown = true;
     clearInterval(keepAlive);
+    log().info("process.shutdown", { signal });
+    logging.debugSwitches.stop();
     console.log(`Worker shutting down gracefully (${signal})`);
     const forceExit = setTimeout(() => {
         console.error("Worker graceful shutdown timed out — forcing exit");

@@ -5,6 +5,12 @@ import { Worker as ThreadWorker } from "node:worker_threads";
 import path from "node:path";
 import { installProcessGuards } from "./lib/processGuards";
 installProcessGuards();
+// After telemetry (App Insights' console patch) and before initSentry (its
+// console.error wrapper): docs/structured-logging.md.
+import { installStructuredLogging } from "./lib/logging/install";
+const logging = installStructuredLogging({ proc: "api" });
+import { log } from "./lib/logging/root";
+import { readTenantDebugSwitches } from "./lib/logging/tenantDebugStore";
 import { buildApp } from "./app";
 import { initDownloadSigningSecret } from "./lib/downloadTokens";
 import { initStorage } from "./lib/storage";
@@ -90,6 +96,7 @@ async function start(): Promise<void> {
   // Multi-tenant phase 1: the install's tenant row exists before any request
   // or job writes a row whose tenant_id defaults from the request context.
   await ensureInstallTenant(createPlatformSupabase());
+  logging.debugSwitches.start(readTenantDebugSwitches);
   await initStreamRunCluster();
   installStreamRunRelayHandler(async (payload) => {
     if (!payload || typeof payload !== "object") return false;
@@ -113,12 +120,14 @@ async function start(): Promise<void> {
 
   const server = listenOrFail(buildApp(), PORT, () => {
     console.log(`Mike backend running on port ${PORT} (workers: ${workersMode})`);
+    log().info("process.start", { port: PORT, workersMode });
     void checkSchemaVersion().catch(() => {});
   }, undefined, HOST);
 
   async function shutdown(signal: string): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
+    log().info("process.shutdown", { signal });
     const forced = setTimeout(() => process.exit(1), 15_000);
     forced.unref();
     try {
@@ -131,6 +140,7 @@ async function start(): Promise<void> {
       // Usage-ledger rows still in flight (issue 015).
       await flushLlmUsage();
       await stopRoleThreads(threads);
+      logging.debugSwitches.stop();
       clearTimeout(forced);
       console.log(`Graceful shutdown complete (${signal})`);
       process.exit(0);

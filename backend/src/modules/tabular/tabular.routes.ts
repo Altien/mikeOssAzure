@@ -27,6 +27,7 @@ import {
     findAssistantTurnRun,
     claimAssistantTurnRun,
 } from "../../lib/assistantTurnRuns";
+import { bindLogContext } from "../../lib/logging/contextLight";
 import { openAssistantSse } from "../../lib/assistantSse";
 import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
@@ -515,6 +516,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, asyncRoute(async (req, re
             detail: "This tabular review is already running elsewhere.",
         });
     }
+    bindLogContext({ runId: generationId });
     // What stops the work, and what tells us it has been stopped. On the sync
     // path that is the run (Stop endpoint); on the async path the request.
     const generationSignal = run ? run.signal : requestAbort.signal;
@@ -1078,6 +1080,7 @@ tabularRouter.post("/:reviewId/chat", requireAuth, asyncRoute(async (req, res) =
             detail: "A response is already being generated for this chat.",
         });
     }
+    if (run) bindLogContext({ chatId: chatId ?? undefined, runId: run.id });
 
     // `prepareTabularChat` is allowed to return no chat id (chat creation was
     // skipped); there is then no thread to key a run on and nothing that

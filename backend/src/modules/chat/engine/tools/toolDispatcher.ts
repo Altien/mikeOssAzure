@@ -18,6 +18,7 @@ import {
   executeGoogleWorkspaceToolCall,
 } from "../../../../lib/integrations/googleWorkspace";
 import { logError } from "../../../../lib/log";
+import { log } from "../../../../lib/logging/root";
 import { diagnosticErrorTags } from "../../../../lib/observability/sentryPrivacy";
 import { documentSearchFailure } from "./documentSearchErrors";
 import { findDocumentText, createDocumentVersions } from "../../../documents/documents.service";
@@ -374,6 +375,43 @@ function cachedCaseNotFetchedResult(clusterId: number | null) {
   };
 }
 
+type ToolStart = { id: string; name: string; at: number };
+
+/** "error" when the call's tool message carries an `error` field. */
+function toolOutcome(toolResults: readonly unknown[], callId: string): "ok" | "error" {
+  const entry = toolResults.find((item) =>
+    !!item && typeof item === "object" && (item as { tool_call_id?: unknown }).tool_call_id === callId);
+  if (!entry) return "error";
+  const content = (entry as { content?: unknown }).content;
+  if (typeof content !== "string" || content.length > 100_000) return "ok";
+  try {
+    const parsed: unknown = JSON.parse(content);
+    return parsed && typeof parsed === "object" && (parsed as { error?: unknown }).error ? "error" : "ok";
+  } catch {
+    return "ok";
+  }
+}
+
+/**
+ * One `tool.call` debug event per call, emitted after the batch so the
+ * dispatch loop is not re-indented: a call's duration runs to the next
+ * call's start (or the end of the batch).
+ */
+function logToolCalls(starts: readonly ToolStart[], toolResults: readonly unknown[], subagent: boolean): void {
+  if (!starts.length || !log().debugEnabled()) return;
+  const end = Date.now();
+  starts.forEach((start, index) => {
+    const finishedAt = starts[index + 1]?.at ?? end;
+    log().debug("tool.call", {
+      toolName: start.name,
+      toolCallId: start.id,
+      durationMs: finishedAt - start.at,
+      outcome: toolOutcome(toolResults, start.id),
+      subagent,
+    });
+  });
+}
+
 export async function runToolCalls(
   toolCalls: ToolCall[],
   docStore: DocStore,
@@ -588,7 +626,9 @@ export async function runToolCalls(
     !!resolveDocLabel(String(args.doc_id ?? ""), docStore, docIndex);
 
   let connectorOwner: ConnectorOwner | undefined;
+  const toolStarts: ToolStart[] = [];
   for (const tc of toolCalls) {
+    toolStarts.push({ id: tc.id, name: tc.function.name, at: Date.now() });
     let args: Record<string, unknown> = {};
     try {
       args = JSON.parse(tc.function.arguments || "{}");
@@ -2045,6 +2085,13 @@ export async function runToolCalls(
           }
           return edited;
         }, signal);
+        log().debug("doc.edit", {
+          documentId: indexed.document_id,
+          edits: edits.length,
+          ok: result.ok,
+          versionId: result.ok ? result.version_id : null,
+          versionNumber: result.ok ? result.version_number : null,
+        });
 
         if (result.ok) {
           clearTurnReadsForDocument(turnReadState, indexed.document_id);
@@ -2496,6 +2543,13 @@ export async function runToolCalls(
           orgId: options.orgId ?? null,
         },
       );
+      const generatedId = (result as Record<string, unknown>).document_id;
+      log().debug("doc.generate", {
+        sections: Array.isArray(args.sections) ? args.sections.length : null,
+        landscape,
+        numberSections,
+        documentId: typeof generatedId === "string" ? generatedId : null,
+      });
       registerGeneratedDocument(
         tc,
         result as Record<string, unknown>,
@@ -2619,6 +2673,7 @@ export async function runToolCalls(
       );
     }
   }
+  logToolCalls(toolStarts, toolResults, options.documentsScoped === true);
 
   if (shouldGroupFindInCase && groupedFindInCaseEvents.length > 0) {
     const errors = groupedFindInCaseEvents

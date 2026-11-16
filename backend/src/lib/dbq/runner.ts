@@ -16,6 +16,8 @@
 import { AppError } from "../appError";
 import { createPlatformSupabase, createServerSupabase } from "../supabase";
 import { runWithJobTenant } from "../tenantContext";
+import { withLogContext } from "../logging/contextLight";
+import { log } from "../logging/root";
 import { jobErrorMessage } from "./jobError";
 import { runIsolated } from "./jobScope";
 import { deleteFile } from "../storage";
@@ -232,14 +234,21 @@ async function runClaimedJob(
             reportError(cleanupError, { tags: { component: "dbq", job_kind: job.kind, stage: "failure-hook" }, extra: { job_id: job.id } });
         }
     };
+    const jobEvent = (phase: "start" | "done" | "retry" | "defer" | "failed", delayMs: number | null, lost: boolean) =>
+        log().debug("dbq.job", {
+            jobKind: job.kind, attempts: job.attempts, maxAttempts: job.max_attempts,
+            phase, delayMs, leaseLost: lost,
+        });
     try {
         if (!handler) throw new AppError("dbq.unknown_job_kind", `unknown job kind: ${job.kind}`);
+        jobEvent("start", null, false);
         const result = await handler(db, job);
         unpublishedResult = result;
         clearInterval(heartbeat);
         publicationUncertain = true;
         const published = await finish("done", null, result ?? null);
         publicationUncertain = false;
+        jobEvent("done", null, !published);
         if (!published) {
             console.warn("[dbq] claim lost before completion", { id: job.id });
             await discardUnpublished();
@@ -276,6 +285,7 @@ async function runClaimedJob(
                 return data === true;
               })()
             : await finish(spent ? "failed" : "pending", message, null, spent ? null : runAt);
+        jobEvent(deferred ? "defer" : spent ? "failed" : "retry", spent ? null : delayMs, !owned);
         // This follows the fenced retry/terminal transition: a lost response
         // from finish(done) is reconciled by the handler before cleanup.
         if (owned) publicationUncertain = false;
@@ -578,6 +588,6 @@ export async function processClaimedJob(
     const actorUserId = typeof actor === "string" ? actor : undefined;
     return runIsolated(() =>
         runWithJobTenant(job.tenant_id, () =>
-            runClaimedJob(db, handlers, job, failureHooks, controlDb),
+            withLogContext({ jobId: job.id }, () => runClaimedJob(db, handlers, job, failureHooks, controlDb)),
             actorUserId));
 }

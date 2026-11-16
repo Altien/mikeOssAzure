@@ -260,6 +260,12 @@ The assistant engine lives in `modules/chat/engine/`. Other chat surfaces use
 named exports from `chat.service.ts`. HTTP framing lives in `lib/assistantSse.ts`;
 message reservation and persistence belong to the chat module.
 
+Logging lives in `lib/logging/`: an `ILogger` reached through `log()`, one JSON
+line per record carrying tenant, user and chat/run/request/job ids, a console
+bridge installed only by the three composition roots, and per-tenant debug
+events gated by an operator switch. See
+[structured-logging.md](structured-logging.md).
+
 ## Background jobs
 
 `jobs/registry.ts` composes domain handlers from module facades and supplies both

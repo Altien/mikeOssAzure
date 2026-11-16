@@ -5,6 +5,7 @@ import {
     findAssistantTurnRun,
     claimAssistantTurnRun,
 } from "../../lib/assistantTurnRuns";
+import { bindLogContext } from "../../lib/logging/contextLight";
 import { stopOutcomeFrame } from "../../lib/streamRuns";
 // HTTP layer for the chat module.
 //
@@ -645,6 +646,7 @@ chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                 detail: "A response is already being generated for this chat.",
             });
         }
+        bindLogContext({ chatId, runId: run.id });
         // Make the advertised identity durable before the response becomes an
         // SSE stream. If this reservation fails, return a normal HTTP error
         // while headers are still mutable; clients must never receive an ID

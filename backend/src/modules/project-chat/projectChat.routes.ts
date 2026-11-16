@@ -3,6 +3,7 @@ import {
     attachAssistantTurnSse,
     claimAssistantTurnRun,
 } from "../../lib/assistantTurnRuns";
+import { bindLogContext } from "../../lib/logging/contextLight";
 import { stopOutcomeFrame } from "../../lib/streamRuns";
 // HTTP layer for the project-chat module.
 //
@@ -185,6 +186,7 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                 detail: "A response is already being generated for this chat.",
             });
         }
+        bindLogContext({ chatId, runId: run.id });
         const stream = attachAssistantTurnSse(res, run);
         const subagentRuns = createSubagentRunStore({
             db, userId, userEmail, chatId, messageId: turnMessageId,

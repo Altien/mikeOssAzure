@@ -8,6 +8,7 @@ import {
   findAssistantTurnRun,
   claimAssistantTurnRun,
 } from "../../lib/assistantTurnRuns";
+import { bindLogContext } from "../../lib/logging/contextLight";
 import { stopOutcomeFrame } from "../../lib/streamRuns";
 // HTTP layer for the word-chat module — the Word task pane's chat surface.
 //
@@ -758,6 +759,7 @@ wordChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
       detail: "A response is already being generated for this chat.",
     });
   }
+  bindLogContext({ chatId, runId: run.id });
 
   if (persistChat) {
     const error = await reserveAssistantMessage({
