@@ -120,8 +120,6 @@ export {
   updateWorkflow,
   updateQuickAction,
   UploadBatchError,
-  uploadWorkflowAsset,
-  uploadStandaloneDocument,
   uploadStandaloneDocuments,
   uploadWorkflowAssets,
   uploadWorkflowAssetVersion,

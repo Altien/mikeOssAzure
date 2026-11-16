@@ -405,13 +405,6 @@ export async function getApiKeyStatus(): Promise<ApiKeyStatus> {
   return apiRequest<ApiKeyStatus>("settings.keys", "/user/api-keys");
 }
 
-export async function uploadStandaloneDocument(
-  file: File,
-  options?: UploadRequestOptions<Document>,
-): Promise<Document> {
-  return firstUploadResult(await uploadStandaloneDocuments([file], options));
-}
-
 export async function uploadStandaloneDocuments(
   files: File[],
   options?: UploadRequestOptions<Document>,
@@ -743,16 +736,6 @@ export async function listWorkflowAssets(
   workflowId: string,
 ): Promise<Document[]> {
   return apiRequest<Document[]>("workflows.run", `/workflows/${workflowId}/assets`);
-}
-
-export async function uploadWorkflowAsset(
-  workflowId: string,
-  file: File,
-  options?: UploadRequestOptions<Document>,
-): Promise<Document> {
-  return firstUploadResult(
-    await uploadWorkflowAssets(workflowId, [file], options),
-  );
 }
 
 export async function uploadWorkflowAssets(
