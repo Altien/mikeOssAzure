@@ -98,6 +98,7 @@ import type {
     Project,
 } from "@/app/components/shared/types";
 import { panelDocumentFromCitation, panelDocumentFromCaseEvent, panelDocumentType } from "@/app/components/shared/types";
+import { isExternalSourceType } from "@/app/components/shared/documentCapabilities";
 import { panelDocumentAtVersion } from "@/app/lib/panelDocumentAtVersion";
 import { resolvePanelDocumentVersionResult } from "@/app/components/assistant/panelDocumentVersion";
 import type { DocumentContentMode } from "@/app/components/shared/DocumentContent";
@@ -345,7 +346,7 @@ export default function ProjectAssistantChatPage() {
     const projectRole = roleFromLoaded(project);
     const canEditContent = can(projectRole, "content.edit");
     const documentPermissions = useDocumentPermissions(
-        tabs.filter((tab) => !["case", "legislation"].includes(tab.sourceDocument?.type ?? ""))
+        tabs.filter((tab) => !isExternalSourceType(tab.sourceDocument?.type))
             .map((tab) => tab.documentId),
         canEditContent,
     );
@@ -1312,7 +1313,7 @@ export default function ProjectAssistantChatPage() {
     // The document on screen rides along with a message as context.
     const displayedDoc = useMemo(
         () =>
-            !activeTab || activeTab.sourceDocument?.type === "case"
+            !activeTab || isExternalSourceType(activeTab.sourceDocument?.type)
                 ? null
                 : {
                       filename: activeTab.filename,
