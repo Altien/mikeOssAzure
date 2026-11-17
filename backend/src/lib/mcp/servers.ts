@@ -39,6 +39,7 @@ import {
 } from "./errors";
 import {
     CLIENT_INFO,
+    MAX_LEGAL_DATA_HUNTER_RESULT_CHARS,
     MAX_MCP_RESULT_CHARS,
     MCP_REQUEST_TIMEOUT_MS,
     type ConnectorRow,
@@ -61,7 +62,7 @@ type McpCallResult = {
     content: string;
     event: McpToolEvent;
     legalSource: LegalDataHunterSource | null;
-    /** The model received only the first MAX_MCP_RESULT_CHARS of the result. */
+    /** The model received only the first part of the result, up to its cap. */
     truncated?: boolean;
 };
 
@@ -551,7 +552,7 @@ async function resolveCallableTool(
     return { connector, tool: row };
 }
 
-function stringifyMcpResult(result: unknown): string {
+function stringifyMcpResult(result: unknown, maxChars: number): string {
     const text = JSON.stringify(
         {
             result,
@@ -560,8 +561,8 @@ function stringifyMcpResult(result: unknown): string {
         null,
         2,
     );
-    if (text.length <= MAX_MCP_RESULT_CHARS) return text;
-    return `${text.slice(0, MAX_MCP_RESULT_CHARS)}\n\n[Truncated MCP result to ${MAX_MCP_RESULT_CHARS} characters]`;
+    if (text.length <= maxChars) return text;
+    return `${text.slice(0, maxChars)}\n\n[Truncated MCP result to ${maxChars} characters]`;
 }
 
 function unavailableTool(
@@ -849,7 +850,7 @@ async function callResolvedTool(
                 ok: false,
                 error: toolError,
                 serverResult: result,
-            });
+            }, MAX_MCP_RESULT_CHARS);
             await insertMcpAuditLog(db, {
                 user_id: owner.userId,
                 connector_id: connector.id,
@@ -879,9 +880,14 @@ async function callResolvedTool(
                 },
             };
         }
-        const content = stringifyMcpResult(result);
+        // Only Legal Data Hunter gets the larger allowance; every other
+        // connector keeps the general cap.
+        const maxChars = isLegalDataHunterUrl(connector.server_url)
+            ? MAX_LEGAL_DATA_HUNTER_RESULT_CHARS
+            : MAX_MCP_RESULT_CHARS;
+        const content = stringifyMcpResult(result, maxChars);
         // The serializer appends a marker beyond the cap when truncating.
-        const truncated = content.length > MAX_MCP_RESULT_CHARS;
+        const truncated = content.length > maxChars;
         // A long document is still registered from the complete result: the
         // panel and exact-quote verification use the full text, and the model
         // is told to read the rest with read_document before relying on it.
@@ -956,7 +962,7 @@ async function callResolvedTool(
             ...(diagnostic.serverError
                 ? { serverError: diagnostic.serverError }
                 : {}),
-        });
+        }, MAX_MCP_RESULT_CHARS);
         await insertMcpAuditLog(db, {
             user_id: owner.userId,
             connector_id: connector.id,
