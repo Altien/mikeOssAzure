@@ -1,6 +1,7 @@
 import { normalizeCaseDocument } from "../../../../lib/sourceDocuments";
 import type { ExternalSourceCache } from "../../../../altien/externalSources/cache";
 import type { VerificationArtifactStore } from "../../../../altien/authorityTrace/core/service";
+import { stampSourceDocument } from "../../../source-documents/sourceDocuments.service";
 import type { CaseCitationEvent } from "./courtlistenerTools";
 import { convert } from "html-to-text";
 
@@ -151,14 +152,18 @@ export function caseCitationEventFromRecord(
     url: record.url,
     pdfUrl: record.pdfUrl,
     dateFiled: record.dateFiled,
-    document: normalizeCaseDocument({
-      clusterId: record.clusterId,
-      caseName: record.caseName,
-      citations: record.citations,
-      url: record.url,
-      pdfUrl: record.pdfUrl,
-      dateFiled: record.dateFiled,
-    }),
+    // Stamped like every provider document, so the client learns the origin
+    // from the wire rather than from the document type.
+    document: stampSourceDocument(
+      normalizeCaseDocument({
+        clusterId: record.clusterId,
+        caseName: record.caseName,
+        citations: record.citations,
+        url: record.url,
+        pdfUrl: record.pdfUrl,
+        dateFiled: record.dateFiled,
+      }),
+    ),
   };
 }
 
