@@ -60,9 +60,10 @@ their existing value. Arrays and maps replace their corresponding value.
 
 | Field | Value |
 | --- | --- |
-| keyMode | platform or byo |
+| keyMode | platform, byo or hybrid (below) |
 | tier | Optional credential-tier identifier, or null to inherit |
 | modelAllowlist | Array of exact application model IDs; null inherits policy, empty array permits no models |
+| memberKeyModels | Array of exact application model IDs (the same form as modelAllowlist) for which a member may use their own provider key; null or empty array permits none |
 | enabledConnectors | Array of connector names, or null to inherit |
 | featureFlags | Object containing boolean values |
 | config | Non-secret configuration map accepted by the tenant-settings validator; endpoints/scopes only |
@@ -76,15 +77,47 @@ are rejected. PostgreSQL performs all decimal arithmetic. For example:
 
 ```json
 {
-  "keyMode": "byo",
+  "keyMode": "hybrid",
   "featureFlags": { "exampleFeature": true },
   "modelAllowlist": null,
+  "memberKeyModels": ["claude-sonnet-5-5", "openrouter/openai/gpt-6-luna"],
   "budget": null
 }
 ```
 
+### Key modes and member keys
+
+Provider keys are named in `cp_set_secret_refs` by canonical secret name; each
+value is a Key Vault secret named `tenant-<tenant_id>-<anything>`. The canonical
+names per provider are `anthropic-api-key` (Claude), `openai-api-key`,
+`gemini-api-key`, `mistral-api-key`, `moonshot-api-key` (Kimi), `xai-api-key`,
+`openrouter-api-key`, `ai-gateway-api-key` (Vercel), `opencode-api-key`;
+endpoint providers take all of theirs: `azure-openai-api-key` and
+`azure-openai-endpoint`, `azure-foundry-api-key` and `azure-foundry-endpoint`,
+`aws-bearer-token-bedrock` and `bedrock-aws-region`,
+`google-vertex-credentials-json` and `google-vertex-location`, `custom-api-key`
+and `custom-base-url`, and `tokenjuice-` / `meta-` `api-key`, `base-url`, `models`.
+
+| keyMode | A provider with a reference | A provider without one |
+| --- | --- | --- |
+| platform | Reference ignored; platform key | Platform key |
+| byo | Tenant key | Refused (fails closed) |
+| hybrid | Tenant key | Platform key |
+
+In hybrid, referencing any one of a provider's names makes the whole provider the
+tenant's: its unreferenced names resolve to nothing rather than to the platform's.
+
+For a model listed in `memberKeyModels` whose provider takes a single API key
+(Claude, OpenAI, Gemini, Mistral, Kimi, xAI, OpenRouter, Vercel, OpenCode Go), a
+member may save their own key in Settings; a call to that model then uses it.
+Every other model, and a listed model when the member has saved no key, resolves
+as the key mode says. Member keys are stored encrypted in the stamp database
+under the stamp's `user-api-keys-encryption-key` Key Vault secret.
+
 Budget policy updates never clear counters or reservations. A missing budget
-refuses pooled platform-paid calls; BYO continues without platform credits. Price
+refuses pooled platform-paid calls; BYO continues without platform credits. A
+hybrid call on the tenant's key and a call on a member's key count as BYO: they
+are recorded in usage with `key_mode` `byo` and reserve no credits. Price
 publication remains a separate service-role operator operation, not a
 control-plane grant. See [credit policy](credit-policy.md).
 

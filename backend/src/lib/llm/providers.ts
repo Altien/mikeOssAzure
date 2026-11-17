@@ -67,7 +67,8 @@ import { admitTenantLlmCall } from "../tenantRateLimit";
 import { REASONING_LEVELS } from "./types";
 import { vertexAuthClient } from "./vertexAuth";
 import { UserFacingError } from "../safeError";
-import { assertTenantModelAllowed, getTenantSettings, tenantKeyMode } from "../tenantSettings";
+import { assertTenantModelAllowed, getTenantSettings, tenantSuppliesProvider } from "../tenantSettings";
+import { memberApiKeysFor } from "./memberKeys";
 
 const OPENROUTER_BASE_URL =
   process.env.OPENROUTER_BASE_URL?.trim().replace(/\/+$/, "") ||
@@ -474,7 +475,7 @@ const MANAGED_ENDPOINT_BLOCKED_MESSAGE =
 async function createManagedAdapter(model: string): Promise<AiSdkAdapterConfig> {
   const resolved = await resolveManagedModel(model);
   if (!resolved.ok) throw new UserFacingError(resolved.detail);
-  const guarded = (await tenantKeyMode()) === "byo";
+  const guarded = await tenantSuppliesProvider(resolved.provider);
   const { createOpenAICompatible } = await import("@ai-sdk/openai-compatible");
   const client = createOpenAICompatible({
     name: resolved.provider,
@@ -731,10 +732,11 @@ async function createProviderAdapter(
 
 /**
  * Ledger descriptor for one call (issue 015). `apiKeys` here are the
- * organisation's credentials (getOrganisationApiKeys), not a user's. Tenant
- * BYO calls carry their configured key mode into the usage ledger.
+ * organisation's credentials (getOrganisationApiKeys), not a user's. A tenant
+ * call on the tenant's own key (byo, or hybrid with a reference) or on a
+ * member's key is recorded as "byo": no platform credits are reserved.
  */
-async function llmCall(model: string, feature: LlmFeature | undefined): Promise<LlmCallDescriptor> {
+async function llmCall(model: string, feature: LlmFeature | undefined, memberKey = false): Promise<LlmCallDescriptor> {
   let provider: string;
   try {
     provider = providerForModel(model);
@@ -745,22 +747,32 @@ async function llmCall(model: string, feature: LlmFeature | undefined): Promise<
     feature: feature ?? "unspecified",
     provider,
     model,
-    keyMode: await tenantKeyMode(),
+    keyMode: memberKey || await tenantSuppliesProvider(provider) ? "byo" : "platform",
   };
+}
+
+/** A tenant call keeps only the member's own key, and only for a listed model. */
+async function tenantCallKeys<P extends { model: string; apiKeys?: UserApiKeys }>(
+  params: P,
+): Promise<{ params: P; memberKey: boolean }> {
+  if (!(await getTenantSettings())) return { params, memberKey: false };
+  const apiKeys = await memberApiKeysFor(params.model, params.apiKeys);
+  return { params: { ...params, apiKeys }, memberKey: !!apiKeys };
 }
 
 export async function streamWithProvider(
   params: StreamChatParams,
 ): Promise<StreamChatResult> {
   await assertTenantModelAllowed(params.model);
-  if (await getTenantSettings()) params = { ...params, apiKeys: undefined };
+  const tenant = await tenantCallKeys(params);
+  params = tenant.params;
   // Shared per-tenant limits (issue 017): refused calls never reach the
   // provider and record no ledger row.
   await admitTenantLlmCall();
   // Usage ledger (issue 015): one row per call, including the reasoning
   // fallback retry below, aborted streams and failures.
   return meterLlmCall(
-    await llmCall(params.model, params.feature),
+    await llmCall(params.model, params.feature, tenant.memberKey),
     (meter) => streamWithProviderMetered(params, meter),
     params.abortSignal,
     { prompt: { system: params.systemPrompt, messages: params.messages, tools: params.tools }, maxOutputTokens: maxOutputTokensFor(providerForModel(params.model)) },
@@ -897,7 +909,8 @@ export async function completeWithProvider(
   params: CompleteProviderParams,
 ): Promise<string> {
   await assertTenantModelAllowed(params.model);
-  if (await getTenantSettings()) params = { ...params, apiKeys: undefined };
+  const tenant = await tenantCallKeys(params);
+  params = tenant.params;
   await admitTenantLlmCall();
   // Reserve what completeAiSdkText may ask for, reasoning headroom included.
   const requestedOutput = params.maxTokens ?? 512;
@@ -905,7 +918,7 @@ export async function completeWithProvider(
   const reservedOutput = completionReasoning && completionReasoning !== "none"
     ? requestedOutput + COMPLETION_REASONING_HEADROOM_TOKENS : requestedOutput;
   return meterLlmCall(
-    await llmCall(params.model, params.feature),
+    await llmCall(params.model, params.feature, tenant.memberKey),
     async (meter) =>
       completeAiSdkText(
         params,

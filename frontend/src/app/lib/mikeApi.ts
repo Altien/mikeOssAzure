@@ -1298,11 +1298,22 @@ export type ApiKeyState = Record<
     }
 > & { modelAllowlist?: readonly string[] | null };
 
+/** Pooled mode only: per model provider, who supplies the key. */
+export type PooledKeyStatus = {
+    /** Models the member may run on their own key; empty when they may not set one. */
+    memberKeyModels: string[];
+    memberKeySet: boolean;
+    /** The organisation supplies its own key for this provider. */
+    organisationKey: boolean;
+};
+export type PooledKeys = Partial<Record<ApiKeyProvider, PooledKeyStatus>>;
+
 export type ApiKeyStatus = Record<ApiKeyProvider, boolean> & {
     sources?: Partial<Record<ApiKeyProvider, ApiKeySource>>;
     enabled?: Partial<Record<ApiKeyProvider, boolean>>;
     settings?: ApiKeySettings;
     modelAllowlist?: readonly string[] | null;
+    pooledKeys?: PooledKeys;
 };
 
 export interface ConfiguredModelOption {

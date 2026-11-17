@@ -23,6 +23,7 @@ import { recordTenantMetric } from "../tenantMetrics";
 /**
  * Whose organisation credential paid: platform or the tenant's BYO Key Vault
  * reference (014). BYO usage is metered but bypasses platform credit budgets.
+ * A hybrid tenant's referenced provider and a member's own key also count as BYO.
  */
 export type LlmKeyMode = "platform" | "byo";
 export type LlmCallOutcome = "completed" | "aborted" | "failed";

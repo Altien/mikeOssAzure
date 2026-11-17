@@ -105,6 +105,11 @@ export type UserApiKeys = {
      * deployment's key either: the user chose their own account.
      */
     unusableProviders?: readonly string[];
+    /**
+     * Pooled tenants: the member's own keys by provider. Used only for the
+     * models the tenant lists for member keys (llm/memberKeys.ts).
+     */
+    memberKeys?: Readonly<Record<string, string>>;
     claude?: string | null;
     gemini?: string | null;
     openai?: string | null;

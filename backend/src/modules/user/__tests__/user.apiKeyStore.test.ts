@@ -7,14 +7,16 @@ vi.mock("../../../lib/envSecrets", () => ({
   resolveVercelApiKey: vi.fn(async () => secrets.values.get("ai-gateway-api-key") ?? ""),
 }));
 
-const allowlist = vi.hoisted(() => ({ value: null as string[] | null }));
+const allowlist = vi.hoisted(() => ({ value: null as string[] | null, memberKeyModels: null as string[] | null }));
 vi.mock("../../../lib/tenantSettings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../lib/tenantSettings")>()),
   tenantModelAllowlist: vi.fn(async () => allowlist.value),
+  getTenantSettings: vi.fn(async () => allowlist.memberKeyModels && { member_key_models: allowlist.memberKeyModels }),
 }));
 
 import { getApiKeyStatusFor, getUserApiKeyStatus, normalizeApiKeyProvider, orgKeyOwner } from "../user.apiKeyStore";
 import { saveApiKey } from "../user.apiKeys";
+import { freezeTenancyMode, resetFrozenTenancyModeForTests } from "../../../lib/tenancyMode";
 
 function profilePreferenceDb() {
   const from = vi.fn((table: string) => {
@@ -130,5 +132,21 @@ describe("organisation provider credentials", () => {
     });
     expect(result).toEqual({ ok: false, kind: "env_configured" });
     expect(db.from).not.toHaveBeenCalled();
+  });
+
+  it("pooled: refuses a member key for a provider with no listed model, writing nothing", async () => {
+    allowlist.memberKeyModels = ["claude-sonnet-4-5"];
+    freezeTenancyMode("pooled");
+    try {
+      const db = { from: vi.fn(() => { throw new Error("personal key write forbidden"); }) };
+      const result = await saveApiKey(db as never, {
+        userId: "entra|tenant|user", provider: "openai", apiKey: "personal-secret",
+      });
+      expect(result).toEqual({ ok: false, kind: "member_key_not_enabled" });
+      expect(db.from).not.toHaveBeenCalled();
+    } finally {
+      resetFrozenTenancyModeForTests();
+      allowlist.memberKeyModels = null;
+    }
   });
 });

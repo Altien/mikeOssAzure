@@ -17,8 +17,7 @@ import { apiKeyForConfiguredModel, configuredEndpointSummaries, resetModelRegist
 import { resolveManagedProvider } from "./llm/managedProviders";
 import { completeWithProvider, streamWithProvider } from "./llm/providers";
 import { flushLlmUsage, setLlmUsageSink, type LlmUsageEvent } from "./llm/usage";
-import { googleDriveOAuthEnv } from "./integrations/googleDrive";
-import { loadDeploymentSearchApiKeys } from "./webSearch/credentials";
+import { googleDriveOAuthEnv } from "./integrations/googleDrive";import { loadDeploymentSearchApiKeys } from "./webSearch/credentials";
 
 const rows = new Map<string, TenantSettings>();
 const secrets = new Map<string, string>();
@@ -47,6 +46,7 @@ beforeEach(() => {
   vi.stubEnv("OPENAI_API_KEY", "platform-openai");
   vi.stubEnv("OPENAI_API_MODE", "chat");
   vi.stubEnv("MIKE_MODEL_CONFIG_JSON", "");
+  vi.stubEnv("TENANCY_MODE", "single"); // no credit RPC or member-key reads in these unit tests
   mocks.getSecret.mockReset().mockImplementation(async (name: string) => ({ value: secrets.get(name) ?? "__unset__" }));
 });
 afterEach(() => {
@@ -195,6 +195,51 @@ describe("tenant configuration", () => {
     });
     await expect(asTenant("b", () => assertTenantModelAllowed("gpt-6-luna"))).rejects.toThrow("not enabled");
     expect(fetchMock).not.toHaveBeenCalled(); expect(usage).not.toHaveBeenCalled();
+  });
+
+  it("hybrid: a referenced provider uses the tenant key, others the platform key, never a mix; byo still fails closed", async () => {
+    rows.set("h", settings({ key_mode: "hybrid", secret_refs: {
+      "openai-api-key": "tenant-h-openai-api-key", "custom-base-url": "tenant-h-custom-base-url",
+    } }));
+    secrets.set("tenant-h-openai-api-key", "tenant-openai");
+    secrets.set("anthropic-api-key", "platform-claude");
+    secrets.set("custom-api-key", "platform-custom");
+    rows.set("b", settings({ key_mode: "byo" }));
+    await asTenant("h", async () => {
+      expect(await resolveProviderSecret("openai-api-key")).toBe("tenant-openai");
+      expect(await resolveProviderSecret("anthropic-api-key", ["claude-api-key"])).toBe("platform-claude");
+      // The tenant names its own endpoint, so the platform key is never sent there.
+      expect(await resolveProviderSecret("custom-api-key")).toBe("");
+    });
+    expect(await asTenant("b", () => resolveProviderSecret("anthropic-api-key", ["claude-api-key"]))).toBe("");
+    expect(await asTenant("b", () => resolveProviderSecret("openai-api-key"))).toBe("");
+  });
+
+  it("uses a member's key only for a listed model, and meters calls on a tenant or member key as BYO", async () => {
+    rows.set("m", settings({ key_mode: "hybrid", member_key_models: ["gpt-6-luna"],
+      secret_refs: { "openai-api-key": "tenant-m-openai-api-key" } }));
+    secrets.set("tenant-m-openai-api-key", "tenant-openai");
+    rows.set("p", settings({ member_key_models: ["gpt-6-luna"] }));
+    const fetchMock = vi.fn().mockImplementation(async () => Response.json({
+      id: "chatcmpl_test", object: "chat.completion", created: 1, model: "gpt-6-luna",
+      choices: [{ index: 0, message: { role: "assistant", content: "Title" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const usage: LlmUsageEvent[] = [];
+    setLlmUsageSink(async (event) => { usage.push(event); });
+    const apiKeys = { openai: "caller-key", memberKeys: { openai: "member-key" } };
+    await asTenant("m", async () => {
+      await completeWithProvider({ model: "gpt-6-luna", user: "Hi", apiKeys });
+      await completeWithProvider({ model: "gpt-6-astra", user: "Hi", apiKeys });
+    });
+    await asTenant("p", () => completeWithProvider({ model: "gpt-6-astra", user: "Hi", apiKeys }));
+    await flushLlmUsage();
+    expect(fetchMock.mock.calls.map((call) => new Headers(call[1].headers).get("authorization")))
+      .toEqual(["Bearer member-key", "Bearer tenant-openai", "Bearer platform-openai"]);
+    expect(usage.map((event) => [event.tenantId, event.model, event.keyMode])).toEqual([
+      ["m", "gpt-6-luna", "byo"], ["m", "gpt-6-astra", "byo"], ["p", "gpt-6-astra", "platform"],
+    ]);
   });
 
   it("resolves configured endpoint BYO refs instead of inline deployment keys", async () => {

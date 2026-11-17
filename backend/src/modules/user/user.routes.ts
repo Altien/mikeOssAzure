@@ -598,6 +598,20 @@ userRouter.put(
                     code: "organisation_api_key_required",
                     detail: organisationCredentialDetail(provider),
                 });
+            if (result.kind === "member_key_not_enabled") {
+                const label = ORGANISATION_CREDENTIALS[provider].label;
+                return void res.status(403).json({
+                    code: "member_key_not_enabled",
+                    detail: `Your organisation's administrators have not enabled personal keys for ${label}.`,
+                });
+            }
+            if (result.kind === "member_key_storage_unavailable") {
+                console.error("[user-api-keys] member key not stored: Key Vault secret user-api-keys-encryption-key is missing or unreadable");
+                return void res.status(503).json({
+                    code: "member_key_storage_unavailable",
+                    detail: "Personal keys cannot be stored yet: the operator must set the user-api-keys-encryption-key secret in this deployment's Key Vault.",
+                });
+            }
             return void sendInternalError(res, result.error);
         }
         res.json(result.status);

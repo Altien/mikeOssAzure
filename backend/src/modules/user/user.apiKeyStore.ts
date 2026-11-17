@@ -26,7 +26,9 @@ import { type ConnectorOwner, workspaceFilter } from "../../lib/connectorOwner";
 import crypto from "node:crypto";
 import { WEB_SEARCH_BACKENDS, type WebSearchBackend } from "../../lib/webSearch/settings";
 import { loadDeploymentSearchApiKeys } from "../../lib/webSearch/credentials";
-import { tenantModelAllowlist } from "../../lib/tenantSettings";
+import { tenantHasProviderKey, tenantModelAllowlist } from "../../lib/tenantSettings";
+import { getTenancyMode } from "../../lib/tenancyMode";
+import { MEMBER_KEY_PROVIDERS, memberKeyModels } from "../../lib/llm/memberKeys";
 import { getConfig } from "../../lib/config";
 import { resolveSecret, resolveProviderSecret, resolveVercelApiKey } from "../../lib/envSecrets";
 import { createServerSupabase, type Db } from "../../lib/supabase";
@@ -66,7 +68,19 @@ export type ApiKeyStatus = Record<ApiKeyProvider, boolean> & {
     settings: ProviderSettings;
     /** Tenant-level model allowlist (multi-tenant tenant settings); absent when unrestricted. */
     modelAllowlist?: readonly string[] | null;
+    /** Pooled mode only: per model provider, who supplies the key. */
+    pooledKeys?: Partial<Record<ApiKeyProvider, PooledKeyStatus>>;
 };
+export type PooledKeyStatus = {
+    /** Models the member may run on their own key; empty when they may not set one. */
+    memberKeyModels: string[];
+    /** The member has saved their own key. */
+    memberKeySet: boolean;
+    /** The organisation (tenant) supplies its own key for this provider. */
+    organisationKey: boolean;
+};
+
+const POOLED_MODEL_PROVIDERS = ["claude", "gemini", "openai", "kimi", "mistral", "openrouter", "opencode-go", "vercel", "azure_openai", "bedrock", "azure", "azure-foundry", "vertex", "xai", "custom", "tokenjuice", "meta"] as const;
 
 const ORG_PROVIDERS = ["claude", "gemini", "openai", "kimi", "mistral", "openrouter", "opencode-go", "vercel", "courtlistener", "azure_openai", "bedrock", "azure", "azure-foundry", "vertex", "xai", "custom", "tokenjuice", "meta", ...WEB_SEARCH_BACKENDS] as const;
 
@@ -88,7 +102,56 @@ export async function getUserApiKeyStatus(userId: string, db: Db = createServerS
     }
     const modelAllowlist = await tenantModelAllowlist();
     if (modelAllowlist !== null) status.modelAllowlist = modelAllowlist;
+    if (await getTenancyMode() === "pooled") {
+        const saved = await savedMemberKeyProviders(userId, db);
+        status.pooledKeys = {};
+        for (const provider of POOLED_MODEL_PROVIDERS) {
+            const entry: PooledKeyStatus = {
+                memberKeyModels: await memberKeyModels(provider),
+                memberKeySet: saved.has(provider),
+                organisationKey: await tenantHasProviderKey(provider),
+            };
+            status.pooledKeys[provider] = entry;
+            // A usable member key makes its listed models selectable.
+            if (entry.memberKeySet && entry.memberKeyModels.length && enabled[provider] !== false && !status[provider]) {
+                status[provider] = true;
+                status.sources[provider] = "user";
+            }
+        }
+    }
     return status;
+}
+
+async function savedMemberKeyProviders(userId: string, db: Db): Promise<Set<string>> {
+    const { data, error } = await db.from("user_api_keys").select("provider").eq("user_id", userId)
+        .in("provider", [...MEMBER_KEY_PROVIDERS]);
+    if (error) throw error;
+    return new Set(((data ?? []) as { provider: string }[]).map((row) => row.provider));
+}
+
+/** A member key may be saved for this provider: at least one of its models is listed. */
+export async function memberKeyAllowed(provider: ApiKeyProvider): Promise<boolean> {
+    return (await memberKeyModels(provider)).length > 0;
+}
+
+/**
+ * The member's own keys for providers with listed models, decrypted for the
+ * call path only (llm/memberKeys.ts decides per model). Never logged.
+ */
+async function getMemberApiKeys(userId: string, db: Db): Promise<Record<string, string>> {
+    const providers: string[] = [];
+    for (const provider of MEMBER_KEY_PROVIDERS) {
+        if ((await memberKeyModels(provider)).length) providers.push(provider);
+    }
+    if (!providers.length) return {};
+    const { data, error } = await db.from("user_api_keys").select("provider, encrypted_key, iv, auth_tag")
+        .eq("user_id", userId).in("provider", providers);
+    if (error) throw error;
+    const keys: Record<string, string> = {};
+    for (const row of (data ?? []) as (EncryptedPayload & { provider: string })[]) {
+        keys[row.provider] = await decrypt(row);
+    }
+    return keys;
 }
 
 /**
@@ -239,6 +302,9 @@ export { resolveVercelApiKey } from "../../lib/envSecrets";
 
 const ENCRYPTION_SECRET_NAME = "user-api-keys-encryption-key";
 
+/** The deployment has no usable user-api-keys-encryption-key: an operator fault. */
+export class ApiKeyEncryptionUnavailableError extends Error {}
+
 let keyPromise: Promise<Buffer> | null = null;
 
 async function getEncryptionKey(): Promise<Buffer> {
@@ -250,13 +316,13 @@ async function getEncryptionKey(): Promise<Buffer> {
             } catch (err) {
                 const cause =
                     err instanceof Error ? err.message : String(err);
-                throw new Error(
+                throw new ApiKeyEncryptionUnavailableError(
                     `User API keys encryption secret (${ENCRYPTION_SECRET_NAME}) ` +
                         `could not be loaded: ${cause}`,
                 );
             }
-            if (!secret) {
-                throw new Error(
+            if (!secret || secret.trim() === "__unset__") {
+                throw new ApiKeyEncryptionUnavailableError(
                     `User API keys encryption secret (${ENCRYPTION_SECRET_NAME}) ` +
                         `is not configured. Set the secret in Key Vault (canonical), ` +
                         `or the equivalent env var USER_API_KEYS_ENCRYPTION_KEY for local dev.`,
@@ -272,7 +338,11 @@ async function getEncryptionKey(): Promise<Buffer> {
             // KDF without a re-encryption migration that decrypts under
             // sha256 and re-encrypts under scrypt.
             return crypto.createHash("sha256").update(secret).digest();
-        })();
+        })().catch((error: unknown) => {
+            // Retry once an operator has set the secret; no restart needed.
+            keyPromise = null;
+            throw error;
+        });
     }
     return keyPromise;
 }
@@ -306,6 +376,14 @@ async function encrypt(plaintext: string): Promise<EncryptedPayload> {
     };
 }
 
+async function decrypt(payload: EncryptedPayload): Promise<string> {
+    const decipher = crypto.createDecipheriv("aes-256-gcm", await getEncryptionKey(), Buffer.from(payload.iv, "base64"));
+    decipher.setAuthTag(Buffer.from(payload.auth_tag, "base64"));
+    return Buffer.concat([
+        decipher.update(Buffer.from(payload.encrypted_key, "base64")),
+        decipher.final(),
+    ]).toString("utf8");
+}
 
 
 
@@ -586,6 +664,7 @@ export async function getEffectiveApiKeys(userId: string, orgId?: string | null,
     keys.courtlistener = courtlistener.key;
     // CourtListener now has its own workspace switch; other provider masks remain.
     keys.disabledProviders = (keys.disabledProviders ?? []).filter((provider) => provider !== "courtlistener");
+    if (await getTenancyMode() === "pooled") keys.memberKeys = await getMemberApiKeys(userId, db);
     return keys;
 }
 

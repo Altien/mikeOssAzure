@@ -10,13 +10,145 @@ import {
     type ModelApiKeyField,
 } from "@/app/components/settings/modelProviders";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
+import { InputUI } from "@/shared/ui/InputUI";
 import { ToggleSwitchUI } from "@/shared/ui/ToggleSwitchUI";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
 import { SettingsDescription } from "@/app/components/settings/SettingsText";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
-import { type ApiKeyProvider } from "@/app/lib/mikeApi";
+import {
+    MikeApiError,
+    saveApiKey,
+    type ApiKeyProvider,
+    type PooledKeys,
+    type PooledKeyStatus,
+} from "@/app/lib/mikeApi";
 import { reportFault } from "@/app/lib/userFacingError";
+
+/**
+ * Pooled mode: the organisation decides who supplies each provider's key. A
+ * member may keep their own key only for the models its administrators list.
+ */
+function PooledProviderCard({
+    field,
+    status,
+    onChanged,
+}: {
+    field: ModelApiKeyField;
+    status: PooledKeyStatus | undefined;
+    onChanged: () => Promise<void>;
+}) {
+    const [value, setValue] = useState("");
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const models = status?.memberKeyModels ?? [];
+    const memberEnabled = models.length > 0;
+    const modelList = models.join(", ");
+    const lines = [
+        status?.organisationKey ? "Provided by your organisation." : null,
+        memberEnabled ? `You may use your own key for: ${modelList}.` : null,
+        !status?.organisationKey && !memberEnabled
+            ? "Keys are managed by your organisation's administrators."
+            : null,
+    ].filter(Boolean);
+
+    async function save(next: string | null) {
+        setBusy(true);
+        setError(null);
+        try {
+            await saveApiKey(field.provider, next);
+            setValue("");
+            await onChanged();
+        } catch (failure) {
+            const message =
+                failure instanceof MikeApiError
+                    ? failure.message
+                    : "The key could not be saved. Please try again.";
+            setError(message);
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    const keyLabel = `${field.name} API key`;
+    const action = !memberEnabled ? null : status?.memberKeySet ? (
+        <PillButtonUI
+            tone="blue"
+            size="sm"
+            disabled={busy}
+            aria-label={`Remove your ${field.name} key`}
+            onClick={() => void save(null)}
+        >
+            Remove
+        </PillButtonUI>
+    ) : (
+        <form
+            className="flex items-center gap-2"
+            onSubmit={(event) => {
+                event.preventDefault();
+                if (value.trim()) void save(value);
+            }}
+        >
+            <InputUI
+                type="password"
+                autoComplete="off"
+                aria-label={keyLabel}
+                placeholder="Your key"
+                value={value}
+                onChange={(event) => setValue(event.target.value)}
+                className="w-40"
+            />
+            <PillButtonUI
+                tone="blue"
+                size="sm"
+                type="submit"
+                disabled={busy || !value.trim()}
+            >
+                Save
+            </PillButtonUI>
+        </form>
+    );
+    const savedLine = memberEnabled && status?.memberKeySet ? " Your key is saved." : "";
+    const detailText = lines.join(" ") + savedLine;
+    return (
+        <div className="space-y-1">
+            <ConnectorCard
+                kind="provider"
+                name={field.name}
+                icon={<ModelProviderIcon field={field} loading={false} />}
+                detail={detailText}
+                action={action}
+            />
+            {error ? (
+                <p role="alert" className="text-sm text-red-600">
+                    {error}
+                </p>
+            ) : null}
+        </div>
+    );
+}
+
+function PooledProviders({ pooledKeys }: { pooledKeys: PooledKeys }) {
+    const { reloadProfile } = useUserProfile();
+    return (
+        <div className="@container space-y-8">
+            <SettingsDescription>
+                Your organisation decides who supplies each provider&apos;s key.
+                Your own key is used only for the models listed with it.
+            </SettingsDescription>
+            <div className="grid grid-cols-1 gap-3 @min-[40rem]:grid-cols-2">
+                {MODEL_API_KEY_FIELDS.map((field) => (
+                    <PooledProviderCard
+                        key={field.provider}
+                        field={field}
+                        status={pooledKeys[field.provider]}
+                        onChanged={reloadProfile}
+                    />
+                ))}
+            </div>
+        </div>
+    );
+}
 /**
  * A provider is listed as saved once the user has saved their own key for it. It
  * stays there while switched off, so the switch does not move under the
@@ -114,6 +246,9 @@ export default function ByokPage() {
             />
         );
     };
+
+    const pooledKeys = profile?.pooledKeys;
+    if (!loading && pooledKeys) return <PooledProviders pooledKeys={pooledKeys} />;
 
     return (
         <div className="@container space-y-8">

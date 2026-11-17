@@ -98,3 +98,42 @@ describe("organisation model providers", () => {
             .getByRole("button", { name: "Manage Anthropic (Claude)" })).toBeInTheDocument();
     });
 });
+
+describe("pooled organisation providers", () => {
+    const pooled = (claudeKeySet: boolean) => ({
+        ...STATUS,
+        pooledKeys: {
+            claude: { memberKeyModels: ["claude-sonnet-4-5"], memberKeySet: claudeKeySet, organisationKey: false },
+            openai: { memberKeyModels: [], memberKeySet: false, organisationKey: true },
+        },
+    });
+    it("shows who supplies each key and saves a member key only where enabled, with no /install route", async () => {
+        let saved = false;
+        let body: unknown;
+        server.use(
+            http.get("*/api/user/profile", () => HttpResponse.json(profileWith(pooled(saved)))),
+            http.put("*/api/user/api-keys/claude", async ({ request }) => {
+                body = await request.json();
+                saved = true;
+                return HttpResponse.json(pooled(true));
+            }),
+        );
+        const user = userEvent.setup();
+        renderPage();
+        expect(await screen.findByText(/You may use your own key for: claude-sonnet-4-5/)).toBeVisible();
+        const claude = screen.getByRole("region", { name: "Anthropic (Claude) provider" });
+        expect(within(screen.getByRole("region", { name: "OpenAI provider" }))
+            .getByText(/Provided by your organisation/)).toBeVisible();
+        expect(within(screen.getByRole("region", { name: "Mistral AI provider" }))
+            .getByText(/managed by your organisation's administrators/)).toBeVisible();
+        expect(screen.queryByRole("link", { name: "Open organisation setup" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: /^Add / })).not.toBeInTheDocument();
+        expect(screen.queryByText(/Personal workspace only/)).not.toBeInTheDocument();
+        expect(screen.getAllByLabelText(/API key$/)).toHaveLength(1);
+
+        await user.type(within(claude).getByLabelText("Anthropic (Claude) API key"), "sk-member");
+        await user.click(within(claude).getByRole("button", { name: "Save" }));
+        expect(body).toEqual({ api_key: "sk-member" });
+        expect(await within(claude).findByRole("button", { name: "Remove your Anthropic (Claude) key" })).toBeVisible();
+    });
+});

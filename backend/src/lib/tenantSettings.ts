@@ -6,10 +6,13 @@ import { currentTenant } from "./tenantContext";
 import { createServerSupabase } from "./supabase";
 import { isSecretNotFound } from "./secretNotFound";
 
+export type TenantKeyMode = "platform" | "byo" | "hybrid";
 export type TenantSettings = {
-  key_mode: "platform" | "byo";
+  key_mode: TenantKeyMode;
   tier: string | null;
   model_allowlist: string[] | null;
+  /** Models a member may run on their own provider key; null or [] permits none. */
+  member_key_models?: string[] | null;
   enabled_connectors: string[] | null;
   feature_flags: Record<string, boolean>;
   config: Record<string, string>;
@@ -25,7 +28,7 @@ export async function getTenantSettings(): Promise<TenantSettings | null> {
   if (hit && Date.now() - hit.at < TTL_MS) return hit.value;
   const value = (async () => {
     const { data, error } = await createServerSupabase().from("tenant_settings")
-      .select("key_mode, tier, model_allowlist, enabled_connectors, feature_flags, config, secret_refs")
+      .select("key_mode, tier, model_allowlist, member_key_models, enabled_connectors, feature_flags, config, secret_refs")
       .eq("tenant_id", tenantId).maybeSingle();
     if (error) throw new Error("Unable to read tenant configuration");
     return data as TenantSettings | null;
@@ -70,8 +73,47 @@ export async function assertTenantModelAllowed(model: string): Promise<void> {
   if (allowed !== null && !allowed.includes(model)) throw new Error("This model is not enabled for your organisation. Ask an administrator to update the model policy.");
 }
 
-export async function tenantKeyMode(): Promise<"platform" | "byo"> {
-  return (await getTenantSettings())?.key_mode ?? "platform";
+/**
+ * Each model provider's Key Vault secrets (canonical names and aliases), by
+ * settings provider name. In hybrid mode a reference to any one of them makes
+ * the whole provider the tenant's, so a tenant endpoint is never paired with
+ * the platform's key, nor the reverse.
+ */
+const PROVIDER_SECRET_GROUPS: Record<string, readonly string[]> = {
+  claude: ["anthropic-api-key", "claude-api-key"],
+  gemini: ["gemini-api-key"],
+  openai: ["openai-api-key"],
+  mistral: ["mistral-api-key"],
+  kimi: ["moonshot-api-key"],
+  xai: ["xai-api-key"],
+  openrouter: ["openrouter-api-key"],
+  vercel: ["ai-gateway-api-key", "vercel-ai-gateway-api-key"],
+  "opencode-go": ["opencode-api-key"],
+  bedrock: ["aws-bearer-token-bedrock", "bedrock-aws-region"],
+  azure: ["azure-openai-api-key", "azure-openai-endpoint"],
+  azure_openai: ["azure-openai-api-key", "azure-openai-endpoint"],
+  "azure-foundry": ["azure-foundry-api-key", "azure-foundry-endpoint"],
+  vertex: ["google-vertex-credentials-json", "google-vertex-location"],
+  custom: ["custom-api-key", "custom-base-url"],
+  tokenjuice: ["tokenjuice-api-key", "tokenjuice-base-url", "tokenjuice-models"],
+  meta: ["meta-api-key", "meta-base-url", "meta-models"],
+};
+
+function hasProviderRef(settings: TenantSettings | null, provider: string): boolean {
+  const names = PROVIDER_SECRET_GROUPS[provider === "azureOpenai" ? "azure_openai" : provider] ?? [];
+  return names.some((name) => Object.hasOwn(settings?.secret_refs ?? {}, name));
+}
+
+/** An organisation key is in place: byo or hybrid with a reference for this provider. */
+export async function tenantHasProviderKey(provider: string): Promise<boolean> {
+  const settings = await getTenantSettings();
+  return (settings?.key_mode === "byo" || settings?.key_mode === "hybrid") && hasProviderRef(settings, provider);
+}
+
+/** The tenant, not the platform, supplies this provider's calls (byo, or hybrid with a reference). */
+export async function tenantSuppliesProvider(provider: string): Promise<boolean> {
+  const settings = await getTenantSettings();
+  return settings?.key_mode === "byo" || (settings?.key_mode === "hybrid" && hasProviderRef(settings, provider));
 }
 
 function usable(raw: string): string {
@@ -87,7 +129,8 @@ export async function hasTenantSecretReference(...names: string[]): Promise<bool
 
 /**
  * Explicit refs never fall through to platform secrets. BYO provider calls
- * also fail closed when a ref is absent; connector clients inherit install
+ * also fail closed when a ref is absent; hybrid provider calls use a ref when
+ * the provider has one and the platform secret otherwise; connector clients inherit install
  * defaults independently of the LLM key mode. Only names live in Postgres.
  *
  * A failed vault read reads as absent, unless `failOnUnreadable` asks for it to
@@ -104,7 +147,7 @@ export async function resolveTenantSecret(
   });
   const settings = await getTenantSettings();
   const names = [name, ...(options.aliases ?? [])];
-  const ref = options.provider && settings?.key_mode !== "byo" ? undefined
+  const ref = options.provider && settings?.key_mode !== "byo" && settings?.key_mode !== "hybrid" ? undefined
     : names.map((key) => settings?.secret_refs?.[key]).find((value) => value !== undefined);
   if (ref !== undefined) {
     const prefix = `tenant-${currentTenant()!.tenantId}-`;
@@ -116,6 +159,9 @@ export async function resolveTenantSecret(
   const oauthClient = /^(.*-oauth-client)-(id|secret)$/.exec(name);
   if (oauthClient && Object.keys(settings?.secret_refs ?? {}).some((key) => key.startsWith(oauthClient[1] + "-"))) return "";
   if (options.provider && settings?.key_mode === "byo") return "";
+  // Hybrid: a provider the tenant supplies in part never takes the rest from the platform.
+  if (options.provider && settings?.key_mode === "hybrid" && Object.entries(PROVIDER_SECRET_GROUPS)
+    .some(([provider, group]) => group.some((key) => names.includes(key)) && hasProviderRef(settings, provider))) return "";
   if (options.provider && settings?.tier) {
     const tierName = `platform-${settings.tier}-${name}`;
     if (process.env.KEY_VAULT_NAME) {

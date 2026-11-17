@@ -17,6 +17,7 @@ import {
     type ApiKeyState,
     type ApiKeyProvider,
     type ApiKeySettings,
+    type PooledKeys,
     type PersonalisationDetails,
     type PracticeSetting,
     type ProfessionalTitle,
@@ -90,6 +91,8 @@ interface UserProfile extends RouterProfileLists {
     apiKeys: ApiKeyState;
     /** Settings saved with the user's own keys (region, endpoint, location, base URL). */
     apiKeySettings: ApiKeySettings;
+    /** Pooled mode only: who supplies each provider's key (Settings → keys). */
+    pooledKeys?: PooledKeys;
 }
 
 export type PreferenceField =
@@ -214,6 +217,7 @@ function toProfile(data: ApiUserProfile): UserProfile {
         ...routerProfileLists(profile),
         apiKeys,
         apiKeySettings: apiKeyStatus.settings ?? {},
+        ...(apiKeyStatus.pooledKeys ? { pooledKeys: apiKeyStatus.pooledKeys } : {}),
     };
 }
 
