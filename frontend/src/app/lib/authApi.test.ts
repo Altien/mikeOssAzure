@@ -10,6 +10,7 @@ import {
     enrollMfa,
     getAuthSession,
     getMfaAssurance,
+    getSignInOptions,
     listMfaFactors,
     login,
     logout,
@@ -182,6 +183,23 @@ describe("cookie auth client", () => {
         expect(
             (fetchMock.mock.calls[0][1] as RequestInit).headers,
         ).not.toHaveProperty("Authorization");
+    });
+
+    it("reads the sign-in options with a bounded request", async () => {
+        // Dev: no first-run setup or closed sign-up fields (not adopted).
+        const options = { google: false, sso: false, setupRequired: false };
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify(options), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            }),
+        );
+
+        await expect(getSignInOptions()).resolves.toEqual(options);
+        expect(fetchMock).toHaveBeenCalledWith(
+            "/api/auth/options",
+            expect.objectContaining({ signal: expect.any(AbortSignal) }),
+        );
     });
 
     it("maps an expired cookie session to a signed-out state", async () => {
