@@ -59,6 +59,7 @@ import {
     prepareProjectChatStream,
     updateChatTitle,
 } from "./projectChat.service";
+import { log } from "../../lib/log";
 
 export const projectChatRouter = Router({ mergeParams: true });
 
@@ -433,7 +434,7 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                 );
             }
             if (isAbortError(err)) {
-                console.log("[project-chat/stream] turn stopped", {
+                log.info("project-chat/stream", "turn stopped", {
                     chatId,
                 });
                 // Same record as the assistant chat's stop path: the turn,
@@ -584,7 +585,7 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                     turn: memoryTurn,
                 });
             } catch {
-                console.warn("[memory] project chat activity release failed", {
+                log.warn("memory", "project chat activity release failed", {
                     chatId,
                 });
             }

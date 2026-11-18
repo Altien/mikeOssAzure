@@ -70,6 +70,7 @@ import {
   updateWordEditOutcome,
   type ProposedWordEdit,
 } from "./wordChat.service";
+import { log } from "../../lib/log";
 
 export const wordChatRouter = Router();
 
@@ -1102,7 +1103,7 @@ wordChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
           turn: memoryTurn,
         });
       } catch {
-        console.warn("[memory] Word activity release failed", { chatId });
+        log.warn("memory", "Word activity release failed", { chatId });
       }
     }
   }

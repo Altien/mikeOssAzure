@@ -48,6 +48,7 @@ import { isStagedPlaybookImportKey } from "./playbooks.staging";
 import { reportPlaybookFailure } from "./playbooks.reporting";
 
 import { DocumentReviewRetryableError } from "../documents/documents.service";
+import { log } from "../../lib/log";
 
 export const PLAYBOOK_REVIEW_JOB = "playbook.review";
 export const PLAYBOOK_IMPORT_JOB = "playbook.import";
@@ -180,7 +181,7 @@ async function clearStagedImport(db: Db, job: DbJob, payload: PlaybookImportJobP
       jobKind: "playbook.import",
       ids: { import_id: payload.attemptId },
     });
-    console.warn("[playbooks] staged upload cleanup failed", {
+    log.warn("playbooks", "staged upload cleanup failed", {
       storageKey: payload.storageKey,
       error: safeError(error),
     });

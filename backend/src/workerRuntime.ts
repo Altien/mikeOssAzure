@@ -38,6 +38,7 @@ import { flushLlmUsage } from "./lib/llm/usage";
 import { probeStampRuntime } from "./lib/stampRuntime";
 import { createPollFailureGate } from "./lib/observability/pollFailureGate";
 import { asReportableError } from "./lib/httpError";
+import { log } from "./lib/log";
 
 const SWEEP_INTERVAL_MS = (() => {
     const raw = Number(process.env.STALE_SWEEP_INTERVAL_MS);
@@ -176,7 +177,7 @@ export async function startAllWorkers(roles: readonly WorkerRole[] = WORKER_ROLE
         void runStaleWorkSweep(createPlatformSupabase())
             .then(({ documents, cells }) => {
                 if (documents || cells)
-                    console.warn("[stale-sweep] flipped", { documents, cells });
+                    log.warn("stale-sweep", "flipped", { documents, cells });
             })
             .catch((err) => {
                 reportError(err, { tags: { component: "stale-sweep" } });

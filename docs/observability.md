@@ -25,7 +25,9 @@ The backend, web app, and Word add-in use an outbound allowlist before events
 leave the process. It retains bounded error identity, code location, operation
 labels, normalized route, status, and validated request IDs. Request bodies,
 headers, cookies, URLs with queries, chat or document text, user identities,
-breadcrumbs, replay, attachments, traces, and non-error envelopes are excluded.
+breadcrumbs, replay, attachments, traces, and non-error envelopes are excluded
+(the backend can opt in to structured logs and metrics; see
+[Structured logs and metrics](#structured-logs-and-metrics)).
 With SDK v11, every SDK option sets `dataCollection` to collect nothing optional
 (no user info, cookies, headers, bodies, URL query parameters, AI inputs or
 outputs, stack-frame variables or context lines); the backend also keeps
@@ -170,6 +172,57 @@ Power-of-two sampling still applies. The add-in gets the power-of-two sampling b
 no `REACT_APP_SENTRY_*` settings into the bundle. Budgets are per process,
 thread or task pane and are bounded to 1,000 recent keys. The former
 `SENTRY_MAX_EVENTS_PER_ISSUE_PER_MINUTE` throttle is retired.
+
+### Structured logs and metrics
+
+Off by default. With `SENTRY_LOGS=on` (and a deployment DSN configured — Dev
+bakes none) the backend also sends its structured logs to
+[Sentry Logs](https://docs.sentry.io/platforms/javascript/guides/node/logs/)
+and its counters to [Sentry's Application Metrics](https://docs.sentry.io/platforms/javascript/guides/node/metrics/),
+to whichever project its error events go to. Error events and their budgets
+are unaffected. The web app and the Word add-in do not send logs.
+
+The backend's line logger is `backend/src/lib/log.ts` (upstream b625334f):
+
+```ts
+import { countMetric, log, logEvent, tpl } from "../lib/log";
+
+log.warn("dbq", "poll failed", error);                    // "[dbq] poll failed" + error printed
+log.info(tpl`[dbq] runner started (poll ${ms}ms)`);       // values printed, not sent
+logEvent("info", "tool-activity", "counted", { tool, count });
+countMetric("tool_activity", count, { kind, tool, outcome });
+```
+
+Every call prints exactly as `console.warn` or `console.log` would, so the
+line still passes through Dev's console bridge (`lib/logging/consoleBridge.ts`,
+errors serialised by `lib/logging/serialize.ts`) into the structured stdout /
+Application Insights sink. It sits on top of that bridge and does not replace
+it, nor Dev's structured root logger (`lib/logging/root.ts`, imported as
+`rootLog` where both are used). What goes to Sentry is narrower:
+
+| Part | Printed | Sent to Sentry |
+|---|---|---|
+| Scope and message | yes | yes; both must be literals in the source |
+| A `tpl` line's values | yes | no; each is sent as `{}` |
+| `logEvent` and `countMetric` attributes | yes | numbers, booleans, and strings shaped like an identifier (letters, digits, `_ . : -`, at most 64 characters) |
+| `detail` arguments (errors, paths, objects) | yes | never |
+
+The privacy boundary enforces this again on the way out: it rebuilds each log
+and metric from those fields, refuses a body that is not `[scope] message` or
+a metric name that is not an identifier, and drops the SDK's own attributes
+(`user.*`, `server.address`, `sentry.*`) except the environment and release.
+`backend/src/__tests__/logContract.test.ts` fails if a scope, message or
+metric name is built at run time, or if code calls `Sentry.logger` or
+`Sentry.metrics` directly. As with diagnostic labels, never put a client's
+words in a scope, a message or a metric name.
+
+At most `SENTRY_MAX_LOGS_PER_DAY` logs and as many metrics (default 5,000
+each) leave one process per UTC day; one `[sentry]` warning marks the limit.
+Logs and metrics are billed by Sentry separately from errors.
+
+`console.error` is not part of this: it is already filed as an error event.
+Warn and info lines that still call `console.warn` or `console.log` directly
+(a message with no `[scope]`, or one built from a variable) are printed only.
 
 ### Reporting ownership
 

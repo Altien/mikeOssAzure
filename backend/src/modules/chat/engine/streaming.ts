@@ -116,6 +116,7 @@ import { buildMemoryTurn } from "../../../lib/memory/prompt";
 
 export type { AssistantEvent } from "@mike/contracts";
 import type { AssistantEvent, AssistantErrorCode } from "@mike/contracts";
+import { log } from "../../../lib/log";
 
 /**
  * Tools the model can call that execute outside this process — in the Word
@@ -804,7 +805,7 @@ export async function runLLMStream(params: {
         );
         // warn: the report above is the Sentry event; the log keeps its
         // redacted category.
-        console.warn("[subagents] model check failed", safeError(error));
+        log.warn("subagents", "model check failed", safeError(error));
         return null;
       });
       return checked?.ok ? checked.model : null;
@@ -1370,7 +1371,7 @@ export async function runLLMStream(params: {
       if (safeToDisplay && isUserProviderRefusal(err)) {
         // This turn returns the remedy to the owner of the rejected account.
         markErrorHandled(failure);
-        console.warn("[chat/stream] model account refused", safeErrorLog(failure));
+        log.warn("chat/stream", "model account refused", safeErrorLog(failure));
       } else {
         reportModelFailure(failure, {
           tags: { component: "chat-stream", ...(isSubagent ? { operation: "chat.subagent" as const } : {}) },

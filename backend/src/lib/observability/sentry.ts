@@ -19,9 +19,10 @@ import { redactDownloadPath } from "../downloadRedaction";
 
 import { isDevelopmentBuild } from "../buildMode";
 import * as Sentry from "@sentry/node";
-import { restoreDomExceptionType, retainExceptionTypes, diagnosticRoute, diagnosticErrorTags, privacyBoundaryIntegration, type Operation, type Stage } from "./sentryPrivacy";
+import { restoreDomExceptionType, retainExceptionTypes, diagnosticRoute, diagnosticErrorTags, privacyBoundaryIntegration, type Operation, type Stage, type TelemetryBudget, type TelemetryItemType } from "./sentryPrivacy";
 
 import { eventBudget, eventBudgetLimits } from "./sentryVolume";
+import { setLogForwarder } from "../log";
 
 export type SentryRole = "api" | "worker" | "worker-thread" | "job";
 
@@ -881,6 +882,47 @@ export function scrubEvent(
 }
 
 /**
+ * Structured logs and metrics (lib/log.ts: logEvent, log.info/warn,
+ * countMetric) go to Sentry only with SENTRY_LOGS=on. Error events are
+ * unaffected. See "Structured logs and metrics" in docs/observability.md.
+ */
+export function sentryLogsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.SENTRY_LOGS?.trim().toLowerCase() === "on";
+}
+
+export const DEFAULT_SENTRY_LOGS_PER_DAY = 5_000;
+
+export function sentryLogsPerDay(env: NodeJS.ProcessEnv = process.env): number {
+  const parsed = Number(env.SENTRY_MAX_LOGS_PER_DAY);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : DEFAULT_SENTRY_LOGS_PER_DAY;
+}
+
+/**
+ * At most `perDay` log items and `perDay` metric items leave this process
+ * each UTC day. Separate from the error-event ceiling, which they never use.
+ */
+export function telemetryBudget(perDay: number, now: () => number = Date.now): TelemetryBudget {
+  let day = "";
+  let used: Record<TelemetryItemType, number> = { log: 0, trace_metric: 0 };
+  let warned = false;
+  return (type, count) => {
+    const today = new Date(now()).toISOString().slice(0, 10);
+    if (today !== day) {
+      day = today;
+      used = { log: 0, trace_metric: 0 };
+      warned = false;
+    }
+    const allowed = Math.max(0, Math.min(count, perDay - used[type]));
+    used[type] += allowed;
+    if (allowed < count && !warned) {
+      warned = true;
+      console.warn("[sentry] the daily limit of structured logs or metrics was reached; the rest of today's are not sent");
+    }
+    return allowed;
+  };
+}
+
+/**
  * Initialise Sentry for this process. Safe to call more than once; returns
  * whether tracking is active. MUST run before Express/HTTP modules load so
  * the request instrumentation can hook them — see src/instrument.ts.
@@ -931,7 +973,10 @@ export function initSentry(
     // Bodies are stripped in beforeSend as well; not collecting them at all
     // means they never sit in memory on the event either.
     integrations: [
-      privacyBoundaryIntegration({ acceptEvent: eventBudget({ repeatEventsPerDay: config.repeatEventsPerDay, eventsPerDay: config.eventsPerDay }) }),
+      privacyBoundaryIntegration({
+        acceptEvent: eventBudget({ repeatEventsPerDay: config.repeatEventsPerDay, eventsPerDay: config.eventsPerDay }),
+        ...(sentryLogsEnabled(env) ? { telemetry: telemetryBudget(sentryLogsPerDay(env)) } : {}),
+      }),
       // Dev (sync-log: f4cf97c7): upstream relies on dataCollection.httpBodies
       // alone in SDK v11. Dev also keeps the integration's own body limit
       // (v11 renamed maxIncomingRequestBodySize to maxRequestBodySize).
@@ -951,6 +996,12 @@ export function initSentry(
     beforeSend: scrubEvent,
   });
   initialized = true;
+  if (sentryLogsEnabled(env)) {
+    setLogForwarder({
+      log: (level, body, attributes) => Sentry.logger[level](body, attributes),
+      metric: (name, value, attributes) => Sentry.metrics.count(name, value, { attributes }),
+    });
+  }
   installProcessWarningReporter(env);
   if (config.dsnSource !== "default") {
     console.log(
@@ -1200,6 +1251,7 @@ export function resetSentryForTests(
   options: { initialized?: boolean } = {},
 ): void {
   initialized = options.initialized ?? false;
+  setLogForwarder(null);
   process.off("warning", reportProcessWarning);
   // Tests exercise the full event shape unless they opt into community mode.
   currentInstall = install;

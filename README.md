@@ -43,8 +43,9 @@ write-only DSNs from runtime `/config` (`sentry-frontend-dsn` and
 `SENTRY_WORD_DSN` as fallbacks). No Sentry address is baked into either
 client bundle. The outbound privacy boundary keeps only bounded diagnostic
 events and excludes document content, credentials, request bodies, and user
-identities. See [observability](docs/observability.md) for configuration and
-limits.
+identities. The backend's structured logs and counters are sent only if you
+also set `SENTRY_LOGS=on`. See [observability](docs/observability.md) for
+configuration and limits.
 
 ### Manual Azure deployment
 

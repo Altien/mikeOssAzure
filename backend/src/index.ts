@@ -14,7 +14,9 @@ installErrorLogRedaction();
 // console.error wrapper): docs/structured-logging.md.
 import { installStructuredLogging } from "./lib/logging/install";
 const logging = installStructuredLogging({ proc: "api" });
-import { log } from "./lib/logging/root";
+// Dev divergence (sync-log: b625334f): dev's structured root logger is
+// imported as rootLog so upstream's central line logger keeps the name `log`.
+import { log as rootLog } from "./lib/logging/root";
 import { readTenantDebugSwitches } from "./lib/logging/tenantDebugStore";
 import { buildApp } from "./app";
 import { initDownloadSigningSecret } from "./lib/downloadTokens";
@@ -37,6 +39,8 @@ import { stopExtractionProcess } from "./lib/extraction/isolated";
 import { flushLlmUsage } from "./lib/llm/usage";
 import { probeStampRuntime } from "./lib/stampRuntime";
 import { extractionLauncherWarnings, storagePublicEndpointWarnings } from "./lib/runtimeConfig";
+import { flushToolActivity } from "./lib/toolActivity";
+import { log, tpl } from "./lib/log";
 
 const PORT = process.env.PORT ?? 3001;
 const HOST = process.env.HOST?.trim() || undefined;
@@ -120,10 +124,10 @@ async function start(): Promise<void> {
   // Upstream 2ada45fb: name a storage endpoint browsers cannot reach (R2/S3
   // driver only reads these variables; Azure Blob installs leave them unset).
   for (const warning of storagePublicEndpointWarnings()) {
-    console.warn(`[storage] ${warning}`);
+    log.warn(tpl`[storage] ${warning}`);
   }
   for (const warning of extractionLauncherWarnings()) {
-    console.warn(`[extraction] ${warning}`);
+    log.warn(tpl`[extraction] ${warning}`);
   }
   await initManifestSigningKey();
   const signingKey = manifestPublicKey();
@@ -134,20 +138,22 @@ async function start(): Promise<void> {
 
   const server = listenOrFail(buildApp(), PORT, () => {
     console.log(`Mike backend running on port ${PORT} (workers: ${workersMode})`);
-    log().info("process.start", { port: PORT, workersMode });
+    rootLog().info("process.start", { port: PORT, workersMode });
     void checkSchemaVersion().catch(() => {});
   }, undefined, HOST);
 
   async function shutdown(signal: string): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
-    log().info("process.shutdown", { signal });
+    rootLog().info("process.shutdown", { signal });
     const forced = setTimeout(() => process.exit(1), 15_000);
     forced.unref();
     try {
       await new Promise<void>((resolve, reject) =>
         server.close((error) => error ? reject(error) : resolve()),
       );
+      // In-flight turns have drained by now: log what they counted.
+      flushToolActivity();
       if (workersMode === "inline") await stopAllWorkers();
       await stopExtractionProcess();
       await closeStreamRunCluster();

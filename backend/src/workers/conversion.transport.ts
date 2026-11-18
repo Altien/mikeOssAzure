@@ -8,6 +8,7 @@ import { createServerSupabase } from "../lib/supabase";
 import { runWithJobTenant } from "../lib/tenantContext";
 import { withLogContext } from "../lib/logging/contextLight";
 import { runConversionJob, setDocumentTerminalStatus } from "../modules/documents/documents.service";
+import { log } from "../lib/log";
 
 /** True once a job has exhausted its retries (BullMQ 'failed', no attempts left). */
 export function isPermanentFailure(job: Job<ConversionJobData>): boolean {
@@ -41,8 +42,7 @@ export function createConversionWorker(): Worker<ConversionJobData> {
     );
     watchQueueErrors(worker, "worker");
     worker.on("stalled", (jobId) => {
-        console.warn(
-            "[conversion-worker] job stalled; will be re-queued",
+        log.warn("conversion-worker", "job stalled; will be re-queued",
             { jobId },
         );
     });

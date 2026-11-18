@@ -17,7 +17,9 @@ import {
   isGoogleWorkspaceTool,
   executeGoogleWorkspaceToolCall,
 } from "../../../../lib/integrations/googleWorkspace";
-import { log } from "../../../../lib/logging/root";
+// Dev divergence (sync-log: b625334f): dev's structured root logger is
+// imported as rootLog so upstream's central line logger keeps the name `log`.
+import { log as rootLog } from "../../../../lib/logging/root";
 import { diagnosticErrorTags } from "../../../../lib/observability/sentryPrivacy";
 import { documentSearchFailure } from "./documentSearchErrors";
 import { findDocumentText, createDocumentVersions } from "../../../documents/documents.service";
@@ -146,6 +148,7 @@ import {
 } from "./courtlistenerTurnState";
 import type { Db } from "../../../../lib/supabase";
 import { renderTableCells } from "./tableCells";
+import { log } from "../../../../lib/log";
 
 /**
  * Report a server-side tool's failure and return what to log for it. The
@@ -412,11 +415,11 @@ function toolOutcome(toolResults: readonly unknown[], callId: string): "ok" | "e
  * call's start (or the end of the batch).
  */
 function logToolCalls(starts: readonly ToolStart[], toolResults: readonly unknown[], subagent: boolean): void {
-  if (!starts.length || !log().debugEnabled()) return;
+  if (!starts.length || !rootLog().debugEnabled()) return;
   const end = Date.now();
   starts.forEach((start, index) => {
     const finishedAt = starts[index + 1]?.at ?? end;
-    log().debug("tool.call", {
+    rootLog().debug("tool.call", {
       toolName: start.name,
       toolCallId: start.id,
       durationMs: finishedAt - start.at,
@@ -1014,7 +1017,7 @@ export async function runToolCalls(
         // tell a 42883 from a 23505.
         const failureCode =
           result.kind === "error" ? diagnosticErrorTags(result.error).failure_code : undefined;
-        console.warn("[run_tools] find_documents failed", {
+        log.warn("run_tools", "find_documents failed", {
           category: failure.error_code,
           ...(failureCode === undefined ? {} : { failure_code: failureCode }),
         });
@@ -1212,7 +1215,7 @@ export async function runToolCalls(
         });
       } catch (error) {
         reportToolFailure(error);
-        console.warn("[run_tools] list_playbooks failed", safeError(error));
+        log.warn("run_tools", "list_playbooks failed", safeError(error));
         toolResults.push({
           role: "tool",
           tool_call_id: tc.id,
@@ -1346,7 +1349,7 @@ export async function runToolCalls(
           if (error instanceof PlaybookRequestError) fail(error.message);
           else {
             reportToolFailure(error);
-            console.warn("[run_tools] run_playbook failed", safeError(error));
+            log.warn("run_tools", "run_playbook failed", safeError(error));
             fail("The playbook review failed. Try again.");
           }
         } finally {
@@ -2203,7 +2206,7 @@ export async function runToolCalls(
           },
         );
         if (!result) break;
-        log().debug("doc.edit", {
+        rootLog().debug("doc.edit", {
           documentId: indexed.document_id,
           edits: edits.length,
           ok: result.ok,
@@ -2664,7 +2667,7 @@ export async function runToolCalls(
         },
       );
       const generatedId = (result as Record<string, unknown>).document_id;
-      log().debug("doc.generate", {
+      rootLog().debug("doc.generate", {
         sections: Array.isArray(args.sections) ? args.sections.length : null,
         landscape,
         numberSections,

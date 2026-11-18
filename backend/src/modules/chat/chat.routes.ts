@@ -82,6 +82,7 @@ import {
     resolveWorkspaceFilter,
     sendWorkspaceFailure,
 } from "../../lib/workspace";
+import { log } from "../../lib/log";
 
 export const chatRouter = Router();
 
@@ -1119,7 +1120,7 @@ chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                     turn: memoryTurn,
                 });
             } catch {
-                console.warn("[memory] chat activity release failed", {
+                log.warn("memory", "chat activity release failed", {
                     chatId,
                 });
             }

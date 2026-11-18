@@ -4,6 +4,7 @@ import { selectInBatches } from "./batchedQuery";
 import { safeError } from "./safeError";
 import { currentTenant } from "./tenantContext";
 import { getTenancyMode } from "./tenancyMode";
+import { log } from "./log";
 
 // Multi-tenant 006: an email is unique only within a tenant. Inside a tenant
 // scope, lookups by email see that tenant's profiles only (RLS, issue 008,
@@ -107,7 +108,7 @@ export async function loadCreatorProfiles(
                     .in("user_id", batch),
         );
     } catch (error) {
-        console.warn("[userLookup] failed to load creator profiles", safeError(error));
+        log.warn("userLookup", "failed to load creator profiles", safeError(error));
         return byUserId;
     }
     for (const row of data) {

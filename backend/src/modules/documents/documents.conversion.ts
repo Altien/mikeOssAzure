@@ -5,8 +5,11 @@ import { downloadFile, uploadFile } from "../../lib/storage";
 import { docxToPdf, convertedPdfKey } from "../../lib/convert";
 import { markStage, reportError, setOperation } from "../../lib/observability/sentry";
 import { createServerSupabase, type Db } from "../../lib/supabase";
-import { log } from "../../lib/logging/root";
+// Dev divergence (sync-log: b625334f): dev's structured root logger is
+// imported as rootLog so upstream's central line logger keeps the name `log`.
+import { log as rootLog } from "../../lib/logging/root";
 import { safeError } from "../../lib/safeError";
+import { log } from "../../lib/log";
 
 /**
  * Convert one uploaded DOCX/DOC to PDF and finalize the document.
@@ -34,7 +37,7 @@ export async function runConversionJob(
     const { documentId, versionId, userId, storagePath } = data;
     const finalize = data.finalizeDocumentStatus !== false;
     const conversionLog = { documentId, versionId, finalize, pdfBytes: null, errorCategory: null };
-    log().debug("conversion.job", { ...conversionLog, outcome: "start" });
+    rootLog().debug("conversion.job", { ...conversionLog, outcome: "start" });
 
     const original = await downloadFile(storagePath);
     if (!original) {
@@ -48,9 +51,9 @@ export async function runConversionJob(
     try {
         markStage("docx-to-pdf");
         pdfBuf = await docxToPdf(Buffer.from(original));
-        log().debug("conversion.job", { ...conversionLog, outcome: "converted", pdfBytes: pdfBuf.byteLength });
+        rootLog().debug("conversion.job", { ...conversionLog, outcome: "converted", pdfBytes: pdfBuf.byteLength });
     } catch (err) {
-        log().debug("conversion.job", { ...conversionLog, outcome: "convert_failed", errorCategory: safeError(err).category });
+        rootLog().debug("conversion.job", { ...conversionLog, outcome: "convert_failed", errorCategory: safeError(err).category });
         // Conversion failure is non-fatal (mirrors the sync path): the version
         // stays usable without a PDF rendition. Retrying LibreOffice on the
         // same bytes just fails the same way.
@@ -122,7 +125,7 @@ export async function runConversionJob(
             );
     }
     if (pdfBuf)
-        console.log("[conversion-worker] converted", { documentId, versionId });
+        log.info("conversion-worker", "converted", { documentId, versionId });
 }
 
 /**

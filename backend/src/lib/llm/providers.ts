@@ -70,6 +70,7 @@ import { vertexAuthClient } from "./vertexAuth";
 import { UserFacingError } from "../safeError";
 import { assertTenantModelAllowed, getTenantSettings, tenantSuppliesProvider } from "../tenantSettings";
 import { memberApiKeysFor } from "./memberKeys";
+import { log, tpl } from "../log";
 import { providerDataRetentionAllowed } from "../runtimeConfig";
 
 const OPENROUTER_BASE_URL =
@@ -143,7 +144,7 @@ function noRetentionOptions(
  * Keys page), so the remedy names the administrator, not Settings.
  */
 function keyNotConfigured(label: string, operatorHint: string): UserFacingError {
-  console.warn(`[llm] ${label} API key is not configured. ${operatorHint}`);
+  log.warn(tpl`[llm] ${label} API key is not configured. ${operatorHint}`);
   return new ProviderConfigurationError(
     `${label} is not configured for this organisation. Ask an administrator to configure it in /install.`,
   );

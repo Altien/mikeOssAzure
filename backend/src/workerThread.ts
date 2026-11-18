@@ -14,11 +14,14 @@ import { installErrorLogRedaction } from "./lib/log";
 installErrorLogRedaction();
 import { installStructuredLogging } from "./lib/logging/install";
 const logging = installStructuredLogging({ proc: "worker-thread" });
-import { log } from "./lib/logging/root";
+// Dev divergence (sync-log: b625334f): dev's structured root logger is
+// imported as rootLog so upstream's central line logger keeps the name `log`.
+import { log as rootLog } from "./lib/logging/root";
 import { readTenantDebugSwitches } from "./lib/logging/tenantDebugStore";
 import { parentPort, workerData } from "node:worker_threads";
 import { startAllWorkers, stopAllWorkers, WORKER_ROLES, type WorkerRole } from "./workerRuntime";
 import { initSentry } from "./lib/observability/sentry";
+import { log, tpl } from "./lib/log";
 
 initSentry("worker-thread");
 const role = (workerData as { role?: unknown } | null)?.role;
@@ -26,8 +29,8 @@ if (role !== undefined && !WORKER_ROLES.includes(role as WorkerRole)) throw new 
 void startAllWorkers(role === undefined ? WORKER_ROLES : [role as WorkerRole]).then(() => {
     logging.debugSwitches.start(readTenantDebugSwitches);
     parentPort?.postMessage("ready");
-    console.log("[worker-thread] background workers started");
-    log().info("process.start", { role: typeof role === "string" ? role : "all" });
+    log.info(tpl`[worker-thread] background workers started (${typeof role === "string" ? role : "all"})`);
+    rootLog().info("process.start", { role: typeof role === "string" ? role : "all" });
 }).catch((error) => {
     parentPort?.postMessage({ error: error instanceof Error ? error.message : String(error) });
     process.exit(1);
@@ -35,7 +38,7 @@ void startAllWorkers(role === undefined ? WORKER_ROLES : [role as WorkerRole]).t
 
 parentPort?.on("message", (message: unknown) => {
     if (message === "shutdown") {
-        log().info("process.shutdown", { signal: "shutdown" });
+        rootLog().info("process.shutdown", { signal: "shutdown" });
         logging.debugSwitches.stop();
         void stopAllWorkers()
             .then(() => process.exit(0))

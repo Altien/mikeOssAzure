@@ -25,7 +25,9 @@ export default defineConfig({
   test: {
     environment: "node",
     // Parser worker mocks remain request-local; isolation tests opt back in.
-    env: { EXTRACTION_ISOLATION: "off" },
+    // Counts are logged on a timer; lib/toolActivity's own tests and the
+    // suites that assert on counts give it a sink instead.
+    env: { EXTRACTION_ISOLATION: "off", TOOL_ACTIVITY_COUNTS: "off" },
     maxWorkers: process.env.CI ? undefined : localMaxWorkers,
     globals: false,
     include: ["src/**/*.{test,spec}.ts"],
