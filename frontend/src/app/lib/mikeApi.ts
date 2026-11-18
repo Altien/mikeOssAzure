@@ -41,7 +41,7 @@ import {
 } from "@/app/lib/auth-token";
 import { isPanelDocument } from "@/app/components/shared/types";
 import { authenticatedFetch, currentAuthEpoch } from "@/app/lib/authEvents";
-import { reportApiFailure, reportError, reportNetworkFailure, trackPendingRequest } from "@/app/lib/errorReporting";
+import { reportApiFailure, reportGatewayLimit, reportError, reportNetworkFailure, trackPendingRequest } from "@/app/lib/errorReporting";
 import { reportedUpstreamMessage } from "@mike/client";
 const apiFetch = async (input: RequestInfo | URL, init?: RequestInit, operation?: Operation): Promise<Response> => {
     const release = trackPendingRequest();
@@ -409,6 +409,10 @@ async function toApiError(
                 error: apiError,
                 reportingOwner: apiError.reportingOwner,
             });
+        } else if (response.status === 413 && !code) {
+            // The backend names its own size limits with a code. A 413
+            // without one was refused in front of it (see reportGatewayLimit).
+            reportGatewayLimit("payload-too-large", { path, method, status: 413, requestId });
         }
         return apiError;
     } catch {
@@ -434,6 +438,10 @@ async function toApiError(
                 error: apiError,
                 reportingOwner: apiError.reportingOwner,
             });
+        } else if (response.status === 413) {
+            // Not JSON, so not the backend's own 413: a proxy's or host's
+            // request-size cap (see reportGatewayLimit).
+            reportGatewayLimit("payload-too-large", { path, method, status: 413, requestId: apiError.requestId });
         }
         return apiError;
     }

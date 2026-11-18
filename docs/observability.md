@@ -69,6 +69,15 @@ once-a-minute `console.warn` count, back off, and log recovery. A PostgREST
 grouping (`upstream-unavailable`) does not apply: the static export has no
 gateway.
 
+Limits of whatever sits in front of the API (upstream e6a958d6,
+`component=gateway-limit`, warning). Neither is visible from the backend, so
+the browser reports them: a `413` that carries none of the backend's own codes
+(`stage=payload-too-large`: a reverse proxy's or ingress's request-size cap
+refused the body, one issue per route), and an assistant stream that ended
+without its `[DONE]` marker (`stage=stream-incomplete`: a proxy or ingress
+time limit, or a restart, closed a reply that was still running). The
+backend's own size limits answer with a `code` and are not reported.
+
 Playbook import/review lifecycle reports retain bounded stage/job/UUID identifiers only. Rule, finding, source and contract text remain excluded.
 
 Node process warnings are reported as warning events grouped by warning name
