@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, PASSWORD_TOO_LONG_DETAIL } from "./auth.messages";
 import { getConfig } from "../../lib/config";
+import { supabaseSessionConfiguration } from "../../lib/runtimeConfig";
+import { ssoConfiguration } from "../../lib/ssoConfig";
 
 /** Resolve the configured identity provider without probing optional GoTrue. */
 export async function authProvider(): Promise<string> {
@@ -59,3 +61,66 @@ export const signupSchema = credentialsSchema.extend({
 });
 
 export const passwordSchema = z.object({ password: passwordField(PASSWORD_MIN_LENGTH), nonce: z.string().optional() });
+
+// ---------------------------------------------------------------------------
+// Sign-in options (upstream 9c72f4f3)
+// ---------------------------------------------------------------------------
+// Dev: upstream's first-run setup (MIKE_FIRST_RUN_SETUP, set only by its
+// Vercel start script) is not adopted — Azure installs create accounts through
+// their identity provider — so `setupRequired` is always false here. Google
+// and SSO are Supabase-provider routes; Entra and local offer neither.
+
+const PROVIDER_SETTINGS_TTL_MS = 60_000;
+let cachedGoogleEnabled: { value: boolean; expiresAt: number } | undefined;
+
+/**
+ * Whether Supabase Auth has the Google provider switched on, from GoTrue's
+ * public settings endpoint. Cached for a minute. When the answer cannot be
+ * read the button stays visible, as it always was, rather than hiding a
+ * provider that may well work.
+ */
+async function googleSignInEnabled(fetchImpl: typeof fetch): Promise<boolean> {
+  const now = Date.now();
+  if (cachedGoogleEnabled && cachedGoogleEnabled.expiresAt > now) {
+    return cachedGoogleEnabled.value;
+  }
+  let value = true;
+  try {
+    const { url, key } = supabaseSessionConfiguration();
+    const response = await fetchImpl(`${url.replace(/\/+$/, "")}/auth/v1/settings`, {
+      headers: { apikey: key },
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (response.ok) {
+      const settings = (await response.json()) as { external?: { google?: unknown } };
+      value = settings.external?.google === true;
+    }
+  } catch {
+    // Unknown: keep the button (see above).
+  }
+  cachedGoogleEnabled = { value, expiresAt: now + PROVIDER_SETTINGS_TTL_MS };
+  return value;
+}
+
+/** Test seam: forget the cached provider settings. */
+export function resetSignInOptionsCache(): void {
+  cachedGoogleEnabled = undefined;
+}
+
+export type SignInOptions = {
+  google: boolean;
+  sso: boolean;
+  setupRequired: boolean;
+};
+
+/** Which sign-in routes the login page should offer. */
+export async function signInOptions(fetchImpl: typeof fetch = fetch): Promise<SignInOptions> {
+  if ((await authProvider()) !== "supabase") {
+    return { google: false, sso: false, setupRequired: false };
+  }
+  return {
+    google: await googleSignInEnabled(fetchImpl),
+    sso: ssoConfiguration().enabled,
+    setupRequired: false,
+  };
+}

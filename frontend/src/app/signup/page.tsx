@@ -67,6 +67,7 @@ import {
 } from "@/app/components/auth/passwordPolicy";
 import { TOO_MANY_ATTEMPTS_MESSAGE, authMessages } from "@/app/lib/authMessages";
 import { GoogleAuthButton } from "@/app/components/auth/GoogleAuthButton";
+import { useSignInOptions } from "@/app/hooks/useSignInOptions";
 import { FieldLabel } from "@/app/components/ui/form-field";
 
 function SignupContent() {
@@ -82,6 +83,11 @@ function SignupContent() {
     const isAccountCreatedPreview =
         process.env.NODE_ENV !== "production" &&
         searchParams.get("preview") === "account-created";
+    const { options: signInOptions, loaded: signInOptionsLoaded } =
+        useSignInOptions();
+    const showGoogle = signInOptionsLoaded && signInOptions.google;
+    // Dev: upstream's first-run /setup redirect is not adopted (no setup
+    // screen; the API always reports setupRequired: false).
 
     useEffect(() => {
         if (isAccountCreatedPreview) return;
@@ -270,12 +276,16 @@ function SignupContent() {
                             >
                                 {loading ? "Creating account..." : "Sign up"}
                             </PillButtonUI>
-                            <AuthDividerUI />
-                            <GoogleAuthButton
-                                onError={setError}
-                                disabled={loading}
-                                onLoadingChange={setLoading}
-                            />
+                            {showGoogle && (
+                                <>
+                                    <AuthDividerUI />
+                                    <GoogleAuthButton
+                                        onError={setError}
+                                        disabled={loading}
+                                        onLoadingChange={setLoading}
+                                    />
+                                </>
+                            )}
                         </div>
                     </form>
                 </div>

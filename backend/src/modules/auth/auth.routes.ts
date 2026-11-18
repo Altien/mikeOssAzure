@@ -31,7 +31,7 @@ import {
 } from "../../lib/auth/providers/supabaseSession";
 import { ssoConfiguration, ssoDomainSchema } from "../../lib/ssoConfig";
 import { readServerSession } from "../../lib/serverSession";
-import { authProvider, credentialsSchema, signupSchema, passwordSchema } from "./auth.service";
+import { authProvider, credentialsSchema, signupSchema, passwordSchema, signInOptions } from "./auth.service";
 
 import { describeAuthProviderError, describeAuthValidationIssues } from "./auth.messages";
 
@@ -79,6 +79,22 @@ authRouter.get("/config", async (_req, res) => {
     const config = ssoConfiguration();
     res.json({ ssoEnabled: config.enabled });
   } catch { res.status(503).json({ detail: "SSO configuration is unavailable" }); }
+});
+
+// Which sign-in routes to offer. Public: the login page asks before anyone is
+// signed in. Dev: first-run setup is not adopted, so setupRequired is false.
+authRouter.get("/options", async (_req, res) => {
+  setOperation("auth.options");
+  try {
+    res.json(await signInOptions());
+  } catch (error) {
+    sendInternalError(
+      res,
+      new AppError("auth.options_failed", "Sign-in options could not be read", {
+        cause: error,
+      }),
+    );
+  }
 });
 
 function frontendOrigin(): URL { return new URL(process.env.FRONTEND_URL || "http://localhost:3000"); }

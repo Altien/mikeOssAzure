@@ -172,6 +172,17 @@ export async function signup(email: string, password: string, next: string) {
     });
 }
 
+/** Which sign-in routes this deployment offers, and whether it still needs its first account. */
+export interface SignInOptions {
+    google: boolean;
+    sso: boolean;
+    setupRequired: boolean;
+}
+
+export async function getSignInOptions() {
+    return authRequest<SignInOptions>("auth.options", "/options");
+}
+
 export async function startGoogleOAuth(next: string) {
     return authRequest<{ url: string }>("auth.signin", "/oauth", {
         method: "POST",
