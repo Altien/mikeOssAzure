@@ -1015,6 +1015,7 @@ tabularRouter.post("/:reviewId/chat", requireAuth, asyncRoute(async (req, res) =
         memorySharedAudience,
         memoryTurn,
         model: selectedChatModel,
+        nonce,
         orgId,
         readableMemoryProjectId,
         reasoningLevel: selectedReasoningLevel,
@@ -1111,6 +1112,7 @@ tabularRouter.post("/:reviewId/chat", requireAuth, asyncRoute(async (req, res) =
             db,
             write,
             extraTools: TABULAR_TOOLS,
+            nonce,
             includeResearchTools: false,
             tabularStore,
             buildCitations: (text) =>
