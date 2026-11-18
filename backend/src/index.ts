@@ -40,7 +40,7 @@ import { flushLlmUsage } from "./lib/llm/usage";
 import { probeStampRuntime } from "./lib/stampRuntime";
 import { extractionLauncherWarnings, storagePublicEndpointWarnings } from "./lib/runtimeConfig";
 import { flushToolActivity } from "./lib/toolActivity";
-import { log, tpl } from "./lib/log";
+import { drainStdout, log, tpl } from "./lib/log";
 
 const PORT = process.env.PORT ?? 3001;
 const HOST = process.env.HOST?.trim() || undefined;
@@ -154,7 +154,11 @@ async function start(): Promise<void> {
       );
       // In-flight turns have drained by now: log what they counted.
       flushToolActivity();
-      if (workersMode === "inline") await stopAllWorkers();
+      if (workersMode === "inline") {
+        await stopAllWorkers();
+        // Inline jobs make tool calls too; log what they counted while stopping.
+        flushToolActivity();
+      }
       await stopExtractionProcess();
       await closeStreamRunCluster();
       // Usage-ledger rows still in flight (issue 015).
@@ -163,6 +167,7 @@ async function start(): Promise<void> {
       logging.debugSwitches.stop();
       clearTimeout(forced);
       console.log(`Graceful shutdown complete (${signal})`);
+      await drainStdout();
       process.exit(0);
     } catch (error) {
       console.error("Graceful shutdown failed", error);

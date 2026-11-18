@@ -30,7 +30,7 @@ import { flushSentry, reportError } from "./lib/observability/sentry";
 import { initSentry } from "./lib/observability/sentry";
 import { getKeyVaultConfig } from "./lib/config";
 import { flushToolActivity } from "./lib/toolActivity";
-import { log, tpl } from "./lib/log";
+import { drainStdout, log, tpl } from "./lib/log";
 
 // The Postgres poller unrefs its timers so an inline API can shut down
 // naturally. A standalone worker must retain a live event-loop reference.
@@ -69,6 +69,7 @@ async function shutdown(signal: string) {
     try {
         await stopAllWorkers();
         flushToolActivity();
+        await drainStdout();
         await flushSentry();
         process.exit(0);
     } catch (err) {
