@@ -34,8 +34,9 @@ function reportAuthFailure(req: Request, kind: ErrorKind, cause: unknown): void 
 // this middleware. If app-level step-up is ever needed, it must be designed
 // per-provider behind lib/auth/providers/.
 // Same for upstream dbddeea4 (MFA_REQUIRE_FOR_ENROLLED_USERS: every enrolled
-// factor guards every route, profile reports mfaOnLogin) and 7bdd9d0f
-// (requireMfaIfEnrolled on PATCH /auth/password): NOT SUPPORTED — they build
+// factor guards every route, profile reports mfaOnLogin; reverted upstream
+// by 1b27fafc) and 7bdd9d0f (requireMfaIfEnrolled on PATCH /auth/password,
+// kept upstream by 1b27fafc): NOT SUPPORTED — they build
 // on the app-level MFA above, which was deferred. Keep dev's behaviour during
 // conflict resolution; Entra Conditional Access owns step-up.
 
