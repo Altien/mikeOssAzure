@@ -179,8 +179,15 @@ export interface SignInOptions {
     setupRequired: boolean;
 }
 
+/**
+ * Bounded: the login page holds its provider buttons back until this
+ * answers, so a hung request must fall back to showing them (see
+ * useSignInOptions) rather than leave them missing.
+ */
 export async function getSignInOptions() {
-    return authRequest<SignInOptions>("auth.options", "/options");
+    return authRequest<SignInOptions>("auth.options", "/options", {
+        signal: AbortSignal.timeout(8_000),
+    });
 }
 
 export async function startGoogleOAuth(next: string) {
