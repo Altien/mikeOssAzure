@@ -11,7 +11,7 @@ continue to use their existing request and platform roles.
 
 The login has no role memberships, schema creation, content-table privileges,
 sequence rights or application-function rights beyond the twenty-one signatures
-below. Four views provide narrowly projected metadata. Application table names
+below. Five views provide narrowly projected metadata. Application table names
 and other functions are implementation details, not an integration API.
 
 Like PostgreSQL builtins, installed non-definer `pgcrypto` / `pg_trgm` utility
@@ -114,6 +114,11 @@ Every other model, and a listed model when the member has saved no key, resolves
 as the key mode says. Member keys are stored encrypted in the stamp database
 under the stamp's `user-api-keys-encryption-key` Key Vault secret.
 
+`cp_models` (below) lists the built-in model IDs this deployment accepts in
+`memberKeyModels`. OpenRouter, Vercel and xAI models have no built-in list:
+their IDs are `openrouter/<vendor>/<model>`, `vercel/<vendor>/<model>` and
+`xai/<model>`, named from the provider's own catalogue, and are not in the view.
+
 Budget policy updates never clear counters or reservations. A missing budget
 refuses pooled platform-paid calls; BYO continues without platform credits. A
 hybrid call on the tenant's key and a call on a member's key count as BYO: they
@@ -150,6 +155,12 @@ Errors: 22023 invalid actor, 23503 unknown report or out-of-scope document,
 | cp_audit_events | id, tenant_id, created_at, action, status, surface |
 | cp_storage_locations | tenant_id, display_name, status, region, stamp, storage_account, storage_container, purged_at |
 | cp_user_counts | tenant_id, users, admins (observed membership counts) |
+| cp_models | model_id, provider, label: the built-in models whose provider takes a member key, in Mike's catalogue order. Not tenant data; the same for every tenant. |
+
+`cp_models` is replaced by the deployment migration job on every deploy, so it
+matches the running image. `model_id` is the exact application model ID to put
+in `memberKeyModels`; `provider` is Mike's provider ID (claude, gemini, openai,
+mistral, kimi, opencode-go); `label` is currently the model ID.
 
 The views use the platform owner's rights for cross-tenant reporting, with fixed
 projections. Audit detail, actor IDs, email, titles, prompts, document/chat IDs,

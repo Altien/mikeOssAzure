@@ -8,6 +8,7 @@ import { syncWorkflowCatalog } from "../lib/workflowCatalogSync";
 import { resolveProviderSecret } from "../lib/envSecrets";
 import { getMigrationDatabaseUrl } from "../lib/deploymentDatabase";
 import { deployStampRuntime } from "../lib/stampDeployment";
+import { publishModelCatalog } from "../lib/llm/modelCatalog";
 import { assertInstallTenantGate } from "./installTenantGate";
 import { assertDirectMigrationConnection, parseMigrationCommand, runMigrationCommand } from "./migrationLedger";
 
@@ -182,6 +183,9 @@ async function main() {
     await deployment.connect();
     const created = await deployStampRuntime(deployment);
     console.log("[migrate] stamp metadata configured; ledger partitions created: " + created);
+    // The control plane's model catalogue (cp_models) follows the image.
+    const models = await publishModelCatalog(deployment);
+    console.log("[migrate] model catalogue published: " + models + " models");
   } finally { await deployment.end().catch(() => {}); }
   await ensureAuthenticatorRole(databaseUrl);
   await provisionAuthSecrets(databaseUrl);
