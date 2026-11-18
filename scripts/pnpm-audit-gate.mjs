@@ -2,6 +2,10 @@
 // Audit this workspace's pnpm lock and enforce dependency-scoped exceptions.
 // Keep the active Dev entrypoint and transport; the graph check prevents a GHSA
 // exception from applying to another package copy or newly added consumer.
+// A production copy (`dev: false`) is admitted only with its own written
+// `productionExposure`: pnpm classes build-time tools reached through a
+// production dependency (a bundler plugin under a framework SDK) as
+// production, and the scope must say why the shipped app never runs it.
 import { spawnSync } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
@@ -78,6 +82,11 @@ for (const [ghsa, advisory] of advisories) {
   if (!advisory.unmatched && isAllowedPnpm(exception, advisory.matches, graph, workspace)) {
     console.log("ALLOWLISTED " + advisory.severity + ": " + ghsa + " — " + advisory.title);
     console.log("  reason: " + exception.reason);
+    for (const scope of exception.scopes) {
+      if (scope.workspace === workspace && scope.dev === false) {
+        console.log("  production copy " + scope.path + ": " + scope.productionExposure);
+      }
+    }
   } else {
     blocking.push(advisory.severity + ": " + ghsa + " — " + advisory.title + " (" + advisory.url + ")" +
       (exception ? " — outside the approved dependency scope" : ""));

@@ -107,7 +107,9 @@ export function validateScopedAllowlist(allowlist) {
         typeof entry.reason !== "string" || !entry.reason.trim() || !Array.isArray(entry.scopes) || !entry.scopes.length ||
         !entry.scopes.every(scope => typeof scope.workspace === "string" && typeof scope.package === "string" &&
           typeof scope.version === "string" && exactVersion.test(scope.version) &&
-          typeof scope.path === "string" && scope.path.startsWith("snapshots/") && scope.dev === true &&
+          typeof scope.path === "string" && scope.path.startsWith("snapshots/") &&
+          (scope.dev === true || (scope.dev === false &&
+            typeof scope.productionExposure === "string" && scope.productionExposure.trim() !== "")) &&
           Array.isArray(scope.dependents) && scope.dependents.length && scope.dependents.every(parent =>
             typeof parent === "string" && /^(?:snapshots|importers)\/.+#(?:dependencies|optionalDependencies|devDependencies):.+$/.test(parent)))) {
       throw new Error("Invalid pnpm-scoped audit exception: " + (entry?.ghsa ?? "unknown"));
@@ -121,10 +123,10 @@ export function isAllowedPnpm(exception, matches, graph, workspace) {
     const copies = graph.installations.filter(copy => copy.name === match.name && copy.version === match.version);
     return copies.length && copies.every(copy => {
       const parents = [...(graph.dependents.get(copy.path) ?? [])];
-      return copy.dev && parents.length && exception.scopes.some(scope => {
+      return parents.length && exception.scopes.some(scope => {
         const permitted = new Set(scope.dependents);
         return scope.workspace === workspace && scope.package === copy.name && scope.version === copy.version &&
-          scope.path === copy.path && scope.dev === true && parents.length === permitted.size &&
+          scope.path === copy.path && scope.dev === copy.dev && parents.length === permitted.size &&
           parents.every(parent => permitted.has(parent));
       });
     });

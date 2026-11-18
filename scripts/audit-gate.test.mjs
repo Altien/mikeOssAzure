@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { buildPnpmAuditGraph, isAllowedPnpm, validateScopedAllowlist } from "./pnpm-audit-lock.mjs";
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = dirname(scriptsDir);
@@ -248,3 +249,71 @@ test("blocks an allowlisted GHSA when package version is outside its exact scope
     strictEqual(result.status, 1, result.stderr);
     strictEqual(result.stderr.includes("outside the approved dependency scope"), true);
 });
+
+// Port of upstream 02c86243: a production copy reached only through build
+// tooling may be allowlisted when its scope states `productionExposure`.
+test("allows a production copy whose scope states its exposure", async () => {
+    const entry = allowlist.find((candidate) => candidate.ghsa === "GHSA-fc5q-39xc-vjpf");
+    const result = await runGate({
+        workspace: join(repoRoot, "frontend"),
+        report: {
+            advisories: {
+                1: {
+                    ...advisory(entry.ghsa),
+                    module_name: "picomatch",
+                    findings: [{ version: "2.3.2", paths: ["fixture>micromatch>picomatch"] }],
+                },
+            },
+        },
+        status: 1,
+    });
+    strictEqual(result.status, 0, result.stderr);
+    strictEqual(result.stdout.includes(`ALLOWLISTED high: ${entry.ghsa}`), true);
+    strictEqual(result.stdout.includes("production copy snapshots/picomatch@2.3.2: Reached only through"), true, result.stdout);
+});
+
+const PROD_GHSA = "GHSA-aaaa-bbbb-cccc";
+const PROD_SCOPE = {
+    workspace: "word-addin", package: "msal", version: "6.0.1", path: "snapshots/msal@6.0.1",
+    dev: false, productionExposure: "Runs only during the build.",
+    dependents: ["snapshots/tool@1.0.0#dependencies:msal"],
+};
+function prodGraph({ devImporter = false, extraConsumer = false } = {}) {
+    const group = devImporter ? "devDependencies" : "dependencies";
+    const lock = {
+        lockfileVersion: "9.0",
+        importers: { ".": { [group]: { tool: { specifier: "1.0.0", version: "1.0.0" } } } },
+        packages: { "tool@1.0.0": {}, "msal@6.0.1": {} },
+        snapshots: { "tool@1.0.0": { dependencies: { msal: "6.0.1" } }, "msal@6.0.1": {} },
+    };
+    if (extraConsumer) {
+        lock.packages["runtime@1.0.0"] = {};
+        lock.snapshots["runtime@1.0.0"] = { dependencies: { msal: "6.0.1" } };
+        lock.importers["."][group].runtime = { specifier: "1.0.0", version: "1.0.0" };
+    }
+    return buildPnpmAuditGraph(lock);
+}
+const prodException = (scope = PROD_SCOPE) => ({ ghsa: PROD_GHSA, reason: "Build tooling only", scopes: [scope] });
+const MSAL_MATCH = [{ name: "msal", version: "6.0.1" }];
+
+test("matches a production copy only to a production scope with the same dependents", () => {
+    validateScopedAllowlist([prodException()]);
+    strictEqual(Boolean(isAllowedPnpm(prodException(), MSAL_MATCH, prodGraph(), "word-addin")), true);
+    strictEqual(Boolean(isAllowedPnpm(prodException(), MSAL_MATCH, prodGraph({ devImporter: true }), "word-addin")), false);
+    strictEqual(Boolean(isAllowedPnpm(prodException(), MSAL_MATCH, prodGraph({ extraConsumer: true }), "word-addin")), false);
+    const devScope = { ...PROD_SCOPE, dev: true };
+    delete devScope.productionExposure;
+    strictEqual(Boolean(isAllowedPnpm(prodException(devScope), MSAL_MATCH, prodGraph(), "word-addin")), false);
+});
+
+for (const [description, scope] of [
+    ["no stated exposure", { ...PROD_SCOPE, productionExposure: undefined }],
+    ["a blank stated exposure", { ...PROD_SCOPE, productionExposure: "  " }],
+    ["a dev flag that is not a boolean", { ...PROD_SCOPE, dev: "false" }],
+]) {
+    test(`rejects a production scope with ${description}`, () => {
+        let error = null;
+        try { validateScopedAllowlist([prodException(scope)]); } catch (caught) { error = caught; }
+        strictEqual(error?.message.includes("Invalid pnpm-scoped audit exception"), true, String(error));
+    });
+}

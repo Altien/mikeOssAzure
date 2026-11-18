@@ -175,5 +175,71 @@
         ]
       }
     ]
+  },
+  {
+    "ghsa": "GHSA-fc5q-39xc-vjpf",
+    "reason": "picomatch through 4.0.7 backtracks exponentially on single-branch repeated extglob PATTERNS such as +(*); the attacker must supply the glob. No release is patched. No source in backend/, frontend/, word-addin/ or packages/ imports picomatch, micromatch, fast-glob or tinyglobby, and every glob these tools compile comes from build, test or bundler configuration checked into this repository, never from a request or a document. Each scope names its exact dependents, so a new consumer of the package fails the gate. REMOVE WHEN: picomatch publishes a release outside the advisory's affected range and the lockfiles resolve it.",
+    "scopes": [
+      {
+        "workspace": "backend",
+        "package": "picomatch",
+        "version": "4.0.7",
+        "path": "snapshots/picomatch@4.0.7",
+        "dev": true,
+        "dependents": [
+          "snapshots/fdir@6.5.0(picomatch@4.0.7)#optionalDependencies:picomatch",
+          "snapshots/tinyglobby@0.2.17#dependencies:picomatch",
+          "snapshots/vite@8.1.5(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)#dependencies:picomatch",
+          "snapshots/vitest@5.0.3(@opentelemetry/api@1.9.1)(@types/node@26.6.6)(@vitest/coverage-v8@5.1.0)(vite@8.1.5(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))#dependencies:picomatch"
+        ]
+      },
+      {
+        "workspace": "frontend",
+        "package": "picomatch",
+        "version": "2.3.2",
+        "path": "snapshots/picomatch@2.3.2",
+        "dev": false,
+        "dependents": [
+          "snapshots/micromatch@4.0.8#dependencies:picomatch"
+        ],
+        "productionExposure": "Reached only through @opennextjs/cloudflare -> @opennextjs/aws -> @node-minify/core -> @node-minify/utils -> fast-glob -> micromatch, the Cloudflare deploy build. Dev ships the frontend as a static export served by the backend, so no request path loads it."
+      },
+      {
+        "workspace": "frontend",
+        "package": "picomatch",
+        "version": "4.0.7",
+        "path": "snapshots/picomatch@4.0.7",
+        "dev": true,
+        "dependents": [
+          "snapshots/fdir@6.5.0(picomatch@4.0.7)#optionalDependencies:picomatch",
+          "snapshots/tinyglobby@0.2.17#dependencies:picomatch",
+          "snapshots/vite@6.4.5(@types/node@26.6.4)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.46.0)(yaml@2.9.1)#dependencies:picomatch",
+          "snapshots/vite@8.3.5(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.46.0)(yaml@2.9.1)#dependencies:picomatch",
+          "snapshots/vitest@5.0.3(@types/node@26.6.4)(@vitest/coverage-v8@5.1.0)(jsdom@31.0.1(@napi-rs/canvas@1.2.0))(msw@2.15.0(@types/node@26.6.4)(@typescript/typescript6@6.0.2))(vite@8.3.5(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.46.0)(yaml@2.9.1))#dependencies:picomatch"
+        ]
+      },
+      {
+        "workspace": "word-addin",
+        "package": "picomatch",
+        "version": "2.3.2",
+        "path": "snapshots/picomatch@2.3.2",
+        "dev": true,
+        "dependents": [
+          "snapshots/micromatch@4.0.8#dependencies:picomatch"
+        ]
+      },
+      {
+        "workspace": "word-addin",
+        "package": "picomatch",
+        "version": "4.0.7",
+        "path": "snapshots/picomatch@4.0.7",
+        "dev": true,
+        "dependents": [
+          "snapshots/fdir@6.5.0(picomatch@4.0.7)#optionalDependencies:picomatch",
+          "snapshots/tinyglobby@0.2.17#dependencies:picomatch",
+          "snapshots/ts-loader@9.6.2(@typescript/typescript6@6.0.2)(webpack@5.112.2)#dependencies:picomatch"
+        ]
+      }
+    ]
   }
 ]
