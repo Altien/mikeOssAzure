@@ -109,8 +109,7 @@ export default function LoginPage() {
         setSessionWarningDismissed(false);
     }
     const [loginMode, setLoginMode] = useState<"account" | "guest" | null>(null);
-    const { options: signInOptions, loaded: signInOptionsLoaded } =
-        useSignInOptions();
+    const { options: signInOptions, providersKnown } = useSignInOptions();
 
     useEffect(() => {
         if (!authLoading && isAuthenticated) {
@@ -123,8 +122,15 @@ export default function LoginPage() {
 
     // Offer only the providers this deployment has configured, and none
     // until it has said which, so a button never appears and then vanishes.
-    const showGoogle = signInOptionsLoaded && signInOptions.google;
-    const showSso = signInOptionsLoaded && signInOptions.sso;
+    // The server's hint (login/layout.tsx) normally says so before the first
+    // paint, which keeps the card from growing once the browser has asked.
+    // Dev divergence (upstream 4dd2212c): the frontend is a static export
+    // with no request-time server render, so login/layout.tsx and
+    // signup/layout.tsx are not carried and no hint is ever provided here;
+    // providersKnown then equals loaded, as before. Provider buttons show
+    // only in supabase mode (see the authProvider gate below).
+    const showGoogle = providersKnown && signInOptions.google;
+    const showSso = providersKnown && signInOptions.sso;
 
     useEffect(() => {
         let cancelled = false;

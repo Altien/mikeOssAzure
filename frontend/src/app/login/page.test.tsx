@@ -70,6 +70,7 @@ const signInOptions = vi.hoisted(() => ({
     current: {
         options: { google: true, sso: true, setupRequired: false },
         loaded: true,
+        providersKnown: true,
     },
 }));
 
@@ -81,6 +82,7 @@ beforeEach(() => {
     signInOptions.current = {
         options: { google: true, sso: true, setupRequired: false },
         loaded: true,
+        providersKnown: true,
     };
     authState.error = null;
     retrySession.mockReset();
@@ -200,6 +202,7 @@ describe("LoginPage", () => {
         signInOptions.current = {
             options: { google: false, sso: false, setupRequired: false },
             loaded: true,
+            providersKnown: true,
         };
         render(<LoginPage />);
         expect(screen.getByRole("button", { name: "Log in" })).toBeInTheDocument();
@@ -211,9 +214,23 @@ describe("LoginPage", () => {
         signInOptions.current = {
             options: { google: true, sso: true, setupRequired: false },
             loaded: false,
+            providersKnown: false,
         };
         render(<LoginPage />);
         expect(screen.queryByRole("button", { name: "Continue with Google" })).toBeNull();
+        expect(screen.queryByRole("button", { name: "Continue with SSO" })).toBeNull();
+    });
+
+    it("draws the hinted provider buttons before the deployment's own answer arrives", () => {
+        // The server rendered the page with a provider hint: the buttons
+        // are in the first paint, so the card does not grow afterwards.
+        signInOptions.current = {
+            options: { google: true, sso: false, setupRequired: false },
+            loaded: false,
+            providersKnown: true,
+        };
+        render(<LoginPage />);
+        expect(screen.getByRole("button", { name: "Continue with Google" })).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Continue with SSO" })).toBeNull();
     });
 

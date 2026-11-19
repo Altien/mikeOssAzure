@@ -83,9 +83,8 @@ function SignupContent() {
     const isAccountCreatedPreview =
         process.env.NODE_ENV !== "production" &&
         searchParams.get("preview") === "account-created";
-    const { options: signInOptions, loaded: signInOptionsLoaded } =
-        useSignInOptions();
-    const showGoogle = signInOptionsLoaded && signInOptions.google;
+    const { options: signInOptions, providersKnown } = useSignInOptions();
+    const showGoogle = providersKnown && signInOptions.google;
     // Dev: upstream's first-run /setup redirect is not adopted (no setup
     // screen; the API always reports setupRequired: false).
 

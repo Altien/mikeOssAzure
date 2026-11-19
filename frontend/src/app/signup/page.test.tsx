@@ -38,6 +38,7 @@ const signInOptions = vi.hoisted(() => ({
     current: {
         options: { google: true, sso: true, setupRequired: false },
         loaded: true,
+        providersKnown: true,
     },
 }));
 
@@ -50,6 +51,7 @@ describe("SignupPage", () => {
         signInOptions.current = {
             options: { google: true, sso: true, setupRequired: false },
             loaded: true,
+            providersKnown: true,
         };
         signup.mockReset();
         startGoogleOAuth.mockReset();
@@ -209,6 +211,7 @@ describe("SignupPage", () => {
         signInOptions.current = {
             options: { google: false, sso: false, setupRequired: false },
             loaded: true,
+            providersKnown: true,
         };
         render(<SignupPage />);
         expect(screen.getByRole("button", { name: "Sign up" })).toBeInTheDocument();
