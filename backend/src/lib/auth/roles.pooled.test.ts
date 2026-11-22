@@ -35,7 +35,39 @@ describe("pooled tenant roles", () => {
   it("gives a named Microsoft member exactly its membership role", async () => {
     const fake = makeFakeDb(() => { throw new Error("A named member needs no policy query"); });
     expect(await resolvePooledRoles(principal({ membershipRole: "TenantAdmin" }), fake.db as unknown as Db)).toEqual(["TenantAdmin", "Member"]);
-    expect(await resolvePooledRoles(principal({ membershipRole: "Member", appRoles: ["Mike.Admin"] }), fake.db as unknown as Db)).toEqual(["Member"]);
+    expect(await resolvePooledRoles(principal({ membershipRole: "Member", groups: [], appRoles: ["Mike.Admin"] }), fake.db as unknown as Db)).toEqual(["Member"]);
+  });
+  const adminPolicy = () => makeFakeDb(call => ({ data: call.table === "tenants" ? { enterprise_role_source: "app_roles" }
+    : [{ group_object_id: "ADMINS", role: "TenantAdmin" }, { group_object_id: "staff", role: "Member" }] }));
+  it("elevates a named Microsoft Member in the administrator group, whatever the role source", async () => {
+    const fake = adminPolicy();
+    expect(await resolvePooledRoles(principal({ membershipRole: "Member" }), fake.db as unknown as Db)).toEqual(["TenantAdmin", "Member"]);
+    expect(fake.callsFor("tenants")).toHaveLength(0);
+    expect(fake.calls.every(call => call.filters.some(f => f[1] === "tenant_id" && f[2] === "tenant-a"))).toBe(true);
+  });
+  it("does not elevate a named Microsoft Member outside the administrator group", async () => {
+    expect(await resolvePooledRoles(principal({ membershipRole: "Member", groups: ["other"] }), adminPolicy().db as unknown as Db)).toEqual(["Member"]);
+    expect(await resolvePooledRoles(principal({ membershipRole: "Member", groups: ["staff"] }), adminPolicy().db as unknown as Db)).toEqual(["Member"]);
+  });
+  it("runs no policy query for a named member without groups", async () => {
+    const fake = makeFakeDb(() => { throw new Error("No groups need no policy query"); });
+    expect(await resolvePooledRoles(principal({ membershipRole: "Member", groups: [] }), fake.db as unknown as Db)).toEqual(["Member"]);
+    expect(await resolvePooledRoles(principal({ membershipRole: "Member", groups: undefined }), fake.db as unknown as Db)).toEqual(["Member"]);
+    expect(fake.calls).toHaveLength(0);
+  });
+  it("never elevates External ID or local members by group", async () => {
+    const fake = adminPolicy();
+    expect(await resolvePooledRoles(principal({ identityKind: "altien", membershipRole: "Member" }), fake.db as unknown as Db)).toEqual(["Member"]);
+    expect(await resolvePooledRoles(principal({ provider: "local", identityKind: undefined, membershipRole: "Member" }), fake.db as unknown as Db)).toEqual(["Member"]);
+    expect(fake.calls).toHaveLength(0);
+  });
+  it("keeps a named TenantAdmin without a policy query", async () => {
+    const fake = makeFakeDb(() => { throw new Error("A named admin needs no policy query"); });
+    expect(await resolvePooledRoles(principal({ membershipRole: "TenantAdmin", groups: ["other"] }), fake.db as unknown as Db)).toEqual(["TenantAdmin", "Member"]);
+  });
+  it("fails closed when a named member's group policy cannot be read", async () => {
+    const fake = makeFakeDb(() => ({ error: { message: "unavailable" } }));
+    await expect(resolvePooledRoles(principal({ membershipRole: "Member" }), fake.db as unknown as Db)).rejects.toThrow("Tenant group policy is unavailable");
   });
   it("fails closed when the tenant policy cannot be read", async () => {
     const fake = makeFakeDb(() => ({ error: { message: "unavailable" } }));

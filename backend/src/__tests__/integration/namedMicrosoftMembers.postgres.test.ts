@@ -90,6 +90,25 @@ describe.skipIf(!adminUrl)("cp_add_directory_member (0198)", () => {
     expect(await code(db.query("select public.cp_link_identity_source($1, 'nm-a')", [` ${CONSUMERS.toUpperCase()} `]))).toBe("22023");
   });
 
+  // Migration 0204: a group policy can only elevate a named member, so setting one must not sign them out.
+  it("cp_set_group_policies keeps named members signed in and still signs directory-link members out", async () => {
+    const LINKED_DIRECTORY = "cccccccc-cccc-4ccc-cccc-cccccccccccc";
+    const LINKED_OBJECT = "dddddddd-dddd-4ddd-dddd-dddddddddddd";
+    const GROUP = "eeeeeeee-eeee-4eee-eeee-eeeeeeeeeeee";
+    await add("nm-a", DIRECTORY, OBJECT);
+    await db.query("select public.cp_link_identity_source($1, 'nm-a')", [LINKED_DIRECTORY]);
+    await db.query("select public.mirror_enterprise_member('nm-a', $1, $2, 'Member')", [LINKED_OBJECT, LINKED_DIRECTORY]);
+    for (const user of [OBJECT, LINKED_OBJECT]) {
+      await db.query(`insert into public.auth_sessions (session_hash, provider, user_id, credential_cipher, token_expires_at, expires_at)
+        values ($1, 'entra', $1, 'x', now() + interval '1 hour', now() + interval '1 day')`, [user]);
+    }
+    await db.query("select public.cp_set_group_policies('nm-a', $1::jsonb)", [JSON.stringify([{ groupObjectId: GROUP, role: "TenantAdmin" }])]);
+    const { rows } = await db.query("select user_id, revoked_at is not null as revoked from public.auth_sessions order by user_id");
+    expect(rows).toEqual([{ user_id: OBJECT, revoked: false }, { user_id: LINKED_OBJECT, revoked: true }]);
+    const policies = await db.query("select group_object_id, role from public.tenant_group_policies where tenant_id = 'nm-a'");
+    expect(policies.rows).toEqual([{ group_object_id: GROUP, role: "TenantAdmin" }]);
+  });
+
   it("is executable by the control_plane login and leaves no platform gaps", async () => {
     const { rows } = await db.query(`select has_function_privilege('control_plane', 'public.cp_add_directory_member(text,text,text,text)', 'EXECUTE') as cp,
       has_function_privilege('tenant_app', 'public.cp_add_directory_member(text,text,text,text)', 'EXECUTE') as app,

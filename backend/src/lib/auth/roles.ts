@@ -60,7 +60,18 @@ export async function resolveRoles(groups: string[]): Promise<AppRole[]> {
 /** Pooled policy is tenant-owned; install-wide allowlists never apply. */
 export async function resolvePooledRoles(principal: AuthPrincipal, db?: Db): Promise<AppRole[]> {
   // A named membership (External ID, local, or a named Microsoft member) sets
-  // membershipRole in resolveTenant; app roles and group policy never apply to it.
+  // membershipRole in resolveTenant; app roles never apply to it. The one
+  // exception: a named Microsoft Member in a group with a TenantAdmin policy row
+  // is elevated (never demoted), whatever enterprise_role_source says.
+  if (principal.provider === "entra" && principal.identityKind === "enterprise"
+    && principal.membershipRole === "Member" && principal.tenantId && principal.groups?.length) {
+    const { data, error } = await (db ?? createServerSupabase()).from("tenant_group_policies")
+      .select("group_object_id,role").eq("tenant_id", principal.tenantId);
+    if (error) throw new Error("Tenant group policy is unavailable", { cause: error });
+    const groups = new Set(principal.groups.map(group => group.toLowerCase()));
+    if ((data ?? []).some(policy => policy.role === "TenantAdmin"
+      && groups.has(String(policy.group_object_id).toLowerCase()))) return ["TenantAdmin", "Member"];
+  }
   if (principal.identityKind === "altien" || principal.provider === "local" || principal.membershipRole) {
     return principal.membershipRole === "TenantAdmin" ? ["TenantAdmin", "Member"]
       : principal.membershipRole === "Member" ? ["Member"] : [];
