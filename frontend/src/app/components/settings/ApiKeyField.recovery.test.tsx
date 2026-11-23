@@ -25,6 +25,7 @@ function renderField(overrides: {
     onSave?: (value: string) => Promise<boolean>;
     onRemove?: () => Promise<boolean>;
     hasSavedKey?: boolean;
+    owner?: "your" | "the organization's";
 }) {
     render(
         <>
@@ -33,6 +34,7 @@ function renderField(overrides: {
                 hasSavedKey={overrides.hasSavedKey ?? false}
                 onSave={overrides.onSave ?? (async () => true)}
                 onRemove={overrides.onRemove ?? (async () => true)}
+                owner={overrides.owner}
             />
             <ToastViewportUI />
         </>,
@@ -50,6 +52,21 @@ describe("ApiKeyField", () => {
 
     afterEach(() => {
         clearToasts();
+    });
+
+    it("names the organization as the owner of a key it could not save", async () => {
+        const user = userEvent.setup();
+        renderField({
+            onSave: async () => false,
+            owner: "the organization's",
+        });
+
+        await user.type(screen.getByLabelText("Anthropic API key"), "sk-test");
+        await user.click(screen.getByRole("button", { name: "Save" }));
+
+        expect(await screen.findByRole("alert")).toHaveTextContent(
+            "Mike couldn't save the organization's Anthropic API key. The key was not changed.",
+        );
     });
 
     it("reports a refused save in a toast with a retry, not an alert", async () => {

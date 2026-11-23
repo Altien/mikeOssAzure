@@ -111,6 +111,11 @@ describe("the sections each role is offered", () => {
       "Model Providers",
       "Privacy & Data",
     ]);
+    // Each section has an icon beside its name, hidden from assistive tech.
+    for (const button of within(
+      screen.getByRole("navigation", { name: "Organization" }),
+    ).getAllByRole("button"))
+      expect(button.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
   });
 
   it("offers an admin General, Members and Model Providers, not Privacy & Data", async () => {

@@ -133,6 +133,8 @@ import {
     saveOrgLogo,
     deleteOrgLogo,
     getOrgApiKeys,
+    getOrgPreferences,
+    updateOrgPreferences,
     saveOrgApiKey,
     saveOrgRouterModels,
     setOrgApiKeyEnabled,
@@ -2218,6 +2220,7 @@ describe("tabular review CRUD", () => {
             format: "date",
             documentName: "lease.pdf",
             tags: ["real-estate"],
+            workspace: "org-1",
         });
 
         expect(result.source).toBe("preset");
@@ -2228,6 +2231,7 @@ describe("tabular review CRUD", () => {
             format: "date",
             documentName: "lease.pdf",
             tags: ["real-estate"],
+            workspace: "org-1",
         });
     });
 });
@@ -3533,6 +3537,15 @@ describe("thin endpoint wrappers", () => {
             name: "getOrgApiKeys", call: () => getOrgApiKeys("org-1"), url: "/orgs/org-1/api-keys",
         },
         {
+            name: "getOrgPreferences", call: () => getOrgPreferences("org-1"), url: "/orgs/org-1/preferences",
+        },
+        {
+            name: "updateOrgPreferences",
+            call: () => updateOrgPreferences("org-1", { tabular_model: "gpt-6-luna", web_search: { enabled: true } }),
+            url: "/orgs/org-1/preferences", method: "PATCH",
+            body: { tabular_model: "gpt-6-luna", web_search: { enabled: true } },
+        },
+        {
             name: "saveOrgApiKey (clear)", call: () => saveOrgApiKey("org-1", "openai", null),
             url: "/orgs/org-1/api-keys/openai", method: "PUT", body: { api_key: null },
         },
@@ -4049,4 +4062,13 @@ it("cache regression: merges a revision delta against the confirmed grid and acc
     expect(previous.cells).toEqual(first.cells);
     fetchMock.mockResolvedValueOnce(jsonResponse({ ...first, cells: [] }));
     expect((await getTabularReview("r", next)).cells).toEqual([]);
+});
+
+describe("organization preferences", () => {
+    it("passes the caller's abort signal to the read", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ tabular_model: null }));
+        const controller = new AbortController();
+        await getOrgPreferences("org-1", controller.signal);
+        expect(lastFetchCall().init.signal).toBe(controller.signal);
+    });
 });

@@ -56,8 +56,11 @@ export function ApiKeyField({
   onSave,
   onRemove,
   render,
+  owner = "your",
 }: {
   label: string;
+  /** Whose key it is, as the failure notices say it: "your" by default. */
+  owner?: "your" | "the organization's";
   variant?: "settings" | "modal";
   description?: string;
   hasSavedKey: boolean;
@@ -172,18 +175,20 @@ export function ApiKeyField({
         // The caller reports failure as `false`, with no error to classify.
         notifyError(
           new UserVisibleError(
-            `Mike couldn't save your ${label}. The key was not changed.`,
+            `Mike couldn't save ${owner} ${label}. The key was not changed.`,
             { retryable: true },
           ),
           {
-            action: `save your ${label}`,
+            action: `save ${owner} ${label}`,
             onRetry: () => retrySave(attempted, attemptedSetting, isCurrent),
           },
         );
       }
     } catch (error) {
+      // Dev: no app-level MFA step-up (sync-log 3a10943); the request-owner
+      // fence stays.
       if (!isCurrent()) return;
-      notifyError(error, { action: `save your ${label}`, onRetry: () => retrySave(attempted, attemptedSetting, isCurrent) });
+      notifyError(error, { action: `save ${owner} ${label}`, onRetry: () => retrySave(attempted, attemptedSetting, isCurrent) });
     } finally {
       setIsSaving(false);
     }
@@ -202,18 +207,18 @@ export function ApiKeyField({
       } else {
         notifyError(
           new UserVisibleError(
-            `Mike couldn't remove your ${label}. The key is still saved.`,
+            `Mike couldn't remove ${owner} ${label}. The key is still saved.`,
             { retryable: true },
           ),
           {
-            action: `remove your ${label}`,
+            action: `remove ${owner} ${label}`,
             onRetry: () => { if (isCurrent()) void handleRemove(); },
           },
         );
       }
     } catch (error) {
       if (!isCurrent()) return;
-      notifyError(error, { action: `remove your ${label}`, onRetry: () => { if (isCurrent()) void handleRemove(); } });
+      notifyError(error, { action: `remove ${owner} ${label}`, onRetry: () => { if (isCurrent()) void handleRemove(); } });
     } finally {
       setIsSaving(false);
     }

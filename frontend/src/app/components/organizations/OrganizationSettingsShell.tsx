@@ -11,6 +11,13 @@ import {
   type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
+import {
+  HatGlasses,
+  KeyRound,
+  ScrollText,
+  SlidersHorizontal,
+  Users,
+} from "lucide-react";
 import { OrganizationSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import { TableEmptyState } from "@/app/components/shared/TablePrimitive";
 import {
@@ -199,12 +206,14 @@ export function OrganizationSettingsFrame({
     () => [
       {
         id: "general",
+        icon: SlidersHorizontal,
         label: "General",
         href: organizationSettingsHref(orgId),
       },
       // A table page of its own; its header leads back here.
       {
         id: "members",
+        icon: Users,
         label: "Members",
         href: organizationSettingsHref(orgId, "members"),
       },
@@ -213,11 +222,16 @@ export function OrganizationSettingsFrame({
         ? [
             {
               id: "audit",
+              icon: ScrollText,
               label: "Audit log",
               href: organizationSettingsHref(orgId, "audit"),
             },
             {
               id: "providers",
+              icon: KeyRound,
+              // Dev keeps "Model Providers": an organization's provider
+              // credentials are deployment/organisation-managed in Dev, not
+              // BYOK (upstream 74745a6f renames it "Bring Your Own Keys").
               label: "Model Providers",
               href: organizationSettingsHref(orgId, "providers"),
             },
@@ -228,6 +242,7 @@ export function OrganizationSettingsFrame({
         ? [
             {
               id: "privacy-data",
+              icon: HatGlasses,
               // Named as the same page is in a person's own settings.
               label: "Privacy & Data",
               href: organizationSettingsHref(orgId, "privacy-data"),
@@ -242,7 +257,7 @@ export function OrganizationSettingsFrame({
     <SettingsShell
       title="Organization"
       navLabel="Organization"
-      tabs={tabs}
+      groups={[{ id: "organization", tabs }]}
       rootHref={organizationSettingsHref(orgId)}
     >
       {children}
