@@ -5,7 +5,8 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
-import { streamAiSdk } from "./aiSdk";
+import { stopNotice, streamAiSdk } from "./aiSdk";
+import { MAX_LENGTH_CONTINUATIONS } from "./lengthContinuation";
 import { UserFacingError } from "../safeError";
 import type { NormalizedToolCall } from "./types";
 import {
@@ -31,6 +32,21 @@ const base = {
   tools: TOOLS,
   maxIterations: 5,
 };
+
+/**
+ * One cut-off text step plus every continuation, each also cut off. Each
+ * continuation writes `CONTINUED` (a text-free step would be a planning
+ * restart, which adds its own notice).
+ */
+const CONTINUED = ".";
+const lengthSteps = (first: string) => [
+  step(...text(first), finish("length")),
+  ...Array.from({ length: MAX_LENGTH_CONTINUATIONS }, () =>
+    step(...text(CONTINUED), finish("length")),
+  ),
+];
+const continuedText = (first: string) =>
+  first + CONTINUED.repeat(MAX_LENGTH_CONTINUATIONS);
 
 describe("success path is untouched", () => {
   it("tool step then text step: one runTools batch per step, text returned", async () => {
@@ -90,19 +106,22 @@ describe("success path is untouched", () => {
 
   it("delivers a terminal notice separately from model text when the caller supports it", async () => {
     const truncated = 'Answer [1].\n<CITATIONS>[{"ref":1,"quote":"cut';
-    const model = await makeModel([step(...text(truncated), finish("length"))]);
+    // Dev divergence (sync-log: 6bf54c22): Dev continues a reply cut off at
+    // the output limit (lengthContinuation.ts), so the notice only appears
+    // once every continuation is also cut off. Script that many length steps.
+    const model = await makeModel(lengthSteps(truncated));
     const callbacks = { onContentDelta: vi.fn(), onStopNotice: vi.fn() };
 
     const result = await streamAiSdk({ ...base, callbacks }, config(model));
 
-    const notice = stopNotice(1, base.maxIterations, "length");
-    expect(callbacks.onContentDelta.mock.calls.map(([delta]) => delta).join("")).toBe(truncated);
+    const notice = stopNotice(MAX_LENGTH_CONTINUATIONS + 1, base.maxIterations, "length");
+    expect(callbacks.onContentDelta.mock.calls.map(([delta]) => delta).join("")).toBe(continuedText(truncated));
     expect(callbacks.onStopNotice).toHaveBeenCalledExactlyOnceWith(notice);
-    expect(result.fullText).toBe(truncated + notice);
+    expect(result.fullText).toBe(continuedText(truncated) + notice);
   });
 
   it("still streams a length notice for callers without a separate notice callback", async () => {
-    const model = await makeModel([step(...text("Partial answer."), finish("length"))]);
+    const model = await makeModel(lengthSteps("Partial answer."));
     const onContentDelta = vi.fn();
 
     const result = await streamAiSdk({ ...base, callbacks: { onContentDelta } }, config(model));
