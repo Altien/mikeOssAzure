@@ -22,6 +22,9 @@ import {
 import type { ApiKeyStatus } from "../types";
 
 /** GET /user/api-keys' flat map in the shape the shared rules read. */
+// Upstream divergence (sync-log: 3422ab5f): upstream unexports this as used
+// only here; Dev's frontend/src/wordAddin/composerAvailability.test.ts
+// imports it, so it stays exported.
 export function providerKeyStates(status: ApiKeyStatus): ProviderKeyStates {
   const {
     sources: _sources,
