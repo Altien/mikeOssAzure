@@ -346,6 +346,11 @@ describe("grouped case searches before a rejecting call", () => {
       undefined,
       undefined,
       undefined,
+      // Dev's extra positional slots: externalSourceCache, authorityTraceState,
+      // skillResourceStore.
+      undefined,
+      undefined,
+      undefined,
       { results },
     ).then(
       () => null,
