@@ -4,7 +4,7 @@
 #
 # Build stages:
 #   1. frontend-builder — runs `pnpm run build` against frontend/, which
-#      emits a static export to /app/out (config: output: 'export').
+#      emits a static export to /app/frontend/out (config: output: 'export').
 #   2. backend-builder  — compiles the TypeScript backend to /app/dist.
 #   3. runtime          — production-deps-only Node image with the
 #      compiled backend + frontend output + migration SQL files. Express
@@ -60,7 +60,7 @@ COPY packages/client /app/packages/client
 # and pass the token (Key Vault first, SENTRY_AUTH_TOKEN env fallback) with
 # `az acr build --secret-build-arg`, which ACR masks in its logs. Upstream
 # mounts it as a BuildKit secret; az acr build has no secret mounts. The token
-# is used only in this stage: the runtime stage copies /app/out, not the
+# is used only in this stage: the runtime stage copies /app/frontend/out, not the
 # stage's environment, and the maps are deleted after upload.
 ARG MIKE_VERSION=
 ARG GIT_SHA=

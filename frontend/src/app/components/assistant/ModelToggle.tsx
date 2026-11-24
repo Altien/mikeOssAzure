@@ -21,7 +21,7 @@ import {
 } from "@mike/client";
 import type { ApiKeyState } from "@/app/lib/mikeApi";
 import { useAoaiDeployments } from "@/altien/models/aoaiDeployments";
-export * from "@/shared/lib/modelCatalog";
+export * from "@mike/client";
 import {
   PERSONAL_WORKSPACE,
   useWorkspace,

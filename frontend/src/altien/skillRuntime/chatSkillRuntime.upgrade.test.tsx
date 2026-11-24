@@ -116,7 +116,8 @@ vi.mock("@/app/components/assistant/ChatInput", () => ({
     ChatInput: forwardRef(() => <div>Chat input</div>),
 }));
 
-vi.mock("@/shared/ui/MikeIconUI", () => ({
+vi.mock("@mike/ui", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("@mike/ui")>()),
     MikeIcon: () => <span>Mike</span>,
 }));
 

@@ -2,7 +2,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { useConfig, useConfigLoading } from "@/app/contexts/ConfigContext";
-import { authGlassCardUIClassName } from "@/shared/ui/AuthStylesUI";
+import { authGlassCardUIClassName } from "@mike/ui";
 
 // Mount provider-specific effects only after runtime configuration resolves.
 export function SupabaseAuthGate({ children }: { children: ReactNode }) {

@@ -16,12 +16,18 @@ import {
     type TenantContentKind,
 } from "@/app/lib/mikeApi";
 import { FieldLabel, FormTextInput } from "@/app/components/ui/form-field";
-import { GlassCardUI } from "@/shared/ui/GlassCardUI";
-import { PillButtonUI } from "@/shared/ui/PillButtonUI";
-import { TextButtonUI } from "@/shared/ui/TextButtonUI";
-import { textButtonUIClassName } from "@/shared/ui/TextButtonUI.styles";
-import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
-import { Dropdown, DropdownTrigger, DropdownContent, DropdownRadioGroup, DropdownRadioItem } from "@/shared/ui/dropdown";
+import {
+  GlassCardUI,
+  PillButtonUI,
+  TextButtonUI,
+  textButtonUIClassName,
+  TabPillButtonUI,
+  Dropdown,
+  DropdownTrigger,
+  DropdownContent,
+  DropdownRadioGroup,
+  DropdownRadioItem,
+} from "@mike/ui";
 
 function OrganisationCard(props: ComponentProps<"div">) {
     return <GlassCardUI><div {...props} /></GlassCardUI>;

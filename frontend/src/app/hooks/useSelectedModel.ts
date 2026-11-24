@@ -161,4 +161,4 @@ export function useSelectedReasoning(sources: {
     return [level, setLevel];
 }
 
-export { isAllowedModelId } from "@/shared/lib/modelCatalog";
+export { isAllowedModelId } from "@mike/client";

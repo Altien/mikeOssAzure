@@ -1,7 +1,7 @@
 import type { RefObject } from "react";
 import { Upload } from "lucide-react";
 import type { GitHubSkillImportPolicy, SkillCatalogItem } from "./api";
-import { PillButtonUI } from "@/shared/ui/PillButtonUI";
+import { PillButtonUI } from "@mike/ui";
 
 /** Library heading plus the ZIP and GitHub import controls. */
 export function ImportPanel({

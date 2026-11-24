@@ -20,7 +20,7 @@ import {
   type PreferenceField,
 } from "@/app/contexts/UserProfileContext";
 import { type ApiKeyState } from "@/app/lib/mikeApi";
-import { mergeConfiguredModelOptions } from "@/shared/lib/modelCatalog";
+import { mergeConfiguredModelOptions } from "@mike/client";
 import {
   MODELS,
   SETTINGS_MODELS,
