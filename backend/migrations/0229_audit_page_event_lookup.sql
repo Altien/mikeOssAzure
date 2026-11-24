@@ -1,12 +1,15 @@
 -- Migration date: 2026-11-01
+-- Upstream: 20261101_11_audit_page_event_lookup.sql (sync-log: 9e6c5532).
+-- Built on Dev's 0215 body (text actor; the admin probe casts a well-formed
+-- actor to uuid). Only the events CTE changes; the 0136 grants carry over.
 -- organization_audit_events(..., p_event_ids) filtered with
 -- "p_event_ids is null or a.id = any(p_event_ids)". The body is planned
 -- without parameter values, so that OR could use no index and every call -
 -- including each 50-row audit page - read every event in the organization.
--- Split into two arms gated by one-time parameter tests. The result, the
--- 3-argument overload (which passes null) and the page's total count are
--- unchanged.
-create or replace function public.organization_audit_events(p_org_id uuid,p_actor_id uuid,p_actor_email text,p_event_ids uuid[])
+-- Split into two arms gated by one-time parameter tests. The result and the
+-- page's total count are unchanged. (Dev's 3-argument overload is its own
+-- 0167 body and is not touched.)
+create or replace function public.organization_audit_events(p_org_id uuid,p_actor_id text,p_actor_email text,p_event_ids uuid[])
 returns setof public.audit_events language sql stable set search_path=public,pg_temp as $$
   with events as materialized (
     -- Two arms instead of "p_event_ids is null or a.id = any(p_event_ids)":
@@ -16,10 +19,10 @@ returns setof public.audit_events language sql stable set search_path=public,pg_
     -- primary-key lookups, and only the null form reads the organization.
     select a.* from public.audit_events a where p_event_ids is not null
       and a.id=any(p_event_ids) and a.org_id=p_org_id and exists(
-        select 1 from public.active_org_members m where m.org_id=p_org_id and m.user_id=p_actor_id and m.role in ('owner','admin'))
+        select 1 from public.active_org_members m where m.org_id=p_org_id and m.user_id=(case when p_actor_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then p_actor_id::uuid end) and m.role in ('owner','admin'))
     union all
     select a.* from public.audit_events a where p_event_ids is null and a.org_id=p_org_id and exists(
-        select 1 from public.active_org_members m where m.org_id=p_org_id and m.user_id=p_actor_id and m.role in ('owner','admin'))
+        select 1 from public.active_org_members m where m.org_id=p_org_id and m.user_id=(case when p_actor_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then p_actor_id::uuid end) and m.role in ('owner','admin'))
   ), actor as materialized (
     select public.can_access_org_private_content(p_org_id,p_actor_id) opens_private
   ), documents as materialized (
