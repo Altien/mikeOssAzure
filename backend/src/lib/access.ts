@@ -746,14 +746,21 @@ export function createSharedRowAccessChecker(
     userEmail: string | null | undefined,
     db: Db,
 ) {
-    const projects = new Map<string, ReturnType<typeof checkProjectAccess>>();
+    // Upstream divergence (sync-log: 6509fab4): upstream shares the full
+    // checkProjectAccess verdict. Dev's checkProjectAccess / ensureChatAccess /
+    // ensureReviewAccess add an audited tenant-admin fallback that checks and
+    // audits each object id, so only the normal (membership/container) verdict
+    // is shared here; a denied verdict still takes the per-row audited
+    // fallback, exactly as the per-row ensureChatAccess/ensureReviewAccess did.
+    const projects = new Map<string, ReturnType<typeof normalCheckProjectAccess>>();
     const creatorOrgs = new Map<string, Promise<ResourceAccess>>();
-    return async (row: Parameters<typeof ensureSharedRowAccess>[1]): Promise<ResourceAccess> => {
+    const auditKind = kind === "chat" ? "chat" : "review";
+    const normalVerdict = async (row: Parameters<typeof ensureSharedRowAccess>[1]): Promise<ResourceAccess> => {
         const isCreator = !!row.user_id && row.user_id === userId;
         if (row.project_id) {
             let pending = projects.get(row.project_id);
             if (!pending) {
-                pending = checkProjectAccess(row.project_id, userId, userEmail, db);
+                pending = normalCheckProjectAccess(row.project_id, userId, userEmail, db);
                 projects.set(row.project_id, pending);
             }
             const access = await pending;
@@ -769,6 +776,12 @@ export function createSharedRowAccessChecker(
             creatorOrgs.set(key, pending);
         }
         return pending;
+    };
+    return async (row: Parameters<typeof ensureSharedRowAccess>[1]): Promise<ResourceAccess> => {
+        const access = await normalVerdict(row);
+        if (access.ok) return access;
+        return await auditedAdminRead(db, auditKind, row.id, userId)
+            ? resourceAccessFor("viewer", null, false) : access;
     };
 }
 
