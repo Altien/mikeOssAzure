@@ -115,36 +115,33 @@ and operation, so its event count does not measure how often it happens. Run
 `pnpm --dir backend migrate:dev up` or the `db-migrate` job (which also reloads
 the PostgREST schema cache), and restart the backend.
 
-### Before upgrading: secrets copied from the template
+### Rotating the signing and encryption secrets
 
-The backend refuses to start when `DOWNLOAD_SIGNING_SECRET` or
-`USER_API_KEYS_ENCRYPTION_SECRET` still holds the `backend/.env.example`
-placeholder, a whitespace-only value, or a value shorter than 32 characters
-after trimming whitespace. A deployment that copied the template verbatim
-was running with publicly known secrets: download and
-blob tokens could be forged, and user-supplied provider API keys were
-encrypted under a key derived from a public string. The startup error names
-the variable; generate a real value for each and restart:
+<!-- Upstream divergence (sync-log: 135dadd2, 88539c64): upstream's backend
+refuses to start when DOWNLOAD_SIGNING_SECRET or USER_API_KEYS_ENCRYPTION_SECRET
+still holds a .env.example placeholder. Dev does not run that startup check:
+these secrets live in Key Vault and Dev's .env.example carries no placeholders.
+Keep this section Key Vault-shaped; the rotation effects below are upstream's. -->
 
-```bash
-openssl rand -hex 32   # once per variable
-```
+These secrets are read from Key Vault, with an environment variable as the
+local-development fallback: `download-signing-secret` (`DOWNLOAD_SIGNING_SECRET`,
+self-seeded in Key Vault on first boot when absent),
+`user-api-keys-encryption-key` (`USER_API_KEYS_ENCRYPTION_KEY`) and
+`mcp-connectors-encryption-key` (`MCP_CONNECTORS_ENCRYPTION_KEY`). Generate a
+new value with `openssl rand -hex 32`. Plan for these effects when replacing
+an existing secret; rotation does not re-encrypt stored credentials:
 
-Both variables may also be left unset: the download and API-key features then
-fail on first use, as before. Plan for these effects when replacing existing
-secrets; changing the environment does not re-encrypt stored credentials:
-
-- Changing `USER_API_KEYS_ENCRYPTION_SECRET` makes stored personal and
+- Changing `user-api-keys-encryption-key` makes stored personal and
   organization provider credentials unreadable. Users must re-enter their
   personal API keys, and organization admins must replace their organization's
   saved provider credentials.
-- When `MCP_CONNECTORS_ENCRYPTION_SECRET` is unset or empty, MCP connectors
-  also use `USER_API_KEYS_ENCRYPTION_SECRET`. Rotating it then makes stored
-  connector authentication configurations and OAuth tokens unreadable.
-  Re-enter connector authentication credentials and reconnect OAuth connectors
-  to authorize them again. A separately configured, unchanged
-  `MCP_CONNECTORS_ENCRYPTION_SECRET` keeps those connector credentials usable.
-- Changing `DOWNLOAD_SIGNING_SECRET` invalidates existing download links and
+- When `mcp-connectors-encryption-key` is not configured, MCP connectors also
+  use `user-api-keys-encryption-key`. Rotating it then makes stored connector
+  authentication configurations and OAuth tokens unreadable. Re-enter
+  connector authentication credentials and reconnect OAuth connectors to
+  authorize them again. A separately configured, unchanged
+  `mcp-connectors-encryption-key` keeps those connector credentials usable.
+- Changing `download-signing-secret` invalidates existing download links and
   blob capability URLs signed with the old secret, including persistent links
   in chat history. Request fresh download links from the application and
   replace any previously shared links; restarting does not re-sign old URLs.
