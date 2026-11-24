@@ -910,7 +910,6 @@ export function ProjectChatPanel({
                                                   }
                                                 : undefined
                                         }
-                                        citationStatus={msg.citationStatus}
                                         activeCitation={activeCitation}
                                         onCitationClick={onCitationClick}
                                         onCaseClick={onCaseClick}

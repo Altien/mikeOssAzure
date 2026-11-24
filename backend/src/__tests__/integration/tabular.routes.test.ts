@@ -2668,6 +2668,8 @@ describe("tabular.routes", () => {
                 expect.objectContaining({
                     memoryProjectId: "p1",
                     memorySharedAudience: true,
+                    // The model cites the review's cells with cite_sources.
+                    citationSources: "tabular_cells",
                 }),
             );
             const streamed = runLLMStream.mock.calls[0][0];
@@ -3026,6 +3028,7 @@ describe("tabular.routes", () => {
                     return {
                         fullText: "Late answer",
                         events: [{ type: "content", text: "Late answer" }],
+                        citations: [],
                     };
                 });
             });
@@ -3075,6 +3078,7 @@ describe("tabular.routes", () => {
                 runLLMStream.mockResolvedValue({
                     fullText: "Done",
                     events: [{ type: "content", text: "Done" }],
+                    citations: [],
                 });
                 const response = send().then((res) => res);
                 await vi.waitFor(() => {

@@ -27,7 +27,6 @@ import {
     buildStoppedAssistantEvent,
     buildStoppedAssistantMessage,
     createSubagentRunStore,
-    extractCitations,
     isAbortError,
     logAssistantMessageFailure,
     requestIdOf,
@@ -302,7 +301,7 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                 nonce,
                 emitDone: false,
             });
-            throwIfTurnStopped(stream.signal, { fullText, events });
+            throwIfTurnStopped(stream.signal, { fullText, events, citations });
 
             const persistedEvents = stripTransientAssistantEvents(events);
             if (askInputsResponse) {
@@ -336,7 +335,7 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                     });
                     // A turn stopped while the save was pending ends as stopped,
                     // not as a save failure (the stop path saves it again).
-                    throwIfTurnStopped(stream.signal, { fullText, events });
+                    throwIfTurnStopped(stream.signal, { fullText, events, citations });
                     write(
                         `data: ${JSON.stringify({
                             type: "error",
@@ -366,7 +365,7 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
             // being saved (or while the title was awaited). A stop seen here
             // still ends it as stopped: no fallback title, no memory
             // consolidation, and the stored answer gets the stop label.
-            throwIfTurnStopped(stream.signal, { fullText, events });
+            throwIfTurnStopped(stream.signal, { fullText, events, citations });
 
             if (!chatTitle && lastUser?.content) {
                 const title = lastUser.content.slice(0, 120);
@@ -461,10 +460,8 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                           }
                         : buildStoppedAssistantMessage({
                               stopReason: run?.stopReason,
-                              fullText: err.fullText,
                               events: err.events,
-                              buildCitations: (fullText) =>
-                                  extractCitations(fullText, docIndex),
+                              citations: err.citations,
                           });
                     let saveError: unknown | null = null;
                     if (savedAnswerMessageId) {
@@ -523,10 +520,9 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                 err instanceof AssistantStreamError
                     ? stripTransientAssistantEvents(err.events)
                     : [{ type: "error" as const, message }];
-            const errorFullText =
-                err instanceof AssistantStreamError ? err.fullText : "";
             try {
-                const citations = extractCitations(errorFullText, docIndex);
+                const citations =
+                    err instanceof AssistantStreamError ? err.citations : [];
                 const saved = askInputsResponse
                     ? null
                     : await insertAssistantMessage(db, {

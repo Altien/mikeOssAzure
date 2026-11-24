@@ -245,3 +245,23 @@ describe("subagent run store failures", () => {
     errorSpy.mockRestore();
   });
 });
+
+
+it("drops source text in nested citation arguments, echoed errors and legacy continuation records", async () => {
+  const quote = "synthetic private provider quotation";
+  const call = { id: "c", name: "cite_sources", input: {
+    citations: [{ ref: 1, cluster_id: 42, quotes: [{ quote }] }],
+  } };
+  const echo = JSON.stringify({ quotes_not_found: [{ ref: 1, quote }] });
+  const fresh = toolRecord(call, echo, new Map(), {});
+  expect(JSON.stringify(fresh)).not.toContain(quote);
+  const legacy = { ...fresh, input: JSON.stringify(call.input), result: echo };
+  const data = db({ transcript: { ...transcript, records: [legacy] } });
+  // Dev: load re-checks the chat's owner and workspace, so use the mocked
+  // chat's ids and Dev's store scope.
+  const store = createSubagentRunStore({
+    db: data.client, userId: "user-1", chatId: "chat-1", messageId: "m",
+    orgId: null, signal: new AbortController().signal, commitRows: async () => {},
+  });
+  expect((await store.load("d"))?.records).toEqual([fresh]);
+});

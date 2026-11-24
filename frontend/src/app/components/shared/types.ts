@@ -243,6 +243,7 @@ type Interruptible = { interrupted?: boolean };
 export type AssistantEvent =
   | WireActivity<"text_card">
   | AuthorityTraceAssistantEvent
+  | (WireActivity<"citations_recorded"> & { isStreaming?: boolean } & Interruptible)
   | (WireActivity<"doc_search"> & { isStreaming?: boolean } & Interruptible)
   | (WireActivity<"web_search"> & { isStreaming?: boolean } & Interruptible)
   | (WireActivity<"web_read"> & { isStreaming?: boolean } & Interruptible)
@@ -423,7 +424,6 @@ export interface Message {
   model?: string;
   reasoning?: "none" | "low" | "medium" | "high" | "xhigh" | "max";
   citations?: Citation[];
-  citationStatus?: "started" | "partial" | "final";
   events?: AssistantEvent[];
   /** Set when streaming failed; rendered as a red error block. */
   error?: string;

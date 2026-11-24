@@ -127,7 +127,7 @@ describe("success path is untouched", () => {
   });
 
   it("delivers a terminal notice separately from model text when the caller supports it", async () => {
-    const truncated = 'Answer [1].\n<CITATIONS>[{"ref":1,"quote":"cut';
+    const truncated = "Answer [1] that was cut mid-sen";
     // Dev divergence (sync-log: 6bf54c22): Dev continues a reply cut off at
     // the output limit (lengthContinuation.ts), so the notice only appears
     // once every continuation is also cut off. Script that many length steps.

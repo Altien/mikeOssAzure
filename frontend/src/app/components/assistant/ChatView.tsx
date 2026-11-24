@@ -1188,9 +1188,6 @@ export function AssistantChatColumn({
                                                                 : undefined
                                                         }
                                                         onAuthorityTraceOpen={openAuthorityTrace}
-                                                        citationStatus={
-                                                            msg.citationStatus
-                                                        }
                                                         activeCitation={
                                                             activeCitation
                                                         }
