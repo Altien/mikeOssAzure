@@ -47,7 +47,16 @@ export function makeFakeDb(
           recorded = true;
           calls.push(call);
         }
-        return Promise.resolve({ data: [], error: null, ...respond(call) });
+        const result: DbResult = { data: [], error: null, ...respond(call) };
+        // Emulate a keyset cursor: only rows past `.gt(column, value)`.
+        const cursor = call.filters.find(([method]) => method === "gt");
+        if (cursor && Array.isArray(result.data)) {
+          const [, column, after] = cursor;
+          result.data = (result.data as Record<string, unknown>[]).filter(
+            (row) => row[column] != null && String(row[column]) > String(after),
+          );
+        }
+        return Promise.resolve(result);
       };
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const builder: any = {
@@ -91,6 +100,11 @@ export function makeFakeDb(
         },
         is(column: string, value: unknown) {
           call.filters.push(["is", column, value]);
+          return builder;
+        },
+        // Keyset paging cursor (lib/batchedQuery selectAllByKey).
+        gt(column: string, value: unknown) {
+          call.filters.push(["gt", column, value]);
           return builder;
         },
         filter(column: string, operator: string, value: unknown) {
