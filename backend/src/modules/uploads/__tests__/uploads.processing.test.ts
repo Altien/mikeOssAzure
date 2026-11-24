@@ -649,6 +649,8 @@ describe("upload processing", () => {
       file_id: baseFile.id,
       attempts: 1,
       locked_by: "worker-1",
+      // Dev: the claim lookup also requires the claim-token fence.
+      claim_token: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     };
     const cases: Array<{ results: QueryResult[]; kind: string; message: string }> = [
       { results: [{ data: null, error: null }], kind: "upload.job_missing", message: "upload_job_not_found" },
