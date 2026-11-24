@@ -993,6 +993,18 @@ function installProcessWarningReporter(env: NodeJS.ProcessEnv): void {
 }
 
 /**
+ * Mark a log payload derived from an already reported error (for example
+ * Dev's `safeErrorLog(error)` copy) so the console bridge treats a
+ * console.error carrying it as that same failure, not a new event. Dev logs
+ * sanitized copies, not the Error itself, so the bridge cannot otherwise
+ * recognise them (upstream 0a322840: one 5xx, one event).
+ */
+export function markReportedLog<T extends object>(payload: T): T {
+  reportedErrors.add(payload);
+  return payload;
+}
+
+/**
  * Report an error with structured context. Call it BEFORE the accompanying
  * console.error so the console bridge recognises the error as already sent.
  * Returns the Sentry event id (useful for correlating with a request id), or

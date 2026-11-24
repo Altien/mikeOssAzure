@@ -1,6 +1,6 @@
 import type { Response } from "express";
 import { safeErrorLog } from "./safeError";
-import { reportError, requestRoutePattern } from "./observability/sentry";
+import { markReportedLog, reportError, requestRoutePattern } from "./observability/sentry";
 
 export const INTERNAL_ERROR_CODE = "internal_error";
 export const RATE_LIMITED_CODE = "rate_limited";
@@ -179,11 +179,13 @@ export function sendInternalError(
         "schema cache. See docs/deployment.md.",
     );
   }
+  // Dev logs a sanitized copy, which the console bridge cannot match to the
+  // reported error; mark it so this line is not filed as a second event.
   console.error("[http/internal-error]", {
     requestId,
     method: res.req?.method,
     route: requestRoutePattern(res.req),
-    error: safeErrorLog(error),
+    error: markReportedLog(safeErrorLog(error)),
   });
 
   const body: PublicFailure = schemaCode
