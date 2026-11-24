@@ -11,6 +11,9 @@ const nextConfig: NextConfig = {
     // demand generateStaticParams; `next build`/`pnpm bundle` still export.
     output: process.env.NODE_ENV === "production" ? "export" : undefined,
     reactCompiler: true,
+    // Browser source maps only for a build whose maps scripts/upload-sourcemaps.mjs
+    // sends to Sentry and then deletes (sync-log: 3bcac35a); never shipped.
+    productionBrowserSourceMaps: process.env.SENTRY_UPLOAD_ENABLED === "1",
     typescript: {
         // `next build` type-checks this program instead of tsconfig.json. It
         // excludes test files, so the static export never depends on test

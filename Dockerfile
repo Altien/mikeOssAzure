@@ -48,7 +48,27 @@ RUN pnpm install --frozen-lockfile
 COPY frontend/. ./
 # tsconfig maps @mike/contracts to ../packages/contracts (declarations only).
 COPY packages/contracts /packages/contracts
-RUN pnpm run build
+# Sentry source-map upload for the web bundle (sync-log: 3bcac35a). Off by
+# default; deploy.ps1 / scripts/release-images.sh set SENTRY_UPLOAD_ENABLED=1
+# and pass the token (Key Vault first, SENTRY_AUTH_TOKEN env fallback) with
+# `az acr build --secret-build-arg`, which ACR masks in its logs. Upstream
+# mounts it as a BuildKit secret; az acr build has no secret mounts. The token
+# is used only in this stage: the runtime stage copies /app/out, not the
+# stage's environment, and the maps are deleted after upload.
+ARG MIKE_VERSION=
+ARG GIT_SHA=
+ARG SENTRY_ORG=
+ARG SENTRY_PROJECT=
+ARG SENTRY_UPLOAD_ENABLED=0
+ARG SENTRY_AUTH_TOKEN=
+RUN case "$SENTRY_UPLOAD_ENABLED" in \
+      0) unset SENTRY_AUTH_TOKEN; pnpm run build ;; \
+      1) if [ -z "$SENTRY_AUTH_TOKEN" ] || [ -z "$SENTRY_ORG" ] || [ -z "$SENTRY_PROJECT" ]; then \
+           echo "Sentry upload requires SENTRY_AUTH_TOKEN, SENTRY_ORG and SENTRY_PROJECT" >&2; exit 1; \
+         fi; \
+         pnpm run build && node scripts/upload-sourcemaps.mjs ;; \
+      *) echo "SENTRY_UPLOAD_ENABLED must be 0 or 1" >&2; exit 1 ;; \
+    esac
 # Result: /app/out — static HTML, JS, CSS, fonts.
 
 # ── Backend build ────────────────────────────────────────────────────────────

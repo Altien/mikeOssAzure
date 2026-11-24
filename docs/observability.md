@@ -82,7 +82,10 @@ the upstream Mike product version this code tracks. Marketplace numbering
 stays in `VERSIONS.md`.
 
 Source maps are uploaded only when `deploy.ps1` or
-`scripts/release-images.sh` is given `SENTRY_ORG`, the projects and a token.
+`scripts/release-images.sh` has `SENTRY_ORG`, the projects and a token.
+The projects are `SENTRY_PROJECT_FRONTEND` for the web bundle and
+`SENTRY_PROJECT_WORD` for the add-in; `release-images.sh` builds only the
+web image.
 The token is read from Key Vault first (`sentry-auth-token` in the vault named
 by `KEY_VAULT_NAME`, or the secret named by `SENTRY_AUTH_TOKEN_SECRET_NAME`),
 with `SENTRY_AUTH_TOKEN` as the fallback. `az acr build` has no BuildKit secret

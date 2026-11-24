@@ -25,4 +25,22 @@ describe("product version", () => {
         expect(version).toMatch(SEMVER);
         expect(read("VERSION").replace(/\r\n/g, "\n")).toBe(`${version}\n`);
     });
+
+    it("reaches every image build as the MIKE_VERSION build argument", () => {
+        expect(read("Dockerfile")).toContain("ARG MIKE_VERSION=");
+        expect(read("word-addin/Dockerfile")).toContain("ARG MIKE_VERSION=");
+        expect(read("deploy.ps1")).toContain("MIKE_VERSION=$MikeVersion");
+        expect(read("scripts/release-images.sh")).toContain("MIKE_VERSION=$MIKE_VERSION");
+    });
+
+    it("uploads source maps only with a Key Vault-first token", () => {
+        for (const script of ["deploy.ps1", "scripts/release-images.sh"]) {
+            const text = read(script);
+            const vault = text.indexOf("az keyvault secret show");
+            const envFallback = text.indexOf("SENTRY_AUTH_TOKEN", vault);
+            expect(vault, script).toBeGreaterThan(-1);
+            expect(envFallback, script).toBeGreaterThan(vault);
+            expect(text, script).toContain("--secret-build-arg");
+        }
+    });
 });
