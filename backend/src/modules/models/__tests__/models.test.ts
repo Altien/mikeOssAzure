@@ -351,7 +351,7 @@ describe("GET /models/openrouter", () => {
                 new DOMException("The operation was aborted due to timeout", "TimeoutError"),
             ),
         );
-        const response = await request(app).get("/models/openrouter");
+        const response = await request(app).get("/api/models/openrouter");
         expect(timeoutSpy).toHaveBeenCalledWith(15_000);
         // The abort rejects the fetch, which the route renders as the generic
         // internal error (a thrown fetch, not an upstream status).
