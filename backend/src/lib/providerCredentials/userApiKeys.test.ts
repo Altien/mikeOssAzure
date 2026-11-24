@@ -15,23 +15,23 @@ const { getConfigMock, createServerSupabaseMock, managedSecrets, resolveManagedS
   resolveManagedSecretMock: vi.fn(),
 }));
 
-vi.mock("./config", () => ({
+vi.mock("../config", () => ({
   getConfig: getConfigMock,
   getKeyVaultConfig: getConfigMock,
   flushConfigCache: vi.fn(),
 }));
 
-vi.mock("./supabase", () => ({
+vi.mock("../supabase", () => ({
   createServerSupabase: createServerSupabaseMock,
 }));
 
 // Dev drift: execution credentials are managed; storage helpers remain internal.
-vi.mock("./envSecrets", () => ({
+vi.mock("../envSecrets", () => ({
   resolveSecret: resolveManagedSecretMock,
   resolveProviderSecret: resolveManagedSecretMock,
   resolveVercelApiKey: () => resolveManagedSecretMock("ai-gateway-api-key"),
 }));
-vi.mock("./llm/cloudProviders", () => ({
+vi.mock("../llm/cloudProviders", () => ({
   envBedrockCredentials: vi.fn(async () => null),
   envAzureCredentials: vi.fn(async () => null),
   envAzureFoundryCredentials: vi.fn(async () => null),
@@ -39,7 +39,7 @@ vi.mock("./llm/cloudProviders", () => ({
   envVertexServiceAccountKey: vi.fn(async () => ""),
   envCustomEndpointCredentials: vi.fn(async () => null),
 }));
-vi.mock("./webSearch/credentials", () => ({
+vi.mock("../webSearch/credentials", () => ({
   loadDeploymentSearchApiKeys: vi.fn(async () => ({ brave: null, tavily: null, deepseek: null })),
 }));
 
@@ -51,7 +51,7 @@ import {
   flushEncryptionKey,
   _readLegacyRowForMigration,
   getOrganisationApiKeys,
-} from "./providerCredentials/store"; // Dev drift: moved by upstream #295, then 877f4598
+} from "./store"; // Dev drift: moved by upstream #295, then 877f4598 / 38ec9bb9
 
 /**
  * Build a fake supabase-style client with one method per code path the

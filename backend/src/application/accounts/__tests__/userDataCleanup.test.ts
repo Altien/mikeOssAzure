@@ -1,6 +1,6 @@
 // Dev drift: destructive settings actions take one workspace and resolve tabular placement through their parent review.
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { makeFakeDb, type DbCall } from "../test/helpers/fakeDb";
+import { makeFakeDb, type DbCall } from "../../../test/helpers/fakeDb";
 
 const { deleteFileMock, listFilesMock } = vi.hoisted(() => ({
   deleteFileMock: vi.fn(),
@@ -9,7 +9,7 @@ const { deleteFileMock, listFilesMock } = vi.hoisted(() => ({
 
 // Dev drift: upstream #295 moved lib/userDataCleanup to modules/user/user.dataCleanup,
 // which also needs assertStorageConfigured/extractedTextKey from storage.
-vi.mock("./storage", () => ({
+vi.mock("../../../lib/storage", () => ({
   assertStorageConfigured: vi.fn(),
   deleteFile: deleteFileMock,
   listFiles: listFilesMock,
@@ -20,7 +20,7 @@ import {
   deleteAllUserChats,
   deleteAllUserTabularReviews,
   deleteUserProjects,
-} from "../application/accounts/dataCleanup";
+} from "../dataCleanup";
 
 beforeEach(() => {
   deleteFileMock.mockReset();

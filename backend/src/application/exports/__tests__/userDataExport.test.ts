@@ -1,17 +1,12 @@
 // Dev drift: candidates carry real creator/parent metadata before current access checks.
 import { describe, it, expect } from "vitest";
-import { makeFakeDb, type DbCall } from "../test/helpers/fakeDb";
+import { makeFakeDb } from "../../../test/helpers/fakeDb";
 import {
   userExportFilename,
   buildUserChatsExport,
   buildUserTabularReviewsExport,
   buildUserAccountExport,
-} from "../application/exports/buildJsonExport"; // Dev drift: moved by upstream #295, then 877f4598
-
-function rangeStart(call: DbCall): number | undefined {
-  const r = call.filters.find(([m]) => m === "range");
-  return r ? Number(r[1]) : undefined;
-}
+} from "../buildJsonExport"; // Dev drift: moved by upstream #295, then 877f4598 / 38ec9bb9
 
 describe("userExportFilename", () => {
   it("embeds the kind, a truncated user id, and a filesystem-safe timestamp", () => {
@@ -64,13 +59,15 @@ describe("buildUserChatsExport", () => {
     expect(callsFor("chat_messages")).toEqual([]);
   });
 
-  it("pages through results 1000 at a time until a short page arrives", async () => {
-    const fullPage = Array.from({ length: 1000 }, (_, i) => ({ id: `c${i}`, user_id: "u1" }));
+  // Dev drift: a66ef7ac replaced `.range` paging with keyset paging on id
+  // that ends on an EMPTY page, not a short one.
+  it("keyset-pages on id until an empty page arrives", async () => {
+    const ids = Array.from({ length: 1001 }, (_, i) => `c${String(i).padStart(4, "0")}`);
     const { db, callsFor } = makeFakeDb((call) => {
       if (call.table === "chats") {
-        return rangeStart(call) === 0
-          ? { data: fullPage }
-          : { data: [{ id: "c-last", user_id: "u1" }] };
+        const cursor = call.filters.find(([method]) => method === "gt")?.[2];
+        const page = ids.filter((id) => cursor === undefined || id > String(cursor)).slice(0, 1000);
+        return { data: page.map((id) => ({ id, user_id: "u1" })) };
       }
       if (call.table === "chat_messages") return { data: [] };
       return {};
@@ -79,8 +76,10 @@ describe("buildUserChatsExport", () => {
     const out = await buildUserChatsExport(db as never, "u1", undefined, null);
 
     expect(out.assistant_chats.chats).toHaveLength(1001);
-    const chatSelects = callsFor("chats", "select");
-    expect(chatSelects.map(rangeStart)).toEqual([0, 1000]);
+    const cursors = callsFor("chats", "select").map(
+      (call) => call.filters.find(([method]) => method === "gt")?.[2],
+    );
+    expect(cursors).toEqual([undefined, "c0999", "c1000"]);
   });
 });
 
@@ -135,8 +134,9 @@ describe("buildUserAccountExport", () => {
         parent_folder_id: null,
       },
     ]);
+    // Keyset paging (a66ef7ac): one page of rows, then the empty end page.
     const folderSelect = callsFor("library_folders", "select");
-    expect(folderSelect).toHaveLength(1);
+    expect(folderSelect).toHaveLength(2);
     expect(
       folderSelect[0].filters.find(
         ([method, column]) => method === "eq" && column === "user_id",
@@ -207,7 +207,8 @@ describe("buildUserAccountExport", () => {
       { provider: "claude", has_key: true, settings: null, enabled: true, created_at: "c", updated_at: "u" },
     ]);
     const keySelect = callsFor("user_api_keys", "select")[0];
-    expect(keySelect.columns).toBe("provider, settings, enabled, created_at, updated_at");
+    // Keyset paging (a66ef7ac) needs the row id as its cursor.
+    expect(keySelect.columns).toBe("id, provider, settings, enabled, created_at, updated_at");
     expect(keySelect.columns).not.toContain("encrypted");
   });
 });
