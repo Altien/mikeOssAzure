@@ -42,8 +42,14 @@ begin
 end; $$;
 revoke all on function public.defer_upload_processing_job(uuid, text, integer, uuid, integer, text, integer)
   from public, web_anon, authenticated;
-alter function public.defer_upload_processing_job(uuid, text, integer, uuid, integer, text, integer)
-  owner to tenant_definer;
+-- A non-superuser migrator (Azure) can re-own only to a role holding CREATE
+-- on the schema; grant it for the change and restore it (0199 pattern).
+do $$ declare v_had boolean := has_schema_privilege('tenant_definer', 'public', 'CREATE'); begin
+  grant create on schema public to tenant_definer;
+  alter function public.defer_upload_processing_job(uuid, text, integer, uuid, integer, text, integer)
+    owner to tenant_definer;
+  if not v_had then revoke create on schema public from tenant_definer; end if;
+end $$;
 grant execute on function public.defer_upload_processing_job(uuid, text, integer, uuid, integer, text, integer)
   to tenant_app, service_role;
 notify pgrst, 'reload schema';
