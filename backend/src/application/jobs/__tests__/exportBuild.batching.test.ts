@@ -23,7 +23,10 @@ it("exports a 120-document selection with batched lookups instead of two reads p
   const job = {
     id: "export-1", kind: "export.build", payload: { userId: "u1", type: "documents-zip", document_ids: ids },
     status: "running", attempts: 1, max_attempts: 3,
+    // Dev drift: exports run only for a live claim (claim_token + renew_db_job).
+    claim_token: "claim-1",
   } as unknown as DbJob;
+  Object.assign(fake.db, { rpc: async (name: string) => ({ data: name === "renew_db_job" ? true : null, error: null }) });
   await handleExportBuild(fake.db, job);
   const zip = await JSZip.loadAsync((upload.mock.calls[0] as unknown[])[1] as ArrayBuffer);
   expect(Object.keys(zip.files)).toHaveLength(120);
