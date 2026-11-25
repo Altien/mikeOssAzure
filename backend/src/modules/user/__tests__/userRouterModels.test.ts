@@ -62,7 +62,9 @@ vi.mock("../../../lib/providerCredentials/index", () => ({
     getUserApiKeyStatus: (...args: unknown[]) => getUserApiKeyStatus(...args),
     getUserApiKeys: vi.fn(async () => ({})),
     hasEnvApiKey: vi.fn(() => false),
-    normalizeApiKeyProvider: vi.fn(),
+    // Drift (upstream 877f4598): user.routes now takes normalizeApiKeyProvider
+    // from this module, so the stub must accept the provider under test.
+    normalizeApiKeyProvider: vi.fn((provider: unknown) => provider),
     saveUserApiKey: vi.fn(),
 }));
 vi.mock("../../../lib/routerModels", async (importOriginal) => ({
