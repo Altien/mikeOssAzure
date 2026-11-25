@@ -22,7 +22,6 @@ describe("AssistantMessage citations", () => {
         renderWithProviders(
             <AssistantMessage
                 citations={[legacyCitation]}
-                citationStatus="final"
             />,
         );
 
