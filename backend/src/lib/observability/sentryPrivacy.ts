@@ -86,7 +86,7 @@ const ROUTE_PARTS = new Set(('word-chat orgs single-documents tabular-review qui
 for (const part of "authority-trace altien skills help llm admin diagnostics install config".split(" ")) ROUTE_PARTS.add(part);
 // Dev divergence: fixed vocabulary of Dev-only Express mounts (authority trace, Altien skills, help, LLM, admin diagnostics, /install, /config).
 for (const part of 'authority-trace altien skills help llm admin diagnostics install config'.split(' ')) ROUTE_PARTS.add(part);
-// OSS divergence: the /diag operator diagnostic mount.
+// Dev divergence: the /diag probe mount (app.ts).
 ROUTE_PARTS.add('diag');
 // Multi-tenant divergence: the tenant administration mount (issue 022).
 ROUTE_PARTS.add('tenant-admin');
