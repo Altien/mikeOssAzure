@@ -90,7 +90,9 @@ function fixture() {
   const dispatch = (approvals = false, userId = "u1") => runToolCalls(
     [{ id: "call-1", function: { name: tool.openai_tool_name, arguments: JSON.stringify(args) } }],
     docStore, userId, db, () => {}, undefined, undefined, docIndex,
-    undefined, undefined, undefined, undefined, undefined, undefined,
+    // Dev: externalSourceCache, authorityTraceState, skillResourceStore slots.
+    undefined, undefined, undefined, undefined, undefined,
+    undefined, undefined, undefined, undefined,
     { connectorApprovals: approvals },
   );
   return { connector, tool, token, row, writes, db, docIndex, docStore, dispatch };
@@ -391,7 +393,8 @@ describe("legal source identity and search", () => {
     runToolCalls(
       [{ id: "find-1", function: { name: "find_in_document", arguments: JSON.stringify({ doc_id, query }) } }],
       f.docStore, "u1", f.db, () => {}, undefined, undefined, f.docIndex,
-      undefined, undefined, undefined, undefined, undefined, "n0nce",
+      undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, "n0nce",
     );
 
   it("searches a retrieved legal source and fences its snippets", async () => {
