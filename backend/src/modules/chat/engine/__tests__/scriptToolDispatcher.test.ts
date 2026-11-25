@@ -51,6 +51,10 @@ function runScript(code: string, tabularStore?: TabularCellStore) {
           null,
           undefined,
           undefined,
+          // Dev drift: externalSourceCache, authorityTraceState, skillResourceStore
+          undefined,
+          undefined,
+          undefined,
           NONCE,
         );
         return String((batch.toolResults[0] as { content?: unknown }).content ?? "");
