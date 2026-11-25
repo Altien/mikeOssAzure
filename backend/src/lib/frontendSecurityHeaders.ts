@@ -65,10 +65,15 @@ export function frontendSecurityHeaders(production: boolean): HeaderEntry[] {
   ];
 }
 
-/** Sets the web-app headers on every response the static-frontend block serves. */
+/**
+ * Sets the web-app headers on every response the static-frontend block
+ * serves, except /api (upstream 29240e98): an unmatched API path keeps the
+ * backend's own stricter helmet headers.
+ */
 export function sendFrontendSecurityHeaders(production: boolean): RequestHandler {
   const headers = frontendSecurityHeaders(production);
-  return (_req, res, next) => {
+  return (req, res, next) => {
+    if (/^\/api(?:\/|$)/.test(req.path)) return next();
     for (const { key, value } of headers) res.setHeader(key, value);
     next();
   };
