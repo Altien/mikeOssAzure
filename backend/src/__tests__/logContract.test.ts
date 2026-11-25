@@ -16,7 +16,9 @@ function sources(dir: string, out: string[] = []): string[] {
     if (entry.isDirectory()) {
       if (entry.name !== "__tests__") sources(path, out);
     } else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) {
-      out.push(path);
+      // Forward slashes so the endsWith("/lib/...") exemptions below also
+      // match on Windows checkouts.
+      out.push(path.replace(/\\/g, "/"));
     }
   }
   return out;
