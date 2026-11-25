@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../storage", () => ({ deleteFile: vi.fn() }));
 
-import { processClaimedJob, runDbJobTick } from "../runner";
+import { createDbJobClaimGate, createDbJobPool, processClaimedJob } from "../runner";
 import type { DbJob } from "../types";
 import { createPlatformSupabase, createServerSupabase, resetPostgrestJwtState } from "../../supabase";
 import {
@@ -125,14 +125,17 @@ describe("job tenant context", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     claimRows = [job({ tenant_id: "tenant-a" }), job({ tenant_id: "tenant-b" })];
     const seen: unknown[] = [];
-    const ran = await runDbJobTick(
+    // Drift (upstream 5ffe26dd): runDbJobTick is gone; claim once through the
+    // production pool with the platform client as claimDb (startDbJobRunner's shape).
+    const pool = createDbJobPool(
       createServerSupabase(),
       { "test.kind": async () => { seen.push(currentTenant()?.tenantId); } },
       {},
-      undefined,
-      createPlatformSupabase(),
+      { claimGate: createDbJobClaimGate(), claimDb: createPlatformSupabase() },
     );
-    expect(ran).toBe(2);
+    await pool.fill();
+    await pool.drain();
+    expect(seen).toHaveLength(2);
     expect(seen.sort()).toEqual(["tenant-a", "tenant-b"]);
     const claim = requests.find((r) => r.path === "/rpc/claim_db_jobs");
     expect(claim?.tenant).toBeUndefined();

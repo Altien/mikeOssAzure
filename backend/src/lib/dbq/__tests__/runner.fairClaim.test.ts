@@ -8,8 +8,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("../../supabase", () => ({ createServerSupabase: vi.fn(), createPlatformSupabase: vi.fn() }));
 vi.mock("../../storage", () => ({ deleteFile: vi.fn() }));
 
-import { runDbJobTick, tenantConcurrencyCap } from "../runner";
+import { createDbJobClaimGate, createDbJobPool, tenantConcurrencyCap } from "../runner";
 import type { Db } from "../types";
+
+// Drift (upstream 5ffe26dd): runDbJobTick is gone; claim once through the
+// production pool (fill, then drain) as runner.reporting.test.ts does.
+async function runDbJobTick(db: Db, handlers: Parameters<typeof createDbJobPool>[1]) {
+  const pool = createDbJobPool(db, handlers, {}, { claimGate: createDbJobClaimGate() });
+  await pool.fill();
+  await pool.drain();
+}
 
 afterEach(() => vi.unstubAllEnvs());
 
