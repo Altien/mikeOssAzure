@@ -58,6 +58,8 @@ describe("audit route rejection handling", () => {
         expect(response.body).toEqual({
             code: "internal_error",
             detail: "Something went wrong. Please try again.",
+            // Drift (upstream 2ada45fb): 500 bodies name the reporting owner
+            reporting_owner: "backend",
         });
     });
 });
