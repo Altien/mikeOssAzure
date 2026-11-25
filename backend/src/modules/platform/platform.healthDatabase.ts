@@ -246,7 +246,7 @@ async function installTenant(signal: AbortSignal): Promise<CheckOutcome> {
         return {
             status: "fail",
             detail: "The database's fallback tenant differs from the configured tenant.",
-            remediation: "Follow \"Install tenant check\" in docs/upgrade-marketplace.md to decide which value is correct.",
+            remediation: "Follow \"Install tenant check\" in docs/operator-checks.md to decide which value is correct.",
         };
     }
     const { data, error, status } = await createPlatformSupabase()
@@ -291,7 +291,7 @@ async function dataAssignment(signal: AbortSignal): Promise<CheckOutcome> {
     return {
         status: "fail",
         detail: `Rows under another tenant: ${summary}. Users cannot see these rows.`,
-        remediation: "Find which tenant holds them with a query as the server administrator, then follow \"Install tenant check\" in docs/upgrade-marketplace.md. Contact support before changing them.",
+        remediation: "Find which tenant holds them with a query as the server administrator, then follow \"Install tenant check\" in docs/operator-checks.md before changing them.",
     };
 }
 

@@ -100,7 +100,7 @@ export function decideInstallTenantGate(input: {
       `Migration ${TENANCY_MIGRATION} would assign all existing data to tenant "${prediction.tenant}" (${reason}), ` +
       `but this deployment is configured for tenant "${configuredLabel}" (${setting}). ` +
       `That assignment cannot be undone by re-running migrations. Decide which value is correct, change the other, ` +
-      `then run the upgrade again. See "Install tenant check" in docs/upgrade-marketplace.md.`,
+      `then run the upgrade again. See "Install tenant check" in docs/operator-checks.md.`,
   };
 }
 

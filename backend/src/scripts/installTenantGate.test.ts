@@ -76,7 +76,7 @@ describe("decideInstallTenantGate", () => {
     expect(message).toContain("row-tenant");
     expect(message).toContain(CONFIGURED);
     expect(message).toContain("entra-tenant-id");
-    expect(message).toContain("docs/upgrade-marketplace.md");
+    expect(message).toContain("docs/operator-checks.md");
   });
 
   it("explains a default pick on an entra install", () => {

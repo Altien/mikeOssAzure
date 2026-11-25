@@ -44,7 +44,7 @@ an authorized deployment diagnostic; leave it disabled ordinarily.
 
 Where Sentry is off, an auth failure's cause does not reach the logs, which say
 only "Auth session is unavailable". The passphrase-gated
-[health page](upgrade-marketplace.md#health-page) at `/diag` names common causes
+[health page](operator-checks.md#health-page) at `/diag` names common causes
 directly, such as an expired Entra client secret, and reports whether Application
 Insights and Sentry are on. It exists only while `DIAGNOSTICS_HEALTH_TOKEN` is set. The
 passphrase is typed into a form, so it is not in a URL for request telemetry or access
