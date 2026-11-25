@@ -125,7 +125,7 @@ describe("job tenant context", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     claimRows = [job({ tenant_id: "tenant-a" }), job({ tenant_id: "tenant-b" })];
     const seen: unknown[] = [];
-    // Drift (upstream 5ffe26dd): runDbJobTick is gone; claim once through the
+    // Drift (upstream 85838120): runDbJobTick is gone; claim once through the
     // production pool with the platform client as claimDb (startDbJobRunner's shape).
     const pool = createDbJobPool(
       createServerSupabase(),

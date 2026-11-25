@@ -11,7 +11,7 @@ vi.mock("../../storage", () => ({ deleteFile: vi.fn() }));
 import { createDbJobClaimGate, createDbJobPool, tenantConcurrencyCap } from "../runner";
 import type { Db } from "../types";
 
-// Drift (upstream 5ffe26dd): runDbJobTick is gone; claim once through the
+// Drift (upstream 85838120): runDbJobTick is gone; claim once through the
 // production pool (fill, then drain) as runner.reporting.test.ts does.
 async function runDbJobTick(db: Db, handlers: Parameters<typeof createDbJobPool>[1]) {
   const pool = createDbJobPool(db, handlers, {}, { claimGate: createDbJobClaimGate() });
