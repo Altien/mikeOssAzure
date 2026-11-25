@@ -634,7 +634,7 @@ describe("GET /models/bedrock", () => {
         let response;
         let splits: number;
         try {
-            response = await request(app).get("/models/bedrock");
+            response = await request(app).get("/api/models/bedrock");
         } finally {
             // Read before restoring: mockRestore also clears the recorded calls.
             splits = split.mock.calls.length;
@@ -767,7 +767,7 @@ describe("GET /models/xai", () => {
     it("does not report xAI refusing the user's key (MIKE-BACKEND-CF)", async () => {
         const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
         fetchMock.mockResolvedValue(new Response("bad key", { status: 401 }));
-        expect((await request(app).get("/models/xai")).status).toBe(502);
+        expect((await request(app).get("/api/models/xai")).status).toBe(502);
         expect(reportError).not.toHaveBeenCalled();
         consoleWarn.mockRestore();
     });
@@ -833,7 +833,7 @@ describe("GET /models/custom", () => {
     ])("answers 502 without a report when the endpoint %s", async (_case, arrange) => {
         const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
         arrange();
-        const response = await request(app).get("/models/custom");
+        const response = await request(app).get("/api/models/custom");
         expect(response.status).toBe(502);
         expect(response.body).toMatchObject({ code: INTERNAL_ERROR_CODE, detail: INTERNAL_ERROR_MESSAGE });
         expect(reportError).not.toHaveBeenCalled();
@@ -847,7 +847,7 @@ describe("GET /models/custom", () => {
     ])("still reports a 2xx answer with %s", async (_case, body) => {
         const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
         guardedFetch.mockResolvedValueOnce(body());
-        const response = await request(app).get("/models/custom");
+        const response = await request(app).get("/api/models/custom");
         expect(response.status).toBe(502);
         expect(reportError).toHaveBeenCalledOnce();
         consoleError.mockRestore();
