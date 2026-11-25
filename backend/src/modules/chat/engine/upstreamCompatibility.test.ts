@@ -29,6 +29,8 @@ describe("upstream feature compatibility", () => {
               "credit-agreement-review",
               "shareholder-agreement-review",
             ].map((workflow_key) => ({
+              // activeAssistantPrompts (upstream e39639bc) keys the catalog by id.
+              id: workflow_key,
               workflow_key,
               title: workflow_key,
               prompt_md: `# ${workflow_key}`,
