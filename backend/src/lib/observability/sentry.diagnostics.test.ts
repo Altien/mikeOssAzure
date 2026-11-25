@@ -3,7 +3,6 @@ import * as Sentry from '@sentry/node';
 import { reportProcessWarning, resetSentryForTests, scrubEvent, reportError, markErrorHandled } from './sentry';
 import { toProviderStreamError } from '../llm/providerErrors';
 import { eventBudget, eventBudgetLimits } from './sentryVolume';
-import { MIKE_SENTRY_DSN } from './sentry';
 import { privacyBoundaryIntegration } from './sentryPrivacy';
 
 // The final transport also emits Sentry's legacy top-level message stack.
