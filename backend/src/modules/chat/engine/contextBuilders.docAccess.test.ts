@@ -16,14 +16,31 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("../../../lib/supabase", () => ({ createServerSupabase: vi.fn() }));
 vi.mock("../../../lib/storage", () => ({ downloadFile: vi.fn() }));
 
+// `ensureDocAccess` here stands for the shared membership verdict and
+// `auditedFallback` for Dev's per-document audited tenant-admin read. The
+// mocked checker mirrors createDocumentAccessChecker's contract (pinned for
+// real in lib/__tests__/tenantAdminAccess.test.ts): share the membership
+// verdict per sharedDocAccessKey, fall back per document when it is denied.
 const ensureDocAccess = vi.fn(async (..._args: unknown[]) => ({ ok: true }));
-vi.mock("../../../lib/access", async (importOriginal) => ({
-  // The real sharing rule, so these tests pin the keying the builder uses.
-  sharedDocAccessKey: (
-    await importOriginal<typeof import("../../../lib/access")>()
-  ).sharedDocAccessKey,
-  ensureDocAccess: (...args: unknown[]) => ensureDocAccess(...args),
-}));
+const auditedFallback = vi.fn(async (_docId: string) => false);
+vi.mock("../../../lib/access", async (importOriginal) => {
+  const { sharedDocAccessKey } =
+    await importOriginal<typeof import("../../../lib/access")>();
+  return {
+    sharedDocAccessKey,
+    ensureDocAccess: (...args: unknown[]) => ensureDocAccess(...args),
+    createDocumentAccessChecker: (userId: string, email: string | null, db: unknown) => {
+      const shared = new Map<string, Promise<{ ok: boolean }>>();
+      return async (doc: { id: string }) => {
+        const key = sharedDocAccessKey(doc as never, userId);
+        if (!key) return ensureDocAccess(doc, userId, email, db);
+        if (!shared.has(key)) shared.set(key, ensureDocAccess(doc, userId, email, db));
+        const access = await shared.get(key)!;
+        return access.ok ? access : { ok: await auditedFallback(doc.id) };
+      };
+    },
+  };
+});
 
 // Version enrichment is a separate concern; give every surviving doc a path
 // so the builder's "no bytes yet" skip never masks an access result.
@@ -101,6 +118,31 @@ const message = (documentIds: string[]) => [
 describe("buildDocContext access scoping", () => {
   beforeEach(() => {
     ensureDocAccess.mockReset().mockResolvedValue({ ok: true });
+    auditedFallback.mockReset().mockResolvedValue(false);
+  });
+
+  it("takes the audited tenant-admin read per document, not once per container", async () => {
+    // Dev-only (sync-log: 02a9fe10): sharing the full audited verdict wrote
+    // one tenant_admin.content_read row for a whole project.
+    ensureDocAccess.mockResolvedValue({ ok: false });
+    auditedFallback.mockResolvedValue(true);
+    const db = makeDb([
+      { id: "d1", user_id: "u2", project_id: "p1", status: "ready" },
+      { id: "d2", user_id: "u2", project_id: "p1", status: "ready" },
+    ]);
+
+    const { docIndex } = await buildDocContext(
+      message(["d1", "d2"]),
+      "admin",
+      db,
+      null,
+      "chat_messages",
+      null,
+    );
+
+    expect(ensureDocAccess).toHaveBeenCalledTimes(1);
+    expect(auditedFallback.mock.calls.map((call) => call[0]).sort()).toEqual(["d1", "d2"]);
+    expect(Object.values(docIndex).map((entry) => entry.document_id).sort()).toEqual(["d1", "d2"]);
   });
 
   it("includes documents the caller did not upload but may read", async () => {

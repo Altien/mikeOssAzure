@@ -8,7 +8,7 @@ import { hydrateDownloadHistory, stripDownloadUrls } from "../../../lib/download
 import type { Db } from "../../../lib/supabase";
 import { listWorkspaceWorkflows } from "../../../lib/workflowWorkspace";
 import { teamOrgIdOf } from "../../../lib/personalOrgs";
-import { ensureDocAccess, sharedDocAccessKey } from "../../../lib/access";
+import { createDocumentAccessChecker } from "../../../lib/access";
 import { attachActiveVersionPaths } from "../../../lib/documentVersions";
 import { selectAllByKey, selectInBatches } from "../../../lib/batchedQuery";
 import {
@@ -1596,27 +1596,17 @@ export async function buildDocContext(
     // either. The caller's own such files share one membership verdict;
     // anyone else's is reached only through that file's own private-content
     // grant, so it is asked about individually (sharedDocAccessKey).
-    const containerKey = (doc: (typeof candidates)[number]) =>
-      sharedDocAccessKey(doc, userId);
-
-    const verdictByContainer = new Map<string, boolean>();
-    for (const doc of candidates) {
-      const key = containerKey(doc);
-      if (!key || verdictByContainer.has(key)) continue;
-      // The representative carries the container this verdict is about. In
-      // a project or a workflow its `user_id` only ever decides the ROLE,
-      // never `ok`, so reusing one document's answer for its siblings cannot
-      // widen access.
-      const verdict = await ensureDocAccess(doc, userId, userEmail ?? null, db);
-      verdictByContainer.set(key, verdict.ok);
-    }
-
+    //
+    // Upstream divergence (sync-log: 02a9fe10): the shared verdict must be
+    // the membership one only. Dev's ensureDocAccess adds an audited
+    // tenant-admin fallback that checks and audits EACH document id, so
+    // sharing its full verdict wrote one audit row per container.
+    // createDocumentAccessChecker shares membership and still runs the
+    // audited fallback per document.
+    const check = createDocumentAccessChecker(userId, userEmail ?? null, db);
     const docList: typeof candidates = [];
     for (const doc of candidates) {
-      const key = containerKey(doc);
-      const ok = key
-        ? (verdictByContainer.get(key) ?? false)
-        : (await ensureDocAccess(doc, userId, userEmail ?? null, db)).ok;
+      const ok = (await check(doc)).ok;
       if (ok) docList.push(doc);
     }
     await attachActiveVersionPaths(db, docList);
