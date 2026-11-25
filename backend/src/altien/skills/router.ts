@@ -79,9 +79,11 @@ function uploadOne(req: Request, res: Response, next: NextFunction) {
         error.code === "LIMIT_FILE_SIZE"
           ? `ZIP exceeds the ${SKILL_IMPORT_LIMITS.compressedBytes} byte limit.`
           : `Skill upload failed: ${error.message}`;
-      return void res
-        .status(error.code === "LIMIT_FILE_SIZE" ? 413 : 400)
-        .json({ detail });
+      // The 413 carries a code so the browser does not take it for a proxy's
+      // request-size cap (frontend reportGatewayLimit, upstream e6a958d6).
+      return void (error.code === "LIMIT_FILE_SIZE"
+        ? res.status(413).json({ detail, code: "skill_zip_too_large" })
+        : res.status(400).json({ detail }));
     }
     next(error);
   });
