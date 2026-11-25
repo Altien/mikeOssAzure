@@ -89,7 +89,8 @@ describe("deleteAllUserTabularReviews", () => {
     ).toEqual(["r1", "r2"]);
   });
 
-  it("batches id-based deletes at 500 per statement", async () => {
+  // Drift (upstream fbf160e1): id filters go in URL-safe batches of ID_FILTER_BATCH_SIZE (50), not 500.
+  it("batches id-based deletes at ID_FILTER_BATCH_SIZE per statement", async () => {
     const manyReviews = Array.from({ length: 501 }, (_, i) => ({ id: `r${i}` }));
     const { db, callsFor } = makeFakeDb((call) =>
       call.table === "tabular_reviews" && call.op === "select"
@@ -100,9 +101,9 @@ describe("deleteAllUserTabularReviews", () => {
     expect(await deleteAllUserTabularReviews(db as never, "u1", null)).toBe(501);
 
     const reviewDeletes = callsFor("tabular_reviews", "delete");
-    expect(reviewDeletes).toHaveLength(2);
-    expect((filterValue(reviewDeletes[0], "in", "id") as string[]).length).toBe(500);
-    expect((filterValue(reviewDeletes[1], "in", "id") as string[]).length).toBe(1);
+    expect(reviewDeletes).toHaveLength(11);
+    expect((filterValue(reviewDeletes[0], "in", "id") as string[]).length).toBe(50);
+    expect((filterValue(reviewDeletes[10], "in", "id") as string[]).length).toBe(1);
   });
 
   it("short-circuits to 0 with no deletes when the user has no reviews", async () => {
