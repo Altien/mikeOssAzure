@@ -455,7 +455,9 @@ async function readZipEntryBounded(
 
   const chunks: Buffer[] = [];
   let actualSize = 0;
-  const stream = entry.internalStream("nodebuffer") as unknown as BoundedZipEntryStream;
+  const stream = (entry as JSZip.JSZipObject & {
+    internalStream(type: "nodebuffer"): BoundedZipEntryStream;
+  }).internalStream("nodebuffer");
 
   await new Promise<void>((resolve, reject) => {
     let settled = false;
