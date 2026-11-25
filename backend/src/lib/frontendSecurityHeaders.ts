@@ -37,7 +37,7 @@ function reportOnlyCsp(production: boolean): string {
     ].join(" "),
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
-    "font-src 'self' data: blob: https://cdn.jsdelivr.net",
+    "font-src 'self' data: blob: https://cdn.jsdelivr.net https://unpkg.com",
     "connect-src 'self' blob: data: https:",
     "media-src 'self' blob: data:",
     "worker-src 'self' blob:",
