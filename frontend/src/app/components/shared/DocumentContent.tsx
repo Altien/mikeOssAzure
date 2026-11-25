@@ -146,7 +146,7 @@ export function DocumentContent({
         filename: resolvedDocument.title,
         fileType: resolvedDocument.type,
     });
-    const isText = !isCase && isTextDocumentFilename(resolvedDocument.title);
+    const isText = !isTextSource &&isTextDocumentFilename(resolvedDocument.title);
     const citation = mode.kind === "citation" ? mode.citation : null;
     const firstSelectableQuoteIndex =
         mode.kind === "citation"
