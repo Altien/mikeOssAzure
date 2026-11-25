@@ -1057,7 +1057,7 @@ describe("upload processing", () => {
     // The sealed upload is a real Word package so it passes DOCX validation
     // (d9a7c365); sealedHash is its digest.
     let sealedHash = "";
-    let officeBytes = Buffer.alloc(0);
+    let officeBytes: Buffer = Buffer.alloc(0);
     beforeEach(async () => {
       officeBytes = await minimalDocxBytes();
       sealedHash = createHash("sha256").update(officeBytes).digest("hex");
