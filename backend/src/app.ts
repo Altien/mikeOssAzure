@@ -420,8 +420,10 @@ export function buildApp(): express.Express {
   }, installRouter);
   app.use("/config", configRouter);
   // Keep the OSS operator diagnostic outside the SPA fallback so it remains
-  // available while authentication is being configured.
-  app.use("/diag", diagRouter);
+  // available while authentication is being configured. /diag itself is the
+  // passphrase-protected health page (createDiagRouter, above), so this one
+  // lives at /diag/setup.
+  app.use("/diag/setup", diagRouter);
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
 

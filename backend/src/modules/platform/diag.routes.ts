@@ -1,11 +1,13 @@
-// /diag — operator diagnostic for Mike deployment configuration.
+// /diag/setup — operator diagnostic for Mike deployment configuration.
+// (Mounted at /diag/setup: /diag itself is the passphrase-protected health
+// page from diagnostics.routes.ts.)
 //
 // Two endpoints:
-//   GET /diag       — HTML shell; reads the JWT from the same localStorage
-//                     key the frontend uses, then fetches /diag/data and
+//   GET /diag/setup       — HTML shell; reads the JWT from the same localStorage
+//                     key the frontend uses, then fetches /diag/setup/data and
 //                     renders the result. Returns a "please sign in" page
 //                     when no token is stored.
-//   GET /diag/data  — JSON. NO auth gate at all. If an Authorization
+//   GET /diag/setup/data  — JSON. NO auth gate at all. If an Authorization
 //                     header is present we try to validate the token and
 //                     fold the principal + groups into the response;
 //                     otherwise we return env-var status only. The route
@@ -284,7 +286,7 @@ diagRouter.get("/data", async (req: Request, res: Response) => {
 
 function renderShell(): string {
   // Server-rendered shell. The body is filled in client-side by JS
-  // that reads the access token from localStorage and calls /diag/data.
+  // that reads the access token from localStorage and calls /diag/setup/data.
   // The JS includes both the Entra and local-mode storage keys so the
   // page works in either auth mode.
   const html = `<!DOCTYPE html>
@@ -608,20 +610,20 @@ function renderShell(): string {
   }
 
   async function main() {
-    // Token is optional. If present, /diag/data validates it and includes
-    // principal + groups data. If absent, /diag/data returns env-var data
+    // Token is optional. If present, /diag/setup/data validates it and includes
+    // principal + groups data. If absent, /diag/setup/data returns env-var data
     // only and the page renders a "not signed in" banner.
     const token = readToken();
     const headers = token ? { Authorization: "Bearer " + token } : {};
     try {
-      const response = await fetch("/diag/data", {
+      const response = await fetch("/diag/setup/data", {
         headers: headers,
         credentials: "omit",
       });
       if (!response.ok) {
         const text = await response.text();
         document.getElementById("root").innerHTML =
-          '<div class="err">/diag/data returned ' +
+          '<div class="err">/diag/setup/data returned ' +
           response.status +
           ": " +
           escapeHtml(text) +
@@ -632,7 +634,7 @@ function renderShell(): string {
       render(data);
     } catch (e) {
       document.getElementById("root").innerHTML =
-        '<div class="err">/diag/data fetch failed: ' +
+        '<div class="err">/diag/setup/data fetch failed: ' +
         escapeHtml(e && e.message ? e.message : String(e)) +
         "</div>";
     }
