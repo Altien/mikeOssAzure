@@ -19,6 +19,7 @@ const {
   releaseMemoryConversationTurn,
   scheduleMemoryConsolidation,
   dbInserts,
+  dbUpdates,
   dbRpcCalls,
   dbControl,
 } = vi.hoisted(() => ({
@@ -36,6 +37,7 @@ const {
     generation: 1,
   }),
   dbInserts: [] as { table: string; value: unknown }[],
+  dbUpdates: [] as { table: string; value: unknown }[],
   dbRpcCalls: [] as { name: string; args: Record<string, unknown> }[],
   // Holds the insert of the assistant's answer open until a test releases it.
   dbControl: { assistantInsertGate: null as Promise<void> | null },
@@ -68,6 +70,10 @@ function makeQuery(table: string) {
     "contains",
     ];
     for (const m of chain) q[m] = vi.fn(() => q);
+  q.update = vi.fn((value: unknown) => {
+    dbUpdates.push({ table, value });
+    return q;
+  });
   let assistantInsert = false;
   q.insert = vi.fn((value: unknown) => {
     dbInserts.push({ table, value });
@@ -264,6 +270,7 @@ describe("POST /projects/:projectId/chat", () => {
         resetAssistantTurnRunsForTests();
         vi.clearAllMocks();
     dbInserts.length = 0;
+    dbUpdates.length = 0;
     dbRpcCalls.length = 0;
     dbControl.assistantInsertGate = null;
         buildMessages.mockReturnValue([]);
@@ -382,7 +389,7 @@ describe("POST /projects/:projectId/chat", () => {
                 citations: [],
             });
             const response = request(app)
-                .post("/projects/p1/chat")
+                .post("/api/projects/p1/chat")
                 .set("Authorization", "Bearer test")
                 .send(VALID_BODY)
                 .then((res) => res);
