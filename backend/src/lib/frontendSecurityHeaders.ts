@@ -33,7 +33,7 @@ function reportOnlyCsp(production: boolean): string {
     [
       "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
       ...(production ? [] : ["'unsafe-eval'"]),
-      "https://apis.google.com https://static.cloudflareinsights.com",
+      "https://apis.google.com",
     ].join(" "),
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
