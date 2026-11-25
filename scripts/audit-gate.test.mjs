@@ -211,41 +211,33 @@ test("ignores moderate and low advisories", async () => {
     strictEqual(result.stdout.includes("audit gate passed (0 high/critical advisories)"), true);
 });
 
-test("passes an allowlisted advisory and prints its reason", { skip: allowlist.length === 0 }, async () => {
-    const entry = allowlist.find((candidate) => candidate.ghsa === "GHSA-vfj7-8cjw-p6xm");
-    const result = await runGate({
-        workspace: join(repoRoot, "frontend"),
-        report: {
-            advisories: {
-                1: {
-                    ...advisory(entry.ghsa),
-                    module_name: "braces",
-                    findings: [{ version: "3.0.3", paths: ["fixture>micromatch>braces"] }],
-                },
+// Any live dev-only scope works; naming one GHSA broke both tests when that
+// entry was retired (GHSA-vfj7 braces, a42500f0b).
+const liveEntry = allowlist.find((candidate) => candidate.scopes?.some((scope) => scope.dev));
+const liveScope = liveEntry?.scopes.find((scope) => scope.dev);
+const liveAdvisory = (version) => ({
+    workspace: join(repoRoot, liveScope.workspace),
+    report: {
+        advisories: {
+            1: {
+                ...advisory(liveEntry.ghsa),
+                module_name: liveScope.package,
+                findings: [{ version, paths: [`fixture>${liveScope.package}`] }],
             },
         },
-        status: 1,
-    });
+    },
+    status: 1,
+});
+
+test("passes an allowlisted advisory and prints its reason", { skip: !liveScope }, async () => {
+    const result = await runGate(liveAdvisory(liveScope.version));
     strictEqual(result.status, 0, result.stderr);
-    strictEqual(result.stdout.includes(`ALLOWLISTED high: ${entry.ghsa}`), true);
+    strictEqual(result.stdout.includes(`ALLOWLISTED high: ${liveEntry.ghsa}`), true);
     strictEqual(result.stdout.includes("audit gate passed (1 high/critical advisories)"), true);
 });
 
-test("blocks an allowlisted GHSA when package version is outside its exact scope", async () => {
-    const ghsa = "GHSA-vfj7-8cjw-p6xm";
-    const result = await runGate({
-        workspace: join(repoRoot, "frontend"),
-        report: {
-            advisories: {
-                1: {
-                    ...advisory(ghsa),
-                    module_name: "braces",
-                    findings: [{ version: "3.0.4", paths: ["fixture>micromatch>braces"] }],
-                },
-            },
-        },
-        status: 1,
-    });
+test("blocks an allowlisted GHSA when package version is outside its exact scope", { skip: !liveScope }, async () => {
+    const result = await runGate(liveAdvisory("0.0.0-outside-scope"));
     strictEqual(result.status, 1, result.stderr);
     strictEqual(result.stderr.includes("outside the approved dependency scope"), true);
 });

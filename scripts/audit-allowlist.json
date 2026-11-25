@@ -10,7 +10,7 @@
         "path": "snapshots/adm-zip@0.5.12",
         "dev": true,
         "dependents": [
-          "snapshots/office-addin-project@1.0.10(@types/node@26.6.5)#dependencies:adm-zip"
+          "snapshots/office-addin-project@1.0.10(@types/node@26.6.6)#dependencies:adm-zip"
         ]
       }
     ]
@@ -26,7 +26,7 @@
         "path": "snapshots/adm-zip@0.5.12",
         "dev": true,
         "dependents": [
-          "snapshots/office-addin-project@1.0.10(@types/node@26.6.5)#dependencies:adm-zip"
+          "snapshots/office-addin-project@1.0.10(@types/node@26.6.6)#dependencies:adm-zip"
         ]
       },
       {
@@ -62,7 +62,7 @@
         "path": "snapshots/adm-zip@0.5.12",
         "dev": true,
         "dependents": [
-          "snapshots/office-addin-project@1.0.10(@types/node@26.6.5)#dependencies:adm-zip"
+          "snapshots/office-addin-project@1.0.10(@types/node@26.6.6)#dependencies:adm-zip"
         ]
       },
       {
@@ -98,7 +98,7 @@
         "path": "snapshots/adm-zip@0.5.12",
         "dev": true,
         "dependents": [
-          "snapshots/office-addin-project@1.0.10(@types/node@26.6.5)#dependencies:adm-zip"
+          "snapshots/office-addin-project@1.0.10(@types/node@26.6.6)#dependencies:adm-zip"
         ]
       },
       {
@@ -134,7 +134,7 @@
         "path": "snapshots/adm-zip@0.5.12",
         "dev": true,
         "dependents": [
-          "snapshots/office-addin-project@1.0.10(@types/node@26.6.5)#dependencies:adm-zip"
+          "snapshots/office-addin-project@1.0.10(@types/node@26.6.6)#dependencies:adm-zip"
         ]
       },
       {
@@ -171,7 +171,7 @@
         "dev": true,
         "dependents": [
           "snapshots/@azure/identity@4.13.3#dependencies:@azure/msal-node",
-          "snapshots/@microsoft/m365agentstoolkit-cli@1.1.17(@types/node@26.6.5)(zod@4.6.7)#dependencies:@azure/msal-node"
+          "snapshots/@microsoft/m365agentstoolkit-cli@1.1.17(@types/node@26.6.6)(zod@4.6.7)#dependencies:@azure/msal-node"
         ]
       }
     ]
