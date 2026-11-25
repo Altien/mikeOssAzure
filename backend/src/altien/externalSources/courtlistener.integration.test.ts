@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getCourtlistenerCaseOpinions } from "../../lib/courtlistener";
 
+// Drift (upstream 2d805863): CourtListener requests go through guardedFetch,
+// which bypasses the stubbed global fetch; route it back to the stub.
+vi.mock("../../lib/mcp/client", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  guardedFetch: (url: string, init?: RequestInit) => fetch(url, init),
+}));
+
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
