@@ -12,9 +12,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import JSZip from "jszip";
+import { Document, Packer, Paragraph } from "docx";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { diagnosticErrorTags } from "../../../lib/observability/sentryPrivacy";
 import { MAX_EMAIL_NESTING_DEPTH } from "../../../lib/email";
+import { MAX_UPLOAD_SIZE_BYTES } from "../uploads.manifest";
 
 const mocks = vi.hoisted(() => ({
   setOperation: vi.fn(),
@@ -741,6 +743,216 @@ describe("upload processing", () => {
       expect(db.remaining).toHaveLength(0);
     },
   );
+
+  // Upstream 16f835a8: the package must also link its main part through
+  // _rels/.rels, and that part must be a WordprocessingML document with one
+  // body. Upstream's processUploadFile cases, run through dev's job harness.
+  async function docxWith(change: (zip: JSZip) => Promise<void> | void): Promise<Buffer> {
+    const zip = await JSZip.loadAsync(await minimalDocxBytes());
+    await change(zip);
+    return await zip.generateAsync({ type: "nodebuffer" });
+  }
+  const changePart = (part: string, change: (xml: string) => string) => async (zip: JSZip) => {
+    zip.file(part, change(await zip.file(part)!.async("string")));
+  };
+  async function expectDocxRejected(bytes: Buffer) {
+    const { db, failures } = docxPackageJob(bytes);
+    await processUploadJob(db as never, "job-1", "worker-1");
+    expect(failures).toEqual(["invalid_docx_package"]);
+    expect(mocks.copyFile).not.toHaveBeenCalled();
+    expect(mocks.officeFileToPdf).not.toHaveBeenCalled();
+    expect(await readdir(processingTempRoot)).toEqual([]);
+  }
+  async function expectDocxAccepted(bytes: Buffer) {
+    const { db, failures } = docxPackageJob(bytes);
+    await processUploadJob(db as never, "job-1", "worker-1");
+    expect(failures).toEqual([null]);
+    expect(mocks.copyFile).toHaveBeenCalledOnce();
+  }
+
+  it("rejects a DOCX whose package relationship points at another part", async () => {
+    await expectDocxRejected(await docxWith(async (zip) => {
+      await changePart("_rels/.rels", (xml) => xml.replace('Target="word/document.xml"', 'Target="word/other.xml"'))(zip);
+      zip.file("word/other.xml", "not a Word document");
+    }));
+  });
+
+  it("rejects a DOCX whose main part is not WordprocessingML", async () => {
+    await expectDocxRejected(await docxWith((zip) => {
+      zip.file("word/document.xml", '<document xmlns="urn:not-word"><body/></document>');
+    }));
+  });
+
+  it.each([
+    ["no office-document relationship", (xml: string) => xml.replace(/<Relationship Id[^>]+\/>/, "")],
+    ["wrong relationship type", (xml: string) => xml.replace(/\/officeDocument"/, '/image"')],
+    ["external main relationship", (xml: string) => xml.replace('Target="', 'TargetMode="External" Target="')],
+    ["external URL", (xml: string) => xml.replace('Target="word/', 'Target="https://example.invalid/word/')],
+    ["network-path target", (xml: string) => xml.replace('Target="word/', 'Target="//docx.invalid/word/')],
+    ["whitespace-prefixed network target", (xml: string) => xml.replace('Target="word/', 'Target=" //docx.invalid/word/')],
+    ["backslash target", (xml: string) => xml.replace('word/document.xml"', 'word\\\\document.xml"')],
+    ["unknown target mode", (xml: string) => xml.replace('Target="', 'TargetMode="Other" Target="')],
+    ["missing target", (xml: string) => xml.replace('Target="word/document.xml"', "")],
+    ["fragment target", (xml: string) => xml.replace('word/document.xml"', 'word/document.xml#part"')],
+    ["wrong package namespace", (xml: string) => xml.replace('package/2006/relationships', 'package/2006/not-relationships')],
+    ["extra colon in relationships root QName", (xml: string) => xml.replace(/Relationships/g, 'r:Relationships:extra').replace(/<Relationship /g, '<r:Relationship ').replace('xmlns=', 'xmlns:r=')],
+    ["extra colon in relationship QName", (xml: string) => xml.replace(/Relationships/g, 'r:Relationships').replace(/<Relationship /g, '<r:Relationship:extra ').replace('xmlns=', 'xmlns:r=')],
+    ["duplicate main relationships", (xml: string) => xml.replace(/(<Relationship Id[^>]+\/>)/, '$1$1')],
+    ["malformed relationships XML", (xml: string) => xml.replace('</Relationships>', '')],
+    ["entity declaration", (xml: string) => '<!DOCTYPE Relationships [<!ENTITY target SYSTEM "https://example.invalid/word/document.xml">]>' + xml.replace(/<\?xml[^>]+\?>/, '')],
+  ])("rejects DOCX package XML with %s", async (_name, change) => {
+    await expectDocxRejected(await docxWith(changePart("_rels/.rels", change)));
+  });
+
+  it.each(["word/document.xml", "_rels/.rels", "[Content_Types].xml"])(
+    "accepts whitespace before a processing instruction in %s",
+    async (part) => {
+      await expectDocxAccepted(await docxWith(changePart(part,
+        (xml) => xml.replace("?>", '?>\n \t<?mso-application progid="Word.Document"?>'))));
+    },
+  );
+
+  it.each([
+    ["word/document.xml", "non-whitespace top-level text"],
+    ["_rels/.rels", "non-whitespace top-level text"],
+    ["[Content_Types].xml", "non-whitespace top-level text"],
+    ["word/document.xml", "multiple roots"],
+    ["_rels/.rels", "multiple roots"],
+    ["[Content_Types].xml", "multiple roots"],
+  ])("rejects %s with %s before a processing instruction", async (part, invalid) => {
+    const extra = invalid === "multiple roots" ? "<extra/>" : "not-whitespace";
+    await expectDocxRejected(await docxWith(changePart(part,
+      (xml) => xml.replace("?>", `?>\n${extra}\n<?mso-application progid="Word.Document"?>`))));
+  });
+
+  it.each([
+    ["word/document.xml", "w:document"],
+    ["word/document.xml", "w:body"],
+    ["_rels/.rels", "Relationships"],
+    ["_rels/.rels", "Relationship"],
+    ["[Content_Types].xml", "Types"],
+    ["[Content_Types].xml", "Override"],
+  ])("rejects whitespace-padded namespace on %s %s", async (part, element) => {
+    await expectDocxRejected(await docxWith(changePart(part, (xml) => {
+      const declaration = xml.match(/xmlns(?::w)?="([^"]+)"/)![0];
+      const paddedDeclaration = declaration.replace('="', '=" ').replace(/"$/, ' "');
+      const isRoot = ["w:document", "Relationships", "Types"].includes(element);
+      return isRoot
+        ? xml.replace(declaration, paddedDeclaration)
+        : xml.replace(new RegExp(`<${element}(?=[\\s>])`), `<${element} ${paddedDeclaration}`);
+    })));
+  });
+
+  it.each([
+    ["plain text", "not XML"],
+    ["empty main part", ""],
+    ["malformed main XML", '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body></w:document>'],
+    ["wrong main root", '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body/></w:styles>'],
+    ["extra colon in document QName", '<w:document:extra xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body/></w:document:extra>'],
+    ["extra colon in body QName", '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body:extra/></w:document>'],
+    ["missing body", '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>'],
+    ["wrong body namespace", '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body xmlns:w="urn:not-word"/></w:document>'],
+    ["duplicate document roots", '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body/></w:document>'.repeat(2)],
+    ["duplicate bodies", '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body/><w:body/></w:document>'],
+    ["main XML DTD", '<!DOCTYPE document SYSTEM "https://example.invalid/word.dtd"><document xmlns="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><body/></document>'],
+  ])("rejects DOCX main XML with %s", async (_name, xml) => {
+    await expectDocxRejected(await docxWith((zip) => { zip.file("word/document.xml", xml); }));
+  });
+
+  it.each([
+    ["default namespace and empty body", '<document xmlns="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><body/></document>'],
+    ["alternate prefixes", '<word:document xmlns:word="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:b="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><b:body/></word:document>'],
+    ["strict namespace", '<w:document xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main"><w:body/></w:document>'],
+    ["main XML larger than metadata ceiling", '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>' + 'a'.repeat(256 * 1024 + 1) + '</w:t></w:r></w:p></w:body></w:document>'],
+  ])("accepts valid DOCX with %s", async (name, xml) => {
+    await expectDocxAccepted(await docxWith(async (zip) => {
+      zip.file("word/document.xml", xml);
+      await changePart("_rels/.rels", (relationships) => relationships
+        .replace(/Relationships/g, 'r:Relationships')
+        .replace(/<Relationship /g, '<r:Relationship ')
+        .replace('xmlns=', 'xmlns:r=')
+        .replace(
+          'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument',
+          name === "strict namespace"
+            ? 'http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument'
+            : 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument',
+        )
+        .replace('Target="word/', 'TargetMode="Internal" Target="/word/'))(zip);
+    }));
+  });
+
+  it.each([
+    ["_rels/.rels", 256 * 1024],
+    ["word/document.xml", MAX_UPLOAD_SIZE_BYTES],
+  ])("rejects %s with a declared size above its ceiling", async (part, limit) => {
+    await expectDocxRejected(withDeclaredZipEntrySize(await minimalDocxBytes(), part, limit + 1));
+  });
+
+  it.each([
+    ["_rels/.rels", 256 * 1024],
+    ["word/document.xml", MAX_UPLOAD_SIZE_BYTES],
+  ])("rejects %s whose actual decompressed bytes exceed its ceiling", async (part, limit) => {
+    const zip = await JSZip.loadAsync(await minimalDocxBytes());
+    zip.file(part, Buffer.alloc(limit + 1, " "));
+    const bytes = withDeclaredZipEntrySize(
+      await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" }), part, 1,
+    );
+    expect(bytes.length).toBeLessThan(MAX_UPLOAD_SIZE_BYTES);
+    await expectDocxRejected(bytes);
+  }, 20_000);
+
+  it("rejects invalid UTF-8 in the main XML", async () => {
+    await expectDocxRejected(await docxWith(async (zip) => {
+      const xml = await zip.file("word/document.xml")!.async("string");
+      zip.file("word/document.xml", Buffer.concat([
+        Buffer.from(xml.slice(0, xml.indexOf("Hello"))),
+        Buffer.from([0xff]),
+        Buffer.from(xml.slice(xml.indexOf("Hello") + "Hello".length)),
+      ]));
+    }));
+  });
+
+  it.each(["utf16le", "utf16be"])("accepts a UTF-16 main document (%s)", async (encoding) => {
+    await expectDocxAccepted(await docxWith(async (zip) => {
+      const xml = (await zip.file("word/document.xml")!.async("string"))
+        .replace('encoding="UTF-8"', 'encoding="UTF-16"');
+      const encoded = Buffer.from('﻿' + xml, "utf16le");
+      zip.file("word/document.xml", encoding === "utf16be" ? encoded.swap16() : encoded);
+    }));
+  });
+
+  it("accepts a DOCX generated by the existing document library", async () => {
+    await expectDocxAccepted(await Packer.toBuffer(new Document({
+      sections: [{ children: [new Paragraph("Hello")] }],
+    })));
+  });
+
+  it.each(["_rels/.rels", "word/document.xml"])("rejects %s with forged decompressed size metadata", async (part) => {
+    await expectDocxRejected(withDeclaredZipEntrySize(await minimalDocxBytes(), part, 1));
+  });
+
+  it("rejects an oversized sealed DOCX before ZIP parsing", async () => {
+    const loadZip = vi.spyOn(JSZip, "loadAsync");
+    try {
+      await expectDocxRejected(Buffer.alloc(MAX_UPLOAD_SIZE_BYTES + 1));
+      expect(loadZip).not.toHaveBeenCalled();
+    } finally {
+      loadZip.mockRestore();
+    }
+  });
+
+  it.each([
+    ["prefixed root and override", '<ct:Types xmlns:ct="http://schemas.openxmlformats.org/package/2006/content-types"><ct:Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></ct:Types>'],
+    ["different override prefix", '<ct:Types xmlns:ct="http://schemas.openxmlformats.org/package/2006/content-types"><part:Override xmlns:part="http://schemas.openxmlformats.org/package/2006/content-types" PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></ct:Types>'],
+    ["Unicode prefixes", '<型:Types xmlns:型="http://schemas.openxmlformats.org/package/2006/content-types"><型:Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></型:Types>'],
+  ])("accepts DOCX content-types with %s", async (_name, xml) => {
+    await expectDocxAccepted(await minimalDocxBytes(xml));
+  });
+
+  it("rejects malformed content-types XML", async () => {
+    await expectDocxRejected(await docxWith(changePart("[Content_Types].xml",
+      (xml) => xml.replace('</Types>', ''))));
+  });
 
   describe("editor-save compare-and-swap (sync 6e3ef6fa)", () => {
     const claimToken = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
