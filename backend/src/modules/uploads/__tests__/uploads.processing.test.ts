@@ -13,6 +13,8 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import JSZip from "jszip";
 import { Document, Packer, Paragraph } from "docx";
+import { EXTRACTION_OPS } from "../../../lib/extraction/ops";
+import { ExtractionBusyError, ExtractionLimitError, withExtractionSlot } from "../../../lib/extraction/isolated";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { diagnosticErrorTags } from "../../../lib/observability/sentryPrivacy";
 import { MAX_EMAIL_NESTING_DEPTH } from "../../../lib/email";
@@ -952,6 +954,45 @@ describe("upload processing", () => {
   it("rejects malformed content-types XML", async () => {
     await expectDocxRejected(await docxWith(changePart("[Content_Types].xml",
       (xml) => xml.replace('</Types>', ''))));
+  });
+
+  // Upstream 90fa1d26: validation runs as the parser process's
+  // validateDocxPackage operation. Dev records each outcome through the
+  // publish RPC: invalid_docx_package (0245) and document_too_large (0246) are
+  // terminal there; processing_failed keeps the RPC's bounded retries.
+  it("acquires parser admission before loading sealed bytes and releases it after failure", async () => {
+    const bytes = await minimalDocxBytes();
+    let release!: () => void;
+    const held = withExtractionSlot({}, () => new Promise<void>((resolve) => { release = resolve; }));
+    try {
+      const { db, failures } = docxPackageJob(bytes);
+      await processUploadJob(db as never, "job-1", "worker-1");
+      expect(failures).toEqual(["processing_failed"]);
+      expect(mocks.copyFile).not.toHaveBeenCalled();
+    } finally { release(); await held; }
+    await expectDocxAccepted(bytes);
+  });
+
+  it.each([
+    ["malformed", null, "invalid_docx_package"],
+    ["deadline", new ExtractionLimitError("parser deadline exceeded"), "document_too_large"],
+    ["memory", new ExtractionLimitError("parser memory budget exceeded"), "document_too_large"],
+    ["off-mode allocation", new RangeError("Array buffer allocation failed"), "document_too_large"],
+    ["busy", new ExtractionBusyError(), "processing_failed"],
+    ["unexpected child exit", new Error("extraction process exited without a result"), "processing_failed"],
+  ] as const)("classifies DOCX %s without destination mutations", async (_label, error, code) => {
+    const parse = vi.spyOn(EXTRACTION_OPS, "validateDocxPackage");
+    if (error) parse.mockRejectedValueOnce(error);
+    else parse.mockResolvedValueOnce({ text: "", valid: false });
+    try {
+      const { db, failures } = docxPackageJob(await minimalDocxBytes());
+      await processUploadJob(db as never, "job-1", "worker-1");
+      expect(failures).toEqual([code]);
+      expect(mocks.copyFile).not.toHaveBeenCalled();
+      expect(mocks.officeFileToPdf).not.toHaveBeenCalled();
+      expect(mocks.uploadFileFromPath).not.toHaveBeenCalled();
+      expect(await readdir(processingTempRoot)).toEqual([]);
+    } finally { parse.mockRestore(); }
   });
 
   describe("editor-save compare-and-swap (sync 6e3ef6fa)", () => {
