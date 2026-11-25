@@ -90,12 +90,19 @@ const workspaceMigration = readFileSync(
 const schemaSql = workspaceMigration;
 const functionBody = body;
 
+// Word chats in a workspace (upstream 20261124_01, Dev 0251) rewrote two of
+// them since. Dev drift (sync-log: 25c76a81): Dev has no schema.sql, so
+// upstream's "fresh install matches the migration" check has no counterpart;
+// the Word checks below read 0251 directly, with Dev's text actor ids.
+const wordWorkspaceMigration = readFileSync(
+  resolve(root, "migrations/0251_word_chat_workspaces.sql"),
+  "utf8",
+);
+
 describe("per-workspace memory SQL", () => {
   it.each([
-    "memory_source_org_id",
     "ensure_user_memory_file",
     "initialize_new_user_memory",
-    "memory_source_allows_app_memory",
     "write_memory_file",
     "schedule_memory_consolidation",
     "refresh_memory_file_status",
@@ -141,11 +148,32 @@ describe("per-workspace memory SQL", () => {
     },
   );
 
-  it("gives only a standalone chat in a team organization a workspace", () => {
-    const body = functionBody(schemaSql, "memory_source_org_id");
-    expect(body).toContain("case when p_surface = 'chat' then");
-    expect(body).toContain("and chat.project_id is null");
-    expect(body).toContain("and public.org_is_team(chat.org_id)");
+  it("gives a standalone chat or a Word chat in a team organization a workspace", () => {
+    const body = functionBody(wordWorkspaceMigration, "memory_source_org_id");
+    expect(body).toMatch(
+      /when p_surface = 'chat' then \(\s+select chat\.org_id\s+from public\.chats chat\s+where chat\.id = p_conversation_id\s+and chat\.project_id is null\s+and public\.org_is_team\(chat\.org_id\)/,
+    );
+    expect(body).toMatch(
+      /when p_surface = 'word' then \(\s+select chat\.org_id\s+from public\.word_chats chat\s+where chat\.id = p_conversation_id\s+and public\.org_is_team\(chat\.org_id\)/,
+    );
+  });
+
+  it("lets a Word chat learn only for its author, and in an organization only while they are a member", () => {
+    const body = functionBody(wordWorkspaceMigration, "memory_source_allows_app_memory");
+    expect(body).toMatch(
+      /when p_surface = 'word' then\s+p_project_id is null\s+and exists \(\s+select 1\s+from public\.word_chats chat\s+where chat\.id = p_conversation_id\s+and chat\.user_id = p_actor_user_id\s+and \(\s+not public\.org_is_team\(chat\.org_id\)\s+or exists \(\s+select 1 from public\.active_org_members member\s+where member\.org_id = chat\.org_id\s+and member\.user_id::text = p_actor_user_id/,
+    );
+  });
+
+  it("purges an organization's Word chats before the organization itself", () => {
+    for (const sql of [wordWorkspaceMigration]) {
+      const body = functionBody(sql, "purge_expired_organizations");
+      const words = body.indexOf("delete from public.word_chats where org_id=org.id;");
+      expect(words).toBeGreaterThan(0);
+      expect(words).toBeLessThan(
+        body.indexOf("delete from public.organizations where id=org.id;"),
+      );
+    }
   });
 
   it("lets an organization's chat learn only when it is standalone and its author is still a member", () => {

@@ -42,7 +42,7 @@ import {
 import { isPanelDocument } from "@/app/components/shared/types";
 import { authenticatedFetch, currentAuthEpoch } from "@/app/lib/authEvents";
 import { reportApiFailure, reportGatewayLimit, reportError, reportNetworkFailure, trackPendingRequest } from "@/app/lib/errorReporting";
-import { reportedUpstreamMessage } from "@mike/client";
+import { reportedUpstreamMessage, workspaceOrgId } from "@mike/client";
 const apiFetch = async (input: RequestInfo | URL, init?: RequestInit, operation?: Operation): Promise<Response> => {
     const release = trackPendingRequest();
     try {
@@ -2538,11 +2538,6 @@ function libraryKindOf(scope: LibraryScope): LibraryKind {
 
 function libraryWorkspaceOf(scope: LibraryScope): string | undefined {
     return typeof scope === "string" ? undefined : scope.workspace;
-}
-
-/** `org_id` for an upload made in `workspace`: none in Personal. */
-function workspaceOrgId(workspace: string | undefined): string | undefined {
-    return workspace && workspace !== "personal" ? workspace : undefined;
 }
 
 /** A library route, with the scope's workspace on the query string. */

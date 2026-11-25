@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { PERSONAL_WORKSPACE } from "@mike/client";
 import type { Chat } from "../types";
 import { listCloudWordChats } from "../api/mikeApi";
 import { listLocalWordChats } from "../lib/localWordChats";
@@ -7,6 +8,7 @@ import { WORD_CHAT_HISTORY_CHANGED } from "../lib/wordChatHistoryEvents";
 import { reportFault } from "../lib/notify";
 import { captureSessionOwner } from "../auth/session";
 import { onSessionRecovered } from "../lib/sessionRefresh";
+import { isWorkspaceGoneError } from "../lib/workspaceState";
 
 export interface PaginatedChatsState {
   chats: Chat[];
@@ -26,6 +28,8 @@ export function usePaginatedChats(
   documentId: string,
   ownerId: string,
   storageMode: WordChatStorageMode,
+  /** "personal" or an organization id: only that workspace's chats. */
+  workspace: string = PERSONAL_WORKSPACE,
 ): PaginatedChatsState {
   const [offset, setOffset] = useState(0);
   const [chats, setChats] = useState<Chat[]>([]);
@@ -55,6 +59,7 @@ export function usePaginatedChats(
       pageSize,
       revision,
       storageMode,
+      workspace,
     ]);
     if (loadedScopeRef.current !== scope) {
       loadedScopeRef.current = scope;
@@ -66,6 +71,17 @@ export function usePaginatedChats(
         setOffset(0);
         return;
       }
+    }
+    // Chats on this device are Personal, and an organization's are only ever
+    // saved to the account: with local storage there is nothing to list here.
+    if (storageMode === "local" && workspace !== PERSONAL_WORKSPACE) {
+      setChats([]);
+      setHasMore(false);
+      setError(null);
+      setLoading(false);
+      setLoadingMore(false);
+      requestPendingRef.current = false;
+      return;
     }
     let cancelled = false;
     const controller = new AbortController();
@@ -83,6 +99,7 @@ export function usePaginatedChats(
             pageSize + 1,
             offset,
             controller.signal,
+            workspace,
           )
         : listLocalWordChats(documentId, ownerId, pageSize + 1, offset);
     const timeout = new Promise<never>((_resolve, reject) => {
@@ -109,7 +126,11 @@ export function usePaginatedChats(
         setError(
           timedOut
             ? "Chat history took too long to load."
-            : reportFault(reason, {
+            : // The pane moves back to Personal once its organizations are
+              // read again (lib/addinWorkspace); until then, say why.
+              isWorkspaceGoneError(reason)
+              ? "You're no longer a member of this workspace."
+              : reportFault(reason, {
                 fallback: "Mike couldn't load your chat history. Try again.",
                 operation: "word_chat.turn",
               }).message,
@@ -128,7 +149,7 @@ export function usePaginatedChats(
       if (timeoutId !== null) window.clearTimeout(timeoutId);
       controller.abort();
     };
-  }, [active, documentId, offset, ownerId, pageSize, requestId, revision, storageMode]);
+  }, [active, documentId, offset, ownerId, pageSize, requestId, revision, storageMode, workspace]);
 
   const loadMore = useCallback((): void => {
     if (!active || !hasMore || requestPendingRef.current) return;

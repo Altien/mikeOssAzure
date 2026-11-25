@@ -174,6 +174,8 @@ interface UseWordAssistantChatOptions {
   wordDocumentId: string;
   wordChatStorage: WordChatStorageMode;
   wordChatOwnerId: string;
+  /** "personal" or an organization id: the workspace a new chat starts in. */
+  workspace: string;
   editApplyMode: "direct" | "approval";
   editController: WordEditStreamController;
 }
@@ -187,6 +189,7 @@ export function useWordAssistantChat({
   wordDocumentId,
   wordChatStorage,
   wordChatOwnerId,
+  workspace,
   editApplyMode,
   editController,
 }: UseWordAssistantChatOptions): WordAssistantChatController {
@@ -836,6 +839,7 @@ export function useWordAssistantChat({
                     wordDocumentId,
                     documentName: readCurrentDocumentName(),
                     wordChatStorage,
+                    workspace,
                     editApplyMode,
                   },
                   onStreamText,
@@ -1144,6 +1148,7 @@ export function useWordAssistantChat({
       wordChatOwnerId,
       wordChatStorage,
       wordDocumentId,
+      workspace,
     ],
   );
 
