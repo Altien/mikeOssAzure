@@ -61,7 +61,7 @@ import { runWithJobTenant } from "../../lib/tenantContext";
 import { withLogContext } from "../../lib/logging/contextLight";
 import { log } from "../../lib/logging/root";
 import { createDocumentVersion, updateDocumentVersion } from "../documents/documents.service";
-import { ExtractionLimitError, withExtractionSlot } from "../../lib/extraction/isolated";
+import { ExtractionBusyError, ExtractionLimitError, withExtractionSlot } from "../../lib/extraction/isolated";
 import { isAllocationFailure } from "../../lib/extraction/limits";
 import {
   MAX_UPLOAD_SIZE_BYTES,
@@ -119,6 +119,11 @@ type SealedFileArtifact = {
 };
 
 export const UPLOAD_JOB_LEASE_SECONDS = 30 * 60;
+// Same bounds as the background text jobs (documents.textJobs.ts): wait up
+// to a minute for the parser, then try again later without spending one of
+// the job's attempts.
+const PARSER_SLOT_WAIT_MS = 60_000;
+const PARSER_BUSY_RETRY_MS = 30_000;
 const UPLOAD_WORKER_POLL_MS = 1_000;
 /** Ceiling for the idle poll interval while every iteration keeps failing. */
 const UPLOAD_WORKER_MAX_BACKOFF_MS = 30_000;
@@ -161,7 +166,9 @@ async function validateDocxFile(artifact: SealedFileArtifact): Promise<void> {
   // archive buffers. Reuse the parser's existing admission and OS budgets.
   if (artifact.size > MAX_UPLOAD_SIZE_BYTES) throw new DocxValidationError("invalid_docx_package");
   try {
-    await withExtractionSlot({ waitMs: 0 }, async (extract) => {
+    // Wait for the single parser slot as background extraction jobs do; a
+    // validation queued behind another file's parse is not a failure.
+    await withExtractionSlot({ waitMs: PARSER_SLOT_WAIT_MS }, async (extract) => {
       const bytes = await readFile(artifact.filePath);
       const result = await extract("validateDocxPackage", bytes.buffer.slice(
         bytes.byteOffset, bytes.byteOffset + bytes.byteLength,
@@ -169,8 +176,10 @@ async function validateDocxFile(artifact: SealedFileArtifact): Promise<void> {
       if (!result.valid) throw new DocxValidationError("invalid_docx_package");
     });
   } catch (error) {
-    if (error instanceof DocxValidationError) throw error;
-    // Busy or unexpected child/I/O failures remain retryable, not malformed.
+    // Still busy after the wait: processUploadJob requeues without charging
+    // an attempt, so it must arrive unwrapped.
+    if (error instanceof DocxValidationError || error instanceof ExtractionBusyError) throw error;
+    // Unexpected child/I/O failures remain retryable, not malformed.
     throw new DocxValidationError(
       error instanceof ExtractionLimitError || isAllocationFailure(error)
         ? "document_too_large" : "processing_failed",
@@ -767,6 +776,21 @@ export async function processUploadJob(
       // Upstream d9a7c365: a DOCX whose package is malformed or oversized
       // cannot succeed on retry. Terminal through the publish RPC (migration
       // 0245), unreported, like invalid_pdf_file.
+      // Upstream 5e986237: other files held the parser for the whole wait.
+      // Nothing is wrong with this one: requeue it through the claim-fenced
+      // defer RPC (migration 0247, dev's equivalent of upstream's direct
+      // job/file updates), give back the attempt the claim charged, and
+      // report nothing.
+      if (error instanceof ExtractionBusyError) {
+        uploadEvent("parser_busy");
+        const { data, error: deferError } = await db.rpc("defer_upload_processing_job", {
+          p_job_id: jobId, p_worker_id: workerId, p_attempt: typedJob.attempts,
+          p_token: typedJob.claim_token, p_delay_seconds: PARSER_BUSY_RETRY_MS / 1000,
+          p_error_code: "document_extraction_busy", p_lease_seconds: UPLOAD_JOB_LEASE_SECONDS,
+        });
+        if (deferError || data !== true) throw deferError ?? leaseLost();
+        return;
+      }
       if (error instanceof DocxValidationError && error.code === "invalid_docx_package") {
         uploadEvent(error.code);
         await finish(null, error.code);

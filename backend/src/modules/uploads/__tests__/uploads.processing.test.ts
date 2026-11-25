@@ -960,17 +960,45 @@ describe("upload processing", () => {
   // validateDocxPackage operation. Dev records each outcome through the
   // publish RPC: invalid_docx_package (0245) and document_too_large (0246) are
   // terminal there; processing_failed keeps the RPC's bounded retries.
-  it("acquires parser admission before loading sealed bytes and releases it after failure", async () => {
+  it("waits for a parser another file holds, then validates", async () => {
     const bytes = await minimalDocxBytes();
+    // Another file's parse holds the single slot when this upload arrives.
     let release!: () => void;
     const held = withExtractionSlot({}, () => new Promise<void>((resolve) => { release = resolve; }));
+    const { db, failures } = docxPackageJob(bytes);
+    const upload = processUploadJob(db as never, "job-1", "worker-1");
+    const settled = vi.fn();
+    void upload.then(settled, settled);
+    await vi.waitFor(() => expect(mocks.createFileReadStream).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(settled).not.toHaveBeenCalled();
+    release();
+    await held;
+    await upload;
+    expect(failures).toEqual([null]);
+    expect(mocks.copyFile).toHaveBeenCalledOnce();
+  });
+
+  // Upstream 5e986237: still busy after the wait → requeued through dev's
+  // claim-fenced defer RPC (0247) without an attempt or a report.
+  it("requeues a DOCX the parser stayed too busy for without spending an attempt or reporting", async () => {
+    const parse = vi.spyOn(EXTRACTION_OPS, "validateDocxPackage").mockRejectedValueOnce(new ExtractionBusyError());
+    const { db, failures } = docxPackageJob(await minimalDocxBytes());
+    const rpc = db.rpc.getMockImplementation()!;
+    const deferred: Record<string, unknown>[] = [];
+    db.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
+      if (name === "defer_upload_processing_job") { deferred.push(args); return { data: true, error: null }; }
+      return rpc(name, args);
+    });
     try {
-      const { db, failures } = docxPackageJob(bytes);
       await processUploadJob(db as never, "job-1", "worker-1");
-      expect(failures).toEqual(["processing_failed"]);
-      expect(mocks.copyFile).not.toHaveBeenCalled();
-    } finally { release(); await held; }
-    await expectDocxAccepted(bytes);
+    } finally { parse.mockRestore(); }
+    expect(deferred).toEqual([expect.objectContaining({ p_job_id: "job-1", p_worker_id: "worker-1",
+      p_attempt: 1, p_token: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", p_delay_seconds: 30,
+      p_error_code: "document_extraction_busy" })]);
+    expect(failures).toEqual([]);
+    expect(mocks.reportError).not.toHaveBeenCalled();
+    expect(mocks.copyFile).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -978,7 +1006,6 @@ describe("upload processing", () => {
     ["deadline", new ExtractionLimitError("parser deadline exceeded"), "document_too_large"],
     ["memory", new ExtractionLimitError("parser memory budget exceeded"), "document_too_large"],
     ["off-mode allocation", new RangeError("Array buffer allocation failed"), "document_too_large"],
-    ["busy", new ExtractionBusyError(), "processing_failed"],
     ["unexpected child exit", new Error("extraction process exited without a result"), "processing_failed"],
   ] as const)("classifies DOCX %s without destination mutations", async (_label, error, code) => {
     const parse = vi.spyOn(EXTRACTION_OPS, "validateDocxPackage");
