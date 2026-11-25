@@ -8,7 +8,8 @@ import {
     type OrgRole,
 } from "../../lib/access";
 import { mapWithConcurrency } from "../../lib/concurrency";
-import { selectAllByKey, selectInBatches, sortRows, uniqueIds } from "../../lib/batchedQuery";
+import { ID_FILTER_BATCH_SIZE, selectAllByKey, selectInBatches, sortRows, uniqueIds } from "../../lib/batchedQuery";
+import { chunkArray } from "../../lib/arrays";
 import { type Db } from "../../lib/supabase";
 import {
     resolvePlaybookRoles,
@@ -604,7 +605,12 @@ export async function buildUserAccountExport(
         [...standaloneDocuments, ...projectDocuments],
         createDocumentAccessChecker(userId, userEmail, db),
     );
-    const outside = new Set(await findDocumentsOutsideWorkspace(db, idsFrom(readableDocuments), orgId, { includeWorkflowAssets: true }));
+    // Dev: the workspace pass reads by id, so keep each list URL-safe like
+    // every other export read (upstream a66ef7ac).
+    const outside = new Set<string>();
+    for (const batch of chunkArray(idsFrom(readableDocuments), ID_FILTER_BATCH_SIZE)) {
+        for (const id of await findDocumentsOutsideWorkspace(db, batch, orgId, { includeWorkflowAssets: true })) outside.add(id);
+    }
     const documents = readableDocuments.filter((row) => !outside.has(String(row.id)));
     const documentIds = idsFrom(documents);
     const reviewIds = idsFrom(tabularReviews);
