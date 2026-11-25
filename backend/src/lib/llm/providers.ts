@@ -529,7 +529,7 @@ async function createCustomEndpointAdapter(
   const credentials = await customEndpointCredentials(apiKeys);
   if (!credentials) {
     throw new ProviderConfigurationError(
-      "OpenAI-compatible endpoint is not configured. Add an API key and base URL in Settings → Bring Your Own Keys.",
+      "OpenAI-compatible endpoint is not configured. Add an API key and base URL in Settings → API Keys.",
     );
   }
   const { createOpenAICompatible } = await import("@ai-sdk/openai-compatible");
@@ -605,7 +605,7 @@ async function createConfiguredAdapter(
 ): Promise<AiSdkAdapterConfig> {
   const configured = configuredModelOrThrow(id);
   if (configured.apiKeyProvider && isProviderDisabled(configured.apiKeyProvider, apiKeys)) {
-    throw new ProviderConfigurationError("This model provider is turned off. Turn it on in Settings → Bring Your Own Keys or select another model.");
+    throw new ProviderConfigurationError("This model provider is turned off. Turn it on in Settings → API Keys or select another model.");
   }
   const { createOpenAICompatible } = await import("@ai-sdk/openai-compatible");
   const apiKey = await apiKeyForConfiguredModel(configured, apiKeys);
@@ -664,7 +664,7 @@ function configuredModelKeySource(
 
 function unsupportedOpenCodeGoModel(model: string): Error {
   return new Error(
-    `OpenCode Go model ${openCodeGoModelId(model)} requires a protocol Mike does not support yet. Select a model listed under Model Selections for OpenCode Go in Settings → Bring Your Own Keys.`,
+    `OpenCode Go model ${openCodeGoModelId(model)} requires a protocol Mike does not support yet. Select a model listed under Model Selections for OpenCode Go in Settings → API Keys.`,
   );
 }
 
@@ -726,7 +726,7 @@ async function buildProviderAdapter(
 ): Promise<AiSdkAdapterConfig> {
   const provider = providerForModel(model);
   if (isProviderDisabled(provider, apiKeys)) {
-    throw new ProviderConfigurationError("This model provider is turned off. Turn it on in Settings → Bring Your Own Keys or select another model.");
+    throw new ProviderConfigurationError("This model provider is turned off. Turn it on in Settings → API Keys or select another model.");
   }
 
   // Last line of defence behind resolveModel and the save-time check: some

@@ -158,7 +158,7 @@ export async function missingModelApiKey(
 ): Promise<MissingApiKey | null> {
     const provider = providerForModel(model);
     if (isProviderDisabled(provider, apiKeys)) {
-        return { provider, model, detail: `${providerLabel(provider)} is turned off. Turn it on in Settings → Bring Your Own Keys or select a different tabular review model.` };
+        return { provider, model, detail: `${providerLabel(provider)} is turned off. Turn it on in Settings → API Keys or select a different tabular review model.` };
     }
     if (provider === "openai-compatible") {
         const configured = getConfiguredModel(model);

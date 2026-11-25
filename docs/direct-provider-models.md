@@ -18,7 +18,7 @@ use 3.8 Flash. A saved title-model override continues to take precedence.
 ## Onboarding
 
 The last onboarding step, Connect a model, shows the same Saved and
-Available provider grids as Settings → Bring Your Own Keys and saves through
+Available provider grids as Settings → API Keys and saves through
 the same dialog, so a key added there is validated and stored exactly as one
 added later. The step can be finished without a key: when the deployment
 provides models, or the person has just joined an organization that has them,

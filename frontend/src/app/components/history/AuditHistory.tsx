@@ -511,7 +511,8 @@ function AuditHistoryOwned({
         shrink
         breadcrumbs={[
           {
-            label: orgId ? "Organization" : "Settings",
+            // An organization's audit log is its owners' and admins' alone.
+            label: orgId ? "Organization Settings" : "Settings",
             onClick: onBack,
           },
           { label: title },
