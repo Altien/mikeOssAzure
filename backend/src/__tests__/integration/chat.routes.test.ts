@@ -619,6 +619,8 @@ describe("POST /chat — streaming endpoint", () => {
     ] as const) {
       vi.mocked(userSettings.getUserModelSettings).mockResolvedValueOnce({
         legal_research_us: false,
+        // Dev drift: Dev's UserModelSettings keeps the Altien fast_model field
+        fast_model: "test-model",
         web_search: DEFAULT_WEB_SEARCH_SETTINGS,
         title_model: null,
         memory_curator_model: null,
@@ -629,8 +631,9 @@ describe("POST /chat — streaming endpoint", () => {
         last_selected_chat_model: null,
         api_keys: { claude: "test-key", gemini: "test-key", openai: "test-key" },
       });
+      // Dev drift: chat router is mounted under /api
       const res = await request(app)
-        .post("/chat")
+        .post("/api/chat")
         .set("Authorization", "Bearer test")
         .send({ ...VALID_BODY, model });
       expect(res.status, model).toBe(200);
