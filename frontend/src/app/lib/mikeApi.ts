@@ -250,6 +250,9 @@ export async function apiRequest<T>(operationOrPath: string, pathOrInit?: string
     if (isCurrentAccount && !isCurrentAccount()) {
         throw new Error("Account changed before the request was sent");
     }
+    // The caller may have cancelled while the token was awaited (e.g. queued
+    // legacy status reads after the view unmounts): do not send it.
+    init?.signal?.throwIfAborted();
     const { headers: initHeaders, ...restInit } = init ?? {};
     const response = await apiFetch(`${API_BASE}${path}`, {
         cache: "no-store",

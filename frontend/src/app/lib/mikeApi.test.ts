@@ -334,9 +334,10 @@ describe("document status polling across backend versions", () => {
         await expect(getDocumentStatuses(["d1", "missing", "d2"], controller.signal)).resolves.toEqual([
             { id: "d1", status: "ready" }, { id: "d2", status: "ready" },
         ]);
+        // Dev drift: requests carry dev's absolute API base.
         expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
             "/api/single-documents/status", "/api/single-documents/d1", "/api/single-documents/missing", "/api/single-documents/d2",
-        ]);
+        ].map((path) => `http://localhost:3001${path}`));
         expect(fetchMock.mock.calls.every(([, init]) => init.signal === controller.signal)).toBe(true);
     });
 
