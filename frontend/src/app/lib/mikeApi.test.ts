@@ -887,7 +887,8 @@ describe("audit history", () => {
     it("narrows personal activity to one workspace", async () => {
         fetchMock.mockResolvedValueOnce(jsonResponse({ events: [], total: 0, page: 1, pageSize: 50 }));
         await getAuditHistory({ workspace: "personal" });
-        expect(lastFetchCall().url).toBe("/api/audit?workspace=personal");
+        // Dev: absolute backend API base (sync-log: a5f571b8).
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/audit?workspace=personal");
     });
     it("includes the organization scope in audit requests", async () => {
         fetchMock.mockResolvedValueOnce(jsonResponse({ events: [], total: 0, page: 1, pageSize: 50 }));

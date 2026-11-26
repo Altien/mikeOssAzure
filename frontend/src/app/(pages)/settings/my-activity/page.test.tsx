@@ -407,6 +407,8 @@ describe("MyActivitySettingsPage", () => {
       expect(mockedGetAuditHistory).toHaveBeenLastCalledWith(
         expect.objectContaining({ workspace: "org-a", page: 1 }),
         expect.any(AbortSignal),
+        // Dev: the request-owner guard (sync-log: a5f571b8).
+        expect.any(Function),
       ),
     );
 
@@ -417,6 +419,7 @@ describe("MyActivitySettingsPage", () => {
       expect(mockedStartUserExport).toHaveBeenCalledWith(
         "audit-csv",
         expect.objectContaining({ workspace: "org-a" }),
+        expect.any(Function),
       ),
     );
 
@@ -426,6 +429,7 @@ describe("MyActivitySettingsPage", () => {
       expect(mockedGetAuditHistory).toHaveBeenLastCalledWith(
         expect.objectContaining({ workspace: undefined, page: 1 }),
         expect.any(AbortSignal),
+        expect.any(Function),
       ),
     );
   });
@@ -465,6 +469,7 @@ describe("MyActivitySettingsPage", () => {
     expect(mockedGetAuditHistory).toHaveBeenLastCalledWith(
       expect.objectContaining({ orgId: "org-a", workspace: undefined }),
       expect.any(AbortSignal),
+      expect.any(Function),
     );
   });
 
