@@ -1,6 +1,8 @@
 import { notifyTabularReviewsChanged } from "@/app/lib/tabularReviewChanges";
-import type { RouterProfileLists } from "@/shared/lib/modelCatalog";
-import type { Operation } from "@/shared/lib/sentryPrivacy";
+import type { RouterProfileLists } from "@mike/client";
+import { BACKEND_REPORTING_OWNER } from "@mike/client";
+import type { Operation } from "@mike/client";
+import { settleWithConcurrency } from "@mike/client";
 import type {
     TabularReviewHistoryStatus,
     AuditActor,
@@ -39,13 +41,15 @@ import {
 } from "@/app/lib/auth-token";
 import { isPanelDocument } from "@/app/components/shared/types";
 import { authenticatedFetch, currentAuthEpoch } from "@/app/lib/authEvents";
-import { markErrorHandled, reportApiFailure, reportError, reportNetworkFailure, trackPendingRequest } from "@/app/lib/errorReporting";
+import { reportApiFailure, reportGatewayLimit, reportError, reportNetworkFailure, trackPendingRequest } from "@/app/lib/errorReporting";
+import { reportedUpstreamMessage } from "@mike/client";
 const apiFetch = async (input: RequestInfo | URL, init?: RequestInit, operation?: Operation): Promise<Response> => {
     const release = trackPendingRequest();
     try {
         return await authenticatedFetch(input, init);
     } catch (error) {
-        if (init?.signal?.aborted || (typeof error === "object" && error !== null && "name" in error && error.name === "AbortError")) throw error;
+        // Upstream 2ada45fb: only our own signal marks an expected abort; abort reasons may be arbitrary values.
+        if (init?.signal?.aborted) throw error;
         reportNetworkFailure(error, { method: init?.method ?? "GET", url: String(input), operation });
         throw error;
     } finally {
@@ -56,6 +60,7 @@ import {
     UploadBatchError,
     createControlRequestRetryPolicy,
     failedUploadMessage,
+    uploadOutcomeNeedsRetry,
     firstUploadResult,
     uploadFilesWithSessionCore,
     type UploadOutcome,
@@ -63,7 +68,7 @@ import {
     type UploadProgressStatus,
     type UploadSessionInput,
     type UploadSessionPurpose,
-} from "@/shared/api/uploadSessionClient";
+} from "@mike/client";
 // The role vocabulary is defined once, next to the capability matrix that
 // gives it meaning, and re-exported here so API consumers do not need two
 // imports to describe one row.
@@ -104,7 +109,7 @@ import type {
 import type { ChatDetailSkillBinding } from "@/altien/skillRuntime/api";
 
 export { UploadBatchError };
-export { failedUploadMessage };
+export { failedUploadMessage, uploadOutcomeNeedsRetry };
 export type {
     UploadOutcome,
     UploadProgress,
@@ -157,61 +162,51 @@ export class MikeApiError extends Error {
     status: number;
     code: string | null;
     requestId: string | null;
+    reportingOwner?: typeof BACKEND_REPORTING_OWNER;
 
     constructor(args: {
         message: string;
         status: number;
         code?: string | null;
         requestId?: string | null;
+        reportingOwner?: typeof BACKEND_REPORTING_OWNER;
     }) {
         super(args.message);
         this.name = "MikeApiError";
         this.status = args.status;
         this.code = args.code ?? null;
         this.requestId = args.requestId ?? null;
+        this.reportingOwner = args.reportingOwner;
     }
 }
 
 export const INTERNAL_ERROR_MESSAGE = "Something went wrong. Please try again.";
-export const MALFORMED_ERROR_RESPONSE_MESSAGE =
-    "The request could not be completed. Please try again.";
-/**
- * The backend's answer when its database is missing a migration (PGRST202/
- * 204/205, 42P01). Unlike other 5xx it tells the user something actionable
- * — contact whoever runs the server — so it is shown instead of the generic
- * fallback (see userFacingApiError).
- */
-export const SCHEMA_OUT_OF_DATE_CODE = "schema_out_of_date";
-export const SCHEMA_OUT_OF_DATE_MESSAGE =
-    "The server's database needs an update before this can load. Please contact your administrator.";
-/**
- * The Next gateway's answer (503, Retry-After) when it cannot reach the
- * backend at all (ECONNREFUSED and friends). The gateway reports it once
- * per outage; the user can only wait and retry.
- *
- * Dev divergence (sync-log: 4428944d): the static export has no Next
- * gateway, so Dev's Express backend never emits this code; it is kept for
- * parity with upstream's shared message table.
- */
-export const UPSTREAM_UNAVAILABLE_CODE = "upstream_unavailable";
-export const UPSTREAM_UNAVAILABLE_MESSAGE =
-    "The server is temporarily unreachable. Please try again shortly.";
-/**
- * 5xx codes that the server side (backend or gateway) has already reported
- * to Sentry, and that carry a message worth showing instead of the generic
- * fallback. The browser shows the message and does not report them again.
- */
-const REPORTED_UPSTREAM_MESSAGES: Readonly<Record<string, string>> = {
-    [SCHEMA_OUT_OF_DATE_CODE]: SCHEMA_OUT_OF_DATE_MESSAGE,
-    [UPSTREAM_UNAVAILABLE_CODE]: UPSTREAM_UNAVAILABLE_MESSAGE,
-};
 
-/** The fixed user-facing message for a server-reported code, or null. */
-export function reportedUpstreamMessage(code: string): string | null {
-    return Object.hasOwn(REPORTED_UPSTREAM_MESSAGES, code)
-        ? REPORTED_UPSTREAM_MESSAGES[code]
-        : null;
+// Pooled tenant administration. Credits stay decimal strings across the wire.
+import type { TenantContentKind, TenantAdminOverview, TenantAdminContentPage } from "@mike/contracts";
+export type { TenantContentKind, TenantAdminOverview, TenantContentItem, TenantAdminMember } from "@mike/contracts";
+export function getTenantAdminStatus(): Promise<{ isTenantAdmin: boolean }> {
+    return apiRequest("/tenant-admin/status");
 }
+export function getTenantAdminOverview(): Promise<TenantAdminOverview> {
+    return apiRequest("/tenant-admin/overview");
+}
+export function getTenantAdminContent(kind: TenantContentKind, offset = 0, limit = 50): Promise<TenantAdminContentPage> {
+    return apiRequest(`/tenant-admin/content?${new URLSearchParams({ kind, offset: String(offset), limit: String(limit) })}`);
+}
+export function reassignTenantContent(input: { kind: TenantContentKind; id: string; newOwnerId: string; reason: string }): Promise<{ ok: true }> {
+    return apiRequest("/tenant-admin/reassign", { method: "POST", body: JSON.stringify(input) });
+}
+const MALFORMED_ERROR_RESPONSE_MESSAGE =
+    "The request could not be completed. Please try again.";
+// The fixed messages for the 5xx codes the server side already reported are
+// shared with the Word add-in (packages/client); they are re-exported here
+// because API consumers know them as mikeApi's answers.
+export {
+    SCHEMA_OUT_OF_DATE_MESSAGE,
+    UPSTREAM_UNAVAILABLE_MESSAGE,
+    reportedUpstreamMessage,
+} from "@mike/client";
 
 // Upstream divergence (sync-log: 3a10943): kept for API parity with
 // upstream, but dev's backend never emits mfa_verification_required —
@@ -255,6 +250,9 @@ export async function apiRequest<T>(operationOrPath: string, pathOrInit?: string
     if (isCurrentAccount && !isCurrentAccount()) {
         throw new Error("Account changed before the request was sent");
     }
+    // The caller may have cancelled while the token was awaited (e.g. queued
+    // legacy status reads after the view unmounts): do not send it.
+    init?.signal?.throwIfAborted();
     const { headers: initHeaders, ...restInit } = init ?? {};
     const response = await apiFetch(`${API_BASE}${path}`, {
         cache: "no-store",
@@ -306,14 +304,7 @@ export async function uploadFilesWithSession<T>(args: {
         transport: {
             apiRequest: <R>(path: string, init?: RequestInit) => apiRequest<R>("upload_session.control", path, init),
             fetchStorage: (...fetchArgs) => fetch(...fetchArgs),
-            onStorageFailure: ({ error, status, network }) => reportError(error, {
-                ...(network ? { level: "warning" as const } : {}),
-                tags: {
-                    component: "mike-api", operation: "upload_session.storage", http_method: "PUT",
-                    ...(status !== undefined ? { http_status: status } : {}),
-                    ...(network ? { network: true } : {}),
-                },
-            }),
+            reportStorageFailure: reportError,
             shouldRetryControlRequest: createControlRequestRetryPolicy(
                 (error) =>
                     error instanceof MikeApiError
@@ -364,6 +355,7 @@ async function toApiError(
     const text = await response.text();
     try {
         const parsed = JSON.parse(text) as {
+            reporting_owner?: unknown;
             detail?: unknown;
             code?: unknown;
             request_id?: unknown;
@@ -379,28 +371,15 @@ async function toApiError(
             requestId,
         });
         const code = typeof parsed.code === "string" ? parsed.code : null;
+        // A code the backend or gateway already reported carries our fixed
+        // sentence for it (never the body's `detail`); reportApiFailure
+        // below only marks it, so no screen files it a second time.
         const upstreamMessage = code ? reportedUpstreamMessage(code) : null;
-        if (upstreamMessage) {
-            // The backend (schema_out_of_date) or the gateway
-            // (upstream_unavailable) has already reported this failure once,
-            // with detail the browser cannot see. A browser copy would be one
-            // more event per endpoint per page view for the same incident —
-            // the per-route fan-out again — so it is only marked: a screen's
-            // console.error of it is not bridged either. The message is
-            // ours, not the body's `detail`.
-            const upstreamError = new MikeApiError({
-                status: response.status,
-                code,
-                requestId,
-                message: upstreamMessage,
-            });
-            markErrorHandled(upstreamError);
-            return upstreamError;
-        }
         const apiError = new MikeApiError({
             status: response.status,
             code,
             requestId,
+            ...(parsed.reporting_owner === BACKEND_REPORTING_OWNER ? { reportingOwner: BACKEND_REPORTING_OWNER } : {}),
             // A 4xx whose body carries no usable `detail` is a malformed
             // error response, and it is treated as one. `API error: 409` used
             // to be produced here instead — and because a 4xx message is the
@@ -410,11 +389,12 @@ async function toApiError(
             // already has the right sentence for "the server did not tell us
             // what went wrong"; this arm now uses it too.
             message:
-                response.status >= 500
+                upstreamMessage ??
+                (response.status >= 500
                     ? INTERNAL_ERROR_MESSAGE
                     : typeof parsed.detail === "string" && parsed.detail
                       ? parsed.detail
-                      : MALFORMED_ERROR_RESPONSE_MESSAGE,
+                      : MALFORMED_ERROR_RESPONSE_MESSAGE),
         });
         // 4xx are intentional answers (validation, permissions) and are
         // shown to the user; 5xx are failures worth an alert, correlated to
@@ -428,7 +408,12 @@ async function toApiError(
                 code: apiError.code,
                 requestId,
                 error: apiError,
+                reportingOwner: apiError.reportingOwner,
             });
+        } else if (response.status === 413 && !code) {
+            // The backend names its own size limits with a code. A 413
+            // without one was refused in front of it (see reportGatewayLimit).
+            reportGatewayLimit("payload-too-large", { path, method, status: 413, requestId });
         }
         return apiError;
     } catch {
@@ -452,7 +437,12 @@ async function toApiError(
                 status: response.status,
                 requestId: apiError.requestId,
                 error: apiError,
+                reportingOwner: apiError.reportingOwner,
             });
+        } else if (response.status === 413) {
+            // Not JSON, so not the backend's own 413: a proxy's or host's
+            // request-size cap (see reportGatewayLimit).
+            reportGatewayLimit("payload-too-large", { path, method, status: 413, requestId: apiError.requestId });
         }
         return apiError;
     }
@@ -499,7 +489,7 @@ export async function listProjects(options?: {
     if (options?.workspace) params.set("workspace", options.workspace);
     // Workspace filters select the paginated backend overload. Pickers still
     // need the full list, including projects beyond its default first page.
-    if (options?.workspace && !options.participatingOnly) {
+    if (options?.includeDocuments || (options?.workspace && !options.participatingOnly)) {
         const projects: Project[] = [];
         const pageSize = 100;
         params.set("limit", String(pageSize));
@@ -948,7 +938,8 @@ export interface UserProfile extends RouterProfileLists {
     responseDetailsVisible?: boolean;
     darkMode: boolean;
     projectMemoryDefault: boolean;
-    apiKeyStatus: ApiKeyStatus;
+    /** Absent only when a forked server or a proxy/misroute answers; see `hasApiKeyStatus`. */
+    apiKeyStatus?: ApiKeyStatus;
 }
 
 /** Uploads a cropped profile-photo data URL, or removes the current photo when passed null. */
@@ -1255,6 +1246,8 @@ export type ApiKeyProvider =
     | "vertex"
     | "xai"
     | "custom"
+    | "tokenjuice"
+    | "meta"
     | "azure_openai"
     | WebSearchBackend;
 export type ApiKeySource = "user" | "org" | "env" | null;
@@ -1278,20 +1271,35 @@ export type ApiKeyState = Record<
         source: ApiKeySource;
         enabled?: boolean;
     }
->;
+> & { modelAllowlist?: readonly string[] | null };
+
+/** Pooled mode only: per model provider, who supplies the key. */
+export type PooledKeyStatus = {
+    /** Models the member may run on their own key; empty when they may not set one. */
+    memberKeyModels: string[];
+    memberKeySet: boolean;
+    /** The organisation supplies its own key for this provider. */
+    organisationKey: boolean;
+};
+export type PooledKeys = Partial<Record<ApiKeyProvider, PooledKeyStatus>>;
 
 export type ApiKeyStatus = Record<ApiKeyProvider, boolean> & {
     sources?: Partial<Record<ApiKeyProvider, ApiKeySource>>;
     enabled?: Partial<Record<ApiKeyProvider, boolean>>;
     settings?: ApiKeySettings;
+    modelAllowlist?: readonly string[] | null;
+    pooledKeys?: PooledKeys;
 };
 
 export interface ConfiguredModelOption {
     id: string;
     label: string;
-    group: "Configured";
+    /** "Configured", or an administrator-entered provider's own name. */
+    group: string;
     location: "cloud" | "local";
     source: "Configured";
+    /** A managed model priced at zero on the tenant's price version. */
+    free?: boolean;
 }
 
 export interface RouterCatalogModel {
@@ -2124,6 +2132,51 @@ export async function setOrgApiKeyEnabled(
     );
 }
 
+/**
+ * What an organization sets for work in its workspace: the Features and
+ * Model Preferences a person sets for themselves in Personal. Every member
+ * reads them; owners and admins change them.
+ */
+export interface OrgPreferences {
+    title_model: string | null;
+    tabular_model: string | null;
+    memory_curator_model: string | null;
+    subagent_model: string | null;
+    subagent_reasoning: NonNullable<Message["reasoning"]> | null;
+    quick_actions_visible: boolean;
+    response_details_visible: boolean;
+    web_search: WebSearchSettings;
+}
+
+/** A change to an organization's preferences; `web_search` merges. */
+export type OrgPreferencesUpdate = Partial<
+    Omit<OrgPreferences, "web_search">
+> & { web_search?: Partial<WebSearchSettings> };
+
+export async function getOrgPreferences(
+    orgId: string,
+    signal?: AbortSignal,
+): Promise<OrgPreferences> {
+    return apiRequest<OrgPreferences>(
+        "organizations.manage", `/orgs/${orgId}/preferences`,
+        { signal },
+    );
+}
+
+export async function updateOrgPreferences(
+    orgId: string,
+    update: OrgPreferencesUpdate,
+): Promise<OrgPreferences> {
+    return apiRequest<OrgPreferences>(
+        "organizations.manage", `/orgs/${orgId}/preferences`,
+        {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(update),
+        },
+    );
+}
+
 export interface OrgMemberDataPolicy {
     allow_member_exports: boolean;
     allow_member_deletes: boolean;
@@ -2927,6 +2980,35 @@ export async function uploadStandaloneDocuments(
     });
 }
 
+export async function getDocumentStatuses(documentIds: string[], signal?: AbortSignal): Promise<Document[]> {
+    try {
+        return await apiRequest<Document[]>("documents.directory", "/single-documents/status", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ document_ids: documentIds }),
+            signal,
+        });
+    } catch (error) {
+        // Self-hosted frontends and backends may be upgraded independently.
+        // Only an unsupported endpoint selects the legacy reads: auth/server
+        // failures must retain their normal handling and retry behavior.
+        if (!(error instanceof MikeApiError) || ![404, 405].includes(error.status)) throw error;
+        signal?.throwIfAborted();
+        const results = await settleWithConcurrency([...new Set(documentIds)], 2, async id => {
+            signal?.throwIfAborted();
+            return apiRequest<Document>("documents.directory", `/single-documents/${encodeURIComponent(id)}`, { signal });
+        });
+        signal?.throwIfAborted();
+        return results.flatMap(result => {
+            if (result.status === "fulfilled") return [result.value];
+            // The batch endpoint also omits deleted or no-longer-readable
+            // documents. Other failures must not look like an empty result.
+            if (result.reason instanceof MikeApiError && result.reason.status === 404) return [];
+            throw result.reason;
+        });
+    }
+}
+
 export async function getDocument(documentId: string, isCurrentAccount?: () => boolean,
 ): Promise<Document> {
     return apiRequest<Document>("documents.directory", `/single-documents/${documentId}`, undefined, isCurrentAccount);
@@ -2941,7 +3023,7 @@ interface DocumentEditResolution {
     already_resolved?: boolean;
     status?: "accepted" | "rejected";
     version_id: string | null;
-    download_url: string | null;
+
     remaining_pending?: number;
 }
 
@@ -2964,41 +3046,14 @@ export async function getDocumentUrl(
     return apiRequest("documents.directory", `/single-documents/${documentId}/url${qs}`);
 }
 
-/**
- * Dev-only (OSS-6 divergence, §2.3 item 6): resolve a document/version
- * download URL and trigger a browser download.
- *
- * R2 returns an absolute pre-signed URL the browser can fetch directly. Azure
- * returns a relative backend-proxy path (`/download/<token>`) that sits behind
- * `requireAuth`, so a plain `<a>` click can't authenticate (no Bearer header)
- * and the relative path also misses the `/api` prefix. For that case we fetch
- * with the auth header and save the resulting blob.
- */
+/** Download current document bytes behind the normal authenticated access check. */
 export async function downloadResolvedDocument(
     documentId: string,
     versionId: string | null,
     fallbackFilename: string,
 ): Promise<void> {
-    const { url, filename } = await getDocumentUrl(documentId, versionId);
+    const { blob, filename } = await getDocumentFile(documentId, versionId);
     const name = filename || fallbackFilename;
-
-    // Absolute pre-signed URL (R2): the browser fetches it directly; adding an
-    // Authorization header would only trip CORS on the storage host.
-    if (/^https?:\/\//i.test(url)) {
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = name;
-        a.rel = "noopener";
-        a.click();
-        return;
-    }
-
-    // Relative backend proxy (Azure): authenticate and download the bytes.
-    const authHeaders = await getAuthHeader();
-    const response = await fetch(`${API_BASE}${url}`, { headers: authHeaders, credentials: "include" });
-    bounceIfUnauthorized(response);
-    if (!response.ok) throw new Error(`Download failed: ${response.status}`);
-    const blob = await response.blob();
     const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = blobUrl;
@@ -3483,8 +3538,17 @@ export async function createTabularReview(payload: {
 
 export async function getTabularReview(
     reviewId: string,
+    previous?: TabularReviewDetailOut,
 ): Promise<TabularReviewDetailOut> {
-    return apiRequest<TabularReviewDetailOut>("tabular.run", `/tabular-review/${reviewId}`);
+    const base = previous?.review.id === reviewId && previous.cell_revision ? previous : undefined;
+    const query = base ? `?cell_revision=${encodeURIComponent(base.cell_revision!)}` : "";
+    const { removed_cell_ids, ...detail } = await apiRequest<TabularReviewDetailOut & { removed_cell_ids?: string[] }>(
+        "tabular.run", `/tabular-review/${reviewId}${query}`);
+    if (!base || !removed_cell_ids) return detail;
+    const cells = new Map(base.cells.map(cell => [cell.id, cell]));
+    for (const id of removed_cell_ids) cells.delete(id);
+    for (const cell of detail.cells) cells.set(cell.id, cell);
+    return { ...detail, cells: [...cells.values()] };
 }
 
 export async function updateTabularReview(
@@ -3546,7 +3610,13 @@ export async function revokeTabularReviewAccess(
 
 export async function generateTabularColumnPrompt(
     title: string,
-    options?: { format?: string; documentName?: string; tags?: string[] },
+    options?: {
+        format?: string;
+        documentName?: string;
+        tags?: string[];
+        /** "personal" or an organization's id: whose tabular model drafts it. */
+        workspace?: string;
+    },
 ): Promise<{ prompt: string; source: "preset" | "llm" | "fallback" }> {
     return apiRequest<{
         prompt: string;
@@ -3559,6 +3629,7 @@ export async function generateTabularColumnPrompt(
             format: options?.format,
             documentName: options?.documentName,
             tags: options?.tags,
+            workspace: options?.workspace,
         }),
     });
 }
@@ -4182,6 +4253,22 @@ export async function updateQuickAction(
 ): Promise<QuickAction> {
     return apiRequest<QuickAction>("quick_actions.run", `/quick-actions/${quickActionId}`, {
         method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+}
+
+/** Report an issue with one assistant response; see ReportIssueModal. */
+export async function createSupportReport(payload: {
+    chat_id: string;
+    message_id: string;
+    description: string;
+    allow_conversation: boolean;
+    allow_documents: boolean;
+    consent_text: string;
+}): Promise<{ id: string; access_expires_at: string | null }> {
+    return apiRequest("support.report_issue", "/support-reports", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
     });

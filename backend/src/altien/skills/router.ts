@@ -5,6 +5,7 @@ import { requireRole } from "../../middleware/requireRole";
 import { safeErrorMessage } from "../../lib/safeError";
 import { checkProjectAccess } from "../../lib/access";
 import { createServerSupabase } from "../../lib/supabase";
+import { runWithOAuthStateTenant } from "../../lib/oauthStateTenant";
 import {
   SKILL_IMPORT_LIMITS,
   SkillArchiveValidationError,
@@ -60,6 +61,8 @@ import {
 import crypto from "node:crypto";
 import { checkGitHubSkillVersionUpdate } from "./updates";
 
+import { importCatalogSkill, listSkillCatalog, SkillCatalogError } from "./catalog";
+
 const zipUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -76,9 +79,11 @@ function uploadOne(req: Request, res: Response, next: NextFunction) {
         error.code === "LIMIT_FILE_SIZE"
           ? `ZIP exceeds the ${SKILL_IMPORT_LIMITS.compressedBytes} byte limit.`
           : `Skill upload failed: ${error.message}`;
-      return void res
-        .status(error.code === "LIMIT_FILE_SIZE" ? 413 : 400)
-        .json({ detail });
+      // The 413 carries a code so the browser does not take it for a proxy's
+      // request-size cap (frontend reportGatewayLimit, upstream e6a958d6).
+      return void (error.code === "LIMIT_FILE_SIZE"
+        ? res.status(413).json({ detail, code: "skill_zip_too_large" })
+        : res.status(400).json({ detail }));
     }
     next(error);
   });
@@ -119,6 +124,24 @@ skillsRouter.get("/", requireAuth, requireTenant, async (_req, res) => {
     res
       .status(500)
       .json({ detail: safeErrorMessage(error, "Failed to list skills") });
+  }
+});
+
+skillsRouter.get("/catalog", requireAuth, requireTenant, async (_req, res) => {
+  try { res.json({ skills: await listSkillCatalog() }); }
+  catch (error) { console.error("[skills/catalog] list failed", error); res.status(503).json({ detail: "The Altien catalog is unavailable." }); }
+});
+
+skillsRouter.post("/imports/catalog", requireAuth, requireRole("TenantAdmin"), requireTenant, async (req, res) => {
+  const catalogId = typeof req.body?.catalogId === "string" ? req.body.catalogId : "";
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(catalogId)) return void res.status(400).json({ detail: "A catalog skill is required." });
+  try { res.status(201).json(await importCatalogSkill({ catalogId, tenantId: tenantId(res), importedBy: String(res.locals.userId) })); }
+  catch (error) {
+    if (error instanceof SkillCatalogError) return void res.status(error.status).json({ detail: error.message });
+    if (error instanceof SkillImportDuplicateError) return void res.status(409).json({ detail: error.message, code: error.code });
+    if (error instanceof SkillArchiveValidationError) return void res.status(400).json({ detail: error.message, code: error.code });
+    console.error("[skills/catalog] import failed", error);
+    res.status(502).json({ detail: "The catalog skill could not be imported. Try again later." });
   }
 });
 
@@ -270,7 +293,8 @@ skillsRouter.get("/settings/github/oauth/callback", async (req, res) => {
   try {
     if (providerError) throw new Error(providerError);
     if (!state || !code) throw new Error("GitHub OAuth callback is incomplete.");
-    await completeGitHubSkillOAuth({ state, code });
+    await runWithOAuthStateTenant("altien_skill_github_oauth_states", state, () =>
+      completeGitHubSkillOAuth({ state, code }));
     githubOAuthPopupHeaders(res, nonce).send(
       githubOAuthPopupHtml({ success: true }, nonce),
     );

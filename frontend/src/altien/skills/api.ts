@@ -375,3 +375,16 @@ export function importSkillFromGitHub(url: string) {
         },
     );
 }
+
+export type SkillCatalogItem = { id: string; displayName: string; description: string; commit: string };
+
+export function listSkillCatalog() {
+    return apiRequest<{ skills: SkillCatalogItem[] }>("/altien/skills/catalog");
+}
+
+export function importSkillFromCatalog(catalogId: string) {
+    return apiRequest<SkillImportResult>("/altien/skills/imports/catalog", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ catalogId }),
+    });
+}

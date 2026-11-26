@@ -8,7 +8,6 @@ import type { EditAnnotation } from "@mike/contracts";
 import { can, ensureDocAccess } from "../../lib/access";
 import { applyTrackedEdits, type EditInput } from "../../lib/docxTrackedChanges";
 import { contentSha256, loadActiveVersion } from "../../lib/documentVersions";
-import { buildDownloadUrl } from "../../lib/downloadTokens";
 import { deleteFileBestEffort, downloadFile, uploadFile } from "../../lib/storage";
 import { reportError } from "../../lib/observability/sentry";
 import type { Db } from "../../lib/supabase";
@@ -61,13 +60,18 @@ export async function applyTrackedEditsToDocument(params: {
     versionNumber: number;
     storagePath: string;
   };
+  /**
+   * The assistant turn's signal. Checked once the edit is computed and before
+   * anything is written: a turn stopped while the source was downloading
+   * publishes no new version.
+   */
+  signal?: AbortSignal;
 }): Promise<
   | {
       ok: true;
       version_id: string;
       version_number: number;
       storage_path: string;
-      download_url: string;
       annotations: EditAnnotation[];
       errors: { index: number; reason: string }[];
     }
@@ -155,6 +159,10 @@ export async function applyTrackedEditsToDocument(params: {
     editedBytes.byteOffset + editedBytes.byteLength,
   ) as ArrayBuffer;
 
+  if (params.signal?.aborted) {
+    return { ok: false, error: "The turn was stopped before the edit was saved." };
+  }
+
   if (params.job) {
     if (!params.expectedVersion || reuseVersion) return { ok: false, error: "A fenced review requires its original document version." };
     const versionId = crypto.randomUUID();
@@ -177,7 +185,7 @@ export async function applyTrackedEditsToDocument(params: {
     }
     const version = result.data;
     return { ok: true, version_id: version.id, version_number: version.version_number,
-      storage_path: stagedPath, download_url: buildDownloadUrl(stagedPath, versionFilename), errors,
+      storage_path: stagedPath, errors,
       annotations: (version.edit_rows ?? []).map(row => {
         const source = changes.find(c => c.id === row.change_id);
         return { kind: "edit" as const, edit_id: row.id, document_id: documentId,
@@ -317,17 +325,13 @@ export async function applyTrackedEditsToDocument(params: {
     },
   );
 
-  // Persistent, non-expiring permalink. The backend streams fresh bytes
-  // on each request, so this URL stays valid as long as the file exists.
-  const resolvedFilename = versionFilename.trim() || "Untitled document.docx";
-  const permalink = buildDownloadUrl(newPath, resolvedFilename);
-
+  // Downloads use tenant-bound document/version links (MT 023), so no
+  // persisted download token is returned here.
   return {
     ok: true,
     version_id: versionRowId,
     version_number: nextVersionNumber,
     storage_path: newPath,
-    download_url: permalink,
     annotations,
     errors,
   };

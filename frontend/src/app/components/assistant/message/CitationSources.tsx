@@ -1,10 +1,9 @@
-import { SvgAssetIcon } from "@/app/components/ui/svg-asset-icon";
-import caseLaw from "../../../../../public/icons/legal-sources/case-law.svg";
-import { Loader2 } from "lucide-react";
 import { FileTypeIcon } from "../../shared/FileTypeIcon";
+import { LegalSourceIcon } from "../../shared/LegalSourceIcon";
+import { legalSourceIconKind } from "../../shared/documentCapabilities";
 import { displayCitationQuote, formatCitationPage } from "../../shared/types";
 import type { Citation } from "../../shared/types";
-import { CitationPillUI } from "@/shared/ui/CitationPillUI";
+import { CitationPillUI } from "@mike/ui";
 import { RESPONSE_GLASS_SURFACE } from "./messageStyles";
 import {
     citationVerificationAriaLabel,
@@ -46,20 +45,30 @@ export function citationTooltip(annotation: Citation): string {
     return verification ? `${source} — ${verification}` : source;
 }
 
+/**
+ * The icon for a cited source: cases and legislation by their document type
+ * (a provider-backed source is titled, not named like a file, as in the
+ * panel), anything else by its filename.
+ */
+export function SourceTypeIcon({
+    type,
+    filename,
+}: {
+    type?: string | null;
+    filename: string;
+}) {
+    const legalIcon = legalSourceIconKind(type);
+    if (legalIcon) return <LegalSourceIcon kind={legalIcon} />;
+    return <FileTypeIcon fileType={filename} className="h-3.5 w-3.5" />;
+}
+
 function CitationSourceIcon({ annotation }: { annotation: Citation }) {
-    if (annotation.kind === "case") {
-        return (
-            <SvgAssetIcon
-                src={caseLaw}
-                aria-hidden="true"
-                width={14}
-                height={14}
-                className="h-3.5 w-3.5 shrink-0"
-            />
-        );
-    }
+    if (annotation.kind === "case") return <LegalSourceIcon kind="case" />;
     return (
-        <FileTypeIcon fileType={annotation.filename} className="h-3.5 w-3.5" />
+        <SourceTypeIcon
+            type={annotation.document?.type}
+            filename={annotation.filename}
+        />
     );
 }
 
@@ -140,19 +149,15 @@ export function CitationsBlock({
     onCitationClick,
     onOpenSource,
     canOpenSource,
-    showWhenEmpty = false,
-    isLoading = false,
 }: {
     citations: Citation[];
     activeCitation?: Citation | null;
     onCitationClick?: (citation: Citation) => void;
     onOpenSource?: (citation: Citation) => void;
     canOpenSource?: (citation: Citation) => boolean;
-    showWhenEmpty?: boolean;
-    isLoading?: boolean;
 }) {
     const rows = buildCitationSourceRows(citations);
-    if (rows.length === 0 && !showWhenEmpty) return null;
+    if (rows.length === 0) return null;
 
     return (
         <div className="mt-2 mb-3">
@@ -161,9 +166,6 @@ export function CitationsBlock({
                     <h3 className="text-base font-serif text-gray-900">
                         Citations
                     </h3>
-                    {isLoading && (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />
-                    )}
                 </div>
                 <div>
                     {rows.map((row) => {

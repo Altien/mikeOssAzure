@@ -66,7 +66,24 @@ vi.mock("@/app/components/site-logo", () => ({
     SiteLogo: () => <div>Mike</div>,
 }));
 
+const signInOptions = vi.hoisted(() => ({
+    current: {
+        options: { google: true, sso: true, setupRequired: false },
+        loaded: true,
+        providersKnown: true,
+    },
+}));
+
+vi.mock("@/app/hooks/useSignInOptions", () => ({
+    useSignInOptions: () => signInOptions.current,
+}));
+
 beforeEach(() => {
+    signInOptions.current = {
+        options: { google: true, sso: true, setupRequired: false },
+        loaded: true,
+        providersKnown: true,
+    };
     authState.error = null;
     retrySession.mockReset();
     login.mockReset();
@@ -88,7 +105,6 @@ beforeEach(() => {
 });
 
 describe("LoginPage", () => {
-
 
     it("allows an existing account to submit a password shorter than the new minimum", async () => {
         login.mockResolvedValue({ user: { id: "user-1" } });
@@ -182,6 +198,42 @@ describe("LoginPage", () => {
                 Node.DOCUMENT_POSITION_FOLLOWING,
         ).toBeTruthy();
     });
+    it("offers only the providers the deployment has configured", () => {
+        signInOptions.current = {
+            options: { google: false, sso: false, setupRequired: false },
+            loaded: true,
+            providersKnown: true,
+        };
+        render(<LoginPage />);
+        expect(screen.getByRole("button", { name: "Log in" })).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Continue with Google" })).toBeNull();
+        expect(screen.queryByRole("button", { name: "Continue with SSO" })).toBeNull();
+    });
+
+    it("shows no provider buttons until the deployment has said which it offers", () => {
+        signInOptions.current = {
+            options: { google: true, sso: true, setupRequired: false },
+            loaded: false,
+            providersKnown: false,
+        };
+        render(<LoginPage />);
+        expect(screen.queryByRole("button", { name: "Continue with Google" })).toBeNull();
+        expect(screen.queryByRole("button", { name: "Continue with SSO" })).toBeNull();
+    });
+
+    it("draws the hinted provider buttons before the deployment's own answer arrives", () => {
+        // The server rendered the page with a provider hint: the buttons
+        // are in the first paint, so the card does not grow afterwards.
+        signInOptions.current = {
+            options: { google: true, sso: false, setupRequired: false },
+            loaded: false,
+            providersKnown: true,
+        };
+        render(<LoginPage />);
+        expect(screen.getByRole("button", { name: "Continue with Google" })).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Continue with SSO" })).toBeNull();
+    });
+
     it("hides the guest button outside the Mac desktop shell", async () => {
         // window.mikeDesktop only exists inside the Electron shell, and only
         // its local ("everything on this Mac") mode answers with credentials.
@@ -292,4 +344,35 @@ it("shows a sign-in failure in the popup ahead of the session warning", async ()
     expect(screen.getByRole("alert")).toHaveTextContent(
         "We could not check your session",
     );
+});
+
+it("offers both pooled identity choices through runtime config", () => {
+  // useConfig is mocked above to return this shared object.
+  const pooled = config as Record<string, unknown>;
+  const previous = { ...pooled };
+  Object.assign(pooled, { authProvider: "entra", tenancyMode: "pooled", externalIdSignIn: true, demoMode: false, entra: { tenantId: "external", clientId: "browser" } });
+  try {
+    render(<LoginPage />);
+    expect(screen.getByRole("button", { name: "Sign in to Mike" })).toHaveAttribute("type", "button");
+    expect(screen.getByRole("button", { name: "Sign in with your organisation" })).toHaveAttribute("type", "button");
+    expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
+  } finally {
+    for (const key of Object.keys(pooled)) delete pooled[key];
+    Object.assign(pooled, previous);
+  }
+});
+
+it("offers one Microsoft button when pooled External ID is not configured", () => {
+  const pooled = config as Record<string, unknown>;
+  const previous = { ...pooled };
+  Object.assign(pooled, { authProvider: "entra", tenancyMode: "pooled", externalIdSignIn: false, demoMode: false, entra: { tenantId: "common", clientId: "browser" } });
+  try {
+    render(<LoginPage />);
+    expect(screen.getByRole("button", { name: "Sign in with Microsoft" })).toHaveAttribute("type", "button");
+    expect(screen.queryByRole("button", { name: "Sign in to Mike" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sign in with your organisation" })).not.toBeInTheDocument();
+  } finally {
+    for (const key of Object.keys(pooled)) delete pooled[key];
+    Object.assign(pooled, previous);
+  }
 });

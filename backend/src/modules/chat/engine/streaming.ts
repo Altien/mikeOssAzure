@@ -1,3 +1,4 @@
+import { BACKEND_REPORTING_OWNER } from "../../../lib/reportedUpstreamCodes";
 import { AppError } from "../../../lib/appError";
 import { teamOrgIdOf } from "../../../lib/personalOrgs";
 import { webSearchAccountFor, type WebSearchPlan } from "../../../lib/webSearch";
@@ -18,10 +19,12 @@ import {
   sameProviderModels,
 } from "../../../lib/modelSelection";
 import { InvalidApiKeyError } from "../../../lib/llm/apiKeyErrors";
-import { markStage, reportError } from "../../../lib/observability/sentry";
-import { providerFailureKind } from "../../../lib/llm/providerErrors";
+import { markStage, markErrorHandled, reportError, isReported } from "../../../lib/observability/sentry";
+import { ProviderConfigurationError, isSelfServiceProviderRefusal, isUserProviderRefusal, providerFailureKind } from "../../../lib/llm/providerErrors";
+import { reportModelFailure } from "../../../lib/llm/providerFailureReport";
 import { safeError } from "../../../lib/safeError";
 import type { Db } from "../../../lib/supabase";
+import type { StreamRunWriteOptions } from "../../../lib/streamRuns";
 import { buildUserMcpTools } from "../../../lib/mcpConnectors";
 import { buildGoogleDriveTools } from "../../../lib/integrations/googleDrive";
 import { COURTLISTENER_TOOLS } from "./tools/courtlistenerTools";
@@ -59,7 +62,6 @@ import {
   type TabularCellStore,
   type WorkflowStore,
   type ToolCall,
-  devLog,
   resolveDocLabel,
   TOOL_ERROR_MESSAGE,
 } from "./types";
@@ -71,13 +73,18 @@ import {
   toolName,
   withoutDocumentMutatingTools,
 } from "./tools/toolSchemas";
-import {
-  parseCitationsWithDiagnostics,
-  parsePartialCitationObjects,
-  createCitation,
-  CITATIONS_OPEN_TAG,
-} from "./citations";
+import { limitCitationPayload } from "./citations";
 import { runToolCalls } from "./tools/toolDispatcher";
+import {
+  SCRIPT_TOOL_NAME,
+  runScriptCall,
+  scriptInnerTools,
+  scriptToolFor,
+} from "./tools/scriptTool";
+import {
+  emptyToolCallBatchResult,
+  type ToolCallBatchResult,
+} from "./tools/toolBatchResult";
 import { addApprovalItems } from "./tools/connectorApprovals";
 import { createKeyedLock, type KeyedLock } from "./tools/documentLocks";
 import type { SubagentRunStore } from "./tools/delegateRuns";
@@ -96,11 +103,19 @@ import {
   createFastModelExternalSourceSummarizer,
   ExternalSourceCache,
 } from "../../../altien/externalSources/cache";
-import { verifyCitations } from "./verifyCitations";
+import {
+  CITE_DOCUMENTS_TOOL,
+  CITE_SOURCES_TOOL_NAME,
+  CITE_TABLE_CELLS_TOOL,
+  createCitationRecorder,
+  documentCitations,
+  tabularCitations,
+} from "./citeSources";
 import { buildMemoryTurn } from "../../../lib/memory/prompt";
 
 export type { AssistantEvent } from "@mike/contracts";
 import type { AssistantEvent, AssistantErrorCode } from "@mike/contracts";
+import { log } from "../../../lib/log";
 
 /**
  * Tools the model can call that execute outside this process — in the Word
@@ -119,16 +134,20 @@ export interface ClientToolsAdapter {
 export class AssistantStreamError extends AppError {
   fullText: string;
   events: AssistantEvent[];
+  /** The citations recorded before the turn ended, to keep with it. */
+  citations: unknown[];
 
   constructor(
     message: string,
     fullText: string,
     events: AssistantEvent[],
     options?: ErrorOptions,
+    citations: unknown[] = [],
   ) {
     super("chat.stream_failed", message, options);
     this.fullText = fullText;
     this.events = events;
+    this.citations = citations;
   }
 }
 
@@ -152,13 +171,19 @@ export function assistantStreamErrorPayload(
   safe_to_display?: true;
   code?: AssistantErrorCode;
   request_id?: string;
-  reporting_owner: "backend";
+  reporting_owner?: typeof BACKEND_REPORTING_OWNER;
 } {
   // The request id is the one handle a user can quote that finds the Sentry
   // event and the access-log line for this failure; it carries no content.
-  // The server owns reporting for terminal failures, even when telemetry is
-  // disabled. This states ownership; it does not promise event delivery.
-  const reporting = { reporting_owner: "backend" as const, ...(requestId ? { request_id: requestId } : {}) };
+  // Only an explicit report or source-owned handling establishes ownership.
+  // A safe message/code says nothing about who accounted for the failure.
+  const reporting: { reporting_owner?: typeof BACKEND_REPORTING_OWNER; request_id?: string } = {
+    ...(isReported(error) ? { reporting_owner: BACKEND_REPORTING_OWNER } : {}),
+    ...(requestId ? { request_id: requestId } : {}),
+  };
+  // A caller that runs the model itself (tabular) holds the provider's own
+  // error, not an AssistantStreamError; it gets the verdict the engine would
+  // have tagged on that same failure.
   const safe =
     error instanceof AssistantStreamError
       ? [...error.events]
@@ -167,13 +192,34 @@ export function assistantStreamErrorPayload(
             (event): event is Extract<AssistantEvent, { type: "error" }> =>
               event.type === "error" && event.safe_to_display === true,
           )
-      : undefined;
-  if (!safe) return { message: ASSISTANT_ERROR_MESSAGE, ...reporting };
+      : modelFailureEvent(error);
+  if (!safe?.safe_to_display) return { message: ASSISTANT_ERROR_MESSAGE, ...reporting };
   return {
     message: safe.message,
     safe_to_display: true,
     ...(safe.code ? { code: safe.code } : {}),
     ...reporting,
+  };
+}
+
+/** The error event a failed model call becomes, shown only when it is ours. */
+function modelFailureEvent(
+  err: unknown,
+): Extract<AssistantEvent, { type: "error" }> {
+  const safeToDisplay = err instanceof UserFacingError;
+  return {
+    type: "error",
+    message: safeToDisplay ? err.message : ASSISTANT_ERROR_MESSAGE,
+    ...(safeToDisplay ? { safe_to_display: true } : {}),
+    // A rejected key is worth naming: the client turns this into a prompt
+    // to go fix the key rather than a suggestion to retry. An account the
+    // user or their organization owns is named too, so the client does not
+    // send them to support for something only they can fix.
+    ...(err instanceof InvalidApiKeyError
+      ? { code: "invalid_api_key" as const }
+      : safeToDisplay && isSelfServiceProviderRefusal(err)
+        ? { code: "provider_account_refused" as const }
+        : {}),
   };
 }
 
@@ -212,10 +258,30 @@ export function sanitizeAssistantSseChunk(chunk: string): string {
 }
 
 export class AssistantStreamAbortError extends AssistantStreamError {
-  constructor(fullText: string, events: AssistantEvent[]) {
-    super("Stream aborted.", fullText, events);
+  constructor(fullText: string, events: AssistantEvent[], citations: unknown[] = []) {
+    super("Stream aborted.", fullText, events, undefined, citations);
     this.name = "AbortError";
   }
+}
+
+/**
+ * Treat a turn as stopped when its signal fired after `runLLMStream` had
+ * already returned: a deadline or Stop that lands while a provider or tool
+ * ignored the abort. The run has
+ * told its readers the turn is over (and may have force-finished it), so the
+ * route must take its stop path rather than persist, title and curate the
+ * turn as a completed answer.
+ */
+export function throwIfTurnStopped(
+  signal: AbortSignal,
+  result: { fullText: string; events: AssistantEvent[]; citations: unknown[] },
+): void {
+  if (signal.aborted)
+    throw new AssistantStreamAbortError(
+      result.fullText,
+      result.events,
+      result.citations,
+    );
 }
 
 class AssistantStreamAskInputsPause extends Error {
@@ -268,7 +334,8 @@ export async function runLLMStream(params: {
    */
   userEmail?: string | null;
   db: Db;
-  write: (s: string) => void;
+  /** `opts.replay` is honoured by a server-owned run and ignored otherwise. */
+  write: (s: string, opts?: StreamRunWriteOptions) => void;
   onActivity?: () => void;
   extraTools?: unknown[];
   allowedToolNames?: string[];
@@ -308,7 +375,11 @@ export async function runLLMStream(params: {
    * retry) need headroom, or the loop ends before the model's summary.
    */
   maxIterations?: number;
-  buildCitations?: (fullText: string) => unknown[];
+  /**
+   * What the answer cites with cite_sources: the conversation's documents
+   * and cases (the default), or the cells of `tabularStore`'s review.
+   */
+  citationSources?: "documents" | "tabular_cells";
   model?: string;
   fastModel?: string;
   /** AI SDK reasoning effort for this interactive request. */
@@ -356,8 +427,12 @@ export async function runLLMStream(params: {
     onToolBatch: (
       calls: NormalizedToolCall[],
       results: NormalizedToolResult[],
+      /** Sources the batch registered, by tool call id; their text is not to be persisted. */
+      externalSourceHandles: ReadonlyMap<string, string>,
     ) => void;
   };
+  /** Usage-ledger tag (multi-tenant issue 015); defaults to "chat". */
+  feature?: import("../../../lib/llm").LlmFeature;
 }): Promise<{
   fullText: string;
   events: AssistantEvent[];
@@ -383,7 +458,7 @@ export async function runLLMStream(params: {
     workflowStore,
     tabularStore,
     clientTools,
-    buildCitations,
+    citationSources = "documents",
     model,
     fastModel,
     apiKeys,
@@ -399,8 +474,11 @@ export async function runLLMStream(params: {
     subagentDefaults,
     subagentRun,
   } = params;
-  const write = (chunk: string) =>
-    unsafeWrite(sanitizeAssistantSseChunk(chunk));
+  // Only frames that carry replay options pass a second argument.
+  const write = (chunk: string, opts?: StreamRunWriteOptions) =>
+    opts
+      ? unsafeWrite(sanitizeAssistantSseChunk(chunk), opts)
+      : unsafeWrite(sanitizeAssistantSseChunk(chunk));
   const isSubagent = subagentRun !== undefined;
   const researchTools = includeResearchTools ? COURTLISTENER_TOOLS : [];
   // The person's own connections for the workspace this conversation is in.
@@ -426,7 +504,9 @@ export async function runLLMStream(params: {
   );
   // An invalid model fails the answer below, before any tool runs.
   const chatModel = resolveModel(model, "");
+  const citesTableCells = citationSources === "tabular_cells" && !!tabularStore;
   const baseTools = [
+    citesTableCells ? CITE_TABLE_CELLS_TOOL : CITE_DOCUMENTS_TOOL,
     ...conversationTools,
     ...researchTools,
     ...EXTERNAL_SOURCE_TOOLS,
@@ -464,6 +544,11 @@ export async function runLLMStream(params: {
         (tool) => !SUBAGENT_EXCLUDED_TOOL_NAMES.has(toolName(tool) ?? ""),
       )
     : permittedTools;
+  // run_script (SCRIPT_TOOL=on) scripts the turn's read-only document tools.
+  // A subagent does not get it: its parent can script, or delegate.
+  const scriptTool = isSubagent ? null : await scriptToolFor(activeTools);
+  const scriptTools = scriptTool ? scriptInnerTools(activeTools) : [];
+  const turnTools = scriptTool ? [...activeTools, scriptTool] : activeTools;
 
   // Extract system prompt; pass remaining turns to the adapter as
   // plain user/assistant messages (assistant turns may carry stored
@@ -563,114 +648,72 @@ export async function runLLMStream(params: {
   // The tokens are this assistant's own, summed over its steps; each
   // subagent reports its own on its delegation event.
   let answerModel: string | null = null;
-  let answerUsage: { input_tokens: number; output_tokens: number } | null = null;
+  let answerUsage: NonNullable<import("@mike/contracts").ResponseDetailsEvent["usage"]> | null = null;
   let fullText = "";
   let iterText = "";
-  let iterVisibleText = "";
   let iterReasoning = "";
-  let visibleTailBuffer = "";
-  let citationsOpenSeen = false;
-  let streamingCitationsBuffer = "";
-  let streamedCitationCount = 0;
+  // Every citations frame carries the whole list so far, and the client
+  // replaces its list with it. Only the newest is worth replaying to a
+  // client that attaches later. The final frame bumps this too, so no
+  // partial outlives it.
+  let citationSnapshotSeq = 0;
 
-  const emitCitationStreamSnapshot = (
-    status: "started" | "partial",
-    citations: unknown[],
-  ) => {
-    if (buildCitations) return;
-    write(
-      `data: ${JSON.stringify({ type: "citations", status, citations })}\n\n`,
-    );
+  // A cited document's extracted text, read from bytes already in storage
+  // with emitEvents:false. The document may be edited later in the turn,
+  // so each cite_sources call reads it afresh, once per document.
+  const readSourceText = (docId: string): Promise<string> => {
+    const label = resolveDocLabel(docId, docStore, docIndex);
+    return label
+      ? readDocumentContent(label, docStore, () => {}, docIndex, db, {
+          emitEvents: false,
+        })
+      : Promise.resolve("");
   };
+  const citationRecorder = createCitationRecorder(
+    citesTableCells
+      ? tabularCitations(tabularStore!)
+      : documentCitations({
+          docIndex,
+          docStore,
+          casesByClusterId: courtlistenerTurnState.casesByClusterId,
+          readSourceText,
+          // Dev: case opinions also come from the turn's external-source
+          // cache, as dev's end-of-turn verification read them.
+          getCaseOpinions: async (clusterId) =>
+            getCachedCaseOpinionTexts(courtlistenerTurnState, clusterId, externalSourceCache),
+        }),
+  );
+  const recordedCitations = () =>
+    limitCitationPayload(citationRecorder.citations());
 
-  const streamHiddenCitationContent = (delta: string) => {
-    if (buildCitations || !delta) return;
-    streamingCitationsBuffer += delta;
-    const partial = parsePartialCitationObjects(streamingCitationsBuffer);
-    if (partial.length <= streamedCitationCount) return;
-    streamedCitationCount = partial.length;
-    const citations = partial.map((c) =>
-      createCitation(
-        c,
-        docIndex,
-        courtlistenerTurnState.casesByClusterId,
-        docStore,
-      ),
+  const emitCitations = (status: "partial" | "final") => {
+    const snapshot = ++citationSnapshotSeq;
+    write(
+      `data: ${JSON.stringify({
+        type: "citations",
+        status,
+        citations: recordedCitations(),
+      })}\n\n`,
+      status === "partial"
+        ? { replay: () => snapshot === citationSnapshotSeq }
+        : undefined,
     );
-    emitCitationStreamSnapshot("partial", citations);
   };
 
   const streamVisibleContent = (delta: string) => {
     if (!delta) return;
-    if (citationsOpenSeen) {
-      streamHiddenCitationContent(delta);
-      return;
-    }
-
-    const combined = visibleTailBuffer + delta;
-    const markerIdx = combined.indexOf(CITATIONS_OPEN_TAG);
-    if (markerIdx >= 0) {
-      const visible = combined.slice(0, markerIdx);
-      if (visible) {
-        iterVisibleText += visible;
-        write(
-          `data: ${JSON.stringify({ type: "content_delta", text: visible })}\n\n`,
-        );
-      }
-      visibleTailBuffer = "";
-      citationsOpenSeen = true;
-      streamingCitationsBuffer = "";
-      streamedCitationCount = 0;
-      emitCitationStreamSnapshot("started", []);
-      streamHiddenCitationContent(
-        combined.slice(markerIdx + CITATIONS_OPEN_TAG.length),
-      );
-      return;
-    }
-
-    const keep = Math.min(CITATIONS_OPEN_TAG.length - 1, combined.length);
-    const visible = combined.slice(0, combined.length - keep);
-    visibleTailBuffer = combined.slice(combined.length - keep);
-    if (visible) {
-      iterVisibleText += visible;
-      write(
-        `data: ${JSON.stringify({ type: "content_delta", text: visible })}\n\n`,
-      );
-    }
+    write(`data: ${JSON.stringify({ type: "content_delta", text: delta })}\n\n`);
   };
 
-  const flushVisibleTail = (opts: { emit?: boolean } = {}) => {
-    const emit = opts.emit ?? true;
-    if (citationsOpenSeen || !visibleTailBuffer) {
-      visibleTailBuffer = "";
-      return;
-    }
-    iterVisibleText += visibleTailBuffer;
-    if (emit) {
-      write(
-        `data: ${JSON.stringify({ type: "content_delta", text: visibleTailBuffer })}\n\n`,
-      );
-    }
-    visibleTailBuffer = "";
-  };
-
-  const flushText = (opts: { emit?: boolean } = {}) => {
+  const flushText = () => {
     if (!iterText) return;
     fullText += iterText;
-    flushVisibleTail(opts);
-    if (iterVisibleText) {
-      events.push({ type: "content", text: iterVisibleText });
-    }
+    events.push({ type: "content", text: iterText });
     iterText = "";
-    iterVisibleText = "";
-    visibleTailBuffer = "";
-    citationsOpenSeen = false;
-    streamingCitationsBuffer = "";
-    streamedCitationCount = 0;
   };
 
-  const flushPartialTurn = (opts: { emit?: boolean } = {}) => {
-    flushText(opts);
+  const flushPartialTurn = () => {
+    flushText();
     if (iterReasoning) {
       events.push({ type: "reasoning", text: iterReasoning });
       iterReasoning = "";
@@ -710,7 +753,7 @@ export async function runLLMStream(params: {
         );
         // warn: the report above is the Sentry event; the log keeps its
         // redacted category.
-        console.warn("[subagents] model check failed", safeError(error));
+        log.warn("subagents", "model check failed", safeError(error));
         return null;
       });
       return checked?.ok ? checked.model : null;
@@ -744,7 +787,10 @@ export async function runLLMStream(params: {
         nonce,
         webSearch,
         includeResearchTools,
+        citationSources,
         onActivity: params.onActivity,
+        // A subagent's calls are billed to the feature that delegated them.
+        feature: params.feature,
         write: () => {},
         model: spawn.model,
         reasoning: spawn.reasoning,
@@ -790,6 +836,96 @@ export async function runLLMStream(params: {
     for (const { event } of await Promise.all(runs)) if (event) events.push(event);
   };
 
+  // Tool batches still running. On a Stop or a deadline the model adapter
+  // ends the stream at once, without waiting for the batch it is executing
+  // (the SDK runs tools inside its own stream), so runLLMStream unwinds while
+  // runToolCalls is still awaiting a later call. The catch below records what
+  // such a batch finished so far, so a saved edit is in the stored turn.
+  const unrecordedBatches = new Set<ToolCallBatchResult>();
+  // Batches a run_script script dispatched: the model was not shown what
+  // they read, and the next turn's replay must not say it read them.
+  const scriptBatches = new WeakSet<ToolCallBatchResult>();
+  // Events of the calls that completed, in the order this turn shows
+  // tool results. A batch is recorded once: `completed` is what the
+  // dispatcher returned for it, which is `batch` itself unless a test
+  // stands in for the dispatcher.
+  const recordBatchEvents = (
+    batch: ToolCallBatchResult,
+    completed: ToolCallBatchResult = batch,
+  ) => {
+    if (!unrecordedBatches.delete(batch)) return;
+    const byScript = scriptBatches.has(batch);
+    for (const r of completed.docsRead) {
+      events.push({
+        type: "doc_read",
+        ...(byScript ? { by_script: true as const } : {}),
+        filename: r.filename,
+        document_id: r.document_id,
+        version_id: r.version_id,
+        version_number: r.version_number,
+      });
+    }
+    for (const f of completed.docsFound) {
+      events.push({
+        type: "doc_find",
+        filename: f.filename,
+        document_id: f.document_id,
+        version_id: f.version_id,
+        version_number: f.version_number,
+        query: f.query,
+        total_matches: f.total_matches,
+      });
+    }
+    events.push(...(completed.documentSearchEvents ?? []));
+    events.push(...(completed.textCardEvents ?? []));
+    for (const dl of completed.docsCreated) {
+      events.push({
+        type: "doc_created",
+        filename: dl.filename,
+        document_id: dl.document_id,
+        version_id: dl.version_id,
+        version_number: dl.version_number ?? null,
+      });
+    }
+    for (const r of completed.docsReplicated) {
+      events.push({
+        type: "doc_replicated",
+        filename: r.filename,
+        count: r.count,
+        copies: r.copies,
+      });
+    }
+    for (const wf of completed.workflowsApplied) {
+      events.push({
+        type: "workflow_applied",
+        workflow_id: wf.workflow_id,
+        title: wf.title,
+      });
+    }
+    for (const e of completed.docsEdited) {
+      events.push({
+        type: "doc_edited",
+        filename: e.filename,
+        document_id: e.document_id,
+        version_id: e.version_id,
+        version_number: e.version_number,
+        annotations: e.annotations,
+      });
+    }
+    for (const event of completed.courtlistenerEvents) {
+      events.push(event);
+    }
+    for (const event of completed.mcpEvents) {
+      events.push(event);
+    }
+    for (const event of completed.caseCitationEvents) {
+      events.push(event);
+    }
+    for (const event of completed.authorityTraceEvents) {
+      events.push(event);
+    }
+  };
+
   try {
     throwIfAborted(signal);
     // Single request-time choke point for every runLLMStream caller (chat,
@@ -807,7 +943,7 @@ export async function runLLMStream(params: {
     // route before they arrive here, but this guard keeps every caller safe.
     const requestedModel = resolveModel(model, "");
     if (!requestedModel) {
-      throw new UserFacingError(
+      throw new ProviderConfigurationError(
         model
           ? `Model "${model}" is not available. Select another model.`
           : "Select a model before sending a message.",
@@ -829,7 +965,7 @@ export async function runLLMStream(params: {
       model: selectedModel,
       systemPrompt,
       messages: chatMessages,
-      tools: activeTools as OpenAIToolSchema[],
+      tools: turnTools as OpenAIToolSchema[],
       // Keep in step with DEFAULT_MAX_ITERATIONS in llm/aiSdk.ts. Deliberately
       // a literal, not an import: tests mock the "../llm" barrel, and reaching
       // past it into llm/aiSdk loads the real SDK module into suites that only
@@ -842,18 +978,31 @@ export async function runLLMStream(params: {
       providerWebSearch:
         providerSearches > 0 ? { maxSearches: providerSearches } : null,
       finishWithoutToolsOnLastStep: isSubagent,
+      feature: params.feature ?? "chat",
       callbacks: {
         onActivity: params.onActivity,
         onUsage: (usage, finishReason) => {
           answerUsage = {
+            ...answerUsage,
             input_tokens: (answerUsage?.input_tokens ?? 0) + usage.inputTokens,
             output_tokens: (answerUsage?.output_tokens ?? 0) + usage.outputTokens,
           };
+          if (usage.cacheReadTokens !== undefined)
+            answerUsage.cache_read_tokens = (answerUsage.cache_read_tokens ?? 0) + usage.cacheReadTokens;
+          if (usage.cacheWriteTokens !== undefined)
+            answerUsage.cache_write_tokens = (answerUsage.cache_write_tokens ?? 0) + usage.cacheWriteTokens;
           subagentRun?.onUsage(usage, finishReason);
         },
         onContentDelta: (delta) => {
           iterText += delta;
           streamVisibleContent(delta);
+        },
+        onStopNotice: (notice) => {
+          // The server's incomplete-answer warning is its own part of the
+          // visible and persisted answer, apart from the model's prose.
+          flushText();
+          iterText += notice;
+          streamVisibleContent(notice);
         },
         onReasoningDelta: (delta) => {
           iterReasoning += delta;
@@ -927,9 +1076,17 @@ export async function runLLMStream(params: {
         const delegateCalls = permittedCalls.filter(
           (c) => c.name === DELEGATE_TOOL_NAME,
         );
+        const isScriptCall = (c: NormalizedToolCall) =>
+          !!scriptTool && c.name === SCRIPT_TOOL_NAME;
+        const scriptCalls = permittedCalls.filter(isScriptCall);
+        const citeCalls = permittedCalls.filter(
+          (c) => c.name === CITE_SOURCES_TOOL_NAME,
+        );
         const handledElsewhere = (c: NormalizedToolCall) =>
           webToolNames.has(c.name) ||
+          c.name === CITE_SOURCES_TOOL_NAME ||
           c.name === DELEGATE_TOOL_NAME ||
+          isScriptCall(c) ||
           !!clientTools?.owns(c.name);
         const serverCalls = permittedCalls.filter((c) => !handledElsewhere(c));
         const delegating = Promise.all(
@@ -980,122 +1137,96 @@ export async function runLLMStream(params: {
             arguments: JSON.stringify(c.input),
           },
         }));
-        const {
-          toolResults,
-          docsRead,
-          docsFound,
-          documentSearchEvents,
-          docsCreated,
-          docsReplicated,
-          workflowsApplied,
-          docsEdited,
-          askInputsEvents,
-          textCardEvents,
-          courtlistenerEvents,
-          caseCitationEvents,
-          mcpEvents,
-          authorityTraceEvents,
-        } = await runToolCalls(
-          toolCalls,
-          docStore,
-          userId,
-          db,
-          write,
-          workflowStore,
-          tabularStore,
-          docIndex,
-          turnEditState,
-          turnReadState,
-          projectId,
-          courtlistenerTurnState,
-          apiKeys,
-          externalSourceCache,
-          authorityTraceTurnState,
-          skillResourceStore,
-          nonce,
-          {
-            connectorApprovals: canPauseForApproval,
-            userEmail,
-            orgId,
-            model: selectedModel,
-            documentLocks,
-            signal,
-            documentsScoped: subagentRun?.documentsScoped,
-          },
-        );
+        // One batch through the server dispatcher. Its events are recorded
+        // into the turn even when a later call in it rejects.
+        const runServerBatch = async (
+          batchCalls: ToolCall[],
+          readState: TurnReadState,
+          byScript = false,
+        ): Promise<ToolCallBatchResult> => {
+          const batch = emptyToolCallBatchResult();
+          unrecordedBatches.add(batch);
+          if (byScript) scriptBatches.add(batch);
+          let completed: ToolCallBatchResult;
+          try {
+            completed = await runToolCalls(
+              batchCalls,
+              docStore,
+              userId,
+              db,
+              write,
+              workflowStore,
+              tabularStore,
+              docIndex,
+              turnEditState,
+              readState,
+              projectId,
+              courtlistenerTurnState,
+              apiKeys,
+              externalSourceCache,
+              authorityTraceTurnState,
+              skillResourceStore,
+              nonce,
+              {
+                connectorApprovals: canPauseForApproval,
+                userEmail,
+                orgId,
+                model: selectedModel,
+                documentLocks,
+                documentsScoped: subagentRun?.documentsScoped,
+                signal,
+                results: batch,
+              },
+            );
+          } catch (error) {
+            // A later call rejected, but the ones before it ran: an edit that
+            // saved a new version, a created document. Keep their events in the
+            // turn the route stores as failed or stopped.
+            recordBatchEvents(batch);
+            // A call that rejects after the turn was stopped ends it as stopped,
+            // the outcome its readers were already told.
+            throwIfAborted(signal);
+            throw error;
+          }
+          recordBatchEvents(batch, completed);
+          return completed;
+        };
+        const completed = await runServerBatch(toolCalls, turnReadState);
+        const { toolResults, askInputsEvents } = completed;
         // A failure after this point happened with tool results in hand; the
         // breadcrumb tells it apart from one in the first model call.
         markStage("tool-result");
+        // Checked only now: a tool that finished before the stop (an edit
+        // that saved a new version, a created document) keeps its event in
+        // the stopped turn the route stores.
         throwIfAborted(signal);
-        for (const r of docsRead) {
-          events.push({
-            type: "doc_read",
-            filename: r.filename,
-            document_id: r.document_id,
-            version_id: r.version_id,
-            version_number: r.version_number,
+
+        // Scripts run after the batch, one at a time. Each inner call goes
+        // through the dispatcher on its own, with a read state of the
+        // script's: a document a script read was not shown to the model, so
+        // the model's own read_document must still return its full text.
+        for (const call of scriptCalls) {
+          const scriptReadState: TurnReadState = new Map();
+          const content = await runScriptCall(call, {
+            innerTools: scriptTools,
+            signal,
+            nonce,
+            userId,
+            dispatch: async (name, args, callId) => {
+              const inner = await runServerBatch(
+                [{ id: callId, function: { name, arguments: JSON.stringify(args) } }],
+                scriptReadState,
+                true,
+              );
+              const row = inner.toolResults.find(
+                (r) => (r as { tool_call_id?: string }).tool_call_id === callId,
+              ) as { content?: unknown } | undefined;
+              if (!row) throw new Error("The tool returned no result.");
+              return String(row.content ?? "");
+            },
           });
-        }
-        for (const f of docsFound) {
-          events.push({
-            type: "doc_find",
-            filename: f.filename,
-            document_id: f.document_id,
-            version_id: f.version_id,
-            version_number: f.version_number,
-            query: f.query,
-            total_matches: f.total_matches,
-          });
-        }
-        events.push(...(documentSearchEvents ?? []));
-        events.push(...(textCardEvents ?? []));
-        for (const dl of docsCreated) {
-          events.push({
-            type: "doc_created",
-            filename: dl.filename,
-            download_url: dl.download_url,
-            document_id: dl.document_id,
-            version_id: dl.version_id,
-            version_number: dl.version_number ?? null,
-          });
-        }
-        for (const r of docsReplicated) {
-          events.push({
-            type: "doc_replicated",
-            filename: r.filename,
-            count: r.count,
-            copies: r.copies,
-          });
-        }
-        for (const wf of workflowsApplied) {
-          events.push({
-            type: "workflow_applied",
-            workflow_id: wf.workflow_id,
-            title: wf.title,
-          });
-        }
-        for (const e of docsEdited) {
-          events.push({
-            type: "doc_edited",
-            filename: e.filename,
-            document_id: e.document_id,
-            version_id: e.version_id,
-            version_number: e.version_number,
-            download_url: e.download_url,
-            annotations: e.annotations,
-          });
-        }
-        for (const event of courtlistenerEvents) {
-          events.push(event);
-        }
-        for (const event of mcpEvents) {
-          events.push(event);
-        }
-        for (const event of caseCitationEvents) {
-          events.push(event);
-        }
-        for (const event of authorityTraceEvents) {
-          events.push(event);
+          clientResultByCallId.set(call.id, content);
+          throwIfAborted(signal);
         }
 
         const delegated = await delegating;
@@ -1105,6 +1236,20 @@ export async function runLLMStream(params: {
           clientResultByCallId.set(delegateCalls[index].id, content),
         );
         await recordDelegations();
+        // Edits, document creation and cell reads in this provider step can
+        // change the version or evidence available to the citation recorder.
+        // In call order: a later call replaces the refs an earlier one set.
+        for (const call of citeCalls) {
+          // The step shows as in progress while the quotes are checked.
+          write(`data: ${JSON.stringify({ type: "citations_recorded_start" })}\n\n`);
+          const { content, event } = await citationRecorder.record(call.input);
+          clientResultByCallId.set(call.id, content);
+          events.push(event);
+          // Publish the backing rows before enabling the finished step's source actions.
+          emitCitations("partial");
+          write(`data: ${JSON.stringify(event)}\n\n`);
+          throwIfAborted(signal);
+        }
         addApprovalItems(
           askInputsEvents,
           delegated.flatMap(({ approvals }) => approvals ?? []),
@@ -1139,7 +1284,11 @@ export async function runLLMStream(params: {
         }));
         // Recorded before a pause too, so a continued subagent knows what
         // already ran beside the actions awaiting approval.
-        subagentRun?.onToolBatch(calls, results);
+        subagentRun?.onToolBatch(
+          calls,
+          results,
+          completed.externalSourceHandles ?? new Map(),
+        );
         if (askInputsEvents.length > 0) {
           throw new AssistantStreamAskInputsPause();
         }
@@ -1148,16 +1297,22 @@ export async function runLLMStream(params: {
     }).finally(() => providerWebSearch.release());
     await recordDelegations();
   } catch (err) {
+    // Before any await: what a still-running batch finished by now.
+    for (const batch of [...unrecordedBatches]) recordBatchEvents(batch);
     if (isAskInputsPause(err)) {
       // The ask_inputs event has already been emitted and persisted in `events`.
       // Stop this assistant turn here so the model does not add redundant
       // prose telling the user to answer the picker or attach documents.
-    } else if (isAbortError(err)) {
+    } else if (isAbortError(err) || signal?.aborted) {
+      // Any failure after the turn's signal fired (a client tool or a tool
+      // call that rejects once the stop reached it) ends the turn as
+      // stopped: that is the outcome its readers were given.
       await recordDelegations().catch(() => {});
-      flushPartialTurn({ emit: false });
+      flushPartialTurn();
       throw new AssistantStreamAbortError(
         fullText,
         events.map(sanitizeAssistantEvent),
+        recordedCitations(),
       );
     } else {
       delegationStop.abort();
@@ -1169,11 +1324,6 @@ export async function runLLMStream(params: {
       // any console.error, is what lets the console bridge recognise every
       // later log of it — this line's, and the route's log of the
       // AssistantStreamError below, whose `cause` is `err` — as already sent.
-      // A UserFacingError (rejected or missing API key, model not allowed)
-      // is the user's configuration rather than our bug: still one event, so
-      // operators see a rejected key with its provider_error tag, but a
-      // warning, not an error. (Left unreported, the console bridge filed it
-      // anyway, at error level, as MIKE-BACKEND-E.)
       // The kind says what the provider did (rejected the key, rate limited,
       // unavailable) so one cause is one issue; the provider's own error
       // stays underneath as the cause, where provider_error and
@@ -1185,98 +1335,32 @@ export async function runLLMStream(params: {
           : new AppError(providerFailureKind(err), "Model stream failed", {
               cause: err,
             });
-      // A subagent's run is its own flow inside the turn's request: name it
-      // on the event so a failing delegate is not filed under the answer.
-      reportError(failure, {
-        tags: {
-          component: "chat-stream",
-          ...(isSubagent ? { operation: "chat.subagent" as const } : {}),
-        },
-        ...(safeToDisplay ? { level: "warning" as const } : {}),
-      });
-      // The sanitized copy has no object identity for console deduplication.
-      // The original failure was explicitly reported above.
-      console.warn("[chat/stream] model stream failed", safeErrorLog(failure));
-      const message = safeToDisplay ? err.message : ASSISTANT_ERROR_MESSAGE;
-      events.push({
-        type: "error",
-        message,
-        ...(safeToDisplay ? { safe_to_display: true } : {}),
-        // A rejected key is worth naming: the client turns this into a prompt
-        // to go fix the key rather than a suggestion to retry.
-        ...(err instanceof InvalidApiKeyError
-          ? { code: "invalid_api_key" as const }
-          : {}),
-      });
+      if (safeToDisplay && isUserProviderRefusal(err)) {
+        // This turn returns the remedy to the owner of the rejected account.
+        markErrorHandled(failure);
+        log.warn("chat/stream", "model account refused", safeErrorLog(failure));
+      } else {
+        reportModelFailure(failure, {
+          tags: { component: "chat-stream", ...(isSubagent ? { operation: "chat.subagent" as const } : {}) },
+        }, "[chat/stream] model stream failed");
+      }
+      const errorEvent = modelFailureEvent(err);
+      events.push(errorEvent);
       throw new AssistantStreamError(
-        message,
+        errorEvent.message,
         fullText,
         events.map(sanitizeAssistantEvent),
         { cause: failure },
+        recordedCitations(),
       );
     }
   }
 
   flushText();
 
-  const citedWebSources = providerWebSearch.citedSources();
-  if (citedWebSources) {
-    events.push(citedWebSources);
-    write(`data: ${JSON.stringify(citedWebSources)}\n\n`);
-  }
-
-  // Parse and emit citations from <CITATIONS> block
-  const { citations: parsedCitations, diagnostics: citationDiagnostics } =
-    parseCitationsWithDiagnostics(fullText);
-  let citations: unknown[];
-  if (buildCitations) {
-    // Custom builders (tabular) bypass document-citation verification.
-    citations = buildCitations(fullText);
-  } else {
-    const rawCitations = parsedCitations.map((c) =>
-      createCitation(
-        c,
-        docIndex,
-        courtlistenerTurnState.casesByClusterId,
-        docStore,
-      ),
-    );
-    // Server-side quote verification. Fetch each document's extracted source
-    // text at most once per turn (memoized by doc_id), reading only bytes
-    // already in storage with emitEvents:false. Case citations are matched
-    // against the opinion text cached during this turn.
-    const sourceTextByDocId = new Map<string, Promise<string>>();
-    const getSourceText = (docId: string): Promise<string> => {
-      let pending = sourceTextByDocId.get(docId);
-      if (!pending) {
-        const label = resolveDocLabel(docId, docStore, docIndex);
-        pending = label
-          ? readDocumentContent(label, docStore, () => {}, docIndex, db, {
-              emitEvents: false,
-            })
-          : Promise.resolve("");
-        sourceTextByDocId.set(docId, pending);
-      }
-      return pending;
-    };
-    citations = await verifyCitations(
-      rawCitations,
-      getSourceText,
-      async (clusterId) =>
-        getCachedCaseOpinionTexts(courtlistenerTurnState, clusterId, externalSourceCache),
-    );
-  }
-  devLog("[chat/stream] final citations", {
-    hasCitationsBlock: citationDiagnostics.hasBlock,
-    citationsBlockLength: citationDiagnostics.rawLength,
-    parseError: citationDiagnostics.error,
-    parsedCitationCount: parsedCitations.length,
-    emittedCitationCount: citations.length,
-    usedCustomCitationBuilder: !!buildCitations,
-  });
-  write(
-    `data: ${JSON.stringify({ type: "citations", status: "final", citations })}\n\n`,
-  );
+  // The citations recorded with cite_sources, each checked when recorded.
+  const citations = recordedCitations();
+  emitCitations("final");
   if (!isSubagent && answerModel) {
     const details: AssistantEvent = {
       type: "response_details",

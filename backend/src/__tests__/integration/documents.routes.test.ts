@@ -156,6 +156,7 @@ vi.mock("../../middleware/auth", () => ({
 vi.mock("../../lib/access", async (importOriginal) => ({
     ...(await importOriginal<typeof import("../../lib/access")>()),
     ensureDocAccess: (...args: unknown[]) => ensureDocAccess(...args),
+    createDocumentAccessChecker: (...args: unknown[]) => (doc: unknown) => ensureDocAccess(doc, ...args),
 }));
 
 vi.mock("../../lib/dbq/enqueue", () => ({
@@ -217,6 +218,31 @@ describe("GET /single-documents/:documentId", () => {
         const res = await request(app).get(`/api/single-documents/${DOC}`).set(...AUTH);
         expect(res.status).toBe(500);
         expect(JSON.stringify(res.body)).not.toContain("private database failure");
+    });
+});
+
+describe("POST /single-documents/status", () => {
+    beforeEach(() => {
+        errors = {};
+        rows = { documents: [{ id: DOC, user_id: "u2", status: "processing", project_id: "p1", org_id: "o1", archived_at: null }], document_versions: [] };
+        ensureDocAccess.mockResolvedValue(access("viewer", false));
+    });
+    it("returns batch metadata with the same viewer flags as detail", async () => {
+        const res = await request(app).post("/api/single-documents/status").set(...AUTH).send({ document_ids: [DOC] });
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual([expect.objectContaining({ id: DOC, status: "processing", can_edit: false, can_delete: false })]);
+    });
+    it.each(["denied", "archived", "missing"])("omits %s documents without leaking metadata", async state => {
+        if (state === "denied") ensureDocAccess.mockResolvedValue({ ok: false });
+        if (state === "archived") rows.documents[0].archived_at = "2026-10-30T00:00:00Z";
+        if (state === "missing") rows.documents = [];
+        const res = await request(app).post("/api/single-documents/status").set(...AUTH).send({ document_ids: [DOC] });
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual([]);
+    });
+    it("rejects malformed IDs at the batch boundary", async () => {
+        const res = await request(app).post("/api/single-documents/status").set(...AUTH).send({ document_ids: ["invalid"] });
+        expect(res.status).toBe(400);
     });
 });
 

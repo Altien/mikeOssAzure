@@ -696,6 +696,11 @@ function requireSession(req: Request, res: Response): InstallSession | null {
     return session;
 }
 
+/** Bicep's seed for a secret nobody has set yet reads as no value at all. */
+function withoutUnsetPlaceholder(value: string): string {
+    return value.trim() === "__unset__" ? "" : value;
+}
+
 async function readCurrentValues(
     fields: FormField[],
 ): Promise<Map<string, string>> {
@@ -703,7 +708,7 @@ async function readCurrentValues(
     await Promise.all(
         fields.map(async (f) => {
             try {
-                const v = await getConfig(f.name);
+                const v = withoutUnsetPlaceholder(await getConfig(f.name));
                 if (v) out.set(f.name, v);
             } catch {
                 // Missing secret is fine — leave the field blank in the form.
@@ -713,13 +718,16 @@ async function readCurrentValues(
     return out;
 }
 
-function renderField(f: FormField, existing: string): string {
+function renderField(f: FormField, rawExisting: string): string {
+    const existing = withoutUnsetPlaceholder(rawExisting);
     const pattern = f.pattern ? ` pattern="${escape(f.pattern)}"` : "";
-    const required = f.required ? " required" : "";
+    const isPassword = f.type === "password";
+    // A set secret is never echoed and blank keeps it, so the browser must not
+    // insist on it: changing another field of the row needs no retyped key.
+    const required = f.required && !(isPassword && existing) ? " required" : "";
     const placeholder = f.placeholder
         ? ` placeholder="${escape(f.placeholder)}"`
         : "";
-    const isPassword = f.type === "password";
 
     // Don't echo password-typed secrets into HTML.  Surface only a
     // "currently set" hint so the operator can confirm there's an
@@ -943,6 +951,9 @@ function validateField(
     }
     if (!trimmed) return null;
     if (field.pattern && !new RegExp(field.pattern).test(trimmed)) {
+        return `${field.label} format check failed.`;
+    }
+    if (field.valid && !field.valid(trimmed)) {
         return `${field.label} format check failed.`;
     }
     return null;

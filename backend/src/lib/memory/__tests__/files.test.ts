@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { makeFakeDb } from "../../../test/helpers/fakeDb";
 
 import { AppError } from "../../appError";
 import {
@@ -14,6 +15,7 @@ import {
   wipeMemoryFile,
   writeMemoryFile,
   type MemoryFileRow,
+  wipeMemoryFiles,
 } from "../files";
 
 const file: MemoryFileRow = {
@@ -263,6 +265,25 @@ describe("direct memory file writes", () => {
     });
   });
 
+  // A database without workspace memory (before 0122) also predates tenant
+  // ids (0176), so the legacy per-person file keeps the global user key.
+  // Tenant-scoped files come from the ensure_user_memory_file RPC.
+  it("creates the legacy per-person file under the global user key", async () => {
+    const empty = { ...file, id: "destination-memory", content: "", content_sha256: null, revision: 0 };
+    const fake = makeFakeDb((call) => {
+      if (call.op !== "select") return { data: empty };
+      const workspaceLookup = call.filters.some(([method, column]) => method === "is" && column === "org_id");
+      return workspaceLookup
+        ? { data: null, error: { code: "42703", message: "column does not exist" } as { message: string } }
+        : { data: null };
+    });
+    await expect(ensureMemoryFile(fake.db as never, "user", "user-1")).resolves.toEqual(empty);
+    expect(fake.callsFor("memory_files", "upsert")[0]).toMatchObject({
+      payload: { scope: "user", user_id: "user-1", enabled: true },
+      filters: [["options", "", { onConflict: "user_id", ignoreDuplicates: true }]],
+    });
+  });
+
   it("rejects executable HTML but preserves Markdown hard breaks", () => {
     expect(normalizeMemoryMarkdown("first  \r\nsecond   \n")).toBe(
       "first  \nsecond  \n",
@@ -429,5 +450,28 @@ describe("direct memory file writes", () => {
       source: "settings",
       status: "idle",
     });
+  });
+});
+
+describe("wipeMemoryFiles", () => {
+  it("wipes in batches and, when a batch is refused, keeps the old one-by-one progress", async () => {
+    const calls: Array<[string, unknown]> = [];
+    const db = {
+      rpc: async (name: string, args: Record<string, unknown>) => {
+        calls.push([name, name === "wipe_memory_files" ? (args.p_ids as string[]).length : args.p_memory_file_id]);
+        // The second batch names a file deleted meanwhile: the batch RPC
+        // rolls back as a whole, and so does that file's single wipe.
+        if (name === "wipe_memory_files" && (args.p_ids as string[]).includes("m55"))
+          return { data: null, error: { code: "P0002" } };
+        if (name === "wipe_memory_file" && args.p_memory_file_id === "m55")
+          return { data: null, error: { code: "P0002" } };
+        return { data: [], error: null };
+      },
+    };
+    const ids = Array.from({ length: 70 }, (_, i) => `m${i}`);
+    await expect(wipeMemoryFiles(db as never, ids, { enabled: null })).rejects.toThrow("Failed to wipe memory");
+    expect(calls.slice(0, 2)).toEqual([["wipe_memory_files", 50], ["wipe_memory_files", 20]]);
+    // m50..m54 were still wiped individually before m55 stopped the cleanup.
+    expect(calls.slice(2).map(([, id]) => id)).toEqual(["m50", "m51", "m52", "m53", "m54", "m55"]);
   });
 });

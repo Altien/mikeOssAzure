@@ -30,6 +30,7 @@ import {
     configuredModelRequiresApiKey,
     getConfiguredModel,
 } from "./llm/registry";
+import { isManagedProvider, resolveManagedModel } from "./llm/managedProviders";
 import {
     isRouterModelSelected,
     type RouterModelSelections,
@@ -118,6 +119,7 @@ export async function hasApiKeyForModel(
     if (provider === "custom") {
         return (await customEndpointCredentials(apiKeys)) !== null;
     }
+    if (isManagedProvider(provider)) return (await resolveManagedModel(model)).ok;
     return !!apiKeys[provider]?.trim();
 }
 
@@ -178,11 +180,16 @@ export async function resolveEffectiveChatModel(args: {
                         detail: "This model provider is turned off. Turn it on in Settings → Bring Your Own Keys or select another model.",
                     };
                 }
+                const managed = isManagedProvider(providerForModel(model))
+                    ? await resolveManagedModel(model)
+                    : null;
                 return {
                     ok: false,
                     status: 422,
                     code: "missing_api_key",
-                    detail: `An API key is required to use ${model}. Add the key or select another model.`,
+                    detail: managed && !managed.ok
+                        ? managed.detail
+                        : `An API key is required to use ${model}. Add the key or select another model.`,
                 };
             }
             return { ok: true, model, source: "request" };
@@ -268,6 +275,8 @@ export function titleModelForChat(
         case "vertex":
         case "xai":
         case "custom":
+        case "tokenjuice":
+        case "meta":
             return resolvedChatModel;
     }
 }

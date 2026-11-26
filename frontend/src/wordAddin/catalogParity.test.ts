@@ -1,8 +1,8 @@
 /**
  * The Word add-in builds its model picker from the same catalog as the web
- * app: frontend/src/shared/lib/modelCatalog.ts, which the add-in compiles
- * through the "@mike/model-catalog" alias (the add-in's typecheck and build
- * fail if that alias breaks). These tests keep a hand copy from creeping
+ * app: packages/client/src/modelCatalog.ts, which both compile through the
+ * "@mike/client" alias (the add-in's typecheck and build fail if that alias
+ * breaks). These tests keep a hand copy from creeping
  * back in, check the add-in's thin adapter for its own key-status shape
  * against the web app's, and keep the shared catalog in line with the
  * backend.
@@ -16,13 +16,16 @@ import {
     LEGACY_MODEL_IDS,
     noModelsReason,
     type RouterSelections,
-} from "../shared/lib/modelCatalog";
+} from "@mike/client";
 import {
     isModelAvailable as addinIsModelAvailable,
     noModelsReason as addinNoModelsReason,
 } from "../../../word-addin/src/taskpane/lib/modelCatalog";
 import type { ApiKeyStatus } from "../../../word-addin/src/taskpane/types";
-import { isModelAvailable as webIsModelAvailable } from "../app/lib/modelAvailability";
+import {
+    isModelAvailable as webIsModelAvailable,
+    providerKeyStates,
+} from "../app/lib/modelAvailability";
 import type { ApiKeyState } from "../app/lib/mikeApi";
 import {
     CLAUDE_MAIN_MODELS,
@@ -33,7 +36,7 @@ import {
     LEGACY_MODEL_IDS as BACKEND_LEGACY_MODEL_IDS,
     reasoningLevelsForModel as backendReasoningLevels,
 } from "../../../backend/src/lib/llm/models";
-import { reasoningLevelsForModel } from "../shared/ui/ModelToggleUI";
+import { reasoningLevelsForModel } from "@mike/ui";
 
 const ADDIN_ROOT = path.resolve(__dirname, "../../../word-addin");
 
@@ -130,7 +133,7 @@ describe("word add-in model catalog", () => {
                     addinNoModelsReason(addinStatus, scenario.routerModels),
                     scenario.name,
                 )
-                .toBe(noModelsReason(webState, scenario.routerModels));
+                .toBe(noModelsReason(providerKeyStates(webState), scenario.routerModels));
         }
     });
 
@@ -149,12 +152,16 @@ describe("word add-in model catalog", () => {
             "vertex",
             "xai",
             "custom",
+            "tokenjuice",
+            "meta",
         ] as const;
         const sharedIds = [
             ...MODELS.map((model) => model.id),
             "openrouter/openai/gpt-5.4",
             "vercel/openai/gpt-5.4",
             "opencode-go/glm-5",
+            "tokenjuice/juice-large",
+            "meta/muse-spark-1.1",
             ...BYOK_PROBES,
         ];
         for (const configured of providers) {
@@ -175,7 +182,7 @@ describe("word add-in model catalog", () => {
                         source: provider === configured ? "user" : null,
                     },
                 ]),
-            ) as ApiKeyState;
+            ) as unknown as ApiKeyState;
             for (const id of sharedIds) {
                 expect
                     .soft(

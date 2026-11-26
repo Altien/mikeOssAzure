@@ -1,4 +1,5 @@
 import { AppError } from "../../../lib/appError";
+import { stripDownloadUrls } from "../../../lib/downloadHistory";
 import { reportError } from "../../../lib/observability/sentry";
 import type { Db } from "../../../lib/supabase";
 import { streamRunCluster } from "../../../lib/streamRunCluster";
@@ -36,6 +37,7 @@ export function createReservedAssistantMessageUpdater(args: {
 }): (content: unknown, citations: unknown) => Promise<unknown | null> {
   return async (content, citations) => {
     if (args.enabled === false) return null;
+    content = stripDownloadUrls(content);
     let lastError: unknown | null = null;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       if (streamRunCluster()) {
@@ -65,7 +67,7 @@ export function createReservedAssistantMessageUpdater(args: {
 export function withoutEmptyAssistantReservations<
   T extends { role?: unknown; content?: unknown },
 >(messages: T[]): T[] {
-  return messages.filter(
+  return messages.map(stripDownloadUrls).filter(
     (message) => !(message.role === "assistant" && message.content == null),
   );
 }

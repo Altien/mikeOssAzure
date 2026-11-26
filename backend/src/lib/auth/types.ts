@@ -15,7 +15,13 @@ export interface AuthPrincipal {
    * a development-only, email-derived identity.
    */
   emailVerified?: boolean;
+  /** Internal tenant after resolution; directory identity is kept separately. */
   tenantId?: string;
+  directoryId?: string;
+  identityKind?: "altien" | "enterprise";
+  /** Set by resolveTenant only from a named membership row (never a mirrored enterprise row). */
+  membershipRole?: "TenantAdmin" | "Member";
+  appRoles?: string[];
   groups: string[];
   roles: string[];
   provider: string;
@@ -23,7 +29,16 @@ export interface AuthPrincipal {
 
 export type AuthValidationResult =
   | { ok: true; principal: AuthPrincipal }
-  | { ok: false; status: 401 | 403; detail: string };
+  // `code: "session_expired"`: GoTrue refused the session (upstream 156d0fde),
+  // so the caller also drops a cookie session that carried it.
+  | { ok: false; status: 401 | 403; detail: string; code?: "session_expired" }
+  // Upstream 156d0fde, adapted: GoTrue answered with a failure of its own
+  // (a 500 from its database): our bug to fix, a reported 500, not a sign-out.
+  | { ok: false; status: 500; detail: string; failure: unknown }
+  // Upstream 08bdc1d9, adapted: the identity provider (GoTrue, in supabase
+  // mode) could not be reached, so nobody can say whether the session is
+  // valid. Callers answer 503 upstream_unavailable, never a 401 sign-out.
+  | { ok: false; status: 503; detail: string; upstreamFailure: unknown };
 
 /**
  * The email `res.locals.userEmail` carries. It is an AUTHORIZATION input,

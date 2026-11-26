@@ -34,8 +34,25 @@ vi.mock("@/app/components/site-logo", () => ({
     SiteLogo: () => <div>Mike</div>,
 }));
 
+const signInOptions = vi.hoisted(() => ({
+    current: {
+        options: { google: true, sso: true, setupRequired: false },
+        loaded: true,
+        providersKnown: true,
+    },
+}));
+
+vi.mock("@/app/hooks/useSignInOptions", () => ({
+    useSignInOptions: () => signInOptions.current,
+}));
+
 describe("SignupPage", () => {
     beforeEach(() => {
+        signInOptions.current = {
+            options: { google: true, sso: true, setupRequired: false },
+            loaded: true,
+            providersKnown: true,
+        };
         signup.mockReset();
         startGoogleOAuth.mockReset();
         refreshSession.mockReset();
@@ -188,6 +205,17 @@ describe("SignupPage", () => {
         expect(await screen.findByRole("alert")).toHaveTextContent(
             "Password must be at most 72 UTF-8 bytes. Accented characters and emoji can use more than one byte.",
         );
+    });
+
+    it("hides Google when the deployment has not configured it", () => {
+        signInOptions.current = {
+            options: { google: false, sso: false, setupRequired: false },
+            loaded: true,
+            providersKnown: true,
+        };
+        render(<SignupPage />);
+        expect(screen.getByRole("button", { name: "Sign up" })).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Continue with Google" })).toBeNull();
     });
 
     it("places Google after the primary signup action without offering SSO", () => {

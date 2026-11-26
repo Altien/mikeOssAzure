@@ -64,10 +64,15 @@ async function encryptionKey(): Promise<Buffer> {
             }
             if (!secret) secret = readSecretEnv("USER_API_KEYS_ENCRYPTION_KEY");
             if (!secret) {
-                throw new Error(
-                    `MCP connectors encryption secret (${ENCRYPTION_SECRET_NAME}) ` +
-                        `is not configured. Set the secret in Key Vault (canonical), ` +
-                        `or the env var MCP_CONNECTORS_ENCRYPTION_KEY for local dev.`,
+                // Upstream 2ada45fb: a missing secret is an operator configuration fault (configuration_invalid), named by its fields.
+                throw Object.assign(
+                    new AppError(
+                        "configuration.encryption_secret_missing",
+                        `MCP connectors encryption secret (${ENCRYPTION_SECRET_NAME}) ` +
+                            `is not configured. Set the secret in Key Vault (canonical), ` +
+                            `or the env var MCP_CONNECTORS_ENCRYPTION_KEY for local dev.`,
+                    ),
+                    { code: "configuration_invalid", configurationFields: ["MCP_CONNECTORS_ENCRYPTION_KEY", "USER_API_KEYS_ENCRYPTION_KEY"] },
                 );
             }
             return crypto.scryptSync(secret, "mike-user-mcp-v1", 32);

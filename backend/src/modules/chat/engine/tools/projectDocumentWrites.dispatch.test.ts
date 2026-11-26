@@ -77,7 +77,7 @@ describe("write_project_document dispatch", () => {
       filename: "cites.json",
       bytes: 13,
       doc_id: "doc-0",
-      download_url: expect.stringMatching(/^\/download\//),
+
     });
     // The model gets a download link but never the storage key behind it.
     expect(payload).not.toHaveProperty("storage_path");

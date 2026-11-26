@@ -141,6 +141,16 @@ export type PanelDocumentQuote = SourceDocumentQuote;
 export type PanelSubdocument = SourceSubdocument;
 export type PanelDocument = SourceDocument;
 
+/** Every `SourceDocumentType` the wire contract allows, for runtime checks. */
+export const PANEL_DOCUMENT_TYPES: readonly PanelDocumentType[] = [
+  "docx",
+  "pdf",
+  "spreadsheet",
+  "case",
+  "legislation",
+  "legal_research",
+];
+
 export function isPanelDocument(value: unknown): value is PanelDocument {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return false;
@@ -149,9 +159,7 @@ export function isPanelDocument(value: unknown): value is PanelDocument {
   return (
     typeof document.document_id === "string" &&
     typeof document.title === "string" &&
-    ["docx", "pdf", "spreadsheet", "case", "legislation"].includes(
-      String(document.type),
-    ) &&
+    (PANEL_DOCUMENT_TYPES as readonly string[]).includes(String(document.type)) &&
     Array.isArray(document.metadata) &&
     Array.isArray(document.quotes) &&
     (document.actions === undefined || Array.isArray(document.actions)) &&
@@ -230,12 +238,15 @@ type WireActivity<T extends WireAssistantEvent["type"]> = Extract<
   { type: T }
 >;
 type WireDelegation = WireActivity<"delegation">;
+/** Client-only: the turn ended before this step reported a result. */
+type Interruptible = { interrupted?: boolean };
 export type AssistantEvent =
   | WireActivity<"text_card">
   | AuthorityTraceAssistantEvent
-  | (WireActivity<"doc_search"> & { isStreaming?: boolean })
-  | (WireActivity<"web_search"> & { isStreaming?: boolean })
-  | (WireActivity<"web_read"> & { isStreaming?: boolean })
+  | (WireActivity<"citations_recorded"> & { isStreaming?: boolean } & Interruptible)
+  | (WireActivity<"doc_search"> & { isStreaming?: boolean } & Interruptible)
+  | (WireActivity<"web_search"> & { isStreaming?: boolean } & Interruptible)
+  | (WireActivity<"web_read"> & { isStreaming?: boolean } & Interruptible)
   | WireActivity<"web_sources">
   | WireActivity<"response_details">
   | (Omit<WireDelegation, "events" | "status" | "model" | "effort"> & {
@@ -246,7 +257,7 @@ export type AssistantEvent =
       effort?: WireDelegation["effort"];
       isStreaming?: boolean;
       activity?: string;
-    })
+    } & Interruptible)
   | (Omit<WireActivity<"reasoning">, "isStreaming"> & { isStreaming?: boolean })
   | (Omit<WireActivity<"error">, "safe_to_display"> & {
       safe_to_display?: boolean;
@@ -259,7 +270,7 @@ export type AssistantEvent =
   | (Omit<WireActivity<"mcp_tool_call">, "error" | "isStreaming"> & {
       error?: string;
       isStreaming?: boolean;
-    })
+    } & Interruptible)
   | AskInputsEvent
   | AskInputsResponseEvent
   | { type: "thinking"; isStreaming?: boolean }
@@ -271,7 +282,7 @@ export type AssistantEvent =
       version_id?: string | null;
       version_number?: number | null;
       isStreaming?: boolean;
-    })
+    } & Interruptible)
   | (Omit<
       WireActivity<"doc_find">,
       "document_id" | "version_id" | "version_number" | "isStreaming"
@@ -280,7 +291,7 @@ export type AssistantEvent =
       version_id?: string | null;
       version_number?: number | null;
       isStreaming?: boolean;
-    })
+    } & Interruptible)
   | (Omit<
       WireActivity<"doc_created">,
       "document_id" | "version_id" | "version_number" | "isStreaming"
@@ -289,6 +300,8 @@ export type AssistantEvent =
       version_id?: string;
       version_number?: number | null;
       isStreaming?: boolean;
+      /** Client-only: the turn ended before this step reported a result. */
+      interrupted?: boolean;
     })
   | WireActivity<"doc_download">
   | (Omit<
@@ -302,6 +315,8 @@ export type AssistantEvent =
       }[];
       error?: string;
       isStreaming?: boolean;
+      /** Client-only: the turn ended before this step reported a result. */
+      interrupted?: boolean;
     })
   | WireActivity<"workflow_applied">
   | (Omit<
@@ -312,11 +327,13 @@ export type AssistantEvent =
       annotations: EditAnnotation[];
       error?: string;
       isStreaming?: boolean;
+      /** Client-only: the turn ended before this step reported a result. */
+      interrupted?: boolean;
     })
   | (Omit<
       WireActivity<"courtlistener_search_case_law">,
       "result_count" | "error" | "isStreaming"
-    > & { result_count?: number; error?: string; isStreaming?: boolean })
+    > & { result_count?: number; error?: string; isStreaming?: boolean } & Interruptible)
   | (Omit<
       WireActivity<"courtlistener_get_cases">,
       "case_count" | "opinion_count" | "cases" | "error" | "isStreaming"
@@ -332,7 +349,7 @@ export type AssistantEvent =
       }[];
       error?: string;
       isStreaming?: boolean;
-    })
+    } & Interruptible)
   | (Omit<
       WireActivity<"courtlistener_find_in_case">,
       | "total_matches"
@@ -355,7 +372,7 @@ export type AssistantEvent =
       }[];
       error?: string;
       isStreaming?: boolean;
-    })
+    } & Interruptible)
   | (Omit<
       WireActivity<"courtlistener_read_case">,
       "case_name" | "citation" | "opinion_count" | "error" | "isStreaming"
@@ -365,7 +382,7 @@ export type AssistantEvent =
       opinion_count?: number;
       error?: string;
       isStreaming?: boolean;
-    })
+    } & Interruptible)
   | (Omit<
       WireActivity<"courtlistener_verify_citations">,
       "citation_count" | "match_count" | "error" | "isStreaming"
@@ -374,7 +391,7 @@ export type AssistantEvent =
       match_count?: number;
       error?: string;
       isStreaming?: boolean;
-    })
+    } & Interruptible)
   | (Omit<
       WireActivity<"case_citation">,
       "pdfUrl" | "dateFiled" | "document"
@@ -407,7 +424,6 @@ export interface Message {
   model?: string;
   reasoning?: "none" | "low" | "medium" | "high" | "xhigh" | "max";
   citations?: Citation[];
-  citationStatus?: "started" | "partial" | "final";
   events?: AssistantEvent[];
   /** Set when streaming failed; rendered as a red error block. */
   error?: string;
@@ -540,21 +556,12 @@ export function panelDocumentFromCitation(
       actions: [
         ...(citation.pdfUrl
           ? [
-              {
-                type: "download" as const,
-                url: citation.pdfUrl,
-                label: "Download",
-              },
+              { type: "download" as const, url: citation.pdfUrl },
             ]
           : []),
         ...(citation.url
           ? [
-              {
-                type: "link" as const,
-                url: citation.url,
-                label: "Link",
-                title: "Link",
-              },
+              { type: "link" as const, url: citation.url },
             ]
           : []),
       ],
@@ -919,6 +926,7 @@ export interface ChatDetailOut {
 }
 
 export interface TabularReviewDetailOut {
+  cell_revision?: string;
   review: TabularReview;
   cells: TabularCell[];
   rows: TabularReviewRow[];

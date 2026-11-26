@@ -1,13 +1,14 @@
 import crypto from "crypto";
 import { resolveSecret } from "./envSecrets.js";
+import { currentTenant } from "./tenantContext";
 
 /**
- * HMAC-signed, non-expiring download tokens.
+ * HMAC-signed download tokens, bound to tenant, user and expiry (issue 011).
  *
- * The token encodes the R2 storage path + filename; the backend route
- * `/download/:token` validates the signature and streams the file. This
- * gives persistent links safe to store in chat history without signed-URL
- * expiry or R2 CORS headaches.
+ * The token encodes the storage path + filename; the backend route
+ * `/download/:token` validates the signature, expiry and binding, then
+ * streams the file through the current tenant's storage, avoiding
+ * signed-URL CORS headaches.
  */
 
 function getSecret(): string {
@@ -101,45 +102,135 @@ function timingSafeEqStr(a: string, b: string): boolean {
     return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
 }
 
-export function signDownload(path: string, filename: string): string {
-    const payload = JSON.stringify({ p: path, f: filename });
-    const enc = b64urlEncode(Buffer.from(payload, "utf8"));
-    const sig = crypto
-        .createHmac("sha256", getSecret())
-        .update(enc)
-        .digest();
-    return `${enc}.${b64urlEncode(sig)}`;
+// ─── Bound tokens (multi-tenant issue 011) ──────────────────────────────────
+//
+// Payload `{t, u, p, f, exp}`: the tenant and user the link was minted for,
+// the storage path and filename, and an expiry (epoch seconds). Tenant and
+// user default to the current tenant context. New links always require an
+// acting user; chat downloads use document/version IDs instead of tokens.
+// Legacy {p, f} links are accepted only on the install tenant before the
+// fixed transition cutoff. Remove the legacy branch in the following release.
+export const LEGACY_DOWNLOAD_TOKENS_CUTOFF = "2026-11-28T00:00:00Z";
+const DEFAULT_TTL_SECONDS = 60;
+
+/** Lifetime of new tokens: DOWNLOAD_TOKEN_TTL_SECONDS, default 60 seconds. */
+export function downloadTokenTtlSeconds(): number {
+    const raw = Number(process.env.DOWNLOAD_TOKEN_TTL_SECONDS);
+    return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : DEFAULT_TTL_SECONDS;
 }
 
-export function verifyDownload(
-    token: string,
-): { path: string; filename: string } | null {
+export interface SignDownloadOptions {
+    /** Defaults to the current tenant context. */
+    tenantId?: string;
+    /** Defaults to the current context's user; required for every new token. */
+    userId?: string;
+    /** Defaults to downloadTokenTtlSeconds(). */
+    ttlSeconds?: number;
+}
+
+export interface DownloadClaims {
+    path: string;
+    filename: string;
+    /** Tenant the link was minted in; absent: install tenant only. */
+    tenantId?: string;
+    /** User the link is bound to; absent only on legacy tokens. */
+    userId?: string;
+    /** Expiry, epoch seconds; absent only on legacy tokens. */
+    expiresAt?: number;
+    /** Old `{p, f}` token without expiry or binding. */
+    legacy?: true;
+}
+
+function nowSeconds(): number {
+    return Math.floor(Date.now() / 1000);
+}
+
+function hmac(enc: string): string {
+    return b64urlEncode(crypto.createHmac("sha256", getSecret()).update(enc).digest());
+}
+
+export function signDownload(
+    path: string,
+    filename: string,
+    options: SignDownloadOptions = {},
+): string {
+    const ctx = currentTenant();
+    const tenantId = options.tenantId ?? ctx?.tenantId;
+    const userId = (options.userId ?? ctx?.userId)?.trim();
+    if (!userId) throw new Error("Download tokens require an acting user");
+    const exp = nowSeconds() + (options.ttlSeconds ?? downloadTokenTtlSeconds());
+    const payload: Record<string, string | number> = { p: path, f: filename, exp };
+    if (tenantId) payload.t = tenantId;
+    payload.u = userId;
+    const enc = b64urlEncode(Buffer.from(JSON.stringify(payload), "utf8"));
+    return `${enc}.${hmac(enc)}`;
+}
+
+/**
+ * Check the signature, shape and expiry of a token. Returns its claims, or
+ * null when forged, malformed or expired. Whether the caller may use it is
+ * `downloadAllowed`'s decision.
+ */
+export function verifyDownload(token: string): DownloadClaims | null {
     const parts = token.split(".");
     if (parts.length !== 2) return null;
     const [enc, sigEnc] = parts;
-    const expected = crypto
-        .createHmac("sha256", getSecret())
-        .update(enc)
-        .digest();
-    if (!timingSafeEqStr(sigEnc, b64urlEncode(expected))) return null;
+    if (!timingSafeEqStr(sigEnc, hmac(enc))) return null;
+    let parsed: Record<string, unknown>;
     try {
-        const parsed = JSON.parse(b64urlDecode(enc).toString("utf8")) as {
-            p: string;
-            f: string;
-        };
-        if (!parsed?.p || !parsed?.f) return null;
-        return { path: parsed.p, filename: parsed.f };
+        parsed = JSON.parse(b64urlDecode(enc).toString("utf8")) as Record<string, unknown>;
     } catch {
         return null;
     }
+    if (!parsed || typeof parsed !== "object") return null;
+    const { p, f, t, u, exp } = parsed;
+    if (typeof p !== "string" || !p || typeof f !== "string" || !f) return null;
+    if (exp === undefined) {
+        // Legacy token: carries nothing but the path and filename.
+        if (t !== undefined || u !== undefined || !legacyWindowOpen()) return null;
+        return { path: p, filename: f, legacy: true };
+    }
+    if (typeof exp !== "number" || !Number.isFinite(exp) || exp <= nowSeconds()) return null;
+    if (t !== undefined && (typeof t !== "string" || !t)) return null;
+    if (typeof u !== "string" || !u) return null;
+    const claims: DownloadClaims = { path: p, filename: f, expiresAt: exp };
+    if (t) claims.tenantId = t;
+    if (u) claims.userId = u;
+    return claims;
+}
+
+function legacyWindowOpen(): boolean {
+    return Date.now() < Date.parse(LEGACY_DOWNLOAD_TOKENS_CUTOFF);
+}
+
+/**
+ * May `caller` use a token with these claims? The tenant must match the
+ * caller's (a token without one, legacy or not, is the install tenant's),
+ * and a user-bound token must name the caller.
+ */
+export function downloadAllowed(
+    claims: DownloadClaims,
+    caller: { tenantId: string | undefined; userId: string; installTenantId: string | undefined },
+): boolean {
+    if (!caller.tenantId) return false;
+    if (claims.legacy && !legacyWindowOpen()) return false;
+    if (!claims.legacy && !claims.userId) return false;
+    const tokenTenant = claims.tenantId ?? caller.installTenantId;
+    if (!tokenTenant || tokenTenant !== caller.tenantId) return false;
+    if (claims.userId && claims.userId !== caller.userId) return false;
+    return true;
 }
 
 /**
  * Returns a relative download URL (e.g. "/download/abc.def"). Browser clients
  * prefix it with their same-origin `/api` gateway.
  */
-export function buildDownloadUrl(path: string, filename: string): string {
-    return `/download/${signDownload(path, filename)}`;
+export function buildDownloadUrl(
+    path: string,
+    filename: string,
+    options?: SignDownloadOptions,
+): string {
+    return `/download/${signDownload(path, filename, options)}`;
 }
 
 /**

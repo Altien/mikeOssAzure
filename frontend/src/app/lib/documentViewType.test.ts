@@ -1,6 +1,20 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveDocumentViewType } from "./documentViewType";
+import { isTextDocumentFilename, resolveDocumentViewType } from "./documentViewType";
+
+describe("isTextDocumentFilename", () => {
+  it.each([
+    ["Deal.eml.md", true],
+    ["notes.TXT", true],
+    ["data.json", true],
+    ["Deal.eml", false],
+    ["contract.pdf", false],
+    ["md", false],
+    [null, false],
+  ] as const)("treats %s as text: %s", (filename, expected) => {
+    expect(isTextDocumentFilename(filename)).toBe(expected);
+  });
+});
 
 describe("resolveDocumentViewType", () => {
   it.each([

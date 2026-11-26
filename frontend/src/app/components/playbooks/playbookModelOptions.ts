@@ -1,5 +1,5 @@
-import type { ModelOption } from "@/shared/lib/modelCatalog";
-import { modelDisplayName } from "@/shared/lib/modelCatalog";
+import type { ModelOption } from "@mike/client";
+import { modelDisplayName } from "@mike/client";
 import type {
     ApiKeyState,
     PlaybookConfiguration,

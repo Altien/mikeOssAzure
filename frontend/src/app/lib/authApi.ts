@@ -1,8 +1,13 @@
+import { BACKEND_REPORTING_OWNER } from "@mike/client";
 import {
+    markErrorHandled,
     reportApiFailure,
     reportNetworkFailure,
 } from "@/app/lib/errorReporting";
-import { isAbortError } from "@/shared/lib/userError";
+import {
+    reportedUpstreamMessage,
+    type Operation,
+} from "@mike/client";
 
 export interface AuthUser {
     id: string;
@@ -29,24 +34,37 @@ export class AuthApiError extends Error {
      * carries it.
      */
     requestId: string | null;
+    reportingOwner?: typeof BACKEND_REPORTING_OWNER;
 
     constructor(
         status: number,
         code: string | null,
         message: string,
         requestId: string | null = null,
+        reportingOwner?: typeof BACKEND_REPORTING_OWNER,
     ) {
         super(message);
         this.name = "AuthApiError";
         this.status = status;
         this.code = code;
         this.requestId = requestId;
+        this.reportingOwner = reportingOwner;
     }
 }
 
 const AUTH_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") + "/api/auth";
 
-async function authRequest<T>(path: string, init?: RequestInit): Promise<T> {
+/**
+ * `report: false` marks a failure handled instead of sending it: a caller
+ * retrying the same request (AuthContext's session check during an outage)
+ * reports the first failure of its streak, not every attempt.
+ */
+async function authRequest<T>(
+    operation: Operation,
+    path: string,
+    init?: RequestInit,
+    { report = true }: { report?: boolean } = {},
+): Promise<T> {
     const url = `${AUTH_BASE}${path}`;
     const method = init?.method ?? "GET";
     let response: Response;
@@ -64,7 +82,8 @@ async function authRequest<T>(path: string, init?: RequestInit): Promise<T> {
         // Same rule as mikeApi: a request that never got a response is one
         // "API unreachable" event per outage, never one per auth screen. An
         // abort is the caller's doing, not an outage.
-        if (!isAbortError(error)) {
+        if (!report) markErrorHandled(error);
+        else if (!init?.signal?.aborted) {
             reportNetworkFailure(error, { method, url });
         }
         throw error;
@@ -74,6 +93,7 @@ async function authRequest<T>(path: string, init?: RequestInit): Promise<T> {
             code?: unknown;
             detail?: unknown;
             request_id?: unknown;
+            reporting_owner?: unknown;
         };
         const code = typeof body.code === "string" ? body.code : null;
         // Mirrors mikeApi.toApiError: the body wins, the header is the
@@ -85,22 +105,28 @@ async function authRequest<T>(path: string, init?: RequestInit): Promise<T> {
         const error = new AuthApiError(
             response.status,
             code,
-            typeof body.detail === "string"
-                ? body.detail
-                : "Authentication could not be completed.",
+            (code && reportedUpstreamMessage(code)) ??
+                (response.status < 500 && typeof body.detail === "string"
+                    ? body.detail
+                    : "Authentication could not be completed."),
             requestId,
+            body.reporting_owner === BACKEND_REPORTING_OWNER ? BACKEND_REPORTING_OWNER : undefined,
         );
         // A 4xx is the auth server's intentional answer (wrong password, a
         // spent link); a 5xx is a fault, reported under the same request id
-        // the backend attached to its own event.
-        if (response.status >= 500) {
+        // the backend attached to its own event, unless the backend or the
+        // gateway explicitly claims ownership in the response.
+        if (!report) markErrorHandled(error);
+        else if (response.status >= 500) {
             reportApiFailure({
+                operation,
                 path: url,
                 status: response.status,
                 code,
                 requestId,
                 method,
                 error,
+                reportingOwner: error.reportingOwner,
             });
         }
         throw error;
@@ -109,9 +135,13 @@ async function authRequest<T>(path: string, init?: RequestInit): Promise<T> {
     return response.json() as Promise<T>;
 }
 
-export async function getAuthSession(): Promise<AuthUser | null> {
+export async function getAuthSession(
+    options: { report?: boolean } = {},
+): Promise<AuthUser | null> {
     try {
-        return (await authRequest<{ user: AuthUser }>("/session")).user;
+        return (
+            await authRequest<{ user: AuthUser }>("auth.session", "/session", undefined, options)
+        ).user;
     } catch (error) {
         if (error instanceof AuthApiError && error.status === 401) return null;
         throw error;
@@ -119,14 +149,14 @@ export async function getAuthSession(): Promise<AuthUser | null> {
 }
 
 export async function login(email: string, password: string) {
-    return authRequest<{ user: AuthUser }>("/login", {
+    return authRequest<{ user: AuthUser }>("auth.signin", "/login", {
         method: "POST",
         body: JSON.stringify({ email, password }),
     });
 }
 
 export async function loginLocal(email: string) {
-    return authRequest<{ user: AuthUser }>("/local-login", {
+    return authRequest<{ user: AuthUser }>("auth.signin", "/local-login", {
         method: "POST",
         body: JSON.stringify({ email }),
     });
@@ -136,95 +166,113 @@ export async function signup(email: string, password: string, next: string) {
     return authRequest<{
         user: AuthUser;
         requiresEmailConfirmation: boolean;
-    }>("/signup", {
+    }>("auth.signup", "/signup", {
         method: "POST",
         body: JSON.stringify({ email, password, next }),
     });
 }
 
+/** Which sign-in routes this deployment offers, and whether it still needs its first account. */
+export interface SignInOptions {
+    google: boolean;
+    sso: boolean;
+    setupRequired: boolean;
+}
+
+/**
+ * Bounded: the login page holds its provider buttons back until this
+ * answers, so a hung request must fall back to showing them (see
+ * useSignInOptions) rather than leave them missing.
+ */
+export async function getSignInOptions() {
+    return authRequest<SignInOptions>("auth.options", "/options", {
+        signal: AbortSignal.timeout(8_000),
+    });
+}
+
 export async function startGoogleOAuth(next: string) {
-    return authRequest<{ url: string }>("/oauth", {
+    return authRequest<{ url: string }>("auth.signin", "/oauth", {
         method: "POST",
         body: JSON.stringify({ provider: "google", next }),
     });
 }
 
 export function startSso(next: string, email: string) {
-    return authRequest<{ url: string }>("/oauth", {
+    return authRequest<{ url: string }>("auth.signin", "/oauth", {
         method: "POST",
         body: JSON.stringify({ provider: "sso", next, email }),
     });
 }
 
 export async function requestPasswordReset(email: string) {
-    return authRequest<void>("/password-reset", {
+    return authRequest<void>("auth.signin", "/password-reset", {
         method: "POST",
         body: JSON.stringify({ email }),
     });
 }
 
 export async function logout(scope: "local" | "global" = "local") {
-    return authRequest<{ logoutUrl?: string }>("/logout", {
+    return authRequest<{ logoutUrl?: string }>("auth.session", "/logout", {
         method: "POST",
         body: JSON.stringify({ scope }),
     });
 }
 
 export async function updateAuthEmail(email: string, next: string) {
-    return authRequest<{ user: AuthUser }>("/email", {
+    return authRequest<{ user: AuthUser }>("auth.session", "/email", {
         method: "PATCH",
         body: JSON.stringify({ email, next }),
     });
 }
 
 export async function updateAuthPassword(password: string, signOut = false, nonce?: string) {
-    return authRequest<{ user: AuthUser }>("/password", {
+    return authRequest<{ user: AuthUser }>("auth.session", "/password", {
         method: "PATCH",
         body: JSON.stringify({ password, signOut, nonce }),
     });
 }
 
 export async function requestReauthentication() {
-    return authRequest<void>("/reauthenticate", { method: "POST" });
+    return authRequest<void>("auth.session", "/reauthenticate", { method: "POST" });
 }
 
 export function listMfaFactors() {
-    return authRequest<{ all: MfaFactor[]; totp: MfaFactor[] }>("/mfa/factors");
+    return authRequest<{ all: MfaFactor[]; totp: MfaFactor[] }>("auth.mfa", "/mfa/factors");
 }
 
 export function getMfaAssurance() {
     return authRequest<{
         currentLevel: string | null;
         nextLevel: string | null;
-    }>("/mfa/assurance");
+    }>("auth.mfa", "/mfa/assurance");
 }
 
 export function enrollMfa(friendlyName: string) {
     return authRequest<{
         id: string;
         totp: { qr_code: string; secret: string };
-    }>("/mfa/enroll", {
+    }>("auth.mfa", "/mfa/enroll", {
         method: "POST",
         body: JSON.stringify({ friendlyName }),
     });
 }
 
 export function challengeMfa(factorId: string) {
-    return authRequest<{ id: string }>("/mfa/challenge", {
+    return authRequest<{ id: string }>("auth.mfa", "/mfa/challenge", {
         method: "POST",
         body: JSON.stringify({ factorId }),
     });
 }
 
 export function verifyMfa(factorId: string, challengeId: string, code: string) {
-    return authRequest<unknown>("/mfa/verify", {
+    return authRequest<unknown>("auth.mfa", "/mfa/verify", {
         method: "POST",
         body: JSON.stringify({ factorId, challengeId, code }),
     });
 }
 
 export function challengeAndVerifyMfa(factorId: string, code: string) {
-    return authRequest<unknown>("/mfa/challenge-and-verify", {
+    return authRequest<unknown>("auth.mfa", "/mfa/challenge-and-verify", {
         method: "POST",
         body: JSON.stringify({ factorId, code }),
     });
@@ -232,6 +280,7 @@ export function challengeAndVerifyMfa(factorId: string, code: string) {
 
 export function unenrollMfa(factorId: string) {
     return authRequest<unknown>(
+        "auth.mfa",
         `/mfa/factors/${encodeURIComponent(factorId)}`,
         {
             method: "DELETE",

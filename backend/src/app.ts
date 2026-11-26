@@ -12,6 +12,7 @@ import fs from "node:fs";
 import { chatRouter } from "./modules/chat/chat.routes";
 import { wordChatRouter } from "./modules/word-chat/wordChat.routes";
 import { projectsRouter } from "./modules/projects/projects.routes";
+import { tenantAdminRouter } from "./modules/tenant-admin/tenant-admin.routes";
 import { orgsRouter } from "./modules/orgs/orgs.routes";
 import { projectChatRouter } from "./modules/project-chat/projectChat.routes";
 import { documentsRouter } from "./modules/documents/documents.routes";
@@ -19,6 +20,7 @@ import { libraryRouter } from "./modules/library/library.routes";
 import { tabularRouter } from "./modules/tabular/tabular.routes";
 import { workflowsRouter } from "./modules/workflows/workflows.routes";
 import { quickActionsRouter } from "./modules/quick-actions/quickActions.routes";
+import { supportRouter } from "./modules/support/support.routes";
 import { workflowAddonsRouter } from "./modules/workflows/workflowAddons.routes";
 import { userRouter } from "./modules/user/user.routes";
 import { modelsRouter } from "./modules/models/models.routes";
@@ -28,10 +30,15 @@ import { auditRouter } from "./modules/audit/audit.routes";
 import { authRouter } from "./modules/auth/auth.routes";
 import { uploadSessionsRouter } from "./modules/uploads/uploads.routes";
 import { llmRouter } from "./modules/platform/llm.routes";
-import { diagnosticsRouter } from "./modules/platform/diagnostics.routes";
+import {
+  createDiagRouter,
+  diagnosticsRouter,
+  setHealthHeaders,
+} from "./modules/platform/diagnostics.routes";
 import { installRouter } from "./modules/platform/install.routes";
 import { configRouter } from "./modules/platform/config.routes";
 import { diagRouter } from "./modules/platform/diag.routes";
+import { monitoringRouter } from "./modules/platform/monitoring.routes";
 import {
   projectMemoryRouter,
   userMemoryRouter,
@@ -46,6 +53,9 @@ import { handleUnhandledError, protectInternalErrorResponses } from "./middlewar
 import { configuredAllowedOrigins as configuredOrigins } from "./lib/origins";
 import { envInt } from "./lib/runtimeConfig";
 import { requestDiagnostics } from "./middleware/requestDiagnostics";
+import { runWithRequestId } from "./lib/requestContext";
+import { getTenancyMode } from "./lib/tenancyMode";
+import { sendFrontendSecurityHeaders } from "./lib/frontendSecurityHeaders";
 
 // ── Rate-limit configuration (from upstream ba6f771) ───────────────────────
 
@@ -213,6 +223,10 @@ export function buildApp(): express.Express {
     }),
   );
 
+  // Here, not on the router, so the general limiter's and the body parsers'
+  // refusals on this page carry the headers too.
+  app.use("/diag", setHealthHeaders);
+
   const allowedOrigins = configuredAllowedOrigins();
 
   app.use(
@@ -252,6 +266,9 @@ export function buildApp(): express.Express {
   // Parse this return channel before the general 50 MB parser. Its full
   // /api path also gives it a separate limiter budget under static hosting.
   app.post(TOOL_RESULT_PATH, toolResultLimiter, express.json({ limit: "2mb" }));
+  // Browser Sentry tunnel (sync-log: 3bcac35a) reads its own bounded raw
+  // envelope stream, so it mounts before any body parser.
+  app.use("/api/monitoring", monitoringRouter);
   // The filesystem capability upload consumes a bounded stream before JSON parsing.
   app.put("/api/download/signed/:token", blobUploadLimiter, blobUploadHandler);
   const jsonParser = express.json({ limit: JSON_BODY_LIMIT });
@@ -267,6 +284,14 @@ export function buildApp(): express.Express {
   // Limit is small — the only field is a token + maybe a few config values.
   app.use(express.urlencoded({ extended: false, limit: "32kb" }));
   app.use(cookieParser());
+  // After the body parsers, whose stream callbacks would drop the scope:
+  // lets the LLM usage ledger (issue 015) record which request made a call.
+  app.use((_req, res, next) =>
+    runWithRequestId(
+      typeof res.locals.requestId === "string" ? res.locals.requestId : undefined,
+      next,
+    ),
+  );
 
   // ── Static frontend bundle (must be set up BEFORE the API routers below) ──
   const PUBLIC_DIR = process.env.FRONTEND_PUBLIC_DIR
@@ -364,12 +389,14 @@ export function buildApp(): express.Express {
   app.use("/api/projects/:projectId/memory", projectMemoryRouter);
   app.use("/api/projects", projectsRouter);
   app.use("/api/orgs", orgsRouter);
+  app.use("/api/tenant-admin", tenantAdminRouter);
   app.use("/api/projects/:projectId/chat", projectChatRouter);
   app.use("/api/single-documents", documentsRouter);
   app.use("/api/library", libraryRouter);
   app.use("/api/tabular-review", tabularRouter);
   app.use("/api/workflows", workflowsRouter);
   app.use("/api/quick-actions", quickActionsRouter);
+  app.use("/api/support-reports", supportRouter);
   app.use("/api/workflow-addons", workflowAddonsRouter);
   app.use("/api/models", modelsRouter);
   app.use("/api/user", userRouter);
@@ -384,11 +411,19 @@ export function buildApp(): express.Express {
   app.use("/api/auth", authRouter);
   app.use("/api/llm", llmRouter);
   app.use("/api/admin/diagnostics", diagnosticsRouter);
-  app.use("/install", installRouter);
+  app.use("/diag", createDiagRouter());
+  app.use("/install", async (_req, res, next) => {
+    try {
+      if (await getTenancyMode() === "pooled") { res.status(404).end(); return; }
+      next();
+    } catch { res.status(503).json({ detail: "Install configuration is unavailable" }); }
+  }, installRouter);
   app.use("/config", configRouter);
   // Keep the OSS operator diagnostic outside the SPA fallback so it remains
-  // available while authentication is being configured.
-  app.use("/diag", diagRouter);
+  // available while authentication is being configured. /diag itself is the
+  // passphrase-protected health page (createDiagRouter, above), so this one
+  // lives at /diag/setup.
+  app.use("/diag/setup", diagRouter);
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
@@ -430,6 +465,9 @@ export function buildApp(): express.Express {
 
   if (FRONTEND_BUNDLED) {
     console.log(`Serving static frontend from ${PUBLIC_DIR}`);
+    // Upstream 84805159: the web app's own security headers (next.config.ts
+    // `headers()` upstream; unsupported by dev's static export).
+    app.use(sendFrontendSecurityHeaders(isProduction));
     app.use(express.static(PUBLIC_DIR, { extensions: ["html"] }));
 
     app.get("*", (req, res, next) => {

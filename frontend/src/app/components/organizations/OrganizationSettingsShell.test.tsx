@@ -45,8 +45,8 @@ vi.mock("@/app/contexts/WorkspaceContext", () => ({
     setWorkspace: mocks.setWorkspace,
   }),
 }));
-vi.mock("@/shared/lib/toastStore", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/shared/lib/toastStore")>()),
+vi.mock("@mike/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@mike/client")>()),
   showToast: mocks.showToast,
 }));
 vi.mock("./OrganizationProviderKeys", () => ({
@@ -111,6 +111,11 @@ describe("the sections each role is offered", () => {
       "Model Providers",
       "Privacy & Data",
     ]);
+    // Each section has an icon beside its name, hidden from assistive tech.
+    for (const button of within(
+      screen.getByRole("navigation", { name: "Organization" }),
+    ).getAllByRole("button"))
+      expect(button.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
   });
 
   it("offers an admin General, Members and Model Providers, not Privacy & Data", async () => {

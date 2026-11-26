@@ -49,7 +49,8 @@ export class EntraAuth {
 
   static async create(cfg: RuntimeConfig): Promise<EntraAuth> {
     const scopes = [cfg.entra.apiScope];
-    if (!naaSupported()) return new EntraAuth(null, scopes);
+    // Pooled identities choose External ID or their organisation in the server dialog.
+    if (cfg.tenancyMode === "pooled" || !naaSupported()) return new EntraAuth(null, scopes);
     const pca = await createNestablePublicClientApplication({
       auth: {
         clientId: cfg.entra.clientId,

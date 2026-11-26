@@ -14,7 +14,7 @@ vi.mock("../../../lib/extraction/isolated", async (original) => ({
   ...(await original<typeof import("../../../lib/extraction/isolated")>()), withBackgroundExtraction: mocks.admit,
 }));
 import { processClaimedJob } from "../../../lib/dbq/runner";
-import { ExtractionLimitError, ExtractionBusyError } from "../../../lib/extraction/isolated";
+import { ExtractionLimitError, ExtractionBusyError, ExtractionParseError } from "../../../lib/extraction/isolated";
 const sentry = vi.hoisted(() => ({ reportError: vi.fn(), setOperation: vi.fn() }));
 vi.mock("../../../lib/observability/sentry", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../lib/observability/sentry")>();
@@ -121,6 +121,36 @@ describe("version text extraction", () => {
     const fake = scriptedDb(preparse());
     await expect(handleDocumentExtractText(fake.db, job)).rejects.toThrow("invalid document"); fake.done();
     expect(sentry.setOperation).toHaveBeenCalledWith("documents.extract"); expect(sentry.reportError).not.toHaveBeenCalled();
+  });
+  // Upstream 2ada45fb, adapted to Dev's fenced RPC harness: the source hash
+  // already matched, so a parser rejection repeats on every attempt. It fails
+  // once (the runner's failure hook marks the text failed) and, since the bytes
+  // are the user's, is logged rather than reported (upstream 441e8864).
+  it("fails an unreadable document once instead of spending its retries", async () => {
+    const { NonRetryableJobError } = await import("../../../lib/dbq/runner.js");
+    const parse = new ExtractionParseError("extraction.parse_failed", "Can't find end of central directory : is this a zip file ?");
+    mocks.extract.mockRejectedValue(parse);
+    const fake = scriptedDb(preparse());
+    const failure = await handleDocumentExtractText(fake.db, job).catch((error: unknown) => error); fake.done();
+    expect(failure).toBeInstanceOf(NonRetryableJobError);
+    expect(failure).toMatchObject({ message: "document_text_unreadable", cause: parse, reportLevel: null });
+  });
+  // Upstream 441e8864 counterexample, adapted to Dev's harness (extraction is
+  // mocked at withBackgroundExtraction, so isByteRejection's classification is
+  // upstream of this handler): a parser that could not load is not an
+  // ExtractionParseError, so it is rethrown for retries and reporting.
+  it("still reports a PDF whose parser could not load", async () => {
+    const { AppError } = await import("../../../lib/appError.js");
+    const { NonRetryableJobError } = await import("../../../lib/dbq/runner.js");
+    const missing = Object.assign(new Error("Cannot find module 'pdfjs-dist'"), { code: "ERR_MODULE_NOT_FOUND" });
+    const failure = new AppError("extraction.pdf_parse_failed", "document_text_pdf_unreadable", {
+      cause: new AppError("extraction.failed", "pdf.js could not be loaded", { cause: missing }),
+    });
+    mocks.extract.mockRejectedValue(failure);
+    const fake = scriptedDb(preparse({ ...version, file_type: "pdf" }));
+    const thrown = await handleDocumentExtractText(fake.db, job).catch((error: unknown) => error); fake.done();
+    expect(thrown).toBe(failure);
+    expect(thrown).not.toBeInstanceOf(NonRetryableJobError);
   });
   it.each(["xlsx", "xlsm", "xls"])("uses the full spreadsheet reader for %s", async (type) => {
     mocks.sheet.mockReturnValue("Sheet and cell addresses");

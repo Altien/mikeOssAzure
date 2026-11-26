@@ -1,6 +1,7 @@
 import type { RefObject } from "react";
 import { Upload } from "lucide-react";
-import type { GitHubSkillImportPolicy } from "./api";
+import type { GitHubSkillImportPolicy, SkillCatalogItem } from "./api";
+import { PillButtonUI } from "@mike/ui";
 
 /** Library heading plus the ZIP and GitHub import controls. */
 export function ImportPanel({
@@ -12,6 +13,10 @@ export function ImportPanel({
     githubUrl,
     onGithubUrlChange,
     onImportGitHub,
+    catalogSkills,
+    catalogId,
+    onCatalogIdChange,
+    onImportCatalog,
 }: {
     canManage: boolean;
     importing: boolean;
@@ -21,6 +26,10 @@ export function ImportPanel({
     githubUrl: string;
     onGithubUrlChange: (value: string) => void;
     onImportGitHub: () => void;
+    catalogSkills: SkillCatalogItem[];
+    catalogId: string;
+    onCatalogIdChange: (value: string) => void;
+    onImportCatalog: () => void;
 }) {
     return (
         <>
@@ -49,6 +58,23 @@ export function ImportPanel({
                     </label>
                 )}
             </div>
+
+            {canManage && catalogSkills.length > 0 && (
+                <section aria-label="Altien skill catalog" className="mt-6 rounded-xl border border-border bg-app-surface p-4">
+                    <h2 className="text-sm font-medium text-foreground">Altien catalog</h2>
+                    <p className="mt-1 text-sm text-muted-foreground">Install a copy to review and enable for your organisation.</p>
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <select aria-label="Altien catalog skill" value={catalogId}
+                            disabled={importing} onChange={(event) => onCatalogIdChange(event.target.value)}
+                            className="min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                            <option value="">Choose a skill</option>
+                            {catalogSkills.map((skill) => <option key={skill.id} value={skill.id}>{skill.displayName}</option>)}
+                        </select>
+                        <PillButtonUI tone="black" disabled={importing || !catalogId} onClick={onImportCatalog}>Install from Altien</PillButtonUI>
+                    </div>
+                    {catalogId && <p className="mt-2 text-sm text-muted-foreground">{catalogSkills.find((skill) => skill.id === catalogId)?.description}</p>}
+                </section>
+            )}
 
             {canManage && githubPolicy?.effectiveEnabled && (
                 <div className="mt-6 flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-4">

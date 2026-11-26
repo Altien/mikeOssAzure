@@ -1,11 +1,18 @@
 "use client";
+import { BACKEND_REPORTING_OWNER } from "@mike/client";
 
 import { streamChatTurn } from "@/app/lib/mikeApi";
 import { readSseFrames } from "@/app/lib/sse";
+import { reportGatewayLimit } from "@/app/lib/errorReporting";
 import { isPanelDocument } from "@/app/components/shared/types";
 import { handleAuthorityTraceStreamEvent } from "@/altien/authorityTrace/events";
+import {
+  citationsRecordedEvent,
+  isRecordingCitations,
+  recordingCitationsEvent,
+} from "@/app/lib/citationsRecorded";
 import type { AssistantEvent, Citation } from "@/app/components/shared/types";
-import type { AssistantTurnHandle } from "@/app/lib/assistantTurns";
+import type { AssistantTurnHandle } from "@/app/lib/assistantTurnTypes";
 import type {
   ConnectorApprovalItem,
   WebSource,
@@ -56,7 +63,7 @@ export type TurnStreamHooks = {
     code: string | null;
     /** The id of the request that produced the frame, when it carried one. */
     requestId: string | null;
-    reportingOwner?: "backend";
+    reportingOwner?: typeof BACKEND_REPORTING_OWNER;
   }) => void;
 };
 
@@ -74,6 +81,7 @@ export async function chatRequestError(response: Response): Promise<Error> {
     typeof value === "string" && value.trim() ? value.trim() : null;
   let detail: string | null = null;
   let code: string | null = null;
+  let reportingOwner: typeof BACKEND_REPORTING_OWNER | undefined;
   let requestId = read(response.headers.get("x-request-id"));
   // Only a JSON error body is read: anything else (an HTML proxy page, a
   // stream that never ends) is released unread so the failure still
@@ -84,6 +92,7 @@ export async function chatRequestError(response: Response): Promise<Error> {
     const body = (await response.json()) as Record<string, unknown>;
     detail = read(body?.detail);
     code = read(body?.code);
+    reportingOwner = body?.reporting_owner === BACKEND_REPORTING_OWNER ? BACKEND_REPORTING_OWNER : undefined;
     requestId = read(body?.request_id) ?? requestId;
   } catch {
     try {
@@ -98,14 +107,11 @@ export async function chatRequestError(response: Response): Promise<Error> {
     ),
     {
       status: response.status,
+      ...(reportingOwner ? { reportingOwner } : {}),
       ...(code ? { code } : {}),
       ...(requestId ? { requestId } : {}),
     },
   );
-}
-
-export function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError";
 }
 
 function readableStreamError(value: unknown, safeToDisplay: boolean): string {
@@ -302,7 +308,14 @@ export function createTurnEventSink(
         if (!("isStreaming" in event) || !event.isStreaming) return event;
         const rest = { ...event };
         delete (rest as { isStreaming?: boolean }).isStreaming;
-        return rest as AssistantEvent;
+        // Text that stopped streaming is simply finished. Every other step
+        // that never reported its result (a document change, a read or
+        // search, a connector or CourtListener call, a subagent) may or may
+        // not have happened: show it as stopped, not as done.
+        if (rest.type === "content" || rest.type === "reasoning") {
+          return rest as AssistantEvent;
+        }
+        return { ...rest, interrupted: true } as AssistantEvent;
       });
 
   // Stop may reach the record twice: from the control itself and from the
@@ -318,9 +331,10 @@ export function createTurnEventSink(
     publish();
   };
 
-  // A turn that failed outside an error frame (the request was refused, or
-  // the connection broke for good): nothing is still running, so no
-  // "Thinking…" line or in-progress step may keep spinning beside the error.
+  // A turn that failed: an error frame (which always ends the turn, including
+  // the one a deadline writes), a refused request, or a connection that broke
+  // for good. Nothing is still running, so no "Thinking…" line or in-progress
+  // step (an edit, a replication, …) may keep spinning beside the error.
   const endStreamingAfterFailure = () => {
     eventsRef.current = cancelStreamingEvents(eventsRef.current);
     publish();
@@ -406,6 +420,7 @@ export async function consumeAssistantTurnStream(
     finalizeStreamingContent,
     finalizeStreamingReasoning,
     clearStreamingPlaceholders,
+    endStreamingAfterFailure,
     pushThinkingPlaceholder,
     pushEvent,
     updateMatchingEvent,
@@ -418,6 +433,12 @@ export async function consumeAssistantTurnStream(
     onEventId: (id) => {
       const seq = Number.parseInt(id, 10);
       if (Number.isFinite(seq)) cursor.lastSeq = seq;
+    },
+    // The turn's stream always ends with [DONE]. Ending without it looks, to
+    // this loop, exactly like a finished reply, so it is the only place the
+    // cut-off can be seen at all.
+    onIncomplete: () => {
+      if (!signal?.aborted) reportGatewayLimit("stream-incomplete");
     },
   })) {
     const data = frame as Record<string, unknown>;
@@ -467,9 +488,7 @@ export async function consumeAssistantTurnStream(
           // signal the surface can turn into "go fix your key" rather than
           // leaving it as one more line of failed-response text.
           if (data.code === "invalid_api_key") hooks.onRejectedApiKey?.();
-          clearStreamingPlaceholders();
-          finalizeStreamingContent();
-          finalizeStreamingReasoning();
+          endStreamingAfterFailure();
           eventsRef.current = [
             ...eventsRef.current,
             {
@@ -493,7 +512,7 @@ export async function consumeAssistantTurnStream(
           hooks.onErrorFrame?.({
             message,
             safeToDisplay,
-            ...(data.reporting_owner === "backend" ? { reportingOwner: "backend" as const } : {}),
+            ...(data.reporting_owner === BACKEND_REPORTING_OWNER ? { reportingOwner: BACKEND_REPORTING_OWNER } : {}),
             code: typeof data.code === "string" ? data.code : null,
             requestId:
               typeof data.request_id === "string" ? data.request_id : null,
@@ -980,6 +999,24 @@ export async function consumeAssistantTurnStream(
           continue;
         }
 
+        if (data.type === "citations_recorded_start") {
+          pushEvent(recordingCitationsEvent());
+          continue;
+        }
+
+        if (data.type === "citations_recorded") {
+          const recorded = citationsRecordedEvent(data);
+          // Completes the step its start frame opened, or adds it.
+          if (
+            !updateMatchingEvent(isRecordingCitations, () => recorded)
+          ) {
+            pushEvent(recorded);
+          }
+          // The model writes the answer next.
+          pushThinkingPlaceholder();
+          continue;
+        }
+
         if (data.type === "text_card") {
           if (
             typeof data.card_id === "string" &&
@@ -1206,12 +1243,6 @@ export async function consumeAssistantTurnStream(
           continue;
         }
 
-        if (data.type === "web_sources") {
-          const sources = parseWebSources(data.sources);
-          if (sources.length) pushEvent({ type: "web_sources", sources });
-          continue;
-        }
-
         if (data.type === "response_details") {
           const details = parseResponseDetails(data);
           if (details) pushEvent(details);
@@ -1321,7 +1352,7 @@ export async function consumeAssistantTurnStream(
           pushEvent({
             type: "doc_created",
             filename: data.filename as string,
-            download_url: "",
+
             isStreaming: true,
           });
           continue;
@@ -1331,7 +1362,9 @@ export async function consumeAssistantTurnStream(
           pushEvent({
             type: "doc_download",
             filename: data.filename as string,
-            download_url: data.download_url as string,
+            ...(typeof data.document_id === "string" ? { document_id: data.document_id } : {}),
+            ...(typeof data.version_id === "string" ? { version_id: data.version_id } : {}),
+
           });
           continue;
         }
@@ -1347,7 +1380,7 @@ export async function consumeAssistantTurnStream(
                 {
                   type: "doc_created",
                   filename: (e as { filename: string }).filename,
-                  download_url: data.download_url as string,
+
                   isStreaming: false,
                 };
               if (typeof data.document_id === "string") {
@@ -1416,7 +1449,7 @@ export async function consumeAssistantTurnStream(
             filename: data.filename as string,
             document_id: "",
             version_id: "",
-            download_url: "",
+
             annotations: [],
             isStreaming: true,
           });
@@ -1438,7 +1471,7 @@ export async function consumeAssistantTurnStream(
                 typeof data.version_number === "number"
                   ? (data.version_number as number)
                   : null,
-              download_url: (data.download_url as string) ?? "",
+
               annotations: Array.isArray(data.annotations)
                 ? (data.annotations as import("@/app/components/shared/types").EditAnnotation[])
                 : [],
@@ -1454,18 +1487,13 @@ export async function consumeAssistantTurnStream(
         }
 
         if (data.type === "citations") {
-          const status =
-            data.status === "started" ||
-            data.status === "partial" ||
-            data.status === "final"
-              ? data.status
-              : "final";
           const incoming = (data.citations ?? []) as Citation[];
-          if (status === "started" || status === "partial") {
+          // Recorded with cite_sources before the answer: the markers link
+          // as they stream.
+          if (data.status === "partial") {
             updateLatestAssistantMessage((message) => ({
               ...message,
               citations: incoming,
-              citationStatus: status,
             }));
             continue;
           }
@@ -1479,7 +1507,6 @@ export async function consumeAssistantTurnStream(
           updateLatestAssistantMessage((message) => ({
             ...message,
             citations: incoming,
-            citationStatus: incoming.length ? "final" : undefined,
           }));
           continue;
         }
@@ -1519,7 +1546,6 @@ export async function readAssistantTurn(args: {
       return;
     } catch (error) {
       if (
-        isAbortError(error) ||
         signal?.aborted ||
         !cursor.chatId ||
         !cursor.turnId ||

@@ -5,6 +5,19 @@ import { Worker as ThreadWorker } from "node:worker_threads";
 import path from "node:path";
 import { installProcessGuards } from "./lib/processGuards";
 installProcessGuards();
+// Dev divergence (sync-log: 86549414): Dev has no src/instrument.ts; each
+// entrypoint installs upstream's provider-error log redaction before anything
+// can log (provider errors carry the prompt and the provider's response).
+import { installErrorLogRedaction } from "./lib/log";
+installErrorLogRedaction();
+// After telemetry (App Insights' console patch) and before initSentry (its
+// console.error wrapper): docs/structured-logging.md.
+import { installStructuredLogging } from "./lib/logging/install";
+const logging = installStructuredLogging({ proc: "api" });
+// Dev divergence (sync-log: b625334f): dev's structured root logger is
+// imported as rootLog so upstream's central line logger keeps the name `log`.
+import { log as rootLog } from "./lib/logging/root";
+import { readTenantDebugSwitches } from "./lib/logging/tenantDebugStore";
 import { buildApp } from "./app";
 import { initDownloadSigningSecret } from "./lib/downloadTokens";
 import { initStorage } from "./lib/storage";
@@ -15,12 +28,19 @@ import { closeStreamRunCluster, initStreamRunCluster, streamRunCluster } from ".
 import { installStreamRunRelayHandler } from "./lib/streamRuns";
 import { submitClientToolResult } from "./modules/chat/chat.service";
 import { enforceDocumentLifecycleMigration } from "./lib/dbq/lifecycleGuard";
+import { ensureInstallTenant } from "./lib/tenantContext";
+import { createPlatformSupabase } from "./lib/supabase";
 import { startAllWorkers, stopAllWorkers, WORKER_ROLES, type WorkerRole } from "./workerRuntime";
 import { startRoleThreads, stopRoleThreads } from "./lib/workerRoleThreads";
 import { initSentry } from "./lib/observability/sentry";
 import { getKeyVaultConfig } from "./lib/config";
 import { failBoot, listenOrFail } from "./lib/processLifecycle";
 import { stopExtractionProcess } from "./lib/extraction/isolated";
+import { flushLlmUsage } from "./lib/llm/usage";
+import { probeStampRuntime } from "./lib/stampRuntime";
+import { extractionLauncherWarnings, storagePublicEndpointWarnings } from "./lib/runtimeConfig";
+import { flushToolActivity } from "./lib/toolActivity";
+import { drainStdout, log, tpl } from "./lib/log";
 
 const PORT = process.env.PORT ?? 3001;
 const HOST = process.env.HOST?.trim() || undefined;
@@ -82,6 +102,11 @@ async function start(): Promise<void> {
   // other database-dependent startup) so a missing migration is reported as
   // such rather than as a stream-run connection failure.
   await enforceDocumentLifecycleMigration();
+  await probeStampRuntime();
+  // Multi-tenant phase 1: the install's tenant row exists before any request
+  // or job writes a row whose tenant_id defaults from the request context.
+  await ensureInstallTenant(createPlatformSupabase());
+  logging.debugSwitches.start(readTenantDebugSwitches);
   await initStreamRunCluster();
   installStreamRunRelayHandler(async (payload) => {
     if (!payload || typeof payload !== "object") return false;
@@ -96,6 +121,14 @@ async function start(): Promise<void> {
   });
   await initDownloadSigningSecret();
   await initStorage();
+  // Upstream 2ada45fb: name a storage endpoint browsers cannot reach (R2/S3
+  // driver only reads these variables; Azure Blob installs leave them unset).
+  for (const warning of storagePublicEndpointWarnings()) {
+    log.warn(tpl`[storage] ${warning}`);
+  }
+  for (const warning of extractionLauncherWarnings()) {
+    log.warn(tpl`[extraction] ${warning}`);
+  }
   await initManifestSigningKey();
   const signingKey = manifestPublicKey();
   if (signingKey) console.log(`Export manifests signed with key ${signingKey.key_id}`);
@@ -105,24 +138,36 @@ async function start(): Promise<void> {
 
   const server = listenOrFail(buildApp(), PORT, () => {
     console.log(`Mike backend running on port ${PORT} (workers: ${workersMode})`);
+    rootLog().info("process.start", { port: PORT, workersMode });
     void checkSchemaVersion().catch(() => {});
   }, undefined, HOST);
 
   async function shutdown(signal: string): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
+    rootLog().info("process.shutdown", { signal });
     const forced = setTimeout(() => process.exit(1), 15_000);
     forced.unref();
     try {
       await new Promise<void>((resolve, reject) =>
         server.close((error) => error ? reject(error) : resolve()),
       );
-      if (workersMode === "inline") await stopAllWorkers();
+      // In-flight turns have drained by now: log what they counted.
+      flushToolActivity();
+      if (workersMode === "inline") {
+        await stopAllWorkers();
+        // Inline jobs make tool calls too; log what they counted while stopping.
+        flushToolActivity();
+      }
       await stopExtractionProcess();
       await closeStreamRunCluster();
+      // Usage-ledger rows still in flight (issue 015).
+      await flushLlmUsage();
       await stopRoleThreads(threads);
+      logging.debugSwitches.stop();
       clearTimeout(forced);
       console.log(`Graceful shutdown complete (${signal})`);
+      await drainStdout();
       process.exit(0);
     } catch (error) {
       console.error("Graceful shutdown failed", error);

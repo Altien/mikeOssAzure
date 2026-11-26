@@ -5,7 +5,7 @@
 
 import { Router } from "express";
 import { requireAuth } from "../../middleware/auth";
-import { getOrganisationApiKeys } from "../user/user.service";
+import { getOrganisationApiKeys } from "../../lib/providerCredentials/index";
 import { listAzureOpenaiDeployments } from "../../lib/llm/azureOpenaiDeployments";
 
 export const llmRouter = Router();
@@ -27,17 +27,14 @@ llmRouter.get("/azure-openai/deployments", requireAuth, async (_req, res) => {
         }
         if (!result.ok) {
             return void res.status(502).json({
-                detail: `Failed to list Azure OpenAI deployments: ${result.detail || `HTTP ${result.status}`}`,
+                detail: "Unable to list Azure OpenAI deployments. Please try again.",
             });
         }
         res.json({ source: result.source, deployments: result.deployments });
     } catch (err) {
         console.error("[llm/aoai-deployments] route threw", { userId, err });
         res.status(500).json({
-            detail:
-                err instanceof Error
-                    ? err.message
-                    : "Unexpected error listing AOAI deployments",
+            detail: "Unable to list Azure OpenAI deployments. Please try again.",
         });
     }
 });

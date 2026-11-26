@@ -1,6 +1,7 @@
 import { normalizeCaseDocument } from "../../../../lib/sourceDocuments";
 import type { ExternalSourceCache } from "../../../../altien/externalSources/cache";
 import type { VerificationArtifactStore } from "../../../../altien/authorityTrace/core/service";
+import { stampSourceDocument } from "../../../source-documents/sourceDocuments.service";
 import type { CaseCitationEvent } from "./courtlistenerTools";
 import { convert } from "html-to-text";
 
@@ -151,14 +152,18 @@ export function caseCitationEventFromRecord(
     url: record.url,
     pdfUrl: record.pdfUrl,
     dateFiled: record.dateFiled,
-    document: normalizeCaseDocument({
-      clusterId: record.clusterId,
-      caseName: record.caseName,
-      citations: record.citations,
-      url: record.url,
-      pdfUrl: record.pdfUrl,
-      dateFiled: record.dateFiled,
-    }),
+    // Stamped like every provider document, so the client learns the origin
+    // from the wire rather than from the document type.
+    document: stampSourceDocument(
+      normalizeCaseDocument({
+        clusterId: record.clusterId,
+        caseName: record.caseName,
+        citations: record.citations,
+        url: record.url,
+        pdfUrl: record.pdfUrl,
+        dateFiled: record.dateFiled,
+      }),
+    ),
   };
 }
 
@@ -244,23 +249,60 @@ export function courtlistenerFetchedCaseMetadata(
   };
 }
 
+// Keyed by the opinions array: upserts replace it rather than mutate it, so
+// identity means the same opinions. Returning the same entries lets callers
+// memoize per-opinion work (normalizedTextFor) across tool calls in a turn.
+// Dev drift: an opinion's text may come from the turn's external source cache,
+// which can gain entries mid-turn, so a memo entry is reused only while every
+// opinion still resolves to the same cached source text.
+type OpinionTextsMemo = {
+  externalSources: ExternalSourceCache | undefined;
+  cachedTexts: (string | undefined)[];
+  texts: CachedCaseOpinionText[];
+};
+const opinionTextsByOpinions = new WeakMap<unknown[], OpinionTextsMemo>();
+
 export function cachedCaseOpinionTexts(
   record: CourtlistenerCaseRecord,
   externalSources?: ExternalSourceCache,
 ): CachedCaseOpinionText[] {
-  return (record.opinions ?? [])
-    .map((raw) => {
+  const raw = record.opinions;
+  if (!raw) return [];
+  const cachedTexts = raw.map((entry) => {
+    const opinion = recordFromUnknown(entry);
+    if (!opinion) return undefined;
+    const opinionId =
+      numberField(opinion, "opinionId") ?? numberField(opinion, "id");
+    return typeof opinionId === "number"
+      ? externalSources?.get(
+          courtlistenerExternalSourceId(record.clusterId, opinionId),
+        )?.source.text
+      : undefined;
+  });
+  const memo = opinionTextsByOpinions.get(raw);
+  if (
+    memo &&
+    memo.externalSources === externalSources &&
+    memo.cachedTexts.every((text, index) => text === cachedTexts[index])
+  ) {
+    return memo.texts;
+  }
+  const texts = buildCaseOpinionTexts(raw, cachedTexts);
+  opinionTextsByOpinions.set(raw, { externalSources, cachedTexts, texts });
+  return texts;
+}
+
+function buildCaseOpinionTexts(
+  opinions: unknown[],
+  cachedTexts: (string | undefined)[],
+): CachedCaseOpinionText[] {
+  return opinions
+    .map((raw, index) => {
       const opinion = recordFromUnknown(raw);
       if (!opinion) return null;
       const opinionId =
         numberField(opinion, "opinionId") ?? numberField(opinion, "id");
-      const cached =
-        typeof opinionId === "number"
-          ? externalSources?.get(
-              courtlistenerExternalSourceId(record.clusterId, opinionId),
-            )
-          : undefined;
-      const text = cached?.source.text ?? opinionText(opinion);
+      const text = cachedTexts[index] ?? opinionText(opinion);
       if (!text) return null;
       return {
         opinion_id: opinionId,

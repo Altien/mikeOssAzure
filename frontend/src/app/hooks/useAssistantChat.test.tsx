@@ -942,7 +942,7 @@ describe("useAssistantChat: doc_find events", () => {
 });
 
 describe("useAssistantChat: doc_created events", () => {
-    it("doc_created_start places a streaming doc_created event with empty download_url", async () => {
+    it("doc_created_start places a streaming doc_created event with no credentials", async () => {
         mockStreamChat.mockResolvedValue(
             sseResponse([{ type: "doc_created_start", filename: "out.docx" }]),
         );
@@ -957,19 +957,17 @@ describe("useAssistantChat: doc_created events", () => {
         expect(created).toMatchObject({
             type: "doc_created",
             filename: "out.docx",
-            download_url: "",
             isStreaming: true,
         });
     });
 
-    it("doc_created finalises the streaming entry with download_url, document_id, version metadata", async () => {
+    it("doc_created finalises the streaming entry with document_id, version metadata", async () => {
         mockStreamChat.mockResolvedValue(
             sseResponse([
                 { type: "doc_created_start", filename: "out.docx" },
                 {
                     type: "doc_created",
                     filename: "out.docx",
-                    download_url: "https://r2/file.docx",
                     document_id: "d-1",
                     version_id: "v-1",
                     version_number: 1,
@@ -987,7 +985,6 @@ describe("useAssistantChat: doc_created events", () => {
         expect(created).toEqual({
             type: "doc_created",
             filename: "out.docx",
-            download_url: "https://r2/file.docx",
             document_id: "d-1",
             version_id: "v-1",
             version_number: 1,
@@ -995,7 +992,7 @@ describe("useAssistantChat: doc_created events", () => {
         });
     });
 
-    it("doc_download pushes a standalone doc_download event with the download_url", async () => {
+    it("doc_download pushes a standalone doc_download event without a download URL", async () => {
         // Production: this fires when the model attaches a
         // user-downloadable artifact mid-stream (e.g. an Excel file).
         mockStreamChat.mockResolvedValue(
@@ -1003,7 +1000,6 @@ describe("useAssistantChat: doc_created events", () => {
                 {
                     type: "doc_download",
                     filename: "report.xlsx",
-                    download_url: "https://r2/report.xlsx",
                 },
             ]),
         );
@@ -1020,7 +1016,6 @@ describe("useAssistantChat: doc_created events", () => {
         expect(download).toEqual({
             type: "doc_download",
             filename: "report.xlsx",
-            download_url: "https://r2/report.xlsx",
         });
     });
 });
@@ -1145,7 +1140,6 @@ describe("useAssistantChat: doc_edited events", () => {
             filename: "draft.docx",
             document_id: "",
             version_id: "",
-            download_url: "",
             annotations: [],
             isStreaming: true,
         });
@@ -1161,7 +1155,6 @@ describe("useAssistantChat: doc_edited events", () => {
                     document_id: "d-9",
                     version_id: "v-3",
                     version_number: 3,
-                    download_url: "https://r2/draft.docx",
                     annotations: [],
                 },
             ]),
@@ -1180,7 +1173,6 @@ describe("useAssistantChat: doc_edited events", () => {
             document_id: "d-9",
             version_id: "v-3",
             version_number: 3,
-            download_url: "https://r2/draft.docx",
             isStreaming: false,
         });
     });

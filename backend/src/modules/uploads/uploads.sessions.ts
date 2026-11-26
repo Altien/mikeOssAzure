@@ -12,6 +12,7 @@ import { Transform, type TransformCallback, type Readable } from "node:stream";
 
 import { AppError } from "../../lib/appError";
 import { markStage } from "../../lib/observability/sentry";
+import { reportSchemaOutOfDateOnce } from "../../lib/schemaOutOfDate";
 import {
   copyFile,
   getSignedUploadUrl,
@@ -286,6 +287,9 @@ async function extendSessionExpiry(db: Db, sessionId: string): Promise<void> {
     target_session_id: sessionId,
   });
   if (error) {
+    // An install missing this RPC (MIKE-BACKEND-1H) would otherwise file one
+    // console event per uploaded file; the upload itself has succeeded.
+    if (reportSchemaOutOfDateOnce(error, { key: "uploads.extend_session_expiry" })) return;
     console.error("[upload-sessions] extending the session expiry failed", {
       sessionId,
       error,

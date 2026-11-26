@@ -1,3 +1,17 @@
+import type {
+    CatalogPricing,
+    CatalogModel,
+    ConfiguredCatalogModel,
+    CatalogFailure,
+    CatalogResult,
+} from "./models.types";
+export type {
+    CatalogPricing,
+    CatalogModel,
+    ConfiguredCatalogModel,
+    CatalogFailure,
+    CatalogResult,
+} from "./models.types";
 // Business logic + data-access for the models module.
 //
 // Service layer behind models.routes.ts. Each function takes an explicit
@@ -11,40 +25,12 @@
 // neither status exists in the shared vocabulary.
 
 import type { Db } from "../../lib/supabase";
+import { filterTenantModels } from "../../lib/tenantSettings";
 import { isSupportedOpenCodeGoModel } from "../../lib/llm/models";
 import { configuredEndpointSummaries } from "../../lib/llm/registry";
-import { getEffectiveApiKeys, getOrganisationApiKeys } from "../user/user.service";
-
-export type CatalogPricing = {
-    input?: string;
-    output?: string;
-    variesByProvider?: true;
-    tiered?: true;
-};
-
-export type CatalogModel = {
-    id: string;
-    label: string;
-    pricing?: CatalogPricing;
-};
-
-
-export type ConfiguredCatalogModel = {
-    id: string;
-    label: string;
-    group: "Configured";
-    location: "cloud" | "local";
-    source: "Configured";
-};
-
-export type CatalogFailure =
-    | { ok: false; kind: "missing_api_key"; code: string; detail: string }
-    | { ok: false; kind: "upstream"; error: Error }
-    | { ok: false; kind: "error"; error: unknown };
-
-export type CatalogResult =
-    | { ok: true; models: CatalogModel[] }
-    | CatalogFailure;
+import { managedProviderCatalog, managedProviderForModel } from "../../lib/llm/managedProviders";
+import { currentTenant } from "../../lib/tenantContext";
+import { getEffectiveApiKeys, getOrganisationApiKeys } from "../../lib/providerCredentials/index";
 
 // Upstream divergence (sync-log: 972cf22): no local Ollama runtime;
 // authenticated organization router catalogs remain fully supported.
@@ -99,11 +85,11 @@ async function upstreamFailure(
  * module service interface but never used to read a personal key row.
  */
 export async function listConfiguredModels(
-    _db: Db,
+    db: Db,
     _userId: string,
 ): Promise<ConfiguredCatalogModel[]> {
     const apiKeys = await getOrganisationApiKeys();
-    return (await configuredEndpointSummaries(apiKeys)).flatMap((model) =>
+    const configured = (await configuredEndpointSummaries(apiKeys)).flatMap((model) =>
         model.available
             ? [
                   {
@@ -116,6 +102,45 @@ export async function listConfiguredModels(
               ]
             : [],
     );
+    // This is the list every picker already reads with no per-user setup, so
+    // administrator-entered providers join it rather than the router lists.
+    const managed = await filterTenantModels(await managedProviderCatalog(), (model) => model.id);
+    const free = managed.length > 0 ? await freeManagedModels(db) : new Set<string>();
+    return [
+        ...configured,
+        ...managed.map((model) => ({
+            ...model,
+            location: "cloud" as const,
+            source: "Configured" as const,
+            ...(free.has(model.id) ? { free: true as const } : {}),
+        })),
+    ];
+}
+
+/**
+ * Model ids priced at zero on the current tenant's price version, read
+ * through the tenant-scoped tenant_free_models() definer function. No tenant
+ * or no price version yields none; a failed lookup is logged and yields none
+ * so the picker still lists every model.
+ */
+async function freeManagedModels(db: Db): Promise<Set<string>> {
+    if (!currentTenant()) return new Set();
+    try {
+        const { data, error } = await db.rpc("tenant_free_models");
+        if (error) throw error;
+        const rows = (data ?? []) as Array<{ provider?: unknown; model?: unknown }>;
+        return new Set(
+            rows.flatMap((row) =>
+                typeof row.model === "string" &&
+                managedProviderForModel(row.model) === row.provider
+                    ? [row.model]
+                    : [],
+            ),
+        );
+    } catch (error) {
+        console.warn("[models] free model lookup failed", error);
+        return new Set();
+    }
 }
 
 /**
@@ -145,7 +170,10 @@ export async function listOpenRouterModels(
         ).replace(/\/+$/, "");
         const response = await fetch(
             `${baseUrl}/models?output_modalities=text&supported_parameters=tools&sort=most-popular&limit=1000`,
-            { headers: { Authorization: `Bearer ${key}` } },
+            {
+                headers: { Authorization: `Bearer ${key}` },
+                signal: AbortSignal.timeout(15_000),
+            },
         );
         if (!response.ok) return await upstreamFailure("OpenRouter", response);
 
@@ -176,7 +204,7 @@ export async function listOpenRouterModels(
                 },
             ];
         });
-        return { ok: true, models };
+        return { ok: true, models: await filterTenantModels(models, (model) => `openrouter/${model.id}`) };
     } catch (error) {
         return { ok: false, kind: "error", error };
     }
@@ -204,7 +232,9 @@ export async function listVercelModels(
             process.env.VERCEL_AI_GATEWAY_BASE_URL?.trim() ||
             "https://ai-gateway.vercel.sh/v1"
         ).replace(/\/+$/, "");
-        const response = await fetch(`${baseUrl}/models`);
+        const response = await fetch(`${baseUrl}/models`, {
+            signal: AbortSignal.timeout(15_000),
+        });
         if (!response.ok) {
             return await upstreamFailure("Vercel AI Gateway", response);
         }
@@ -270,7 +300,7 @@ export async function listVercelModels(
                 },
             ];
         });
-        return { ok: true, models };
+        return { ok: true, models: await filterTenantModels(models, (model) => `vercel/${model.id}`) };
     } catch (error) {
         return { ok: false, kind: "error", error };
     }
@@ -304,6 +334,7 @@ export async function listOpenCodeGoModels(
         ).replace(/\/+$/, "");
         const response = await fetch(`${baseUrl}/models`, {
             headers: { Authorization: `Bearer ${key}` },
+            signal: AbortSignal.timeout(15_000),
         });
         if (!response.ok) return await upstreamFailure("OpenCode Go", response);
 
@@ -326,7 +357,7 @@ export async function listOpenCodeGoModels(
         const models = [...byId.values()].sort((left, right) =>
             left.label.localeCompare(right.label),
         );
-        return { ok: true, models };
+        return { ok: true, models: await filterTenantModels(models, (model) => `opencode-go/${model.id}`) };
     } catch (error) {
         return { ok: false, kind: "error", error };
     }

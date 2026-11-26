@@ -9,7 +9,12 @@ domain logic live behind exactly one named `*.service.ts` facade per module.
 Workers and other modules import that facade. `lib/` and `middleware/` never
 import modules, and `backend/src/routes/` is retired. Keep `buildApp()` free of
 startup side effects; required auth and document-lifecycle probes complete
-before the API listens or a worker claims jobs.
+before the API listens or a worker claims jobs. `backend/src/application/` owns
+cross-domain account, purge and export workflows: routes and the job registry
+may call it, domain modules never import it, and `lib/` imports neither
+modules nor `application/`. `dependencyCycles.test.ts` fails CI on any
+source import cycle across the applications, the shared `packages/` sources
+and every local file they reach.
 
 `backend/src/__tests__/architecture.test.ts` enforces these boundaries.
 Document-version mutations belong to the documents module and use its
@@ -40,11 +45,14 @@ explicit signatures; this deployment has no Supabase auth schema or RLS.
 
 Read `docs/design-system.md` for non-trivial UI changes. Prefer existing
 primitives in `frontend/src/app/components/ui/`, shared web/Word controls in
-`frontend/src/shared/ui/`, and shell components in
+`packages/ui/` (imported as `@mike/ui`, exported from
+`packages/ui/src/index.ts`), and shell components in
 `frontend/src/app/components/shared/` before introducing feature markup or
-dependencies. When a shared control is used by Word, keep its Tailwind `@source`
-entry in `word-addin/src/taskpane/styles.css`. Keep loading states aligned with
-the corresponding layout.
+dependencies. Framework-free behavior the Word add-in also needs (error
+classification and toasts, the model catalog, upload sessions, excerpts,
+Sentry event hygiene) lives in `packages/client/` (`@mike/client`). Both
+targets already scan `packages/ui/src` for Tailwind classes. Keep loading
+states aligned with the corresponding layout.
 
 Use plain text for informational labels unless an established interactive pill
 control is appropriate. Preserve visible focus, accessible names for icon-only
@@ -84,6 +92,8 @@ This project is based on an upstream open-source repository. Prefer the smallest
 API, worker and storage CLI bootstraps await `initStorage()` before serving or
 claiming work; this resolves credentials through the existing Key Vault-first
 boundary. Desktop uses the same API/worker bootstrap with the filesystem driver.
+The desktop app is upstream code that this fork does not ship or support (see
+`desktop/README.md`); keep it mergeable, but do not spend work fixing it.
 `setStorageAdapter()` supports explicit boot-time injection and updates the live
 `storageEnabled` binding. Callers continue importing only the facade.
 
@@ -220,3 +230,17 @@ Name branches after the change they contain, using a descriptive prefix such as
 `docs/`, `fix/`, `feat/`, `refactor/`, `test/`, or `chore/` (for example,
 `docs/shorten-readme-telemetry`). Never use `claude/` as a prefix. Upstream
 migration branches keep their established `upstream-sync/` prefix.
+
+## Error reporting principles
+
+- Prefer small reporting helpers and clear ownership at the boundary that knows what happened. Reuse existing mechanisms before adding another policy layer.
+- Preserve original exceptions, causes, useful stack locations, operation/stage context, and request/job correlation. Optimize for actionable user failures.
+- Mark expected outcomes where they are actually handled. A recognized UI error code, HTTP status, or AbortError name alone does not prove handling or reporting ownership. Keep unowned terminal transport and response-body failures visible.
+- Keep the final outbound privacy allowlist protecting customer documents, credentials, and identities. Separate privacy enforcement from configurable volume policy; avoid repeat traffic starving new/severe failures.
+- Preserve the shared Sentry projects' hard ceiling of 50 total events per runtime per day. Match the resolved destination project, including explicitly configured DSNs, and keep quiet resets or issue eviction from replenishing that ceiling. Reserve capacity for new failures and severity escalations before repeats.
+- Treat console capture as a fallback, not a business-policy engine. Prefer explicit capture of the original Error with static context.
+- Keep development reporting off by default; avoid accumulating compiler-internal filename filters.
+- Verify meaningful regressions through final SDK envelopes as well as source-level tests. Test diagnostic usefulness, ownership/deduplication, and privacy.
+- Prefer focused simplification and root-cause fixes over suppressing symptoms or building new reporting frameworks.
+
+See `docs/observability.md` for reporting ownership and transport policy.

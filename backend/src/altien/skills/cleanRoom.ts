@@ -414,6 +414,7 @@ depends on it, but do not restate its contract.`
   const raw = await call({
     model: args.model,
     apiKeys: args.apiKeys,
+    feature: "skill-import",
     maxTokens: 4_000,
     systemPrompt: `Write a clean-room behavioural specification from source.
 Do not reproduce source code, comments, prompt prose, examples, identifiers

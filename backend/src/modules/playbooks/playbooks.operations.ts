@@ -1,5 +1,37 @@
 import { deleteFile } from "../../lib/storage";
 import { mutatePlaybookJob, PlaybookClaimLostError, type PlaybookJobIdentity } from "./playbooks.jobOwnership";
+import {
+    playbookContentShape,
+    playbookContentSchema,
+    editablePlaybookSchema,
+    findingSchema,
+    reviewSchema,
+} from "./playbooks.schemas";
+export { playbookContentSchema, editablePlaybookSchema } from "./playbooks.schemas";
+import type {
+    PlaybookContent,
+    PlaybookFinding,
+    Playbook,
+    PlaybookImportStage,
+    PlaybookImport,
+    PlaybookImportRequest,
+    PlaybookImportWork,
+    PlaybookReviewRequest,
+    PlaybookReviewInput,
+    PlaybookReviewWork,
+} from "./playbooks.types";
+export type {
+    PlaybookContent,
+    PlaybookFinding,
+    Playbook,
+    PlaybookImportStage,
+    PlaybookImport,
+    PlaybookImportRequest,
+    PlaybookImportWork,
+    PlaybookReviewRequest,
+    PlaybookReviewInput,
+    PlaybookReviewWork,
+} from "./playbooks.types";
 import crypto from "node:crypto";
 import { AppError } from "../../lib/appError";
 import { safeError } from "../../lib/safeError";
@@ -15,16 +47,26 @@ import {
 } from "../../lib/access";
 import { findDocumentsOutsideWorkspace } from "../../lib/documentWorkspace";
 import { teamOrgIdOf } from "../../lib/personalOrgs";
-import { resolveWorkspaceFilter, workspaceMatches } from "../../lib/workspace";
+import { PERSONAL_WORKSPACE, resolveWorkspaceFilter, workspaceMatches, type WorkspaceFilter } from "../../lib/workspace";
+import { selectAllByKey, selectInBatches } from "../../lib/batchedQuery";
 import type { EditAnnotation } from "@mike/contracts";
 import { extractDocxBodyText, type EditInput } from "../../lib/docxTrackedChanges";
 import { loadActiveVersion } from "../../lib/documentVersions";
 import {
-  applyTrackedEditsToDocument,
+  prepareDocumentReviewEdits,
+  discardUnpublishedReviewUpload,
+  DocumentReviewRetryableError,
+  publishDocumentReview,
   loadCurrentVersionBytes,
 } from "../documents/documents.service";
 import { loadCreatorProfiles, type CreatorProfile } from "../../lib/userLookup";
 import { createServerSupabase } from "../../lib/supabase";
+import { loadWorkspacePreferences } from "../../lib/orgPreferences";
+import {
+  getEffectiveRouterModels,
+  isRouterModelSelected,
+  resolveRequestedModel,
+} from "../../lib/routerModels";
 import {
   completeText,
   streamChatWithTools,
@@ -38,10 +80,11 @@ import {
   providerForModel,
 } from "../../lib/llm/models";
 import type { Provider } from "../../lib/llm/types";
-import { getEffectiveRouterModels, resolveRequestedModel } from "../../lib/routerModels";
 import { configuredEndpointSummaries } from "../../lib/llm/registry";
+import { managedProviderCatalog } from "../../lib/llm/managedProviders";
+import { filterTenantModels } from "../../lib/tenantSettings";
 import { hasApiKeyForModel } from "../../lib/modelSelection";
-import { getUserApiKeys, getEffectiveApiKeys } from "../user/user.service";
+import { getUserApiKeys, getEffectiveApiKeys } from "../../lib/providerCredentials/index";
 import { uploadFile } from "../../lib/storage";
 import { getFileStreamSource } from "../documents/documents.service";
 import { liveDbJobDedupeKeys } from "../../lib/dbq/enqueue";
@@ -79,6 +122,7 @@ import {
   type PlaybookReportStage,
 } from "./playbooks.reporting";
 import { markStage } from "../../lib/observability/sentry";
+import { log } from "../../lib/log";
 
 type Db = ReturnType<typeof createServerSupabase>;
 
@@ -98,172 +142,6 @@ export function runFailureMessage(error: unknown): string {
     return "The model returned a review that did not match the expected format. Try again.";
   return "The review failed. Try again.";
 }
-
-const clauseSchema = z.object({
-  text: z.string().trim().min(1).max(20_000),
-  usage: z
-    .enum(["illustrative", "preferred", "verbatim", "accepted", "unacceptable"])
-    .default("illustrative"),
-  sourceRefs: z.array(z.string().trim().min(1).max(100)).max(30).default([]),
-});
-
-const positionSchema = z.object({
-  name: z.string().trim().min(1).max(200),
-  criteria: z.string().trim().min(1).max(20_000),
-  sampleClauses: z.array(clauseSchema).max(30).default([]),
-});
-
-const ruleSchema = z.object({
-  id: z.string().trim().min(1).max(100).optional(),
-  name: z.string().trim().min(1).max(300),
-  concept: z.string().trim().min(1).max(20_000),
-  scope: z.enum(["clause", "agreement"]).default("clause"),
-  required: z.boolean().default(false),
-  guidance: z.string().trim().max(20_000).default(""),
-  standard: positionSchema.nullable().default(null),
-  fallbacks: z.array(positionSchema).max(20).default([]),
-  unacceptable: z.array(positionSchema).max(20).default([]),
-  conditions: z.array(z.string().trim().min(1).max(2_000)).max(30).default([]),
-  actions: z
-    .array(
-      z.object({
-        scenario: z.string().trim().max(2_000).default(""),
-        instruction: z.string().trim().min(1).max(5_000),
-      }),
-    )
-    .max(20)
-    .default([]),
-  sourceRefs: z.array(z.string().trim().min(1).max(100)).max(50).default([]),
-});
-
-const topicSchema = z.object({
-  id: z.string().trim().min(1).max(100).optional(),
-  name: z.string().trim().min(1).max(300),
-  rules: z.array(ruleSchema).max(200),
-});
-
-const playbookContentShape = z.object({
-  name: z.string().trim().min(1).max(200),
-  description: z.string().trim().max(2_000).default(""),
-  representedParty: z.string().trim().max(300).default(""),
-  documentTypes: z.array(z.string().trim().min(1).max(200)).max(50).default([]),
-  jurisdictions: z.array(z.string().trim().min(1).max(200)).max(50).default([]),
-  rules: z.array(ruleSchema).max(200).default([]),
-  topics: z.array(topicSchema).max(200).default([]),
-});
-
-export const playbookContentSchema = playbookContentShape.refine(
-  (content) =>
-    content.rules.length > 0 ||
-    content.topics.some((topic) => topic.rules.length > 0),
-  {
-    message: "Add at least one rule before running a review.",
-    path: ["rules"],
-  },
-);
-
-// Autosave must accept an unfinished field or an empty topic. Compilation and
-// review still use the strict schema above; structural limits apply to both.
-const editableClauseSchema = clauseSchema.extend({
-  text: z.string().max(20_000),
-});
-const editablePositionSchema = positionSchema.extend({
-  name: z.string().max(200),
-  criteria: z.string().max(20_000),
-  sampleClauses: z.array(editableClauseSchema).max(30).default([]),
-});
-const editableRuleSchema = ruleSchema.extend({
-  name: z.string().max(300),
-  concept: z.string().max(20_000),
-  guidance: z.string().max(20_000).default(""),
-  standard: editablePositionSchema.nullable().default(null),
-  fallbacks: z.array(editablePositionSchema).max(20).default([]),
-  unacceptable: z.array(editablePositionSchema).max(20).default([]),
-});
-export const editablePlaybookSchema = playbookContentShape.extend({
-  name: z.string().max(200),
-  description: z.string().max(2_000).default(""),
-  representedParty: z.string().max(300).default(""),
-  rules: z.array(editableRuleSchema).max(200).default([]),
-  topics: z
-    .array(
-      topicSchema.extend({
-        name: z.string().max(300),
-        rules: z.array(editableRuleSchema).max(200),
-      }),
-    )
-    .max(200)
-    .default([]),
-});
-
-const findingSchema = z.object({
-  topicId: z.string().trim().max(100).nullable().default(null),
-  ruleId: z.string().trim().max(100).nullable().default(null),
-  ruleName: z.string().trim().min(1).max(300),
-  status: z.enum([
-    "not_applicable",
-    "acceptable",
-    "needs_review",
-    "unacceptable",
-    "missing_required",
-    "outside_scope",
-  ]),
-  quote: z.string().trim().max(30_000).default(""),
-  location: z.string().trim().max(500).default(""),
-  analysis: z.string().trim().min(1).max(20_000),
-  suggestedText: z.string().trim().max(30_000).default(""),
-  /** For missing_required: the end of the clause the new one follows. */
-  insertAfter: z.string().trim().max(5_000).default(""),
-});
-
-const reviewSchema = z.object({
-  summary: z.string().trim().min(1).max(10_000),
-  findings: z.array(findingSchema).max(1000),
-});
-
-export type PlaybookContent = z.infer<typeof playbookContentSchema>;
-export type PlaybookFinding = z.infer<typeof findingSchema> & {
-  id: string;
-  /** The tracked change made in the reviewed document, when one was. */
-  edit?: EditAnnotation | null;
-};
-
-export type Playbook = {
-  id: string;
-  userId: string;
-  name: string;
-  description: string;
-  orgId: string | null;
-  visibility: "private" | "organization";
-  /** The caller's role: viewer (view and run), editor, or owner. */
-  role: PlaybookRole;
-  isCreator: boolean;
-  /** Edit rules, details and sources: editor or owner. */
-  canEdit: boolean;
-  /** Share, change visibility and delete: owner. */
-  canManageAccess: boolean;
-  /** Who it is shared with, for its owners only; empty for everyone else. */
-  sharedWith: string[];
-  /** The creator's profile name and photo; null when they have not set one. */
-  creatorName: string | null;
-  creatorPhoto: string | null;
-  content: PlaybookContent;
-  sourceFilename: string | null;
-  importModel: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type PlaybookImportStage =
-  | "validating_file"
-  | "checking_model"
-  | "extracting_text"
-  | "compiling"
-  | "validating_output"
-  | "repairing_output"
-  | "storing_source"
-  | "saving_playbook"
-  | "completed";
 
 /**
  * A failure whose message is written for the user. The router forwards these
@@ -568,6 +446,8 @@ const PROVIDER_DISPLAY_NAMES: Record<Provider, string> = {
   vertex: "Google Vertex AI",
   xai: "xAI",
   custom: "OpenAI-compatible endpoint",
+  tokenjuice: "TokenJuice",
+  meta: "Meta (Muse)",
   "openai-compatible": "Configured endpoint",
   azureOpenai: "Azure OpenAI",
 };
@@ -622,34 +502,57 @@ async function availablePlaybookModels(
   const apiKeys = orgId
     ? await getEffectiveApiKeys(userId, orgId, db)
     : await getUserApiKeys(userId, db);
-  const { data: profile } = await db
-    .from("user_profiles")
-    .select("last_selected_chat_model, title_model, tabular_model")
-    .eq("user_id", userId)
-    .maybeSingle();
+  const [{ data: profileRow }, workspacePreferences, routerModels] =
+    await Promise.all([
+      // Dev stores a person's title-model override in fast_model (0004);
+      // user_profiles has no title_model column here.
+      db
+        .from("user_profiles")
+        .select("last_selected_chat_model, fast_model, tabular_model")
+        .eq("user_id", userId)
+        .maybeSingle(),
+      loadWorkspacePreferences(db, userId, orgId),
+      getEffectiveRouterModels(userId, orgId, db),
+    ]);
+  const profile = profileRow
+    ? {
+        last_selected_chat_model: profileRow.last_selected_chat_model as unknown,
+        title_model: profileRow.fast_model as unknown,
+        tabular_model: profileRow.tabular_model as unknown,
+      }
+    : null;
   // The assistant composer opens on the last model chosen there, so a
   // playbook run defaults to the same model before any background-task one.
+  // In a team organization's workspace the background-task models are the
+  // organization's choice; the last pick in the composer stays the person's.
+  const backgroundModels = workspacePreferences ?? profile;
   const profileModelIds = [
     profile?.last_selected_chat_model,
-    profile?.title_model,
-    profile?.tabular_model,
+    backgroundModels?.title_model,
+    backgroundModels?.tabular_model,
   ]
     .filter((modelId): modelId is string => typeof modelId === "string")
-    .map((modelId) => LEGACY_MODEL_IDS[modelId] ?? modelId);
-  const [configured, routerModels] = await Promise.all([configuredEndpointSummaries(apiKeys), getEffectiveRouterModels(userId, orgId, db)]);
+    .map((modelId) => LEGACY_MODEL_IDS[modelId] ?? modelId)
+    // A router model counts only while it is still selected for the router,
+    // as Settings > Model Preferences treats it; otherwise a model the
+    // organization (or person) deselected would still be offered and billed.
+    .filter((modelId) => isRouterModelSelected(modelId, routerModels));
+  const [configured, managedModels] = await Promise.all([
+    configuredEndpointSummaries(apiKeys),
+    managedProviderCatalog().then((catalog) => filterTenantModels(catalog, (model) => model.id)),
+  ]);
+  // Dev adds its configured, managed, router and AOAI models as candidates.
+  // The profile's raw title/tabular ids that dev also added here are covered
+  // by profileModelIds, which upstream 74745a6f now filters to router models
+  // still selected — re-adding them raw would undo that filter.
   const candidateIds = [
     ...new Set([
       ...builtInModelIds(),
       ...profileModelIds,
       ...configured.filter((model) => model.available).map((model) => model.id),
+      ...managedModels.map((model) => model.id),
       ...Object.values(routerModels).flat(),
       ...(apiKeys.azureOpenai?.deployment ? [`aoai:${apiKeys.azureOpenai.deployment}`] : []),
-      ...(typeof profile?.title_model === "string"
-        ? [profile.title_model]
-        : []),
-      ...(typeof profile?.tabular_model === "string"
-        ? [profile.tabular_model]
-        : []),
     ]),
   ];
   const modelAvailability = await Promise.all(candidateIds.map(async (modelId) => {
@@ -833,12 +736,18 @@ async function creationScope(db: Db, userId: string, raw: unknown) {
     : null;
 }
 
-export async function listPlaybooks(
+/** Who the caller is in each organization, and the workspace a list is narrowed to. */
+type PlaybookListScope = {
+  workspace: WorkspaceFilter;
+  orgRoles: Map<string, OrgRole>;
+};
+
+async function playbookListScope(
   userId: string,
-  db: Db = createServerSupabase(),
-  options: { workspace?: unknown; email?: string | null } = {},
-): Promise<Playbook[]> {
-  const resolved = await resolveWorkspaceFilter(db, userId, options.workspace);
+  db: Db,
+  workspace: unknown,
+): Promise<PlaybookListScope> {
+  const resolved = await resolveWorkspaceFilter(db, userId, workspace);
   if (!resolved.ok)
     throw new PlaybookRequestError(
       "Workspace not found.",
@@ -853,40 +762,110 @@ export async function listPlaybooks(
   const orgRoles = new Map(
     (memberships ?? []).map((row) => [String(row.org_id), row.role as OrgRole]),
   );
-  const orgIds = [...orgRoles.keys()];
-  const granted = await grantedPlaybookIds(db, userId, options.email);
-  const results = await Promise.all([
-    db.from("playbooks").select("*").eq("user_id", userId),
-    orgIds.length
-      ? db
-          .from("playbooks")
-          .select("*")
-          .eq("visibility", "organization")
-          .in("org_id", orgIds)
-      : { data: [], error: null },
-    granted.length
-      ? db.from("playbooks").select("*").in("id", granted)
-      : { data: [], error: null },
-  ]);
-  const rows = new Map<string, Record<string, unknown>>();
-  for (const result of results) {
-    if (result.error) throw result.error;
-    for (const row of result.data ?? []) {
-      // Organization membership remains required, even for the creator.
-      if (row.org_id && !orgRoles.has(row.org_id)) continue;
-      if (workspaceMatches(resolved.workspace, row.org_id))
-        rows.set(row.id, row);
-    }
+  return { workspace: resolved.workspace, orgRoles };
+}
+
+/**
+ * Narrow a playbooks query to the active workspace in SQL, so a list of one
+ * workspace does not download every other workspace's playbooks only to
+ * discard them. authorizePlaybookRows still applies workspaceMatches.
+ */
+function inPlaybookWorkspace<Q>(query: Q, workspace: WorkspaceFilter): Q {
+  if (!workspace) return query;
+  // Typed loosely on purpose: the PostgREST builder's generics are too deep
+  // to thread through a helper, and both filters return the same builder.
+  const narrowable = query as unknown as {
+    is(column: string, value: null): Q;
+    eq(column: string, value: string): Q;
+  };
+  return workspace === PERSONAL_WORKSPACE
+    ? narrowable.is("org_id", null)
+    : narrowable.eq("org_id", workspace);
+}
+
+/** The rows the caller may open in the workspace, with their roles. */
+async function authorizePlaybookRows(
+  db: Db,
+  rows: Record<string, unknown>[],
+  userId: string,
+  email: string | null | undefined,
+  scope: PlaybookListScope,
+): Promise<{ visible: Record<string, unknown>[]; roles: Map<string, PlaybookRole> }> {
+  const candidates = new Map<string, Record<string, unknown>>();
+  for (const row of rows) {
+    const orgId = row.org_id ? String(row.org_id) : null;
+    // Organization membership remains required, even for the creator.
+    if (orgId && !scope.orgRoles.has(orgId)) continue;
+    if (workspaceMatches(scope.workspace, orgId)) candidates.set(String(row.id), row);
   }
-  const candidates = [...rows.values()];
   const roles = await resolvePlaybookRoles(
     db,
-    candidates as PlaybookAccessRow[],
+    [...candidates.values()] as PlaybookAccessRow[],
+    userId,
+    email,
+    scope.orgRoles,
+  );
+  return {
+    visible: [...candidates.values()].filter((row) => roles.has(String(row.id))),
+    roles,
+  };
+}
+
+/**
+ * The playbooks the caller may open in the workspace (`columns` of each, which
+ * must include the access columns), with their roles.
+ */
+async function readVisiblePlaybooks(
+  db: Db,
+  userId: string,
+  email: string | null | undefined,
+  scope: PlaybookListScope,
+  columns: string,
+): Promise<{ visible: Record<string, unknown>[]; roles: Map<string, PlaybookRole> }> {
+  const { workspace } = scope;
+  // Organization-visible playbooks only from organizations the workspace
+  // can show: none for Personal, just that one for an organization.
+  const orgIds = !workspace
+    ? [...scope.orgRoles.keys()]
+    : workspace !== PERSONAL_WORKSPACE && scope.orgRoles.has(workspace)
+      ? [workspace]
+      : [];
+  const granted = await grantedPlaybookIds(db, userId, email);
+  // Typed as `*` (untyped rows either way): a column-list variable defeats
+  // the builder's select-string parser.
+  const playbooks = () => db.from("playbooks").select(columns as "*");
+  // One user or organization can own more playbooks than max_rows: those
+  // two reads are paged in full (a truncated list would drop playbooks, and
+  // with them their runs from History). Granted ids are 50 per request.
+  const [own, shared, direct] = await Promise.all([
+    selectAllByKey<Record<string, unknown>>("own playbooks", () =>
+      inPlaybookWorkspace(playbooks().eq("user_id", userId), workspace),
+    ),
+    selectInBatches<Record<string, unknown>>("organization playbooks", orgIds, (batch) =>
+      selectAllByKey<Record<string, unknown>>("organization playbooks", () =>
+        playbooks().eq("visibility", "organization").in("org_id", batch),
+      ),
+    ),
+    selectInBatches<Record<string, unknown>>("granted playbooks", granted, (batch) =>
+      inPlaybookWorkspace(playbooks().in("id", batch), workspace),
+    ),
+  ]);
+  return authorizePlaybookRows(db, [...own, ...shared, ...direct], userId, email, scope);
+}
+
+export async function listPlaybooks(
+  userId: string,
+  db: Db = createServerSupabase(),
+  options: { workspace?: unknown; email?: string | null } = {},
+): Promise<Playbook[]> {
+  const scope = await playbookListScope(userId, db, options.workspace);
+  const { visible, roles } = await readVisiblePlaybooks(
+    db,
     userId,
     options.email,
-    orgRoles,
+    scope,
+    "*",
   );
-  const visible = candidates.filter((row) => roles.has(String(row.id)));
   const [creators, recipients] = await Promise.all([
     loadCreatorProfiles(db, visible),
     playbookRecipientEmails(
@@ -1163,7 +1142,7 @@ function keepPlaybookWorkAttended(
             ids: review ? { run_id: id } : { import_id: id },
           });
         }
-        console.warn("[playbooks] heartbeat failed", {
+        log.warn("playbooks", "heartbeat failed", {
           table,
           id,
           error: safeError(error),
@@ -1215,20 +1194,6 @@ async function assertPlaybookNotBeingReplaced(
   if (replacing.some((row) => !interrupted.has(String(row.id))))
     throw new PlaybookRequestError(PLAYBOOK_BEING_REPLACED_ERROR, 409);
 }
-
-/** An import attempt as the page follows it. */
-export type PlaybookImport = {
-  id: string;
-  status: "running" | "completed" | "failed";
-  stage: string;
-  error: string | null;
-  filename: string;
-  name: string | null;
-  /** The playbook being replaced, or the one created once completed. */
-  playbookId: string | null;
-  startedAt: string;
-  completedAt: string | null;
-};
 
 /**
  * An import's state as readers should see it; `interrupted` holds the ids
@@ -1315,50 +1280,6 @@ export async function listRunningPlaybookImports(
     .filter((attempt) => attempt.status === "running");
 }
 
-/** What an import is asked to do, before its file is read. */
-export type PlaybookImportRequest = {
-  userId: string;
-  /** Needed to replace a personal playbook shared with the caller. */
-  userEmail?: string | null;
-  filename: string;
-  /** The file's size in bytes, known before it is read. */
-  size: number;
-  name?: string;
-  workspace?: unknown;
-  model: string;
-  /** Replace this playbook's content instead of creating a new playbook. */
-  playbookId?: string;
-  db?: Db;
-};
-
-/**
- * Everything compiling an import needs besides the file's bytes: its row's
- * columns, plus two ids the row cannot hold. The replace target is kept
- * apart because the row's playbook_id is set null if that playbook is
- * deleted, and a new playbook's id is chosen up front so a re-run of the
- * same import saves the same playbook instead of a second one.
- */
-export type PlaybookImportWork = {
-  job?: PlaybookJobIdentity;
-  attemptId: string;
-  userId: string;
-  userEmail: string | null;
-  filename: string;
-  name: string | null;
-  model: string;
-  orgId: string | null;
-  replacePlaybookId: string | null;
-  /**
-   * The replace target's updated_at when the import began. The compiled
-   * content is saved only if the playbook still has it, so an edit made in
-   * between fails the import instead of being overwritten. Absent only on a
-   * job queued before the column existed.
-   */
-  targetUpdatedAt?: string | null;
-  newPlaybookId: string;
-  startedAt: string;
-};
-
 /** An import whose file is already in memory. */
 type PlaybookImportArgs = Omit<PlaybookImportRequest, "size"> & {
   buffer: Buffer;
@@ -1393,7 +1314,7 @@ async function recordImportFailure(
     reportPlaybookFailure(error, { ...report, stage: importReportStage(stage) });
   // Not console.error: a refusal is not a fault, and a reported failure would
   // be filed again by the console bridge.
-  console.warn("[playbooks] import failed", {
+  log.warn("playbooks", "import failed", {
     attemptId,
     stage,
     error: safeError(error),
@@ -1409,7 +1330,7 @@ async function recordImportFailure(
     }, source.work?.job);
   } catch (recordError) {
     reportPlaybookFailure(recordError, { ...report, stage: "import.record" });
-    console.warn("[playbooks] failed to record import failure", {
+    log.warn("playbooks", "failed to record import failure", {
       attemptId,
       error: safeError(recordError),
     });
@@ -1629,6 +1550,7 @@ export async function compilePlaybookImport(
         user: compilationPrompt(structure, name),
         maxTokens: 16_000,
         apiKeys,
+        feature: "playbook",
       }),
       compilationTimeoutMs,
     );
@@ -1649,6 +1571,7 @@ export async function compilePlaybookImport(
             user: compilationRetryPrompt(structure, name, validationError),
             maxTokens: 16_000,
             apiKeys,
+            feature: "playbook",
           }),
           compilationTimeoutMs,
         );
@@ -2168,18 +2091,14 @@ async function loadReviewDocument(
  * set of tracked changes, and links every change to its finding. A finding
  * whose text cannot be located keeps its suggestion as text.
  */
-async function applyReviewEdits(args: {
+async function prepareReviewEdits(args: {
   db: Db;
   userId: string;
   userEmail?: string | null;
   documentId: string;
   expectedVersion: { id: string; storagePath: string };
   findings: PlaybookFinding[];
-  job?: PlaybookJobIdentity;
-}): Promise<{
-  findings: PlaybookFinding[];
-  version: { id: string; number: number; downloadUrl: string } | null;
-}> {
+}) {
   const planned: { index: number; edit: EditInput }[] = [];
   args.findings.forEach((finding, index) => {
     const suggestion = finding.suggestedText.trim();
@@ -2214,39 +2133,13 @@ async function applyReviewEdits(args: {
       });
     }
   });
-  if (!planned.length) return { findings: args.findings, version: null };
-  const result = await applyTrackedEditsToDocument({
+  return prepareDocumentReviewEdits(args.db, {
     documentId: args.documentId,
     userId: args.userId,
     userEmail: args.userEmail,
     expectedVersion: args.expectedVersion,
-    job: args.job,
-    edits: planned.map((item) => item.edit),
-    db: args.db,
+    edits: planned.map(({ index, edit }) => ({ findingIndex: index, edit })),
   });
-  // A reader who cannot edit, or text that cannot be found, keeps the review
-  // as text alone.
-  if (!result.ok) return { findings: args.findings, version: null };
-  const failed = new Set(result.errors.map((error) => error.index));
-  const applied = planned.filter((_, index) => !failed.has(index));
-  const findings = [...args.findings];
-  // Each applied edit yields one change, in order; without that guarantee the
-  // changes stay in the document but are not tied to findings.
-  if (applied.length === result.annotations.length)
-    applied.forEach((item, position) => {
-      findings[item.index] = {
-        ...findings[item.index],
-        edit: result.annotations[position],
-      };
-    });
-  return {
-    findings,
-    version: {
-      id: result.version_id,
-      number: result.version_number,
-      downloadUrl: result.download_url,
-    },
-  };
 }
 
 export const INTERRUPTED_RUN_ERROR =
@@ -2281,54 +2174,6 @@ export async function reviewWithPlaybook(args: PlaybookReviewRequest) {
   const { done } = await startPlaybookReview(args);
   return done;
 }
-
-export type PlaybookReviewRequest = {
-  userId: string;
-  userEmail?: string | null;
-  playbookId: string;
-  /** Text extracted by the caller; a stored Word document is read instead. */
-  documentText?: string;
-  documentName?: string;
-  /** A stored document to review; a Word document also gets tracked changes. */
-  documentId?: string;
-  instructions?: string;
-  model: string;
-  reviewMode: "strict" | "permissive";
-  /** "issues" reports only what needs attention; the run records which. */
-  reviewScope?: "full" | "issues";
-  db?: Db;
-};
-
-/**
- * What a review needs that its run row does not record. The rules, model,
- * mode, scope, and document reference are all on the row; the text reviewed
- * and the document version the edits are made against are fixed here when the
- * review is requested, so a re-run reviews the same text and its edits are
- * refused, not doubled, if an earlier run already revised the document.
- */
-export type PlaybookReviewInput = {
-  job?: PlaybookJobIdentity;
-  orgId?: string | null;
-  runId: string;
-  /** Also what account erasure purges queued jobs by (payload.userId). */
-  userId: string;
-  documentText: string;
-  instructions: string | null;
-  userEmail: string | null;
-  expectedVersion: { id: string; storagePath: string } | null;
-};
-
-/** A review as runPlaybookReview performs it: its row plus its input. */
-export type PlaybookReviewWork = PlaybookReviewInput & {
-  playbookId: string;
-  content: PlaybookContent;
-  model: string;
-  reviewMode: "strict" | "permissive";
-  reviewScope: "full" | "issues";
-  documentId: string | null;
-  documentName: string | null;
-  startedAt: string;
-};
 
 /** A stored run and its input, as the review that fills it reads them. */
 export function playbookReviewWork(
@@ -2443,7 +2288,7 @@ export async function beginPlaybookReview(args: PlaybookReviewRequest) {
  */
 export async function startPlaybookReview(args: PlaybookReviewRequest) {
   const { run, work, apiKeys, db } = await beginPlaybookReview(args);
-  return { run, done: runPlaybookReview(db, work, apiKeys) };
+  return { run, done: runPlaybookReview(db, work, apiKeys, args.signal) };
 }
 
 /**
@@ -2474,6 +2319,8 @@ export async function runPlaybookReview(
   db: Db,
   work: PlaybookReviewWork,
   apiKeys?: UserApiKeys,
+  /** The asking chat turn's; see PlaybookReviewRequest.signal. */
+  signal?: AbortSignal,
 ) {
   const { runId } = work;
   const stopHeartbeat = keepPlaybookWorkAttended(db, "playbook_runs", runId, work.job);
@@ -2511,6 +2358,7 @@ export async function runPlaybookReview(
           apiKeys: keys,
           prompt,
           sources,
+          signal,
         })
       : await completeText({
           model: work.model,
@@ -2518,6 +2366,8 @@ export async function runPlaybookReview(
           user: prompt,
           maxTokens: 20_000,
           apiKeys: keys,
+          feature: "playbook",
+          abortSignal: signal,
         });
     const parsed = reviewSchema.parse(parseModelJson(raw));
     const normalized = normalizeFindings(
@@ -2533,77 +2383,97 @@ export async function runPlaybookReview(
         : normalized;
     stage = "review.apply_edits";
     markStage(stage);
-    const { findings, version } =
-      work.documentId && work.expectedVersion
-        ? await applyReviewEdits({
-            db,
-            userId: work.userId,
-            userEmail: work.userEmail,
-            documentId: work.documentId,
-            expectedVersion: work.expectedVersion,
-            findings: reviewed,
-            job: work.job,
-          })
-        : { findings: reviewed, version: null };
-    const versionId = version?.id ?? null;
-    const completedAt = new Date().toISOString();
+    // A provider can finish its answer after the turn was stopped: a stopped
+    // review saves nothing, neither a new version nor a completed run.
+    signal?.throwIfAborted();
+    const prepared = work.documentId && work.expectedVersion
+      ? await prepareReviewEdits({
+          db, userId: work.userId, userEmail: work.userEmail,
+          documentId: work.documentId, expectedVersion: work.expectedVersion, findings: reviewed,
+        })
+      : null;
+    // The download can finish after the stop too. This is the last point
+    // before publication (#853's write-time check, moved here for #819's
+    // publish step): nothing has been published, so the upload prepared
+    // meanwhile is deleted.
+    if (signal?.aborted) {
+      if (prepared) await discardUnpublishedReviewUpload(prepared);
+      signal.throwIfAborted();
+    }
     stage = "review.save";
     markStage(stage);
-    const updated = work.job ? await mutatePlaybookJob(db, work.job, "review_publish", runId, {
-      status: "completed", summary: parsed.summary, findings_json: findings, edited_version_id: versionId, completed_at: completedAt,
-    }).then(data => ({ data: data.result === "published" ? [{ id: runId }] : [], error: null })) : await db
-      .from("playbook_runs")
-      .update({
-        status: "completed",
-        summary: parsed.summary,
-        findings_json: findings,
-        edited_version_id: versionId,
-        completed_at: completedAt,
-        updated_at: completedAt,
-      })
-      .eq("id", runId)
-      .eq("user_id", work.userId)
-      .eq("status", "running")
-      .select("id");
-    if (updated.error) throw updated.error;
-    // Only the claim whose write landed records the run in the audit log.
-    if (updated.data?.length && !work.job)
-      await recordPlaybookRunAudit(db, work, { status: "completed", findings });
-    return {
-      id: runId,
-      playbookId: work.playbookId,
-      model: work.model,
-      documentName: work.documentName,
-      documentId: work.documentId,
-      editedVersionId: versionId,
-      /** For the response that made them; a stored run has only the id. */
-      editedVersionNumber: version?.number ?? null,
-      editedDownloadUrl: version?.downloadUrl ?? null,
-      reviewMode: work.reviewMode,
-      reviewScope: scope,
-      status: "completed" as const,
-      summary: parsed.summary,
-      findings,
-      error: null,
-      startedAt: work.startedAt,
-      completedAt,
-    };
+    // Dev: a worker-claimed review publishes under its db_jobs claim fence;
+    // the RPC composes mutate_playbook_job's document/access checks, the
+    // fenced create_document_version and review_publish (SQL audit) in the
+    // same transaction (migration 0244).
+    const publication = await publishDocumentReview(db, {
+      runId, userId: work.userId, summary: parsed.summary, findings: reviewed, prepared, job: work.job,
+    }).catch((error: unknown) => {
+      // The claim fence's explicit raise: rolled back, and the claim is gone.
+      if ((error as { code?: unknown } | null)?.code === "40001") throw new PlaybookClaimLostError();
+      throw error;
+    });
+    if (publication.disposition === "forbidden")
+      throw new PlaybookRequestError("Document access changed. Run the review again.", 409);
+    if (publication.disposition === "conflict")
+      throw new PlaybookRequestError("This document changed. Run the review again.", 409);
+    const row = publication.run;
+    if (!row || row.status !== "completed")
+      throw new PlaybookRequestError("This review is no longer running.", 409);
+    const result = publicRun(row, new Set());
+    // Only a newly completed outcome owns the audit, including text-only
+    // source conflicts. Reconciliation cannot promise an exactly-once audit.
+    // Dev: a fenced review's audit row is written by review_publish in SQL.
+    if (!work.job && (publication.disposition === "published" || publication.disposition === "source_changed")) {
+      await recordPlaybookRunAudit(db, work, { status: "completed", findings: result.findings })
+        .catch((error) => reportPlaybookFailure(error, {
+          stage: "review.save", jobKind: "playbook.review",
+          ids: { run_id: runId, playbook_id: work.playbookId },
+        }));
+    }
+    let editedVersionNumber: number | null = null;
+    if (result.editedVersionId && result.documentId) {
+      // Display conveniences are outside the commit. A query failure cannot
+      // turn a saved review into a failed one or lose its findings. (Dev
+      // returns no signed download URL: its edit events carry none.)
+      try {
+        const { data: version, error } = await db.from("document_versions")
+          .select("version_number")
+          .eq("id", result.editedVersionId).eq("document_id", result.documentId)
+          .is("deleted_at", null).maybeSingle();
+        if (error) throw error;
+        if (version) editedVersionNumber = version.version_number;
+      } catch (error) {
+        reportPlaybookFailure(error, { stage: "review.save", jobKind: "playbook.review",
+          ids: { run_id: runId, playbook_id: work.playbookId } });
+      }
+    }
+    return { ...result, status: "completed" as const, editedVersionNumber };
   } catch (error) {
     if (error instanceof PlaybookClaimLostError) throw error;
     const report = {
       jobKind: "playbook.review" as const,
       ids: { run_id: runId, playbook_id: work.playbookId },
     };
-    if (!isPlaybookRefusal(error)) reportPlaybookFailure(error, { ...report, stage });
+    // A review its chat turn stopped did not fail: it was cut short on
+    // purpose, so it is not reported, and its run says to run it again.
+    const stopped = signal?.aborted === true;
+    if (!stopped && !isPlaybookRefusal(error))
+      reportPlaybookFailure(error, { ...report, stage });
+    // A failed publication response is not proof of rollback: the
+    // transaction may still be in flight. Never stamp that run failed. A
+    // failure while preparing the edits is certain (nothing was published)
+    // and is recorded below like any other failure.
+    if (error instanceof DocumentReviewRetryableError) throw error;
     // Not console.error: see recordImportFailure.
-    console.warn("[playbooks] review failed", { runId, error: safeError(error) });
+    log.warn("playbooks", "review failed", { runId, error: safeError(error) });
     const completedAt = new Date().toISOString();
     const marked = work.job ? await mutatePlaybookJob(db, work.job, "failure", runId, { error: error instanceof PlaybookRequestError ? error.message : "The review could not be completed. Run it again." })
       .then(data => ({ data: data.result === "updated" ? [{ id: runId }] : [], error: null })) : await db
       .from("playbook_runs")
       .update({
         status: "failed",
-        error: runFailureMessage(error),
+        error: stopped ? INTERRUPTED_RUN_ERROR : runFailureMessage(error),
         completed_at: completedAt,
         updated_at: completedAt,
       })
@@ -2613,7 +2483,7 @@ export async function runPlaybookReview(
       .select("id");
     if (marked.error) {
       reportPlaybookFailure(marked.error, { ...report, stage: "review.record" });
-      console.warn("[playbooks] failed to record review failure", {
+      log.warn("playbooks", "failed to record review failure", {
         runId,
         error: safeError(marked.error),
       });
@@ -2637,6 +2507,7 @@ async function completeReviewWithSources(args: {
   apiKeys: UserApiKeys;
   prompt: string;
   sources: PlaybookSourceRow[];
+  signal?: AbortSignal;
 }): Promise<string> {
   const known = new Set(args.sources.map((source) => source.id));
   const result = await streamChatWithTools({
@@ -2646,6 +2517,8 @@ async function completeReviewWithSources(args: {
     tools: [READ_SOURCE_TOOL],
     maxIterations: 8,
     apiKeys: args.apiKeys,
+    feature: "playbook",
+    abortSignal: args.signal,
     runTools: (calls) =>
       Promise.all(
         calls.map(async (call) => ({
@@ -2784,25 +2657,72 @@ export async function listAllPlaybookRuns(
   db: Db = createServerSupabase(),
   options: { workspace?: unknown; email?: string | null } = {},
 ) {
-  const playbooks = await listPlaybooks(userId, db, options);
-  if (!playbooks.length) return [];
-  const names = new Map(
-    playbooks.map((playbook) => [playbook.id, playbook.name]),
-  );
-  const { data, error } = await db
-    .from("playbook_runs")
-    .select("*")
-    .eq("user_id", userId)
-    .in("playbook_id", [...names.keys()])
-    .order("started_at", { ascending: false })
-    .limit(100);
-  if (error) throw error;
-  const rows = (data ?? []) as Record<string, unknown>[];
+  const { rows, names } = await readVisibleRuns(userId, db, options, {
+    columns: "*",
+    limit: 100,
+  });
   const interrupted = await interruptedRuns(db, rows);
   return rows.map((row) => ({
     ...publicRun(row, interrupted),
     playbookName: names.get(String(row.playbook_id)) ?? "",
   }));
+}
+
+/**
+ * The caller's newest runs (up to `limit`, before `before`) of playbooks they
+ * can still open in the workspace, with those playbooks' names.
+ *
+ * Eligibility comes BEFORE the limit: the playbooks the caller may open are
+ * listed first (only the access columns and the name, never content), and
+ * runs are read only for those, so the page holds the newest visible runs
+ * however many newer runs of other workspaces or revoked playbooks exist.
+ * Reading the caller's runs first and filtering afterwards could not tell
+ * "no more visible runs" from "a scan budget spent on hidden ones".
+ *
+ * The playbook ids go out in bounded `.in()` batches. Each batch's newest
+ * `limit` runs include every run of that batch that can make the page, so
+ * merging the batches newest first and keeping `limit` rows is exact.
+ */
+async function readVisibleRuns(
+  userId: string,
+  db: Db,
+  options: { workspace?: unknown; email?: string | null; before?: string },
+  read: { columns: string; limit: number },
+): Promise<{ rows: Record<string, unknown>[]; names: Map<string, string> }> {
+  const scope = await playbookListScope(userId, db, options.workspace);
+  const { visible } = await readVisiblePlaybooks(
+    db,
+    userId,
+    options.email,
+    scope,
+    "id, name, user_id, org_id, visibility",
+  );
+  const names = new Map(visible.map((row) => [String(row.id), String(row.name)]));
+  const runs = await selectInBatches<Record<string, unknown>>(
+    "visible playbook runs",
+    names.keys(),
+    (batch) => {
+      let query = db
+        .from("playbook_runs")
+        .select(read.columns as "*")
+        .eq("user_id", userId)
+        .in("playbook_id", batch);
+      if (options.before) query = query.lt("started_at", options.before);
+      return query
+        .order("started_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(read.limit);
+    },
+  );
+  // Newest first by (started_at, id), so ties keep one order across batches.
+  const rows = runs
+    .sort(
+      (a, b) =>
+        String(b.started_at).localeCompare(String(a.started_at)) ||
+        String(b.id).localeCompare(String(a.id)),
+    )
+    .slice(0, read.limit);
+  return { rows, names };
 }
 
 /**
@@ -2819,24 +2739,11 @@ export async function listPlaybookRunHistory(
     before?: string;
   } = {},
 ) {
-  const playbooks = await listPlaybooks(userId, db, options);
-  if (!playbooks.length) return [];
-  const names = new Map(
-    playbooks.map((playbook) => [playbook.id, playbook.name]),
-  );
-  let query = db
-    .from("playbook_runs")
-    .select(
+  const { rows, names } = await readVisibleRuns(userId, db, options, {
+    columns:
       "id, playbook_id, document_name, status, error, started_at, updated_at, completed_at",
-    )
-    .eq("user_id", userId)
-    .in("playbook_id", [...names.keys()]);
-  if (options.before) query = query.lt("started_at", options.before);
-  const { data, error } = await query
-    .order("started_at", { ascending: false })
-    .limit(Math.min(Math.max(options.limit ?? 25, 1), 100));
-  if (error) throw error;
-  const rows = (data ?? []) as Record<string, unknown>[];
+    limit: Math.min(Math.max(options.limit ?? 25, 1), 100),
+  });
   const interrupted = await interruptedRuns(db, rows);
   return rows.map((row) => ({
     id: String(row.id),

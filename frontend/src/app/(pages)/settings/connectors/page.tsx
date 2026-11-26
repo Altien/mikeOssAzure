@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import Image from "next/image";
-import { FolderPlus, Plus } from "lucide-react";
+import { FolderPlus, Plus, Scale } from "lucide-react";
 import { ConnectorSetupGuideLink } from "@/app/components/settings/ConnectorSetupGuideLink";
 import { NewCustomMcpModal } from "@/app/components/settings/NewCustomMcpModal";
 import {
@@ -45,10 +45,8 @@ import { useGoogleDrivePicker } from "@/app/components/settings/useGoogleDrivePi
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import {
   PERSONAL_WORKSPACE,
-  PERSONAL_WORKSPACE_LABEL,
   useWorkspace,
 } from "@/app/contexts/WorkspaceContext";
-import { useHasMultipleWorkspaces } from "@/app/hooks/useHasMultipleWorkspaces";
 import {
   type McpConnectorSummary,
   MikeApiError,
@@ -65,9 +63,7 @@ import {
 import { reportFault } from "@/app/lib/userFacingError";
 import { SettingsDescription } from "@/app/components/settings/SettingsText";
 import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
-import { PillButtonUI } from "@/shared/ui/PillButtonUI";
-import { LIQUID_GLASS_SUBTLE_CLASS } from "@/shared/ui/LiquidGlassUI";
-import { ToggleSwitchUI } from "@/shared/ui/ToggleSwitchUI";
+import { PillButtonUI, LIQUID_GLASS_SUBTLE_CLASS, ToggleSwitchUI } from "@mike/ui";
 
 /** What the user was doing, for "Couldn't ..." and honest retry text. */
 const CONNECTOR_ACTION_LABELS = {
@@ -240,6 +236,9 @@ function connectorPlaceholderClassName(connector: McpConnectorSummary) {
 }
 
 function ConnectorBrandIcon({ name }: { name: string }) {
+  if (name === "Legal Data Hunter") {
+    return <Scale className="h-5 w-5 text-foreground" aria-hidden="true" />;
+  }
   if (name === "Slack") {
     return (
       <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
@@ -396,7 +395,6 @@ function mcpDetailsView(connector: McpConnectorSummary): ConnectorDetailsView {
  */
 export default function ConnectorsPage() {
   const { workspaceId, activeOrganization } = useWorkspace();
-  const multipleWorkspaces = useHasMultipleWorkspaces();
   const workspace = workspaceId ?? undefined;
   const organizationName =
     workspace && workspace !== PERSONAL_WORKSPACE
@@ -407,7 +405,6 @@ export default function ConnectorsPage() {
       key={workspace ?? PERSONAL_WORKSPACE}
       workspace={workspace}
       organizationName={organizationName}
-      multipleWorkspaces={multipleWorkspaces}
     />
   );
 }
@@ -415,23 +412,12 @@ export default function ConnectorsPage() {
 function WorkspaceConnectors({
   workspace,
   organizationName,
-  multipleWorkspaces,
 }: {
   /** "personal", an organization id, or undefined outside a workspace. */
   workspace: string | undefined;
   /** The active organization's name, or null in Personal (or still loading). */
   organizationName: string | null;
-  /** Whether the person has more than one workspace to tell apart. */
-  multipleWorkspaces: boolean;
 }) {
-  // Which workspace these connectors are saved for, said only to someone
-  // with more than one, and only once that workspace has a name to show.
-  const savedFor = !multipleWorkspaces
-    ? null
-    : (organizationName ??
-      (workspace && workspace !== PERSONAL_WORKSPACE
-        ? null
-        : PERSONAL_WORKSPACE_LABEL));
   const [connectors, setConnectors] = useState<McpConnectorSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -1342,9 +1328,7 @@ function WorkspaceConnectors({
   return (
     <div className="@container">
       <section aria-labelledby="installed-connectors-heading">
-        <div
-          className={`${savedFor ? "mb-1" : "mb-4"} flex items-center justify-between gap-3`}
-        >
+        <div className="mb-4 flex items-center justify-between gap-3">
           <SettingsHeading id="installed-connectors-heading">
             Installed
           </SettingsHeading>
@@ -1359,13 +1343,6 @@ function WorkspaceConnectors({
             Custom
           </PillButtonUI>
         </div>
-        {savedFor && (
-          <div className="mb-4">
-            <SettingsDescription>
-              Saved for {savedFor}. Each workspace has its own connectors.
-            </SettingsDescription>
-          </div>
-        )}
         {error && (
           <div className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
             {error}

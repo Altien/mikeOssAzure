@@ -3,6 +3,8 @@ import {
   aiSdkFetch,
   completeAiSdkText,
   streamAiSdk,
+  maxOutputTokensFor,
+  COMPLETION_REASONING_HEADROOM_TOKENS,
   type AiSdkAdapterConfig,
 } from "./aiSdk";
 import {
@@ -18,7 +20,8 @@ import {
 import { guardedFetch } from "../mcp/client";
 import { isBlockedDestinationError } from "../blockedDestination";
 import { localModelToleranceMiddleware } from "./localModelMiddleware";
-import { providerFailureResponse } from "./providerErrors";
+import { MANAGED_PROVIDERS, resolveManagedModel } from "./managedProviders";
+import { ProviderConfigurationError, providerFailureResponse, type ProviderKeySource } from "./providerErrors";
 import {
   ACCOUNT_MODEL_LABELS,
   accountModelPrefix,
@@ -46,17 +49,29 @@ import {
   tolerateTextToolCalls,
 } from "./registry";
 import type {
+  ApiKeyName,
   ConfiguredModel,
+  LlmFeature,
   Provider,
   ReasoningLevel,
   StreamChatParams,
   StreamChatResult,
   UserApiKeys,
 } from "./types";
+import {
+  meterLlmCall,
+  type LlmCallDescriptor,
+  type LlmUsageMeter,
+} from "./usage";
 import { resolveSecret, resolveProviderSecret, resolveVercelApiKey } from "../envSecrets";
+import { admitTenantLlmCall } from "../tenantRateLimit";
 import { REASONING_LEVELS } from "./types";
 import { vertexAuthClient } from "./vertexAuth";
 import { UserFacingError } from "../safeError";
+import { assertTenantModelAllowed, getTenantSettings, tenantSuppliesProvider } from "../tenantSettings";
+import { memberApiKeysFor } from "./memberKeys";
+import { log, tpl } from "../log";
+import { providerDataRetentionAllowed } from "../runtimeConfig";
 
 const OPENROUTER_BASE_URL =
   process.env.OPENROUTER_BASE_URL?.trim().replace(/\/+$/, "") ||
@@ -75,6 +90,7 @@ type CompleteProviderParams = {
   abortSignal?: AbortSignal;
   apiKeys?: UserApiKeys;
   reasoningEffort?: "none" | "low" | "high" | "max";
+  feature?: LlmFeature;
 };
 
 type RouterProvider = Extract<
@@ -88,11 +104,78 @@ const ROUTER_LABELS: Record<RouterProvider, string> = {
   "opencode-go": "OpenCode Go",
 };
 
+/**
+ * Per-request settings asking a provider not to keep, or train on, what Mike
+ * sends it: lawyers' prompts and document text. Only providers whose API has
+ * such a request field are listed; for the others (Anthropic, Gemini,
+ * Vertex, Bedrock, Mistral) retention is set by the account's terms, not by
+ * the request. LLM_PROVIDER_DATA_RETENTION=allow sends none of these.
+ *
+ * - OpenAI, Azure OpenAI and xAI Responses APIs store every response unless
+ *   told not to. With store=false the SDKs ask for reasoning encrypted and
+ *   hand it back inline on the next tool step instead of by stored id.
+ * - OpenRouter routes only to upstreams that do not collect user data, and
+ *   the Vercel AI Gateway only to providers that do not train on prompts;
+ *   either can leave a model with no eligible upstream.
+ */
+const NO_RETENTION_OPTIONS: Partial<
+  Record<Provider, AiSdkAdapterConfig["requestProviderOptions"]>
+> = {
+  openai: { openai: { store: false } },
+  azure: { azure: { store: false } },
+  xai: { xai: { store: false } },
+  openrouter: { openrouter: { provider: { data_collection: "deny" } } },
+  vercel: { gateway: { disallowPromptTraining: true } },
+};
+
+function noRetentionOptions(
+  provider: Provider,
+): AiSdkAdapterConfig["requestProviderOptions"] {
+  return providerDataRetentionAllowed()
+    ? undefined
+    : NO_RETENTION_OPTIONS[provider];
+}
+
+/**
+ * A provider with no key (upstream 2ada45fb). The user is told who can fix
+ * it; the Key Vault secret that would fix it is the operator's configuration,
+ * so it goes to the server log, never into a message every user can read.
+ * Dev divergence: credentials are organisation-managed (no Bring Your Own
+ * Keys page), so the remedy names the administrator, not Settings.
+ */
+function keyNotConfigured(label: string, operatorHint: string): UserFacingError {
+  log.warn(tpl`[llm] ${label} API key is not configured. ${operatorHint}`);
+  return new ProviderConfigurationError(
+    `${label} is not configured for this organisation. Ask an administrator to configure it in /install.`,
+  );
+}
+
 async function requiredKey(label: string, secretName: string, override?: string | null): Promise<string> {
   const aliases = secretName === "anthropic-api-key" ? ["claude-api-key"] : [];
   const key = override?.trim() || await resolveProviderSecret(secretName, aliases);
-  if (!key) throw new Error(`${label} is not configured for this organisation. Ask an administrator to set the ${secretName} Key Vault secret in /install.`);
+  if (!key) throw keyNotConfigured(label, `Set the ${secretName} Key Vault secret in /install.`);
   return key;
+}
+
+/**
+ * Whose key a call for `provider` sends. The credential store lays saved
+ * keys over the environment's, so `apiKeys[provider]` is often the
+ * deployment's own key, and keySources says which (see UserApiKeys). An
+ * empty entry means requiredKey, routerKey or the cloud credential helpers
+ * fall back to the environment: the deployment's key too. A key without a
+ * recorded origin (built outside the store) counts as the user's, the quiet
+ * default: a refusal is then logged, never reported.
+ */
+function keySourceFor(
+  apiKeys: UserApiKeys | undefined,
+  provider: ApiKeyName,
+): ProviderKeySource {
+  // Dev: azureOpenai holds settings, not a key string.
+  const key = apiKeys?.[provider];
+  if (typeof key !== "string" || !key.trim()) return "deployment";
+  const origin = apiKeys?.keySources?.[provider];
+  if (origin === "env") return "deployment";
+  return origin === "org" ? "org" : "user";
 }
 
 function routerUserKey(
@@ -110,9 +193,7 @@ async function routerKey(provider: RouterProvider, apiKeys?: UserApiKeys): Promi
       provider === "openrouter" ? await resolveProviderSecret("openrouter-api-key") :
       await resolveProviderSecret("opencode-api-key"));
   if (!key) {
-    throw new Error(
-      `${ROUTER_LABELS[provider]} is not configured for this organisation. Ask an administrator to set the provider Key Vault secret in /install.`,
-    );
+    throw keyNotConfigured(ROUTER_LABELS[provider], "Set the provider Key Vault secret in /install.");
   }
   return key;
 }
@@ -122,6 +203,7 @@ async function createAnthropicAdapter(args: {
   label: string;
   model: string;
   apiKey: string;
+  keySource: ProviderKeySource;
   baseURL?: string;
   supportsReasoning: boolean;
 }): Promise<AiSdkAdapterConfig> {
@@ -137,6 +219,8 @@ async function createAnthropicAdapter(args: {
     label: args.label,
     model: anthropic(args.model),
     modelId: args.model,
+    anthropicCachePoint: true,
+    keySource: args.keySource,
     supportsReasoning: args.supportsReasoning,
     // Only Anthropic itself runs the search; compatible gateways do not.
     ...(args.provider === "claude"
@@ -157,6 +241,7 @@ async function createRouterAdapter(
     throw unsupportedOpenCodeGoModel(model);
   }
   const key = await routerKey(provider, apiKeys);
+  const keySource = keySourceFor(apiKeys, provider);
 
   if (provider === "openrouter") {
     const { createOpenRouter } = await import("@openrouter/ai-sdk-provider");
@@ -173,6 +258,7 @@ async function createRouterAdapter(
       label: ROUTER_LABELS[provider],
       model: openrouter.chat(openRouterModelId(model)),
       modelId: model,
+      keySource,
     };
   }
 
@@ -188,6 +274,7 @@ async function createRouterAdapter(
       label: ROUTER_LABELS[provider],
       model: gateway.chat(vercelModelId(model)),
       modelId: model,
+      keySource,
     };
   }
 
@@ -196,6 +283,8 @@ async function createRouterAdapter(
     name: "opencodeGo",
     apiKey: key,
     baseURL: OPENCODE_GO_BASE_URL,
+    // Usage ledger (issue 015): ask for the final usage chunk when streaming.
+    includeUsage: true,
     fetch: aiSdkFetch,
   });
   return {
@@ -203,6 +292,7 @@ async function createRouterAdapter(
     label: ROUTER_LABELS[provider],
     model: openCodeGo(openCodeGoModelId(model)),
     modelId: model,
+    keySource,
     supportsReasoning: false,
   };
 }
@@ -223,8 +313,9 @@ async function createBedrockAdapter(
 ): Promise<AiSdkAdapterConfig> {
   const credentials = await bedrockCredentials(apiKeys);
   if (!credentials) {
-    throw new Error(
-      "Amazon Bedrock API key is not configured. Set AWS_BEARER_TOKEN_BEDROCK and BEDROCK_AWS_REGION or add a user Amazon Bedrock key and region.",
+    throw keyNotConfigured(
+      "Amazon Bedrock",
+      "Set AWS_BEARER_TOKEN_BEDROCK and BEDROCK_AWS_REGION, or the user adds a key and region.",
     );
   }
   const { createAmazonBedrock } = await import("@ai-sdk/amazon-bedrock");
@@ -245,6 +336,7 @@ async function createBedrockAdapter(
     label: "Amazon Bedrock",
     model: bedrock(upstreamId),
     modelId: model,
+    keySource: keySourceFor(apiKeys, "bedrock"),
     bedrockCachePoint: isClaude,
     ...(isClaude
       ? { defaultMaxOutputTokens: await bedrockClaudeMaxOutputTokens(upstreamId) }
@@ -282,8 +374,9 @@ async function createAzureAdapter(
 ): Promise<AiSdkAdapterConfig> {
   const credentials = await azureCredentials(apiKeys);
   if (!credentials) {
-    throw new Error(
-      "Azure OpenAI API key is not configured. Set AZURE_API_KEY and AZURE_OPENAI_ENDPOINT or add a user Azure OpenAI key and endpoint.",
+    throw keyNotConfigured(
+      "Azure OpenAI",
+      "Set AZURE_API_KEY and AZURE_OPENAI_ENDPOINT, or the user adds a key and endpoint.",
     );
   }
   const { createAzure } = await import("@ai-sdk/azure");
@@ -300,6 +393,7 @@ async function createAzureAdapter(
     // get reasoning controls and arbitrary names run without them.
     model: azure.responses(azureDeploymentName(model)),
     modelId: model,
+    keySource: keySourceFor(apiKeys, "azure"),
     courtlistenerCitationReminder: true,
   };
 }
@@ -310,17 +404,20 @@ async function createAzureFoundryAdapter(
 ): Promise<AiSdkAdapterConfig> {
   const credentials = await azureFoundryCredentials(apiKeys);
   if (!credentials) {
-    throw new Error(
-      "Azure AI Foundry API key is not configured. Set AZURE_FOUNDRY_API_KEY and AZURE_FOUNDRY_ENDPOINT or add a user Azure AI Foundry key and endpoint.",
+    throw keyNotConfigured(
+      "Azure AI Foundry",
+      "Set AZURE_FOUNDRY_API_KEY and AZURE_FOUNDRY_ENDPOINT, or the user adds a key and endpoint.",
     );
   }
   const deployment = azureFoundryDeploymentName(model);
+  const keySource = keySourceFor(apiKeys, "azure-foundry");
   if (isAzureFoundryClaudeDeployment(model)) {
     return createAnthropicAdapter({
       provider: "azure-foundry",
       label: "Azure AI Foundry",
       model: deployment,
       apiKey: credentials.apiKey,
+      keySource,
       baseURL: `${credentials.endpoint}/anthropic/v1`,
       supportsReasoning: true,
     });
@@ -333,6 +430,8 @@ async function createAzureFoundryAdapter(
     // header; sending both covers resources that only accept one.
     headers: { "api-key": credentials.apiKey },
     baseURL: `${credentials.endpoint}/openai/v1`,
+    // Usage ledger (issue 015): ask for the final usage chunk when streaming.
+    includeUsage: true,
     fetch: aiSdkFetch,
   });
   return {
@@ -340,6 +439,7 @@ async function createAzureFoundryAdapter(
     label: "Azure AI Foundry",
     model: foundry(deployment),
     modelId: model,
+    keySource,
     supportsReasoning: false,
   };
 }
@@ -363,7 +463,12 @@ async function createVertexAdapter(
     fetch: aiSdkFetch,
   };
   const upstreamId = vertexModelId(model);
-  const base = { provider: "vertex" as const, label: "Google Vertex AI", modelId: model };
+  const base = {
+    provider: "vertex" as const,
+    label: "Google Vertex AI",
+    modelId: model,
+    keySource: keySourceFor(apiKeys, "vertex"),
+  };
   const protocol = vertexModelProtocol(model);
   if (protocol === "anthropic") {
     const { createVertexAnthropic } = await import(
@@ -394,6 +499,7 @@ async function createVertexAdapter(
 async function customEndpointFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
+  blockedMessage = CUSTOM_ENDPOINT_BLOCKED_MESSAGE,
 ): Promise<Response> {
   try {
     return await aiSdkFetch(input, init, (url, options) =>
@@ -405,7 +511,7 @@ async function customEndpointFetch(
     // so say so instead of surfacing an internal error (or retrying it as a
     // network failure).
     if (isBlockedDestinationError(error)) {
-      throw new UserFacingError(CUSTOM_ENDPOINT_BLOCKED_MESSAGE, {
+      throw new UserFacingError(blockedMessage, {
         cause: error,
       });
     }
@@ -422,7 +528,7 @@ async function createCustomEndpointAdapter(
 ): Promise<AiSdkAdapterConfig> {
   const credentials = await customEndpointCredentials(apiKeys);
   if (!credentials) {
-    throw new Error(
+    throw new ProviderConfigurationError(
       "OpenAI-compatible endpoint is not configured. Add an API key and base URL in Settings → Bring Your Own Keys.",
     );
   }
@@ -431,12 +537,50 @@ async function createCustomEndpointAdapter(
     name: "custom",
     apiKey: credentials.apiKey,
     baseURL: credentials.baseUrl,
+    // Usage ledger (issue 015): ask for the final usage chunk when streaming.
+    includeUsage: true,
     fetch: customEndpointFetch,
   });
   return {
     provider: "custom",
     label: "OpenAI-compatible endpoint",
     model: client(customEndpointModelId(model)),
+    modelId: model,
+    // Custom endpoints may belong to the user or their organization.
+    keySource: keySourceFor(apiKeys, "custom"),
+    supportsReasoning: false,
+  };
+}
+
+const MANAGED_ENDPOINT_BLOCKED_MESSAGE =
+  "This provider's base URL does not resolve to a public address. Ask an administrator to correct it, or select another model.";
+
+/**
+ * Organisation settings only: these providers never take a personal key.
+ *
+ * A BYO tenant's address is its own input to a shared stamp, so it gets the same
+ * egress guard as a custom endpoint. Everywhere else the address comes from the
+ * deployment's administrator, who may legitimately name a private gateway.
+ */
+async function createManagedAdapter(model: string): Promise<AiSdkAdapterConfig> {
+  const resolved = await resolveManagedModel(model);
+  if (!resolved.ok) throw new UserFacingError(resolved.detail);
+  const guarded = await tenantSuppliesProvider(resolved.provider);
+  const { createOpenAICompatible } = await import("@ai-sdk/openai-compatible");
+  const client = createOpenAICompatible({
+    name: resolved.provider,
+    apiKey: resolved.apiKey,
+    baseURL: resolved.baseUrl,
+    // Usage ledger (issue 015): ask for the final usage chunk when streaming.
+    includeUsage: true,
+    fetch: guarded
+      ? (input, init) => customEndpointFetch(input, init, MANAGED_ENDPOINT_BLOCKED_MESSAGE)
+      : aiSdkFetch,
+  });
+  return {
+    provider: resolved.provider,
+    label: MANAGED_PROVIDERS[resolved.provider].label,
+    model: client(resolved.upstreamModel),
     modelId: model,
     supportsReasoning: false,
   };
@@ -461,7 +605,7 @@ async function createConfiguredAdapter(
 ): Promise<AiSdkAdapterConfig> {
   const configured = configuredModelOrThrow(id);
   if (configured.apiKeyProvider && isProviderDisabled(configured.apiKeyProvider, apiKeys)) {
-    throw new UserFacingError("This model provider is turned off. Turn it on in Settings → Bring Your Own Keys or select another model.");
+    throw new ProviderConfigurationError("This model provider is turned off. Turn it on in Settings → Bring Your Own Keys or select another model.");
   }
   const { createOpenAICompatible } = await import("@ai-sdk/openai-compatible");
   const apiKey = await apiKeyForConfiguredModel(configured, apiKeys);
@@ -473,6 +617,8 @@ async function createConfiguredAdapter(
     baseURL: configured.baseUrl,
     // Omit Authorization entirely for endpoints declared without auth.
     ...(apiKey ? { apiKey } : {}),
+    // Usage ledger (issue 015): ask for the final usage chunk when streaming.
+    includeUsage: true,
     ...(configured.maxTokensField === "max_completion_tokens"
       ? {
           transformRequestBody: (body: Record<string, unknown>) => {
@@ -497,9 +643,23 @@ async function createConfiguredAdapter(
         })
       : base,
     modelId: configured.id,
+    keySource: configuredModelKeySource(configured, apiKeys),
     supportsReasoning: false,
     replayReasoning: configured.replayReasoning === true,
   };
+}
+
+/**
+ * Whose key a declared model sends, in apiKeyForConfiguredModel's order: a
+ * key written into the declaration is the deployment's, then the user's own
+ * key for apiKeyProvider, then the deployment's apiKeyEnv.
+ */
+function configuredModelKeySource(
+  configured: ConfiguredModel,
+  apiKeys?: UserApiKeys,
+): ProviderKeySource {
+  if (configured.apiKey?.trim() || !configured.apiKeyProvider) return "deployment";
+  return keySourceFor(apiKeys, configured.apiKeyProvider);
 }
 
 function unsupportedOpenCodeGoModel(model: string): Error {
@@ -535,9 +695,9 @@ async function createLegacyAzureAdapter(model: string, apiKeys?: UserApiKeys): P
   const settings = apiKeys?.azureOpenai;
   const endpoint = settings?.endpoint?.trim() || await resolveSecret("azure-openai-endpoint");
   const apiKey = settings?.apiKey?.trim() || await resolveSecret("azure-openai-api-key");
-  const apiVersion = settings?.apiVersion?.trim() || process.env.AZURE_OPENAI_API_VERSION?.trim() || DEFAULT_AZURE_API_VERSION;
+  const apiVersion = settings?.apiVersion?.trim() || await resolveSecret("azure-openai-api-version") || DEFAULT_AZURE_API_VERSION;
   if (!endpoint || !apiKey) throw new Error("Azure OpenAI is not configured for this organisation. Ask an administrator to set its endpoint and API key in /install.");
-  const deployment = azureDeployment(model, settings);
+  const deployment = azureDeployment(model, settings ?? { endpoint, deployment: await resolveSecret("azure-openai-deployment") });
   const { createAzure } = await import("@ai-sdk/azure");
   const azure = createAzure({
     baseURL: `${endpoint.replace(/\/+$/, "").replace(/\/openai$/, "")}/openai`,
@@ -554,9 +714,19 @@ async function createProviderAdapter(
   apiKeys?: UserApiKeys,
   nativeWebSearch = false,
 ): Promise<AiSdkAdapterConfig> {
+  const adapter = await buildProviderAdapter(model, apiKeys, nativeWebSearch);
+  const requestProviderOptions = noRetentionOptions(adapter.provider);
+  return requestProviderOptions ? { ...adapter, requestProviderOptions } : adapter;
+}
+
+async function buildProviderAdapter(
+  model: string,
+  apiKeys?: UserApiKeys,
+  nativeWebSearch = false,
+): Promise<AiSdkAdapterConfig> {
   const provider = providerForModel(model);
   if (isProviderDisabled(provider, apiKeys)) {
-    throw new UserFacingError("This model provider is turned off. Turn it on in Settings → Bring Your Own Keys or select another model.");
+    throw new ProviderConfigurationError("This model provider is turned off. Turn it on in Settings → Bring Your Own Keys or select another model.");
   }
 
   // Last line of defence behind resolveModel and the save-time check: some
@@ -564,7 +734,7 @@ async function createProviderAdapter(
   // malformed id must never reach an adapter, whatever path it came from.
   const accountPrefix = accountModelPrefix(model);
   if (accountPrefix === provider && !isSafeAccountModel(model)) {
-    throw new UserFacingError(
+    throw new ProviderConfigurationError(
       `This is not a valid ${ACCOUNT_MODEL_LABELS[accountPrefix]} model id. Choose a model saved in Model Providers.`,
     );
   }
@@ -575,6 +745,7 @@ async function createProviderAdapter(
       label: "Claude",
       model,
       apiKey: await requiredKey("Anthropic", "anthropic-api-key", apiKeys?.claude),
+      keySource: keySourceFor(apiKeys, "claude"),
       supportsReasoning: true,
     });
   }
@@ -585,7 +756,13 @@ async function createProviderAdapter(
       apiKey: await requiredKey("Gemini", "gemini-api-key", apiKeys?.gemini),
       fetch: aiSdkFetch,
     });
-    return { provider, label: "Gemini", model: google(model), modelId: model };
+    return {
+      provider,
+      label: "Gemini",
+      model: google(model),
+      modelId: model,
+      keySource: keySourceFor(apiKeys, "gemini"),
+    };
   }
 
   if (provider === "openai") {
@@ -600,6 +777,7 @@ async function createProviderAdapter(
       label: "OpenAI",
       model: nativeWebSearch || process.env.OPENAI_API_MODE?.trim().toLowerCase() === "responses" ? openai.responses(model) : openai.chat(model),
       modelId: model,
+      keySource: keySourceFor(apiKeys, "openai"),
       courtlistenerCitationReminder: true,
       webSearchTool: () => openai.tools.webSearch({}) as unknown as ReturnType<NonNullable<AiSdkAdapterConfig["webSearchTool"]>>,
     };
@@ -611,7 +789,13 @@ async function createProviderAdapter(
       apiKey: await requiredKey("Mistral", "mistral-api-key", apiKeys?.mistral),
       fetch: aiSdkFetch,
     });
-    return { provider, label: "Mistral", model: mistral(model), modelId: model };
+    return {
+      provider,
+      label: "Mistral",
+      model: mistral(model),
+      modelId: model,
+      keySource: keySourceFor(apiKeys, "mistral"),
+    };
   }
 
   if (provider === "openrouter" || provider === "vercel") {
@@ -625,6 +809,7 @@ async function createProviderAdapter(
         label: "OpenCode Go",
         model: openCodeGoModelId(model),
         apiKey: await routerKey(provider, apiKeys),
+        keySource: keySourceFor(apiKeys, provider),
         baseURL: OPENCODE_GO_BASE_URL,
         supportsReasoning: false,
       });
@@ -638,6 +823,8 @@ async function createProviderAdapter(
       name: "kimi",
       baseURL: "https://api.moonshot.ai/v1",
       apiKey: await requiredKey("Kimi", "moonshot-api-key", apiKeys?.kimi),
+      // Usage ledger (issue 015): ask for the final usage chunk when streaming.
+      includeUsage: true,
       fetch: aiSdkFetch,
     });
     return { provider, label: "Kimi K3", model: kimi(model), modelId: model };
@@ -650,6 +837,7 @@ async function createProviderAdapter(
   }
   if (provider === "vertex") return createVertexAdapter(model, apiKeys);
   if (provider === "custom") return createCustomEndpointAdapter(model, apiKeys);
+  if (provider === "tokenjuice" || provider === "meta") return createManagedAdapter(model);
 
   if (provider === "xai") {
     const { createXai } = await import("@ai-sdk/xai");
@@ -662,6 +850,7 @@ async function createProviderAdapter(
       label: "xAI",
       model: xai(xaiModelId(model)),
       modelId: model,
+      keySource: keySourceFor(apiKeys, "xai"),
     };
   }
 
@@ -671,8 +860,58 @@ async function createProviderAdapter(
   throw new Error(`Unsupported provider for model ${model}`);
 }
 
+/**
+ * Ledger descriptor for one call (issue 015). `apiKeys` here are the
+ * organisation's credentials (getOrganisationApiKeys), not a user's. A tenant
+ * call on the tenant's own key (byo, or hybrid with a reference) or on a
+ * member's key is recorded as "byo": no platform credits are reserved.
+ */
+async function llmCall(model: string, feature: LlmFeature | undefined, memberKey = false): Promise<LlmCallDescriptor> {
+  let provider: string;
+  try {
+    provider = providerForModel(model);
+  } catch {
+    provider = "unknown";
+  }
+  return {
+    feature: feature ?? "unspecified",
+    provider,
+    model,
+    keyMode: memberKey || await tenantSuppliesProvider(provider) ? "byo" : "platform",
+  };
+}
+
+/** A tenant call keeps only the member's own key, and only for a listed model. */
+async function tenantCallKeys<P extends { model: string; apiKeys?: UserApiKeys }>(
+  params: P,
+): Promise<{ params: P; memberKey: boolean }> {
+  if (!(await getTenantSettings())) return { params, memberKey: false };
+  const apiKeys = await memberApiKeysFor(params.model, params.apiKeys);
+  return { params: { ...params, apiKeys }, memberKey: !!apiKeys };
+}
+
 export async function streamWithProvider(
   params: StreamChatParams,
+): Promise<StreamChatResult> {
+  await assertTenantModelAllowed(params.model);
+  const tenant = await tenantCallKeys(params);
+  params = tenant.params;
+  // Shared per-tenant limits (issue 017): refused calls never reach the
+  // provider and record no ledger row.
+  await admitTenantLlmCall();
+  // Usage ledger (issue 015): one row per call, including the reasoning
+  // fallback retry below, aborted streams and failures.
+  return meterLlmCall(
+    await llmCall(params.model, params.feature, tenant.memberKey),
+    (meter) => streamWithProviderMetered(params, meter),
+    params.abortSignal,
+    { prompt: { system: params.systemPrompt, messages: params.messages, tools: params.tools }, maxOutputTokens: maxOutputTokensFor(providerForModel(params.model)) },
+  );
+}
+
+async function streamWithProviderMetered(
+  params: StreamChatParams,
+  meter: LlmUsageMeter,
 ): Promise<StreamChatResult> {
   const normalizedParams = {
     ...params,
@@ -703,6 +942,7 @@ export async function streamWithProvider(
     return await streamAiSdk(
       tracked,
       await createProviderAdapter(params.model, params.apiKeys, !!params.providerWebSearch),
+      meter,
     );
   } catch (error) {
     const retryReasoning = fallbackReasoningLevelFromProviderError(
@@ -710,12 +950,16 @@ export async function streamWithProvider(
       normalizedParams.reasoning,
     );
     if (retryReasoning) {
+      meter.discardUnbilledStep();
       return streamAiSdk(
         { ...normalizedParams, reasoning: retryReasoning },
         await createProviderAdapter(params.model, params.apiKeys, !!params.providerWebSearch),
+        meter,
       );
     }
     if (shouldRetryWithoutWebSearch(error, params, streamed)) {
+      // The provider refused the request before any inference ran.
+      meter.discardUnbilledStep();
       params.callbacks?.onWebSearch?.({ kind: "unavailable" });
       return streamAiSdk(
         {
@@ -724,6 +968,7 @@ export async function streamWithProvider(
           providerWebSearch: null,
         },
         await createProviderAdapter(params.model, params.apiKeys),
+        meter,
       );
     }
     throw error;
@@ -793,8 +1038,24 @@ export function fallbackReasoningLevelFromProviderError(
 export async function completeWithProvider(
   params: CompleteProviderParams,
 ): Promise<string> {
-  return completeAiSdkText(
-    params,
-    await createProviderAdapter(params.model, params.apiKeys),
+  await assertTenantModelAllowed(params.model);
+  const tenant = await tenantCallKeys(params);
+  params = tenant.params;
+  await admitTenantLlmCall();
+  // Reserve what completeAiSdkText may ask for, reasoning headroom included.
+  const requestedOutput = params.maxTokens ?? 512;
+  const completionReasoning = normalizeReasoningLevelForModel(params.model, params.reasoningEffort ?? "none");
+  const reservedOutput = completionReasoning && completionReasoning !== "none"
+    ? requestedOutput + COMPLETION_REASONING_HEADROOM_TOKENS : requestedOutput;
+  return meterLlmCall(
+    await llmCall(params.model, params.feature, tenant.memberKey),
+    async (meter) =>
+      completeAiSdkText(
+        params,
+        await createProviderAdapter(params.model, params.apiKeys),
+        meter,
+      ),
+    params.abortSignal,
+    { prompt: { system: params.systemPrompt, user: params.user }, maxOutputTokens: reservedOutput },
   );
 }

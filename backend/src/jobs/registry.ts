@@ -1,15 +1,19 @@
 // Composition root: domain handlers are reached through their public facades.
 import { handleChatTurnAudit } from "../modules/audit/audit.service";
-import { handleAccountDelete, handleExportBuild, handleMcpRefreshToken } from "../modules/user/user.service";
+import { handleAccountDelete } from "../application/jobs/accountDelete";
+import { handleExportBuild } from "../application/jobs/exportBuild";
+import { handleMcpRefreshToken } from "../modules/user/user.service";
 import { handleDocumentCleanup, handleDocumentExtractText, markDocumentTextFailed, handleDocumentPrecomputeText, handleConversionConvert, markConversionFailed } from "../modules/documents/documents.service";
 import { handleExtractionExtract, markExtractionJobFailed } from "../modules/tabular/tabular.service";
 import { handleMemoryConsolidation, markMemoryConsolidationFailed } from "../modules/memory/memory.service";
 import { handlePlaybookImport, handlePlaybookReview, markPlaybookImportJobFailed, markPlaybookReviewJobFailed } from "../modules/playbooks/playbooks.service";
 import { handleStorageCleanup } from "../lib/dbq/storageCleanup";
+import { handleTenantPurge } from "../modules/tenant-lifecycle/tenant-lifecycle.service";
 import { type DbJobHandlers } from "../lib/dbq/types";
 import { type DbJobFailureHook } from "../lib/dbq/runner";
 
 export const DB_JOB_HANDLERS: DbJobHandlers = {
+  "tenant.purge": handleTenantPurge,
   "audit.chat_turn": handleChatTurnAudit,
   "account.delete": handleAccountDelete,
   "storage.cleanup": handleStorageCleanup,
@@ -40,4 +44,5 @@ export {
   handleDocumentPrecomputeText,
   handleStorageCleanup,
 };
-export { MAX_ZIP_EXPORT_DOCUMENTS, MCP_TOKEN_REFRESH_WINDOW_MS } from "../modules/user/user.service";
+export { MAX_ZIP_EXPORT_DOCUMENTS } from "../application/exports/exportContracts";
+export { MCP_TOKEN_REFRESH_WINDOW_MS } from "../modules/user/user.service";

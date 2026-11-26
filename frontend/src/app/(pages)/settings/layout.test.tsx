@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listMyOrgInvitations, type OrgInvitation } from "@/app/lib/mikeApi";
@@ -6,6 +6,12 @@ import SettingsLayout from "./layout";
 
 const push = vi.fn();
 let pathname = "/settings/memory";
+let tenancyMode: "single" | "pooled" = "single";
+const adminStatus = vi.hoisted(() => vi.fn());
+
+vi.mock("@/app/contexts/ConfigContext", () => ({
+    useConfig: () => ({ tenancyMode }),
+}));
 
 vi.mock("next/navigation", () => ({
     usePathname: () => pathname,
@@ -22,6 +28,7 @@ vi.mock("@/app/contexts/AuthContext", () => ({
 
 vi.mock("@/app/lib/mikeApi", () => ({
     listMyOrgInvitations: vi.fn(),
+    getTenantAdminStatus: adminStatus,
 }));
 
 // What Privacy & Data may do in the active workspace; everything unless a
@@ -31,6 +38,15 @@ vi.mock("@/app/hooks/useMemberDataActions", () => ({
     useMemberDataActions: () => dataActions,
 }));
 
+// Whose Features, Model Preferences and keys the active workspace shows;
+// Personal unless a test says otherwise.
+const settingsScope = vi.hoisted(() => ({
+    current: { kind: "personal" } as { kind: string; orgName?: string },
+}));
+vi.mock("@/app/hooks/useWorkspaceSettingsScope", () => ({
+    useWorkspaceSettingsScope: () => settingsScope.current,
+}));
+
 describe("SettingsLayout", () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -38,6 +54,95 @@ describe("SettingsLayout", () => {
         vi.mocked(listMyOrgInvitations).mockResolvedValue([]);
         dataActions.canExport = true;
         dataActions.canDelete = true;
+        tenancyMode = "single";
+        adminStatus.mockResolvedValue({ isTenantAdmin: false });
+        settingsScope.current = { kind: "personal" };
+    });
+
+    const WORKSPACE_TABS = [
+        "Memory",
+        "Connectors",
+        "Features",
+        "Model Preferences",
+        "Bring Your Own Keys",
+        "Privacy & Data",
+    ];
+
+    it("lists the organization's Features, Model Preferences and keys for its owners and admins", () => {
+        settingsScope.current = { kind: "organization", orgName: "Acme LLP" };
+        render(
+            <SettingsLayout>
+                <div />
+            </SettingsLayout>,
+        );
+        expect(
+            tabNames(screen.getByRole("list", { name: "Workspace" })),
+        ).toEqual(WORKSPACE_TABS);
+    });
+
+    it.each(["managed", "loading"])(
+        "does not list Features, Model Preferences or keys in an organization's workspace when %s",
+        (kind) => {
+            settingsScope.current = { kind, orgName: "Acme LLP" };
+            render(
+                <SettingsLayout>
+                    <div />
+                </SettingsLayout>,
+            );
+            expect(
+                tabNames(screen.getByRole("list", { name: "Workspace" })),
+            ).toEqual(["Memory", "Connectors", "Privacy & Data"]);
+        },
+    );
+
+    const tabNames = (list: HTMLElement) =>
+        within(list)
+            .getAllByRole("button")
+            .map((button) => button.textContent);
+
+    it("groups the workspace's own settings apart from the person's", () => {
+        render(
+            <SettingsLayout>
+                <div />
+            </SettingsLayout>,
+        );
+        const nav = screen.getByRole("navigation", { name: "Settings" });
+
+        expect(
+            tabNames(within(nav).getByRole("list", { name: "Workspace" })),
+        ).toEqual(WORKSPACE_TABS);
+        expect(
+            tabNames(within(nav).getByRole("list", { name: "Personal" })),
+        ).toEqual([
+            "Account",
+            "Personalisation",
+            "Appearance",
+            // Dev omits Security (sync-log: 3a10943).
+            "My Activity",
+            "Organizations",
+        ]);
+        // Each section has an icon beside its name, hidden from assistive tech.
+        for (const button of within(nav).getAllByRole("button"))
+            expect(
+                button.querySelector('svg[aria-hidden="true"]'),
+            ).not.toBeNull();
+    });
+
+    it("marks Account current at the root of Settings, under Personal", () => {
+        pathname = "/settings";
+        render(
+            <SettingsLayout>
+                <div />
+            </SettingsLayout>,
+        );
+
+        const personal = screen.getByRole("list", { name: "Personal" });
+        expect(
+            within(personal).getByRole("button", { name: "Account" }),
+        ).toHaveAttribute("aria-current", "page");
+        const workspace = screen.getByRole("list", { name: "Workspace" });
+        for (const button of within(workspace).getAllByRole("button"))
+            expect(button).not.toHaveAttribute("aria-current");
     });
 
     it("lists Privacy & Data while it has an export or a delete to offer", () => {
@@ -63,7 +168,9 @@ describe("SettingsLayout", () => {
         expect(
             screen.queryByRole("button", { name: "Privacy & Data" }),
         ).toBeNull();
-        expect(screen.getByRole("button", { name: "Memory" })).toBeInTheDocument();
+        expect(
+            tabNames(screen.getByRole("list", { name: "Workspace" })),
+        ).toEqual(WORKSPACE_TABS.filter((tab) => tab !== "Privacy & Data"));
     });
 
     it("exposes Memory as a dedicated settings page and marks it current", async () => {
@@ -132,5 +239,28 @@ describe("SettingsLayout", () => {
         );
         await user.click(organizations);
         expect(push).toHaveBeenCalledWith("/settings/organizations");
+    });
+
+    it("keeps Organisation hidden for single-tenant installs", () => {
+        render(<SettingsLayout><div>Settings content</div></SettingsLayout>);
+        expect(screen.queryByRole("button", { name: "Organisation" })).not.toBeInTheDocument();
+        expect(adminStatus).not.toHaveBeenCalled();
+    });
+
+    it("shows Organisation only after pooled admin permission is confirmed", async () => {
+        tenancyMode = "pooled";
+        adminStatus.mockResolvedValue({ isTenantAdmin: true });
+        pathname = "/settings/organisation";
+        render(<SettingsLayout><div>Organisation content</div></SettingsLayout>);
+        expect(await screen.findByRole("button", { name: "Organisation" })).toHaveAttribute("aria-current", "page");
+    });
+
+    it.each([false, "unavailable"])("keeps Organisation hidden when permission is %s", async (result) => {
+        tenancyMode = "pooled";
+        if (result === false) adminStatus.mockResolvedValue({ isTenantAdmin: false });
+        else adminStatus.mockRejectedValue(new Error("unavailable"));
+        render(<SettingsLayout><div>Settings content</div></SettingsLayout>);
+        await waitFor(() => expect(adminStatus).toHaveBeenCalled());
+        expect(screen.queryByRole("button", { name: "Organisation" })).not.toBeInTheDocument();
     });
 });

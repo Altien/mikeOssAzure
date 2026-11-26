@@ -79,6 +79,19 @@ export async function getKeyVaultConfig(secretName: string): Promise<string> {
     return value;
 }
 
+/**
+ * Prove the vault answers this identity without reading any real secret: a name
+ * that should not exist gets a 404 only once the vault has accepted the caller.
+ * The cache is bypassed, because a cached value proves nothing about now.
+ */
+export async function probeKeyVault(): Promise<void> {
+    try {
+        await getSecretClient().getSecret("mike-diagnostics-reachability-probe");
+    } catch (error) {
+        if ((error as { statusCode?: number }).statusCode !== 404) throw error;
+    }
+}
+
 export function flushConfigCache(): void {
     cache.clear();
 }

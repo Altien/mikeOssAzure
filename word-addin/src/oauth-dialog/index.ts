@@ -4,7 +4,7 @@ import {
   type GoogleOAuthDialogMessage,
 } from "../taskpane/auth/oauthProtocol";
 import { API_BASE_URL, loadRuntimeConfig } from "../taskpane/auth/runtimeConfig";
-import { describeError } from "@mike/user-error";
+import { describeError } from "@mike/client";
 import { initAddinErrorReporting } from "../taskpane/lib/errorReporting";
 
 void loadRuntimeConfig().then((config) => initAddinErrorReporting("oauth-dialog", config.wordSentryDsn)).catch(() => {});
@@ -79,7 +79,20 @@ async function runGoogleOAuth(): Promise<void> {
     const loginUrl = new URL(`${API_BASE}/auth/login-provider/microsoft`, window.location.href);
     loginUrl.searchParams.set("requestId", requestId);
     loginUrl.searchParams.set("wordOrigin", window.location.origin);
-    window.location.assign(loginUrl.toString());
+    const config = await loadRuntimeConfig();
+    if (config.tenancyMode === "pooled") {
+      // Without External ID, Microsoft (work or personal account) is the only choice.
+      const choices = config.externalIdSignIn
+        ? [["Sign in to Mike", "altien"], ["Sign in with your organisation", "enterprise"]] as const
+        : [["Sign in with Microsoft", "enterprise"]] as const;
+      setStatus(config.externalIdSignIn ? "Choose how to sign in." : "Sign in to continue.");
+      for (const [label, kind] of choices) {
+        const button = document.createElement("button");
+        button.type = "button"; button.textContent = label;
+        button.addEventListener("click", () => { loginUrl.searchParams.set("identity", kind); window.location.assign(loginUrl.toString()); });
+        document.body.append(button);
+      }
+    } else window.location.assign(loginUrl.toString());
     return;
   }
   const requestedId = currentUrl.searchParams.get("requestId");

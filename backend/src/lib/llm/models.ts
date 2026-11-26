@@ -173,6 +173,23 @@ export function builtInModelIds(): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// Earlier-turn replay
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether this model withdraws its own earlier answer when a later turn shows
+ * it only a text record of that answer's tool calls: it takes the record for
+ * words it wrote and the answer for one it made up. Measured, not assumed:
+ * Claude Sonnet 5.5 did so on every follow-up tried, on any route to it
+ * (direct, Bedrock, Vertex, a router). The other models tried (Claude Fable
+ * 5.1 and Haiku 4.5, GPT 6.1 Sol) did not, and the remedy changes how they
+ * answer, so it is applied to this model only.
+ */
+export function disownsReplayedToolRecord(model: string): boolean {
+    return /claude-sonnet-5[-.]5(?![0-9])/.test(model);
+}
+
+// ---------------------------------------------------------------------------
 // Provider inference
 // ---------------------------------------------------------------------------
 
@@ -195,6 +212,8 @@ export function providerForModel(model: string): Provider {
     if (model.startsWith("vertex/")) return "vertex";
     if (model.startsWith("xai/")) return "xai";
     if (model.startsWith("custom/")) return "custom";
+    if (model.startsWith("tokenjuice/")) return "tokenjuice";
+    if (model.startsWith("meta/")) return "meta";
     if (model.startsWith("claude")) return "claude";
     if (model.startsWith("gemini")) return "gemini";
     if (model.startsWith("kimi-")) return "kimi";
@@ -208,7 +227,14 @@ export function isAllowedModelId(id: string): boolean {
     // Static models are listed in ALL_MODELS; AOAI ids are accepted by
     // prefix because deployment names are user-defined and only known
     // at runtime via deployment discovery.
-    return ALL_MODELS.has(id) || getConfiguredModel(id) !== null || (/^opencode-go\/[^\s]+$/.test(id) || isSafeAccountModel(id)) || id.startsWith(AZURE_OPENAI_PREFIX) || /^(?:openrouter|vercel)\/[^\s/]+\/[^\s]+$/.test(id);
+    return ALL_MODELS.has(id) || getConfiguredModel(id) !== null || (/^opencode-go\/[^\s]+$/.test(id) || isSafeAccountModel(id)) || id.startsWith(AZURE_OPENAI_PREFIX) || /^(?:openrouter|vercel)\/[^\s/]+\/[^\s]+$/.test(id) || isManagedModelShape(id);
+}
+
+// Dev divergence: named by an administrator on /install. This is shape only;
+// resolveManagedModel (managedProviders.ts) decides whether the name may run.
+function isManagedModelShape(id: string): boolean {
+    const name = /^(?:tokenjuice|meta)\/(.+)$/.exec(id)?.[1];
+    return name !== undefined && isSafeAccountModelId("custom", name);
 }
 
 // Renamed/retired static ids → their current equivalents. Stored preferences

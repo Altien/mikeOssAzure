@@ -1,6 +1,7 @@
 // Extraction for the tabular-review module: the LLM cell-extraction helpers
 // and document (PDF/DOCX/Office) text extraction.
 
+import { cachedTextForModel } from "../../lib/documentTextCache";
 import { runIsolatedExtraction } from "../../lib/extraction/isolated";
 import {
     completeText,
@@ -8,7 +9,7 @@ import {
     type UserApiKeys,
 } from "../../lib/llm";
 import { AppError } from "../../lib/appError";
-import { reportError } from "../../lib/observability/sentry";
+import { reportModelFailure } from "../../lib/llm/providerFailureReport";
 import { formatPromptSuffix } from "./tabular.prompt";
 import { type CellResult, type Column } from "./tabular.shared";
 
@@ -43,6 +44,7 @@ The "summary" field must contain only the extracted value with inline citations 
             user: `Document: ${filename}\n\n${documentText}\n\n---\nInstruction: ${fullPrompt}`,
             maxTokens: 2048,
             apiKeys,
+            feature: "tabular",
         });
     } catch (err) {
         // Reported once, here, under the kind that names the failure; the
@@ -56,8 +58,8 @@ The "summary" field must contain only the extracted value with inline citations 
             "Tabular cell completion failed",
             { cause: err },
         );
-        reportError(failure);
-        console.error("[queryTabularCell] completion failed", failure);
+        // This cell has no account-remedy UI; keep its failure visible.
+        reportModelFailure(failure, {}, "[queryTabularCell] completion failed");
         return null;
     }
     try {
@@ -115,6 +117,7 @@ export async function generateChatTitle(
             user: `${contextBlock}Generate a short title (4-6 words) for a chat that starts with the message below. The title should reflect the user's specific question, not the review or project name. Return only the title, no punctuation, no quotes:\n\n${firstUserMessage}`,
             maxTokens: 64,
             apiKeys,
+            feature: "chat-title",
         });
         return raw.trim().slice(0, 80) || null;
     } catch {
@@ -131,7 +134,7 @@ export async function queryTabularAllColumns(
     apiKeys?: UserApiKeys,
     abortSignal?: AbortSignal,
     onActivity?: () => void,
-    reportFailure = true,
+    reportFailure: boolean | ((error: unknown) => boolean) = true,
 ): Promise<void> {
     const columnsDesc = columns
         .map((col) => {
@@ -155,7 +158,8 @@ Rules:
 - The "summary" and "reasoning" string VALUES may use markdown (bullets, bold, italics, etc.) — escape newlines as \\n inside the JSON string. This markdown is rendered in the UI.
 - Output ONLY the JSON lines themselves. Do NOT wrap the response in markdown code fences (e.g. \`\`\`json), and do not add any preamble or summary.`;
 
-    const USER = `Document: ${filename}\n\n${documentText}\n\n---\nColumns to extract:\n${columnsDesc}`;
+    const sourcePrefix = `Document: ${filename}\n\n${documentText}`;
+    const USER = `${sourcePrefix}\n\n---\nColumns to extract:\n${columnsDesc}`;
 
     let contentBuffer = "";
     const pending: Promise<unknown>[] = [];
@@ -197,9 +201,11 @@ Rules:
             model,
             systemPrompt: SYSTEM,
             messages: [{ role: "user", content: USER }],
+            sourcePrefixLength: sourcePrefix.length,
             tools: [],
             apiKeys,
             abortSignal,
+            feature: "tabular",
             callbacks: {
                 onActivity,
                 onContentDelta: (delta) => {
@@ -218,9 +224,12 @@ Rules:
         });
     } catch (err) {
         streamError = err;
-        if (!abortSignal?.aborted && reportFailure) {
-            // Inline callers report here; queue callers let the runner own
-            // retries and severity. Reported once, here, under the kind that names the failure, with
+        if (
+            !abortSignal?.aborted &&
+            (typeof reportFailure === "function" ? reportFailure(err) : reportFailure)
+        ) {
+            // Inline callers report here (a run says whether the failure is
+            // new to it); queue callers let the runner own retries and severity. Reported once, here, under the kind that names the failure, with
             // the provider's error as the cause (provider_error and
             // dependency_status come from it). The raw error is still what is
             // rethrown: the row orchestrator classifies it for the grid, and
@@ -230,8 +239,11 @@ Rules:
                 "Tabular row completion stream failed",
                 { cause: err },
             );
-            reportError(failure);
-            console.error("[queryTabularAllColumns] stream failed", failure);
+            reportModelFailure(
+                failure,
+                {},
+                "[queryTabularAllColumns] stream failed",
+            );
         }
     }
 
@@ -250,14 +262,19 @@ export {
 } from "../../lib/extraction/documentMarkdown";
 
 /**
- * Markdown for a source document, parsed in the isolated extraction worker so
- * a huge file times out on its own instead of stalling this thread.
+ * Canonical accepted-view source text, matching the durable search index.
+ * Keep the historical name for callers; Markdown decoration must not depend
+ * on whether indexing finished. Parsing stays in the bounded worker.
  */
-export function extractDocumentMarkdown(
+export async function extractDocumentMarkdown(
     loadSource: () => Promise<ArrayBuffer | null>,
     fileType: string | null | undefined,
 ): Promise<string> {
-    return runIsolatedExtraction("documentMarkdown", loadSource, {
+    const extracted = await runIsolatedExtraction("documentText", loadSource, {
         fileType: fileType ?? "",
+    });
+    return cachedTextForModel({
+        revision: "", text: extracted.text,
+        textlessPageCount: extracted.textlessPageCount ?? 0,
     });
 }

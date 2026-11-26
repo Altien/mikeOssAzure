@@ -1,4 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+const { tenancyModeMock } = vi.hoisted(() => ({ tenancyModeMock: vi.fn() }));
+vi.mock("../tenancyMode", () => ({ getTenancyMode: tenancyModeMock }));
+beforeEach(() => tenancyModeMock.mockResolvedValue("single"));
 import {
     normalizeEmail,
     normalizeDisplayName,
@@ -8,6 +11,7 @@ import {
     findMissingUserEmails,
     syncProfileEmail,
 } from "../userLookup";
+import { runWithTenant } from "../tenantContext";
 
 type Row = Record<string, unknown>;
 
@@ -329,4 +333,66 @@ it("finds requested profiles beyond the first thousand without reading unrelated
     const db = makeDb(Array.from({ length: 1200 }, (_, i) => ({ user_id: `u${i}`, email: `u${i}@example.com` })));
     const result = await loadProfileUsersByEmail(db as any, { userIds: ["u1199"], emails: ["u1150@example.com"] });
     expect([...result.userById.keys()]).toEqual(["u1199", "u1150"]);
+});
+
+// ---------------------------------------------------------------------------
+// Tenant scope (multi-tenant 006): the same email may exist in two tenants
+// ---------------------------------------------------------------------------
+
+describe("email lookups inside a tenant scope", () => {
+    const rows = [
+        { tenant_id: "tA", user_id: "a1", email: "same@example.com", display_name: "A" },
+        { tenant_id: "tB", user_id: "b1", email: "same@example.com", display_name: "B" },
+        { tenant_id: "tB", user_id: "b2", email: "only-b@example.com", display_name: null },
+    ];
+
+    it("findProfileUserByEmail returns the current tenant's profile", async () => {
+        const db = makeDb(rows);
+        const found = await runWithTenant({ tenantId: "tB" }, () =>
+            findProfileUserByEmail(db as any, "same@example.com"),
+        );
+        expect(found).toEqual({ id: "b1", email: "same@example.com", display_name: "B" });
+    });
+
+    it("loadProfileUsersByEmail sees only the current tenant", async () => {
+        const db = makeDb(rows);
+        const { userByEmail, userById } = await runWithTenant({ tenantId: "tA" }, () =>
+            loadProfileUsersByEmail(db as any, {
+                userIds: ["a1", "b1", "b2"],
+                emails: ["same@example.com", "only-b@example.com"],
+            }),
+        );
+        expect([...userById.keys()]).toEqual(["a1"]);
+        expect(userByEmail.has("only-b@example.com")).toBe(false);
+    });
+
+    it("findMissingUserEmails treats another tenant's email as missing", async () => {
+        const db = makeDb(rows);
+        const missing = await runWithTenant({ tenantId: "tA" }, () =>
+            findMissingUserEmails(db as any, ["same@example.com", "only-b@example.com"]),
+        );
+        expect(missing).toEqual(["only-b@example.com"]);
+    });
+});
+
+
+describe("pooled sharing recipients", () => {
+    const rows = [{ tenant_id: "tA", user_id: "moved", email: "old@example.com" },
+        { tenant_id: "tA", user_id: "current", email: "current@example.com" }];
+    it("rejects a historical profile after membership moves and accepts a current member", async () => {
+        tenancyModeMock.mockResolvedValue("pooled");
+        const db = { ...makeDb(rows), rpc: vi.fn(async (_name, args) => ({ data: args.p_user_id === "current", error: null })) };
+        await runWithTenant({ tenantId: "tA" }, async () => {
+            expect(await findProfileUserByEmail(db as any, "old@example.com")).toBeNull();
+            expect(await findProfileUserByEmail(db as any, "current@example.com")).toMatchObject({ id: "current" });
+            expect(await findMissingUserEmails(db as any, ["old@example.com", "current@example.com"])).toEqual(["old@example.com"]);
+        });
+    });
+    it("fails closed when the membership lookup fails", async () => {
+        tenancyModeMock.mockResolvedValue("pooled");
+        const error = new Error("membership unavailable");
+        const db = { ...makeDb(rows), rpc: vi.fn(async () => ({ data: null, error })) };
+        await expect(runWithTenant({ tenantId: "tA" }, () => findProfileUserByEmail(db as any, "old@example.com"))).rejects.toBe(error);
+        await expect(runWithTenant({ tenantId: "tA" }, () => findMissingUserEmails(db as any, ["old@example.com"]))).rejects.toBe(error);
+    });
 });

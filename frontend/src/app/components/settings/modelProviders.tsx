@@ -15,6 +15,8 @@ export type ModelApiKeyField = {
     icon?: LucideIcon;
     label: string;
     keyLabel?: string;
+    /** No personal on/off preference: the backend keeps none for this provider. */
+    noPersonalSwitch?: boolean;
 };
 
 export const MODEL_API_KEY_FIELDS: readonly ModelApiKeyField[] = [
@@ -99,6 +101,8 @@ export const MODEL_API_KEY_FIELDS: readonly ModelApiKeyField[] = [
         icon: Plug,
         label: "OpenAI-compatible endpoint API Key",
     },
+    { provider: "tokenjuice", name: "TokenJuice", icon: Plug, label: "TokenJuice", noPersonalSwitch: true },
+    { provider: "meta", name: "Meta (Muse)", icon: Plug, label: "Meta (Muse)", noPersonalSwitch: true },
 ];
 
 /** A provider's logo, or a pulsing stand-in while its state is loading. */

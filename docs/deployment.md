@@ -98,6 +98,177 @@ must finish before the database switches active catalogue rows. A failed
 download, upload or replacement fails the job and leaves the previous active
 catalogue usable; do not bypass the job during deployment.
 
+### Install is behind on migrations
+
+A backend started against a database that is missing some of
+`backend/migrations/` keeps running, but anything that needs a missing
+function, table or column fails. Requests answer `503` with code
+`schema_out_of_date` ("The server's database needs an update"), and the
+backend logs `[schema-out-of-date]` warnings naming the PostgREST/SQLSTATE
+code (`PGRST202` function, `PGRST203` function signature, `PGRST204` or
+`42703` column, `PGRST205` table, `42P01` relation). With error reporting on,
+Sentry shows an error with `schema_out_of_date` and the code in its title,
+for example `Failure in maintenance.document_text / stale-sweep /
+schema_out_of_date / PGRST202`; a request's event also names its method,
+route and `503`. Each is sent once per process per request route or
+background operation (sweeps, upload-session deadline extension), so its
+event count does not measure how often it happens; while the failures go on,
+the log repeats a `[schema-out-of-date] <key>: still failing` line at most
+once an hour with the number of failures since the last line, and each
+failed request also logs an `[http/schema-out-of-date]` line. Run
+`pnpm --dir backend migrate:dev status` to list what is pending, apply it with
+`pnpm --dir backend migrate:dev up` or the `db-migrate` job (which also reloads
+the PostgREST schema cache), and restart the backend. If the status shows
+nothing pending, a `schema_out_of_date` event is a bug in Mike (a query
+naming a column that does not exist, or a migration that left an old
+function overload behind): report it.
+
+### Supabase Auth (GoTrue) unreachable
+
+This applies only when the backend runs with the Supabase auth provider.
+When the backend cannot reach GoTrue (no answer, or a 502/503/504 from a
+gateway in front of it), signed-in requests answer `503` with code
+`upstream_unavailable` and `retry-after: 5` instead of signing anyone out;
+the web app keeps the session and retries. A GoTrue `500` is GoTrue failing
+on something of ours and stays a reported `500`. Sentry receives one
+`upstream-unavailable` event per process per failure class (no answer, 502,
+503, 504), again at most once per 15 minutes while that class keeps failing
+or keeps coming back, and a class that returns after a quiet 15 minutes is
+reported as a new outage. Every replica reports for itself, so the event
+count is replicas × classes × 15-minute windows, not the number of failed
+requests; the quiet repeats are counted in an `[upstream-unavailable] still
+failing` log line at most once a minute.
+
+### Rotating the signing and encryption secrets
+
+<!-- Upstream divergence (sync-log: 135dadd2, 88539c64): upstream's backend
+refuses to start when DOWNLOAD_SIGNING_SECRET or USER_API_KEYS_ENCRYPTION_SECRET
+still holds a .env.example placeholder and, since 9be593f8, when either is
+unset in production or a Supabase key is a published demo key (upgrade note
+90812b19, omitted here). Dev does not run that startup check:
+these secrets live in Key Vault and Dev's .env.example carries no placeholders.
+Keep this section Key Vault-shaped; the rotation effects below are upstream's. -->
+
+These secrets are read from Key Vault, with an environment variable as the
+local-development fallback: `download-signing-secret` (`DOWNLOAD_SIGNING_SECRET`,
+self-seeded in Key Vault on first boot when absent),
+`user-api-keys-encryption-key` (`USER_API_KEYS_ENCRYPTION_KEY`) and
+`mcp-connectors-encryption-key` (`MCP_CONNECTORS_ENCRYPTION_KEY`). Generate a
+new value with `openssl rand -hex 32`. Plan for these effects when replacing
+an existing secret; rotation does not re-encrypt stored credentials:
+
+- Changing `user-api-keys-encryption-key` makes stored personal and
+  organization provider credentials unreadable. Users must re-enter their
+  personal API keys, and organization admins must replace their organization's
+  saved provider credentials.
+- When `mcp-connectors-encryption-key` is not configured, MCP connectors also
+  use `user-api-keys-encryption-key`. Rotating it then makes stored connector
+  authentication configurations and OAuth tokens unreadable. Re-enter
+  connector authentication credentials and reconnect OAuth connectors to
+  authorize them again. A separately configured, unchanged
+  `mcp-connectors-encryption-key` keeps those connector credentials usable.
+- Changing `download-signing-secret` invalidates existing download links and
+  blob capability URLs signed with the old secret, including persistent links
+  in chat history. Request fresh download links from the application and
+  replace any previously shared links; restarting does not re-sign old URLs.
+
+### Upgrade order and rollback
+
+<!-- Upstream dbc3c927 (PR #749 upgrade notes), adapted: Dev upgrades through
+the numbered migration runner and the Azure db-migrate job, not migrate.sh,
+schema.sql or Compose's db-init/workflow-sync services. -->
+For the SQL/backend/web/Word performance changes in upstream PR #749, upgrade
+an existing installation in this order:
+
+1. Back up the database and retain the currently deployed image tags or Git
+   commit. Let active assistant turns finish before restarting their backend;
+   their resumable stream buffers live in that process.
+2. Apply the pending numbered migrations (`pnpm --dir backend migrate:dev up`,
+   or the `db-migrate` job), then run `status` and require no pending files.
+   The new project-directory search requires `search_project_directory`, and
+   paginated participation requires the new `get_projects_overview` argument.
+   Starting the new backend before these migrations makes those requests fail.
+3. Make sure PostgREST's schema cache was reloaded and the workflow catalogue
+   synced (the `db-migrate` job does both), then deploy the backend and any
+   separate workers.
+4. Deploy the frontend and Word add-in. Check project-directory search,
+   document conversion completion, and reopening an existing Word chat.
+
+Manually or independently hosted components need the same ordering. A new
+frontend can poll an older backend using individual document reads when its
+batch endpoint is unavailable. Older API clients can still request
+`/api/projects?include=documents` without pagination; new clients should send
+`limit` and `offset` explicitly.
+
+The migrations in this release retain the previous backend's project RPC call
+shapes. A backend rollback leaves the migration history and schema in place;
+do not delete `public.pgmigrations` rows or replay old migrations to undo an
+application deployment. Validate a rollback against a copy of the database
+before using it on a deployment that has accepted new writes.
+
+Word's released device-only database remains at IndexedDB version 4, so an
+older pane can still save an answer after another pane loads the new code.
+Existing v4 databases retain their history-listing path; fresh v4 databases
+include the optional recency index. PR preview builds used version 5: the new
+add-in can read those databases in place, but a rollback to a released v4-only
+bundle cannot. Keep a compatible add-in build for those devices. Do not clear
+browser/add-in storage to resolve a version error: device-only chats have no
+durable server copy.
+
+### Playbook review publication upgrade
+
+`backend/migrations/0244_playbook_review_publication.sql` adds atomic publication of a
+review's document version, tracked edits and saved findings. Before deploying
+its backend, stop accepting new playbook reviews and let old in-flight reviews
+finish. Apply the migration, reload the PostgREST schema cache, and replace
+**all** API and worker processes before accepting reviews again. The old
+publisher bypasses the new transaction, so a mixed-version rolling deployment
+does not provide this guarantee. Backend rollback restores that older behavior.
+
+The migration does not reconstruct edits orphaned by an older interrupted
+review: those versions lack the provenance needed to recover the exact findings.
+An upload the database answered as unpublished is deleted; one whose
+publication outcome is unknown (a lost response or timeout) is kept and may
+remain an unreferenced object. Never remove an object merely because a review
+row is missing after a timeout: history can be deleted after a successful
+publication while its document version stays.
+
+## Tenancy mode
+
+Every normal install (Azure Marketplace, local stack) is one
+single system: tenancy mode `single`. You do not have to configure it. The
+backend selects `single` when neither `TENANCY_MODE` nor `KEY_VAULT_NAME` is
+set, and when the Key Vault has no `tenancy-mode` secret. A Key Vault that
+cannot be read (unreachable, access denied, outage) stops startup instead of
+falling back to `single`.
+
+`pooled` (many customer tenants on one regional stamp) is opt-in. Set the
+`tenancy-mode` Key Vault secret or the `TENANCY_MODE` environment variable to
+`pooled`; the environment variable wins over the secret. Pooled stamps also
+need the stamp, identity and control-plane configuration in the
+[regional stamp runtime contract](multi-tenant/regional-stamp-runtime.md).
+
+The mode is fixed at deployment time. The migration job records it in the
+database (`app.install_tenancy`). The API and worker start only if their mode
+agrees with the database, and they keep that mode until restart, so editing
+the secret later changes nothing. Deployment setup refuses to turn a pooled
+database back into a single install. Changing the mode means a redeploy, not
+a configuration edit.
+
+What `single` means:
+
+- One install tenant owns all data: `DEFAULT_TENANT_ID` (default `default`)
+  with local or Supabase sign-in, or the Entra directory tenant ID with Entra
+  sign-in. The API and worker register it at startup with local or Supabase
+  sign-in; with Entra the existing tenant onboarding creates it.
+- Forced row-level security stays on as defence in depth. Single installs keep
+  the `TENANT_RLS_ENFORCED=false` rollback switch; pooled startup refuses it.
+- No multi-tenant setup is needed or used: no control plane, stamp ID or
+  region, credit prices or budgets, or tenant-admin roles. Model calls are
+  recorded in the usage ledger but never reserve or spend credits. The
+  `/install` operator surface stays available; pooled stamps return 404 for
+  it.
+
 ## Runtime configuration and credentials
 
 The frontend is statically exported and reads public identity/API configuration at runtime. Follow the deployment runbook for routing its assets and the backend /config endpoint; do not replace this with a Next.js production server or bake secrets into browser bundles.
@@ -173,7 +344,8 @@ admission slot instead of holding it indefinitely.
 Generic job concurrency does not create more parser slots.
 
 Linux requires `prlimit` (util-linux), installed by the combined Dev Docker image and Nixpacks. Missing
-`prlimit` fails extraction. Defaults:
+`prlimit` fails extraction; the backend and worker log a warning at startup when
+it is not on `PATH`. Defaults:
 
 | Limit | Setting |
 | --- | --- |

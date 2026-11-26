@@ -15,6 +15,15 @@ audio, embedding, or restricted-access models.
 Main chat still requires an explicit model selection. Internal Gemini fallbacks
 use 3.8 Flash. A saved title-model override continues to take precedence.
 
+## Onboarding
+
+The last onboarding step, Connect a model, shows the same Saved and
+Available provider grids as Settings → Bring Your Own Keys and saves through
+the same dialog, so a key added there is validated and stored exactly as one
+added later. The step can be finished without a key: when the deployment
+provides models, or the person has just joined an organization that has them,
+the step says so instead of asking for a key.
+
 ## Provider switches
 
 Configured provider cards show a switch for the current account. Turning a
@@ -22,6 +31,7 @@ provider off preserves shared credentials and saved model selections, but makes
 its models unavailable to that user and blocks secondary Key Vault or
 environment fallback. The Azure router and legacy Azure OpenAI aliases share
 one preference. Turning it back on restores normal credential resolution.
+TokenJuice and Meta (Muse) have no switch.
 
 Numbered migration 0108 adds a per-user preference map and an atomic,
 service-role-only update function. Preference updates never create, replace or
@@ -49,6 +59,61 @@ Mistral requests use the native `@ai-sdk/mistral` adapter at
 blocks use the existing shared AI SDK loop. The available reasoning controls are
 None and High. The API IDs are `mistral-large-4`, `mistral-medium-3-5`, and
 `mistral-small-2603`. Large 4 is currently a public preview, labeled accordingly.
+
+## TokenJuice and Meta (Muse) setup
+
+Both are OpenAI-compatible organisation providers whose address and model names
+are not built in, so an administrator enters them on `/install` (AI providers):
+
+| `/install` row | Field | Key Vault secret | Required |
+| --- | --- | --- | --- |
+| TokenJuice | API key | `tokenjuice-api-key` | Yes |
+| TokenJuice | Base URL | `tokenjuice-base-url` | Yes |
+| TokenJuice | Model names | `tokenjuice-models` | Yes |
+| Meta (Muse) | API key | `meta-api-key` | Yes |
+| Meta (Muse) | Base URL | `meta-base-url` | No, defaults to `https://api.meta.ai/v1` |
+| Meta (Muse) | Model names | `meta-models` | Yes |
+
+Model names are comma-separated and sent to the provider exactly as typed (for
+example `muse-spark-1.1`). The base URL is the address that `/chat/completions`
+sits under, with no credentials, query or fragment. Nothing is checked against
+the provider when you save: send a test chat to confirm the values.
+
+Meta's default address comes second-hand from LiteLLM's documentation and has
+not been confirmed against Meta's own. No TokenJuice documentation was available,
+so nothing about it is built in. Both are assumed to answer Chat Completions with
+Bearer authentication.
+
+A row turns green, and its models appear in the chat, tabular review and Word
+add-in pickers for everyone, once all its settings are present. There is no
+per-user model selection, and a request for any other model name is refused. The
+models run with reasoning off and without provider-native web search. Unlike the
+other providers, they have no per-user switch: `set_user_provider_enabled` (0108)
+does not accept them, and adding that would take a migration.
+
+Requests to both ask for at most 16,384 output tokens, because a provider's own
+default is unknown and could silently cut off a long answer. A model whose ceiling
+is lower may answer with a visible error instead: set `LLM_MAX_OUTPUT_TOKENS` to
+override the limit. That setting applies to every provider on the deployment.
+
+On a pooled stamp, a tenant using the platform's keys is charged credits, so each
+model it runs needs a published price in `app.credit_prices` under its tenant
+budget's price version, keyed by provider and the full model id (for example
+`meta`, `meta/muse-spark-1.1`). Without one, sends are refused with
+`pricing_unavailable` even though the picker still lists the model. Publish prices
+with `publish_credit_prices`. Single installs and BYO tenants are not charged.
+
+If Key Vault cannot answer for a base URL (throttling, an outage), the provider is
+unavailable until it can: only a secret that is really absent selects Meta's
+default address. A BYO tenant's address must be a public `https` one, because it
+goes through the same egress guard as a custom endpoint. Other deployments may
+point at a private gateway.
+
+Leaving a field blank on `/install` keeps its current value, so to return Meta to
+its default address either type the address in or delete `meta-base-url` from Key
+Vault. Other running replicas can keep a previously read value until their config
+cache expires. A `TOKENJUICE_*` or `META_*` environment variable is a local
+development fallback; the backend reads Key Vault first.
 
 ## Amazon Bedrock and Azure OpenAI setup
 
@@ -189,7 +254,7 @@ mappings.
 ## Catalog maintenance
 
 Keep `backend/src/lib/llm/models.ts` and the client catalog
-`frontend/src/shared/lib/modelCatalog.ts` (used by both the web app and the
+`packages/client/src/modelCatalog.ts` (used by both the web app and the
 Word add-in) synchronized, including legacy mappings;
 `frontend/src/wordAddin/catalogParity.test.ts` compares them. Update
 reasoning capabilities in the backend and shared `ModelToggleUI.tsx` together.

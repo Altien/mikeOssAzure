@@ -14,6 +14,12 @@ import { server } from "@/test/msw-server";
 
 const { mockUseAuth } = vi.hoisted(() => ({ mockUseAuth: vi.fn() }));
 
+const reportError = vi.hoisted(() => vi.fn(() => null));
+vi.mock("@/app/lib/errorReporting", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("@/app/lib/errorReporting")>()),
+    reportError,
+}));
+
 vi.mock("@/app/contexts/AuthContext", () => ({
     useAuth: mockUseAuth,
 }));
@@ -233,6 +239,8 @@ describe("UserProfileContext: bootstrap fetch on mount", () => {
             // Dev (OSS-6 §2.3 item 3): organisation Kimi + Azure OpenAI.
             kimi: { configured: true, source: "env", enabled: true },
             azure_openai: { configured: true, source: "env", enabled: true },
+            tokenjuice: { configured: false, source: null, enabled: true },
+            meta: { configured: false, source: null, enabled: true },
         });
     });
 
@@ -508,5 +516,31 @@ describe("UserProfileContext: useUserProfile outside a provider", () => {
             "useUserProfile must be used within a UserProfileProvider",
         );
         spy.mockRestore();
+    });
+});
+
+// Upstream 2ada45fb, adapted to Dev's msw harness (Sentry MIKE-FRONTEND-4H):
+// a profile answered 200 without `apiKeyStatus` is a real profile whose key
+// state is unknown, not a failed fetch, and is reported once as a warning.
+describe("UserProfileContext when the server omits apiKeyStatus", () => {
+    it("shows the real profile and warns Sentry once per page load", async () => {
+        reportError.mockClear();
+        authedFor(TEST_USER);
+        const { apiKeyStatus: _omitted, ...withoutKeyStatus } = PROFILE_FIXTURE;
+        const captured = serveProfile(withoutKeyStatus);
+
+        renderProbe();
+        await waitReady();
+        expect(readProfile().displayName).toBe("Test User");
+        expect(reportError).toHaveBeenCalledTimes(1);
+        expect(reportError).toHaveBeenCalledWith(
+            expect.objectContaining({ message: "profile missing apiKeyStatus" }),
+            { level: "warning", tags: { component: "profile", error_kind: "missing_api_key_status" } },
+        );
+
+        fireEvent.click(screen.getByText("reload-profile"));
+        await waitFor(() => expect(captured.filter((entry) => entry.method === "GET")).toHaveLength(2));
+        await waitReady();
+        expect(reportError).toHaveBeenCalledTimes(1);
     });
 });

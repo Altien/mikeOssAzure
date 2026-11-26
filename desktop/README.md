@@ -1,5 +1,11 @@
 # Mike desktop
 
+> **Not supported in this fork.** Altien does not ship, test or support the
+> desktop app; customers use the Azure deployment. The code is kept unchanged
+> only because it is upstream Mike, so upstream merges stay simple. Known and
+> not fixed: in the local workspace every upload fails `content_type_mismatch`,
+> because the filesystem storage driver reports no content type or ETag.
+
 The Electron shell hosts the existing Mike web product. It provides native
 menus and shortcuts, window persistence, fenced OAuth popups, context menus
 and downloads. It can connect to an explicitly chosen deployment or supervise
@@ -80,6 +86,22 @@ uses its soffice binary when installed. Email-based password recovery and
 cloud synchronisation do not apply to the local cookie-session provider.
 Back up the entire local directory, including pgdata and secrets, together.
 
+## Native PostgREST linkage
+
+local:fetch and local:stage relocate the pinned macOS PostgREST binary to
+@loader_path/pg/lib/libpq.5.dylib, including cached downloads, so it needs no
+Homebrew or DYLD_* override. The helper rejects unexpected non-system
+dependencies, audits the bundled dependency closure and applies a verified
+ad-hoc signature for development. Run it before release packaging; signed
+releases are never patched in place. To check fetched, staged or packaged output:
+
+```bash
+MIKE_NATIVE_BIN="$PWD/desktop/local-stack/bin" node --test desktop/src/local/postgrest-linkage.test.js
+```
+
+Without MIKE_NATIVE_BIN this native test skips in the ordinary unit suite.
+desktop.yml runs it after the native fetch and again, read-only, on the packaged app.
+
 ## Migration safety
 
 Desktop calls the compiled canonical migrationLedger helper from the backend.
@@ -109,7 +131,11 @@ desktop.yml retains the Mac unit/real-PostgreSQL upgrade job and unsigned
 packaged first-run/returning-user job. The native upgrade test installs the
 pinned previous numbered Dev history, applies current files through the actual
 desktop bootstrap and compares fresh/upgraded shapes. First-run E2E exercises
-local login, projects, uploads, capability downloads, guest entry and persistence.
+local login, projects, uploads, capability downloads, background text
+extraction, guest entry and persistence. The extraction step polls the local
+PostgreSQL for up to 120 s until the uploaded PDF's document_version_texts row
+is ready with text and zero textless pages; only the isolated parser child
+writes that row, so it catches a child that is not in Node mode (#799).
 The separate flows E2E covers popup fencing, external links and downloads.
 
 Tests use isolated profiles and artifacts; they must not use a person's real

@@ -12,6 +12,7 @@ vi.mock("../mcp/client", () => ({ guardedFetch }));
 
 import { completeWithProvider } from "./providers";
 import { UserFacingError } from "../userFacingError";
+import { isUserProviderRefusal, providerFailureLevel, providerFailureStatus } from "./providerErrors";
 
 const SERVICE_ACCOUNT = JSON.stringify({
   type: "service_account",
@@ -292,7 +293,7 @@ describe("Azure AI Foundry adapter", () => {
         user: "x",
         apiKeys: { "azure-foundry": "foundry-key" },
       }),
-    ).rejects.toThrow(/Azure AI Foundry API key is not configured/);
+    ).rejects.toThrow(/Azure AI Foundry is not configured for this organisation/);
   });
 });
 
@@ -315,15 +316,94 @@ describe("xAI adapter", () => {
     expect(body.model).toBe("grok-4.3");
   });
 
-  it("reports a missing key", async () => {
+  it("reports a missing key as the user's configuration, not our failure", async () => {
     vi.stubEnv("XAI_API_KEY", "");
-    await expect(
-      completeWithProvider({ model: "xai/grok-4.3", user: "x" }),
-    ).rejects.toThrow(/xAI is not configured for this organisation.*xai-api-key/);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const failure = completeWithProvider({ model: "xai/grok-4.3", user: "x" });
+    await expect(failure).rejects.toThrow(/xAI is not configured for this organisation/);
+    // A plain Error read as a bug: "Failure in application" (MIKE-BACKEND-6M).
+    await expect(failure).rejects.toBeInstanceOf(UserFacingError);
+    // The user reads this message (safe_to_display), so it says who can fix
+    // it (Dev: the organisation's administrator); the Key Vault secret is the
+    // operator's and goes to the log.
+    const message = await failure.catch((error: Error) => error.message);
+    expect(message).toContain("Ask an administrator");
+    expect(message).not.toContain("xai-api-key");
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("xai-api-key"));
+    warn.mockRestore();
+  });
+});
+
+describe("whose key a failed call sent", () => {
+  // providerFailureLevel reports a refusal of the deployment's env key (one
+  // warning, the operator must act) but not of a user's own key.
+  const rejected = () =>
+    Response.json(
+      { error: { message: "Incorrect API key provided", code: "invalid_api_key" } },
+      { status: 401 },
+    );
+
+  it("records the user's own key on the provider's refusal", async () => {
+    vi.stubEnv("XAI_API_KEY", "xai-deployment-key");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(rejected()));
+    const error = await completeWithProvider({
+      model: "xai/grok-4.3",
+      user: "x",
+      apiKeys: { xai: "xai-user-key" },
+    }).catch((thrown: unknown) => thrown);
+    expect(providerFailureStatus(error)).toBe(401);
+    expect(providerFailureLevel(error)).toBe("warning");
+  });
+
+  it("records the deployment's key when the user has none", async () => {
+    vi.stubEnv("XAI_API_KEY", "xai-deployment-key");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(rejected()));
+    const error = await completeWithProvider({ model: "xai/grok-4.3", user: "x" }).catch(
+      (thrown: unknown) => thrown,
+    );
+    expect(providerFailureStatus(error)).toBe(401);
+    expect(providerFailureLevel(error)).toBe("error");
+  });
+
+  // The credential store's keys always hold the environment's key in the
+  // provider's own field when the user saved none; keySources says whose it
+  // is. Reading a non-empty field as "the user's" lost every deployment-key
+  // refusal in a real chat turn, title, cell or curator run.
+  it.each([
+    ["env", "error"],
+    ["user", "warning"],
+    ["org", "error"],
+  ] as const)("reads a store key whose origin is %s", async (origin, level) => {
+    vi.stubEnv("XAI_API_KEY", "xai-deployment-key");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(rejected()));
+    const error = await completeWithProvider({
+      model: "xai/grok-4.3",
+      user: "x",
+      apiKeys: { xai: "xai-deployment-key", keySources: { xai: origin } },
+    }).catch((thrown: unknown) => thrown);
+    expect(providerFailureStatus(error)).toBe(401);
+    expect(providerFailureLevel(error)).toBe(level);
+    expect(isUserProviderRefusal(error)).toBe(origin === "user");
   });
 });
 
 describe("custom OpenAI-compatible endpoint adapter", () => {
+  it.each(["user", "org"] as const)("preserves %s ownership on a custom endpoint refusal", async (origin) => {
+    guardedFetch.mockResolvedValue(Response.json({ error: { message: "Rejected", type: "authentication_error" } }, { status: 401 }));
+    const error = await completeWithProvider({
+      model: "custom/example/model",
+      user: "x",
+      apiKeys: {
+        custom: "sk-custom",
+        keySources: { custom: origin },
+        providerSettings: { custom: { baseUrl: "https://llm.example.com/v1" } },
+      },
+    }).catch((thrown: unknown) => thrown);
+    expect(providerFailureStatus(error)).toBe(401);
+    expect(isUserProviderRefusal(error)).toBe(origin === "user");
+    expect(providerFailureLevel(error)).toBe(origin === "user" ? "warning" : "error");
+  });
+
   // PR #608 regression: a guard rejection (the base URL resolves to a
   // private/metadata address) reached the chat as a raw internal error
   // mentioning "MCP server URL"; it is the user's configuration to fix.
@@ -389,5 +469,21 @@ describe("custom OpenAI-compatible endpoint adapter", () => {
       }),
     ).rejects.toThrow(/OpenAI-compatible endpoint is not configured/);
     expect(guardedFetch).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("locally authored provider configuration refusals", () => {
+  it.each([
+    ["gemini-3-flash-preview", { disabledProviders: ["gemini"] }],
+    ["vertex/../../invalid", {}],
+    ["custom/example/model", {}],
+  ] as const)("keeps %s configuration failures at warning", async (model, apiKeys) => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const error = await completeWithProvider({ model, user: "hello", apiKeys: apiKeys as never }).catch(error => error);
+    expect(error).toBeInstanceOf(UserFacingError);
+    expect(providerFailureLevel(error)).toBe("warning");
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

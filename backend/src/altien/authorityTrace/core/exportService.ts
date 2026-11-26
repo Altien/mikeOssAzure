@@ -179,7 +179,7 @@ export async function exportCitationReview(
     run_id: run.id,
     export_type: "review",
     filename,
-    download_url: buildDownloadUrl(storagePath, filename),
+    download_url: buildDownloadUrl(storagePath, filename, { userId: input.userId }),
     document_id: documentId,
     version_id: versionId,
     run_created_at: workspace.created_at,

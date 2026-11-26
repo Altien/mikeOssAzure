@@ -29,8 +29,6 @@ import {
     getOrg,
     updateOrg,
     deleteOrg,
-    deleteOrgData,
-    isOrgDataKind,
     listOrgResources,
     listMembers,
     updateMember,
@@ -44,6 +42,8 @@ import {
     saveOrgApiKey,
     setOrgApiKeyEnabled,
     setOrgMemberDataPolicy,
+    getOrgPreferences,
+    updateOrgPreferences,
     getOrgLogo,
     saveOrgLogo,
     removeOrgLogo,
@@ -54,7 +54,8 @@ import {
     resolveDepartureArchive,
     resolveDepartureArchives,
 } from "./orgs.service";
-import { normalizeApiKeyProvider } from "../user/user.service";
+import { deleteOrgData, isOrgDataKind } from "../../application/organizations/purgeContent";
+import { normalizeApiKeyProvider } from "../../lib/providerCredentials/index";
 
 export const orgsRouter = Router();
 
@@ -461,6 +462,36 @@ orgsRouter.get("/:orgId/api-keys", requireOrgAuth, asyncRoute(async (req, res) =
     });
     if (!result.ok) return sendOrgFailure(res, result);
     res.json(result.settings);
+}));
+
+// GET /orgs/:orgId/preferences — the Features and Model Preferences the
+// organization sets for work in its workspace (any member: they decide what
+// a member's work there shows and runs on).
+orgsRouter.get("/:orgId/preferences", requireOrgAuth, asyncRoute(async (req, res) => {
+    const db = createServerSupabase();
+    const result = await getOrgPreferences(db, {
+        userId: res.locals.userId as string,
+        orgId: req.params.orgId,
+    });
+    if (!result.ok) return sendOrgFailure(res, result);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json(result.preferences);
+}));
+
+// PATCH /orgs/:orgId/preferences — change some of them (owner or admin).
+// No step-up: like a person's own preferences, these choose among what the
+// organization's keys already allow; saving a key is what needs MFA.
+orgsRouter.patch("/:orgId/preferences", requireOrgAuth, asyncRoute(async (req, res) => {
+    const db = createServerSupabase();
+    const result = await updateOrgPreferences(db, {
+        actorId: res.locals.userId as string,
+        actorEmail: res.locals.userEmail as string | undefined,
+        orgId: req.params.orgId,
+        body: req.body,
+    });
+    if (!result.ok) return sendOrgFailure(res, result);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json(result.preferences);
 }));
 
 // PUT /orgs/:orgId/member-data-policy — whether members may export, and

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AssistantMessage } from "./AssistantMessage";
-import type { AssistantEvent } from "../shared/types";
+import type { AssistantEvent, DocumentCitation } from "../shared/types";
 
 // Settings > Features > Response details, off unless a test turns it on.
 const profileState = vi.hoisted(() => ({ responseDetailsVisible: false }));
@@ -514,6 +514,95 @@ describe("AssistantMessage timeline", () => {
     });
 });
 
+describe("AssistantMessage stopped steps", () => {
+    beforeEach(() => {
+        vi.stubGlobal("ResizeObserver", class {
+            observe() {}
+            disconnect() {}
+            unobserve() {}
+        });
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it("labels connector and CourtListener steps the turn stopped as stopped, without invented counts", () => {
+        render(<AssistantMessage isStreaming events={[
+            { type: "mcp_tool_call", connector_id: "", connector_name: "", tool_name: "crm_update_record",
+                openai_tool_name: "crm_update_record", status: "ok", interrupted: true },
+            { type: "courtlistener_search_case_law", query: "fair use", interrupted: true },
+            { type: "courtlistener_get_cases", cluster_ids: [1, 2], interrupted: true },
+            { type: "courtlistener_find_in_case", cluster_id: 1, query: "damages", interrupted: true },
+            { type: "courtlistener_read_case", cluster_id: 1, interrupted: true },
+            { type: "courtlistener_verify_citations", citation_count: 3, interrupted: true },
+        ]} />);
+        for (const label of [
+            "Connector call stopped",
+            "Case law search stopped",
+            "Fetch of 2 cases stopped",
+            "Case search stopped",
+            "Case read stopped case",
+            "Verification of 3 citations stopped",
+        ]) {
+            expect(screen.getByText(label)).toBeInTheDocument();
+        }
+        expect(screen.queryByText(/0 results|0 matches/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/^Searched case law|^Fetched|^Verified|^Read case/)).not.toBeInTheDocument();
+    });
+
+    it("says a subagent the turn stopped was stopped, not finished", () => {
+        // Rendered open, as the timeline is while its turn is on screen.
+        render(<AssistantMessage isStreaming events={[
+            { type: "delegation", delegation_id: "d1", title: "Research", task: "Find cases",
+                events: [], interrupted: true },
+        ]} />);
+        expect(screen.getByText("Subagent stopped")).toBeInTheDocument();
+        expect(screen.queryByText("Subagent finished")).not.toBeInTheDocument();
+    });
+
+    it("counts finished and stopped subagents apart in a mixed group", () => {
+        render(<AssistantMessage isStreaming events={[
+            { type: "delegation", delegation_id: "d1", title: "Research", task: "Find cases",
+                events: [], status: "completed" },
+            { type: "delegation", delegation_id: "d2", title: "Summary", task: "Summarize",
+                events: [], interrupted: true },
+        ]} />);
+        expect(screen.getByText("1 subagent finished, 1 stopped")).toBeInTheDocument();
+        expect(screen.queryByText("2 subagents finished")).not.toBeInTheDocument();
+    });
+
+    // After a reload the client-only `interrupted` flag is gone; the stored
+    // subagent carries the server's `status: "cancelled"` instead.
+    const reloaded = (events: AssistantEvent[]) => {
+        render(<AssistantMessage events={[
+            ...events,
+            { type: "content", text: "Cancelled by user." },
+        ]} />);
+        fireEvent.click(screen.getByRole("button", { name: /subagent/ }));
+    };
+
+    it("says a stored cancelled subagent was stopped, not finished", () => {
+        reloaded([
+            { type: "delegation", delegation_id: "d1", title: "Research", task: "Find cases",
+                events: [], status: "cancelled" },
+        ]);
+        expect(screen.getByText("Subagent stopped")).toBeInTheDocument();
+        expect(screen.queryByText("Subagent finished")).not.toBeInTheDocument();
+    });
+
+    it("counts a stored cancelled subagent as stopped beside a finished one", () => {
+        reloaded([
+            { type: "delegation", delegation_id: "d1", title: "Research", task: "Find cases",
+                events: [], status: "completed" },
+            { type: "delegation", delegation_id: "d2", title: "Summary", task: "Summarize",
+                events: [], status: "cancelled" },
+        ]);
+        expect(screen.getByText("1 subagent finished, 1 stopped")).toBeInTheDocument();
+        expect(screen.queryByText("2 subagents finished")).not.toBeInTheDocument();
+    });
+});
+
 describe("AssistantMessage response details", () => {
     const answer = (): AssistantEvent[] => [
         { type: "content", text: "Here is the answer." },
@@ -565,5 +654,141 @@ describe("AssistantMessage response details", () => {
         profileState.responseDetailsVisible = true;
         render(<AssistantMessage isStreaming events={answer()} />);
         expect(screen.queryByText(/1.3K tokens/)).toBeNull();
+    });
+});
+
+describe("AssistantMessage citations", () => {
+    beforeEach(() => {
+        vi.stubGlobal("ResizeObserver", class {
+            observe() {}
+            disconnect() {}
+            unobserve() {}
+        });
+    });
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    const citation: DocumentCitation = {
+        type: "citation_data",
+        kind: "document",
+        ref: 1,
+        doc_id: "doc-0",
+        document_id: "document-0",
+        filename: "Lease.pdf",
+        page: 2,
+        quote: "Either party may terminate",
+        quotes: [{ page: 2, quote: "Either party may terminate" }],
+    };
+    const events: AssistantEvent[] = [
+        {
+            type: "citations_recorded",
+            refs: [1, 2],
+            sources: [
+                { name: "Lease.pdf", type: "pdf", ref: 1 },
+                { name: "Companies Act 2006", type: "legislation", ref: 2 },
+            ],
+            quotes_not_found: 1,
+            rejected: 0,
+        },
+        { type: "content", text: "Either party may terminate [1]." },
+    ];
+
+    it("shows the recorded citations as a step, and the list only once the answer is finished", () => {
+        const { rerender } = render(
+            <AssistantMessage isStreaming events={events} citations={[citation]} />,
+        );
+        // Like every step, it folds away once the answer starts.
+        fireEvent.click(screen.getByRole("button", { name: /1 step/ }));
+        expect(screen.getByText("Recorded 2 citations")).toBeVisible();
+        expect(screen.getByText("Lease.pdf")).toBeVisible();
+        expect(screen.getByText("Companies Act 2006")).toBeVisible();
+        expect(screen.getByText("1 quote not found in the source")).toBeVisible();
+        expect(screen.queryByRole("heading", { name: "Citations" })).toBeNull();
+
+        rerender(<AssistantMessage events={events} citations={[citation]} />);
+        expect(screen.getByRole("heading", { name: "Citations" })).toBeVisible();
+    });
+
+    it("opens only the current recording when the same ref changes sources", () => {
+        const onOpenCitationSource = vi.fn();
+        const step = (name: string): AssistantEvent => ({
+            type: "citations_recorded", refs: [1], sources: [{ name, type: "pdf", ref: 1 }],
+            rejected: 0, quotes_not_found: 0,
+        });
+        render(<AssistantMessage isStreaming events={[step("Old.pdf"), step("Lease.pdf"), events[1]]}
+            citations={[citation]} onOpenCitationSource={onOpenCitationSource} />);
+        fireEvent.click(screen.getByRole("button", { name: /2 steps/ }));
+        expect(screen.getByText("Old.pdf")).toBeVisible();
+        expect(screen.queryByRole("button", { name: "Old.pdf" })).toBeNull();
+        fireEvent.click(screen.getByRole("button", { name: "Lease.pdf" }));
+        expect(onOpenCitationSource).toHaveBeenCalledExactlyOnceWith(citation);
+    });
+
+    it("keeps a delegated recording with ref 1 separate from the parent", () => {
+        const child: AssistantEvent = {
+            type: "delegation", delegation_id: "d", title: "Research", task: "Read memo", status: "completed",
+            effort: "standard", model: "test", events: [{ type: "citations_recorded", refs: [1],
+                sources: [{ name: "Memo.pdf", type: "pdf", ref: 1 }], rejected: 0, quotes_not_found: 0 }],
+        };
+        render(<AssistantMessage isStreaming events={[child, ...events]} citations={[citation]} onOpenCitationSource={vi.fn()} />);
+        fireEvent.click(screen.getByRole("button", { name: /2 steps.*1 subagent/ }));
+        fireEvent.click(screen.getByRole("button", { name: /^Research,/ }));
+        expect(screen.getByText("Memo.pdf")).toBeVisible();
+        expect(screen.queryByRole("button", { name: "Memo.pdf" })).toBeNull();
+        expect(screen.getByRole("button", { name: "Lease.pdf" })).toBeVisible();
+    });
+
+    it("opens a cited source through the citation that cites it", () => {
+        const onOpenCitationSource = vi.fn();
+        render(
+            <AssistantMessage
+                isStreaming
+                events={events}
+                citations={[citation]}
+                onOpenCitationSource={onOpenCitationSource}
+            />,
+        );
+        fireEvent.click(screen.getByRole("button", { name: /1 step/ }));
+        fireEvent.click(screen.getByRole("button", { name: "Lease.pdf" }));
+        expect(onOpenCitationSource).toHaveBeenCalledExactlyOnceWith(citation);
+        // No citation with ref 2 has arrived yet, so the statute is not a button.
+        expect(screen.queryByRole("button", { name: "Companies Act 2006" })).toBeNull();
+        expect(screen.getByText("Companies Act 2006")).toBeVisible();
+    });
+
+    it("labels a withdrawal and keeps its former source out of the action buttons", () => {
+        const removal = {
+            type: "citations_recorded" as const, refs: [], sources: [], removed_refs: [1],
+            quotes_not_found: 0, rejected: 0,
+        };
+        render(<AssistantMessage isStreaming events={[events[0], removal, events[1]]} citations={[]} onOpenCitationSource={vi.fn()} />);
+        fireEvent.click(screen.getByRole("button", { name: /2 steps/ }));
+        expect(screen.getByText("Removed 1 citation")).toBeVisible();
+        expect(screen.queryByRole("button", { name: citation.filename })).toBeNull();
+    });
+
+    it("shows a citations step in progress, and one the turn stopped", () => {
+        const step = (state: { isStreaming?: boolean; interrupted?: boolean }): AssistantEvent => ({
+            type: "citations_recorded", refs: [], sources: [], quotes_not_found: 0, rejected: 0, ...state,
+        });
+        const { rerender } = render(<AssistantMessage isStreaming events={[step({ isStreaming: true })]} />);
+        expect(screen.getByText("Recording citations...")).toBeVisible();
+        expect(screen.queryByText("Could not record citations")).toBeNull();
+
+        rerender(<AssistantMessage events={[step({ interrupted: true })]} />);
+        expect(screen.getByText("Citation recording stopped")).toBeVisible();
+        expect(screen.queryByText("Could not record citations")).toBeNull();
+    });
+
+    it("says when a call recorded nothing", () => {
+        render(
+            <AssistantMessage
+                isStreaming
+                events={[{ type: "citations_recorded", refs: [], sources: [], quotes_not_found: 0, rejected: 2 }]}
+            />,
+        );
+        expect(screen.getByText("Could not record citations")).toBeVisible();
+        expect(screen.getByText("2 citations refused")).toBeVisible();
     });
 });

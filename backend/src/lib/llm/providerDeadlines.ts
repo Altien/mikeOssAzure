@@ -3,6 +3,7 @@ import type { LanguageModelMiddleware } from "ai" with {
 };
 import { abortable } from "../abortable";
 import { streamChunkTimeouts } from "../runtimeConfig";
+import { log } from "../logging/root";
 
 /** Bound one provider call, including headers, without timing the SDK's tools. */
 export function providerDeadlines(
@@ -20,16 +21,20 @@ export function providerDeadlines(
       };
       const arm = (label: string, ms: number) => {
         clearTimeout(timer);
-        timer = setTimeout(
-          () =>
-            controller.abort(
-              new DOMException(
-                `${label} timeout of ${ms}ms exceeded`,
-                "TimeoutError",
-              ),
+        timer = setTimeout(() => {
+          log().debug("llm.deadline_fired", {
+            model: model.modelId,
+            provider: model.provider,
+            which: label === "First chunk" ? "first_chunk" : "chunk",
+            limitMs: ms,
+          });
+          controller.abort(
+            new DOMException(
+              `${label} timeout of ${ms}ms exceeded`,
+              "TimeoutError",
             ),
-          ms,
-        );
+          );
+        }, ms);
         timer.unref?.();
       };
       if (params.abortSignal?.aborted) forwardAbort();

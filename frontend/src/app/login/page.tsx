@@ -5,22 +5,23 @@ import { useRouter } from "next/navigation";
 import { login, loginLocal } from "@/app/lib/authApi";
 import { useConfig } from "@/app/contexts/ConfigContext";
 import { completeUserOnboarding, getUserProfile } from "@/app/lib/mikeApi";
-import { InputUI } from "@/shared/ui/InputUI";
-import { PillButtonUI } from "@/shared/ui/PillButtonUI";
+import {
+    InputUI,
+    PillButtonUI,
+    authGlassCardUIClassName,
+    authInputUIClassName,
+    AuthDividerUI,
+    noticeActionClassName,
+} from "@mike/ui";
 import Link from "next/link";
 import { SiteLogo } from "@/app/components/site-logo";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { cn } from "@/app/lib/utils";
-import {
-    authGlassCardUIClassName,
-    authInputUIClassName,
-} from "@/shared/ui/AuthStylesUI";
-import { AuthDividerUI } from "@/shared/ui/AuthDividerUI";
 import { SsoAuthButton } from "@/app/components/auth/SsoAuthButton";
 import { GoogleAuthButton } from "@/app/components/auth/GoogleAuthButton";
+import { useSignInOptions } from "@/app/hooks/useSignInOptions";
 import { FieldLabel } from "@/app/components/ui/form-field";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
-import { noticeActionClassName } from "@/shared/ui/NoticeCardUI";
 import { describeError, reportFault,
     supportMailtoFor,
     type UserFacingError,
@@ -80,6 +81,9 @@ declare global {
 export default function LoginPage() {
     const router = useRouter();
     const config = useConfig();
+    // Pooled stamps offer the External ID choice only when it is configured;
+    // otherwise Microsoft (work or personal account) is the single sign-in.
+    const externalIdSignIn = config.tenancyMode === "pooled" && config.externalIdSignIn === true;
     const {
         isAuthenticated,
         authLoading,
@@ -105,12 +109,28 @@ export default function LoginPage() {
         setSessionWarningDismissed(false);
     }
     const [loginMode, setLoginMode] = useState<"account" | "guest" | null>(null);
+    const { options: signInOptions, providersKnown } = useSignInOptions();
 
     useEffect(() => {
         if (!authLoading && isAuthenticated) {
             router.replace("/onboarding/profile");
         }
     }, [authLoading, isAuthenticated, router]);
+
+    // Dev: upstream's first-run /setup redirect is not adopted (no setup
+    // screen; the API always reports setupRequired: false).
+
+    // Offer only the providers this deployment has configured, and none
+    // until it has said which, so a button never appears and then vanishes.
+    // The server's hint (login/layout.tsx) normally says so before the first
+    // paint, which keeps the card from growing once the browser has asked.
+    // Dev divergence (upstream 4dd2212c): the frontend is a static export
+    // with no request-time server render, so login/layout.tsx and
+    // signup/layout.tsx are not carried and no hint is ever provided here;
+    // providersKnown then equals loaded, as before. Provider buttons show
+    // only in supabase mode (see the authProvider gate below).
+    const showGoogle = providersKnown && signInOptions.google;
+    const showSso = providersKnown && signInOptions.sso;
 
     useEffect(() => {
         let cancelled = false;
@@ -278,14 +298,22 @@ export default function LoginPage() {
                                 const next = new URL("/onboarding/profile", window.location.origin).toString();
                                 window.location.assign(`${base}/api/auth/login-provider/microsoft?returnUrl=${encodeURIComponent(next)}`);
                             }}
-                        >Sign in with Microsoft</PillButtonUI>}
-                        {config.authProvider === "supabase" && <><AuthDividerUI />
-                        <GoogleAuthButton
+                        >{externalIdSignIn ? "Sign in to Mike" : "Sign in with Microsoft"}</PillButtonUI>}
+                        {config.authProvider === "entra" && externalIdSignIn && <PillButtonUI
+                            type="button" tone="white" size="normal" className="w-full"
+                            onClick={() => {
+                                const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+                                const next = new URL("/onboarding/profile", window.location.origin).toString();
+                                window.location.assign(`${base}/api/auth/login-provider/microsoft?identity=enterprise&returnUrl=${encodeURIComponent(next)}`);
+                            }}
+                        >Sign in with your organisation</PillButtonUI>}
+                        {config.authProvider === "supabase" && (showGoogle || showSso) && <><AuthDividerUI />
+                        {showGoogle && <GoogleAuthButton
                             onError={(nextError) => { setLoginMode(null); setError(nextError); }}
                             disabled={loading}
                             onLoadingChange={setLoading}
-                        />
-                        <SsoAuthButton disabled={loading} /></>}
+                        />}
+                        {showSso && <SsoAuthButton disabled={loading} />}</>}
                     </form>
                     </details>
                 </div>

@@ -20,6 +20,7 @@ import {
   contentTypeForDocumentType,
   documentSuffix,
 } from "../../lib/documentTypes";
+import { emailDocumentFilename } from "../../lib/email";
 export const MAX_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024;
 export const MAX_UPLOAD_SESSION_FILES = 50;
 export const MAX_UPLOAD_SESSION_TOTAL_BYTES = 2 * 1024 * 1024 * 1024;
@@ -221,12 +222,28 @@ export function parseUploadSessionRequest(
       );
     }
 
-    const fileType = documentSuffix(file.filename);
-    if (!ALLOWED_DOCUMENT_TYPES.has(fileType)) {
+    const suffix = documentSuffix(file.filename);
+    if (!ALLOWED_DOCUMENT_TYPES.has(suffix)) {
+      const shownType = suffix || "unknown";
       throw new UploadSessionValidationError(
-        `Unsupported file type: ${fileType || "unknown"}. Allowed: ${ALLOWED_DOCUMENT_TYPES_LABEL}`,
+        `Unsupported file type: ${shownType}. Allowed: ${ALLOWED_DOCUMENT_TYPES_LABEL}`,
       );
     }
+    // An email becomes a new Markdown document plus one document per
+    // attachment, so it cannot be a version of an existing document.
+    const isEmail = suffix === "eml";
+    if (isEmail && parsed.data.purpose !== "document_create") {
+      throw new UploadSessionValidationError(
+        "An email (.eml) can only be uploaded as a new document",
+      );
+    }
+    // upload_session_files.file_type admits only the binary upload types
+    // (migration 0076), so an email is recorded under a stand-in type; the
+    // worker publishes the Markdown and then sets the version's type to md.
+    // The message/rfc822 content type is what marks the file as an email.
+    const fileType = isEmail ? "pdf" : suffix;
+    const filename = isEmail ? emailDocumentFilename(file.filename) : file.filename;
+    const contentType = contentTypeForDocumentType(suffix);
 
     expectedTotalBytes += file.size_bytes;
     if (expectedTotalBytes > MAX_UPLOAD_SESSION_TOTAL_BYTES) {
@@ -243,10 +260,10 @@ export function parseUploadSessionRequest(
       id,
       resource_id: resourceId,
       client_id: file.client_id,
-      filename: file.filename,
+      filename,
       target_folder_id: file.folder_id ?? null,
       file_type: fileType,
-      content_type: contentTypeForDocumentType(fileType),
+      content_type: contentType,
       expected_size_bytes: file.size_bytes,
       staging_storage_path: `${basePath}/staging`,
       sealed_storage_path: `${basePath}/sealed`,

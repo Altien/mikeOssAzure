@@ -1,11 +1,13 @@
 import React, { useState } from "react";
 import { useAuth } from "./useAuth";
-import { InputUI } from "@mike/input-ui";
+import {
+  InputUI,
+  PillButtonUI as PillButton,
+  GoogleIconUI,
+  AuthDividerUI as AuthDivider,
+} from "@mike/ui";
 import { Label } from "../../shared/ui/label";
 import { WordAddinLogo } from "../components/shell/WordAddinLogo";
-import { PillButtonUI as PillButton } from "@mike/pill-button-ui";
-import { GoogleIconUI } from "@mike/google-icon-ui";
-import { AuthDividerUI as AuthDivider } from "@mike/auth-divider-ui";
 
 const authInputClassName =
   "rounded-lg border border-white/70 bg-white/55 px-3 text-gray-700 shadow-[0_3px_9px_rgba(15,23,42,0.06),inset_0_1px_0_rgba(255,255,255,0.86),inset_0_-1px_0_rgba(255,255,255,0.58)] backdrop-blur-xl transition-[color,box-shadow,background-color,border-color] placeholder:text-gray-400 hover:bg-white/65 focus-visible:border-white/90 focus-visible:bg-white/75 focus-visible:ring-2 focus-visible:ring-white/70";

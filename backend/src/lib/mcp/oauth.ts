@@ -10,7 +10,7 @@ import type {
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { AppError } from "../appError";
 import { createServerSupabase } from "../supabase";
-import { resolveProviderSecret } from "../envSecrets";
+import { resolveProviderSecret, resolveSecret } from "../envSecrets";
 import {
     authConfigPatch,
     base64Url,
@@ -267,7 +267,7 @@ export async function oauthClientConfigFor(serverUrl: string) {
     // client; never hand them an organisation-wide OAuth client credential.
     const prefix = mcpOAuthProviderFor(serverUrl)?.envPrefix;
     const vaultName = (suffix: string) =>
-        prefix ? `${prefix.replaceAll("_", "-")}-${suffix}` : null;
+        prefix ? `${prefix.replaceAll("_", "-")}-${suffix}`.toLowerCase() : null;
     return {
         clientId: vaultName("CLIENT-ID")
             ? await resolveProviderSecret(vaultName("CLIENT-ID")!)
@@ -276,8 +276,8 @@ export async function oauthClientConfigFor(serverUrl: string) {
             ? await resolveProviderSecret(vaultName("CLIENT-SECRET")!)
             : undefined,
         scope: vaultName("SCOPE")
-            ? await resolveProviderSecret(vaultName("SCOPE")!, ["mcp-oauth-default-scope"])
-            : await resolveProviderSecret("mcp-oauth-default-scope"),
+            ? (await resolveSecret(vaultName("SCOPE")!)) || await resolveSecret("mcp-oauth-default-scope")
+            : await resolveSecret("mcp-oauth-default-scope"),
     };
 }
 

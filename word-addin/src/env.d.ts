@@ -16,6 +16,10 @@ declare const process: {
     readonly REACT_APP_WEB_APP_URL: string | undefined;
     readonly REACT_APP_SUPABASE_URL: string | undefined;
     readonly REACT_APP_SUPABASE_ANON_KEY: string | undefined;
+    // Release identity (sync-log: 3bcac35a): build identity, not tenant data;
+    // the DSN itself still comes from runtime /config.
+    readonly REACT_APP_GIT_SHA: string | undefined;
+    readonly REACT_APP_MIKE_VERSION: string | undefined;
     readonly NODE_ENV: string;
   };
 };

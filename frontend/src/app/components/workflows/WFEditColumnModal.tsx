@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Plus, X } from "lucide-react";
 import type { ColumnConfig, ColumnFormat } from "../shared/types";
 import { generateTabularColumnPrompt } from "@/app/lib/mikeApi";
+import { notifyError } from "@/app/lib/userFacingError";
+import { useDocumentWorkspace } from "@/app/contexts/WorkspaceContext";
 import { FORMAT_OPTIONS } from "../tabular/columnFormat";
 import { TAG_COLORS } from "../tabular/pillUtils";
 import { getPresetConfig, PROMPT_PRESETS } from "../tabular/columnPresets";
@@ -11,7 +13,7 @@ import { Modal } from "../modals/Modal";
 import { ModalSelect } from "../modals/ModalSelect";
 import { ModalTextarea } from "../modals/ModalTextarea";
 import { FieldLabel, FormTextInput } from "../ui/form-field";
-import { LIQUID_GLASS_FLOAT_CLASS } from "@/shared/ui/LiquidGlassUI";
+import { LIQUID_GLASS_FLOAT_CLASS } from "@mike/ui";
 
 interface ColumnDraft {
     name: string;
@@ -30,6 +32,8 @@ interface Props {
 
 export function WFEditColumnModal({ column, onClose, onSave, onDelete }: Props) {
     const formId = "workflow-edit-column-modal-form";
+    // Drafted by the tabular model of the workspace the column belongs to.
+    const workspace = useDocumentWorkspace();
     const [draft, setDraft] = useState<ColumnDraft>({
         name: column.name,
         prompt: column.prompt,
@@ -91,10 +95,16 @@ export function WFEditColumnModal({ column, onClose, onSave, onDelete }: Props) 
         setGenerating(true);
         try {
             const { prompt } = await generateTabularColumnPrompt(title, {
+                workspace,
                 format: draft.format,
                 tags: draft.format === "tag" ? draft.tags : undefined,
             });
             update({ prompt });
+        } catch (error) {
+            notifyError(error, {
+                action: "draft the column prompt",
+                onRetry: () => void autoGeneratePrompt(),
+            });
         } finally {
             setGenerating(false);
         }

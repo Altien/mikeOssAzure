@@ -102,7 +102,7 @@ describe("writeProjectDocument", () => {
       filename: "cites.json",
       bytes: 13,
       version_number: 1,
-      download_url: expect.stringMatching(/^\/download\/[\w-]+\.[\w-]+$/),
+
     });
     expect(calls.map((call) => `${call.table}:${call.op}`)).toEqual(
       expect.arrayContaining([

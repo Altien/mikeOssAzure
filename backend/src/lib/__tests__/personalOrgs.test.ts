@@ -144,9 +144,12 @@ describe("personal organizations in SQL", () => {
     );
 
     it("initializes the personal organization after the Dev profile without undoing sign-in", () => {
-        const auth = readFileSync(resolve(ROOT, "src/middleware/auth.ts"), "utf8");
+        // Multi-tenant: profile admission runs inside the admitted tenant's
+        // scope, in lib/auth/profileAdmission.ts (called by requireAuth).
+        const auth = readFileSync(resolve(ROOT, "src/lib/auth/profileAdmission.ts"), "utf8");
+        expect(auth.indexOf("await upsertUserProfile(")).toBeGreaterThan(-1);
         expect(auth.indexOf('rpc("ensure_personal_organization"')).toBeGreaterThan(auth.indexOf("await upsertUserProfile("));
-        expect(auth).toContain('p_user_id: result.principal.userId');
+        expect(auth).toContain('p_user_id: principal.userId');
         expect(auth).toContain('console.warn("[auth/personal-org] initialization');
         expect(migration).toContain('references public.user_profiles(user_id) on delete cascade');
     });

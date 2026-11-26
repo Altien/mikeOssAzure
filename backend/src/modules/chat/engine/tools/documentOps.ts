@@ -1,9 +1,11 @@
 import { findDocumentsOutsideWorkspace } from "../../../../lib/documentWorkspace";
+import { loadVersionTextState, cachedTextForModel } from "../../../../lib/documentTextCache";
 import {
   applyTrackedEditsToDocument,
   createDocumentVersion,
   loadCurrentVersionBytes,
   readStoredDocumentText,
+  storedDocumentTextCurrent,
 } from "../../../documents/documents.service";
 
 // Tracked-change editing lives in the documents module; the tool dispatcher
@@ -20,7 +22,6 @@ import { readCurrentLegacyDocumentText } from "../../../documents/documents.serv
 import { enqueueConversion } from "../../../../lib/queue/conversionQueue";
 import { enqueueDbJob } from "../../../../lib/dbq/enqueue";
 import type { Db } from "../../../../lib/supabase";
-import { buildDownloadUrl } from "../../../../lib/downloadTokens";
 import {
   contentSha256,
   loadActiveVersion,
@@ -57,14 +58,14 @@ export function citationReminder(
   );
   const shapeLine = isSpreadsheet
     ? `Use this citation object shape for this spreadsheet: {"ref": 1, "doc_id": "${docLabel}", "quotes": [{"sheet": "Sheet name", "cell": "B7", "quote": "plain cell value"}]}. Cite by "sheet" + "cell" (A1 address or range), not by page.`
-    : `Use this citation object shape: {"ref": 1, "doc_id": "${docLabel}", "quotes": [{"page": 1, "quote": "exact verbatim text from the document"}]}. Include top-level "page" and "quote" too only if they match the first quote.`;
+    : `Use this citation object shape: {"ref": 1, "doc_id": "${docLabel}", "quotes": [{"page": "1", "quote": "exact verbatim text from the document"}]}.`;
   return [
     `[Citation requirement for ${docLabel}]:`,
     `Document filename: ${promptFilename}`,
-    `If your final answer makes any factual claim from this document, include inline [N] markers and append a final <CITATIONS> JSON block.`,
+    `If your final answer makes any factual claim from this document, include inline [N] markers, each with a citation entry.`,
     `Every citation entry for this document MUST use "doc_id": "${docLabel}".`,
     shapeLine,
-    `Do not use "marker" or "text" keys in the citation block; use "ref" and "quotes".`,
+    `Do not use "marker" or "text" keys in citation entries; use "ref" and "quotes".`,
   ].join("\n");
 }
 
@@ -974,7 +975,6 @@ async function persistGeneratedFile(params: {
     }
   }
 
-  const downloadUrl = buildDownloadUrl(key, filename);
   const { data: docRow, error: docErr } = await db
     .from("documents")
     .insert({
@@ -1036,7 +1036,7 @@ async function persistGeneratedFile(params: {
 
   return {
     filename,
-    download_url: downloadUrl,
+
     document_id: documentId,
     version_id: versionId,
     version_number: 1,
@@ -1126,6 +1126,17 @@ export async function getTurnReadIdentity(params: {
   if (!docInfo) return null;
 
   const documentId = docIndex?.[docLabel]?.document_id;
+  if (docInfo.external_source) {
+    // A provider-backed source has no stored version or file: within the
+    // request it is identified by the provider's document id alone.
+    return {
+      key: `external:${docInfo.external_source.document_id}`,
+      docLabel,
+      filename: docInfo.filename,
+      documentId,
+      storagePath: "",
+    };
+  }
   if (docInfo.search_source) {
     const indexed = docIndex?.[docLabel];
     return {
@@ -1140,7 +1151,7 @@ export async function getTurnReadIdentity(params: {
     if (active?.storage_path) {
       return {
         // A reused version keeps its id but moves to a new file.
-        key: `${documentId}:${active.id}:${active.storage_path}`,
+        key: `${documentId}:${active.id}:${active.storage_path}:${active.text_revision ?? ""}`,
         docLabel,
         filename: docInfo.filename,
         documentId,
@@ -1197,6 +1208,9 @@ export function clearTurnReadsForDocument(
   }
 }
 
+// Lifetime is one turn's DocStore; retain only the latest read per label.
+const turnDocumentTexts = new WeakMap<DocStore, Map<string, { key: string; text: string }>>();
+
 export async function readDocumentContent(
   docLabel: string,
   docStore: DocStore,
@@ -1226,9 +1240,7 @@ export async function readDocumentContent(
   const documentId = docIndex?.[docLabel]?.document_id;
   const readIdentity =
     opts?.readIdentity ??
-    (emitEvents
-      ? await getTurnReadIdentity({ docLabel, docStore, docIndex, db })
-      : null);
+    await getTurnReadIdentity({ docLabel, docStore, docIndex, db });
   const versionId =
     readIdentity?.versionId ?? docIndex?.[docLabel]?.version_id ?? null;
   const versionNumber =
@@ -1268,6 +1280,16 @@ export async function readDocumentContent(
       return docInfo.inline_text;
     }
 
+    const cached = turnDocumentTexts.get(docStore)?.get(docLabel);
+    const remember = (text: string) => {
+      if (readIdentity) {
+        const texts = turnDocumentTexts.get(docStore) ?? new Map();
+        texts.set(docLabel, { key: readIdentity.key, text });
+        turnDocumentTexts.set(docStore, texts);
+      }
+      return text;
+    };
+
     // Search results are bound to a content revision, not just a mutable
     // version id. Recheck access before serving persisted text or any bytes.
     if (docInfo.search_source) {
@@ -1278,16 +1300,28 @@ export async function readDocumentContent(
       const workspace = docInfo.search_source.workspace;
       // References are request-scoped server state. A legacy/unknown scope
       // cannot be rebound to the current UI or model-selected workspace.
+      // Rechecked on every read, including a repeat read served from the turn cache.
       if (typeof workspace !== "string" || !workspace ||
         (await findDocumentsOutsideWorkspace(db,[documentId],
           workspace === "personal" ? null : workspace,{ includeWorkflowAssets: true })).length) {
         emitDocRead();
         return "Document could not be read.";
       }
-      const stored = await readStoredDocumentText(db, {
+      const actor = {
         userId: docInfo.search_source.userId, userEmail: docInfo.search_source.userEmail,
         documentId, versionId,
-      });
+      };
+      // A repeat read in the same turn rechecks access and revision, but does
+      // not transfer the (up to 16 MB) text again: the ready text for an
+      // unchanged revision is the text already held.
+      if (readIdentity && cached?.key === readIdentity.key) {
+        const current = await storedDocumentTextCurrent(db, {
+          ...actor, revision: docInfo.search_source.revision,
+        });
+        emitDocRead();
+        return current ? cached.text : "Document could not be read.";
+      }
+      const stored = await readStoredDocumentText(db, actor);
       if (!stored || stored.revision !== docInfo.search_source.revision || stored.status !== "ready") {
         emitDocRead();
         return "Document could not be read.";
@@ -1296,7 +1330,19 @@ export async function readDocumentContent(
       const notice = stored.textless_page_count
         ? `[${stored.textless_page_count} page(s) have no text layer and need OCR. Search coverage is incomplete.]\n\n`
         : "";
-      return notice + (stored.text ?? "");
+      return remember(notice + (stored.text ?? ""));
+    }
+
+    if (readIdentity && cached?.key === readIdentity.key) {
+      emitDocRead();
+      return cached.text;
+    }
+    if (db && documentId && versionId) {
+      const stored = await loadVersionTextState(db, documentId, versionId, readIdentity?.storagePath);
+      if (stored?.text !== null && stored?.text !== undefined) {
+        emitDocRead();
+        return remember(cachedTextForModel(stored));
+      }
     }
 
     return await withExtractionRequest(async (extract) => {
@@ -1428,7 +1474,7 @@ export async function readDocumentContent(
         `[read_document] DONE filename="${docInfo.filename}" finalTextLength=${text.length} firstChars=${JSON.stringify(text.slice(0, 120))}`,
       );
       emitDocRead();
-      return text;
+      return remember(text);
     });
   } catch (err) {
     devLog(
@@ -1452,12 +1498,26 @@ export async function readDocumentContent(
   }
 }
 
+/** A hyphen, dash or minus sign directly between two digits. */
+function isDashBetweenDigits(text: string, i: number): boolean {
+  return (
+    /[\p{Pd}\u2212]/u.test(text[i]) &&
+    /\p{N}/u.test(text[i - 1] ?? "") &&
+    /\p{N}/u.test(text[i + 1] ?? "")
+  );
+}
+
 /** A character is "punctuation" for tolerant matching if it is not a letter,
  *  number, or whitespace. Dropped entirely (not replaced with a space) so
  *  "U.S." collapses to "us" and "plaintiff's" to "plaintiffs". */
 function isPunctuation(ch: string): boolean {
   return !/[\p{L}\p{N}\s]/u.test(ch);
 }
+
+export type NormalizeOptions = {
+  stripPunctuation?: boolean;
+  joinLineEndHyphens?: "keep" | "drop";
+};
 
 /**
  * Build a whitespace-collapsed, lowercased copy of `text`, plus a map from
@@ -1470,26 +1530,51 @@ function isPunctuation(ch: string): boolean {
  * normalized form too, making matching tolerant of punctuation drift (e.g. a
  * model that adds a stray comma or drops a period). The index map still points
  * back at the surviving original characters so the recovered excerpt is exact.
+ *
+ * With `joinLineEndHyphens`, a word hyphenated at the end of a line (PDF text
+ * "indem-", newline, "nification") is joined with the next line: "keep" keeps
+ * the hyphen ("1998-", newline, "2001" -> "1998-2001"), "drop" removes it
+ * ("indemnification"). See `lineEndHyphenJoin` for exactly what counts.
  */
 export function normalizeWithMap(
   text: string,
-  opts: { stripPunctuation?: boolean } = {},
+  opts: NormalizeOptions = {},
 ): { norm: string; origIdx: number[] } {
   const stripPunctuation = opts.stripPunctuation ?? false;
+  const join = opts.joinLineEndHyphens;
+  // A stripped hyphen disappears even in "keep" mode, so it joins only letters.
+  const hyphenVanishes = join === "drop" || stripPunctuation;
   const norm: string[] = [];
   const origIdx: number[] = [];
   let prevSpace = false;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
-    if (/\s/.test(ch)) {
+    const joinTo = join ? lineEndHyphenJoin(text, i, hyphenVanishes) : null;
+    if (joinTo !== null) {
+      if (!hyphenVanishes) {
+        norm.push(ch);
+        origIdx.push(i);
+      }
+      // Skip the line break and indentation; the next word continues here.
+      i = joinTo - 1;
+    } else if (/\s/.test(ch)) {
       if (!prevSpace) {
         norm.push(" ");
         origIdx.push(i);
         prevSpace = true;
       }
     } else if (stripPunctuation && isPunctuation(ch)) {
-      // Drop punctuation without disturbing the space-collapsing state so
-      // "foo, bar" -> "foo bar" but "U.S." -> "us".
+      // A dash between two digits belongs to a number range or identifier
+      // ("pp. 3-7", "No. 21-1234"); deleting it would make "pp. 3-7" equal
+      // "pp. 37". Keep one canonical hyphen there instead, so "3-7" still
+      // matches "3–7" but never "37".
+      if (isDashBetweenDigits(text, i)) {
+        norm.push("-");
+        origIdx.push(i);
+        prevSpace = false;
+      }
+      // Drop other punctuation without disturbing the space-collapsing state
+      // so "foo, bar" -> "foo bar" but "U.S." -> "us".
       continue;
     } else {
       norm.push(ch.toLowerCase());
@@ -1498,6 +1583,63 @@ export function normalizeWithMap(
     }
   }
   return { norm: norm.join(""), origIdx };
+}
+
+// "-", Unicode hyphen, non-breaking hyphen, soft hyphen.
+const LINE_END_HYPHENS = new Set(["-", "\u2010", "\u2011", "\u00ad"]);
+const LETTER = /\p{L}/u;
+const LETTER_OR_DIGIT = /[\p{L}\p{N}]/u;
+const COMBINING_MARK = /\p{M}/u;
+// Whitespace that does not end a line: spaces, tabs, no-break spaces.
+const HORIZONTAL_SPACE = /[^\S\n\r\f\v\u0085\u2028\u2029]/;
+
+/**
+ * When `text[i]` is a hyphen that ends a line inside a word, the index of the
+ * word's continuation on the next line; otherwise null. A real line-end
+ * hyphenation needs all of:
+ *   - a letter or digit before the hyphen (combining accents skipped), and a
+ *     letter or digit starting the next line;
+ *   - exactly one line break (`\n`, `\r\n` or `\r`) after it, with only
+ *     spaces or tabs around that break. A blank line is a paragraph or page
+ *     break, not hyphenation, so "2024-", blank line, "Renewal" stays apart;
+ *   - letters on BOTH sides when the hyphen will vanish (`hyphenVanishes`).
+ *     Joining "3-", newline, "7" into "37" would turn a page range into a
+ *     different number, so digits are only ever joined with the hyphen kept.
+ */
+function lineEndHyphenJoin(
+  text: string,
+  i: number,
+  hyphenVanishes: boolean,
+): number | null {
+  if (!LINE_END_HYPHENS.has(text[i])) return null;
+  const wordChar = hyphenVanishes ? LETTER : LETTER_OR_DIGIT;
+  let before = i - 1;
+  while (before >= 0 && COMBINING_MARK.test(text[before])) before--;
+  if (before < 0 || !wordChar.test(text[before])) return null;
+  let j = i + 1;
+  while (j < text.length && HORIZONTAL_SPACE.test(text[j])) j++;
+  if (text[j] === "\r") j += text[j + 1] === "\n" ? 2 : 1;
+  else if (text[j] === "\n") j++;
+  else return null;
+  while (j < text.length && HORIZONTAL_SPACE.test(text[j])) j++;
+  return j < text.length && wordChar.test(text[j]) ? j : null;
+}
+
+type NormalizedText = ReturnType<typeof normalizeWithMap>;
+const normalizedByHolder = new WeakMap<object, { text: string; value: NormalizedText }>();
+
+/**
+ * The search form of `text`, built once per holder object and reused while
+ * the holder still carries the same text. Holders are turn-scoped (a DocStore
+ * entry, a cached case opinion), so nothing outlives the turn or crosses
+ * users; a changed text (an edit mid-turn) rebuilds it.
+ */
+export function normalizedTextFor(holder: object, text: string): NormalizedText {
+  const cached = normalizedByHolder.get(holder);
+  if (cached && cached.text === text) return cached.value;
+  const value = normalizeWithMap(text);
+  normalizedByHolder.set(holder, { text, value });
+  return value;
 }
 
 function normalizeQuery(q: string): string {
@@ -1516,9 +1658,11 @@ export function findTextMatches(params: {
   maxResults: number;
   contextChars: number;
   startIndex?: number;
+  /** Precomputed `normalizeWithMap(text)`, e.g. from `normalizedTextFor`. */
+  normalized?: NormalizedText;
 }): { hits: TextMatch[]; totalMatches: number } {
   const { text, query, maxResults, contextChars, startIndex = 0 } = params;
-  const { norm, origIdx } = normalizeWithMap(text);
+  const { norm, origIdx } = params.normalized ?? normalizeWithMap(text);
   const needle = normalizeQuery(query);
   const hits: TextMatch[] = [];
   let totalMatches = 0;
@@ -1648,11 +1792,13 @@ export async function findInDocumentContent(params: {
     });
   }
 
+  // Probes are short and many by design; normalize the text once per turn.
   const { hits, totalMatches } = findTextMatches({
     text,
     query,
     maxResults,
     contextChars,
+    normalized: normalizedTextFor(docInfo, text),
   });
 
   write(
@@ -1683,7 +1829,7 @@ export type DocEditedResult = {
   document_id: string;
   version_id: string;
   version_number: number | null;
-  download_url: string;
+
   annotations: EditAnnotation[];
 };
 
@@ -1706,7 +1852,7 @@ export type TurnReadState = Map<
 
 export type DocCreatedResult = {
   filename: string;
-  download_url: string;
+
   document_id?: string;
   version_id?: string;
   version_number?: number | null;

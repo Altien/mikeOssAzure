@@ -97,7 +97,7 @@ describe("EditCard", () => {
             finish({
                 status: verb === "accept" ? "accepted" : "rejected",
                 version_id: "version-2",
-                download_url: null,
+
             });
 
             await waitFor(() =>

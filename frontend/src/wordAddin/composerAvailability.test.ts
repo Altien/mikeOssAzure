@@ -4,9 +4,11 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import {
-    isAllowedModelId, isModelAvailable,
+    isAllowedModelId, isModelAllowed, isModelAvailable,
+    providerKeyStates,
     unavailableModelMessage,
 } from "../../../word-addin/src/taskpane/lib/modelCatalog";
+import { isModelAvailable as isWebModelAvailable } from "../app/lib/modelAvailability";
 import { loadWithRetry } from "../../../word-addin/src/taskpane/lib/composerPreflight";
 import type { ApiKeyStatus } from "../../../word-addin/src/taskpane/types";
 
@@ -55,6 +57,50 @@ describe("isModelAvailable fail-open", () => {
                 "opencode-go": true,
             }),
         ).toBe(true);
+    });
+});
+
+describe("tenant model allowlist", () => {
+    const OPENAI = { ...NO_KEYS, openai: true };
+
+    it("hides a keyed model outside the tenant allowlist, as the web app does", () => {
+        const status = { ...OPENAI, modelAllowlist: ["gpt-6-luna"] };
+        expect(isModelAvailable("gpt-6-luna", status)).toBe(true);
+        expect(isModelAvailable("gpt-6.1-sol", status)).toBe(false);
+        expect(isModelAvailable("gpt-6.1-sol", status)).toBe(
+            isWebModelAvailable("gpt-6.1-sol", {
+                openai: { configured: true },
+                modelAllowlist: ["gpt-6-luna"],
+            }),
+        );
+    });
+
+    it("matches legacy ids by their canonical id", () => {
+        const status = { ...OPENAI, modelAllowlist: ["gpt-6-luna"] };
+        expect(isModelAvailable("gpt-5.4-mini", status)).toBe(true);
+    });
+
+    it("applies to configured and local models too", () => {
+        const status = { ...NO_KEYS, modelAllowlist: ["allowed-local"] };
+        expect(isModelAvailable("custom-cloud", status, ["custom-cloud"])).toBe(false);
+        expect(isModelAllowed("custom-cloud", status)).toBe(false);
+        expect(isModelAllowed("allowed-local", status)).toBe(true);
+    });
+
+    it("permits nothing for an empty allowlist and everything when absent or null", () => {
+        expect(isModelAvailable("gpt-6-luna", { ...OPENAI, modelAllowlist: [] })).toBe(false);
+        expect(isModelAvailable("gpt-6-luna", { ...OPENAI, modelAllowlist: null })).toBe(true);
+        expect(isModelAvailable("gpt-6-luna", OPENAI)).toBe(true);
+    });
+
+    it("fails open while the key status is unknown", () => {
+        expect(isModelAllowed("gpt-6-luna", null)).toBe(true);
+    });
+
+    it("does not treat the allowlist as a provider key", () => {
+        expect(
+            Object.keys(providerKeyStates({ ...OPENAI, modelAllowlist: ["gpt-6-luna"] })),
+        ).not.toContain("modelAllowlist");
     });
 });
 

@@ -25,11 +25,13 @@ vi.mock("@/app/lib/auth-token", () => ({
 }));
 const reportApiFailure = vi.hoisted(() => vi.fn());
 const reportNetworkFailure = vi.hoisted(() => vi.fn());
+const reportGatewayLimit = vi.hoisted(() => vi.fn());
 const markErrorHandled = vi.hoisted(() => vi.fn());
 vi.mock("@/app/lib/errorReporting", () => ({
     trackPendingRequest: () => () => {},
     markErrorHandled,
     reportApiFailure,
+    reportGatewayLimit,
     reportNetworkFailure,
 }));
 
@@ -82,6 +84,7 @@ import {
     getAuditActors,
     getPanelDocument,
     getDocument,
+    getDocumentStatuses,
     getDocumentFile,
     getDocumentFileUrl,
     getDocumentUrl,
@@ -130,6 +133,8 @@ import {
     saveOrgLogo,
     deleteOrgLogo,
     getOrgApiKeys,
+    getOrgPreferences,
+    updateOrgPreferences,
     saveOrgApiKey,
     saveOrgRouterModels,
     setOrgApiKeyEnabled,
@@ -318,6 +323,69 @@ it("does not send a profile save with a new account's token after async refresh"
 // Chat requests carry the browser's IANA time zone for the assistant.
 const BROWSER_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
+describe("document status polling across backend versions", () => {
+    it.each([404, 405])("uses individual document reads when the batch endpoint returns %s", async (status) => {
+        fetchMock.mockImplementation(async (url: string) => {
+            if (url.endsWith("/status")) return jsonResponse({}, { status });
+            if (url.endsWith("/missing")) return jsonResponse({}, { status: 404 });
+            return jsonResponse({ id: url.split("/").at(-1), status: "ready" });
+        });
+        const controller = new AbortController();
+        await expect(getDocumentStatuses(["d1", "missing", "d2"], controller.signal)).resolves.toEqual([
+            { id: "d1", status: "ready" }, { id: "d2", status: "ready" },
+        ]);
+        // Dev drift: requests carry dev's absolute API base.
+        expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+            "/api/single-documents/status", "/api/single-documents/d1", "/api/single-documents/missing", "/api/single-documents/d2",
+        ].map((path) => `http://localhost:3001${path}`));
+        expect(fetchMock.mock.calls.every(([, init]) => init.signal === controller.signal)).toBe(true);
+    });
+
+    it.each([401, 403, 500])("does not turn a batch %s into individual reads", async (status) => {
+        fetchMock.mockResolvedValue(jsonResponse({}, { status }));
+        await expect(getDocumentStatuses(["d1"])).rejects.toMatchObject({ status });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not start fallback reads after cancellation", async () => {
+        const controller = new AbortController();
+        fetchMock.mockImplementation(async () => {
+            controller.abort();
+            return jsonResponse({}, { status: 404 });
+        });
+        await expect(getDocumentStatuses(["d1"], controller.signal)).rejects.toBeDefined();
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("bounds legacy reads and propagates individual failures", async () => {
+        let active = 0;
+        let peak = 0;
+        fetchMock.mockImplementation(async (url: string) => {
+            if (url.endsWith("/status")) return jsonResponse({}, { status: 404 });
+            peak = Math.max(peak, ++active);
+            await new Promise(resolve => setTimeout(resolve, 1));
+            active--;
+            return jsonResponse({ id: url.split("/").at(-1), status: "ready" });
+        });
+        const ids = Array.from({ length: 8 }, (_, i) => `d${i}`);
+        await expect(getDocumentStatuses(ids)).resolves.toHaveLength(8);
+        expect(peak).toBe(2);
+        fetchMock.mockImplementation(async (url: string) => jsonResponse({}, { status: url.endsWith("/status") ? 404 : 500 }));
+        await expect(getDocumentStatuses(["d1"])).rejects.toMatchObject({ status: 500 });
+    });
+
+    it("stops queued legacy reads when the view unmounts", async () => {
+        const controller = new AbortController();
+        fetchMock.mockImplementation(async (url: string) => {
+            if (url.endsWith("/status")) return jsonResponse({}, { status: 404 });
+            controller.abort();
+            return jsonResponse({ id: "d1", status: "ready" });
+        });
+        await expect(getDocumentStatuses(["d1", "d2", "d3"], controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+});
+
 describe("MikeApiError / isMfaRequiredError", () => {
     it("carries status and code, defaulting code to null", () => {
         const withCode = new MikeApiError({
@@ -395,16 +463,16 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
         await listProjects({ includeDocuments: true });
 
         expect(lastFetchCall().url).toBe(
-            "http://localhost:3001/api/projects?include=documents",
+            "http://localhost:3001/api/projects?include=documents&limit=100&offset=0",
         );
     });
 
-    it("requests actual project participation for the IDE without enabling pagination", async () => {
+    it("paginates document-rich participation requests while preserving metadata-only listing", async () => {
         fetchMock.mockImplementation(async () => jsonResponse([]));
         await listProjects({ participatingOnly: true });
         expect(lastFetchCall().url).toBe("http://localhost:3001/api/projects?participating=true");
         await listProjects({ includeDocuments: true, participatingOnly: true });
-        expect(lastFetchCall().url).toBe("http://localhost:3001/api/projects?include=documents&participating=true");
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/projects?include=documents&participating=true&limit=100&offset=0");
     });
 
     it("fetches every project-choice page within the requested workspace", async () => {
@@ -418,6 +486,14 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
             "http://localhost:3001/api/projects?workspace=org-1&limit=100&offset=0",
             "http://localhost:3001/api/projects?workspace=org-1&limit=100&offset=100",
         ]);
+    });
+
+    it("loads all pages when documents are requested, including participating projects", async () => {
+        const first = Array.from({length:100}, (_, i) => ({id:`p${i}`, documents:[]}));
+        fetchMock.mockResolvedValueOnce(jsonResponse(first)).mockResolvedValueOnce(jsonResponse([{id:"last",documents:[]}])) ;
+        const projects = await listProjects({includeDocuments:true,participatingOnly:true});
+        expect(projects).toHaveLength(101);
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/projects?include=documents&participating=true&limit=100&offset=100");
     });
 
     // Regression guard: legacy tabular-review project pickers call
@@ -519,6 +595,42 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
         });
     });
 
+    it("reports a 413 that is not the backend's own as a limit in front of the API", async () => {
+        // A host or proxy size cap answers before the backend: no JSON, no code.
+        reportGatewayLimit.mockClear();
+        fetchMock.mockResolvedValue(
+            new Response("Request Entity Too Large", {
+                status: 413,
+                headers: { "x-request-id": "req-413" },
+            }),
+        );
+        await expect(getUserProfile()).rejects.toMatchObject({ status: 413 });
+        expect(reportGatewayLimit).toHaveBeenCalledExactlyOnceWith("payload-too-large", {
+            path: "/user/profile",
+            method: "GET",
+            status: 413,
+            requestId: "req-413",
+        });
+
+        // The same cap answering with JSON but none of our codes.
+        reportGatewayLimit.mockClear();
+        fetchMock.mockResolvedValue(jsonResponse({ error: "too large" }, { status: 413 }));
+        await expect(getUserProfile()).rejects.toMatchObject({ status: 413 });
+        expect(reportGatewayLimit).toHaveBeenCalledTimes(1);
+
+        // The backend's own limit is an intended answer and is not reported.
+        reportGatewayLimit.mockClear();
+        fetchMock.mockResolvedValue(
+            jsonResponse(
+                { code: "request_too_large", detail: "The request is too large." },
+                { status: 413 },
+            ),
+        );
+        await expect(getUserProfile()).rejects.toMatchObject({ status: 413, code: "request_too_large" });
+        expect(reportGatewayLimit).not.toHaveBeenCalled();
+        expect(reportApiFailure).not.toHaveBeenCalledWith(expect.objectContaining({ status: 413 }));
+    });
+
     it("discards raw JSON details from 5xx responses and keeps the request ID", async () => {
         fetchMock.mockResolvedValue(
             jsonResponse(
@@ -560,7 +672,6 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
         ["schema_out_of_date", SCHEMA_OUT_OF_DATE_MESSAGE, "The server's database needs an update before this can load. Please contact your administrator."],
         ["upstream_unavailable", UPSTREAM_UNAVAILABLE_MESSAGE, "The server is temporarily unreachable. Please try again shortly."],
     ])("shows the %s message and leaves the report to the server side", async (code, message, sentence) => {
-        markErrorHandled.mockClear();
         fetchMock.mockResolvedValue(
             jsonResponse(
                 {
@@ -575,8 +686,12 @@ describe("apiRequest plumbing (via thin wrappers)", () => {
         const error = await getUserProfile().catch((caught: unknown) => caught);
         expect(error).toMatchObject({ status: 503, code, requestId: "req-503-1", message });
         expect(userFacingApiError(error, "Fallback")).toBe(sentence);
-        expect(reportApiFailure).not.toHaveBeenCalled();
-        expect(markErrorHandled).toHaveBeenCalledExactlyOnceWith(error);
+        // reportApiFailure owns the "already reported upstream" rule (one
+        // rule for web and add-in; errorReporting.test.ts): it only marks
+        // these codes.
+        expect(reportApiFailure).toHaveBeenCalledExactlyOnceWith(
+            expect.objectContaining({ status: 503, code, error }),
+        );
     });
 
     it("reports a 5xx without a code and never reports a 4xx", async () => {
@@ -1071,13 +1186,13 @@ describe("mapTRMessages", () => {
 // ---------------------------------------------------------------------------
 
 describe("API transport cancellation", () => {
-    it("preserves AbortError without reporting a network failure", async () => {
+    it("reports an unexpected AbortError when no caller cancelled", async () => {
         const error = new DOMException("The operation was aborted", "AbortError");
         fetchMock.mockRejectedValueOnce(error);
 
         await expect(streamChat({ messages: [] })).rejects.toBe(error);
 
-        expect(reportNetworkFailure).not.toHaveBeenCalled();
+        expect(reportNetworkFailure).toHaveBeenCalledWith(error, expect.objectContaining({ operation: "chat.turn" }));
     });
 
     it.each([new Error("User stopped the response"), "navigation", null])(
@@ -2106,6 +2221,7 @@ describe("tabular review CRUD", () => {
             format: "date",
             documentName: "lease.pdf",
             tags: ["real-estate"],
+            workspace: "org-1",
         });
 
         expect(result.source).toBe("preset");
@@ -2116,6 +2232,7 @@ describe("tabular review CRUD", () => {
             format: "date",
             documentName: "lease.pdf",
             tags: ["real-estate"],
+            workspace: "org-1",
         });
     });
 });
@@ -2984,6 +3101,13 @@ describe("thin endpoint wrappers", () => {
             url: "/single-documents/d1",
         },
         {
+            name: "getDocumentStatuses",
+            call: () => getDocumentStatuses(["d1", "d2"]),
+            url: "/single-documents/status",
+            method: "POST",
+            body: { document_ids: ["d1", "d2"] },
+        },
+        {
             name: "deleteDocument",
             call: () => deleteDocument("d1"),
             url: "/single-documents/d1",
@@ -3414,6 +3538,15 @@ describe("thin endpoint wrappers", () => {
             name: "getOrgApiKeys", call: () => getOrgApiKeys("org-1"), url: "/orgs/org-1/api-keys",
         },
         {
+            name: "getOrgPreferences", call: () => getOrgPreferences("org-1"), url: "/orgs/org-1/preferences",
+        },
+        {
+            name: "updateOrgPreferences",
+            call: () => updateOrgPreferences("org-1", { tabular_model: "gpt-6-luna", web_search: { enabled: true } }),
+            url: "/orgs/org-1/preferences", method: "PATCH",
+            body: { tabular_model: "gpt-6-luna", web_search: { enabled: true } },
+        },
+        {
             name: "saveOrgApiKey (clear)", call: () => saveOrgApiKey("org-1", "openai", null),
             url: "/orgs/org-1/api-keys/openai", method: "PUT", body: { api_key: null },
         },
@@ -3719,63 +3852,31 @@ describe("dev divergences", () => {
             clickSpy.mockRestore();
         });
 
-        it("absolute (pre-signed) URL: clicks it directly without an authenticated fetch", async () => {
-            fetchMock.mockResolvedValueOnce(
-                jsonResponse({
-                    url: "https://r2.example.test/signed",
-                    filename: "a.pdf",
-                    version_id: null,
-                }),
-            );
-
-            await downloadResolvedDocument("d1", null, "fallback.pdf");
-
-            expect(fetchMock).toHaveBeenCalledTimes(1);
-            expect(clickSpy).toHaveBeenCalledOnce();
-        });
-
-        it("relative (Azure proxy) URL: fetches the bytes through /api with the bearer token", async () => {
-            fetchMock
-                .mockResolvedValueOnce(
-                    jsonResponse({
-                        url: "/single-documents/d1/content",
-                        filename: "",
-                        version_id: "v1",
-                    }),
-                )
-                .mockResolvedValueOnce(
-                    new Response(new Blob(["pdf"]), { status: 200 }),
-                );
-
+        it("downloads by document ID and version with authentication even days later", async () => {
+            fetchMock.mockResolvedValueOnce(new Response(new Blob(["pdf"]), {
+                status: 200,
+                headers: { "content-disposition": 'inline; filename="saved.pdf"' },
+            }));
             await downloadResolvedDocument("d1", "v1", "fallback.pdf");
-
-            expect(fetchMock.mock.calls[0][0]).toBe(
-                "http://localhost:3001/api/single-documents/d1/url?version_id=v1",
-            );
+            expect(fetchMock).toHaveBeenCalledTimes(1);
             const { url, init } = lastFetchCall();
-            expect(url).toBe(
-                "http://localhost:3001/api/single-documents/d1/content",
-            );
-            expect(init.headers).toMatchObject({
-                Authorization: "Bearer token-123",
-            });
+            expect(url).toBe("http://localhost:3001/api/single-documents/d1/file?version_id=v1");
+            expect(init.credentials).toBe("include");
+            expect(init.cache).toBe("no-store");
             expect(clickSpy).toHaveBeenCalledOnce();
         });
 
-        it("relative URL: throws on a non-2xx download", async () => {
-            fetchMock
-                .mockResolvedValueOnce(
-                    jsonResponse({
-                        url: "/single-documents/d1/content",
-                        filename: "a.pdf",
-                        version_id: null,
-                    }),
-                )
-                .mockResolvedValueOnce(new Response("", { status: 404 }));
+        it("uses the current version when none was stored", async () => {
+            fetchMock.mockResolvedValueOnce(new Response(new Blob(["pdf"]), { status: 200 }));
+            await downloadResolvedDocument("d 1", null, "fallback.pdf");
+            expect(lastFetchCall().url).toBe("http://localhost:3001/api/single-documents/d%201/file");
+            expect(clickSpy).toHaveBeenCalledOnce();
+        });
 
-            await expect(
-                downloadResolvedDocument("d1", null, "a.pdf"),
-            ).rejects.toThrow("Download failed: 404");
+        it("throws on a non-2xx file download", async () => {
+            fetchMock.mockResolvedValueOnce(new Response("", { status: 404 }));
+            await expect(downloadResolvedDocument("d1", null, "a.pdf")).rejects.toThrow();
+            expect(clickSpy).not.toHaveBeenCalled();
         });
     });
 
@@ -3948,5 +4049,27 @@ describe("organization private content", () => {
         expect(lastFetchCall()).toMatchObject({ url: "http://localhost:3001/api/orgs/org-1/private-content/document/doc-1/open", init: { method: "POST" } });
         await closeOrgPrivateContent("org-1", "document", "doc-1");
         expect(lastFetchCall()).toMatchObject({ url: "http://localhost:3001/api/orgs/org-1/private-content/document/doc-1", init: { method: "DELETE" } });
+    });
+});
+
+it("cache regression: merges a revision delta against the confirmed grid and accepts full fallback", async () => {
+    const first = { review: { id: "r" }, cells: [{ id: "keep" }, { id: "remove" }], cell_revision: "one" };
+    fetchMock.mockResolvedValueOnce(jsonResponse(first));
+    const previous = await getTabularReview("r");
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ...first, cells: [{ id: "add" }], removed_cell_ids: ["remove"], cell_revision: "two" }));
+    const next = await getTabularReview("r", previous);
+    expect(fetchMock.mock.calls.at(-1)?.[0]).toContain("cell_revision=one");
+    expect(next.cells).toEqual([{ id: "keep" }, { id: "add" }]);
+    expect(previous.cells).toEqual(first.cells);
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ...first, cells: [] }));
+    expect((await getTabularReview("r", next)).cells).toEqual([]);
+});
+
+describe("organization preferences", () => {
+    it("passes the caller's abort signal to the read", async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ tabular_model: null }));
+        const controller = new AbortController();
+        await getOrgPreferences("org-1", controller.signal);
+        expect(lastFetchCall().init.signal).toBe(controller.signal);
     });
 });

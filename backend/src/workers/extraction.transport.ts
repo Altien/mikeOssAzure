@@ -1,11 +1,15 @@
 // extraction transport — implementation behind the module facade.
 import { Worker, UnrecoverableError, type Job } from "bullmq";
+import { ExtractionParseError } from "../lib/extraction/failure";
 import { ExtractionLimitError } from "../lib/extraction/limits";
 import { runIsolated } from "../lib/dbq/jobScope";
-import { getRedisConnection } from "../lib/queue/connection";
-import { reportError } from "../lib/observability/sentry";
+import { getRedisConnection, watchQueueErrors } from "../lib/queue/connection";
+import { isDeterministicProviderRefusal, providerFailureLevel } from "../lib/llm/providerErrors";
+import { markErrorHandled, reportError } from "../lib/observability/sentry";
 import { EXTRACTION_QUEUE, type ExtractionJobData } from "../lib/queue/extractionQueue";
-import { extractionJobOperation, runExtractionJob, markExtractionFailed } from "../modules/tabular/tabular.service";
+import { runWithJobTenant } from "../lib/tenantContext";
+import { extractionJobOperation, isRefusalShownToUser, runExtractionJob, markExtractionFailed } from "../modules/tabular/tabular.service";
+import { log } from "../lib/log";
 
 /** Terminal resource refusals and exhausted retries both need cell cleanup. */
 export function isPermanentFailure(job: Job<ExtractionJobData>, error?: Error): boolean {
@@ -21,12 +25,18 @@ export function createExtractionWorker(): Worker<ExtractionJobData> {
         EXTRACTION_QUEUE,
         async (job: Job<ExtractionJobData>) => {
             // Own isolation scope per job (concurrency is 3); the job body
-            // names its operation (tabular.cell or tabular.row).
+            // names its operation (tabular.cell or tabular.row). The job runs
+            // as its tenant and acting user (multi-tenant issue 003).
             await runIsolated(async () => {
                 try {
-                    await runExtractionJob(job.data);
+                    await runWithJobTenant(job.data.tenantId, () => runExtractionJob(job.data), job.data.userId);
                 } catch (error) {
-                    if (error instanceof ExtractionLimitError) throw new UnrecoverableError("document_too_large");
+                    if (error instanceof ExtractionLimitError || error instanceof ExtractionParseError) {
+                        throw Object.assign(new UnrecoverableError(error instanceof ExtractionParseError ? "document_text_unreadable" : "document_too_large"), { cause: error });
+                    }
+                    if (isDeterministicProviderRefusal(error)) {
+                        throw Object.assign(new UnrecoverableError("provider_refused"), { cause: error });
+                    }
                     throw error;
                 }
             });
@@ -41,18 +51,23 @@ export function createExtractionWorker(): Worker<ExtractionJobData> {
             maxStalledCount: 2,
         },
     );
+    watchQueueErrors(worker, "worker");
     worker.on("stalled", (jobId) => {
-        console.warn(
-            "[extraction-worker] job stalled; will be re-queued",
+        log.warn("extraction-worker", "job stalled; will be re-queued",
             { jobId },
         );
     });
     worker.on("failed", async (job, err) => {
         const permanent = !!job && isPermanentFailure(job, err);
         // The 'failed' event fires outside the processor's isolation scope,
-        // so the operation is named here rather than inherited.
-        reportError(err, {
-            level: permanent ? "error" : "warning",
+        // so the operation is named here rather than inherited. The grid was
+        // already told the user's key was rejected: only the log below stays.
+        if (isRefusalShownToUser(err)) markErrorHandled(err);
+        else reportError(err, {
+            // A refusal ends on its first attempt, at the chat engine's level.
+            level: err.cause instanceof ExtractionParseError ? "warning"
+                : isDeterministicProviderRefusal(err) ? providerFailureLevel(err)
+                : permanent ? "error" : "warning",
             tags: {
                 component: "extraction-worker",
                 operation: extractionJobOperation(job?.data ?? {}),
@@ -86,7 +101,7 @@ export function createExtractionWorker(): Worker<ExtractionJobData> {
             },
         );
         try {
-            await markExtractionFailed(job.data);
+            await runWithJobTenant(job.data.tenantId, () => markExtractionFailed(job.data), job.data.userId);
         } catch (updateErr) {
             // Cells stay "generating" forever if this write is lost: reported
             // with the terminal stage, logged as the same object.

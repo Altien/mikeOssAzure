@@ -29,7 +29,7 @@ describe("AssistantMessage document events", () => {
                 document_id: "document-created",
                 version_id: "version-created",
                 version_number: 3,
-                download_url: "",
+
             },
             {
                 type: "doc_replicated",
@@ -54,7 +54,7 @@ describe("AssistantMessage document events", () => {
                 document_id: "document-edited",
                 version_id: "version-edited",
                 version_number: 4,
-                download_url: "",
+
                 annotations: [],
             },
         ];
@@ -152,7 +152,7 @@ describe("AssistantMessage document events", () => {
                 document_id: "document-1",
                 version_id: "version-2",
                 version_number: 2,
-                download_url: "",
+
                 annotations: [
                     {
                         edit_id: "edit-1",
@@ -223,7 +223,6 @@ describe("AssistantMessage document events", () => {
                                 document_id: "document-1",
                                 version_id: "version-2",
                                 version_number: 2,
-                                download_url: "/documents/document-1/download",
                                 annotations: [
                                     {
                                         edit_id: "edit-1",
@@ -241,7 +240,7 @@ describe("AssistantMessage document events", () => {
                                 type: "doc_created",
                                 filename: "summary.docx",
                                 document_id: "document-2",
-                                download_url: "/documents/document-2/download",
+                                version_id: "version-1",
                             },
                         ],
                     },

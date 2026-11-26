@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../../supabase", () => ({ createServerSupabase: () => ({}) }));
+vi.mock("../../supabase", () => ({ createPlatformSupabase: () => ({}) }));
 
 import {
   enforceDocumentLifecycleMigration,

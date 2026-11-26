@@ -17,8 +17,18 @@ import type { CheckResult, InstallContext } from "../types";
 // Either way, this check fails-soft with a clear remediation hint
 // until one of those is in place — the operator sees what to do.
 
-const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
-const GRAPH_SCOPE = "https://graph.microsoft.com/.default";
+export const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
+export const GRAPH_SCOPE = "https://graph.microsoft.com/.default";
+
+/** A Graph token for the backend's managed identity. */
+export async function mintGraphToken(): Promise<string> {
+    const cred = new DefaultAzureCredential({
+        managedIdentityClientId: process.env.AZURE_CLIENT_ID,
+    });
+    const t = await cred.getToken(GRAPH_SCOPE);
+    if (!t?.token) throw new Error("empty token");
+    return t.token;
+}
 
 function expectedUris(fqdn: string): { web: string[]; spa: string[] } {
     return {
@@ -54,12 +64,7 @@ export async function checkRedirectUris(
 
     let token: string;
     try {
-        const cred = new DefaultAzureCredential({
-            managedIdentityClientId: process.env.AZURE_CLIENT_ID,
-        });
-        const t = await cred.getToken(GRAPH_SCOPE);
-        if (!t?.token) throw new Error("empty token");
-        token = t.token;
+        token = await mintGraphToken();
     } catch (err) {
         return {
             status: "info",

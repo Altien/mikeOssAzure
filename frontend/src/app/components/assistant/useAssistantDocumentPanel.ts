@@ -235,7 +235,6 @@ export function useAssistantDocumentPanel() {
             documentId: string;
             status: "accepted" | "rejected";
             versionId: string | null;
-            downloadUrl: string | null;
         }) => {
             setResolvedEditStatuses((prev) => ({
                 ...prev,

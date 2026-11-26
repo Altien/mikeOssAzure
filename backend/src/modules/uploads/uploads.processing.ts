@@ -10,12 +10,13 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { pathToFileURL } from "node:url";
+
 
 import { AppError } from "../../lib/appError";
 import { recordAudit } from "../../lib/audit";
@@ -30,8 +31,21 @@ import {
   createPollFailureGate,
   type PollFailureGate,
 } from "../../lib/observability/pollFailureGate";
-import { asReportableError } from "../../lib/httpError";
-import { shouldConvertToPdf } from "../../lib/documentTypes";
+import { asReportableError, withResponseStatus } from "../../lib/httpError";
+import {
+  contentTypeForDocumentType,
+  contentTypeForTextDocumentType,
+  EMAIL_UPLOAD_CONTENT_TYPE,
+  isTextDocumentType,
+  shouldConvertToPdf,
+} from "../../lib/documentTypes";
+import {
+  emailDocumentFilename,
+  emailToMarkdown,
+  newEmailImportBudget,
+  type EmailAttachmentDocument,
+  type EmailImportBudget,
+} from "../../lib/email";
 import { countPagesWithoutText } from "../../lib/pdfText";
 import { uploadJobWallClockMs } from "../../lib/runtimeConfig";
 import {
@@ -42,8 +56,17 @@ import {
   versionStorageKey,
   workflowReferenceKey,
 } from "../../lib/storage";
-import { createServerSupabase, type Db } from "../../lib/supabase";
-import { UPLOAD_VERIFICATION_LEASE_SECONDS } from "./uploads.manifest";
+import { createPlatformSupabase, createServerSupabase, type Db } from "../../lib/supabase";
+import { runWithJobTenant } from "../../lib/tenantContext";
+import { withLogContext } from "../../lib/logging/contextLight";
+import { log } from "../../lib/logging/root";
+import { createDocumentVersion, updateDocumentVersion } from "../documents/documents.service";
+import { ExtractionBusyError, ExtractionLimitError, withBackgroundExtraction } from "../../lib/extraction/isolated";
+import { isAllocationFailure } from "../../lib/extraction/limits";
+import {
+  MAX_UPLOAD_SIZE_BYTES,
+  UPLOAD_VERIFICATION_LEASE_SECONDS,
+} from "./uploads.manifest";
 
 type UploadSessionRow = {
   id: string;
@@ -96,6 +119,11 @@ type SealedFileArtifact = {
 };
 
 export const UPLOAD_JOB_LEASE_SECONDS = 30 * 60;
+// Same bounds as the background text jobs (documents.textJobs.ts): wait up
+// to a minute for the parser, then try again later without spending one of
+// the job's attempts.
+const PARSER_SLOT_WAIT_MS = 60_000;
+const PARSER_BUSY_RETRY_MS = 30_000;
 const UPLOAD_WORKER_POLL_MS = 1_000;
 /** Ceiling for the idle poll interval while every iteration keeps failing. */
 const UPLOAD_WORKER_MAX_BACKOFF_MS = 30_000;
@@ -115,6 +143,82 @@ class ChangedDocumentError extends AppError {
   constructor() {
     super("upload.document_changed", "document_changed");
   }
+}
+
+class InvalidPdfFileError extends Error {
+  constructor() {
+    super("invalid_pdf_file");
+    this.name = "InvalidPdfFileError";
+  }
+}
+
+class DocxValidationError extends AppError {
+  constructor(
+    readonly code: "invalid_docx_package" | "document_too_large" | "processing_failed",
+    cause?: unknown,
+  ) {
+    super("upload.docx_validation_failed", code, { cause });
+  }
+}
+
+async function validateDocxFile(artifact: SealedFileArtifact): Promise<void> {
+  // Bound the compressed source before reading it. Reuse the parser's
+  // existing admission and OS budgets.
+  if (artifact.size > MAX_UPLOAD_SIZE_BYTES) throw new DocxValidationError("invalid_docx_package");
+  try {
+    // Wait for the parser as the background text jobs do; a validation queued
+    // behind another file's parse is not a failure. The background gate lets
+    // one upload at a time into the parser's own queue, so a batch of
+    // UPLOAD_PROCESSING_CONCURRENCY workers cannot fill it and turn away
+    // interactive parses. Only that one upload holds its (size-bounded)
+    // bytes while it waits; the rest wait outside the gate holding nothing.
+    await withBackgroundExtraction({ waitMs: PARSER_SLOT_WAIT_MS }, async (extract) => {
+      const bytes = await readFile(artifact.filePath);
+      const result = await extract("validateDocxPackage", bytes.buffer.slice(
+        bytes.byteOffset, bytes.byteOffset + bytes.byteLength,
+      ) as ArrayBuffer);
+      if (!result.valid) throw new DocxValidationError("invalid_docx_package");
+    });
+  } catch (error) {
+    // Still busy after the wait: processUploadJob requeues without charging
+    // an attempt, so it must arrive unwrapped.
+    if (error instanceof DocxValidationError || error instanceof ExtractionBusyError) throw error;
+    // Unexpected child/I/O failures remain retryable, not malformed.
+    throw new DocxValidationError(
+      error instanceof ExtractionLimitError || isAllocationFailure(error)
+        ? "document_too_large" : "processing_failed",
+      error,
+    );
+  }
+}
+
+const PDF_HEADER_SIGNATURE = Buffer.from("%PDF-");
+// ISO 32000 lets a reader accept the header anywhere in the first 1024 bytes
+// (Annex H, implementation note 13), and pdf.js — which renders and page-counts
+// these files downstream — scans exactly that window.
+const PDF_HEADER_SEARCH_WINDOW_BYTES = 1024;
+
+async function hasPdfSignature(filePath: string): Promise<boolean> {
+  const handle = await open(filePath, "r");
+  try {
+    const window = Buffer.alloc(PDF_HEADER_SEARCH_WINDOW_BYTES);
+    const { bytesRead } = await handle.read(window, 0, window.length, 0);
+    return window.subarray(0, bytesRead).indexOf(PDF_HEADER_SIGNATURE) !== -1;
+  } finally {
+    await handle.close();
+  }
+}
+
+// Refuse bytes that cannot be a PDF (a renamed .txt, a ZIP, a truncated or
+// empty file) before anything is written for them. The signature search is
+// the cheap path; when it misses, the decision is handed to the same parser
+// that renders the file downstream, because pdf.js keeps going without a
+// header and rebuilds the cross-reference table by scanning, so a file it
+// can open must never be refused here as "not a PDF".
+async function validatePdfFile(filePath: string): Promise<void> {
+  if (await hasPdfSignature(filePath)) return;
+  if ((await countPdfPages(filePath)) !== null) return;
+  throw new InvalidPdfFileError();
 }
 
 /**
@@ -204,10 +308,10 @@ async function countTextlessPdfPages(filePath: string): Promise<number | null> {
 // Dev's worker only prepares claim-specific objects and a payload; the claim-
 // fenced finish_upload_processing_job RPC publishes them (0098, 0104).
 async function pdfPageMetrics(
-  file: UploadFileRow,
+  fileType: string,
   filePath: string,
 ): Promise<{ page_count: number | null; textless_page_count: number | null }> {
-  if (file.file_type !== "pdf") return { page_count: null, textless_page_count: null };
+  if (fileType !== "pdf") return { page_count: null, textless_page_count: null };
   return {
     page_count: await countPdfPages(filePath),
     textless_page_count: await countTextlessPdfPages(filePath),
@@ -343,34 +447,209 @@ async function requireSealedFile(
   }
 }
 
+
 // Prepare immutable, claim-specific storage objects before publishing any
 // document/reference row. A reclaimed worker may finish its copy or PDF work,
 // but only the current claim can publish these paths in one database RPC.
+/** Bytes stored as a document's source, with their storage content type. */
+function storedContentType(fileType: string): string {
+  return isTextDocumentType(fileType)
+    ? contentTypeForTextDocumentType(fileType)
+    : contentTypeForDocumentType(fileType);
+}
+
+type PreparedUpload = {
+  payload: Record<string, unknown>;
+  /** Work that needs the published document row; runs once publishing succeeded. */
+  afterPublish?: (result: unknown) => Promise<void>;
+};
+
+type EmailUpload = {
+  /** The Markdown the email became, on local disk. */
+  filePath: string;
+  size: number;
+  sha256: string;
+  attachments: EmailAttachmentDocument[];
+  budget: EmailImportBudget;
+};
+
+async function convertUploadedEmail(file: UploadFileRow, artifact: SealedFileArtifact): Promise<EmailUpload> {
+  markStage("conversion");
+  // The manifest named the document "<email>.md"; attachments are named after the email.
+  const emailFilename = file.filename.replace(/\.md$/i, "");
+  const budget = newEmailImportBudget();
+  const email = await emailToMarkdown(await readFile(artifact.filePath),
+    { emailFilename, budget });
+  const bytes = Buffer.from(email.markdown, "utf8");
+  const filePath = join(artifact.directory, "email.md");
+  await writeFile(filePath, bytes);
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  return { filePath, size: bytes.byteLength, sha256, attachments: email.attachments, budget };
+}
+
+/** Where a published document sits, copied onto the documents made from its email. */
+type DocumentPlacement = Record<
+  "user_id" | "project_id" | "folder_id" | "library_kind" | "library_folder_id" | "workflow_id" | "org_id",
+  unknown
+>;
+
+type EmailImport = {
+  db: Db;
+  session: UploadSessionRow;
+  placement: DocumentPlacement;
+  budget: EmailImportBudget;
+};
+
+/**
+ * Import email attachments as documents of their own beside the email. A
+ * nested email becomes Markdown and its own attachments follow, one level
+ * deeper, within the same budget. One unreadable attachment does not stop
+ * the others.
+ */
+async function importEmailAttachments(
+  context: EmailImport,
+  attachments: EmailAttachmentDocument[],
+  depth: number,
+): Promise<void> {
+  for (const attachment of attachments) {
+    try {
+      if (attachment.fileType !== "eml") {
+        await storeEmailAttachment(context, attachment);
+        continue;
+      }
+      const email = await emailToMarkdown(attachment.content,
+        { emailFilename: attachment.filename, budget: context.budget, depth });
+      await storeEmailAttachment(context, {
+        filename: emailDocumentFilename(attachment.filename),
+        fileType: "md",
+        content: Buffer.from(email.markdown, "utf8"),
+      });
+      await importEmailAttachments(context, email.attachments, depth + 1);
+    } catch (error) {
+      reportError(error, {
+        level: "warning",
+        tags: { component: "upload-worker", stage: "email-attachment", file_type: attachment.fileType },
+        fingerprint: ["upload-email-attachment-failed", attachment.fileType],
+      });
+      console.error("[upload-worker] email attachment import failed", {
+        sessionId: context.session.id, fileType: attachment.fileType, error,
+      });
+    }
+  }
+}
+
+/** One attachment stored with the conversion and page metrics an upload of it would get. */
+async function storeEmailAttachment(
+  { db, session, placement }: EmailImport,
+  attachment: EmailAttachmentDocument,
+): Promise<void> {
+  const userId = placement.user_id as string;
+  const documentId = randomUUID();
+  const versionId = randomUUID();
+  const slug = versionId.replace(/-/g, "");
+  const directory = await mkdtemp(join(uploadProcessingTempRoot(), "mike-upload-"));
+  try {
+    const filePath = join(directory, `source.${attachment.fileType}`);
+    await writeFile(filePath, attachment.content);
+    const sourcePath = versionStorageKey(userId, documentId, slug, attachment.filename);
+    await uploadFileFromPath(sourcePath, filePath, storedContentType(attachment.fileType));
+    const pdfPath = await buildPdfRendition({ sourceFilePath: filePath, workingDirectory: directory,
+      fileType: attachment.fileType, userId, documentId, versionSlug: slug, sourceStoragePath: sourcePath });
+    const metrics = await pdfPageMetrics(attachment.fileType, filePath);
+    const sha256 = createHash("sha256").update(attachment.content).digest("hex");
+    const { error: documentError } = await db.from("documents")
+      .insert({ ...placement, id: documentId, status: "ready" });
+    if (documentError) throw documentError;
+    const { error: versionError } = await createDocumentVersion(db, {
+      id: versionId, document_id: documentId, storage_path: sourcePath, pdf_storage_path: pdfPath,
+      source: "upload", filename: attachment.filename, file_type: attachment.fileType,
+      size_bytes: attachment.content.byteLength, ...metrics, content_sha256: sha256,
+    });
+    if (versionError) {
+      await db.from("documents").delete().eq("id", documentId);
+      throw versionError;
+    }
+    await recordAudit(db, {
+      userId: session.user_id, userEmail: session.user_email,
+      action: "document.uploaded", title: attachment.filename,
+      surface: session.destination.scope === "project" ? "project" : "assistant",
+      projectId: (placement.project_id as string | null) ?? null,
+      documentId,
+    });
+  } finally {
+    await removeTemporaryArtifact(directory);
+  }
+}
+
+/**
+ * Finish an uploaded email once its Markdown document is published: give the
+ * version its real type and size (the manifest could only record a stand-in),
+ * then import each attachment as a document in the same place.
+ */
+async function publishEmailParts(
+  db: Db,
+  session: UploadSessionRow,
+  file: UploadFileRow,
+  email: EmailUpload,
+  result: unknown,
+): Promise<void> {
+  const documentId = file.resource_id;
+  const { error: versionError } = await updateDocumentVersion(db, documentId, file.id,
+    { file_type: "md", size_bytes: email.size });
+  if (versionError) throw versionError;
+  const published = (result ?? {}) as Record<string, unknown>;
+  const { error: resultError } = await db.from("upload_session_files")
+    .update({ result: { ...published, file_type: "md", size_bytes: email.size } })
+    .eq("id", file.id);
+  if (resultError) throw resultError;
+
+  const { data: placement, error: placementError } = await db.from("documents")
+    .select("user_id, project_id, folder_id, library_kind, library_folder_id, workflow_id, org_id")
+    .eq("id", documentId).single();
+  if (placementError || !placement) throw placementError ?? new Error("document_not_found");
+  const context = { db, session, placement: placement as DocumentPlacement, budget: email.budget };
+  await importEmailAttachments(context, email.attachments, 1);
+}
+
 async function prepareUploadFile(
   db: Db,
   session: UploadSessionRow,
   file: UploadFileRow,
   claimToken: string,
-): Promise<Record<string, unknown>> {
+): Promise<PreparedUpload> {
   const artifact = await requireSealedFile(file);
   const slug = claimToken.replace(/-/g, "");
   try {
+    if (file.file_type === "pdf") await validatePdfFile(artifact.filePath);
+    if (file.file_type === "docx") await validateDocxFile(artifact);
+    // An email is stored as the Markdown it converts to. size_bytes stays that
+    // of the sealed upload, which the publish RPC checks against the manifest;
+    // publishEmailParts corrects it once the row exists.
+    const email = file.content_type === EMAIL_UPLOAD_CONTENT_TYPE
+      ? await convertUploadedEmail(file, artifact) : null;
+    if (email && session.purpose !== "document_create") throw new Error("email_upload_purpose");
     if (session.purpose === "document_create") {
       const scope = session.destination.scope as "standalone" | "project" | "library";
       const documentId = file.resource_id;
+      const sourceFilePath = email?.filePath ?? artifact.filePath;
+      const fileType = email ? "md" : file.file_type;
       const sourcePath = versionStorageKey(session.user_id, documentId, slug, file.filename);
-      await copyFile(file.sealed_storage_path, sourcePath);
-      const pdfPath = await buildPdfRendition({ sourceFilePath: artifact.filePath,
-        workingDirectory: artifact.directory, fileType: file.file_type,
+      if (email) await uploadFileFromPath(sourcePath, email.filePath, storedContentType("md"));
+      else await copyFile(file.sealed_storage_path, sourcePath);
+      const pdfPath = await buildPdfRendition({ sourceFilePath,
+        workingDirectory: artifact.directory, fileType,
         userId: session.user_id, documentId, versionSlug: slug, sourceStoragePath: sourcePath });
-      return { kind: session.purpose, source_path: sourcePath, pdf_path: pdfPath,
-        size_bytes: artifact.size, sha256: artifact.sha256,
-        ...(await pdfPageMetrics(file, artifact.filePath)),
+      const payload = { kind: session.purpose, source_path: sourcePath, pdf_path: pdfPath,
+        size_bytes: artifact.size, sha256: email?.sha256 ?? artifact.sha256,
+        ...(await pdfPageMetrics(fileType, sourceFilePath)),
         project_id: scope === "project" ? session.destination.project_id : null,
         folder_id: scope === "project" ? (file.target_folder_id ?? session.destination.folder_id ?? null) : null,
         library_kind: scope === "library" ? session.destination.library_kind : "file",
         library_folder_id: scope === "library" ? (file.target_folder_id ?? session.destination.folder_id ?? null) : null,
       };
+      const afterPublish = email
+        ? (result: unknown) => publishEmailParts(db, session, file, email, result) : undefined;
+      return { payload, afterPublish };
     }
     if (session.purpose === "document_version_create" || session.purpose === "document_version_replace") {
       const documentId = session.destination.document_id as string;
@@ -386,11 +665,11 @@ async function prepareUploadFile(
       const pdfPath = skipPdf ? null : await buildPdfRendition({ sourceFilePath: artifact.filePath,
         workingDirectory: artifact.directory, fileType: file.file_type,
         userId: session.user_id, documentId, versionSlug: slug, sourceStoragePath: sourcePath });
-      return { kind: session.purpose, ...baseline, source_path: sourcePath, pdf_path: pdfPath,
+      return { payload: { kind: session.purpose, ...baseline, source_path: sourcePath, pdf_path: pdfPath,
         size_bytes: artifact.size, sha256: artifact.sha256,
-        ...(await pdfPageMetrics(file, artifact.filePath)),
+        ...(await pdfPageMetrics(file.file_type, artifact.filePath)),
         filename: session.purpose === "document_version_create"
-          ? ((session.destination.filename as string | undefined)?.trim() || file.filename) : file.filename };
+          ? ((session.destination.filename as string | undefined)?.trim() || file.filename) : file.filename } };
     }
     const workflowId = session.destination.workflow_id as string;
     const { data: workflow, error: workflowError } = await db.from("workflows")
@@ -402,11 +681,21 @@ async function prepareUploadFile(
     const sourcePath = workflowReferenceKey(ownerId, workflowId, referenceId,
       `${artifact.sha256}-${slug}`, file.filename);
     await copyFile(file.sealed_storage_path, sourcePath);
-    return { kind: session.purpose, source_path: sourcePath,
-      size_bytes: artifact.size, sha256: artifact.sha256, owner_id: ownerId };
+    return { payload: { kind: session.purpose, source_path: sourcePath,
+      size_bytes: artifact.size, sha256: artifact.sha256, owner_id: ownerId } };
   } finally {
     await removeTemporaryArtifact(artifact.directory);
   }
+}
+
+/**
+ * The job row no longer says this worker holds it: another worker claimed
+ * it after the lease aged out, or a sweep retired it. Named, so Sentry files
+ * it under its own kind (MIKE-BACKEND-M grouped every code-less iteration
+ * failure as one anonymous "Failure in upload-worker / iteration").
+ */
+function leaseLost(): AppError {
+  return new AppError("upload.lease_lost", "upload_job_lease_lost");
 }
 
 export async function processUploadJob(
@@ -416,26 +705,35 @@ export async function processUploadJob(
 ): Promise<void> {
   setOperation("documents.upload.complete");
   markStage("claim");
+  // maybeSingle(): zero rows is a missing row, named below, not a PostgREST
+  // PGRST116 error. Database failures still arrive on the error path.
   const { data: job, error: jobError } = await db.from("upload_processing_jobs")
     .select("id, session_id, file_id, attempts, locked_by, claim_token")
-    .eq("id", jobId).eq("status", "running").eq("locked_by", workerId).single();
-  if (jobError || !job || !job.claim_token) throw jobError ?? new Error("upload_job_not_found");
+    .eq("id", jobId).eq("status", "running").eq("locked_by", workerId).maybeSingle();
+  if (jobError || !job || !job.claim_token)
+    throw jobError ?? new AppError("upload.job_missing", "upload_job_not_found");
   const typedJob = job as UploadJobRow;
   const { data: session, error: sessionError } = await db.from("upload_sessions")
     .select("id, user_id, user_email, purpose, destination, status")
-    .eq("id", typedJob.session_id).single();
-  if (sessionError || !session) throw sessionError ?? new Error("upload_session_not_found");
+    .eq("id", typedJob.session_id).maybeSingle();
+  if (sessionError || !session) {
+    throw sessionError
+      ?? new AppError("upload.session_missing", "upload_session_not_found");
+  }
   const typedSession = session as UploadSessionRow;
   const { data: file, error: fileError } = await db.from("upload_session_files")
-    .select("*").eq("id", typedJob.file_id).eq("session_id", typedSession.id).single();
-  if (fileError || !file) throw fileError ?? new Error("upload_session_file_not_found");
+    .select("*").eq("id", typedJob.file_id).eq("session_id", typedSession.id).maybeSingle();
+  if (fileError || !file) {
+    throw fileError
+      ?? new AppError("upload.file_missing", "upload_session_file_not_found");
+  }
   const typedFile = file as UploadFileRow;
   const renew = async () => {
     const { data, error } = await db.rpc("renew_upload_processing_job", {
       p_job_id: jobId, p_worker_id: workerId, p_attempt: typedJob.attempts,
       p_token: typedJob.claim_token, p_lease_seconds: UPLOAD_JOB_LEASE_SECONDS,
     });
-    if (error || data !== true) throw error ?? new Error("upload_job_lease_lost");
+    if (error || data !== true) throw error ?? leaseLost();
   };
   const finish = async (payload: Record<string, unknown> | null, failure: string | null) => {
     const { data, error } = await db.rpc("finish_upload_processing_job", {
@@ -443,7 +741,7 @@ export async function processUploadJob(
       p_token: typedJob.claim_token, p_payload: payload, p_failure: failure,
       p_lease_seconds: UPLOAD_JOB_LEASE_SECONDS,
     });
-    if (error || !data) throw error ?? new Error("upload_job_lease_lost");
+    if (error || !data) throw error ?? leaseLost();
     return data as { status: string; result?: unknown };
   };
   const startedAt = Date.now();
@@ -452,30 +750,84 @@ export async function processUploadJob(
     void renew().catch((error) => console.error("[upload-worker] heartbeat failed", { jobId, error }));
   }, UPLOAD_WORKER_HEARTBEAT_MS);
   heartbeat.unref();
+  const uploadEvent = (outcome: string) => log().debug("upload.job", {
+    uploadJobId: jobId, attempts: typedJob.attempts, sessionId: typedSession.id,
+    purpose: typedSession.purpose, format: typedFile.file_type, outcome,
+    durationMs: Date.now() - startedAt,
+  });
   try {
     await renew();
-    let payload: Record<string, unknown>;
+    uploadEvent("start");
+    let prepared: PreparedUpload;
     try {
       markStage("process-file");
-      payload = await prepareUploadFile(db, typedSession, typedFile, typedJob.claim_token);
+      prepared = await prepareUploadFile(db, typedSession, typedFile, typedJob.claim_token);
     } catch (error) {
       // A stale editor save cannot succeed on retry (sync 6e3ef6fa).
       if (error instanceof ChangedDocumentError) {
+        uploadEvent("document_changed");
         await finish(null, "document_changed");
+        return;
+      }
+      // Upstream ceedace6: a file that is not a PDF cannot succeed on retry.
+      // Dev records it terminally through the publish RPC (migration 0243)
+      // instead of upstream's direct job/file updates, and does not report it.
+      if (error instanceof InvalidPdfFileError) {
+        uploadEvent("invalid_pdf_file");
+        await finish(null, "invalid_pdf_file");
+        return;
+      }
+      // Upstream d9a7c365: a DOCX whose package is malformed or oversized
+      // cannot succeed on retry. Terminal through the publish RPC (migration
+      // 0245), unreported, like invalid_pdf_file.
+      // Upstream 5e986237: other files held the parser for the whole wait.
+      // Nothing is wrong with this one: requeue it through the claim-fenced
+      // defer RPC (migration 0247, dev's equivalent of upstream's direct
+      // job/file updates), give back the attempt the claim charged, and
+      // report nothing.
+      if (error instanceof ExtractionBusyError) {
+        uploadEvent("parser_busy");
+        const { data, error: deferError } = await db.rpc("defer_upload_processing_job", {
+          p_job_id: jobId, p_worker_id: workerId, p_attempt: typedJob.attempts,
+          p_token: typedJob.claim_token, p_delay_seconds: PARSER_BUSY_RETRY_MS / 1000,
+          p_error_code: "document_extraction_busy", p_lease_seconds: UPLOAD_JOB_LEASE_SECONDS,
+        });
+        if (deferError || data !== true) throw deferError ?? leaseLost();
+        return;
+      }
+      if (error instanceof DocxValidationError && error.code === "invalid_docx_package") {
+        uploadEvent(error.code);
+        await finish(null, error.code);
+        return;
+      }
+      // Upstream 90fa1d26: validation that exhausted the parser's deadline or
+      // memory budget is a distinct terminal outcome (migration 0246), still
+      // logged like processing_failed. A busy parser or an unexpected child/I/O
+      // failure (code processing_failed) falls through and keeps its retries.
+      if (error instanceof DocxValidationError && error.code === "document_too_large") {
+        console.error("[upload-worker] DOCX validation exceeded parser limits", {
+          jobId, sessionId: typedSession.id, fileId: typedFile.id,
+          purpose: typedSession.purpose, error,
+        });
+        uploadEvent(error.code);
+        await finish(null, error.code);
         return;
       }
       console.error("[upload-worker] file processing failed", {
         jobId, sessionId: typedSession.id, fileId: typedFile.id,
         purpose: typedSession.purpose, error,
       });
+      uploadEvent("processing_failed");
       await finish(null, "processing_failed");
       return;
     }
     if (Date.now() - startedAt >= uploadJobWallClockMs()) {
+      uploadEvent("wall_clock_exceeded");
       throw new Error("upload_job_wall_clock_exceeded");
     }
     await renew();
-    const published = await finish(payload, null);
+    const published = await finish(prepared.payload, null);
+    uploadEvent(published.status === "completed" ? "published" : "publish_refused");
     // The publish RPC lost its compare-and-swap and recorded the terminal
     // document_changed outcome itself.
     if (published.status === "error") return;
@@ -490,12 +842,27 @@ export async function processUploadJob(
         documentId: typedFile.resource_id,
       });
     }
+    if (prepared.afterPublish) {
+      // The job is complete and its lease released; nothing left to renew.
+      clearInterval(heartbeat);
+      markStage("after-publish");
+      await prepared.afterPublish(published.result).catch((error: unknown) => {
+        reportError(error, {
+          level: "warning",
+          tags: { component: "upload-worker", stage: "after-publish" },
+          fingerprint: ["upload-after-publish-failed"],
+        });
+        console.error("[upload-worker] post-publish work failed", {
+          jobId, sessionId: typedSession.id, fileId: typedFile.id, error,
+        });
+      });
+    }
   } finally {
     clearInterval(heartbeat);
   }
 }
 
-export async function cleanupUploadSessions(db: Db): Promise<void> {
+export async function cleanupUploadSessions(db: Db, tenantDb: Db = db): Promise<void> {
   const now = new Date();
   const nowIso = now.toISOString();
   const { error: expireError } = await db
@@ -530,7 +897,7 @@ export async function cleanupUploadSessions(db: Db): Promise<void> {
 
   const { data: sessions, error: sessionsError } = await db
     .from("upload_sessions")
-    .select("id")
+    .select("id, tenant_id")
     .in("status", ["expired", "cancelled", "error"])
     .is("cleaned_at", null)
     .limit(20);
@@ -540,8 +907,12 @@ export async function cleanupUploadSessions(db: Db): Promise<void> {
     // The RPC queues both immediate and post-signature-expiry prefix sweeps in
     // the same transaction as cleaned_at. Files already processing are left
     // alone; their atomic publish queues their own object cleanup.
-    const { error } = await db.rpc("queue_upload_session_cleanup", { p_session_id: session.id });
-    if (error) throw error;
+    // It is a tenant function: under forced RLS it sees only the claim's
+    // tenant, so it runs as the session's tenant (multi-tenant 008).
+    await runWithJobTenant(session.tenant_id, async () => {
+      const { error } = await tenantDb.rpc("queue_upload_session_cleanup", { p_session_id: session.id });
+      if (error) throw error;
+    });
   }
 
   const retentionCutoff = new Date(
@@ -570,7 +941,7 @@ async function claimNextUploadJob(
   workerId: string,
   maxRunningPerUser: number,
 ) {
-  const { data, error } = await db.rpc("claim_upload_processing_job", {
+  const { data, error, status } = await db.rpc("claim_upload_processing_job", {
     target_worker_id: workerId,
     target_lease_seconds: UPLOAD_JOB_LEASE_SECONDS,
     target_max_running_per_user: maxRunningPerUser,
@@ -578,8 +949,16 @@ async function claimNextUploadJob(
   // A PostgREST error is a plain object: give it a stack here and keep its
   // `code` (PGRST202 = RPC missing, i.e. migrations not applied) on the
   // cause chain, where the Sentry boundary reads it into failure_code.
-  if (error) throw asReportableError(error, claimNextUploadJob);
+  if (error) throw asReportableError(withResponseStatus(error, status), claimNextUploadJob);
   return typeof data === "string" && data ? data : null;
+}
+
+/** The tenant that queued a claimed upload job (migration 0179), if recorded. */
+async function uploadJobTenant(db: Db, jobId: string): Promise<string | null> {
+  const { data, error } = await db.from("upload_processing_jobs")
+    .select("tenant_id").eq("id", jobId).maybeSingle();
+  if (error) throw asReportableError(error, uploadJobTenant);
+  return (data as { tenant_id?: string | null } | null)?.tenant_id ?? null;
 }
 
 function startUploadProcessingWorker(options: {
@@ -603,16 +982,19 @@ function startUploadProcessingWorker(options: {
     if (stopped) return;
     try {
       const db = createServerSupabase();
+      // Cleanup and claiming span tenants; the claimed job then runs as the
+      // tenant that queued it (multi-tenant issue 003).
+      const platformDb = createPlatformSupabase();
       if (options.runCleanup && Date.now() - lastCleanupAt >= 60_000) {
         // Own scope: the stages cleanup marks must not land on a later job.
         await Promise.all([
-          runIsolated(() => cleanupUploadSessions(db)),
+          runIsolated(() => cleanupUploadSessions(platformDb, db)),
           cleanupUploadProcessingTempFiles(),
         ]);
         lastCleanupAt = Date.now();
       }
       const jobId = await claimNextUploadJob(
-        db,
+        platformDb,
         workerId,
         options.maxRunningPerUser,
       );
@@ -623,8 +1005,13 @@ function startUploadProcessingWorker(options: {
       }
       // Each job in its own Sentry isolation scope: several of these loops
       // share the process, and the operation/stages one job records must not
-      // land on another's failure.
-      await runIsolated(() => processUploadJob(db, jobId, workerId));
+      // land on another's failure. Inside it, the job runs as the tenant that
+      // queued it (multi-tenant issue 003).
+      const tenantId = await uploadJobTenant(platformDb, jobId);
+      await runIsolated(() =>
+        runWithJobTenant(tenantId, () =>
+          withLogContext({ jobId }, () => processUploadJob(db, jobId, workerId))),
+      );
       failures.success();
       schedule(0);
     } catch (thrown) {

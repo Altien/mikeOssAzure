@@ -1,8 +1,11 @@
+import { AsyncResource } from "node:async_hooks";
 import { type Response } from "express";
+import type { StreamRunWriteOptions } from "./streamRuns";
 
 export function openAssistantSse(res: Response): {
   signal: AbortSignal;
-  write: (line: string) => boolean;
+  /** Same signature as a run's writer; a single socket has nothing to replay. */
+  write: (line: string, opts?: StreamRunWriteOptions) => boolean;
   finish: () => void;
 } {
   res.setHeader("Content-Type", "text/event-stream");
@@ -13,9 +16,11 @@ export function openAssistantSse(res: Response): {
 
   const controller = new AbortController();
   let finished = false;
-  res.on("close", () => {
+  // Bound to the request's async context so abort listeners keep its tenant
+  // (multi-tenant 008); the socket emits `close` from its own context.
+  res.on("close", AsyncResource.bind(() => {
     if (!finished) controller.abort();
-  });
+  }));
 
   return {
     signal: controller.signal,

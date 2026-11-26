@@ -66,6 +66,17 @@ describe("loadModelRegistry", () => {
         );
     });
 
+    it("drops a model that would borrow an administrator-entered provider's key", () => {
+        configure({
+            models: [
+                { ...CLOUD_DEEPSEEK, id: "borrows-tokenjuice", apiKeyProvider: "tokenjuice" },
+                { ...CLOUD_DEEPSEEK, id: "borrows-meta", apiKeyProvider: "meta" },
+                { ...CLOUD_DEEPSEEK, id: "borrows-openai", apiKeyProvider: "openai" },
+            ],
+        });
+        expect(loadModelRegistry().models.map((model) => model.id)).toEqual(["borrows-openai"]);
+    });
+
     it("drops entries that are not declarable models", () => {
         configure({
             models: [

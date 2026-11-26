@@ -10,6 +10,7 @@
 // The SDK is optional and remains disabled when no connection string is set.
 
 import * as appInsights from "applicationinsights";
+import { redactDownloadSpan } from "./lib/downloadRedaction";
 
 const connectionString = process.env.APPLICATIONINSIGHTS_CONNECTION_STRING;
 
@@ -26,6 +27,14 @@ if (connectionString) {
         .setUseDiskRetryCaching(true) // queue locally if AI is unreachable
         .setSendLiveMetrics(false) // not needed for batch backend
         .setInternalLogging(false, false)
+        // applicationinsights v3 ignores addTelemetryProcessor. Register its
+        // supported OpenTelemetry processor before auto-collection starts.
+        .setAzureMonitorOptions({ spanProcessors: [{
+            onStart() {},
+            onEnd(span) { redactDownloadSpan(span); },
+            async forceFlush() {},
+            async shutdown() {},
+        }] })
         .start();
 
     // Tag every telemetry item with a stable role name so the App

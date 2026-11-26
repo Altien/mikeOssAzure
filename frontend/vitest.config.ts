@@ -26,32 +26,54 @@ export default defineConfig({
     build: { assetsInlineLimit: 0 },
     resolve: {
         // Upstream #450 test (src/wordAddin/client.test.ts) imports Word add-in
-        // source outside this root, where tsconfigPaths() does not apply the
-        // frontend paths; mirror upstream's explicit alias for the shared client.
+        // source outside this root, and the shared packages' colocated tests
+        // live in ../packages; tsconfigPaths() does not apply the frontend
+        // paths there, so mirror upstream's explicit package aliases
+        // (upstream vitest.config.mts, a1c87117).
         alias: [
-            { find: "@mike/model-catalog", replacement: fileURLToPath(new URL("./src/shared/lib/modelCatalog.ts", import.meta.url)) },
+            { find: /^@mike\/ui$/, replacement: fileURLToPath(new URL("../packages/ui/src/index.ts", import.meta.url)) },
+            { find: /^@mike\/client$/, replacement: fileURLToPath(new URL("../packages/client/src/index.ts", import.meta.url)) },
             { find: /^react$/, replacement: fileURLToPath(new URL("./node_modules/react/index.js", import.meta.url)) },
+            // JSX compilation adds these imports even when source imports only
+            // React. Resolve both runtimes beside the same frontend React copy.
+            { find: /^react\/(jsx-runtime|jsx-dev-runtime)$/, replacement: fileURLToPath(new URL("./node_modules/react/$1.js", import.meta.url)) },
             { find: /^@sentry\/react$/, replacement: fileURLToPath(new URL("./node_modules/@sentry/react/build/esm/index.js", import.meta.url)) },
             { find: /^@sentry\/nextjs$/, replacement: fileURLToPath(new URL("./node_modules/@sentry/react/build/esm/index.js", import.meta.url)) },
-            { find: "@mike/sentry-event", replacement: fileURLToPath(new URL("./src/shared/lib/sentryEvent.ts", import.meta.url)) },
-            { find: "@mike/user-error", replacement: fileURLToPath(new URL("./src/shared/lib/userError.ts", import.meta.url)) },
-            { find: "@mike/error-notifier", replacement: fileURLToPath(new URL("./src/shared/lib/errorNotifier.ts", import.meta.url)) },
-            { find: "@mike/toast-store", replacement: fileURLToPath(new URL("./src/shared/lib/toastStore.ts", import.meta.url)) },
-            { find: "@mike/toast-ui", replacement: fileURLToPath(new URL("./src/shared/ui/ToastUI.tsx", import.meta.url)) },
-            { find: "@mike/secure-uuid", replacement: fileURLToPath(new URL("./src/shared/lib/secureUuid.ts", import.meta.url)) },
-            {
-                find: /^@mike\/upload-session-client$/,
-                replacement: fileURLToPath(
-                    new URL("./src/shared/api/uploadSessionClient.ts", import.meta.url),
-                ),
-            },
         ],
+        // packages/ui and packages/client have no node_modules of their own.
+        // Vite resolves a bare import from the importer's directory, which
+        // for a file under packages/ never reaches frontend/node_modules;
+        // dedupe makes these resolve from this package instead. Mirror
+        // packages/*/package.json peerDependencies plus the test tooling the
+        // packages' colocated tests import.
+        dedupe: [
+            "react",
+            "react-dom",
+            "clsx",
+            "tailwind-merge",
+            "lucide-react",
+            "@radix-ui/react-dropdown-menu",
+            "vitest",
+            "@testing-library/react",
+            "@testing-library/user-event",
+            "postcss",
+        ],
+    },
+    server: {
+        // The shared packages' tests and sources sit outside this directory.
+        fs: { allow: [fileURLToPath(new URL("..", import.meta.url))] },
     },
     test: {
         environment: "jsdom",
         maxWorkers: process.env.CI ? undefined : localMaxWorkers,
         globals: false,
-        include: ["src/**/*.{test,spec}.{ts,tsx}"],
+        include: [
+            "src/**/*.{test,spec}.{ts,tsx}",
+            // The shared packages' colocated tests run here: they need the
+            // same jsdom + Testing Library setup (upstream a1c87117).
+            "../packages/ui/src/**/*.test.{ts,tsx}",
+            "../packages/client/src/**/*.test.{ts,tsx}",
+        ],
         setupFiles: ["src/test/setup.ts"],
         css: false,
         coverage: {

@@ -33,8 +33,9 @@ import { sendInternalError } from "../../lib/httpError";
 import { sendServiceFailure } from "../../lib/serviceResult";
 import { dbJobsEnabled } from "../../lib/dbq/runner";
 import { buildContentDisposition } from "../../lib/storage";
-import { normalizeApiKeyProvider, type ApiKeyProvider } from "./user.apiKeyStore";
+import { normalizeApiKeyProvider, type ApiKeyProvider } from "../../lib/providerCredentials/index";
 import { completeUserMcpConnectorOAuth } from "../../lib/mcpConnectors";
+import { runWithOAuthStateTenant } from "../../lib/oauthStateTenant";
 import { conciseMcpErrorMessage } from "../../lib/mcp/errors";
 import {
     acceptInvitation,
@@ -60,33 +61,20 @@ import {
     completeUserOnboarding,
     createMcpConnector,
     deleteMcpConnector,
-    deletePrivateMemories,
-    deleteUserAccount,
-    describeAccountDeletionBlockers,
-    deleteUserChats,
-    deleteUserProjectsData,
-    deleteUserTabularReviews,
-    getApiKeyStatus,
     getCustomInstructions,
     getResponseStyle,
     getMcpConnector,
-    getUserExportStatus,
     getUserProfile,
-    loadUserExportArtifact,
     lookupUserByEmail,
     listMcpConnectors,
     readBooleanBodyField,
     recordPasswordSet,
     refreshMcpConnectorTools,
-    saveApiKey,
-    setApiKeyEnabled,
     setMcpToolEnabled,
     setMfaOnLogin,
     startMcpConnectorOAuth,
-    startUserExport,
     updateMcpConnector,
     updateUserProfile,
-    validateExportRequest,
     validateOnboardingPayload,
     validateProfilePayload,
     validateCustomInstructionsPayload,
@@ -98,8 +86,23 @@ import {
     saveWebSearchSettings,
     courtListenerConnectorStatus,
     setCourtListenerEnabled,
-    isWorkspaceExportType,
 } from "./user.service";
+import {
+    deletePrivateMemories,
+    deleteUserChats,
+    deleteUserProjectsData,
+    deleteUserTabularReviews,
+} from "../../application/accounts/clearAccountData";
+import { deleteUserAccount, describeAccountDeletionBlockers } from "../../application/accounts/deleteAccount";
+import {
+    getUserExportStatus,
+    loadUserExportArtifact,
+    startUserExport,
+    validateExportRequest,
+} from "../../application/exports/requestExport";
+import { isWorkspaceExportType } from "../../application/exports/exportContracts";
+import { getApiKeyStatus, saveApiKey, setApiKeyEnabled } from "./user.service";
+import { log } from "../../lib/log";
 
 export const userRouter = Router();
 
@@ -547,6 +550,8 @@ const ORGANISATION_CREDENTIALS: Record<
     vertex: { label: "Google Vertex AI", secretNames: ["google-vertex-credentials-json", "google-vertex-location"] },
     xai: { label: "xAI", secretNames: ["xai-api-key"] },
     custom: { label: "OpenAI-compatible endpoint", secretNames: ["custom-api-key", "custom-base-url"] },
+    tokenjuice: { label: "TokenJuice", secretNames: ["tokenjuice-api-key", "tokenjuice-base-url", "tokenjuice-models"] },
+    meta: { label: "Meta (Muse)", secretNames: ["meta-api-key", "meta-base-url", "meta-models"] },
     azure_openai: {
         label: "Azure OpenAI",
         secretNames: ["azure-openai-endpoint", "azure-openai-api-key"],
@@ -595,6 +600,20 @@ userRouter.put(
                     code: "organisation_api_key_required",
                     detail: organisationCredentialDetail(provider),
                 });
+            if (result.kind === "member_key_not_enabled") {
+                const label = ORGANISATION_CREDENTIALS[provider].label;
+                return void res.status(403).json({
+                    code: "member_key_not_enabled",
+                    detail: `Your organisation's administrators have not enabled personal keys for ${label}.`,
+                });
+            }
+            if (result.kind === "member_key_storage_unavailable") {
+                console.error("[user-api-keys] member key not stored: Key Vault secret user-api-keys-encryption-key is missing or unreadable");
+                return void res.status(503).json({
+                    code: "member_key_storage_unavailable",
+                    detail: "Personal keys cannot be stored yet: the operator must set the user-api-keys-encryption-key secret in this deployment's Key Vault.",
+                });
+            }
             return void sendInternalError(res, result.error);
         }
         res.json(result.status);
@@ -612,6 +631,10 @@ userRouter.patch(
             !provider ||
             provider === "courtlistener" ||
             isWebSearchBackend(provider) ||
+            // set_user_provider_enabled (0108) has no such preference for
+            // them; adding one would take a migration. Settings shows no switch.
+            provider === "tokenjuice" ||
+            provider === "meta" ||
             typeof req.body?.enabled !== "boolean"
         ) {
             return void res.status(400).json({ detail: "A supported provider and boolean enabled value are required." });
@@ -827,7 +850,8 @@ userRouter.get("/mcp-connectors/oauth/callback", asyncRoute(async (req, res) => 
         if (error) throw new Error(error);
         if (!state || !code)
             throw new Error("OAuth callback is missing state or code.");
-        const result = await completeUserMcpConnectorOAuth(state, code, db);
+        const result = await runWithOAuthStateTenant("user_mcp_oauth_states", state, () =>
+            completeUserMcpConnectorOAuth(state, code, db));
         res.set(mcpOAuthPopupHeaders(nonce))
             .type("html")
             .send(
@@ -1010,7 +1034,7 @@ userRouter.get(
                 warnGoogleRoute("[google-drive] oauth callback failed", err, "google.auth_failed", {
                     hasCode: !!code,
                 });
-            else console.warn("[google-drive] oauth callback denied", { hasCode: !!code });
+            else log.warn("google-drive", "oauth callback denied", { hasCode: !!code });
             res.status(400)
                 .set(mcpOAuthPopupHeaders(nonce))
                 .type("html")
@@ -1185,7 +1209,6 @@ userRouter.post(
     }),
 );
 
-
 // Gmail and Calendar are explicit integrations, independent of sign-in.
 for (const provider of ["gmail", "google-calendar"] as const) {
     const path = `/integrations/${provider}`;
@@ -1260,7 +1283,7 @@ for (const provider of ["gmail", "google-calendar"] as const) {
                 // the browser verbatim, under their machine-readable code.
                 if (error instanceof ConnectorSetupError) {
                     // Operator setup, not a fault: a log line, never an event.
-                    console.warn("[google-workspace] setup required", {
+                    log.warn("google-workspace", "setup required", {
                         provider,
                     });
                     return void res

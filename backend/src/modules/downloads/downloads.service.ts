@@ -2,21 +2,25 @@
 //
 // Service layer behind downloads.routes.ts. Takes an explicit Supabase client
 // (`db`) plus request-derived primitives, resolves a signed download token to
-// the bytes it grants access to, and RETURNS a typed result. It never touches
+// the object it grants access to, and RETURNS a typed result. It never touches
 // req/res — the route maps the result onto status codes, headers, and body.
 
 import type { Db } from "../../lib/supabase";
 import type { Readable } from "node:stream";
 import {
     BlobUploadSizeError,
-    downloadFile,
+    headFile,
+    openFileStream,
+    TenantStorageError,
     writeBlobFromStream,
 } from "../../lib/storage";
 import {
+    downloadAllowed,
     verifyBlobToken,
     verifyBlobUploadToken,
     verifyDownload,
 } from "../../lib/downloadTokens";
+import { currentTenant, installTenantId, runWithTenant } from "../../lib/tenantContext";
 import {
     failure,
     internalFailure,
@@ -34,22 +38,81 @@ function contentTypeFor(filename: string): string {
 }
 
 /**
- * Resolve a filesystem-driver blob token (the fs stand-in for an S3 presigned
- * GET) to its bytes. The token itself is the authorization: it is minted only
- * after an authenticated caller's access check, matching the S3 presigned URLs
- * used by the cloud storage driver.
+ * Multi-tenant 010: the filesystem adapter signs the tenant's physical object
+ * key, so a non-install tenant's key is `t/{tenantId}/…`. The signed route has
+ * no session, so the transfer runs as the tenant the signed key names (the
+ * HMAC covers the key); an unprefixed key is the install tenant's, as before.
+ * Without this the storage facade would refuse the key as foreign.
  */
-export async function resolveBlobDownload(token: string): Promise<
-    ServiceResult<{ bytes: Buffer; contentType: string; filename: string }>
-> {
+function asBlobKeyTenant<T>(key: string, work: () => Promise<T>): Promise<T> {
+    const owner = /^t\/([^/]+)\//.exec(key)?.[1];
+    return owner ? runWithTenant({ tenantId: owner }, work) : work();
+}
+
+/**
+ * An object a download token resolved to: what the response headers need,
+ * and a way to open the bytes. Opening is deferred so a conditional or HEAD
+ * request can be answered from the metadata without reading the object.
+ */
+export type ObjectDownload = {
+    size: number;
+    etag: string | null;
+    contentType: string;
+    filename: string;
+    /**
+     * Open the object as a stream. Rejects (StorageOperationError) when the
+     * store cannot serve it, before any byte is produced; `signal` releases
+     * the read when the client goes away.
+     */
+    open: (signal: AbortSignal) => Promise<Readable>;
+};
+
+/**
+ * Metadata for the object at `path`, or null when it is not there. A HEAD,
+ * not a read: the bytes are streamed to the client later, never held whole.
+ */
+async function describeObject(
+    path: string,
+    filename: string,
+): Promise<ObjectDownload | null> {
+    // Dev: a key the tenant routing refuses finds nothing (as downloadFile's
+    // resolveForRead did before streaming), rather than failing the request.
+    let head: Awaited<ReturnType<typeof headFile>>;
+    try {
+        head = await headFile(path);
+    } catch (error) {
+        if (error instanceof TenantStorageError) return null;
+        throw error;
+    }
+    if (!head) return null;
+    return {
+        size: head.size,
+        etag: head.etag,
+        contentType: contentTypeFor(filename),
+        filename,
+        open: (signal) => openFileStream(path, { signal }),
+    };
+}
+
+/**
+ * Resolve a filesystem-driver blob token (the fs stand-in for an S3 presigned
+ * GET) to the object it names. The token itself is the authorization: it is
+ * minted only after an authenticated caller's access check, matching the S3
+ * presigned URLs used by the cloud storage driver.
+ */
+export async function resolveBlobDownload(
+    token: string,
+): Promise<ServiceResult<ObjectDownload>> {
     const info = verifyBlobToken(token);
     if (!info) return failure("not_found", "Invalid or expired link");
-    const bytes = await downloadFile(info.path);
-    if (!bytes) return failure("not_found", "File not found");
+    // Dev (multi-tenant 010): both the HEAD and the deferred open run as the
+    // tenant the signed key names; the open happens later, in the route.
+    const download = await asBlobKeyTenant(info.path, () =>
+        describeObject(info.path, info.filename));
+    if (!download) return failure("not_found", "File not found");
     return ok({
-        bytes: Buffer.from(bytes),
-        contentType: contentTypeFor(info.filename),
-        filename: info.filename,
+        ...download,
+        open: (signal) => asBlobKeyTenant(info.path, () => download.open(signal)),
     });
 }
 
@@ -74,7 +137,8 @@ export async function storeBlobUpload(args: {
         return failure("validation", "Upload content type does not match the link");
     }
     try {
-        await writeBlobFromStream(info.path, args.body, info.sizeBytes);
+        await asBlobKeyTenant(info.path, () =>
+            writeBlobFromStream(info.path, args.body, info.sizeBytes));
     } catch (error) {
         // writeBlobFromStream commits only on success, so a failed upload
         // leaves no partial file and any existing blob at the key intact.
@@ -87,7 +151,7 @@ export async function storeBlobUpload(args: {
 }
 
 /**
- * Resolve a signed download token to file bytes, enforcing that the token's
+ * Resolve a signed download token to the object it names, enforcing that the token's
  * storage path is still backed by a live document version the caller can
  * access. Every failure after token verification collapses to "not_found" so
  * a valid-looking token cannot be used to probe for foreign files.
@@ -96,11 +160,20 @@ export async function resolveTokenDownload(
     db: Db,
     args: { token: string; userId: string; userEmail: string | undefined },
 ): Promise<
-    | { ok: true; bytes: Buffer; contentType: string; filename: string }
+    | { ok: true; download: ObjectDownload }
     | { ok: false; kind: "invalid_link" | "not_found" }
 > {
+    // Issue 011: signature, expiry, then tenant/user binding, all before any
+    // database or storage read. The bytes are then read through the current
+    // tenant's storage (issue 010), which is the token's tenant.
     const info = verifyDownload(args.token);
     if (!info) return { ok: false, kind: "invalid_link" };
+    const allowed = downloadAllowed(info, {
+        tenantId: currentTenant()?.tenantId,
+        userId: args.userId,
+        installTenantId: await installTenantId().catch(() => undefined),
+    });
+    if (!allowed) return { ok: false, kind: "invalid_link" };
 
     const { data: version } = await db
         .from("document_versions")
@@ -120,13 +193,7 @@ export async function resolveTokenDownload(
     const access = await ensureDocAccess(doc, args.userId, args.userEmail, db);
     if (!access.ok) return { ok: false, kind: "not_found" };
 
-    const raw = await downloadFile(info.path);
-    if (!raw) return { ok: false, kind: "not_found" };
-
-    return {
-        ok: true,
-        bytes: Buffer.from(raw),
-        contentType: contentTypeFor(info.filename),
-        filename: info.filename,
-    };
+    const download = await describeObject(info.path, info.filename);
+    if (!download) return { ok: false, kind: "not_found" };
+    return { ok: true, download };
 }

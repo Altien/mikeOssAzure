@@ -23,27 +23,32 @@ import {
 } from "../../lib/dbq/types";
 import { createServerSupabase } from "../../lib/supabase";
 import {
-  beginPlaybookImport,
-  beginPlaybookReview,
-  compilePlaybookImport,
-  INTERRUPTED_IMPORT_ERROR,
-  INTERRUPTED_RUN_ERROR,
-  MAX_PLAYBOOK_IMPORT_BYTES,
-  playbookImportDocument,
-  playbookImportJobKey,
-  PlaybookRequestError,
-  playbookReviewJobKey,
-  playbookReviewWork,
-  playbookWorkAttended,
-  runPlaybookReview,
-  type PlaybookImport,
-  type PlaybookImportRequest,
-  type PlaybookImportWork,
-  type PlaybookReviewInput,
-  type PlaybookReviewRequest,
+    beginPlaybookImport,
+    beginPlaybookReview,
+    compilePlaybookImport,
+    INTERRUPTED_IMPORT_ERROR,
+    INTERRUPTED_RUN_ERROR,
+    MAX_PLAYBOOK_IMPORT_BYTES,
+    playbookImportDocument,
+    playbookImportJobKey,
+    PlaybookRequestError,
+    playbookReviewJobKey,
+    playbookReviewWork,
+    playbookWorkAttended,
+    runPlaybookReview,
 } from "./playbooks.operations";
+import {
+    type PlaybookImport,
+    type PlaybookImportRequest,
+    type PlaybookImportWork,
+    type PlaybookReviewInput,
+    type PlaybookReviewRequest,
+} from "./playbooks.types";
 import { isStagedPlaybookImportKey } from "./playbooks.staging";
 import { reportPlaybookFailure } from "./playbooks.reporting";
+
+import { DocumentReviewRetryableError } from "../documents/documents.service";
+import { log } from "../../lib/log";
 
 export const PLAYBOOK_REVIEW_JOB = "playbook.review";
 export const PLAYBOOK_IMPORT_JOB = "playbook.import";
@@ -122,7 +127,12 @@ async function untilRecorded(
     await work();
   } catch (error) {
     if (error instanceof PlaybookClaimLostError) return;
-    const row = await loadRow(db, table, id);
+    let row: Record<string, unknown> | null;
+    try { row = await loadRow(db, table, id); }
+    catch (readError) {
+      // Preserve the retry marker through a failed reconciliation read.
+      throw error instanceof DocumentReviewRetryableError ? error : readError;
+    }
     if (!row || row.status !== "running") return;
     throw error;
   }
@@ -171,7 +181,7 @@ async function clearStagedImport(db: Db, job: DbJob, payload: PlaybookImportJobP
       jobKind: "playbook.import",
       ids: { import_id: payload.attemptId },
     });
-    console.warn("[playbooks] staged upload cleanup failed", {
+    log.warn("playbooks", "staged upload cleanup failed", {
       storageKey: payload.storageKey,
       error: safeError(error),
     });

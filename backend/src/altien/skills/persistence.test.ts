@@ -92,6 +92,7 @@ describe("storeSkillSnapshot", () => {
       sourceFilename: "skills.zip",
       sourceBytes: new Uint8Array([1, 2, 3]),
       snapshot: snapshot(),
+      catalog: { id: "review", displayName: "Review", commit: "a".repeat(40) },
       db: fake.db as never,
     });
 
@@ -124,6 +125,9 @@ describe("storeSkillSnapshot", () => {
     expect(
       fake.callsFor("altien_skill_import_snapshots", "insert"),
     ).toHaveLength(1);
+    expect(fake.callsFor("altien_skill_import_snapshots", "insert")[0].payload).toMatchObject({
+      manifest: { catalog: { id: "review", displayName: "Review", commit: "a".repeat(40) } },
+    });
     expect(fake.callsFor("altien_skill_versions", "insert")[0].payload).toEqual(
       expect.objectContaining({ state: "draft" }),
     );

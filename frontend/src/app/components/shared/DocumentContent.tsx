@@ -5,12 +5,14 @@ import { PdfView } from "./views/PdfView";
 import { DocxView } from "./views/DocxView";
 import type { DocxCloseGuard, DocxSaveState } from "./views/DocxRenderer.types";
 import { SpreadsheetView } from "./views/SpreadsheetView";
+import { TextView } from "./views/TextView";
 import {
     CitationQuotesSection,
     documentQuoteId,
 } from "../assistant/CitationQuotesSection";
 import { EditCard } from "../assistant/EditCard";
 import { expandDocumentQuoteEntry } from "./types";
+import { documentCapabilities } from "./documentCapabilities";
 import type { Citation, EditAnnotation, PanelDocument } from "./types";
 import { quoteVerificationState } from "../assistant/message/citationVerification";
 import { CaseView } from "../assistant/CaseView";
@@ -18,7 +20,10 @@ import { useResolvedPanelDocument } from "../assistant/useResolvedPanelDocument"
 import type { DocumentVersion } from "@/app/lib/mikeApi";
 import { DocumentTitleRow } from "./DocumentTitleRow";
 import { DocumentAnnotationLayer } from "./DocumentAnnotationLayer";
-import { resolveDocumentViewType } from "@/app/lib/documentViewType";
+import {
+    isTextDocumentFilename,
+    resolveDocumentViewType,
+} from "@/app/lib/documentViewType";
 
 /**
  * Discriminated-union describing which header annotation the viewer is showing.
@@ -49,7 +54,7 @@ export type DocumentContentMode =
               documentId: string;
               status: "accepted" | "rejected";
               versionId: string | null;
-              downloadUrl: string | null;
+
           }) => void;
           onError?: (args: {
               editId: string;
@@ -63,7 +68,8 @@ export interface DocumentContentProps {
     document: PanelDocument;
     mode: DocumentContentMode;
     isReloading?: boolean;
-    compactActions?: boolean;
+    /** The host's tab strip already names the document; hide the title row's copy. */
+    hideTitle?: boolean;
     /** Assistant default: start with editing locked and the DOCX toolbar hidden. */
     showToolbarToggle?: boolean;
     /**
@@ -97,7 +103,7 @@ export function DocumentContent({
     document,
     mode,
     isReloading = false,
-    compactActions,
+    hideTitle,
     showToolbarToggle = false,
     canEdit = false,
     active = true,
@@ -112,19 +118,7 @@ export function DocumentContent({
     cacheBytes = true,
     onVersionChange,
 }: DocumentContentProps) {
-    const contentRef = useRef<HTMLDivElement>(null);
-    const [narrow, setNarrow] = useState(false);
     const [toolbarVisible, setToolbarVisible] = useState(!showToolbarToggle);
-    useEffect(() => {
-        const element = contentRef.current;
-        if (!element || typeof ResizeObserver === "undefined") return;
-        const observer = new ResizeObserver(([entry]) => {
-            if (entry.contentRect.width > 0)
-                setNarrow(entry.contentRect.width < 600);
-        });
-        observer.observe(element);
-        return () => observer.disconnect();
-    }, []);
     const [saveState, setSaveState] = useState<DocxSaveState | null>(null);
     const onSaveStateChange = useCallback(
         (_documentId: string, state: DocxSaveState | null) =>
@@ -148,11 +142,14 @@ export function DocumentContent({
 
     const documentId = resolvedDocument.document_id;
     const versionId = resolvedDocument.version_id ?? null;
-    const isCase = resolvedDocument.type === "case";
+    // A provider-backed source renders as text in CaseView; the file viewers,
+    // their quote highlighting and the edit card are for uploads.
+    const isExternalSource = documentCapabilities(resolvedDocument).external;
     const viewType = resolveDocumentViewType({
         filename: resolvedDocument.title,
         fileType: resolvedDocument.type,
     });
+    const isText = !isExternalSource &&isTextDocumentFilename(resolvedDocument.title);
     const citation = mode.kind === "citation" ? mode.citation : null;
     const firstSelectableQuoteIndex =
         mode.kind === "citation"
@@ -178,7 +175,7 @@ export function DocumentContent({
         : undefined;
 
     const { activeViewerQuotes, activeHighlightCells } = useMemo(() => {
-        if (mode.kind !== "citation" || isCase) {
+        if (mode.kind !== "citation" || isExternalSource) {
             return {
                 activeViewerQuotes: undefined,
                 activeHighlightCells: undefined,
@@ -207,7 +204,7 @@ export function DocumentContent({
                       ]
                     : [],
         };
-    }, [activeDocumentQuote, isCase, mode.kind]);
+    }, [activeDocumentQuote, isExternalSource, mode.kind]);
 
     useEffect(() => {
         // eslint-disable-next-line react-hooks/set-state-in-effect -- reset quote selection for a newly opened citation without remounting the editor
@@ -235,19 +232,19 @@ export function DocumentContent({
     }, [editFocusKey, mode]);
 
     return (
-        <div ref={contentRef} className="flex h-full min-h-0 flex-col">
+        <div className="flex h-full min-h-0 flex-col">
             <DocumentAnnotationLayer
                 title={
                     <DocumentTitleRow
                         document={resolvedDocument}
                         isReloading={isReloading}
-                        compactActions={compactActions ?? narrow}
+                        hideTitle={hideTitle}
                         saveState={saveState}
                         onVersionChange={onVersionChange}
                         onDownload={() => localDownload.current?.()}
                         toolbarVisible={toolbarVisible}
                         onToggleToolbar={
-                            viewType === "docx" && canEdit
+                            !isExternalSource && viewType === "docx" && canEdit
                                 ? () => setToolbarVisible((visible) => !visible)
                                 : undefined
                         }
@@ -255,7 +252,7 @@ export function DocumentContent({
                 }
                 annotation={
                     mode.kind === "citation" ||
-                    (mode.kind === "edit" && !isCase) ? (
+                    (mode.kind === "edit" && !isExternalSource) ? (
                         <>
                             {mode.kind === "citation" && (
                                 <CitationQuotesSection
@@ -279,7 +276,7 @@ export function DocumentContent({
                                 />
                             )}
 
-                            {mode.kind === "edit" && !isCase && (
+                            {mode.kind === "edit" && !isExternalSource && (
                                 <div className="px-2 pb-2">
                                     <EditCard
                                         annotation={mode.edit}
@@ -301,7 +298,7 @@ export function DocumentContent({
                     ) : undefined
                 }
             >
-                {isCase ? (
+                {isExternalSource ? (
                     <CaseView
                         document={resolvedDocument}
                         activeQuote={active ? activeDocumentQuote : undefined}
@@ -310,6 +307,14 @@ export function DocumentContent({
                         error={documentError}
                         onRetry={retryDocument}
                         onClearQuote={() => setActiveCitationQuoteId(null)}
+                    />
+                ) : isText ? (
+                    <TextView
+                        documentId={documentId}
+                        versionId={versionId}
+                        filename={resolvedDocument.title}
+                        refetchKey={refetchKey}
+                        rounded={false}
                     />
                 ) : viewType === "docx" ? (
                     <DocxView

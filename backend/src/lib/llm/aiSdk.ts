@@ -1,5 +1,6 @@
-import { normalizeReasoningLevelForModel } from "./models";
-import type { LanguageModel, ToolSet } from "ai" with {
+import { installProviderWarningLogger } from "./warnings";
+import { normalizeReasoningLevelForModel, reasoningLevelsForModel } from "./models";
+import type { LanguageModel, LanguageModelMiddleware, ToolSet } from "ai" with {
   "resolution-mode": "import",
 };
 import type * as AiSdk from "ai" with { "resolution-mode": "import" };
@@ -15,8 +16,56 @@ import type {
 } from "./types";
 import type { WebSource } from "@mike/contracts";
 import { providerDeadlines } from "./providerDeadlines";
-import { asProviderStallError, streamErrorMessage, toProviderStreamError } from "./providerErrors";
+import {
+  loadToolInputChecker,
+  type ToolInputChecker,
+} from "./toolInputValidation";
+import {
+  asProviderStallError,
+  isDeterministicProviderQuota,
+  providerFailureKind,
+  providerFailureStatus,
+  streamErrorMessage,
+  toProviderStreamError,
+  withKeySource,
+  type ProviderKeySource,
+} from "./providerErrors";
+import { log } from "../logging/root";
 import { createRawLlmStreamRecorder, logRawLlmStream } from "./rawStreamLog";
+import type { LlmUsageMeter } from "./usage";
+import {
+  contextNotice,
+  estimateTokens,
+  fitMessagesToBudget,
+  inputBudgetFor,
+  type SummaryRequest,
+} from "./contextBudget";
+import {
+  continueAfterLength,
+  planningRestartNotice,
+  recoveryReasoningLevel,
+} from "./lengthContinuation";
+
+installProviderWarningLogger();
+
+/** Keep SDK retry backoff for throttling, but don't repeat a proven account refusal. */
+function quotaRefusalRetries(): LanguageModelMiddleware {
+  const attempt = async <T>(call: () => PromiseLike<T>): Promise<T> => {
+    try { return await call(); }
+    catch (error) {
+      if (isDeterministicProviderQuota(error) && error instanceof Error) {
+        // APICallError exposes this flag to the SDK retry loop. Preserve the
+        // actual exception, provider response, stack and cause for its owner.
+        Object.defineProperty(error, "isRetryable", { value: false, configurable: true });
+      }
+      throw error;
+    }
+  };
+  return {
+    wrapGenerate: ({ doGenerate }) => attempt(doGenerate),
+    wrapStream: ({ doStream }) => attempt(doStream),
+  };
+}
 
 /**
  * Per-step output limit, or undefined to leave it to the provider.
@@ -29,23 +78,33 @@ import { createRawLlmStreamRecorder, logRawLlmStream } from "./rawStreamLog";
  *
  * OpenCode Go keeps the previous 16,384: its Messages models (MiniMax, Qwen)
  * go through the Anthropic adapter, which does not recognise them and would
- * otherwise fall back to 4,096.
+ * otherwise fall back to 4,096. There the number raises the limit.
  *
- * Dev divergence (sync-log: 171d6f95): Kimi (Moonshot, through
- * `@ai-sdk/openai-compatible`) also keeps 16,384. No adapter fills in a
- * model-aware maximum for it and Moonshot's server default when `max_tokens`
- * is omitted is not verified to exceed Dev's previous limit, so dropping the
- * cap could truncate long answers. Azure OpenAI follows upstream (unset).
+ * Kimi, TokenJuice and Meta (OpenAI-compatible) send no limit, like the rest:
+ * a fixed 16,384 cut long drafts short on models that allow far more.
  */
 const PROVIDERS_KEEPING_LEGACY_OUTPUT_LIMIT: ReadonlySet<Provider> = new Set<Provider>([
   "opencode-go",
-  "kimi",
 ]);
 
 export function maxOutputTokensFor(provider: Provider, adapterDefault?: number): number | undefined {
   const value = Number(process.env.LLM_MAX_OUTPUT_TOKENS);
   if (Number.isSafeInteger(value) && value > 0) return value;
   return PROVIDERS_KEEPING_LEGACY_OUTPUT_LIMIT.has(provider) ? 16_384 : adapterDefault;
+}
+
+/**
+ * The output limit a call may use under a tenant credit reservation (issue
+ * 016): never more than the reservation holds, and never more than the call
+ * would have asked for without one.
+ */
+function withinCreditReservation(
+  desired: number | undefined,
+  meter: LlmUsageMeter | undefined,
+): number | undefined {
+  const held = meter?.reservation?.maxOutputTokens;
+  if (held === undefined) return desired;
+  return desired === undefined ? held : Math.min(desired, held);
 }
 
 /**
@@ -223,7 +282,7 @@ const COURTLISTENER_CITATION_REMINDER = `COURTLISTENER CITATION REMINDER:
 If your final answer relies on any CourtListener case, every such case reference must have BOTH a clickable markdown case link and an inline [N] marker.
 Include the clickable case link only the first time you cite that case; later references to the same case should reuse the existing inline [N] marker without repeating the link unless clarity requires it.
 Assign new refs in first-use order as much as possible: [1], then [2], then [3]. Reuse an existing ref when citing the same case/passage again, even if that means a later sentence cites [3] and then [1] again.
-End the response with a <CITATIONS> block containing one matching case entry per [N] marker:
+Before writing the answer, record one case entry per [N] marker with cite_sources:
 {"ref": N, "cluster_id": 123, "quotes": [{"opinion_id": 456, "quote": "exact verbatim opinion text"}]}.
 Do not use doc_id, page, top-level quote, case_name, or citation fields for CourtListener case entries.`;
 
@@ -232,6 +291,12 @@ export type AiSdkAdapterConfig = {
   label: string;
   model: Exclude<LanguageModel, string>;
   modelId: string;
+  /**
+   * Whose key this adapter sends: a user's own, or the deployment's
+   * environment key. Recorded on a failure so a refusal of the operator's
+   * key is reported and a user's is not (providerFailureLevel).
+   */
+  keySource?: ProviderKeySource;
   /** Some protocol-compatible gateways reject reasoning request fields. */
   supportsReasoning?: boolean;
   /** OpenAI's CourtListener tools require an extra instruction after use. */
@@ -242,6 +307,8 @@ export type AiSdkAdapterConfig = {
   replayReasoning?: boolean;
   /** Mark the prefix-cache breakpoint with a Bedrock cache point as well. */
   bedrockCachePoint?: boolean;
+  /** The adapter accepts Anthropic cache controls on source text blocks. */
+  anthropicCachePoint?: boolean;
   /**
    * Output ceiling for a chat step at the given reasoning level, for SDKs
    * that send none by default. LLM_MAX_OUTPUT_TOKENS still wins.
@@ -249,7 +316,25 @@ export type AiSdkAdapterConfig = {
   defaultMaxOutputTokens?: (
     reasoning: StreamChatParams["reasoning"],
   ) => number | undefined;
+  /**
+   * Provider options every request from this adapter carries, chat and
+   * one-shot alike: the data-retention settings chosen in providers.ts.
+   */
+  requestProviderOptions?: StreamTextProviderOptions;
 };
+
+/** Per-namespace merge: a later set's fields win within a namespace. */
+function mergeProviderOptions(
+  ...sets: Array<StreamTextProviderOptions | undefined>
+): StreamTextProviderOptions {
+  const merged: StreamTextProviderOptions = {};
+  for (const set of sets) {
+    for (const [namespace, options] of Object.entries(set ?? {})) {
+      merged[namespace] = { ...merged[namespace], ...options };
+    }
+  }
+  return merged;
+}
 
 type PendingToolExecution = {
   call: NormalizedToolCall;
@@ -325,6 +410,7 @@ function toAiSdkTools(
   runTools?: StreamChatParams["runTools"],
   sdk?: Pick<typeof AiSdk, "jsonSchema" | "tool">,
   onRunToolsFailure?: (error: unknown) => void,
+  inputChecker?: ToolInputChecker,
 ): ToolSet | undefined {
   if (!schemas.length) return undefined;
   if (!sdk) throw new Error("AI SDK tool helpers are unavailable.");
@@ -334,10 +420,18 @@ function toAiSdkTools(
 
   return Object.fromEntries(
     schemas.map((schema) => {
+      // With a validate function, the SDK refuses a call whose arguments do
+      // not match the schema and answers it with the error, as it does for
+      // unparseable JSON; see toolInputValidation.ts.
+      const validate = inputChecker?.(
+        schema.function.name,
+        schema.function.parameters,
+      );
       const definition = {
         description: schema.function.description,
         inputSchema: sdk.jsonSchema<Record<string, unknown>>(
           schema.function.parameters as never,
+          validate ? { validate } : undefined,
         ),
         ...(batcher
           ? {
@@ -465,7 +559,7 @@ function toModelMessage(
 
 export function withPrefixCacheHints(
   params: StreamChatParams,
-  options: { replayReasoning?: boolean; bedrockCachePoint?: boolean } = {},
+  options: { replayReasoning?: boolean; bedrockCachePoint?: boolean; sourceCachePoint?: boolean } = {},
 ): {
   messages: AiSdk.ModelMessage[];
   providerOptions?: StreamTextProviderOptions;
@@ -476,7 +570,7 @@ export function withPrefixCacheHints(
           toModelMessage(m, options.replayReasoning === true),
         )
       : params.messages;
-  if (!params.conversationId || !messages.length) {
+  if ((!params.conversationId && !params.sourcePrefixLength) || !messages.length) {
     return { messages };
   }
   const last = messages.length - 1;
@@ -486,6 +580,22 @@ export function withPrefixCacheHints(
       ? { bedrock: { cachePoint: { type: "default" } } }
       : {}),
   };
+  const source = messages[0];
+  const end = params.sourcePrefixLength;
+  if (options.sourceCachePoint && end && Number.isSafeInteger(end) &&
+      messages.length === 1 && source.role === "user" && typeof source.content === "string" &&
+      end > 0 && end < source.content.length) {
+    return {
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: source.content.slice(0, end), providerOptions: breakpoint },
+          { type: "text", text: source.content.slice(end) },
+        ],
+      }],
+    };
+  }
+  if (!params.conversationId) return { messages };
   return {
     messages: messages.map((message, index): AiSdk.ModelMessage => {
       if (index !== last) return message;
@@ -503,6 +613,7 @@ export function withPrefixCacheHints(
 export async function streamAiSdk(
   params: StreamChatParams,
   config: AiSdkAdapterConfig,
+  meter?: LlmUsageMeter,
 ): Promise<StreamChatResult> {
   const sdk = await import("ai");
   // Internal abort linked to the caller's signal: a runTools failure (e.g. the
@@ -515,10 +626,19 @@ export async function streamAiSdk(
   if (params.abortSignal?.aborted) forwardAbort();
   else params.abortSignal?.addEventListener("abort", forwardAbort, { once: true });
   const runToolsFailure: { first: { error: unknown } | null } = { first: null };
-  const functionTools = toAiSdkTools(params.tools ?? [], params.runTools, sdk, (error) => {
-    runToolsFailure.first ??= { error };
-    internalAbort.abort();
-  });
+  const inputChecker = params.tools?.length
+    ? await loadToolInputChecker()
+    : undefined;
+  const functionTools = toAiSdkTools(
+    params.tools ?? [],
+    params.runTools,
+    sdk,
+    (error) => {
+      runToolsFailure.first ??= { error };
+      internalAbort.abort();
+    },
+    inputChecker,
+  );
   const webSearch =
     params.providerWebSearch && config.webSearchTool
       ? {
@@ -548,10 +668,11 @@ export async function streamAiSdk(
   const cacheHints = withPrefixCacheHints(params, {
     replayReasoning: config.replayReasoning,
     bedrockCachePoint: config.bedrockCachePoint,
+    sourceCachePoint: config.anthropicCachePoint || config.bedrockCachePoint,
   });
-  const providerOptions: StreamTextProviderOptions = {
-    ...(cacheHints.providerOptions ?? {}),
-    ...(config.provider === "openrouter"
+  const providerOptions = mergeProviderOptions(
+    cacheHints.providerOptions,
+    config.provider === "openrouter"
       ? {
           // OpenRouter's adapter does not consume AI SDK's call-level
           // `reasoning` option. Its per-request namespace is merged into the
@@ -560,8 +681,9 @@ export async function streamAiSdk(
             reasoning: { effort: params.reasoning ?? "none" },
           },
         }
-      : {}),
-  };
+      : undefined,
+    config.requestProviderOptions,
+  );
   const rawStreamRecorder = createRawLlmStreamRecorder({
     provider: config.provider,
     model: config.modelId,
@@ -572,12 +694,112 @@ export async function streamAiSdk(
   const maxIterations = params.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   let lastFinishReason: string | undefined;
   let lastRawFinishReason: string | undefined;
+  const maxOutputTokens = withinCreditReservation(
+    maxOutputTokensFor(
+      config.provider,
+      config.defaultMaxOutputTokens?.(params.reasoning),
+    ),
+    meter,
+  );
+  // Keep each step inside the model's context window (contextBudget.ts).
+  // Counts accumulate across steps for the closing notice.
+  const inputBudget = inputBudgetFor(config.modelId, maxOutputTokens);
+  const toolTokens = estimateTokens(params.tools ?? []);
+  const condensed = { summarizedTurns: 0, shortenedToolResults: 0 };
+  const summarize = async ({ system, prompt, maxOutputTokens: maxTokens }: SummaryRequest) => {
+    const summary = await completeAiSdkText(
+      { systemPrompt: system, user: prompt, maxTokens, abortSignal: internalAbort.signal },
+      config,
+      meter,
+    );
+    params.callbacks?.onActivity?.();
+    return summary;
+  };
+  // Steps run by earlier calls of this turn, so a recovery call's step loop
+  // stays inside the same tool-round bound.
+  let stepsBefore = 0;
+  let planningRestarts = 0;
+  const closeOpenReasoningBlocks = () => {
+    for (const id of openReasoningBlocks) {
+      openReasoningBlocks.delete(id);
+      params.callbacks?.onReasoningBlockEnd?.();
+    }
+  };
+  // Reasoning for a recovery call: lowered, never switched on or off.
+  const recoveryReasoning = recoveryReasoningLevel(
+    params.reasoning,
+    reasoningLevelsForModel(config.modelId),
+    "none",
+  );
+  // A reply cut off mid-text at the output limit is continued by the same
+  // model (lengthContinuation.ts). Each continuation is one tool-free step
+  // with the same options, so its prepareStep/onStepFinish metering, output
+  // cap, abort signal and deadline middleware apply exactly as to any step.
+  // A reply cut off while still planning is recovered: the same options and
+  // tools (deliverables such as generate_docx are tool calls), with the steps
+  // left in this turn's bound and reasoning lowered where that is safe.
+  const startStream = (options: Parameters<typeof sdk.streamText>[0]) => {
+    const first = sdk.streamText(options);
+    const stream = continueAfterLength(first, (messages, kind) => {
+      // A cut-off reasoning block may never have received its end part, and
+      // the next call can reuse its id; close it so the UI starts afresh.
+      closeOpenReasoningBlocks();
+      const steps = messages.map((message) => ({
+        toolCalls: Array.isArray(message.content)
+          ? (message.content as Array<{ type: string; toolName: string }>).filter((c) => c.type === "tool-call")
+          : [],
+      }));
+      const system = config.courtlistenerCitationReminder && usesCourtlistenerTool(steps)
+        ? `${params.systemPrompt}\n\n${COURTLISTENER_CITATION_REMINDER}` : options.system;
+      if (kind === "recover") {
+        planningRestarts += 1;
+        stepsBefore = iteration;
+        const lowerReasoning = options.reasoning !== undefined && recoveryReasoning !== params.reasoning;
+        const reasoningOptions = lowerReasoning
+          ? {
+              reasoning: recoveryReasoning as typeof options.reasoning,
+              ...(config.provider === "openrouter"
+                ? { providerOptions: { ...options.providerOptions, openrouter: { reasoning: { effort: recoveryReasoning } } } }
+                : {}),
+            }
+          : {};
+        return sdk.streamText({
+          ...options,
+          ...reasoningOptions,
+          system,
+          messages,
+          stopWhen: sdk.stepCountIs(Math.max(1, Math.max(0, maxIterations) + 1 - stepsBefore)),
+        } as typeof options);
+      }
+      // The cast only bridges AI SDK's prompt-or-messages union.
+      return sdk.streamText({
+        ...options,
+        system,
+        messages,
+        activeTools: [],
+        toolChoice: "none",
+        stopWhen: sdk.stepCountIs(1),
+      } as typeof options);
+    }, cacheHints.messages);
+    return { stream };
+  };
 
+  const callStartedAt = Date.now();
+  log().debug("llm.call.start", {
+    model: config.modelId,
+    provider: config.provider,
+    maxIterations,
+    maxOutputTokens,
+    inputBudget,
+    toolCount: Object.keys(tools ?? {}).length,
+    reasoning: params.reasoning ?? null,
+    metered: !!meter?.reservation,
+  });
   try {
-    const result = sdk.streamText({
+    const result = startStream({
       model: sdk.wrapLanguageModel({
         model: config.model,
-        middleware: providerDeadlines(params.callbacks?.onActivity),
+        middleware: [providerDeadlines(params.callbacks?.onActivity), quotaRefusalRetries()],
       }),
       system: params.systemPrompt,
       messages: cacheHints.messages,
@@ -585,10 +807,10 @@ export async function streamAiSdk(
         ? { providerOptions }
         : {}),
       tools,
-      maxOutputTokens: maxOutputTokensFor(
-        config.provider,
-        config.defaultMaxOutputTokens?.(params.reasoning),
-      ),
+      maxOutputTokens,
+      // Budget holds cover one wire request per step; opaque SDK retries could
+      // spend twice without another reservation when a response is lost.
+      ...(meter?.reservation ? { maxRetries: 0 } : {}),
       // Dev final synthesis step remains tool-disabled.
       stopWhen: sdk.stepCountIs(Math.max(0, maxIterations) + 1),
       abortSignal: internalAbort.signal,
@@ -604,16 +826,54 @@ export async function streamAiSdk(
               | undefined),
       include: { rawChunks: true },
       onError: () => {},
-      prepareStep: ({ steps, stepNumber }: { steps: Array<{ toolCalls: Array<{ toolName: string }> }>; stepNumber: number }) => ({
-        ...(steps.length >= Math.max(0, maxIterations)
+      ...(meter?.reservation ? {
+        // SDK hooks run in step order, before the next prepareStep. Recording
+        // paid usage here avoids a fast tool loop outrunning stream consumption.
+        onChunk: ({ chunk }: { chunk: { type: string; text?: string; input?: unknown } }) => {
+          if ((chunk.type === "text-delta" || chunk.type === "reasoning-delta") && chunk.text) meter.observeOutput(chunk.text);
+          if (chunk.type === "tool-call") meter.observeOutput(JSON.stringify(chunk.input));
+        },
+        onStepFinish: ({ usage, response }: { usage: Parameters<LlmUsageMeter["addStep"]>[0]; response?: { id?: string } }) => meter.addStep(usage, response?.id),
+      } : {}),
+      prepareStep: async ({ steps, stepNumber, messages, instructions }: { steps: Array<{ toolCalls: Array<{ toolName: string }> }>; stepNumber: number; messages: AiSdk.ModelMessage[]; instructions?: unknown }) => {
+        const system = config.courtlistenerCitationReminder && usesCourtlistenerTool(steps)
+          ? `${params.systemPrompt}\n\n${COURTLISTENER_CITATION_REMINDER}` : instructions ?? params.systemPrompt;
+        const fixedTokens = estimateTokens(system) + toolTokens;
+        const fitted = await fitMessagesToBudget({
+          messages,
+          fixedTokens,
+          budget: inputBudget,
+          label: config.label,
+          modelId: config.modelId,
+          summarize,
+        });
+        condensed.summarizedTurns += fitted.summarizedTurns;
+        condensed.shortenedToolResults += fitted.shortenedToolResults;
+        // Logged here, not in contextBudget.ts, which stays import-free.
+        if (fitted.messages !== messages && log().debugEnabled()) {
+          log().debug("llm.context_fit", {
+            model: config.modelId,
+            budget: inputBudget,
+            fixedTokens,
+            totalTokens: fixedTokens + estimateTokens(fitted.messages),
+            shortenedToolResults: fitted.shortenedToolResults,
+            summarizedTurns: fitted.summarizedTurns,
+          });
+        }
+        await meter?.beforeStep({ system, messages: fitted.messages, tools: params.tools ?? [] });
+        return ({
+        // The override carries forward, so later steps start from it.
+        ...(fitted.messages !== messages ? { messages: fitted.messages } : {}),
+        ...(stepsBefore + steps.length >= Math.max(0, maxIterations)
           ? { activeTools: [], toolChoice: "none" as const }
           : {}),
-        ...(params.finishWithoutToolsOnLastStep && stepNumber === maxIterations - 1
+        ...(params.finishWithoutToolsOnLastStep && stepsBefore + stepNumber === maxIterations - 1
           ? { toolChoice: "none" as const } : {}),
         ...(config.courtlistenerCitationReminder && usesCourtlistenerTool(steps)
           ? { system: `${params.systemPrompt}\n\n${COURTLISTENER_CITATION_REMINDER}` }
           : {}),
-      }),
+      });
+      },
     });
 
     for await (const part of result.stream) {
@@ -637,6 +897,7 @@ export async function streamAiSdk(
           break;
         case "text-delta":
           fullText += part.text;
+          if (!meter?.reservation) meter?.observeOutput(part.text);
           params.callbacks?.onContentDelta?.(part.text);
           break;
         case "reasoning-start":
@@ -644,6 +905,7 @@ export async function streamAiSdk(
           break;
         case "reasoning-delta":
           openReasoningBlocks.add(part.id);
+          if (!meter?.reservation) meter?.observeOutput(part.text);
           params.callbacks?.onReasoningDelta?.(part.text);
           break;
         case "reasoning-end":
@@ -652,6 +914,8 @@ export async function streamAiSdk(
           }
           break;
         case "tool-call": {
+          // Tool arguments are output too if the step ends without usage.
+          if (!meter?.reservation) meter?.observeOutput(JSON.stringify(part.input));
           if (part.providerExecuted) {
             if (part.toolName === PROVIDER_WEB_SEARCH_TOOL) {
               emitWebSearch({
@@ -710,12 +974,26 @@ export async function streamAiSdk(
               {
                 inputTokens: part.usage.inputTokens ?? 0,
                 outputTokens: part.usage.outputTokens ?? 0,
+                ...(part.usage.inputTokenDetails?.cacheReadTokens !== undefined &&
+                  { cacheReadTokens: part.usage.inputTokenDetails.cacheReadTokens }),
+                ...(part.usage.inputTokenDetails?.cacheWriteTokens !== undefined &&
+                  { cacheWriteTokens: part.usage.inputTokenDetails.cacheWriteTokens }),
               },
               part.finishReason,
             );
           }
           lastFinishReason = part.finishReason;
           lastRawFinishReason = part.rawFinishReason;
+          log().debug("llm.step.finish", {
+            model: config.modelId,
+            step: iteration,
+            inputTokens: part.usage.inputTokens,
+            outputTokens: part.usage.outputTokens,
+            finishReason: part.finishReason,
+            rawFinishReason: part.rawFinishReason,
+          });
+          // Usage ledger (issue 015): one provider request per step.
+          if (!meter?.reservation) meter?.addStep(part.usage, part.response?.id);
           break;
         // A tool's own failure is not the model provider's: a search tool
         // answering 401 says nothing about our LLM key, so this path keeps the
@@ -749,6 +1027,11 @@ export async function streamAiSdk(
           const stalled = params.abortSignal?.aborted
             ? null
             : asProviderStallError(part.reason, config);
+          log().debug("llm.stream_abort", {
+            model: config.modelId,
+            stalled: !!stalled,
+            callerAborted: !!params.abortSignal?.aborted,
+          });
           if (stalled) throw stalled;
           const error = new Error(part.reason || "Stream aborted.");
           error.name = "AbortError";
@@ -757,25 +1040,36 @@ export async function streamAiSdk(
       }
     }
 
-    for (const id of openReasoningBlocks) {
-      openReasoningBlocks.delete(id);
-      params.callbacks?.onReasoningBlockEnd?.();
-    }
+    closeOpenReasoningBlocks();
     // A run halted by stopWhen, or cut off at the output ceiling, otherwise
     // ends exactly like a finished one: streamText just stops and this
     // function returns whatever text happened to accumulate. That renders as
     // a bare "Completed in N steps" with no answer and no error, which is
     // indistinguishable from the model having nothing to say. Name it instead.
-    const notice = stopNotice(
-      iteration,
-      maxIterations,
-      lastFinishReason,
-      lastRawFinishReason,
-    );
+    const notice =
+      stopNotice(
+        iteration,
+        maxIterations,
+        lastFinishReason,
+        lastRawFinishReason,
+      ) +
+      planningRestartNotice(planningRestarts) +
+      contextNotice(condensed.summarizedTurns, condensed.shortenedToolResults);
     if (notice) {
       fullText += notice;
-      params.callbacks?.onContentDelta?.(notice);
+      if (params.callbacks?.onStopNotice) params.callbacks.onStopNotice(notice);
+      else params.callbacks?.onContentDelta?.(notice);
     }
+    log().debug("llm.call.finish", {
+      model: config.modelId,
+      steps: iteration,
+      finishReason: lastFinishReason,
+      planningRestarts,
+      summarizedTurns: condensed.summarizedTurns,
+      shortenedToolResults: condensed.shortenedToolResults,
+      outputChars: fullText.length,
+      durationMs: Date.now() - callStartedAt,
+    });
     await rawStreamRecorder?.flush("completed");
     return { fullText };
   } catch (error) {
@@ -785,6 +1079,16 @@ export async function streamAiSdk(
     const fatal = runToolsFailure.first
       ? guardAbortShaped(rethrowable(runToolsFailure.first.error, config.label))
       : guardAbortShaped(streamFailure(error, config));
+    if (log().debugEnabled()) {
+      log().debug("llm.provider_error", {
+        model: config.modelId,
+        provider: config.provider,
+        errorType: fatal instanceof Error ? fatal.name : typeof fatal,
+        failureKind: runToolsFailure.first ? null : providerFailureKind(fatal),
+        httpStatus: providerFailureStatus(fatal),
+        toolFailure: !!runToolsFailure.first,
+      });
+    }
     await rawStreamRecorder?.flush("error", fatal);
     throw fatal;
   } finally {
@@ -801,8 +1105,9 @@ export async function completeAiSdkText(
     abortSignal?: AbortSignal;
   },
   config: AiSdkAdapterConfig,
+  meter?: LlmUsageMeter,
 ): Promise<string> {
-  const { generateText } = await import("ai");
+  const { generateText, wrapLanguageModel } = await import("ai");
   // Upstream 2f30082a: lightweight completions disable reasoning by default
   // ("none", moved to the nearest supported level). Dev keeps an explicit
   // caller effort (Altien skills ask for "low").
@@ -811,20 +1116,43 @@ export async function completeAiSdkText(
     params.reasoningEffort ?? "none",
   );
   const requested = params.maxTokens ?? 512;
-  const result = await generateText({
-    model: config.model,
-    system: params.systemPrompt,
-    prompt: params.user,
-    abortSignal: params.abortSignal,
-    maxOutputTokens: config.supportsReasoning !== false && completionReasoning && completionReasoning !== "none"
-      ? requested + COMPLETION_REASONING_HEADROOM_TOKENS : requested,
-    reasoning: config.provider === "kimi" || config.supportsReasoning === false
-      ? undefined
-      : completionReasoning === "max" ? "xhigh" : completionReasoning,
-    ...(config.provider === "kimi" && params.reasoningEffort
-      ? { providerOptions: { kimi: { reasoningEffort: params.reasoningEffort === "none" ? "low" : params.reasoningEffort } } }
-      : {}),
-  });
+  const kimiEffortOptions: StreamTextProviderOptions | undefined =
+    config.provider === "kimi" && params.reasoningEffort
+      ? { kimi: { reasoningEffort: params.reasoningEffort === "none" ? "low" : params.reasoningEffort } }
+      : undefined;
+  const completionProviderOptions =
+    kimiEffortOptions || config.requestProviderOptions
+      ? mergeProviderOptions(kimiEffortOptions, config.requestProviderOptions)
+      : undefined;
+  await meter?.beforeStep({ system: params.systemPrompt, user: params.user });
+  let result: Awaited<ReturnType<typeof generateText>>;
+  try {
+    result = await generateText({
+      model: wrapLanguageModel({ model: config.model, middleware: quotaRefusalRetries() }),
+      system: params.systemPrompt,
+      prompt: params.user,
+      abortSignal: params.abortSignal,
+      maxOutputTokens: withinCreditReservation(
+        config.supportsReasoning !== false && completionReasoning && completionReasoning !== "none"
+          ? requested + COMPLETION_REASONING_HEADROOM_TOKENS : requested,
+        meter,
+      ),
+      ...(meter?.reservation ? { maxRetries: 0 } : {}),
+      reasoning: config.provider === "kimi" || config.supportsReasoning === false
+        ? undefined
+        : completionReasoning === "max" ? "xhigh" : completionReasoning,
+      // Upstream ba187ea8: the adapter's data-retention options ride on every
+      // one-shot request too, merged per namespace with dev's Kimi effort.
+      ...(completionProviderOptions
+        ? { providerOptions: completionProviderOptions }
+        : {}),
+    });
+  } catch (error) {
+    // Upstream 2ada45fb: the provider's own error, unconverted (callers
+    // classify it), with whose key was sent recorded on it for the reporting level.
+    throw withKeySource(error, config.keySource, config.provider);
+  }
+  meter?.addStep(result.totalUsage ?? result.usage, result.response?.id);
   return result.text;
 }
 

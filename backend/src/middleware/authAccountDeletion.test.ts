@@ -16,5 +16,8 @@ it.each([
  const req = { headers: { authorization: "Bearer valid-token" }, method: "GET", originalUrl: "/api/projects" } as Request;
  const res = { locals: {}, status: vi.fn().mockReturnThis(), json: vi.fn() }; const next = vi.fn();
  await requireAuth(req, res as unknown as Response, next);
- expect(res.status).toHaveBeenCalledWith(status); expect(next).not.toHaveBeenCalled(); expect(mocks.upsert).not.toHaveBeenCalled(); expect(res.locals).toEqual({});
+ expect(res.status).toHaveBeenCalledWith(status); expect(next).not.toHaveBeenCalled(); expect(mocks.upsert).not.toHaveBeenCalled();
+ // Multi-tenant: tenantAccess reads the validated principal before the
+ // tombstone check; no authenticated identity is published to the route.
+ expect(res.locals).not.toHaveProperty("userId"); expect(res.locals).not.toHaveProperty("token");
 });

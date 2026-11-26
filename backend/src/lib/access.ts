@@ -1,9 +1,12 @@
+import { auditedAdminRead } from "./tenantAdminAccess";
+import { mapWithConcurrency } from "./concurrency";
 import type { Db } from "./supabase";
 import { chunkArray } from "./arrays";
 import {
     hasOrgPrivateContentAccess,
     listOrgPrivateContentAccess,
 } from "./orgPrivateContent";
+import { currentTenant } from "./tenantContext";
 
 /**
  * Project / document access helpers.
@@ -249,8 +252,31 @@ export async function getOrgRole(
     orgId: string | null | undefined,
     db: Db,
 ): Promise<OrgRole | null> {
-    if (!orgId) return null;
-    const { data } = await db
+    return (await readOrgRole(userId, orgId, db)).role;
+}
+
+/**
+ * Like getOrgRole, but tells a failed membership read apart from a confirmed
+ * non-member. Use it where treating a failed read as "not a member" would
+ * quietly change what the caller's work runs on.
+ */
+export async function getOrgRoleOrThrow(
+    userId: string,
+    orgId: string | null | undefined,
+    db: Db,
+): Promise<OrgRole | null> {
+    const { role, failed } = await readOrgRole(userId, orgId, db);
+    if (failed) throw new Error("Failed to read organization membership");
+    return role;
+}
+
+async function readOrgRole(
+    userId: string,
+    orgId: string | null | undefined,
+    db: Db,
+): Promise<{ role: OrgRole | null; failed: boolean }> {
+    if (!orgId) return { role: null, failed: false };
+    const { data, error } = await db
         .from("org_members")
         .select("role, organizations!inner(id)")
         .is("organizations.deleted_at", null)
@@ -258,13 +284,13 @@ export async function getOrgRole(
         .eq("user_id", userId)
         .maybeSingle();
     const role = (data as { role?: string } | null)?.role;
-    return isOrgRole(role) ? role : null;
+    return { role: isOrgRole(role) ? role : null, failed: Boolean(error) };
 }
 
 /**
  * The role a direct access grant gives the caller on a project, or null when
- * they hold no grant. Grants are keyed by normalized email so an invitation
- * to share can be honoured before the recipient has an account.
+ * they hold no grant. Grant creation resolves the recipient inside this
+ * tenant; the normalized email remains the stable matching key.
  */
 export async function getProjectGrantRole(
     projectId: string,
@@ -273,12 +299,14 @@ export async function getProjectGrantRole(
 ): Promise<ProjectRole | null> {
     const email = normalizeEmail(userEmail);
     if (!email) return null;
-    const { data } = await db
+    let query = db
         .from("project_access_grants")
         .select("role")
         .eq("project_id", projectId)
-        .eq("email", email)
-        .maybeSingle();
+        .eq("email", email);
+    const tenantId = currentTenant()?.tenantId;
+    if (tenantId) query = query.eq("tenant_id", tenantId);
+    const { data } = await query.maybeSingle();
     const role = (data as { role?: string } | null)?.role;
     return isProjectRole(role) ? role : null;
 }
@@ -370,7 +398,7 @@ export type ProjectAccess =
       }
     | { ok: false };
 
-export async function checkProjectAccess(
+async function normalCheckProjectAccess(
     projectId: string,
     userId: string,
     userEmail: string | null | undefined,
@@ -569,7 +597,7 @@ export type WorkflowAccess =
     | { ok: false };
 
 /** Resolve a workflow through exactly one scope: organization or direct. */
-export async function checkWorkflowAccess(
+async function normalCheckWorkflowAccess(
     workflowId: string,
     userId: string,
     userEmail: string | null | undefined,
@@ -613,12 +641,14 @@ export async function checkWorkflowAccess(
     // Before that constraint a mixed-case row listed for its recipient via
     // get_workflows_overview — which lowers both sides — and then missed
     // here, so the workflow 404'd the moment they opened it.
-    const { data: share, error } = await db
+    let shareQuery = db
         .from("workflow_shares")
         .select("role")
         .eq("workflow_id", workflowId)
-        .eq("shared_with_email", email)
-        .maybeSingle();
+        .eq("shared_with_email", email);
+    const tenantId = currentTenant()?.tenantId;
+    if (tenantId) shareQuery = shareQuery.eq("tenant_id", tenantId);
+    const { data: share, error } = await shareQuery.maybeSingle();
     if (error) return { ok: false };
     const role = (share as { role?: unknown } | null)?.role;
     if (!isProjectRole(role)) return { ok: false };
@@ -639,7 +669,7 @@ export async function checkWorkflowAccess(
  * colleague's document, while that colleague does not gain extra permissions
  * beyond the inherited container role.
  */
-export async function ensureDocAccess(
+async function normalEnsureDocAccess(
     doc: {
         id?: string;
         user_id: string | null;
@@ -652,7 +682,7 @@ export async function ensureDocAccess(
     db: Db,
 ): Promise<ResourceAccess> {
     if (doc.project_id) {
-        const access = await checkProjectAccess(
+        const access = await normalCheckProjectAccess(
             doc.project_id,
             userId,
             userEmail,
@@ -667,7 +697,7 @@ export async function ensureDocAccess(
             : { ok: false };
     }
     if (doc.workflow_id) {
-        const access = await checkWorkflowAccess(
+        const access = await normalCheckWorkflowAccess(
             doc.workflow_id,
             userId,
             userEmail,
@@ -701,6 +731,99 @@ export async function ensureDocAccess(
 }
 
 /**
+ * The key under which one ensureDocAccess verdict may stand for other
+ * documents in the same batch, or null when the verdict is the document's
+ * own. A project or workflow admits or refuses everything in it together,
+ * and the caller's own standalone files turn only on their organization
+ * membership. Someone else's standalone file is reached only through its own
+ * private-content grant, so it never shares a verdict.
+ */
+export function sharedDocAccessKey(
+    doc: Parameters<typeof ensureDocAccess>[0],
+    userId: string,
+): string | null {
+    return doc.project_id ? `project:${doc.project_id}`
+        : doc.workflow_id ? `workflow:${doc.workflow_id}`
+        : doc.user_id === userId && doc.org_id ? `creator-org:${doc.org_id}` : null;
+}
+
+/** Reuse only shared container/membership verdicts within one authorized batch. */
+export function createDocumentAccessChecker(userId: string, userEmail: string | null | undefined, db: Db) {
+    const shared = new Map<string, Promise<ResourceAccess>>();
+    return async (doc: Parameters<typeof ensureDocAccess>[0]): Promise<ResourceAccess> => {
+        const key = sharedDocAccessKey(doc, userId);
+        if (!key) return ensureDocAccess(doc, userId, userEmail, db);
+        // Upstream divergence (sync-log: 98f01a2b): upstream shares the full
+        // ensureDocAccess verdict. Dev's ensureDocAccess adds an audited
+        // tenant-admin fallback that checks and audits each document id, so
+        // only the normal (membership/container) verdict is shared here; a
+        // denied shared verdict still takes the per-document audited fallback.
+        let pending = shared.get(key);
+        if (!pending) { pending = normalEnsureDocAccess(doc, userId, userEmail, db); shared.set(key, pending); }
+        const access = await pending;
+        if (!access.ok) {
+            return await auditedAdminRead(db, "document", doc.id, userId)
+                ? resourceAccessFor("viewer", null, false) : access;
+        }
+        // A shared role never shares the uploader's provenance.
+        return { ...access, isCreator: !!doc.user_id && doc.user_id === userId };
+    };
+}
+
+/**
+ * The review/chat twin of createDocumentAccessChecker, for callers that
+ * authorize many rows at once (data exports). A project child's verdict is
+ * its project's, so each project is checked once; a creator's own
+ * standalone rows depend only on their organization membership, so that is
+ * resolved once per organization. Anything else (a non-creator's standalone
+ * row, reached through a per-row grant) is still checked row by row.
+ */
+export function createSharedRowAccessChecker(
+    kind: "tabular_review" | "chat",
+    userId: string,
+    userEmail: string | null | undefined,
+    db: Db,
+) {
+    // Upstream divergence (sync-log: 6509fab4): upstream shares the full
+    // checkProjectAccess verdict. Dev's checkProjectAccess / ensureChatAccess /
+    // ensureReviewAccess add an audited tenant-admin fallback that checks and
+    // audits each object id, so only the normal (membership/container) verdict
+    // is shared here; a denied verdict still takes the per-row audited
+    // fallback, exactly as the per-row ensureChatAccess/ensureReviewAccess did.
+    const projects = new Map<string, ReturnType<typeof normalCheckProjectAccess>>();
+    const creatorOrgs = new Map<string, Promise<ResourceAccess>>();
+    const auditKind = kind === "chat" ? "chat" : "review";
+    const normalVerdict = async (row: Parameters<typeof ensureSharedRowAccess>[1]): Promise<ResourceAccess> => {
+        const isCreator = !!row.user_id && row.user_id === userId;
+        if (row.project_id) {
+            let pending = projects.get(row.project_id);
+            if (!pending) {
+                pending = normalCheckProjectAccess(row.project_id, userId, userEmail, db);
+                projects.set(row.project_id, pending);
+            }
+            const access = await pending;
+            return access.ok
+                ? resourceAccessFor(access.projectRole, access.orgRole, isCreator)
+                : { ok: false };
+        }
+        if (!isCreator) return ensureSharedRowAccess(kind, row, userId, userEmail, db);
+        const key = row.org_id ?? "";
+        let pending = creatorOrgs.get(key);
+        if (!pending) {
+            pending = ensureSharedRowAccess(kind, row, userId, userEmail, db);
+            creatorOrgs.set(key, pending);
+        }
+        return pending;
+    };
+    return async (row: Parameters<typeof ensureSharedRowAccess>[1]): Promise<ResourceAccess> => {
+        const access = await normalVerdict(row);
+        if (access.ok) return access;
+        return await auditedAdminRead(db, auditKind, row.id, userId)
+            ? resourceAccessFor("viewer", null, false) : access;
+    };
+}
+
+/**
  * Shared derivation for tabular reviews and assistant chats. Project children
  * inherit the project role exactly.
  *
@@ -727,7 +850,7 @@ async function ensureSharedRowAccess(
     db: Db,
 ): Promise<ResourceAccess> {
     if (row.project_id) {
-        const access = await checkProjectAccess(
+        const access = await normalCheckProjectAccess(
             row.project_id,
             userId,
             userEmail,
@@ -773,7 +896,7 @@ async function ensureSharedRowAccess(
  * Same shape as `ensureDocAccess`, for tabular_reviews: creator, direct
  * grant, or inherited project access, using one exclusive scope.
  */
-export async function ensureReviewAccess(
+async function normalEnsureReviewAccess(
     review: {
         id: string;
         user_id: string | null;
@@ -797,7 +920,7 @@ export async function ensureReviewAccess(
  * two in lockstep, or a chat becomes openable by URL while staying invisible
  * in the list.
  */
-export async function ensureChatAccess(
+async function normalEnsureChatAccess(
     chat: {
         id: string;
         user_id: string | null;
@@ -836,21 +959,7 @@ export async function filterAccessibleDocumentIds(
         org_id?: string | null;
     };
     const accessibleIds: string[] = [];
-    // Cache only within this lookup, and only container visibility. Standalone
-    // documents can have independent private-access grants.
-    const containerChecks = new Map<string, Promise<boolean>>();
-    /** Reuse container visibility without sharing standalone document grants. */
-    const readable = (doc: DocumentAccessRow): Promise<boolean> => {
-        const key = doc.project_id ? `project:${doc.project_id}`
-            : doc.workflow_id ? `workflow:${doc.workflow_id}` : null;
-        if (!key) return ensureDocAccess(doc, userId, userEmail, db).then((access) => access.ok);
-        let check = containerChecks.get(key);
-        if (!check) {
-            check = ensureDocAccess(doc, userId, userEmail, db).then((access) => access.ok);
-            containerChecks.set(key, check);
-        }
-        return check;
-    };
+    const check = createDocumentAccessChecker(userId, userEmail, db);
     // Keep UUID filters below the gateway's request/header limits, as in the
     // add-on asset lookup. A failed batch is not an empty permissions verdict.
     for (const batch of chunkArray([...new Set(documentIds)], 50)) {
@@ -861,11 +970,11 @@ export async function filterAccessibleDocumentIds(
         if (error) {
             throw new Error("Document access lookup failed", { cause: error });
         }
-        const verdicts = await Promise.all(
-            ((data ?? []) as DocumentAccessRow[]).map(async (doc) => ({
+        const verdicts = await mapWithConcurrency(
+            (data ?? []) as DocumentAccessRow[], 5, async (doc) => ({
                 id: doc.id,
-                readable: await readable(doc),
-            })),
+                readable: (await check(doc)).ok,
+            }),
         );
         accessibleIds.push(
             ...verdicts.filter((entry) => entry.readable).map((entry) => entry.id),
@@ -1085,4 +1194,33 @@ export async function listAccessibleProjectIds(
         if (role || privateAccess.get("project")?.has(project.id)) ids.add(project.id);
     }
     return [...ids];
+}
+
+/** Audited tenant-admin fallback always derives Viewer, never an ownership/write grant. */
+export async function checkProjectAccess(...args: Parameters<typeof normalCheckProjectAccess>): Promise<ProjectAccess> {
+    const access = await normalCheckProjectAccess(...args);
+    if (access.ok || !await auditedAdminRead(args[3], "project", args[0], args[1])) return access;
+    const { data: project, error } = await args[3].from("projects").select("id,user_id,org_id").eq("id", args[0]).maybeSingle();
+    return !error && project ? { ok: true, isCreator: false, orgRole: null, projectRole: "viewer", project } : { ok: false };
+}
+export async function checkWorkflowAccess(...args: Parameters<typeof normalCheckWorkflowAccess>): Promise<WorkflowAccess> {
+    const access = await normalCheckWorkflowAccess(...args);
+    if (access.ok || !await auditedAdminRead(args[3], "workflow", args[0], args[1])) return access;
+    const { data: workflow, error } = await args[3].from("workflows").select("id,user_id,org_id").eq("id", args[0]).maybeSingle();
+    return !error && workflow ? { ok: true, isCreator: false, orgRole: null, projectRole: "viewer", workflow } : { ok: false };
+}
+export async function ensureDocAccess(...args: Parameters<typeof normalEnsureDocAccess>): Promise<ResourceAccess> {
+    const access = await normalEnsureDocAccess(...args);
+    return access.ok || !await auditedAdminRead(args[3], "document", args[0].id, args[1])
+        ? access : resourceAccessFor("viewer", null, false);
+}
+export async function ensureChatAccess(...args: Parameters<typeof normalEnsureChatAccess>): Promise<ResourceAccess> {
+    const access = await normalEnsureChatAccess(...args);
+    return access.ok || !await auditedAdminRead(args[3], "chat", args[0].id, args[1])
+        ? access : resourceAccessFor("viewer", null, false);
+}
+export async function ensureReviewAccess(...args: Parameters<typeof normalEnsureReviewAccess>): Promise<ResourceAccess> {
+    const access = await normalEnsureReviewAccess(...args);
+    return access.ok || !await auditedAdminRead(args[3], "review", args[0].id, args[1])
+        ? access : resourceAccessFor("viewer", null, false);
 }

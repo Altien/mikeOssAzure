@@ -1,6 +1,10 @@
 // PostgREST diagnostics data access. Route files only authenticate and render.
-import { createServerSupabase } from "../../lib/supabase";
+import { createServerSupabase, postgrestRequestAuthorization } from "../../lib/supabase";
 import { getConfig, flushConfigCache } from "../../lib/config";
+import { runWithJobTenant } from "../../lib/tenantContext";
+
+export { runHealthChecks } from "./platform.health";
+export type { HealthResult, HealthStatus } from "./platform.shared";
 
 const SENTINEL_USER_ID = "00000000-0000-0000-0000-dddd0000dddd";
 
@@ -18,6 +22,15 @@ export type TestResult = {
     notes?: string;
 };
 
+// Raw on purpose (no supabase-js path rewriting), but signed like the request
+// client: entra PostgREST rejects a request without a JWT.
+async function signedFetch(url: string, init?: RequestInit): Promise<Response> {
+    const headers = new Headers(init?.headers);
+    const authorization = await postgrestRequestAuthorization();
+    if (authorization) headers.set("Authorization", authorization);
+    return fetch(url, { ...init, headers });
+}
+
 async function rawFetch(
     url: string,
     init?: RequestInit,
@@ -27,7 +40,7 @@ async function rawFetch(
     headers: Record<string, string>;
     body: string;
 }> {
-    const resp = await fetch(url, init);
+    const resp = await signedFetch(url, init);
     const headers: Record<string, string> = {};
     resp.headers.forEach((v, k) => {
         headers[k] = v;
@@ -40,7 +53,14 @@ async function rawFetch(
     };
 }
 
+// Multi-tenant issue 008: operator tooling has no signed-in user, so it runs
+// as the install's tenant (as it effectively did before RLS) rather than
+// across tenants.
 export async function runDiagnostics(): Promise<TestResult[]> {
+    return runWithJobTenant(null, runDiagnosticTests);
+}
+
+async function runDiagnosticTests(): Promise<TestResult[]> {
     const baseUrl = process.env.SUPABASE_URL ?? "";
     const tests: TestResult[] = [];
 
@@ -184,7 +204,7 @@ export async function runDiagnostics(): Promise<TestResult[]> {
     // ── F. Raw INSERT roundtrip (insert + verify + delete) with sentinel user
     try {
         // Insert
-        const insertResp = await fetch(`${baseUrl}/user_profiles`, {
+        const insertResp = await signedFetch(`${baseUrl}/user_profiles`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -211,7 +231,7 @@ export async function runDiagnostics(): Promise<TestResult[]> {
             });
         } else {
             // Delete
-            const deleteResp = await fetch(
+            const deleteResp = await signedFetch(
                 `${baseUrl}/user_profiles?user_id=eq.${SENTINEL_USER_ID}`,
                 { method: "DELETE", headers: { Prefer: "return=minimal" } },
             );
@@ -359,6 +379,10 @@ export async function runDiagnostics(): Promise<TestResult[]> {
 
 
 export async function inspectRows(table:string, filter:Record<string,unknown>, limit:number): Promise<{rows:Record<string,unknown>[]|null; queryError:string|null}> {
+  return runWithJobTenant(null, () => inspectInstallTenantRows(table, filter, limit));
+}
+
+async function inspectInstallTenantRows(table:string, filter:Record<string,unknown>, limit:number): Promise<{rows:Record<string,unknown>[]|null; queryError:string|null}> {
   try {
     const db=createServerSupabase();
     let q=db.from(table).select("*").limit(limit);

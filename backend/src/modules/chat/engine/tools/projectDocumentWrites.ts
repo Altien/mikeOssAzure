@@ -4,7 +4,6 @@ import {
   contentTypeForTextDocumentType,
   isTextDocumentType,
 } from "../../../../lib/documentTypes";
-import { buildDownloadUrl } from "../../../../lib/downloadTokens";
 import { uploadFile, versionStorageKey } from "../../../../lib/storage";
 import { createServerSupabase } from "../../../../lib/supabase";
 import { createDocumentVersion } from "../../../documents/documents.service";
@@ -72,7 +71,7 @@ export type WriteProjectDocumentResult =
       filename: string;
       bytes: number;
       created: "new" | "version";
-      download_url: string;
+
       version_number: number;
       storage_path: string;
     }
@@ -288,7 +287,7 @@ export async function writeProjectDocument(
     filename,
     bytes: bytes.byteLength,
     created: existing ? "version" : "new",
-    download_url: buildDownloadUrl(storagePath, filename),
+
     version_number: version.version_number,
     storage_path: storagePath,
   };

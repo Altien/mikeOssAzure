@@ -75,3 +75,17 @@ export function resolveDocumentViewType({
 
   return "pdf";
 }
+
+/** Text formats stored verbatim (an imported email's Markdown, a written note). */
+const TEXT_EXTENSIONS = new Set(["md", "markdown", "txt", "json", "csv", "html", "xml", "yaml", "yml"]);
+
+/**
+ * Whether a document is stored text, shown as text rather than through a PDF
+ * rendition it does not have. Decided by the filename, since a source
+ * document's panel type has no text kind.
+ */
+export function isTextDocumentFilename(filename: string | null | undefined): boolean {
+  const name = (filename ?? "").trim().toLowerCase();
+  const extension = name.includes(".") ? (name.split(".").pop() ?? "") : "";
+  return TEXT_EXTENSIONS.has(extension);
+}

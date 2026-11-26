@@ -111,7 +111,6 @@ it("runs a playbook on an attached Word document and shows its tracked changes a
     summary: "One issue.",
     editedVersionId: "v2",
     editedVersionNumber: 2,
-    editedDownloadUrl: "/download/v2",
     findings: [
       {
         ruleName: "Liability cap",

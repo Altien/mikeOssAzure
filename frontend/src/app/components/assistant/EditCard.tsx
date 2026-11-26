@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { EditCardUI } from "@/shared/ui/EditCardUI";
+import { EditCardUI } from "@mike/ui";
 import { resolveDocumentEdit } from "@/app/lib/mikeApi";
 import type { EditAnnotation } from "../shared/types";
 import { RESPONSE_GLASS_SURFACE } from "./message/messageStyles";
@@ -127,7 +127,7 @@ interface Props {
         documentId: string;
         status: "accepted" | "rejected";
         versionId: string | null;
-        downloadUrl: string | null;
+
     }) => void;
     /**
      * Fires when the backend accept/reject call fails. The optimistic
@@ -204,7 +204,7 @@ export function EditCard({
                 documentId: annotation.document_id,
                 status: nextStatus,
                 versionId: data.version_id,
-                downloadUrl: data.download_url,
+
             });
         } catch (e) {
             console.error("EditCard resolve failed", e);

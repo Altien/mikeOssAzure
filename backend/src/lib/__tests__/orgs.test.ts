@@ -1,6 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ownerlessRpcResult } from "../../__tests__/helpers/ownerlessRpc";
 import { handoverRpcResult } from "../../__tests__/helpers/handoverRpc";
+import type { Db } from "../supabase";
+import { runWithTenant } from "../tenantContext";
+import { makeFakeDb } from "../../test/helpers/fakeDb";
+import { tableDb } from "../../__tests__/helpers/tableDb";
 import {
     acceptInvitation,
     cancelInvitation,
@@ -22,6 +26,14 @@ import {
 
 type Row = Record<string, unknown>;
 
+let savedTenancyMode: string | undefined;
+beforeEach(() => { savedTenancyMode = process.env.TENANCY_MODE; process.env.TENANCY_MODE = "single"; });
+afterEach(() => {
+    if (savedTenancyMode === undefined) delete process.env.TENANCY_MODE;
+    else process.env.TENANCY_MODE = savedTenancyMode;
+    vi.restoreAllMocks();
+});
+
 // Stateful in-memory Supabase fake: unlike the read-only makeDb in
 // access.test.ts, this one actually mutates the seeded tables so
 // insert/update/delete round-trips (membership changes, last-admin counts) can
@@ -34,7 +46,7 @@ function makeDb(initial: Record<string, Row[]>) {
 
     function query(table: string) {
         const filters: (
-            | { type: "eq" | "is"; col: string; val: unknown }
+            | { type: "eq" | "is" | "gt"; col: string; val: unknown }
             | { type: "in"; col: string; vals: unknown[] }
         )[] = [];
         let op: "select" | "insert" | "update" | "delete" = "select";
@@ -49,7 +61,9 @@ function makeDb(initial: Record<string, Row[]>) {
                 filters.every((f) =>
                     f.type === "in"
                         ? f.vals.includes(r[f.col])
-                        : f.type === "is"
+                        : f.type === "gt"
+                          ? String(r[f.col]) > String(f.val)
+                          : f.type === "is"
                           ? (r[f.col] ?? null) === f.val
                           : r[f.col] === f.val,
                 ),
@@ -104,6 +118,10 @@ function makeDb(initial: Record<string, Row[]>) {
             },
             in: (col: string, vals: unknown[]) => {
                 filters.push({ type: "in", col, vals });
+                return builder;
+            },
+            gt: (col: string, val: unknown) => {
+                filters.push({ type: "gt", col, val });
                 return builder;
             },
             order: (col: string, opts?: { ascending?: boolean }) => {
@@ -424,7 +442,8 @@ describe("organization resources", () => {
             ok: true,
             workflows: [{ id: "workflow1" }],
         });
-        expect(db._selects.workflows).toEqual([
+        // Every page asks for the same columns.
+        expect([...new Set(db._selects.workflows)]).toEqual([
             "id, user_id, org_id, visibility, title, type, practice, created_at",
         ]);
     });
@@ -849,6 +868,32 @@ describe("handing over a departing member's work", () => {
         });
     });
 
+    it("retries a removal once when the departure fence deadlocks, then reports a retryable conflict", async () => {
+        const failing = (times: number) => {
+            const db = seed();
+            db._tables.projects = db._tables.projects.filter((row: Row) => row.visibility !== "organization");
+            db._tables.workflows = db._tables.workflows.filter((row: Row) => row.visibility !== "organization");
+            let left = times;
+            const rpc = db.rpc.bind(db);
+            const calls: string[] = [];
+            db.rpc = (name: string, args: unknown) => {
+                if (name === "remove_org_member") calls.push(name);
+                if (name === "remove_org_member" && left-- > 0)
+                    return Promise.resolve({ data: null, error: { code: "40P01", message: "deadlock detected" } });
+                return rpc(name, args);
+            };
+            return { db, calls };
+        };
+        const once = failing(1);
+        await expect(remove(once.db, "alex", "alex")).resolves.toEqual({ ok: true });
+        expect(once.calls).toHaveLength(2);
+        expect(isMember(once.db, "sam")).toBe(false);
+
+        const twice = failing(2);
+        await expect(remove(twice.db, "alex", "alex")).resolves.toMatchObject({ ok: false, kind: "conflict" });
+        expect(twice.calls).toHaveLength(2);
+    });
+
     it("needs no successor when only private work remains", async () => {
         const db = seed();
         db._tables.projects = db._tables.projects.filter((row: Row) => row.visibility !== "organization");
@@ -874,6 +919,19 @@ describe("handing over a departing member's work", () => {
         await expect(getMemberHandover(db, {
             actorId: "alex", orgId: "o1", targetUserId: "sam", departingUserIds: ["dana"],
         })).resolves.toMatchObject({ ok: false, kind: "owner_required" });
+    });
+
+    it("authorizes a bulk preview with one batched role read, not two lookups per person", async () => {
+        const db = seed();
+        const departing = Array.from({ length: 60 }, (_, i) => `member-${i}`);
+        db._tables.org_members.push(...departing.map((user_id) => ({ org_id: "o1", user_id, role: "member" })));
+        const tables: string[] = [];
+        const counting = { ...db, from: (table: string) => (tables.push(table), db.from(table)) };
+        await expect(getMemberHandover(counting, {
+            actorId: "alex", orgId: "o1", targetUserId: "sam", departingUserIds: departing,
+        })).resolves.toMatchObject({ ok: true });
+        // The actor once, then the 61 departing members in two batches.
+        expect(tables.filter((table) => table === "org_members").length).toBeLessThanOrEqual(3);
     });
 
     it("answers that question only to somebody who could remove them", async () => {
@@ -1756,5 +1814,96 @@ describe("owner and admin tiers", () => {
             }),
         ).resolves.toMatchObject({ ok: true, role: "admin" });
         expect(roleOf(db, "orgadmin1")).toBe("admin");
+    });
+});
+
+describe("pooled organisation invitations stay inside current tenant membership", () => {
+    const invitation = {
+        id: "invite", org_id: "org", email: "recipient@example.test", role: "member",
+        status: "pending", expires_at: "2099-01-01T00:00:00.000Z", invited_by: "admin",
+    };
+    type Operation = "create" | "resend";
+    function fixture(operation: Operation, state: "active" | "cross-tenant" | "moved" | "profile-error" | "membership-error") {
+        return makeFakeDb(call => {
+            if (call.table === "org_members") {
+                const actor = call.filters.some(filter => filter[1] === "user_id" && filter[2] === "admin");
+                return { data: actor ? { role: "admin" } : null };
+            }
+            if (call.table === "user_profiles") {
+                if (state === "profile-error") return { error: { message: "private profile database detail" } };
+                return { data: state === "cross-tenant" ? null : {
+                    user_id: "recipient", email: invitation.email, display_name: "Recipient", tenant_id: "tenant-a",
+                } };
+            }
+            if (call.table === "tenant_member_exists") return state === "membership-error"
+                ? { error: { message: "private membership database detail" } }
+                : { data: state === "active" };
+            if (call.table === "org_invitations") return {
+                data: call.op === "select" ? (operation === "resend" ? invitation : null) : invitation,
+            };
+            return { data: null };
+        });
+    }
+    function act(operation: Operation, db: Db) {
+        return runWithTenant({ tenantId: "tenant-a", userId: "admin" }, () =>
+            operation === "create"
+                ? createInvitation(db, { actorId: "admin", actorEmail: "admin@example.test", orgId: "org", email: " Recipient@Example.Test ", role: "member" })
+                : resendInvitation(db, { actorId: "admin", orgId: "org", invitationId: "invite" }),
+        );
+    }
+    beforeEach(() => { process.env.TENANCY_MODE = "pooled"; });
+
+    it.each<Operation>(["create", "resend"])("refuses %s for a cross-tenant recipient without writing an invitation", async operation => {
+        const fake = fixture(operation, "cross-tenant");
+        expect(await act(operation, fake.db as unknown as Db)).toEqual({
+            ok: false, kind: "validation", detail: "That person is not a member of your organisation",
+        });
+        expect(fake.callsFor("user_profiles")[0].filters).toContainEqual(["eq", "tenant_id", "tenant-a"]);
+        expect(fake.callsFor("user_profiles")[0].filters).toContainEqual(["eq", "email", invitation.email]);
+        expect(fake.callsFor("org_invitations").some(call => call.op !== "select")).toBe(false);
+    });
+    it.each<Operation>(["create", "resend"])("refuses %s for a moved member whose historical profile remains", async operation => {
+        const fake = fixture(operation, "moved");
+        expect(await act(operation, fake.db as unknown as Db)).toMatchObject({ ok: false, kind: "validation", detail: "That person is not a member of your organisation" });
+        expect(fake.callsFor("tenant_member_exists")[0].payload).toEqual({ p_user_id: "recipient" });
+        expect(fake.callsFor("org_invitations").some(call => call.op !== "select")).toBe(false);
+    });
+    it.each<Operation>(["create", "resend"])("keeps %s working for a current member in this tenant", async operation => {
+        const fake = fixture(operation, "active");
+        expect(await act(operation, fake.db as unknown as Db)).toMatchObject({ ok: true, invitation: { id: "invite", email: invitation.email } });
+        expect(fake.callsFor("org_invitations", operation === "create" ? "insert" : "update")).toHaveLength(1);
+    });
+    it.each<Operation>(["create", "resend"])("preserves single-tenant pre-account %s invitations", async operation => {
+        process.env.TENANCY_MODE = "single";
+        const fake = fixture(operation, "cross-tenant");
+        expect(await act(operation, fake.db as unknown as Db)).toMatchObject({ ok: true });
+        expect(fake.callsFor("tenant_member_exists")).toHaveLength(0);
+    });
+    it.each([
+        ["create", "profile-error"], ["resend", "profile-error"],
+        ["create", "membership-error"], ["resend", "membership-error"],
+    ] as const)("fails closed for %s when recipient lookup has a %s", async (operation, state) => {
+        vi.spyOn(console, "error").mockImplementation(() => {});
+        const fake = fixture(operation, state);
+        const result = await act(operation, fake.db as unknown as Db);
+        expect(result).toEqual({ ok: false, kind: "db_error", detail: "Unable to resolve invitation recipient" });
+        expect(JSON.stringify(result)).not.toContain("private");
+        expect(fake.callsFor("org_invitations").some(call => call.op !== "select")).toBe(false);
+        expect(fake.callsFor("audit_events")).toHaveLength(0);
+    });
+});
+
+describe("listOrgResources at scale", () => {
+    it("lists every visible project of an organization past max_rows", async () => {
+        const fake = tableDb({
+            org_members: [{ org_id: "org", user_id: "me", role: "member" }],
+            projects: Array.from({ length: 1200 }, (_, i) => ({
+                id: `p-${String(i).padStart(4, "0")}`, user_id: "someone", org_id: "org",
+                visibility: "organization", archived_at: null, created_at: `2026-01-01T00:${String(i % 60).padStart(2, "0")}:00Z`,
+            })),
+            workflows: [], project_org_access_overrides: [], workflow_org_access_overrides: [],
+        });
+        const result = await listOrgResources(fake.db, { userId: "me", orgId: "org" });
+        expect(result.ok && result.projects.length).toBe(1200);
     });
 });

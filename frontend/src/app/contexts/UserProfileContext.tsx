@@ -17,6 +17,7 @@ import {
     type ApiKeyState,
     type ApiKeyProvider,
     type ApiKeySettings,
+    type PooledKeys,
     type PersonalisationDetails,
     type PracticeSetting,
     type ProfessionalTitle,
@@ -37,17 +38,18 @@ import {
     updateLastSelectedChatSettings,
     parseTabularChatSelectionKey,
 } from "@/app/lib/mikeApi";
-import { API_KEY_PROVIDERS, apiKeyStateFromStatus } from "@/app/lib/apiKeyState";
+import { API_KEY_PROVIDERS, apiKeyStateFromStatus, hasApiKeyStatus } from "@/app/lib/apiKeyState";
 import type { Message } from "@/app/components/shared/types";
 import { applyDarkMode } from "@/app/lib/theme";
 import { notifyError } from "@/app/lib/userFacingError";
+import { reportError } from "@/app/lib/errorReporting";
 import { useAssignLatest } from "@/app/hooks/useLatestRef";
 import {
     ROUTER_PROFILE_FIELDS,
     routerProfileLists,
     type RouterProfileLists,
     type RouterSlug,
-} from "@/shared/lib/modelCatalog";
+} from "@mike/client";
 import { publishTabularChatSettingsUpdate } from "@/app/lib/tabularChatSettingsEvents";
 import {
     clearConfiguredModels,
@@ -90,6 +92,8 @@ interface UserProfile extends RouterProfileLists {
     apiKeys: ApiKeyState;
     /** Settings saved with the user's own keys (region, endpoint, location, base URL). */
     apiKeySettings: ApiKeySettings;
+    /** Pooled mode only: who supplies each provider's key (Settings → keys). */
+    pooledKeys?: PooledKeys;
 }
 
 export type PreferenceField =
@@ -103,13 +107,19 @@ interface UserProfileContextType {
     profile: UserProfile | null;
     loading: boolean;
     /**
-     * True when the profile fetch failed (after a retry) and `profile` holds
-     * the local fallback. Every field on it is a placeholder, not an answer:
-     * apiKeys say "nothing configured" and the router model lists are empty
-     * only because the truth is unknown. Consumers must distinguish this from
-     * a real profile that loaded with the same values — key-gated UI fails
-     * open, and destructive normalization (e.g. resetting a saved composer
-     * selection that is absent from the router lists) must not run at all.
+     * True when the server did not say which provider keys are configured.
+     * Two cases:
+     * - the fetch failed (after a retry) and `profile` holds the local
+     *   fallback. Every field on it is a placeholder, not an answer: apiKeys
+     *   say "nothing configured" and the router model lists are empty only
+     *   because the truth is unknown;
+     * - the profile loaded but without `apiKeyStatus` (a forked server, or
+     *   a proxy or misrouted API URL answering 200 with other JSON). The
+     *   profile is real; only its `apiKeys` are placeholders.
+     * Consumers must distinguish this from a real profile that loaded with
+     * the same values — key-gated UI fails open, and destructive
+     * normalization (e.g. resetting a saved composer selection that is
+     * absent from the router lists) must not run at all.
      */
     apiKeysDegraded: boolean;
     updateProfilePhoto: (photo: string | null) => Promise<void>;
@@ -171,6 +181,8 @@ function emptyApiKeys(): ApiKeyState {
         vertex: { configured: false, source: null },
         xai: { configured: false, source: null },
         custom: { configured: false, source: null },
+        tokenjuice: { configured: false, source: null },
+        meta: { configured: false, source: null },
         courtlistener: { configured: false, source: null },
         kimi: { configured: false, source: null },
         azure_openai: { configured: false, source: null },
@@ -184,6 +196,8 @@ function emptyApiKeys(): ApiKeyState {
 function toProfile(data: ApiUserProfile): UserProfile {
     const { apiKeyStatus, ...profile } = data;
     const apiKeys = apiKeyStateFromStatus(apiKeyStatus);
+    // Multi-tenant: a pooled tenant's model allowlist travels with key state.
+    if (Array.isArray(apiKeyStatus?.modelAllowlist)) apiKeys.modelAllowlist = apiKeyStatus.modelAllowlist;
 
     return {
         ...profile,
@@ -209,7 +223,8 @@ function toProfile(data: ApiUserProfile): UserProfile {
         projectMemoryDefault: profile.projectMemoryDefault !== false,
         ...routerProfileLists(profile),
         apiKeys,
-        apiKeySettings: apiKeyStatus.settings ?? {},
+        apiKeySettings: apiKeyStatus?.settings ?? {},
+        ...(apiKeyStatus?.pooledKeys ? { pooledKeys: apiKeyStatus.pooledKeys } : {}),
     };
 }
 
@@ -252,6 +267,9 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     // closure that raised the notice, so it always re-runs the latest one
     // (the mutators are re-created whenever `user` changes).
     const retryRef = useRef<UserProfileContextType | null>(null);
+    // One report per page load (the provider mounts once, at the root) of a
+    // profile that arrived without a key status; see loadProfile.
+    const missingKeyStatusReported = useRef(false);
 
     const failureEpoch = authEpochRef.current;
     const failureAuthEpoch = currentAuthEpoch();
@@ -271,6 +289,24 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
         [identity, failureEpoch, failureAuthEpoch],
     );
 
+    // Every full profile response carries the same key-availability state,
+    // whether it came from a load or a settings mutation.
+    const applyProfile = useCallback((data: ApiUserProfile, merge = false) => {
+        const normalized = toProfile(data);
+        setProfile((previous) => merge
+            ? previous && { ...previous, ...normalized }
+            : normalized);
+        const known = hasApiKeyStatus(data.apiKeyStatus);
+        setApiKeysDegraded(!known);
+        if (!known && !missingKeyStatusReported.current) {
+            missingKeyStatusReported.current = true;
+            reportError(new Error("profile missing apiKeyStatus"), {
+                level: "warning",
+                tags: { component: "profile", error_kind: "missing_api_key_status" },
+            });
+        }
+    }, []);
+
     const loadProfile = useCallback(async () => {
         const owner = identity;
         const globalEpoch = currentAuthEpoch();
@@ -289,8 +325,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 profileData = await getUserProfile(isCurrent);
             }
             if (isCurrent()) {
-                setProfile(toProfile(profileData));
-                setApiKeysDegraded(false);
+                applyProfile(profileData);
             }
         } catch (error) {
             if (!isCurrent()) return;
@@ -349,7 +384,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
         } finally {
             if (isCurrent()) setLoading(false);
         }
-    }, [identity]);
+    }, [identity, applyProfile]);
 
     // A new signed-in user invalidates the shared model catalog. This runs as
     // a LAYOUT effect on purpose: React runs a component's passive effects
@@ -401,9 +436,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             try {
                 const updated = await updateUserProfile({ displayName }, current);
                 if (!current()) return false;
-                setProfile((prev) =>
-                    prev ? { ...prev, ...toProfile(updated) } : null,
-                );
+                applyProfile(updated, true);
                 return true;
             } catch (error) {
                 reportFailure(error, "save your name", () => {
@@ -412,7 +445,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 return false;
             }
         },
-        [user, accountGuard, reportFailure],
+        [user, accountGuard, reportFailure, applyProfile],
     );
 
     const updateOrganisation = useCallback(
@@ -423,9 +456,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             try {
                 const updated = await updateUserProfile({ organisation }, current);
                 if (!current()) return false;
-                setProfile((prev) =>
-                    prev ? { ...prev, ...toProfile(updated) } : null,
-                );
+                applyProfile(updated, true);
                 return true;
             } catch (error) {
                 // An MFA challenge is a step in the flow, not a failure: the
@@ -437,7 +468,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 return false;
             }
         },
-        [user, accountGuard, reportFailure],
+        [user, accountGuard, reportFailure, applyProfile],
     );
 
     const completeOnboarding = useCallback(
@@ -448,7 +479,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             try {
                 const updated = await completeUserOnboarding(details, current);
                 if (!current()) return false;
-                setProfile(toProfile(updated));
+                applyProfile(updated);
                 return true;
             } catch (error) {
                 reportFailure(error, "save your practice details", () => {
@@ -457,7 +488,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 return false;
             }
         },
-        [user, accountGuard, reportFailure],
+        [user, accountGuard, reportFailure, applyProfile],
     );
 
     const updatePersonalisation = useCallback(
@@ -473,7 +504,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 );
                 if (identityRef.current !== owner || writeEpochRef.current !== epoch) return false;
                 loadEpochRef.current++;
-                setProfile(toProfile(updated));
+                applyProfile(updated);
                 setLoading(false);
                 return true;
             } catch (error) {
@@ -487,7 +518,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 return false;
             }
         },
-        [reportFailure, user],
+        [reportFailure, user, applyProfile],
     );
 
     const syncPasswordSet = useCallback(async (): Promise<boolean> => {
@@ -497,7 +528,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
         try {
             const updated = await getUserProfile(current);
             if (!current()) return false;
-            setProfile(toProfile(updated));
+            applyProfile(updated);
             return true;
         } catch (error) {
             if (!current()) return false;
@@ -518,9 +549,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 const updated = await updateUserProfile({
                     [field]: value,
                 });
-                setProfile((prev) =>
-                    prev ? { ...prev, ...toProfile(updated) } : null,
-                );
+                applyProfile(updated, true);
                 return true;
             } catch (error) {
                 reportFailure(error, "save your model preference", () => {
@@ -529,7 +558,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 return false;
             }
         },
-        [reportFailure, user],
+        [reportFailure, user, applyProfile],
     );
 
     const persistChatModelSelection = useCallback(
@@ -631,9 +660,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             if (!user) return false;
             try {
                 const updated = await updateUserMfaOnLogin(enabled);
-                setProfile((prev) =>
-                    prev ? { ...prev, ...toProfile(updated) } : null,
-                );
+                applyProfile(updated, true);
                 return true;
             } catch (error) {
                 // An MFA challenge is a step in the flow, not a failure.
@@ -648,7 +675,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 return false;
             }
         },
-        [reportFailure, user],
+        [reportFailure, user, applyProfile],
     );
 
     const updateQuickActionsVisible = useCallback(
@@ -658,9 +685,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 const updated = await updateUserProfile({
                     quickActionsVisible: visible,
                 });
-                setProfile((prev) =>
-                    prev ? { ...prev, ...toProfile(updated) } : null,
-                );
+                applyProfile(updated, true);
                 return true;
             } catch (error) {
                 reportFailure(error, "update your quick actions setting", () => {
@@ -669,7 +694,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 return false;
             }
         },
-        [reportFailure, user],
+        [reportFailure, user, applyProfile],
     );
 
     const updateResponseDetailsVisible = useCallback(
@@ -679,9 +704,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 const updated = await updateUserProfile({
                     responseDetailsVisible: visible,
                 });
-                setProfile((prev) =>
-                    prev ? { ...prev, ...toProfile(updated) } : null,
-                );
+                applyProfile(updated, true);
                 return true;
             } catch (error) {
                 reportFailure(error, "update your response details setting", () => {
@@ -690,7 +713,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 return false;
             }
         },
-        [reportFailure, user],
+        [reportFailure, user, applyProfile],
     );
 
     const updateRouterModels = useCallback(
@@ -703,9 +726,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                     [ROUTER_PROFILE_FIELDS[router]]: models,
                 }, current);
                 if (!current()) return false;
-                setProfile((prev) =>
-                    prev ? { ...prev, ...toProfile(updated) } : null,
-                );
+                applyProfile(updated, true);
                 return true;
             } catch (error) {
                 reportFailure(error, `save your ${router} models`, () => {
@@ -714,7 +735,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 return false;
             }
         },
-        [user, accountGuard, reportFailure],
+        [user, accountGuard, reportFailure, applyProfile],
     );
 
     const updateDarkMode = useCallback(
@@ -748,14 +769,9 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             const updated = await updateUserProfile({
                 projectMemoryDefault: enabled,
             });
-            const normalized = toProfile(updated);
-            setProfile((prev) =>
-                prev
-                    ? { ...prev, ...normalized, projectMemoryDefault: enabled }
-                    : null,
-            );
+            applyProfile({ ...updated, projectMemoryDefault: enabled }, true);
         },
-        [user],
+        [user, applyProfile],
     );
 
     const updateApiKey = useCallback(
@@ -807,11 +823,15 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 if (!current()) return false;
                 setProfile((prev) => prev && current() ? {
                     ...prev,
-                    apiKeys: Object.fromEntries(API_KEY_PROVIDERS.map((slug) => [slug, {
-                        configured: !!status[slug],
-                        source: status.sources?.[slug] ?? null,
-                        enabled: status.enabled?.[slug] !== false,
-                    }])) as ApiKeyState,
+                    apiKeys: {
+                        ...(Object.fromEntries(API_KEY_PROVIDERS.map((slug) => [slug, {
+                            configured: !!status[slug],
+                            source: status.sources?.[slug] ?? null,
+                            enabled: status.enabled?.[slug] !== false,
+                        }])) as Omit<ApiKeyState, "modelAllowlist">),
+                        // Multi-tenant: keep the pooled tenant's model allowlist.
+                        modelAllowlist: prev.apiKeys.modelAllowlist,
+                    },
                 } : prev);
                 void refreshConfiguredModels();
                 return true;

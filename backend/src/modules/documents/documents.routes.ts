@@ -6,12 +6,13 @@
 
 import { Router } from "express";
 import type { ParamsDictionary } from "express-serve-static-core";
-import { pipeline } from "node:stream/promises";
 import type { Readable } from "node:stream";
 import { requireAuth } from "../../middleware/auth";
 import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
+import { sendServiceFailure } from "../../lib/serviceResult";
 import { sendInternalError } from "../../lib/httpError";
+import { pipeToResponse } from "../../lib/pipeToResponse";
 import { setOperation } from "../../lib/observability/sentry";
 import { buildContentDisposition, createFileReadStream } from "../../lib/storage";
 import { sendDocumentDisplay } from "../../lib/documentDisplay";
@@ -19,6 +20,7 @@ import { contentTypeForDocumentType } from "../../lib/documentTypes";
 import { uniqueArchiveFilename } from "../../lib/zipExport";
 import {
     getDocument,
+    getDocumentStatuses,
     deleteDocument,
     getDisplayableVersion,
     resolveZipExportDocuments,
@@ -32,6 +34,17 @@ import {
 } from "./documents.service";
 
 export const documentsRouter = Router();
+
+// One bounded poll replaces a request per converting document.
+documentsRouter.post("/status", requireAuth, asyncRoute(async (req, res) => {
+    const result = await getDocumentStatuses(createServerSupabase(), {
+        documentIds: req.body?.document_ids,
+        userId: res.locals.userId as string,
+        userEmail: res.locals.userEmail as string | undefined,
+    });
+    if (!result.ok) return void sendServiceFailure(res, result);
+    res.json(result.data);
+}));
 
 // GET /single-documents/:documentId
 // One document, same shape as a list entry — the client polls this while a
@@ -106,7 +119,10 @@ documentsRouter.get("/:documentId/display", requireAuth, asyncRoute(async (req, 
 // fetch the file without depending on cross-origin access to signed R2 URLs.
 // The service locates and sizes the object; the stream is opened here so
 // `res` is what applies backpressure to the object-storage read.
-documentsRouter.get("/:documentId/file", requireAuth, asyncRoute(async (req, res) => {
+documentsRouter.get("/:documentId/file", (_req, res, next) => {
+    res.setHeader("Cache-Control", "private, no-store");
+    next();
+}, requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { documentId } = req.params;
@@ -132,7 +148,7 @@ documentsRouter.get("/:documentId/file", requireAuth, asyncRoute(async (req, res
     );
     const source = createFileReadStream(result.storagePath);
     try {
-        await pipeline(source, res);
+        await pipeToResponse(source, res);
     } catch (error) {
         source.destroy();
         if (!res.headersSent && !res.destroyed) {
@@ -193,6 +209,7 @@ documentsRouter.post("/download-zip", requireAuth, asyncRoute(async (req, res) =
         return stream;
     });
 
+    res.setHeader("Cache-Control", "private, no-store");
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", 'attachment; filename="documents.zip"');
     const archiveStream = zip.generateNodeStream({
@@ -201,7 +218,7 @@ documentsRouter.post("/download-zip", requireAuth, asyncRoute(async (req, res) =
         compression: "STORE",
     }) as Readable;
     try {
-        await pipeline(archiveStream, res);
+        await pipeToResponse(archiveStream, res);
     } catch (error) {
         // Destroy the per-file readers so a failed archive does not leave
         // object-storage GETs open. Once bytes are on the wire the status is
@@ -216,7 +233,10 @@ documentsRouter.post("/download-zip", requireAuth, asyncRoute(async (req, res) =
 // GET /single-documents/:documentId/url
 // Optional ?version_id= selects a specific tracked-changes version.
 // Otherwise falls back to documents.current_version_id, else the original upload.
-documentsRouter.get("/:documentId/url", requireAuth, asyncRoute(async (req, res) => {
+documentsRouter.get("/:documentId/url", (_req, res, next) => {
+    res.setHeader("Cache-Control", "private, no-store");
+    next();
+}, requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { documentId } = req.params;

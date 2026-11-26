@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AssistantEvent, Message } from "@/app/components/shared/types";
 import type { ConnectorApprovalItem } from "@mike/contracts";
 import { streamChatTurn } from "./mikeApi";
+import { reportGatewayLimit } from "@/app/lib/errorReporting";
 import { beginAssistantTurn } from "./assistantTurns";
 import {
   consumeAssistantTurnStream,
@@ -11,7 +12,9 @@ import {
 } from "./assistantTurnStream";
 
 vi.mock("./mikeApi", () => ({ streamChatTurn: vi.fn(), stopChatTurn: vi.fn() }));
+vi.mock("@/app/lib/errorReporting", () => ({ reportGatewayLimit: vi.fn() }));
 const streamChatTurnMock = vi.mocked(streamChatTurn);
+const reportGatewayLimitMock = vi.mocked(reportGatewayLimit);
 
 /** An SSE body that emits the given chunks; `fail` makes it error out after them. */
 function sseResponse(chunks: string[], opts?: { fail?: boolean; status?: number }) {
@@ -45,6 +48,23 @@ afterEach(() => {
 });
 
 describe("consumeAssistantTurnStream", () => {
+  it("reports a stream that ends without [DONE], and not one that finishes or is stopped", async () => {
+    const consume = async (chunks: string[], signal?: AbortSignal) => {
+      const turn = begin();
+      await consumeAssistantTurnStream(sseResponse(chunks), {
+        turn, sink: createTurnEventSink(turn, []), cursor: createTurnCursor("chat-a"), signal,
+      });
+      turn.finish();
+    };
+
+    await consume([frame(1, { type: "content_delta", text: "Half an ans" })]);
+    expect(reportGatewayLimitMock).toHaveBeenCalledExactlyOnceWith("stream-incomplete");
+
+    reportGatewayLimitMock.mockClear();
+    await consume([frame(1, { type: "content_delta", text: "Done." }), "data: [DONE]\n\n"]);
+    expect(reportGatewayLimitMock).not.toHaveBeenCalled();
+  });
+
   it("keeps text cards between prose segments and ignores malformed cards", async () => {
     const turn = begin();
     const card = { type: "text_card" as const, card_id: "card-1", title: "Draft", text: "First paragraph.\n\nSecond paragraph." };
@@ -58,6 +78,43 @@ describe("consumeAssistantTurnStream", () => {
     expect(turn.turn.assistant.events).toEqual([
       { type: "content", text: "Before." }, card, { type: "content", text: "After.", isStreaming: true },
     ]);
+    turn.finish();
+  });
+  it("shows the citations step as in progress until its result arrives", async () => {
+    const turn = begin();
+    await consumeAssistantTurnStream(sseResponse([
+      frame(1, { type: "tool_call_start", name: "cite_sources" }),
+      frame(2, { type: "citations_recorded_start" }),
+    ]), { turn, sink: createTurnEventSink(turn, []), cursor: createTurnCursor("chat-a") });
+    expect(turn.turn.assistant.events).toEqual([
+      { type: "citations_recorded", refs: [], sources: [], quotes_not_found: 0, rejected: 0, isStreaming: true },
+    ]);
+    turn.finish();
+  });
+
+  it("keeps the citations step before the answer and drops malformed fields", async () => {
+    const turn = begin();
+    const step = {
+      type: "citations_recorded" as const,
+      refs: [1, 2],
+      sources: [{ name: "Lease.pdf", type: "pdf" as const, ref: 1 }],
+      quotes_not_found: 1,
+      rejected: 0,
+    };
+    await consumeAssistantTurnStream(sseResponse([
+      frame(1, { type: "citations_recorded_start" }),
+      frame(2, step),
+      frame(2, { type: "content_delta", text: "Either party may terminate [1]." }),
+      frame(3, { type: "citations_recorded", refs: [3, "4"], sources: [{ name: "Act", type: "legislation", ref: 3 }] }),
+      "data: [DONE]\n\n",
+    ]), { turn, sink: createTurnEventSink(turn, []), cursor: createTurnCursor("chat-a") });
+    expect(turn.turn.assistant.events?.slice(0, 2)).toEqual([
+      step,
+      { type: "content", text: "Either party may terminate [1]." },
+    ]);
+    expect(turn.turn.assistant.events?.[2]).toEqual({
+      type: "citations_recorded", refs: [3], sources: [{ name: "Act", type: "legislation", ref: 3 }], quotes_not_found: 0, rejected: 0,
+    });
     turn.finish();
   });
   it("records what the answer ran on and drops malformed details", async () => {
@@ -115,6 +172,26 @@ describe("consumeAssistantTurnStream", () => {
     ]);
     turn.finish();
   });
+
+  it("shows an edit that was still running when the turn was stopped as stopped", async () => {
+    const turn = begin();
+    const sink = createTurnEventSink(turn, []);
+    await consumeAssistantTurnStream(
+      sseResponse([
+        frame(1, { type: "doc_edited_start", filename: "brief.docx" }),
+        frame(2, { type: "cancelled" }),
+        "data: [DONE]\n\n",
+      ]),
+      { turn, sink, cursor: createTurnCursor("chat-a") },
+    );
+    expect(turn.turn.assistant.events?.[0]).toMatchObject({
+      type: "doc_edited",
+      filename: "brief.docx",
+      interrupted: true,
+    });
+    expect(turn.turn.assistant.events?.[0]).not.toHaveProperty("isStreaming");
+    turn.finish();
+  });
 });
 
 describe("readAssistantTurn", () => {
@@ -149,6 +226,27 @@ describe("readAssistantTurn", () => {
     });
     expect(text(turn.turn.assistant)).toBe("Hello world");
     expect(cursor.lastSeq).toBe(4);
+    turn.finish();
+  });
+
+  // The pairing the API gateway relies on: only a failed read resumes. A body
+  // that ends cleanly is taken as the end of the turn, which is why the
+  // gateway errors (never closes) an event stream whose backend went away.
+  it("treats a clean end of the body as the end of the turn and does not resume", async () => {
+    const turn = begin();
+    const sink = createTurnEventSink(turn, []);
+    await readAssistantTurn({
+      open: async () =>
+        sseResponse([
+          frame(1, { type: "chat_id", chatId: "chat-a", turnId: "turn-1" }),
+          frame(2, { type: "content_delta", text: "Hello" }),
+        ]),
+      turn,
+      sink,
+      cursor: createTurnCursor("chat-a"),
+    });
+    expect(streamChatTurnMock).not.toHaveBeenCalled();
+    expect(text(turn.turn.assistant)).toBe("Hello");
     turn.finish();
   });
 
@@ -474,6 +572,89 @@ describe("error frames", () => {
       },
     ]);
     turn.finish();
+  });
+
+  it("ends tool steps still in progress, as a deadline's error ends the turn", async () => {
+    expect(
+      await eventsOf([
+        { type: "doc_created_start", filename: "memo.docx" },
+        { type: "doc_replicate_start", filename: "answer.docx", count: 2 },
+        { type: "doc_edited_start", filename: "brief.docx" },
+        {
+          type: "error",
+          message: "The request timed out because it stopped responding. Please try again.",
+          safe_to_display: true,
+        },
+      ]),
+    ).toEqual([
+      // Dev's doc_created carries no download_url (private Blob transport).
+      { type: "doc_created", filename: "memo.docx", interrupted: true },
+      { type: "doc_replicated", filename: "answer.docx", count: 2, interrupted: true },
+      {
+        type: "doc_edited",
+        filename: "brief.docx",
+        document_id: "",
+        version_id: "",
+        // Dev's doc_edited carries no download_url (private Blob transport).
+        annotations: [],
+        interrupted: true,
+      },
+      {
+        type: "error",
+        message: "The request timed out because it stopped responding. Please try again.",
+        safe_to_display: true,
+      },
+    ]);
+  });
+
+  it("keeps a step that reported its result as done when the turn then fails", async () => {
+    const [edited] = (await eventsOf([
+      { type: "doc_edited_start", filename: "brief.docx" },
+      { type: "doc_edited", filename: "brief.docx", document_id: "doc-1", version_id: "ver-2" },
+      { type: "error", message: "boom" },
+    ])) ?? [];
+    expect(edited).toMatchObject({ type: "doc_edited", document_id: "doc-1", isStreaming: false });
+    expect(edited).not.toHaveProperty("interrupted");
+  });
+
+  // Every other kind of step a turn can end on before its result arrives.
+  const unfinishedSteps: [string, Frame, string][] = [
+    ["a connector call", { type: "mcp_tool_start", name: "crm_update_record" }, "mcp_tool_call"],
+    ["a case law search", { type: "courtlistener_search_case_law_start", query: "fair use" }, "courtlistener_search_case_law"],
+    ["a case fetch", { type: "courtlistener_get_cases_start", cluster_ids: [1, 2] }, "courtlistener_get_cases"],
+    ["a search in a case", { type: "courtlistener_find_in_case_start", cluster_id: 1, query: "damages" }, "courtlistener_find_in_case"],
+    ["a case read", { type: "courtlistener_read_case_start", cluster_id: 1 }, "courtlistener_read_case"],
+    ["a citation check", { type: "courtlistener_verify_citations_start", citation_count: 3 }, "courtlistener_verify_citations"],
+    ["a document read", { type: "doc_read_start", filename: "brief.docx" }, "doc_read"],
+    ["a document find", { type: "doc_find_start", filename: "brief.docx", query: "term" }, "doc_find"],
+    ["a document search", { type: "doc_search_start", search_id: "s1", scope: "project", query: "term", offset: 0 }, "doc_search"],
+    ["a web search", { type: "web_search_start", search_id: "w1", query: "news" }, "web_search"],
+    ["a web read", { type: "web_read_start", read_id: "r1", url: "https://example.com/a" }, "web_read"],
+    ["a subagent", { type: "delegation_start", delegation_id: "d1", title: "Research", task: "Find cases" }, "delegation"],
+  ];
+  const ending: [string, Frame][] = [
+    ["a deadline's error", { type: "error", message: "timed out", safe_to_display: true }],
+    ["Stop", { type: "cancelled" }],
+  ];
+
+  it.each(
+    unfinishedSteps.flatMap(([label, start, type]) =>
+      ending.map(([end, frame]) => [label, end, start, frame, type] as const),
+    ),
+  )("shows %s that %s ended before its result as stopped", async (_label, _end, start, end, type) => {
+    const step = ((await eventsOf([start, end])) ?? []).find((e) => e.type === type);
+    expect(step).toMatchObject({ type, interrupted: true });
+    expect(step).not.toHaveProperty("isStreaming");
+  });
+
+  it("keeps a search that reported its results as done when the turn is then stopped", async () => {
+    const search = ((await eventsOf([
+      { type: "web_search_start", search_id: "w1", query: "news" },
+      { type: "web_search", search_id: "w1", query: "news", results: [{ url: "https://example.com/a", title: "A" }] },
+      { type: "cancelled" },
+    ])) ?? []).find((e) => e.type === "web_search");
+    expect(search).toMatchObject({ type: "web_search", isStreaming: false });
+    expect(search).not.toHaveProperty("interrupted");
   });
 
   it("finalizes an in-flight content block before appending the error", async () => {
@@ -1238,14 +1419,14 @@ describe("document frames", () => {
     );
   });
 
-  it("attaches the download link and version to a created document", async () => {
+  it("attaches the document ID and version to a created document", async () => {
     expect(
       await eventsOf([
         { type: "doc_created_start", filename: "answer.docx" },
         {
           type: "doc_created",
           filename: "answer.docx",
-          download_url: "https://dl/1",
+
           document_id: "doc-1",
           version_id: "ver-1",
           version_number: 1,
@@ -1255,7 +1436,7 @@ describe("document frames", () => {
       {
         type: "doc_created",
         filename: "answer.docx",
-        download_url: "https://dl/1",
+
         document_id: "doc-1",
         version_id: "ver-1",
         version_number: 1,
@@ -1269,26 +1450,26 @@ describe("document frames", () => {
     expect(
       await eventsOf([
         { type: "doc_created_start", filename: "answer.docx" },
-        { type: "doc_created", filename: "answer.docx", download_url: "https://dl/1" },
+        { type: "doc_created", filename: "answer.docx" },
       ]),
     ).toEqual([
       {
         type: "doc_created",
         filename: "answer.docx",
-        download_url: "https://dl/1",
+
         isStreaming: false,
       },
       thinking,
     ]);
   });
 
-  it("appends a standalone download link", async () => {
+  it("appends a standalone download identity", async () => {
     expect(
       await eventsOf([
-        { type: "doc_download", filename: "answer.docx", download_url: "https://dl/1" },
+        { type: "doc_download", filename: "answer.docx" },
       ]),
     ).toEqual([
-      { type: "doc_download", filename: "answer.docx", download_url: "https://dl/1" },
+      { type: "doc_download", filename: "answer.docx" },
     ]);
   });
 
@@ -1350,7 +1531,7 @@ describe("document frames", () => {
           document_id: "doc-1",
           version_id: "ver-2",
           version_number: 2,
-          download_url: "https://dl/2",
+
           annotations,
           error: "one edit skipped",
         },
@@ -1362,7 +1543,7 @@ describe("document frames", () => {
         document_id: "doc-1",
         version_id: "ver-2",
         version_number: 2,
-        download_url: "https://dl/2",
+
         annotations,
         error: "one edit skipped",
         isStreaming: false,
@@ -1384,7 +1565,7 @@ describe("document frames", () => {
         document_id: "",
         version_id: "",
         version_number: null,
-        download_url: "",
+
         annotations: [],
         error: undefined,
         isStreaming: false,
@@ -1596,20 +1777,16 @@ describe("ask_inputs frames", () => {
 describe("citation frames", () => {
   const citations = [{ id: "c1", document_id: "doc-1", quote: "a quote" }];
 
-  it.each([["started"], ["partial"]])(
-    "publishes %s citations without touching the streaming answer",
-    async (status) => {
-      const message = await run([
-        { type: "content_delta", text: "answer" },
-        { type: "citations", status, citations },
-      ]);
-      expect(message.citations).toEqual(citations);
-      expect(message.citationStatus).toBe(status);
-      expect(message.events).toEqual([
-        { type: "content", text: "answer", isStreaming: true },
-      ]);
-    },
-  );
+  it("publishes partial citations without touching the streaming answer", async () => {
+    const message = await run([
+      { type: "content_delta", text: "answer" },
+      { type: "citations", status: "partial", citations },
+    ]);
+    expect(message.citations).toEqual(citations);
+    expect(message.events).toEqual([
+      { type: "content", text: "answer", isStreaming: true },
+    ]);
+  });
 
   it("finalizes the answer and scrubs placeholders on the last citation frame", async () => {
     const message = await run([
@@ -1618,14 +1795,12 @@ describe("citation frames", () => {
       { type: "citations", status: "final", citations },
     ]);
     expect(message.citations).toEqual(citations);
-    expect(message.citationStatus).toBe("final");
     expect(message.events).toEqual([{ type: "content", text: "answer" }]);
   });
 
-  it("treats an unknown status as final and leaves no status when there are no citations", async () => {
+  it("treats an unknown status as final", async () => {
     const message = await run([{ type: "citations", status: "halfway" }]);
     expect(message.citations).toEqual([]);
-    expect(message.citationStatus).toBeUndefined();
   });
 });
 
@@ -1840,7 +2015,7 @@ describe("web activity", () => {
     ]);
   });
 
-  it("keeps valid cited sources and search results while discarding malformed entries", async () => {
+  it("keeps valid search results while discarding malformed entries", async () => {
     const sources = [
       null, {}, "not a source", { url: 42 }, { url: "" },
       { url: "https://law.example/act", title: "Act" },
@@ -1856,15 +2031,15 @@ describe("web activity", () => {
     ];
     expect(web(await eventsOf([
       { type: "web_search", search_id: "ws-1", query: "law", results: sources },
-      { type: "web_sources", sources },
     ]))).toEqual([
       { type: "web_search", search_id: "ws-1", query: "law", results: valid, isStreaming: false },
-      { type: "web_sources", sources: valid },
     ]);
   });
 
-  it.each([undefined, null, {}, [], [null, { url: "" }]])("omits empty or malformed source lists: %j", async (sources) => {
-    expect(await eventsOf([{ type: "web_sources", sources }])).toEqual([]);
+  it("ignores a cited-pages frame from an older server", async () => {
+    expect(await eventsOf([
+      { type: "web_sources", sources: [{ url: "https://law.example/act" }] },
+    ])).toEqual([]);
   });
 
   it("completes a search and a read from their start frames", async () => {
@@ -1973,7 +2148,7 @@ describe("delegation", () => {
 
   it("stops a running delegation on Stop", async () => {
     expect(await eventsOf([start("d1"), { type: "cancelled" }])).toEqual([
-      { ...running("d1"), isStreaming: undefined },
+      { ...running("d1"), isStreaming: undefined, interrupted: true },
       { type: "content", text: "Cancelled by user." },
     ]);
   });

@@ -1,13 +1,15 @@
 "use client";
 
 import { useEffect } from "react";
+import Link from "next/link";
 import {
   ModelToggleUI,
   nearestReasoningLevelForModel,
   reasoningLevelsForModel,
+  type ModelToggleNotice,
   type ReasoningLevel,
-} from "@/shared/ui/ModelToggleUI";
-import { isModelAvailable } from "@/app/lib/modelAvailability";
+} from "@mike/ui";
+import { isModelAvailable, providerKeyStates } from "@/app/lib/modelAvailability";
 import {
   MODELS, mergeConfiguredModelOptions,
   allRouterModelOptions,
@@ -16,10 +18,10 @@ import {
   type ModelOption,
   type NoModelsReason,
   type RouterSelections,
-} from "@/shared/lib/modelCatalog";
+} from "@mike/client";
 import type { ApiKeyState } from "@/app/lib/mikeApi";
 import { useAoaiDeployments } from "@/altien/models/aoaiDeployments";
-export * from "@/shared/lib/modelCatalog";
+export * from "@mike/client";
 import {
   PERSONAL_WORKSPACE,
   useWorkspace,
@@ -27,6 +29,19 @@ import {
 import { useConfiguredModels } from "@/app/hooks/useConfiguredModels";
 
 export type { ReasoningLevel };
+
+const FREE_MODEL_NOTICE: ModelToggleNotice = {
+  tag: "Free",
+  text: "This is a free or discounted AI model because the provider stores your prompts and responses in full and may use them for training. Use a key of your own or upgrade to a paid plan.",
+  content: (
+    <>
+      This is a free or discounted AI model because the provider stores your
+      prompts and responses in full and may use them for training. Use{" "}
+      <Link href="/settings/byok">a key of your own</Link> or upgrade to a
+      paid plan.
+    </>
+  ),
+};
 
 interface Props {
   value: string;
@@ -73,7 +88,9 @@ export function ModelToggle({
 }: Props) {
   const { modelOptions: extraModels } = useAoaiDeployments();
   const selections = routerSelections ?? routerModels;
-  const configuredModels = useConfiguredModels();
+  const configuredModels = useConfiguredModels().map((model) =>
+    model.free ? { ...model, notice: FREE_MODEL_NOTICE } : model,
+  );
   const models = mergeConfiguredModelOptions(configuredModels, [
     ...MODELS,
     ...allRouterModelOptions(selections),
@@ -114,7 +131,8 @@ export function ModelToggle({
   const { workspaceId } = useWorkspace();
   const inOrganization =
     workspaceId !== null && workspaceId !== PERSONAL_WORKSPACE;
-  const emptyReason = noModelsReason(apiKeys, selections, inOrganization);
+  const providerKeys = apiKeys ? providerKeyStates(apiKeys) : undefined;
+  const emptyReason = noModelsReason(providerKeys, selections, inOrganization);
   return (
     <ModelToggleUI
       value={value}

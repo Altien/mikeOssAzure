@@ -19,7 +19,9 @@
 .claude
 .vscode
 .idea
-docs
+# The image ships docs/help (GET /api/help/articles); the rest is contributor docs.
+docs/*
+!docs/help
 **/*.test.ts
 **/*.test.tsx
 **/__tests__

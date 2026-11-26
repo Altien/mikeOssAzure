@@ -7,10 +7,18 @@ export const ALLOWED_DOCUMENT_TYPES = new Set([
   "xls",
   "pptx",
   "ppt",
+  "eml",
 ]);
 
 export const ALLOWED_DOCUMENT_TYPES_LABEL =
-  "pdf, docx, doc, xlsx, xlsm, xls, pptx, ppt";
+  "pdf, docx, doc, xlsx, xlsm, xls, pptx, ppt, eml";
+
+/**
+ * An uploaded email becomes a Markdown document (see lib/email.ts) and its
+ * attachments documents of their own. The staged upload keeps this content
+ * type, which is how the upload worker knows to convert it.
+ */
+export const EMAIL_UPLOAD_CONTENT_TYPE = "message/rfc822";
 
 /**
  * Text formats Mike stores verbatim: the bytes are the content, so they are
@@ -103,6 +111,8 @@ export function contentTypeForDocumentType(fileType: string | null | undefined) 
       return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
     case "ppt":
       return "application/vnd.ms-powerpoint";
+    case "eml":
+      return EMAIL_UPLOAD_CONTENT_TYPE;
     default:
       return "application/octet-stream";
   }

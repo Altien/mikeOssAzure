@@ -20,8 +20,8 @@ import { DocumentPaneTitle } from "@/app/components/shared/DocumentPaneTitle";
 import { PdfView } from "@/app/components/shared/views/PdfView";
 import { DocxView } from "@/app/components/shared/views/DocxView";
 import { SpreadsheetView } from "@/app/components/shared/views/SpreadsheetView";
-import { CloseButton } from "@/shared/ui/CloseButton";
-import { PillButtonUI } from "@/shared/ui/PillButtonUI";
+import { TextView } from "@/app/components/shared/views/TextView";
+import { CloseButton, PillButtonUI } from "@mike/ui";
 import type { Document } from "@/app/components/shared/types";
 import type { DocumentVersion } from "@/app/lib/mikeApi";
 import { cn } from "@/app/lib/utils";
@@ -29,7 +29,10 @@ import { reportFault,
     UserVisibleError,
     notifyError,
 } from "@/app/lib/userFacingError";
-import { resolveDocumentViewType } from "@/app/lib/documentViewType";
+import {
+    isTextDocumentFilename,
+    resolveDocumentViewType,
+} from "@/app/lib/documentViewType";
 import { textLayerWarning } from "@/app/lib/textLayerWarning";
 import {
     LIQUID_FLOAT_PANEL_SURFACE_CLASS,
@@ -273,6 +276,7 @@ export function DocumentSidePanel({
         filename: selectedFilename,
         fileType: selectedFileType,
     });
+    const selectedIsText = isTextDocumentFilename(selectedFilename);
     const selectedSizeBytes =
         selectedVersion?.size_bytes === undefined
             ? doc.size_bytes
@@ -290,6 +294,10 @@ export function DocumentSidePanel({
     const selectedVersionNumber =
         selectedVersion?.version_number ?? doc.active_version_number ?? null;
     const selectedUploadedAt = selectedVersion?.created_at ?? doc.created_at;
+    const textViewVersion = selectedVersionId ?? "current";
+    const textViewUploadedAt = selectedUploadedAt ?? "";
+    const textViewSize = selectedSizeBytes ?? "";
+    const textViewKey = `${textViewVersion}:${textViewUploadedAt}:${textViewSize}`;
     const selectedExtension = filenameExtension(selectedFilename);
     const replaceFileType = replaceTargetVersion
         ? fileTypeForVersion(replaceTargetVersion, selectedFileType)
@@ -598,7 +606,16 @@ export function DocumentSidePanel({
                         versionNumber={selectedVersionNumber}
                     />
                     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                        {selectedViewType === "spreadsheet" ? (
+                        {selectedIsText ? (
+                            <TextView
+                                rounded="top-right"
+                                key={textViewKey}
+                                documentId={doc.id}
+                                versionId={selectedVersionId}
+                                filename={selectedFilename}
+                                displayUrl={displayUrl}
+                            />
+                        ) : selectedViewType === "spreadsheet" ? (
                             <SpreadsheetView
                                 rounded="top-right"
                                 key={`${selectedVersionId ?? "current"}:${selectedUploadedAt ?? ""}:${selectedSizeBytes ?? ""}`}

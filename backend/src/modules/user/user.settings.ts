@@ -1,6 +1,9 @@
 import { createServerSupabase, type Db } from "../../lib/supabase";
 import { DEFAULT_TITLE_MODEL, OPENAI_LOW_MODELS, type UserApiKeys, type ReasoningLevel } from "../../lib/llm";
-import { getEffectiveApiKeys, loadCourtListenerConnection } from "./user.apiKeyStore";
+import {
+    getEffectiveApiKeys,
+    loadCourtListenerConnection,
+} from "../../lib/providerCredentials/index";
 import { courtlistenerBulkDataEnabled } from "../../lib/courtlistener";
 import { loadCustomInstructions } from "./user.customInstructions";
 import {
@@ -15,6 +18,7 @@ import { getEffectiveRouterModels, ROUTER_SLUGS, type RouterModelSelections } fr
 import { normalizeOptionalModelPreference, normalizeReasoningLevel } from "../../lib/modelSelection";
 import { AppError } from "../../lib/appError";
 import { reportError } from "../../lib/observability/sentry";
+import { loadWorkspacePreferences } from "../../lib/orgPreferences";
 
 export type UserModelSettings = {
     /** Existing internal title helper for Altien skill paths. */
@@ -58,6 +62,10 @@ function fallbackTitleModel(apiKeys: UserApiKeys, routerModels: RouterModelSelec
     if (apiKeys.claude?.trim()) return "claude-haiku-4-5";
     if (apiKeys.kimi?.trim()) return "kimi-k3";
     if (apiKeys.azureOpenai?.apiKey?.trim() && apiKeys.azureOpenai.deployment?.trim()) return `aoai:${apiKeys.azureOpenai.deployment}`;
+    for (const provider of ["tokenjuice", "meta"] as const) {
+        const first = apiKeys.providerSettings?.[provider]?.models[0];
+        if (apiKeys[provider]?.trim() && first) return `${provider}/${first}`;
+    }
     for (const slug of ROUTER_SLUGS) {
         const first = routerModels[slug][0];
         if (apiKeys[slug]?.trim() && first) return `${slug}/${first}`;
@@ -67,11 +75,14 @@ function fallbackTitleModel(apiKeys: UserApiKeys, routerModels: RouterModelSelec
 
 /**
  * `options.orgId` is the organization the work belongs to, when it belongs
- * to one: the keys it runs on are then the organization's, with a member's
- * own keys beneath them only if the organization allows that (see
- * getEffectiveApiKeys), and the saved model preferences are judged against
- * the lists that govern those keys (getEffectiveRouterModels). Everything
- * else here is the person's own, whichever workspace they are in.
+ * to one. For a team organization the caller is a member of, the work runs
+ * on the organization's keys (getEffectiveApiKeys) and follows the
+ * organization's preferences (lib/orgPreferences.ts): its title, tabular,
+ * memory-curation and subagent models and its web search choices replace
+ * the person's. Every saved model is judged against the lists that govern
+ * the keys in use (getEffectiveRouterModels). Everything else here — the
+ * last picks in the composer, personalisation — is the person's own,
+ * whichever workspace they are in.
  */
 /**
  * A settings read that fell back to its default. The chat goes ahead, so this
@@ -98,6 +109,7 @@ export async function getUserModelSettings(
         responseStyle,
         webSearch,
         courtListener,
+        workspacePreferences,
     ] = await Promise.all([
         client
             .from("user_profiles")
@@ -130,6 +142,10 @@ export async function getUserModelSettings(
             reportSettingsReadFailure("CourtListener connection load failed", error);
             return { enabled: false, token: null };
         }),
+        // Not optional like the enhancements above: falling back to the
+        // person's own models and web search would send an organization's
+        // work somewhere its owners did not choose, so a failure throws.
+        loadWorkspacePreferences(client, userId, options.orgId),
     ]);
     let data = profileResult.data;
     let profileError = profileResult.error;
@@ -213,18 +229,30 @@ export async function getUserModelSettings(
     }
     const optional = (value: string | null | undefined) =>
         normalizeOptionalModelPreference(value, routerModels);
-    const titleOverride = optional(data?.fast_model);
+
+    // In a team organization's workspace these come from the organization.
+    // Dev stores a person's title override in user_profiles.fast_model; an
+    // organization's lives in organizations.title_model (0249).
+    const governing = workspacePreferences ?? {
+        title_model: data?.fast_model,
+        tabular_model: data?.tabular_model,
+        memory_curator_model: data?.memory_curator_model,
+        subagent_model: data?.subagent_model,
+        subagent_reasoning: data?.subagent_reasoning,
+        web_search: webSearch,
+    };
+    const titleOverride = optional(governing.title_model);
     return {
         fast_model: titleOverride ?? fallbackTitleModel(api_keys, routerModels),
         title_model: titleOverride,
-        tabular_model: optional(data?.tabular_model),
-        memory_curator_model: optional(data?.memory_curator_model),
+        tabular_model: optional(governing.tabular_model),
+        memory_curator_model: optional(governing.memory_curator_model),
         last_selected_chat_model: optional(data?.last_selected_chat_model),
         last_selected_reasoning_level: normalizeReasoningLevel(data?.last_selected_reasoning_level),
         legal_research_us: courtListener.enabled && (!!api_keys.courtlistener || courtlistenerBulkDataEnabled()),
-        subagent_model: optional(data?.subagent_model),
-        subagent_reasoning: normalizeReasoningLevel(data?.subagent_reasoning),
-        web_search: webSearch,
+        subagent_model: optional(governing.subagent_model),
+        subagent_reasoning: normalizeReasoningLevel(governing.subagent_reasoning),
+        web_search: governing.web_search,
         personalisation: {
             displayName: typeof data?.display_name === "string" ? data.display_name : null,
             organisation: typeof data?.organisation === "string" ? data.organisation : null,

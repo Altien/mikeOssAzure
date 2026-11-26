@@ -3,7 +3,7 @@
 // Conventions are worthless if nothing checks them. This test walks every
 // TypeScript file under `src/`, reads its import statements, and fails when a
 // file crosses a boundary the module layout forbids. It needs no lint plugin
-// or dependency-cruiser: a directory walk and a regex are enough to make the
+// or dependency-cruiser: a directory walk and a syntax parser make the
 // rules in `AGENTS.md` ("Backend Structure") load-bearing.
 //
 // The rules:
@@ -33,8 +33,10 @@
 // decision with a comment explaining why; silently widening one is not.
 
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
-import { describe, expect, it } from "vitest";
+import { join, relative, resolve, sep } from "node:path";
+import { beforeAll, describe, expect, it } from "vitest";
+
+import { dependencies, loadSourceParser, readPaths, resolveDependency, type Paths } from "./helpers/sourceDependencies";
 
 const SRC = resolve(__dirname, "..");
 
@@ -59,24 +61,16 @@ function read(file: string): string {
   return readFileSync(join(SRC, file), "utf8");
 }
 
-const IMPORT_RE =
-  /(?:^|\n)\s*(?:import|export)\s+(?:type\s+)?(?:[^'";]*?\s+from\s+)?["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)/g;
-
-/** Every import specifier in a file, resolved to an `src`-relative path when it is relative. */
+let PATHS: Paths;
+beforeAll(async () => {
+  await loadSourceParser();
+  PATHS = readPaths(resolve(SRC, "../tsconfig.json"));
+});
 function importsOf(file: string): string[] {
-  const text = read(file);
-  const specs: string[] = [];
-  for (const match of text.matchAll(IMPORT_RE)) {
-    const spec = match[1] ?? match[2];
-    if (!spec) continue;
-    if (spec.startsWith(".")) {
-      const abs = resolve(SRC, dirname(file), spec);
-      specs.push(relative(SRC, abs).split(sep).join("/"));
-    } else {
-      specs.push(spec);
-    }
-  }
-  return specs;
+  return dependencies(read(file), file).map(({ specifier }) => {
+    const resolved = resolveDependency(join(SRC, file), specifier, resolve(SRC, ".."), PATHS);
+    return resolved ? relative(SRC, resolved).split(sep).join("/").replace(/\.[cm]?[jt]sx?$/, "") : specifier;
+  });
 }
 
 const moduleOf = (file: string): string | null => {
@@ -103,12 +97,37 @@ const MODULES = existsSync(join(SRC, "modules"))
   : [];
 
 describe("backend architecture", () => {
+  it("domain implementations cannot import application workflows or their own facade", () => {
+    const offenders: string[] = [];
+    for (const file of PRODUCTION_FILES) {
+      const domain = moduleOf(file);
+      if (!domain || /\.routes\.ts$/.test(file)) continue;
+      for (const spec of importsOf(file)) {
+        if (spec.startsWith("application/") || spec === facadeOf(domain)) offenders.push(`${file} -> ${spec}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("application workflows are HTTP-agnostic", () => {
+    expect(PRODUCTION_FILES.filter(f => f.startsWith("application/") && importsOf(f).includes("express"))).toEqual([]);
+  });
+
+  it("credential consumers use its public API", () => {
+    const offenders: string[] = [];
+    for (const file of PRODUCTION_FILES.filter(f => !f.startsWith("lib/providerCredentials/"))) {
+      for (const spec of importsOf(file)) if (spec.startsWith("lib/providerCredentials/") && spec !== "lib/providerCredentials/index") offenders.push(`${file} -> ${spec}`);
+    }
+    expect(offenders).toEqual([]);
+  });
+
   it("every module has exactly one facade and at least one routes file", () => {
     for (const domain of MODULES) {
       expect(() => facadeOf(domain)).not.toThrow();
       const files = readdirSync(join(SRC, "modules", domain));
       expect(
-        files.some((f) => /\.routes\.ts$/.test(f)),
+        // 018: tenant lifecycle is durable platform work with no HTTP surface.
+        files.some((f) => /\.routes\.ts$/.test(f)) || domain === "tenant-lifecycle",
         `modules/${domain} has no *.routes.ts`,
       ).toBe(true);
     }
@@ -118,7 +137,7 @@ describe("backend architecture", () => {
     const offenders: string[] = [];
     for (const file of PRODUCTION_FILES.filter((f) => f.startsWith("lib/"))) {
       for (const spec of importsOf(file)) {
-        if (spec.startsWith("modules/")) offenders.push(`${file} -> ${spec}`);
+        if (spec.startsWith("modules/") || spec.startsWith("application/")) offenders.push(`${file} -> ${spec}`);
       }
     }
     expect(offenders).toEqual([]);
@@ -194,7 +213,7 @@ describe("backend architecture", () => {
     const offenders: string[] = [];
     for (const file of PRODUCTION_FILES.filter((f) => f.startsWith("middleware/"))) {
       for (const spec of importsOf(file)) {
-        if (spec.startsWith("modules/")) offenders.push(`${file} -> ${spec}`);
+        if (spec.startsWith("modules/") || spec.startsWith("application/")) offenders.push(`${file} -> ${spec}`);
       }
     }
     expect(offenders).toEqual([]);
@@ -202,6 +221,39 @@ describe("backend architecture", () => {
 
   it("rule 7: src/routes/ is gone; HTTP surfaces are modules", () => {
     expect(existsSync(join(SRC, "routes"))).toBe(false);
+  });
+
+  // Multi-tenant issue 004. createPlatformSupabase() sends no tenant and, once
+  // RLS is forced (issue 008), bypasses it. Only work that is cross-tenant by
+  // design may use it; everything else runs inside a tenant context and uses
+  // createServerSupabase(). Each entry says why it is cross-tenant.
+  it("createPlatformSupabase is imported only by the reviewed allowlist", () => {
+    const PLATFORM_ALLOWLIST = new Map<string, string>([
+      ["index.ts", "startup probe: ensure the install tenant exists"],
+      ["workerRuntime.ts", "worker startup probes; stale-work and MCP-refresh sweeps span tenants"],
+      ["lib/dbq/runner.ts", "job claiming and retention sweep span tenants; jobs run as their tenant"],
+      ["workers/appJobsWorker.ts", "claim of a delivered db_jobs row; the job runs as its tenant"],
+      ["modules/uploads/uploads.processing.ts", "upload job claim, its tenant lookup and session retention span tenants"],
+      ["lib/tenantMemberships.ts", "identity membership/directory resolution before a tenant is known"],
+      ["modules/tenant-lifecycle/tenant-lifecycle.service.ts", "fenced offboarding purge: platform-only RPC, never a request operation"],
+      ["lib/serverSession.ts", "auth session store: looked up by token hash before any tenant is known"],
+      ["lib/oauthStateTenant.ts", "OAuth callbacks: the state row, found by its token hash, names the tenant"],
+      ["lib/dbq/lifecycleGuard.ts", "startup probe of the document-lifecycle migration"],
+      ["lib/schemaCheck.ts", "startup check of applied migrations"],
+      ["lib/stampRuntime.ts", "read-only startup metadata and platform credential readiness before any tenant traffic"],
+      ["modules/platform/platform.healthDatabase.ts", "passphrase-gated read-only health page: install metadata, tenant counts and the job queue span tenants"],
+      ["jobs/maintenance.ts", "stale-work sweep spans tenants"],
+      ["lib/logging/tenantDebugStore.ts", "debug-log switch poll reads every tenant's debug_log_until"],
+      ["jobs/syncWorkflows.ts", "global workflow catalog sync"],
+      ["scripts/runMigrations.ts", "migration job: global workflow catalog sync"],
+    ]);
+    const importsPlatform = /import\s*(?:type\s+)?\{[^}]*\bcreatePlatformSupabase\b[^}]*\}\s*from/;
+    const importers = PRODUCTION_FILES.filter(
+      (file) => file !== "lib/supabase.ts" && importsPlatform.test(read(file)),
+    );
+    expect(importers.filter((file) => !PLATFORM_ALLOWLIST.has(file))).toEqual([]);
+    // Keep the allowlist honest: an entry nobody needs any more goes.
+    expect([...PLATFORM_ALLOWLIST.keys()].filter((file) => !importers.includes(file))).toEqual([]);
   });
 
   it("document version mutations belong to the documents module", () => {

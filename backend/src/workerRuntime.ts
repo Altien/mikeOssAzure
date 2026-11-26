@@ -24,7 +24,8 @@ import { enqueueDbJob } from "./lib/dbq/enqueue";
 import { runStaleWorkSweep } from "./jobs/maintenance";
 import { startUploadProcessingWorkers } from "./modules/uploads/uploads.service";
 import { uploadProcessingConfiguration } from "./lib/runtimeConfig";
-import { createServerSupabase } from "./lib/supabase";
+import { createPlatformSupabase, createServerSupabase } from "./lib/supabase";
+import { ensureInstallTenant, runWithTenant } from "./lib/tenantContext";
 import { initServerSessionKeys } from "./lib/serverSession";
 import { initDownloadSigningSecret } from "./lib/downloadTokens";
 import { initStorage } from "./lib/storage";
@@ -33,6 +34,11 @@ import { enforceDocumentLifecycleMigration } from "./lib/dbq/lifecycleGuard";
 import { reportError } from "./lib/observability/sentry";
 import { safeErrorLog } from "./lib/safeError";
 import { stopExtractionProcess } from "./lib/extraction/isolated";
+import { flushLlmUsage } from "./lib/llm/usage";
+import { probeStampRuntime } from "./lib/stampRuntime";
+import { createPollFailureGate } from "./lib/observability/pollFailureGate";
+import { asReportableError } from "./lib/httpError";
+import { log } from "./lib/log";
 
 const SWEEP_INTERVAL_MS = (() => {
     const raw = Number(process.env.STALE_SWEEP_INTERVAL_MS);
@@ -51,6 +57,17 @@ const MCP_REFRESH_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
  */
 const MCP_REFRESH_MAX_EXPIRED_AGE_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * One report per failure class per process: an unreachable database fails
+ * every 5-minute tick identically, and each tick was its own event
+ * (MIKE-BACKEND-E7). The interval is fixed, so the gate's backoff is unused.
+ */
+const mcpRefreshFailures = createPollFailureGate({
+    label: "[mcp-refresh-sweep]",
+    baseDelayMs: MCP_REFRESH_SWEEP_INTERVAL_MS,
+    maxDelayMs: MCP_REFRESH_SWEEP_INTERVAL_MS,
+});
+
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
 let initialSweep: ReturnType<typeof setTimeout> | null = null;
 let mcpRefreshTimer: ReturnType<typeof setInterval> | null = null;
@@ -62,27 +79,33 @@ let stopUploadWorker: (() => void) | null = null;
  * so nothing it hits may take the worker runtime down.
  */
 async function runMcpTokenRefreshSweep(): Promise<void> {
-    const db = createServerSupabase();
+    // Spans every user's connectors, so the scan runs as the platform; each
+    // refresh job is queued as the token's tenant (multi-tenant issue 008),
+    // so db_jobs.tenant_id defaults to it and the job runs in that tenant.
+    const db = createPlatformSupabase();
     const now = Date.now();
     const { data, error } = await db
         .from("user_mcp_oauth_tokens")
-        .select("connector_id, expires_at")
+        .select("connector_id, tenant_id, expires_at")
         .not("expires_at", "is", null)
         .not("encrypted_refresh_token", "is", null)
         .lt("expires_at", new Date(now + MCP_TOKEN_REFRESH_WINDOW_MS).toISOString())
         .gt("expires_at", new Date(now - MCP_REFRESH_MAX_EXPIRED_AGE_MS).toISOString());
-    if (error) throw new Error(error.message);
+    // Keep the PostgREST object as the cause: supabase-js puts the network
+    // errno in `details`, which `new Error(error.message)` dropped.
+    if (error) throw asReportableError(error, runMcpTokenRefreshSweep);
 
-    for (const row of (data ?? []) as { connector_id: string }[]) {
-        if (!row.connector_id) continue;
+    for (const row of (data ?? []) as { connector_id: string; tenant_id: string }[]) {
+        if (!row.connector_id || !row.tenant_id) continue;
         // One live job per connector: overlapping sweeps, and several
         // replicas sweeping at once, collapse into a single refresh.
-        await enqueueDbJob(db, {
-            kind: "mcp.refresh_token",
-            payload: { connectorId: row.connector_id },
-            dedupeKey: `mcp.refresh:${row.connector_id}`,
-            maxAttempts: 3,
-        });
+        await runWithTenant({ tenantId: row.tenant_id }, () =>
+            enqueueDbJob(createServerSupabase(), {
+                kind: "mcp.refresh_token",
+                payload: { connectorId: row.connector_id },
+                dedupeKey: `mcp.refresh:${row.connector_id}`,
+                maxAttempts: 3,
+            }));
     }
 }
 export type WorkerRole = "jobs" | "uploads";
@@ -93,6 +116,10 @@ let started = false;
 export async function startAllWorkers(roles: readonly WorkerRole[] = WORKER_ROLES): Promise<void> {
     if (started) return;
     await enforceDocumentLifecycleMigration();
+    await probeStampRuntime();
+    // Multi-tenant phase 1: a standalone worker may start before the API, and
+    // job rows default their tenant_id from the context.
+    await ensureInstallTenant(createPlatformSupabase());
     // Worker threads have independent module caches. The API's Key Vault
     // warm-up cannot initialize this process's signing or session state.
     await initServerSessionKeys();
@@ -100,7 +127,8 @@ export async function startAllWorkers(roles: readonly WorkerRole[] = WORKER_ROLE
     await initStorage();
     await initManifestSigningKey();
     manifestPublicKey();
-    const db = createServerSupabase();
+    // Startup probes of the queue schema are cross-tenant.
+    const db = createPlatformSupabase();
     const { error: tableError } = await db.from("db_jobs").select("id").limit(0);
     if (tableError) throw new Error("DB job schema is unavailable");
     const { error: claimError } = await db.rpc("claim_db_jobs", { p_limit: 0, p_stale_seconds: 600 });
@@ -146,10 +174,10 @@ export async function startAllWorkers(roles: readonly WorkerRole[] = WORKER_ROLE
     // nothing else owns them. Sweep shortly after boot (crash recovery) and
     // on an interval.
     const runSweep = () =>
-        void runStaleWorkSweep()
+        void runStaleWorkSweep(createPlatformSupabase())
             .then(({ documents, cells }) => {
                 if (documents || cells)
-                    console.warn("[stale-sweep] flipped", { documents, cells });
+                    log.warn("stale-sweep", "flipped", { documents, cells });
             })
             .catch((err) => {
                 reportError(err, { tags: { component: "stale-sweep" } });
@@ -164,10 +192,16 @@ export async function startAllWorkers(roles: readonly WorkerRole[] = WORKER_ROLE
     // rather than inside whichever request first trips over the expiry. The
     // lazy refresh in lib/mcp/oauth.ts stays as the last line of defense.
     const runMcpRefresh = () =>
-        void runMcpTokenRefreshSweep().catch((err) => {
-            reportError(err, { tags: { component: "mcp-refresh-sweep" } });
-            console.warn("[mcp-refresh-sweep] failed", safeErrorLog(err));
-        });
+        void runMcpTokenRefreshSweep()
+            .then(() => mcpRefreshFailures.success())
+            .catch((thrown) => {
+                const error = asReportableError(thrown);
+                if (mcpRefreshFailures.failure(error).report) {
+                    reportError(error, { tags: { component: "mcp-refresh-sweep" } });
+                    // Dev: log a sanitized copy at warn (the console bridge files console.error).
+                    console.warn("[mcp-refresh-sweep] failed", safeErrorLog(error));
+                }
+            });
     mcpRefreshTimer = setInterval(runMcpRefresh, MCP_REFRESH_SWEEP_INTERVAL_MS);
     mcpRefreshTimer.unref();
     started = true;
@@ -188,5 +222,7 @@ export async function stopAllWorkers(): Promise<void> {
     await stopWorkers();
     await stopDbJobRunner();
     await stopExtractionProcess();
+    // Usage-ledger rows still in flight from background model calls (015).
+    await flushLlmUsage();
     started = false;
 }

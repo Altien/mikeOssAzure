@@ -4,7 +4,7 @@ import { useSelectedModel, useSelectedReasoning } from "./useSelectedModel";
 import {
     canonicalModelId,
     routerSelections as selectionsFromProfile,
-} from "@/shared/lib/modelCatalog";
+} from "@mike/client";
 import type { ApiKeyState } from "../lib/mikeApi";
 
 const keys: ApiKeyState = {
@@ -23,6 +23,8 @@ const keys: ApiKeyState = {
     custom: { configured: false, source: null },
     courtlistener: { configured: false, source: null },
     kimi: { configured: false, source: null },
+    tokenjuice: { configured: false, source: null },
+    meta: { configured: false, source: null },
     azure_openai: { configured: false, source: null },
     brave: { configured: false, source: null },
     tavily: { configured: false, source: null },

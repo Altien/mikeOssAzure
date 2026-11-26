@@ -18,7 +18,7 @@ import { pathToFileURL } from "node:url";
 // ever reports listening or starting its runner before it exits 1.
 const backendRoot = path.resolve(__dirname, "..", "..");
 
-function stubSupabase(): Promise<{ server: Server; url: string }> {
+function stubSupabase(gate: "lifecycle" | "stamp" = "lifecycle"): Promise<{ server: Server; url: string }> {
     const server = createServer((req, res) => {
         if (req.method === "GET" && req.url?.startsWith("/auth_sessions?")) {
             res.writeHead(200, { "content-type": "application/json" });
@@ -27,7 +27,12 @@ function stubSupabase(): Promise<{ server: Server; url: string }> {
         }
         if (req.method === "POST" && req.url?.startsWith("/rpc/document_lifecycle_version")) {
             res.writeHead(200, { "content-type": "application/json" });
-            res.end("0");
+            res.end(gate === "stamp" ? "2" : "0");
+            return;
+        }
+        if (req.url?.startsWith("/rpc/stamp_runtime_metadata")) {
+            res.writeHead(503, { "content-type": "application/json" });
+            res.end('{"message":"stamp metadata unavailable"}');
             return;
         }
         res.writeHead(404, { "content-type": "application/json" });
@@ -81,6 +86,8 @@ describe("document-lifecycle boot gate", () => {
             SUPABASE_SECRET_KEY: "not-a-real-key",
             SUPABASE_PUBLISHABLE_KEY: "not-a-real-key",
             AUTH_PROVIDER: "local",
+            // Multi-tenant 008: PostgREST calls are always signed per request.
+            JWT_SECRET: Buffer.alloc(32, 4).toString("base64url"),
             AUTH_SESSION_ENCRYPTION_SECRET: Buffer.alloc(32, 1).toString("base64url"),
             AUTH_HANDOFF_ENCRYPTION_SECRET: Buffer.alloc(32, 2).toString("base64url"),
             AUTH_STATE_SECRET: Buffer.alloc(32, 3).toString("base64url"),
@@ -103,6 +110,7 @@ describe("document-lifecycle boot gate", () => {
             SUPABASE_URL: url,
             SUPABASE_SECRET_KEY: "not-a-real-key",
             AUTH_PROVIDER: "local",
+            JWT_SECRET: Buffer.alloc(32, 4).toString("base64url"),
             AUTH_SESSION_ENCRYPTION_SECRET: Buffer.alloc(32, 1).toString("base64url"),
             AUTH_HANDOFF_ENCRYPTION_SECRET: Buffer.alloc(32, 2).toString("base64url"),
             AUTH_STATE_SECRET: Buffer.alloc(32, 3).toString("base64url"),
@@ -110,5 +118,22 @@ describe("document-lifecycle boot gate", () => {
         expect(output).toMatch(/document-lifecycle migration is not applied/);
         expect(output).not.toMatch(/\[dbq\] runner started/);
         expect(code).toBe(1);
+    }, 60_000);
+});
+
+describe("regional stamp boot gate", () => {
+    it.each(["src/index.ts", "src/worker.ts"])("%s refuses to listen or claim when stamp metadata fails", async file => {
+        const { server, url } = await stubSupabase("stamp"); stub = server;
+        const { code, output } = await runEntrypoint(file, {
+            PORT: "0", WORKERS_MODE: "inline", QUEUE_DRIVER: "postgres", DB_JOBS_POLL_MS: "60000",
+            SUPABASE_URL: url, SUPABASE_SECRET_KEY: "test-key", AUTH_PROVIDER: "local", TENANCY_MODE: "single",
+            SENTRY_DISABLED: "true", JWT_SECRET: Buffer.alloc(32, 4).toString("base64url"),
+            AUTH_SESSION_ENCRYPTION_SECRET: Buffer.alloc(32, 1).toString("base64url"),
+            AUTH_HANDOFF_ENCRYPTION_SECRET: Buffer.alloc(32, 2).toString("base64url"),
+            AUTH_STATE_SECRET: Buffer.alloc(32, 3).toString("base64url"),
+        });
+        expect(output).toContain("Stamp runtime metadata is unavailable");
+        expect(output).not.toMatch(/Mike backend running on port|\[dbq\] runner started/);
+        expect(typeof code).toBe("number"); expect(code).not.toBe(0);
     }, 60_000);
 });

@@ -1,23 +1,31 @@
+import { BACKEND_REPORTING_OWNER } from "@mike/client";
 /**
  * Error reporting for the web app: a thin, testable layer over the Sentry
  * SDK. Application code calls these helpers instead of `@sentry/react`
- * directly so the PII policy (see `@/shared/lib/sentryEvent`) and the
+ * directly so the PII policy (see `@mike/client`'s sentryEvent) and the
  * explicit opt-out rule live in one place.
  */
 
 import * as Sentry from "@sentry/react";
-import { privacyBoundaryIntegration, type Operation } from "@/shared/lib/sentryPrivacy";
 import {
-    MIKE_SENTRY_DSN,
+    privacyBoundaryIntegration,
+    type Operation,
     createEventScrubber,
-    installKind,
+    sentryEnvironment,
     normalizeApiPath,
     parseSampleRate,
     releaseName,
     resolveDsn,
-} from "@/shared/lib/sentryEvent";
+} from "@mike/client";
 
 export type ReportLevel = "fatal" | "error" | "warning";
+
+/**
+ * Where the browser SDK posts envelopes. Upstream serves `/monitoring` from a
+ * Next route handler; Dev's static export has none, so the backend serves it
+ * (backend/src/modules/platform/monitoring.routes.ts, sync-log: 3bcac35a).
+ */
+export const SENTRY_TUNNEL_PATH = "/api/monitoring";
 
 export type ReportContext = {
     tags?: Record<string, string | number | boolean | null | undefined>;
@@ -26,13 +34,9 @@ export type ReportContext = {
     fingerprint?: string[];
 };
 
-// NEXT_PUBLIC_* is inlined into the browser bundle at build time; the Next
-// server reads SENTRY_INSTALL at runtime. Anything but "official" is a
-// community install and gets the minimised event shape.
-const install = installKind(
-    process.env.NEXT_PUBLIC_SENTRY_INSTALL ?? process.env.SENTRY_INSTALL,
-);
-const scrubber = createEventScrubber({ install });
+// Tenant-portable bundles always use the privacy-preserving community shape.
+const install = "community";
+const scrubber = createEventScrubber();
 
 /** `beforeSend` for every Sentry client in the web app (browser, server, edge). */
 export const scrubEvent = scrubber.scrubEvent;
@@ -81,11 +85,17 @@ export function markErrorHandled(error: unknown): void {
 }
 
 /**
- * A backend 5xx seen from the browser. The request id is the same one the
- * backend attached to its own event, so the two sides of one failure can be
- * matched in Sentry by searching `request_id:<id>`.
+ * A backend 5xx seen from the browser, reported immediately with the
+ * operation known by its caller. The request id is the same one the backend
+ * attached to its own event, so the two sides of one failure can be matched
+ * in Sentry by searching `request_id:<id>`.
+ *
+ * Same rule as the Word add-in: only an explicit backend ownership marker
+ * suppresses a duplicate. Codes and statuses alone do not prove ownership.
+ *
+ * Dev (sync-log: fa15c661): no Next gateway; the Express backend sets the
+ * marker (sendInternalError) on what it reported.
  */
-/** Report an API failure immediately with the operation known by its caller. */
 export function reportApiFailure(failure: {
     path: string;
     status: number;
@@ -94,9 +104,11 @@ export function reportApiFailure(failure: {
     method?: string;
     operation?: Operation;
     error?: unknown;
+    reportingOwner?: typeof BACKEND_REPORTING_OWNER;
 }): string | null {
     if (isReported(failure.error)) return null;
     markReported(failure.error);
+    if (failure.reportingOwner === BACKEND_REPORTING_OWNER) return null;
     if (!Sentry.isEnabled()) return null;
     const route = normalizeApiPath(failure.path);
     const method = failure.method ?? "GET";
@@ -115,7 +127,61 @@ export function reportApiFailure(failure: {
             },
             fingerprint: ["api-5xx", method, route, String(failure.status)],
         });
-        return Sentry.captureMessage(`API ${failure.status} on ${method} ${route}`, "error");
+        return failure.error instanceof Error
+            ? Sentry.captureException(failure.error)
+            : Sentry.captureMessage(`API ${failure.status} on ${method} ${route}`, "error");
+    });
+}
+
+/**
+ * A limit of whatever sits in front of the API (a reverse proxy, or the host
+ * running the web app's /api gateway) seen from the browser. Neither kind is
+ * visible anywhere else: a request the proxy refuses never reaches the
+ * gateway or the backend, and a response it cuts off ends like a finished
+ * one. Reported at warning level, because the cause is the deployment's
+ * configuration rather than a fault in the code. The privacy boundary groups
+ * by component, stage and route, so an oversized request is one issue per
+ * route (which says what to shrink) and a cut-off stream is one issue.
+ *
+ * - `payload-too-large`: a 413 that carries none of the backend's own codes,
+ *   so the body was refused before the backend saw it (for example a
+ *   serverless function's request-size cap).
+ * - `stream-incomplete`: an assistant stream that ended without its `[DONE]`
+ *   marker (for example a function time limit closing a long reply).
+ */
+class GatewayPayloadTooLargeError extends Error {
+    override name = "GatewayPayloadTooLargeError";
+    constructor() {
+        super("A request was refused as too large before it reached the API.");
+    }
+}
+
+class AssistantStreamIncompleteError extends Error {
+    override name = "AssistantStreamIncompleteError";
+    constructor() {
+        super("An assistant stream ended before the turn finished.");
+    }
+}
+
+export function reportGatewayLimit(
+    kind: "payload-too-large" | "stream-incomplete",
+    details: { path?: string; method?: string; status?: number; requestId?: string | null } = {},
+): string | null {
+    if (!Sentry.isEnabled()) return null;
+    const error =
+        kind === "payload-too-large"
+            ? new GatewayPayloadTooLargeError()
+            : new AssistantStreamIncompleteError();
+    return reportError(error, {
+        level: "warning",
+        tags: {
+            component: "gateway-limit",
+            stage: kind,
+            http_status: details.status,
+            http_method: details.method,
+            http_route: details.path ? normalizeApiPath(details.path) : undefined,
+            request_id: details.requestId,
+        },
     });
 }
 
@@ -307,21 +373,28 @@ export function setReportingUser(user: { id: string } | null): void {
 }
 
 /**
- * Browser SDK options. `NEXT_PUBLIC_*` values are inlined at build time, so
- * the caller (instrumentation-client.ts) reads them literally and passes
- * them in; everything policy-shaped is decided here.
+ * Browser SDK options. Deployment values (DSN, release) arrive through
+ * runtime /config; the shared image always keeps the community privacy
+ * boundary. Envelopes travel through the backend tunnel, which re-applies the
+ * deployment's opt-out and DSN before forwarding.
  */
 export function browserSentryOptions(env: {
     disabled?: string;
     dsn?: string;
+    /** Origin prefix of the backend (NEXT_PUBLIC_API_BASE_URL); "" = same origin. */
+    apiBase?: string;
     install?: string;
     environment?: string;
     release?: string;
+    version?: string;
     gitSha?: string;
     tracesSampleRate?: string;
     nodeEnv?: string;
 }): Sentry.BrowserOptions {
     // Runtime /config supplies this deployment's DSN; an empty value is off.
+    // Upstream divergence (sync-log: 3bcac35a): upstream always initializes
+    // with a placeholder DSN because its bundle is baked at build time. Dev's
+    // DSN is already runtime (/config), so an empty one still means "off".
     const { dsn } = resolveDsn({
         disabled: env.disabled,
         dsn: env.dsn,
@@ -330,8 +403,14 @@ export function browserSentryOptions(env: {
     return {
         dsn: dsn || undefined,
         enabled: dsn.length > 0,
-        environment: env.environment?.trim() || "self-hosted",
-        release: releaseName(env.release, env.gitSha),
+        // A `next dev` build says "development" unless an explicit
+        // environment is configured (upstream 576c70a7).
+        environment: sentryEnvironment(env.environment, env.nodeEnv === "development"),
+        release: releaseName(env.release, env.version, env.gitSha),
+        // Every browser envelope goes through the backend tunnel
+        // (POST /api/monitoring), which applies the deployment's runtime
+        // opt-out and DSN before forwarding; the server decides where it goes.
+        tunnel: `${env.apiBase ?? ""}${SENTRY_TUNNEL_PATH}`,
         tracesSampleRate: parseSampleRate(env.tracesSampleRate, 0),
         // Session replay is deliberately NOT enabled: it would record
         // privileged document text on screen.
@@ -356,15 +435,29 @@ export function browserSentryOptions(env: {
                 runtime: "browser",
                 build_mode: env.nodeEnv,
                 diagnostics_version: "2",
-                install: installKind(env.install),
+                install,
             },
         },
         beforeSend: scrubEvent,
     };
 }
 
-export function initBrowserErrorReporting(dsn: string): boolean {
+/**
+ * Start browser reporting with the runtime /config values. The release is
+ * the backend's `mike@<version>+<sha12>` (same image, same build arguments),
+ * so no NEXT_PUBLIC_* release identity is baked into the bundle.
+ *
+ * Upstream divergence (sync-log: 3bcac35a): upstream's reportingDestination()
+ * and serverSentryOptions() run on its Next server. Dev has no Next server;
+ * the same rule lives in the backend tunnel (lib/observability/sentryTunnel.ts).
+ */
+export function initBrowserErrorReporting(dsn: string, release?: string): boolean {
     if (!dsn.trim()) return false;
-    Sentry.init(browserSentryOptions({ dsn }));
+    Sentry.init(browserSentryOptions({
+        dsn,
+        release,
+        apiBase: process.env.NEXT_PUBLIC_API_BASE_URL ?? "",
+        nodeEnv: process.env.NODE_ENV,
+    }));
     return true;
 }

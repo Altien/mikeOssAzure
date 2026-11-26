@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mergeConfiguredModelOptions, ModelToggle } from "./ModelToggle";
-import { underlyingProviderGroup } from "@/shared/lib/modelCatalog";
+import { underlyingProviderGroup } from "@mike/client";
 import type {
     ApiKeyState,
     ConfiguredModelOption,
@@ -62,7 +62,7 @@ function keys(configured: Partial<Record<keyof ApiKeyState, boolean>>) {
                 source: configured[provider] ? "user" : null,
             },
         ]),
-    ) as ApiKeyState;
+    ) as unknown as ApiKeyState;
 }
 
 describe("ModelToggle responsive trigger", () => {
@@ -273,6 +273,56 @@ describe("ModelToggle availability states", () => {
             screen.getByRole("button", { name: "Choose model" }),
         );
         expect(screen.getByText("Configured")).toBeInTheDocument();
+    });
+
+    it("warns while a free managed model is selected and links to own-key settings", async () => {
+        configuredModels.push({
+            id: "tokenjuice/free-model",
+            label: "free-model",
+            group: "TokenJuice",
+            location: "cloud",
+            source: "Configured",
+            free: true,
+        });
+        render(
+            <ModelToggle
+                value="tokenjuice/free-model"
+                onChange={vi.fn()}
+                apiKeys={keys({})}
+            />,
+        );
+
+        await userEvent.click(
+            screen.getByRole("button", { name: "Choose model" }),
+        );
+        expect(screen.getByRole("note")).toHaveTextContent(
+            "This is a free or discounted AI model because the provider stores your prompts and responses in full and may use them for training. Use a key of your own or upgrade to a paid plan.",
+        );
+        expect(
+            screen.getByRole("link", { name: "a key of your own" }),
+        ).toHaveAttribute("href", "/settings/byok");
+    });
+
+    it("offers an administrator-entered model under its provider, with no personal setup", async () => {
+        configuredModels.push({
+            id: "meta/muse-spark-1.1",
+            label: "muse-spark-1.1",
+            group: "Meta (Muse)",
+            location: "cloud",
+            source: "Configured",
+        });
+        render(
+            <ModelToggle
+                value="meta/muse-spark-1.1"
+                onChange={vi.fn()}
+                apiKeys={keys({})}
+            />,
+        );
+
+        const trigger = screen.getByRole("button", { name: "Choose model" });
+        expect(trigger).toHaveTextContent("muse-spark-1.1");
+        await userEvent.click(trigger);
+        expect(screen.getByText("Meta (Muse)")).toBeInTheDocument();
     });
 
     it("renders a neutral disabled trigger while keys are loading", () => {

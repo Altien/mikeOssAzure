@@ -23,3 +23,8 @@ overrides:
   # GHSA-8r5x-fm3f-whwj / GHSA-p8wg-vrv2-v86f (critical, handlebars <=4.7.9),
   # reached only through the same development sideload tooling.
   handlebars: ^4.7.10
+  # node-forge <=1.4.0 (GHSA-8hrf-8g6f-7xwp et al.) and follow-redirects
+  # 1.16.0-1.16.1 (GHSA-mrwp-f3q8-3g9p), dev-only sideload/dev-server chains.
+  # Pinned to the versions upstream's npm lock chose (6a52e85e).
+  'node-forge@1.4.0': 1.4.2
+  'follow-redirects@1.16.1': 1.16.2

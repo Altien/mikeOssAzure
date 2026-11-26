@@ -19,6 +19,7 @@
 
 import type { AzureOpenaiSettings } from "./types";
 import { resolveSecret } from "../envSecrets";
+import { filterTenantModels } from "../tenantSettings";
 
 // Pinned for the LISTING call only. Newer api-versions (2024-10-21,
 // 2024-08-01-preview) return 404 against the /openai/deployments route
@@ -124,7 +125,7 @@ export async function listAzureOpenaiDeployments(
                 name: d.id,
                 model: typeof d.model === "string" ? d.model : null,
             }));
-        return { ok: true, source: picked.source, deployments };
+        return { ok: true, source: picked.source, deployments: await filterTenantModels(deployments, (deployment) => `aoai:${deployment.name}`) };
     } catch (err) {
         console.error("[aoai-deployments] fetch threw", err);
         return {

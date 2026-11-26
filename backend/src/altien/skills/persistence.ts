@@ -381,6 +381,7 @@ export async function storeSkillSnapshot(args: {
     requestedRef: string;
     resolvedCommitSha: string;
   };
+  catalog?: { id: string; displayName: string; commit: string };
   db?: Db;
 }): Promise<StoredSkillSnapshot> {
   const db = args.db ?? createServerSupabase();
@@ -557,6 +558,7 @@ export async function storeSkillSnapshot(args: {
         licence_paths: args.snapshot.licencePaths,
         warnings: args.snapshot.warnings,
         mcp_requirements: args.snapshot.mcpRequirements ?? [],
+        ...(args.catalog ? { catalog: args.catalog } : {}),
       },
       tree_hash: args.snapshot.treeHash,
       expanded_bytes: args.snapshot.expandedBytes,

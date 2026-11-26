@@ -112,7 +112,7 @@ describe("Amazon Bedrock adapter", () => {
         user: "x",
         apiKeys: { bedrock: "user-key" },
       }),
-    ).rejects.toThrow(/Amazon Bedrock API key is not configured/);
+    ).rejects.toThrow(/Amazon Bedrock is not configured for this organisation/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -297,7 +297,7 @@ describe("Azure OpenAI adapter", () => {
         user: "x",
         apiKeys: { azure: "user-key" },
       }),
-    ).rejects.toThrow(/Azure OpenAI API key is not configured/);
+    ).rejects.toThrow(/Azure OpenAI is not configured for this organisation/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,9 @@
 import { NextFunction, Request, Response } from "express";
 import { createServerSupabase } from "../lib/supabase.js";
-import { resolveRoles } from "../lib/auth/roles.js";
+import { resolveRoles, resolvePooledRoles } from "../lib/auth/roles.js";
+import { getTenancyMode } from "../lib/tenancyMode";
+import { mirrorEnterpriseMembership } from "../lib/tenantMemberships";
+import { currentTenant, runWithTenant } from "../lib/tenantContext";
 import { getConfig } from "../lib/config.js";
 
 function deny(res: Response, tenantId: string | undefined, userId: string, reason: string): void {
@@ -27,12 +30,15 @@ async function readOnboardingMode(): Promise<string> {
 }
 
 export async function tenantAccess(
-  _req: Request,
+  req: Request,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
   const provider = await readAuthProvider();
-  if (provider !== "entra") {
+  let pooled: boolean;
+  try { pooled = await getTenancyMode() === "pooled"; }
+  catch { res.status(503).json({ detail: "Tenant configuration is unavailable" }); return; }
+  if (!pooled && provider !== "entra") {
     next();
     return;
   }
@@ -42,6 +48,12 @@ export async function tenantAccess(
   const userId: string = principal?.userId ?? "unknown";
 
   if (!tenantId) {
+    // Every pooled identity path (External ID, Microsoft, local) that resolves no tenant is sent to onboarding.
+    if (pooled && (principal?.identityKind || (principal?.provider === "local" && process.env.NODE_ENV !== "production"))) {
+      const onboardingUrl = await getConfig("pooled-onboarding-url").catch(() => "");
+      res.status(403).json({ code: "onboarding_required", detail: "Join an organisation to continue.", ...(onboardingUrl ? { onboardingUrl } : {}) });
+      return;
+    }
     deny(res, tenantId, userId, "TENANT_UNKNOWN");
     return;
   }
@@ -64,7 +76,7 @@ export async function tenantAccess(
 
   if (!tenant) {
     const onboardingMode = await readOnboardingMode();
-    if (onboardingMode === "auto") {
+    if (!pooled && onboardingMode === "auto") {
       // Upsert with ignoreDuplicates instead of plain insert: when a
       // freshly-signed-in user fires several authenticated requests in
       // parallel (profile + projects + deployments + chat on first
@@ -103,12 +115,25 @@ export async function tenantAccess(
     return;
   }
 
-  const roles = await resolveRoles(principal.groups ?? []);
+  let roles;
+  try { roles = pooled ? await resolvePooledRoles(principal) : await resolveRoles(principal.groups ?? []); }
+  catch { res.status(503).json({ detail: "Tenant policy is unavailable" }); return; }
   if (roles.length === 0) {
     deny(res, tenantId, userId, "GROUP_NOT_WHITELISTED");
     return;
   }
 
+  // Mirror only directory-link admissions; a named member's row is already authoritative.
+  if (pooled && principal.identityKind === "enterprise" && !principal.membershipRole) {
+    try {
+      if (!principal.directoryId) throw new Error("Missing verified directory");
+      await mirrorEnterpriseMembership(tenantId, userId, principal.directoryId, roles.includes("TenantAdmin") ? "TenantAdmin" : "Member");
+    } catch { res.status(503).json({ detail: "Tenant membership is unavailable" }); return; }
+  }
   res.locals.principal.roles = roles;
-  next();
+  if (pooled) {
+    // Compatibility guard: POST reads retain ordinary resource permissions.
+    runWithTenant({ ...currentTenant(), tenantId, userId, roles, pooled: true,
+      readOnly: req.method === "GET" || req.method === "HEAD", userEmail: principal.email }, () => next());
+  } else next();
 }

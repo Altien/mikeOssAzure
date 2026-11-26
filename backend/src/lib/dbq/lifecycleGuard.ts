@@ -14,7 +14,7 @@
 // So: ask the database once, at boot, whether the contract is installed, and
 // refuse to serve if it is not. The check is a single cheap RPC.
 
-import { createServerSupabase, type Db } from "../supabase";
+import { createPlatformSupabase, type Db } from "../supabase";
 
 export type LifecycleProbe = {
   data: unknown;
@@ -130,7 +130,7 @@ const wait = (delayMs: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, delayMs));
 
 export async function enforceDocumentLifecycleMigration(
-  db: Db = createServerSupabase(),
+  db: Db = createPlatformSupabase(),
   exit: (code: number) => never = process.exit as (code: number) => never,
   options: LifecycleGuardOptions = {},
 ): Promise<LifecycleVerdict> {

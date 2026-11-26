@@ -1,9 +1,20 @@
+import { createTextExtractionCache } from "../../lib/textExtractionCache";
 // extraction body — implementation behind the module facade.
+import { ExtractionParseError } from "../../lib/extraction/failure";
 import { ExtractionLimitError } from "../../lib/extraction/limits";
 import { type ExtractionJobData } from "../../lib/queue/extractionQueue";
 import { publishCellUpdate as defaultPublish, type RunProgressUpdate } from "../../lib/queue/runProgress";
 import { assistantStreamErrorPayload } from "../chat/chat.service";
-import { extractRowColumns, finalizeCell, finishGenerationIfIdle, loadReviewRow, renewGeneration, validateSelectedModel, TABULAR_GENERATION_HEARTBEAT_MS, type Column } from "./tabular.service";
+import { isUserProviderRefusal } from "../../lib/llm/providerErrors";
+import { extractRowColumns, finalizeCell } from "./tabular.extractRow";
+import { loadReviewRow } from "./tabular.rows";
+import {
+    finishGenerationIfIdle,
+    renewGeneration,
+    validateSelectedModel,
+    TABULAR_GENERATION_HEARTBEAT_MS,
+    type Column,
+} from "./tabular.shared";
 import { createServerSupabase, type Db } from "../../lib/supabase";
 import { AppError } from "../../lib/appError";
 import { asReportableError } from "../../lib/httpError";
@@ -33,6 +44,33 @@ function reportLeaseLost(
     });
     return failure;
 }
+
+/**
+ * The error frame a failed row sends the grid, or null when the failure has
+ * no remedy to name and the grid shows only failed cells. Read down the cause
+ * chain, so a queue failure wrapping the provider's error finds the frame the
+ * row sent.
+ */
+export function gridErrorFrame(error: unknown): ReturnType<typeof assistantStreamErrorPayload> | null {
+    for (let current = error, depth = 0; current && depth < 8; current = (current as { cause?: unknown }).cause, depth++) {
+        const payload = assistantStreamErrorPayload(current);
+        if (payload.code === "invalid_api_key") return payload;
+    }
+    return null;
+}
+
+/**
+ * The user's own account refused the request and the grid was sent the
+ * remedy: nothing the operator can act on, so it is logged, never reported
+ * (the chat engine's rule). A refusal with no frame (no credits, no model
+ * access) leaves the user with bare failed cells, so it keeps its warning.
+ */
+export function isRefusalShownToUser(error: unknown): boolean {
+    return isUserProviderRefusal(error) && gridErrorFrame(error) !== null;
+}
+
+// Queue jobs may share a source; revision keys prevent stale in-place edits.
+const workerTextCache = createTextExtractionCache();
 
 export interface ExtractionDeps {
     db: Db;
@@ -195,6 +233,7 @@ export async function runExtractionJob(
         //    tailing /generate request sees them live. Every cell write is
         //    stamped with — and, once terminal, guarded by — this generation.
         const { processed, missing, error } = await extractRowColumns({
+            textCache: workerTextCache,
             reportFailure: false,
             db,
             reviewId,
@@ -223,13 +262,9 @@ export async function runExtractionJob(
                     }),
             },
         });
-        if (error instanceof ExtractionLimitError) throw error;
-        if (error) {
-            const payload = assistantStreamErrorPayload(error);
-            if (payload.code === "invalid_api_key") {
-                await publish(reviewId, { type: "error", ...payload });
-            }
-        }
+        if (error instanceof ExtractionLimitError || error instanceof ExtractionParseError) throw error;
+        const frame = error ? gridErrorFrame(error) : null;
+        if (frame) await publish(reviewId, { type: "error", ...frame });
         if (processed.length === 0) {
             settled = true;
             return;

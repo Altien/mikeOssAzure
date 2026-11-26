@@ -55,6 +55,53 @@ If the browser is no longer talking to PostgREST, a reasonable question is wheth
 - **RLS becomes optional.** With no untrusted client talking to PostgREST, RLS is no longer a security boundary. The existing two policies on `user_profiles` can be removed (the EntraID agent will own this decision); authorization is enforced in `backend/src/lib/access.ts` and equivalents.
 - **No PostgREST upgrade is automatic.** We pin a version (`v12.2.x`) and update on a manual cadence. See `../infra/005-container-images-and-observability.md` (image registry section).
 
+## Update: trust model for multi-tenancy (2026-10, multi-tenant issue 002)
+
+Entra mode no longer relies on the network alone. The backend's fetch
+wrapper (`backend/src/lib/supabase.ts`) mints a 60-second HS256 JWT per
+request, `{ role: "service_role", tenant_id, sub }`, signed with Key Vault
+`postgrest-jwt-secret`; PostgREST verifies it (`PGRST_JWT_SECRET`, now wired
+in every mode by `infra/modules/containerapp-postgrest.bicep`) and exposes the
+claims to SQL as `current_setting('request.jwt.claims', true)`. The tenant
+comes from the request's tenant context (`backend/src/lib/tenantContext.ts`),
+never from request input. Local mode signs the same way with `JWT_SECRET`.
+
+- Role is still `service_role`, so nothing changes functionally. Issue 008
+  switches tenant traffic to a non-`BYPASSRLS` role with forced RLS.
+- `PGRST_DB_ANON_ROLE` stays `service_role` in entra mode for now, so an
+  older backend revision (or a backend that cannot read the secret) still
+  works during an upgrade; the backend also falls back to the unsigned form
+  when PostgREST rejects a token (`PGRST30x`, e.g. a rotated secret).
+  Issue 008 removes both fallbacks. Until then a request with *no* JWT is
+  still served as `service_role`; a request with a bad or expired JWT is
+  rejected.
+- `createPlatformSupabase()` sends the same token without `tenant_id` for
+  work that is cross-tenant by design (allowlisted, issue 004).
+- Upgrade: existing entra installs pick up `PGRST_JWT_SECRET` on the next
+  infrastructure redeploy; updating only the images is safe (the backend falls
+  back to unsigned requests while PostgREST has no secret).
+
+## Update: forced RLS (2026-10, multi-tenant issue 008)
+
+- Tenant traffic runs as `tenant_app` (no `BYPASSRLS`): the request client's
+  token is `{ role: "tenant_app", tenant_id, sub }`. Every `public` table with
+  `tenant_id` has forced RLS and policy `tenant_isolation`
+  (`tenant_id = app.current_tenant_id()`), migration `0110`. A call with no
+  tenant context runs as the install's tenant on a single-tenant install and
+  sees nothing on a pooled one.
+- `createPlatformSupabase()` keeps `service_role` (platform work only).
+- Both fallbacks are gone: the backend never sends an unsigned request or the
+  static service key, and entra-mode PostgREST has no `PGRST_DB_ANON_ROLE`, so
+  a request without a JWT is rejected (`PGRST302`). Local/supabase mode keeps
+  `web_anon`, which forced RLS shows no tenant rows.
+- **Upgrade order:** an entra install must have `PGRST_JWT_SECRET` wired (the
+  002 infra redeploy) before running a backend with 008; image-only updates
+  from before 002's infra change fail every database call. The upgrade
+  script (`scripts/install/upgrade-marketplace.ps1`, from 1.0.14) applies
+  both PostgREST changes in a safe order.
+- Rollback without a schema change: `tenant-rls-enforced=false` (Key Vault or
+  env `TENANT_RLS_ENFORCED`) makes tenant traffic send `service_role` again.
+
 ## Deferred to the EntraID work
 
 - The PostgREST JWT signing key vs JWKS-from-EntraID swap.

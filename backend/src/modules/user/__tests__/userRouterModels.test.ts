@@ -34,13 +34,13 @@ vi.mock("../../../lib/llm", async () => ({
 
 vi.mock("../../../lib/audit", () => ({ recordAudit: vi.fn() }));
 vi.mock("../../../lib/userLookup", () => ({ findProfileUserByEmail: vi.fn() }));
-vi.mock("../user.dataCleanup", () => ({
+vi.mock("../../../application/accounts/dataCleanup", () => ({
     deleteAllUserChats: vi.fn(),
     deleteAllUserTabularReviews: vi.fn(),
     deleteUserAccountData: vi.fn(),
     deleteUserProjects: vi.fn(),
 }));
-vi.mock("../user.dataExport", () => ({
+vi.mock("../../../application/exports/buildJsonExport", () => ({
     buildUserAccountExport: vi.fn(),
     buildUserChatsExport: vi.fn(),
     buildUserTabularReviewsExport: vi.fn(),
@@ -58,11 +58,13 @@ vi.mock("../../../lib/mcpConnectors", () => ({
     startUserMcpConnectorOAuth: vi.fn(),
     updateUserMcpConnector: vi.fn(),
 }));
-vi.mock("../../lib/userApiKeys", () => ({
+vi.mock("../../../lib/providerCredentials/index", () => ({
+    getUserApiKeyStatus: (...args: unknown[]) => getUserApiKeyStatus(...args),
     getUserApiKeys: vi.fn(async () => ({})),
-    resolveVercelApiKey: vi.fn(async () => ""),
     hasEnvApiKey: vi.fn(() => false),
-    normalizeApiKeyProvider: vi.fn(),
+    // Drift (upstream 877f4598): user.routes now takes normalizeApiKeyProvider
+    // from this module, so the stub must accept the provider under test.
+    normalizeApiKeyProvider: vi.fn((provider: unknown) => provider),
     saveUserApiKey: vi.fn(),
 }));
 vi.mock("../../../lib/routerModels", async (importOriginal) => ({
@@ -110,7 +112,7 @@ vi.mock("../../../lib/supabase", () => ({
 }));
 
 import { userRouter } from "../user.routes";
-import { normalizeRouterModels } from "../user.service";
+import { normalizeRouterModels } from "../../../lib/routerModelValidation";
 
 const app = express();
 app.use(express.json());

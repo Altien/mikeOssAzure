@@ -32,6 +32,8 @@ export function ByokProviderModal({ provider, enabledToggle, store, onClose }: {
   const hasModelSelections = (ROUTER_SLUGS as readonly string[]).includes(provider.provider) && (!store || !!store.routerModels);
   const configured = store ? store.hasSavedKey : profile?.apiKeys[provider.provider]?.source != null;
   const installUrl = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001") + "/install";
+  // These two have no per-user switch or model selection (docs/direct-provider-models.md).
+  const administratorManaged = provider.provider === "tokenjuice" || provider.provider === "meta";
   return (
     <Modal open onClose={onClose} breadcrumbs={[store?.breadcrumb ?? "Model Providers", provider.name]}
       size={hasModelSelections ? "md" : "sm"} className="h-auto max-h-[calc(100vh-2rem)]">
@@ -43,8 +45,12 @@ export function ByokProviderModal({ provider, enabledToggle, store, onClose }: {
           </div>
         )}
         <p className="text-sm text-gray-500">
-          Credentials are shared by this organisation and managed by an administrator.
-          Your provider switch and model selections affect only your account.
+          {administratorManaged
+            ? "Credentials and model names are shared by this organisation and managed by an administrator."
+            : <>
+                Credentials are shared by this organisation and managed by an administrator.
+                Your provider switch and model selections affect only your account.
+              </>}
         </p>
         <a href={installUrl} className="inline-flex text-sm font-medium text-gray-700 underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40">
           Open organisation setup

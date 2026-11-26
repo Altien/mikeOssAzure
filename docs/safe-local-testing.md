@@ -75,6 +75,23 @@ test only the non-LLM flows first:
 Then add one disposable, capped model-provider key and test assistant behavior
 with synthetic documents.
 
+## Playbook Review Recovery Regressions
+
+After applying the numbered migrations to a disposable database, run the
+publication transaction regression as the database owner:
+
+```bash
+psql "$DATABASE_URL" -X --set ON_ERROR_STOP=1   -f backend/scripts/test-playbook-review-publication.sql
+```
+
+It rolls back all synthetic rows and temporary fault-injection triggers. It
+checks exact finding/edit mapping, replay, source/status guards and atomic
+rollback, including extraction rows and queued jobs, for both the in-process
+review and the worker-claimed (fenced) review: claim loss, a changed or
+inaccessible document, a run already recorded as failed, the SQL audit row,
+and tenant isolation. This sequential script does not establish concurrent
+lock behavior or lost-network-response handling.
+
 ## Clean Up After Testing
 
 After testing, delete:

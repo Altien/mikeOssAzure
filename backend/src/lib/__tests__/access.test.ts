@@ -9,6 +9,8 @@ import {
     ensureDocAccess,
     ensureReviewAccess,
     filterAccessibleDocumentIds,
+    getOrgRole,
+    getOrgRoleOrThrow,
     isOrgAdmin,
     isOrgOwner,
     listAccessibleProjectIds,
@@ -131,6 +133,28 @@ function makeDb(
         },
     } as any;
 }
+
+describe("getOrgRoleOrThrow", () => {
+    const tables = {
+        organizations: [{ id: "org-1", deleted_at: null }],
+        org_members: [{ org_id: "org-1", user_id: "u1", role: "admin" }],
+    };
+
+    it("answers the role, or null for a confirmed non-member", async () => {
+        const db = makeDb(tables);
+        await expect(getOrgRoleOrThrow("u1", "org-1", db)).resolves.toBe("admin");
+        await expect(getOrgRoleOrThrow("u2", "org-1", db)).resolves.toBeNull();
+        await expect(getOrgRoleOrThrow("u1", null, db)).resolves.toBeNull();
+    });
+
+    it("throws on a failed read, where getOrgRole answers null", async () => {
+        const db = makeDb(tables, { selectErrors: { org_members: "down" } });
+        await expect(getOrgRole("u1", "org-1", db)).resolves.toBeNull();
+        await expect(getOrgRoleOrThrow("u1", "org-1", db)).rejects.toThrow(
+            "Failed to read organization membership",
+        );
+    });
+});
 
 describe("access helpers", () => {
     it("denies archived containers to former creators and organization owners", async () => {
@@ -2147,4 +2171,29 @@ it("checks each project/workflow once across document batches and never shares s
         .toEqual([...docs.map(d => d.id), "own"]);
     expect(from.mock.calls.filter(([table]) => table === "projects")).toHaveLength(1);
     expect(from.mock.calls.filter(([table]) => table === "workflows")).toHaveLength(1);
+});
+
+it("bounds standalone private-document verdict concurrency and preserves per-document grants", async () => {
+    const docs = Array.from({ length: 30 }, (_, i) => ({ id: `d${i}`, user_id: "other", project_id: null, org_id: "org" }));
+    const db = makeDb({ documents: docs });
+    let active = 0, peak = 0;
+    db.rpc = vi.fn(async (_name: string, args: Record<string, unknown>) => {
+        active++; peak = Math.max(peak, active);
+        await new Promise(resolve => setTimeout(resolve, 1));
+        active--;
+        return { data: Number(String(args.p_document_id).slice(1)) % 2 === 0, error: null };
+    });
+    expect(await filterAccessibleDocumentIds(docs.map(d => d.id), "reader", null, db))
+        .toEqual(docs.filter((_, i) => i % 2 === 0).map(d => d.id));
+    expect(peak).toBeLessThanOrEqual(5);
+    expect(db.rpc).toHaveBeenCalledTimes(30);
+});
+
+it("shares only an uploader's organisation-membership verdict within one document lookup", async () => {
+    const docs = Array.from({ length: 120 }, (_, i) => ({ id: `d${i}`, user_id: "reader", project_id: null, org_id: "org" }));
+    const db = makeDb({ documents: docs, organizations: [{ id: "org", kind: "team" }], org_members: [{ org_id: "org", user_id: "reader", role: "member" }] });
+    const from = vi.spyOn(db, "from");
+    expect(await filterAccessibleDocumentIds(docs.map(d => d.id), "reader", null, db)).toEqual(docs.map(d => d.id));
+    expect(from.mock.calls.filter(([table]) => table === "organizations")).toHaveLength(1);
+    expect(from.mock.calls.filter(([table]) => table === "org_members")).toHaveLength(1);
 });

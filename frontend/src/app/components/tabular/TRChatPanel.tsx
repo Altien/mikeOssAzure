@@ -1,6 +1,12 @@
 "use client";
 
+import { nextRevealLength } from "./tabularReveal";
+
+import { useMarkdownCheckpoint } from "../assistant/message/markdownCheckpoint";
+import { createCitationPreprocessor } from "../assistant/message/citationPreprocessor";
 import {
+    memo,
+    useMemo,
     useCallback,
     useEffect,
     useLayoutEffect,
@@ -36,8 +42,15 @@ import {
     DocReadBlock,
     EventBlock,
     ReasoningBlock,
+    CitationsRecordedBlock,
 } from "../assistant/message/EventBlocks";
 import { readSseFrames } from "@/app/lib/sse";
+import {
+    citationsRecordedEvent,
+    currentCitationSteps,
+    isRecordingCitations,
+    recordingCitationsEvent,
+} from "@/app/lib/citationsRecorded";
 import { chatRequestError } from "@/app/lib/assistantTurnStream";
 import { restoreOptimisticallyDeletedRows } from "@/app/lib/optimisticRows";
 import { notifyError, notifyInfo } from "@/app/lib/userFacingError";
@@ -55,7 +68,7 @@ import { ChatPanelHeader } from "../shared/ChatPanelHeader";
 import { HeaderActionsMenu } from "../shared/HeaderActionsMenu";
 import { cn } from "@/app/lib/utils";
 import { buildTabularChatHistory } from "@/app/lib/tabularChatHistory";
-import { CitationPillUI } from "@/shared/ui/CitationPillUI";
+import { CitationPillUI } from "@mike/ui";
 import { subscribeToTabularChatSettingsUpdates } from "@/app/lib/tabularChatSettingsEvents";
 import { sortChatsByActivity, touchChatActivity } from "@/app/lib/chatActivity";
 import { WarningPopup } from "../popups/WarningPopup";
@@ -190,6 +203,8 @@ type TREventGroup =
           index: number;
       };
 
+const EMPTY_TR_ANNOTATIONS: TRCitationAnnotation[] = [];
+
 function TRAssistantMessage({
     msg,
     onCitationClick,
@@ -197,17 +212,15 @@ function TRAssistantMessage({
     msg: TRMessage;
     onCitationClick: (colIdx: number, rowIdx: number) => void;
 }) {
-    const annotations = msg.annotations ?? [];
+    const annotations = msg.annotations ?? EMPTY_TR_ANNOTATIONS;
     const citationsList: TRCitationAnnotation[] = [];
-
-    // Pre-process all content events
-    const processedTexts: string[] = (msg.events ?? []).map((e) =>
-        e.type === "content"
-            ? preprocessTRCitations(e.text, annotations, citationsList)
-            : "",
-    );
-
     const events = msg.events ?? [];
+    const lastContentIndex = events.findLastIndex(event => event.type === "content");
+    const lastContent = events[lastContentIndex];
+    const {richText, plainTail} = useMarkdownCheckpoint(lastContent?.type === "content" ? lastContent.text : "", !!msg.isStreaming && lastContentIndex === events.length - 1);
+    const processCitations = useMemo(() => createCitationPreprocessor(preprocessTRCitations), []);
+    const processedTexts = events.map((event, index) => event.type === "content"
+        ? processCitations(index, index === lastContentIndex ? richText : event.text, annotations, citationsList) : "");
 
     // Group consecutive non-content events together so they share a single
     // PreResponseWrapper. Content events render between wrappers.
@@ -237,6 +250,15 @@ function TRAssistantMessage({
             if (g.kind === "content") return true;
         }
         return false;
+    };
+
+    // A cited document opens at the first cell that cites it.
+    const citationSteps = currentCitationSteps(events);
+    const openCitedCell = ({ ref }: { ref: number }) => {
+        const cell = annotations.find((annotation) => annotation.ref === ref);
+        return cell
+            ? () => onCitationClick(cell.col_index, cell.row_index)
+            : undefined;
     };
 
     const renderPreEvent = (
@@ -270,6 +292,22 @@ function TRAssistantMessage({
                 />
             );
         }
+        if (event.type === "citations_recorded") {
+            return (
+                <CitationsRecordedBlock
+                    key={key}
+                    refs={event.refs}
+                    removedRefs={event.removed_refs}
+                    sources={event.sources}
+                    quotesNotFound={event.quotes_not_found}
+                    rejected={event.rejected}
+                    isStreaming={!!event.isStreaming}
+                    interrupted={!!event.interrupted}
+                    showConnector={showConnector}
+                    openSource={source => citationSteps.get(source.ref) === event ? openCitedCell(source) : undefined}
+                />
+            );
+        }
         if (event.type === "thinking") {
             return (
                 <EventBlock key={key} showConnector={showConnector} isStreaming>
@@ -280,9 +318,69 @@ function TRAssistantMessage({
         return null;
     };
 
-    const renderContent = (text: string, key: number) => (
+
+    return (
+        <div className="text-gray-900 font-serif">
+            <ResponseStatus
+                status={
+                    msg.error ? "error" : msg.isStreaming ? "active" : null
+                }
+            />
+            {groups.length > 0 && (
+                <div className="flex flex-col gap-2.5">
+                    {groups.map((g, gIdx) => {
+                        if (g.kind === "content") {
+                            return <div key={g.index}>
+                                <TRMarkdown text={processedTexts[g.index]} citationsList={citationsList} onCitationClick={onCitationClick} />
+                                {g.index === lastContentIndex && plainTail && <span className="whitespace-pre-wrap">{plainTail}</span>}
+                            </div>;
+                        }
+                        const subsequentContent = hasContentAfter(gIdx);
+                        // "Working" while at least one event in *this*
+                        // wrapper is actively streaming. Gaps between real
+                        // events are bridged by `pushThinkingPlaceholder`
+                        // so this check stays continuously true through
+                        // the whole pre-content phase.
+                        const wrapperIsStreaming = g.events.some(
+                            (event) =>
+                                "isStreaming" in event && !!event.isStreaming,
+                        );
+                        return (
+                            <PreResponseWrapper
+                                key={`p-${g.indices[0]}`}
+                                stepCount={g.events.length}
+                                shouldMinimize={subsequentContent}
+                                isStreaming={wrapperIsStreaming}
+                            >
+                                {g.events.map((event, i) =>
+                                    renderPreEvent(
+                                        event,
+                                        i,
+                                        g.events,
+                                        g.indices[i],
+                                    ),
+                                )}
+                            </PreResponseWrapper>
+                        );
+                    })}
+                </div>
+            )}
+            {msg.error ? (
+                <p className="mt-2 text-sm leading-6 text-red-700">
+                    {msg.error}
+                </p>
+            ) : null}
+        </div>
+    );
+}
+
+const TRMarkdown = memo(function TRMarkdown({text, citationsList, onCitationClick}: {
+    text: string;
+    citationsList: TRCitationAnnotation[];
+    onCitationClick: (column: number, row: number) => void;
+}) {
+    return (
         <div
-            key={key}
             className="prose prose-sm max-w-none text-sm leading-relaxed"
         >
             <ReactMarkdown
@@ -344,67 +442,13 @@ function TRAssistantMessage({
             </ReactMarkdown>
         </div>
     );
-
-    return (
-        <div className="text-gray-900 font-serif">
-            <ResponseStatus
-                status={
-                    msg.error ? "error" : msg.isStreaming ? "active" : null
-                }
-            />
-            {groups.length > 0 && (
-                <div className="flex flex-col gap-2.5">
-                    {groups.map((g, gIdx) => {
-                        if (g.kind === "content") {
-                            return renderContent(
-                                processedTexts[g.index],
-                                g.index,
-                            );
-                        }
-                        const subsequentContent = hasContentAfter(gIdx);
-                        // "Working" while at least one event in *this*
-                        // wrapper is actively streaming. Gaps between real
-                        // events are bridged by `pushThinkingPlaceholder`
-                        // so this check stays continuously true through
-                        // the whole pre-content phase.
-                        const wrapperIsStreaming = g.events.some(
-                            (event) =>
-                                "isStreaming" in event && !!event.isStreaming,
-                        );
-                        return (
-                            <PreResponseWrapper
-                                key={`p-${g.indices[0]}`}
-                                stepCount={g.events.length}
-                                shouldMinimize={subsequentContent}
-                                isStreaming={wrapperIsStreaming}
-                            >
-                                {g.events.map((event, i) =>
-                                    renderPreEvent(
-                                        event,
-                                        i,
-                                        g.events,
-                                        g.indices[i],
-                                    ),
-                                )}
-                            </PreResponseWrapper>
-                        );
-                    })}
-                </div>
-            )}
-            {msg.error ? (
-                <p className="mt-2 text-sm leading-6 text-red-700">
-                    {msg.error}
-                </p>
-            ) : null}
-        </div>
-    );
-}
+}, (previous, next) => previous.text === next.text && previous.onCitationClick === next.onCitationClick && previous.citationsList.length === next.citationsList.length && previous.citationsList.every((value, index) => value === next.citationsList[index]));
 
 // ---------------------------------------------------------------------------
 // MessageBubble
 // ---------------------------------------------------------------------------
 
-function MessageBubble({
+export const TRMessageBubble = memo(function MessageBubble({
     msg,
     onCitationClick,
 }: {
@@ -421,7 +465,7 @@ function MessageBubble({
         );
     }
     return <TRAssistantMessage msg={msg} onCitationClick={onCitationClick} />;
-}
+});
 
 // ---------------------------------------------------------------------------
 // Drip helpers
@@ -578,7 +622,6 @@ export function TRChatPanel({
         lastSeq: 0,
         hadError: false,
     });
-    const DRIP_CHARS = 8;
 
     // Load existing chats from DB on mount
     useEffect(() => {
@@ -874,8 +917,11 @@ export function TRChatPanel({
         dripIntervalRef.current = setInterval(() => {
             const target = dripTargetRef.current;
             const displayLen = dripDisplayLenRef.current;
-            if (displayLen >= target.length) return;
-            const newLen = Math.min(displayLen + DRIP_CHARS, target.length);
+            if (displayLen >= target.length) {
+                stopDrip();
+                return;
+            }
+            const newLen = nextRevealLength(displayLen, target.length);
             dripDisplayLenRef.current = newLen;
             const slice = target.slice(0, newLen);
             syncDripIntoEventsRef(slice, true);
@@ -893,10 +939,13 @@ export function TRChatPanel({
         return e.type === "thinking" && !!e.isStreaming;
     }
 
-    function clearStreamingPlaceholders() {
+    function finishStreamingSteps() {
         const before = eventsRef.current;
-        const after = before.filter((e) => !isStreamingPlaceholder(e));
-        if (after.length === before.length) return;
+        if (!before.some(e => isStreamingPlaceholder(e) || isRecordingCitations(e))) return;
+        const after = before.filter(e => !isStreamingPlaceholder(e)).map(e =>
+            e.type === "citations_recorded" && e.isStreaming
+                ? { ...e, isStreaming: false, interrupted: true } : e,
+        );
         eventsRef.current = after;
         const snapshot = [...after];
         setMessages((prev) => {
@@ -1404,7 +1453,7 @@ export function TRChatPanel({
                             // tab. The server has already stored the partial
                             // answer and [DONE] follows immediately, so all
                             // that is left is to stop pretending to think.
-                            clearStreamingPlaceholders();
+                            finishStreamingSteps();
                             continue;
                         }
 
@@ -1835,6 +1884,27 @@ export function TRChatPanel({
                             continue;
                         }
 
+                        if (data.type === "citations_recorded_start") {
+                            pushEvent(recordingCitationsEvent());
+                            continue;
+                        }
+
+                        if (data.type === "citations_recorded") {
+                            const recorded = citationsRecordedEvent(data);
+                            // Completes the step its start frame opened, or adds it.
+                            if (
+                                !updateMatchingEvent(
+                                    isRecordingCitations,
+                                    () => recorded,
+                                )
+                            ) {
+                                pushEvent(recorded);
+                            }
+                            // The model writes the answer next.
+                            pushThinkingPlaceholder();
+                            continue;
+                        }
+
                         if (data.type === "doc_read_start") {
                             pushEvent({
                                 type: "doc_read",
@@ -1879,7 +1949,7 @@ export function TRChatPanel({
                                 },
                             );
                             flushDrip();
-                            clearStreamingPlaceholders();
+                            finishStreamingSteps();
                             pushEvent({
                                 type: "error",
                                 message: failure.message,
@@ -1915,10 +1985,14 @@ export function TRChatPanel({
                         }
 
                         if (data.type === "citations") {
-                            // End-of-stream signal — scrub any lingering
-                            // placeholders so they don't persist into the
-                            // finalised message.
-                            clearStreamingPlaceholders();
+                            // The final frame ends the stream — scrub any
+                            // lingering placeholders so they don't persist
+                            // into the finalised message. Partial frames
+                            // arrive as cite_sources records citations,
+                            // before the answer.
+                            if (data.status === "final") {
+                                finishStreamingSteps();
+                            }
                             const incoming = (data.citations ??
                                 []) as TRCitationAnnotation[];
                             setMessages((prev) => {
@@ -2051,7 +2125,7 @@ export function TRChatPanel({
             if (streamGenerationRef.current !== gen) return;
 
             flushDrip();
-            clearStreamingPlaceholders();
+            finishStreamingSteps();
             setMessages((prev) => {
                 const updated = [...prev];
                 const last = updated[updated.length - 1];
@@ -2088,7 +2162,7 @@ export function TRChatPanel({
                 !isAbort &&
                 isUncertainDelivery(err, Boolean(serverChatId && serverTurnId));
             stopDrip();
-            clearStreamingPlaceholders();
+            finishStreamingSteps();
             setMessages((prev) => {
                 const updated = [...prev];
                 const last = updated[updated.length - 1];
@@ -2328,7 +2402,7 @@ export function TRChatPanel({
                                         : undefined
                                 }
                             >
-                                <MessageBubble
+                                <TRMessageBubble
                                     msg={msg}
                                     onCitationClick={onCitationClick}
                                 />

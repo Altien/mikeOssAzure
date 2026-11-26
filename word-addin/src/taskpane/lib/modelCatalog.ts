@@ -1,6 +1,6 @@
-import { getModelProvider, providerLabel } from "@mike/model-catalog";
+import { getModelProvider, providerLabel } from "@mike/client";
 // The Word add-in's adapter onto the model catalog it shares with the web app
-// (@mike/model-catalog = frontend/src/shared/lib/modelCatalog.ts). The
+// (@mike/client, packages/client/src/modelCatalog.ts). The
 // catalog, router Model Selections, picker rows and availability rules all
 // live there; only what is specific to the add-in is here: its key status is
 // GET /user/api-keys as a flat boolean map, and an unknown status (null, the
@@ -11,18 +11,27 @@ import { getModelProvider, providerLabel } from "@mike/model-catalog";
 // of Office globals and add-in-only packages: tests in frontend/src/wordAddin
 // import this file across packages.
 import {
+  isModelAllowedByTenant,
   isModelAvailable as isModelAvailableForKeys,
   noModelsReason as noModelsReasonForKeys,
   unavailableModelMessage as unavailableModelMessageForKeys,
   type NoModelsReason,
   type ProviderKeyStates,
   type RouterSelections,
-} from "@mike/model-catalog";
+} from "@mike/client";
 import type { ApiKeyStatus } from "../types";
 
 /** GET /user/api-keys' flat map in the shape the shared rules read. */
+// Upstream divergence (sync-log: 3422ab5f): upstream unexports this as used
+// only here; Dev's frontend/src/wordAddin/composerAvailability.test.ts
+// imports it, so it stays exported.
 export function providerKeyStates(status: ApiKeyStatus): ProviderKeyStates {
-  const { sources: _sources, enabled = {}, ...configured } = status;
+  const {
+    sources: _sources,
+    modelAllowlist: _modelAllowlist,
+    enabled = {},
+    ...configured
+  } = status;
   const providers = new Set([
     ...Object.keys(configured),
     ...Object.keys(enabled),
@@ -38,6 +47,18 @@ export function providerKeyStates(status: ApiKeyStatus): ProviderKeyStates {
   );
 }
 
+/**
+ * Multi-tenant divergence: the tenant model allowlist on the key status
+ * (shared rule, as in the web app). It applies to every picker row,
+ * including configured and local models; unknown status fails open.
+ */
+export function isModelAllowed(
+  modelId: string,
+  status: ApiKeyStatus | null,
+): boolean {
+  return isModelAllowedByTenant(modelId, status?.modelAllowlist);
+}
+
 export function isModelAvailable(
   modelId: string,
   status: ApiKeyStatus | null,
@@ -46,7 +67,9 @@ export function isModelAvailable(
   // Unknown status fails OPEN: the backend authoritatively rejects a model
   // it cannot serve, so blocking sends here on a flaky WKWebView request
   // would brick the composer for requests the backend would happily accept.
-  return !status || isModelAvailableForKeys(modelId, providerKeyStates(status), configuredModelIds);
+  if (!status) return true;
+  if (!isModelAllowed(modelId, status)) return false;
+  return isModelAvailableForKeys(modelId, providerKeyStates(status), configuredModelIds);
 }
 
 /** Why the composer cannot send with a model the picker does not offer. */
@@ -71,5 +94,5 @@ export function noModelsReason(
   );
 }
 
-export * from "@mike/model-catalog";
+export * from "@mike/client";
 export function missingModelProvider(id: string): string { const provider = getModelProvider(id); return provider ? providerLabel(provider, {withProduct:false}) : "model provider"; }

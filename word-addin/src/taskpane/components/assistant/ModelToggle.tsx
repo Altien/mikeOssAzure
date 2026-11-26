@@ -4,7 +4,7 @@ import {
   nearestReasoningLevelForModel,
   reasoningLevelsForModel,
   type ReasoningLevel,
-} from "@mike/model-toggle-ui";
+} from "@mike/ui";
 import { getAzureModels, type ApiKeyStatus, type ConfiguredModelOption } from "../../api/mikeApi";
 import {
   MODELS, mergeConfiguredModelOptions,
@@ -12,8 +12,8 @@ import {
   modelDisplayName,
   type ModelOption,
   type RouterSelections,
-} from "@mike/model-catalog";
-import { isModelAvailable } from "../../lib/modelCatalog";
+} from "@mike/client";
+import { isModelAllowed, isModelAvailable } from "../../lib/modelCatalog";
 
 export function ModelToggle({
   value,
@@ -71,7 +71,8 @@ export function ModelToggle({
       ...localOptions,
     ]).filter(
       (model) =>
-        model.source === "Configured" || model.group === "Local" || isModelAvailable(model.id, keyStatus),
+        isModelAllowed(model.id, keyStatus) &&
+        (model.source === "Configured" || model.group === "Local" || isModelAvailable(model.id, keyStatus)),
     );
   }, [keyStatus, azureModels, routerSelections, configuredModels]);
   const selected = models.find((model) => model.id === value);

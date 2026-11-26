@@ -14,7 +14,7 @@ const { readEncryptedApiKeysMock, createServerSupabaseMock } = vi.hoisted(() => 
 
 // Dev drift: upstream #295 moved userApiKeys/userSettings into modules/user;
 // upsertUserProfile lives in lib/userLookup.
-vi.mock("../modules/user/user.apiKeyStore", () => ({
+vi.mock("./providerCredentials/index", () => ({
   getOrganisationApiKeys: readEncryptedApiKeysMock,
   // Dev drift: settings load credentials and router lists for the effective workspace.
   getEffectiveApiKeys: readEncryptedApiKeysMock,
@@ -242,6 +242,21 @@ describe("getUserModelSettings — fast model resolution chain", () => {
     expect(result.fast_model).toBe("kimi-k3");
   });
 
+  it("falls back to the first listed model of an administrator-entered provider", async () => {
+    readEncryptedApiKeysMock.mockResolvedValueOnce({
+      ...emptyKeys,
+      meta: "meta-key",
+      providerSettings: { meta: { models: ["muse-spark-1.1", "muse-spark-2"] } },
+    });
+    const { client } = makeClient({
+      selectSingle: { data: { fast_model: null, tabular_model: null } },
+    });
+
+    const result = await getUserModelSettings("u1", client as never);
+
+    expect(result.fast_model).toBe("meta/muse-spark-1.1");
+  });
+
   // Dev drift: upstream d08e2d2b requires both an API key and a deployment.
   it("falls back to aoai:<deployment> when only the org azure_openai config is set", async () => {
     readEncryptedApiKeysMock.mockResolvedValueOnce({
@@ -410,7 +425,7 @@ describe("upsertUserProfile — new-user insert", () => {
         display_name: "Ada",
       },
       options: {
-        onConflict: "user_id",
+        onConflict: "tenant_id,user_id",
         ignoreDuplicates: true,
       },
     });
@@ -438,7 +453,7 @@ describe("upsertUserProfile — new-user insert", () => {
         display_name: "Ada Lovelace",
       },
       options: {
-        onConflict: "user_id",
+        onConflict: "tenant_id,user_id",
         ignoreDuplicates: true,
       },
     });
@@ -457,7 +472,7 @@ describe("upsertUserProfile — new-user insert", () => {
       type: "upsert",
       row: { user_id: "u1", email: null, display_name: null },
       options: {
-        onConflict: "user_id",
+        onConflict: "tenant_id,user_id",
         ignoreDuplicates: true,
       },
     });

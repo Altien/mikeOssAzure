@@ -4,7 +4,7 @@
 #
 # Build stages:
 #   1. frontend-builder — runs `pnpm run build` against frontend/, which
-#      emits a static export to /app/out (config: output: 'export').
+#      emits a static export to /app/frontend/out (config: output: 'export').
 #   2. backend-builder  — compiles the TypeScript backend to /app/dist.
 #   3. runtime          — production-deps-only Node image with the
 #      compiled backend + frontend output + migration SQL files. Express
@@ -21,7 +21,11 @@
 
 # ── Frontend build ───────────────────────────────────────────────────────────
 FROM node:22-slim AS frontend-builder
-WORKDIR /app
+# The stage mirrors the repository layout (/app/frontend beside
+# /app/packages): next.config.ts sets the Turbopack root to the parent of
+# frontend/ so the @mike/ui and @mike/client packages resolve (sync-log:
+# a1c87117).
+WORKDIR /app/frontend
 RUN corepack enable
 
 # NEXT_PUBLIC_API_BASE_URL is the only build-arg the frontend bundle
@@ -46,8 +50,33 @@ COPY frontend/package.json frontend/pnpm-lock.yaml frontend/.npmrc frontend/pnpm
 RUN pnpm install --frozen-lockfile
 
 COPY frontend/. ./
-RUN pnpm run build
-# Result: /app/out — static HTML, JS, CSS, fonts.
+# tsconfig maps @mike/contracts (declarations only), @mike/ui and
+# @mike/client to ../packages/*.
+COPY packages/contracts /app/packages/contracts
+COPY packages/ui /app/packages/ui
+COPY packages/client /app/packages/client
+# Sentry source-map upload for the web bundle (sync-log: 3bcac35a). Off by
+# default; deploy.ps1 / scripts/release-images.sh set SENTRY_UPLOAD_ENABLED=1
+# and pass the token (Key Vault first, SENTRY_AUTH_TOKEN env fallback) with
+# `az acr build --secret-build-arg`, which ACR masks in its logs. Upstream
+# mounts it as a BuildKit secret; az acr build has no secret mounts. The token
+# is used only in this stage: the runtime stage copies /app/frontend/out, not the
+# stage's environment, and the maps are deleted after upload.
+ARG MIKE_VERSION=
+ARG GIT_SHA=
+ARG SENTRY_ORG=
+ARG SENTRY_PROJECT=
+ARG SENTRY_UPLOAD_ENABLED=0
+ARG SENTRY_AUTH_TOKEN=
+RUN case "$SENTRY_UPLOAD_ENABLED" in \
+      0) unset SENTRY_AUTH_TOKEN; pnpm run build ;; \
+      1) if [ -z "$SENTRY_AUTH_TOKEN" ] || [ -z "$SENTRY_ORG" ] || [ -z "$SENTRY_PROJECT" ]; then \
+           echo "Sentry upload requires SENTRY_AUTH_TOKEN, SENTRY_ORG and SENTRY_PROJECT" >&2; exit 1; \
+         fi; \
+         pnpm run build && node scripts/upload-sourcemaps.mjs ;; \
+      *) echo "SENTRY_UPLOAD_ENABLED must be 0 or 1" >&2; exit 1 ;; \
+    esac
+# Result: /app/frontend/out — static HTML, JS, CSS, fonts.
 
 # ── Backend build ────────────────────────────────────────────────────────────
 FROM node:22-slim AS backend-builder
@@ -59,6 +88,7 @@ RUN pnpm install --frozen-lockfile
 
 COPY backend/tsconfig.json ./
 COPY backend/src ./src
+COPY packages/contracts /packages/contracts
 
 RUN pnpm run build
 # Result: /app/dist — compiled JS.
@@ -88,7 +118,7 @@ RUN pnpm install --frozen-lockfile --prod \
 
 COPY --from=backend-builder /app/dist ./dist
 # Frontend static output is served from /app/public via express.static.
-COPY --from=frontend-builder /app/out ./public
+COPY --from=frontend-builder /app/frontend/out ./public
 # Migration files travel with the image so the migrate job uses the same artifact.
 COPY backend/migrations ./migrations
 # User-facing help guides, served by GET /api/help/articles. Only docs/help
@@ -97,6 +127,15 @@ COPY docs/help ./docs/help
 # /install serves operator scripts from /app/scripts/install at request time
 # (see GET /install/scripts/:name). Companion docs live alongside.
 COPY scripts/install ./scripts/install
+
+# Release identity (upstream 3bcac35a, relocated from its backend/Dockerfile):
+# the product version (/VERSION) and the commit this image was built from.
+# Sentry tags backend events, and /config hands the bundled web app,
+# mike@<version>+<sha12> unless SENTRY_RELEASE is set; a build without them
+# is mike@0.0.0. deploy.ps1 and scripts/release-images.sh pass both.
+ARG MIKE_VERSION=
+ARG GIT_SHA=
+ENV MIKE_VERSION=$MIKE_VERSION GIT_SHA=$GIT_SHA
 
 EXPOSE 8080
 CMD ["node", "dist/index.js"]

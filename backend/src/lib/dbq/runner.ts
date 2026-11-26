@@ -14,10 +14,20 @@
 // backend replicas partition the work safely.
 
 import { AppError } from "../appError";
-import { createServerSupabase } from "../supabase";
+import { createPlatformSupabase, createServerSupabase } from "../supabase";
+import { runWithJobTenant } from "../tenantContext";
+import { withLogContext } from "../logging/contextLight";
+// Dev divergence (sync-log: b625334f): dev's structured root logger is
+// imported as rootLog so upstream's central line logger keeps the name `log`.
+import { log as rootLog } from "../logging/root";
 import { jobErrorMessage } from "./jobError";
 import { runIsolated } from "./jobScope";
 import { deleteFile } from "../storage";
+import { mapWithConcurrency } from "../concurrency";
+import { mutateInBatches } from "../batchedQuery";
+
+/** Object deletes in flight at once, per sweep or cleanup. */
+const STORAGE_DELETE_CONCURRENCY = 8;
 import { enqueueAppJobDelivery } from "../queue/appJobsQueue";
 import { redisEnabled } from "./driver";
 import {
@@ -26,12 +36,13 @@ import {
     type DbJob,
     type DbJobHandlers,
 } from "./types";
-import { reportError, setOperation } from "../observability/sentry";
+import { markErrorHandled, reportError, setOperation } from "../observability/sentry";
 import {
     createPollFailureGate,
     type PollFailureGate,
 } from "../observability/pollFailureGate";
-import { asReportableError } from "../httpError";
+import { asReportableError, withResponseStatus } from "../httpError";
+import { log, tpl } from "../log";
 
 /**
  * Poll cadence depends on the driver: with Redis configured, BullMQ delivers
@@ -65,6 +76,16 @@ const defaultClaimGate = createDbJobClaimGate();
 
 const CLAIM_BATCH = 5;
 /**
+ * Per-tenant cap on live jobs across every worker and replica (multi-tenant
+ * issue 017, migration 0184), or undefined for no cap. claim_db_jobs always
+ * picks round-robin across tenants; the cap is opt-in so single-tenant
+ * installs claim exactly as before.
+ */
+export function tenantConcurrencyCap(env: NodeJS.ProcessEnv = process.env): number | undefined {
+    const raw = Number.parseInt(env.DBQ_TENANT_CONCURRENCY ?? "", 10);
+    return Number.isFinite(raw) && raw > 0 ? raw : undefined;
+}
+/**
  * A "running" job whose claim is older than this is presumed crashed.
  * Exported because a handler that claims sibling rows of its own kind (the
  * document.cleanup coalescer) has to use the same stale threshold this loop
@@ -75,7 +96,10 @@ export const STALE_SECONDS = 600;
 const DONE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const FAILED_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const SWEEP_EVERY_MS = 60 * 60 * 1000;
-const RETRY_UNTIL_SUCCESS_KINDS = new Set(["storage.cleanup", "document.cleanup"]);
+/** Expired export rows read per query, and the per-sweep ceiling (50,000 rows). */
+const EXPORT_EXPIRY_BATCH = 100;
+const EXPORT_EXPIRY_MAX_BATCHES = 500;
+const RETRY_UNTIL_SUCCESS_KINDS = new Set(["storage.cleanup", "document.cleanup", "tenant.purge"]);
 
 /**
  * Exponential backoff for retries: 30s, 90s, 270s, ... capped at 30 min.
@@ -109,8 +133,20 @@ export type DbJobFailureHook = (db: Db, job: DbJob) => Promise<void>;
  * user's request in limbo far longer than it needs to be.
  */
 export class NonRetryableJobError extends AppError {
-    constructor(message: string) {
-        super("dbq.non_retryable", message);
+    /**
+     * How the terminal failure is reported: "error" by default (a refused
+     * job is worth knowing about), "warning", or null for a condition the
+     * user has already been told about and nothing in Mike can fix (a
+     * provider rejecting the user's own key) — logged, never sent.
+     */
+    readonly reportLevel: "error" | "warning" | null;
+
+    constructor(
+        message: string,
+        options: { cause?: unknown; reportLevel?: "error" | "warning" | null } = {},
+    ) {
+        super("dbq.non_retryable", message, { cause: options.cause });
+        this.reportLevel = options.reportLevel === undefined ? "error" : options.reportLevel;
     }
 }
 
@@ -122,12 +158,20 @@ export class NonRetryableJobError extends AppError {
  *   handler throws NonRetryableJobError -> failed immediately
  *   unknown kind            -> failed immediately (retrying can't fix it)
  * Exported for unit tests; the poll loop below is just claim + fan-in.
+ *
+ * The whole run — handler, lease renewals, the outcome write and any failure
+ * hook — happens as the job's tenant (multi-tenant issue 003), so the
+ * handler's queries carry the same tenant claim as the request that queued it.
+ * Lease renewals and the outcome write (renew/finish/defer_db_job) go through
+ * `controlDb`, the platform client in production: tenant_app may not call the
+ * job-control functions (issue 008).
  */
 async function runClaimedJob(
     db: Db,
     handlers: DbJobHandlers,
     job: DbJob,
-    failureHooks: Readonly<Record<string, DbJobFailureHook>> = {},
+    failureHooks: Readonly<Record<string, DbJobFailureHook>>,
+    controlDb: Db,
 ): Promise<void> {
     // A UUID is stable across PostgREST/JavaScript timestamp precision loss.
     // SQL renews lease_expires_at and finishes only this claim token.
@@ -147,7 +191,7 @@ async function runClaimedJob(
             return;
         }
         renewing = true;
-        void Promise.resolve(db.rpc("renew_db_job", {
+        void Promise.resolve(controlDb.rpc("renew_db_job", {
             ...identity,
             p_lease_seconds: STALE_SECONDS,
         })).then(({ data, error }) => {
@@ -162,7 +206,7 @@ async function runClaimedJob(
         runAt: string | null = null,
     ): Promise<boolean> => {
         if (leaseLost) return false;
-        const { data, error } = await db.rpc("finish_db_job", {
+        const { data, error } = await controlDb.rpc("finish_db_job", {
             ...identity,
             p_status: status,
             p_last_error: lastError,
@@ -213,14 +257,21 @@ async function runClaimedJob(
             reportError(cleanupError, { tags: { component: "dbq", job_kind: job.kind, stage: "failure-hook" }, extra: { job_id: job.id } });
         }
     };
+    const jobEvent = (phase: "start" | "done" | "retry" | "defer" | "failed", delayMs: number | null, lost: boolean) =>
+        rootLog().debug("dbq.job", {
+            jobKind: job.kind, attempts: job.attempts, maxAttempts: job.max_attempts,
+            phase, delayMs, leaseLost: lost,
+        });
     try {
         if (!handler) throw new AppError("dbq.unknown_job_kind", `unknown job kind: ${job.kind}`);
+        jobEvent("start", null, false);
         const result = await handler(db, job);
         unpublishedResult = result;
         clearInterval(heartbeat);
         publicationUncertain = true;
         const published = await finish("done", null, result ?? null);
         publicationUncertain = false;
+        jobEvent("done", null, !published);
         if (!published) {
             console.warn("[dbq] claim lost before completion", { id: job.id });
             await discardUnpublished();
@@ -250,13 +301,14 @@ async function runClaimedJob(
         const owned = deferred
             ? await (async () => {
                 if (leaseLost) return false;
-                const { data, error } = await db.rpc("defer_db_job", {
+                const { data, error } = await controlDb.rpc("defer_db_job", {
                     ...identity, p_run_at: runAt, p_reason: message,
                 });
                 if (error) throw new Error(`Unable to defer DB job: ${error.message}`);
                 return data === true;
               })()
             : await finish(spent ? "failed" : "pending", message, null, spent ? null : runAt);
+        jobEvent(deferred ? "defer" : spent ? "failed" : "retry", spent ? null : delayMs, !owned);
         // This follows the fenced retry/terminal transition: a lost response
         // from finish(done) is reconciled by the handler before cleanup.
         if (owned) publicationUncertain = false;
@@ -309,10 +361,20 @@ async function runClaimedJob(
         // A handler can reject with a PostgREST plain object: give it a stack
         // and keep its code on the cause chain (failure_code), as the claim
         // path does. Errors pass through unchanged.
-        const reportable = asReportableError(err, processClaimedJob);
-        if (!deferred) {
+        const reportable = asReportableError(err, runClaimedJob);
+        // A handler may say its terminal failure is quieter than an error,
+        // or not worth sending at all (NonRetryableJobError.reportLevel).
+        const level =
+            err instanceof NonRetryableJobError
+                ? err.reportLevel
+                : spent
+                  ? "error"
+                  : "warning";
+        if (!deferred && level === null) {
+            markErrorHandled(reportable);
+        } else if (!deferred && level !== null) {
             reportError(reportable, {
-                level: spent ? "error" : "warning",
+                level,
                 tags: {
                     component: "dbq",
                     job_kind: job.kind,
@@ -327,7 +389,11 @@ async function runClaimedJob(
         if (deferred) {
             // Not a failure, and not reported: console.error would reach
             // Sentry through the console bridge as an error event.
+            // Printed only: the central logger would forward it with SENTRY_LOGS=on.
             console.log("[dbq] job deferred", summary);
+        } else if (level === null) {
+            // Deliberately unreported; console.warn is not forwarded either.
+            console.warn("[dbq] job permanently failed", summary);
         } else {
             // The reported Error rides along so the console bridge recognises
             // it and files no second, context-free "Failure in application"
@@ -342,16 +408,20 @@ async function runClaimedJob(
     }
 }
 
-/** One poll tick: claim a batch and run every claimed job to completion. */
-export async function runDbJobTick(
+/**
+ * Claim up to `limit` runnable jobs; a failed claim is gated and yields none.
+ * Claiming spans tenants, so `db` here is the platform client in production.
+ */
+async function claimDbJobs(
     db: Db,
-    handlers: DbJobHandlers,
-    failureHooks: Readonly<Record<string, DbJobFailureHook>> = {},
-    claimGate: PollFailureGate = defaultClaimGate,
-): Promise<number> {
-    const { data, error } = await db.rpc("claim_db_jobs", {
-        p_limit: CLAIM_BATCH,
+    limit: number,
+    claimGate: PollFailureGate,
+): Promise<DbJob[]> {
+    const tenantCap = tenantConcurrencyCap();
+    const { data, error, status } = await db.rpc("claim_db_jobs", {
+        p_limit: limit,
         p_stale_seconds: STALE_SECONDS,
+        ...(tenantCap ? { p_tenant_cap: tenantCap } : {}),
     });
     if (error) {
         // Table/function missing (migration not applied yet) or transient DB
@@ -360,7 +430,7 @@ export async function runDbJobTick(
         // asReportableError keeps the PostgREST object as the cause, so its
         // `code` (PGRST202 = RPC missing) reaches failure_code and the issue
         // title says why; re-wrapping `error.message` in a new Error lost it.
-        const failure = asReportableError(error, runDbJobTick);
+        const failure = asReportableError(withResponseStatus(error, status), claimDbJobs);
         if (claimGate.failure(failure).report) {
             reportError(failure, {
                 tags: { component: "dbq", stage: "claim" },
@@ -370,24 +440,91 @@ export async function runDbJobTick(
             // reported object, a message string it files as a new event.
             console.error("[dbq] claim failed", failure);
         }
-        return 0;
+        return [];
     }
     claimGate.success();
-    const jobs = (data ?? []) as DbJob[];
-    // allSettled defensively: processClaimedJob handles its own errors, but
-    // one job's unexpected rejection must never abandon the rest of a batch.
-    const outcomes = await Promise.allSettled(
-        jobs.map((job) => processClaimedJob(db, handlers, job, failureHooks)),
-    );
-    for (const [index, outcome] of outcomes.entries()) {
-        if (outcome.status === "rejected") {
-            console.error("[dbq] job transition failed", {
-                id: jobs[index]?.id,
-                reason: outcome.reason instanceof Error ? outcome.reason.message : "unknown",
-            });
-        }
-    }
-    return jobs.length;
+    return (data ?? []) as DbJob[];
+}
+
+export type DbJobPool = {
+    /** Claim jobs for every free slot (no-op while a claim is in flight). */
+    fill(): Promise<void>;
+    /** Jobs currently executing. */
+    readonly running: number;
+    /** Stop refilling and wait for the claim and every running job. */
+    drain(): Promise<void>;
+};
+
+/**
+ * A fixed number of job slots. The old loop claimed a batch and awaited the
+ * whole batch before the next claim, so one three-minute extraction held
+ * four idle slots hostage and throughput collapsed to `CLAIM_BATCH` jobs per
+ * slowest job. Here each finished job frees its slot and immediately asks
+ * for more work, so a slow job only ever occupies its own slot. Concurrency
+ * is still capped at `capacity` per process, as before.
+ */
+export function createDbJobPool(
+    db: Db,
+    handlers: DbJobHandlers,
+    failureHooks: Readonly<Record<string, DbJobFailureHook>> = {},
+    opts: { capacity?: number; claimGate?: PollFailureGate; claimDb?: Db } = {},
+): DbJobPool {
+    const capacity = opts.capacity ?? CLAIM_BATCH;
+    const claimGate = opts.claimGate ?? defaultClaimGate;
+    // Claiming spans tenants (platform client); each job runs on `db`.
+    const claimDb = opts.claimDb ?? db;
+    const running = new Set<Promise<void>>();
+    let claiming: Promise<void> | null = null;
+    let stopped = false;
+
+    const fill = (): Promise<void> => {
+        if (claiming) return claiming;
+        const free = capacity - running.size;
+        if (stopped || free <= 0 || !claimGate.ready()) return Promise.resolve();
+        claiming = (async () => {
+            let jobs: DbJob[];
+            try {
+                jobs = await claimDbJobs(claimDb, free, claimGate);
+            } catch (err) {
+                // fill() is also called fire-and-forget from a finishing
+                // job, so it must never reject.
+                reportError(err, { tags: { component: "dbq", stage: "tick" } });
+                console.error("[dbq] tick failed", err);
+                return;
+            }
+            for (const job of jobs) {
+                // processClaimedJob contains its own failures; the catch is
+                // defence so one unexpected rejection cannot leak a slot.
+                const run: Promise<void> = processClaimedJob(db, handlers, job, failureHooks, claimDb)
+                    .catch((err) => {
+                        console.error("[dbq] job transition failed", {
+                            id: job.id,
+                            reason: err instanceof Error ? err.message : "unknown",
+                        });
+                    })
+                    .finally(() => {
+                        running.delete(run);
+                        void fill();
+                    });
+                running.add(run);
+            }
+        })().finally(() => {
+            claiming = null;
+        });
+        return claiming;
+    };
+
+    return {
+        fill,
+        get running() {
+            return running.size;
+        },
+        async drain() {
+            stopped = true;
+            if (claiming) await claiming;
+            await Promise.allSettled([...running]);
+        },
+    };
 }
 
 /**
@@ -409,28 +546,56 @@ export async function runDbJobRetentionSweep(
     // 1. Expire export artifacts (their download links stop working here â€”
     //    documented as a 24h availability window).
     const exportCutoff = new Date(Date.now() - exportRetentionMs).toISOString();
-    const { data: expired } = await db
-        .from("db_jobs")
-        .select("id, result")
-        .eq("kind", "export.build")
-        .eq("status", "done")
-        .lt("finished_at", exportCutoff)
-        .limit(100);
-    for (const row of (expired ?? []) as Pick<DbJob, "id" | "result">[]) {
-        const path = row.result?.storage_path;
-        if (typeof path === "string" && path.length > 0) {
-            try {
-                await deleteStoredFile(path);
-            } catch (err) {
-                // Keep the row so the next sweep retries the file delete.
-                console.error("[dbq] export artifact delete failed", {
-                    id: row.id,
-                    err,
-                });
-                continue;
+    //    Drain the backlog in keyset batches: one capped batch per hourly
+    //    sweep fell behind for good once more than 2,400 exports finished
+    //    in a day. Rows kept after a failed file delete sort before the
+    //    cursor, so a retrying row can never pin the loop.
+    let after: string | null = null;
+    for (let batch = 0; batch < EXPORT_EXPIRY_MAX_BATCHES; batch++) {
+        let query = db
+            .from("db_jobs")
+            .select("id, result, tenant_id")
+            .eq("kind", "export.build")
+            .eq("status", "done")
+            .lt("finished_at", exportCutoff)
+            .order("id", { ascending: true })
+            .limit(EXPORT_EXPIRY_BATCH);
+        if (after) query = query.gt("id", after);
+        const { data: expired } = await query;
+        const rows = (expired ?? []) as Pick<DbJob, "id" | "result" | "tenant_id">[];
+        // Objects are removed a few at a time rather than one after another,
+        // and the rows whose object is gone are deleted together.
+        const removable = await mapWithConcurrency(rows, STORAGE_DELETE_CONCURRENCY, async (row) => {
+            const path = row.result?.storage_path;
+            if (typeof path === "string" && path.length > 0) {
+                try {
+                    // The sweep runs on the platform client with no tenant; the
+                    // storage facade resolves the key prefix and location from
+                    // the current tenant, so the delete must run as the row's.
+                    await runWithJobTenant(row.tenant_id, () => deleteStoredFile(path));
+                } catch (err) {
+                    // Keep the row so the next sweep retries the file delete.
+                    console.error("[dbq] export artifact delete failed", {
+                        id: row.id,
+                        err,
+                    });
+                    return null;
+                }
             }
+            return row.id;
+        });
+        try {
+            await mutateInBatches(
+                "export row expiry",
+                removable.filter((id): id is string => id !== null),
+                (ids) => db.from("db_jobs").delete().in("id", ids),
+            );
+        } catch (err) {
+            // As before, a failed row delete leaves the row for the next sweep.
+            console.error("[dbq] export row delete failed", { err });
         }
-        await db.from("db_jobs").delete().eq("id", row.id);
+        if (rows.length < EXPORT_EXPIRY_BATCH) break;
+        after = rows[rows.length - 1].id;
     }
 
     // 2. Drop old finished rows â€” EXCEPT export.build. Step 1 is the only
@@ -456,6 +621,7 @@ export async function runDbJobRetentionSweep(
         .eq("status", "failed")
         .neq("kind", "storage.cleanup")
         .neq("kind", "account.delete")
+        .neq("kind", "tenant.purge")
         .neq("kind", "document.cleanup")
         .lt("finished_at", failedCutoff);
 
@@ -471,37 +637,34 @@ export async function runDbJobRetentionSweep(
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
-let inFlight: Promise<unknown> | null = null;
+let pool: DbJobPool | null = null;
 
 export function dbJobsEnabled(): boolean {
     return process.env.DB_JOBS_ENABLED !== "false";
 }
 
 /**
- * Start the poll loop (idempotent). Ticks never overlap: a tick that is
- * still running when the next interval fires simply skips that interval.
+ * Start the poll loop (idempotent). Each interval tops up the job pool's
+ * free slots; claims never overlap, and a finished job refills its own slot
+ * without waiting for the interval.
  */
 export function startDbJobRunner(handlers: DbJobHandlers, failureHooks: Readonly<Record<string, DbJobFailureHook>> = {}): void {
     if (!dbJobsEnabled()) {
-        console.log("[dbq] disabled via DB_JOBS_ENABLED=false");
+        log.info("dbq", "disabled via DB_JOBS_ENABLED=false");
         return;
     }
     if (pollTimer) return;
     const db = createServerSupabase();
+    // Claiming and retention span tenants by design (multi-tenant issue 003).
+    const platformDb = createPlatformSupabase();
 
-    const tick = () => {
-        // While claims keep failing, skip ticks until the backed-off retry
-        // time instead of hitting the broken dependency every interval.
-        if (inFlight || !defaultClaimGate.ready()) return;
-        inFlight = runDbJobTick(db, handlers, failureHooks)
-            .catch((err) => {
-                reportError(err, { tags: { component: "dbq", stage: "tick" } });
-                console.error("[dbq] tick failed", err);
-            })
-            .finally(() => {
-                inFlight = null;
-            });
-    };
+    const jobPool = createDbJobPool(db, handlers, failureHooks, {
+        claimDb: platformDb,
+    });
+    pool = jobPool;
+    // While claims keep failing, fill() skips until the backed-off retry
+    // time instead of hitting the broken dependency every interval.
+    const tick = () => void jobPool.fill();
     pollTimer = setInterval(tick, pollMs());
     pollTimer.unref();
     // First tick shortly after boot so work queued before a restart resumes
@@ -509,7 +672,7 @@ export function startDbJobRunner(handlers: DbJobHandlers, failureHooks: Readonly
     setTimeout(tick, 1_000).unref();
 
     const sweep = () =>
-        void runDbJobRetentionSweep(db).catch((err) => {
+        void runDbJobRetentionSweep(platformDb).catch((err) => {
             reportError(err, { tags: { component: "dbq", stage: "retention" } });
             console.error("[dbq] retention sweep failed", err);
         });
@@ -517,21 +680,36 @@ export function startDbJobRunner(handlers: DbJobHandlers, failureHooks: Readonly
     sweepTimer.unref();
     setTimeout(sweep, 60_000).unref();
 
-    console.log(
-        `[dbq] runner started (poll ${pollMs()}ms, driver ${redisEnabled() ? "redis" : "postgres"})`,
+    log.info(tpl`[dbq] runner started (poll ${pollMs()}ms, driver ${redisEnabled() ? "redis" : "postgres"})`,
     );
 }
 
-/** Stop polling and wait for the in-flight tick to finish (shutdown path). */
+/** Stop polling and wait for the in-flight jobs to finish (shutdown path). */
 export async function stopDbJobRunner(): Promise<void> {
     if (pollTimer) clearInterval(pollTimer);
     if (sweepTimer) clearInterval(sweepTimer);
     pollTimer = null;
     sweepTimer = null;
-    if (inFlight) await inFlight;
+    const draining = pool;
+    pool = null;
+    if (draining) await draining.drain();
 }
 
-/** Each canonical claimed job keeps its own diagnostic operation/stage scope. */
-export async function processClaimedJob(db: Db, handlers: DbJobHandlers, job: DbJob, failureHooks: Readonly<Record<string, DbJobFailureHook>> = {}): Promise<void> {
-    return runIsolated(() => runClaimedJob(db, handlers, job, failureHooks));
+/**
+ * Each canonical claimed job keeps its own diagnostic operation/stage scope,
+ * and runs as the job's tenant (multi-tenant issue 003; see runClaimedJob).
+ */
+export async function processClaimedJob(
+    db: Db,
+    handlers: DbJobHandlers,
+    job: DbJob,
+    failureHooks: Readonly<Record<string, DbJobFailureHook>> = {},
+    controlDb: Db = db,
+): Promise<void> {
+    const actor = job.kind === "memory.consolidate" ? job.payload?.actorUserId : job.payload?.userId;
+    const actorUserId = typeof actor === "string" ? actor : undefined;
+    return runIsolated(() =>
+        runWithJobTenant(job.tenant_id, () =>
+            withLogContext({ jobId: job.id }, () => runClaimedJob(db, handlers, job, failureHooks, controlDb)),
+            actorUserId));
 }

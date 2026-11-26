@@ -240,7 +240,7 @@ vi.mock("../../middleware/auth", () => ({
 // (which encrypts) and never echo plaintext — getUserApiKeyStatus returns
 // presence-only booleans. getUserApiKeys must be exported too — lib/userSettings
 // imports it at module load.
-vi.mock("../../modules/user/user.apiKeyStore", () => ({
+vi.mock("../../lib/providerCredentials/store", () => ({
     getUserApiKeyStatus: (...args: unknown[]) => getUserApiKeyStatus(...args),
     saveUserApiKey: (...args: unknown[]) => saveUserApiKey(...args),
     hasEnvApiKey: (...args: unknown[]) => hasEnvApiKey(...args),
@@ -249,7 +249,7 @@ vi.mock("../../modules/user/user.apiKeyStore", () => ({
     getUserApiKeys: vi.fn(async () => ({})),
 }));
 
-vi.mock("../../modules/user/user.dataCleanup", () => ({
+vi.mock("../../application/accounts/dataCleanup", () => ({
     deleteAllUserChats: (...args: unknown[]) => deleteAllUserChats(...args),
     deleteAllUserTabularReviews: (...args: unknown[]) =>
         deleteAllUserTabularReviews(...args),
@@ -265,7 +265,7 @@ vi.mock("../../lib/memory/bulk", () => ({
         deleteUserPrivateMemories(...args),
 }));
 
-vi.mock("../../modules/user/user.dataExport", () => ({
+vi.mock("../../application/exports/buildJsonExport", () => ({
     buildUserAccountExport: (...args: unknown[]) =>
         buildUserAccountExport(...args),
     buildUserChatsExport: (...args: unknown[]) => buildUserChatsExport(...args),
@@ -352,7 +352,7 @@ describe("user.routes", () => {
         saveUserApiKey.mockResolvedValue(undefined);
         hasEnvApiKey.mockReturnValue(false);
         normalizeApiKeyProvider.mockImplementation((v: string) =>
-            ["claude", "openai", "gemini", "mistral", "openrouter", "vercel"].includes(v)
+            ["claude", "openai", "gemini", "mistral", "openrouter", "vercel", "tokenjuice", "meta"].includes(v)
                 ? v
                 : null,
         );
@@ -1018,6 +1018,32 @@ describe("user.routes", () => {
             expect(res.body).toEqual(ORG_KEY_REFUSAL);
             expect(saveUserApiKey).not.toHaveBeenCalled();
             expect(JSON.stringify(res.body)).not.toContain("sk-");
+        });
+
+        it.each([
+            ["tokenjuice", "tokenjuice-api-key"],
+            ["meta", "meta-api-key"],
+        ])("refuses a personal %s key and names the organisation secret", async (provider, secret) => {
+            const res = await request(app)
+                .put(`/api/user/api-keys/${provider}`)
+                .set(...AUTH)
+                .send({ api_key: "personal-key" });
+
+            expect(res.status).toBe(403);
+            expect(res.body.code).toBe("organisation_api_key_required");
+            expect(res.body.detail).toContain(secret);
+            expect(res.body.detail).toContain("/install");
+            expect(saveUserApiKey).not.toHaveBeenCalled();
+        });
+
+        it.each(["tokenjuice", "meta"])("keeps no personal on/off preference for %s", async (provider) => {
+            const res = await request(app)
+                .patch(`/api/user/api-keys/${provider}`)
+                .set(...AUTH)
+                .send({ enabled: false });
+
+            expect(res.status).toBe(400);
+            expect(supabaseRpc).not.toHaveBeenCalled();
         });
 
         it("refuses a personal Mistral key and names the organisation secret", async () => {

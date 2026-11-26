@@ -15,20 +15,38 @@ import "dotenv/config";
 import "./telemetry";
 import { installProcessGuards } from "./lib/processGuards";
 installProcessGuards();
+// Dev divergence (sync-log: 86549414): upstream's src/instrument.ts hook.
+import { installErrorLogRedaction } from "./lib/log";
+installErrorLogRedaction();
+import { installStructuredLogging } from "./lib/logging/install";
+const logging = installStructuredLogging({ proc: "worker" });
+// Dev divergence (sync-log: b625334f): dev's structured root logger is
+// imported as rootLog so upstream's central line logger keeps the name `log`.
+import { log as rootLog } from "./lib/logging/root";
+import { readTenantDebugSwitches } from "./lib/logging/tenantDebugStore";
+import { extractionLauncherWarnings } from "./lib/runtimeConfig";
 import { startAllWorkers, stopAllWorkers } from "./workerRuntime";
 import { flushSentry, reportError } from "./lib/observability/sentry";
 import { initSentry } from "./lib/observability/sentry";
 import { getKeyVaultConfig } from "./lib/config";
+import { flushToolActivity } from "./lib/toolActivity";
+import { drainStdout, log, tpl } from "./lib/log";
 
 // The Postgres poller unrefs its timers so an inline API can shut down
 // naturally. A standalone worker must retain a live event-loop reference.
 const keepAlive = setInterval(() => {}, 60_000);
+// Extraction jobs run the parser here when the API runs WORKERS_MODE=none.
+for (const warning of extractionLauncherWarnings()) {
+    log.warn(tpl`[extraction] ${warning}`);
+}
 void getKeyVaultConfig("sentry-dsn").catch(() => "").then((dsn) => {
     if (dsn) process.env.SENTRY_DSN = dsn;
     initSentry("worker");
     return startAllWorkers();
 }).then(() => {
+    logging.debugSwitches.start(readTenantDebugSwitches);
     console.log("Mike worker process running");
+    rootLog().info("process.start", {});
 }).catch((error) => {
     console.error("Worker initialization failed", error);
     clearInterval(keepAlive);
@@ -40,6 +58,8 @@ async function shutdown(signal: string) {
     if (shuttingDown) return;
     shuttingDown = true;
     clearInterval(keepAlive);
+    rootLog().info("process.shutdown", { signal });
+    logging.debugSwitches.stop();
     console.log(`Worker shutting down gracefully (${signal})`);
     const forceExit = setTimeout(() => {
         console.error("Worker graceful shutdown timed out — forcing exit");
@@ -48,6 +68,8 @@ async function shutdown(signal: string) {
     forceExit.unref();
     try {
         await stopAllWorkers();
+        flushToolActivity();
+        await drainStdout();
         await flushSentry();
         process.exit(0);
     } catch (err) {

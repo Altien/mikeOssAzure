@@ -176,11 +176,22 @@ export function createS3StorageAdapter(options: S3StorageOptions = {}): StorageA
       }
     },
 
-    async openReadStream(key) {
+    async openReadStream(key, options) {
+      const abortSignal = options?.signal;
       const response = (await client().send(
         new GetObjectCommand({ Bucket: bucket, Key: key }),
+        abortSignal ? { abortSignal } : undefined,
       )) as any;
-      return (response.Body as AsyncIterable<Uint8Array> | undefined) ?? null;
+      const body = response.Body;
+      if (!body) return null;
+      // The SDK's signal covers the request; once the body is flowing, tear
+      // the socket down here so an abort never leaves it half-read.
+      if (abortSignal) {
+        const stop = () => body.destroy?.(abortSignal.reason);
+        if (abortSignal.aborted) stop();
+        else abortSignal.addEventListener("abort", stop, { once: true });
+      }
+      return body as AsyncIterable<Uint8Array>;
     },
 
     async headFile(key) {
@@ -253,7 +264,7 @@ export function createS3StorageAdapter(options: S3StorageOptions = {}): StorageA
         // that code (the SDK calls it "NotFound") is what a wrong endpoint, a
         // proxy path or a bucket-level 404 produce while the object may well
         // still exist. Treating it as success would let the durable cleanup
-        // jobs (dbq/storageCleanup, documents.cleanupJobs, user.dataCleanup)
+        // jobs (dbq/storageCleanup, documents.cleanupJobs, application/accounts/dataCleanup)
         // record the key as deleted, stop retrying, and leave the bytes
         // behind for good, so anything other than NoSuchKey stays a failure.
         if ((error as { name?: unknown } | null)?.name === "NoSuchKey") return;

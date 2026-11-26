@@ -15,7 +15,9 @@ import type { Db } from "../../../../lib/supabase";
 import { findDocumentsOutsideWorkspace } from "../../../../lib/documentWorkspace";
 import { teamOrgIdOf } from "../../../../lib/personalOrgs";
 import { loadAssistantMessage } from "../contextBuilders";
-import { resolveDocLabel, type DocIndex, type DocStore } from "../types";
+import { createDocLabelResolver, type DocIndex, type DocStore } from "../types";
+import { log } from "../../../../lib/log";
+import { externalSourceReference } from "./externalSources";
 
 type DocumentRef = { document_id: string; version_id: string | null };
 
@@ -73,28 +75,55 @@ export const REMOVED_RESULT = "[earlier result removed: document no longer avail
 export const actionLabel = (item: ConnectorApprovalItem) =>
     `${item.title} on ${item.connector_name}`;
 
+function citationToolRecord(): SubagentRecord {
+    return { tool: "cite_sources", input: "{}", result: "Read the sources again before citing them.", documents: [] };
+}
+
 export function toolRecord(
     call: NormalizedToolCall,
     result: string,
     docStore: DocStore,
     docIndex: DocIndex,
+    /** The request-scoped source this call's result registered, if any. */
+    externalSourceHandle?: string,
 ): SubagentRecord {
+    // Both the model input and the recorder response can quote source text.
+    // A resumed run gets only the tool name and must read its sources again.
+    if (call.name === "cite_sources") {
+        return citationToolRecord();
+    }
     // A project-wide search reads documents its input does not name.
     const named =
         call.name === "find_documents" && call.input.scope !== "document"
             ? []
             : [call.input.doc_id, ...(Array.isArray(call.input.doc_ids) ? call.input.doc_ids : [])];
-    const documents = named
-        .filter((id) => id !== undefined)
-        .map((id) => {
-            const label = typeof id === "string" ? resolveDocLabel(id, docStore, docIndex) : null;
+    const labelFor = createDocLabelResolver(docStore, docIndex);
+    const labels = named
+        .filter((id): id is string => typeof id === "string")
+        .map((id) => labelFor(id));
+    // A provider's source text is never persisted: a connector result that
+    // registered one, or a read, search or fetch of one, is recorded as the
+    // source's reference. Such a source exists only in the request that read
+    // it, so it is not a document a continuation could recheck access to; the
+    // uploaded documents named beside it still are.
+    const candidate =
+        externalSourceHandle ??
+        labels.find((label) => label && docStore.get(label)?.external_source) ??
+        null;
+    const external = candidate ? docStore.get(candidate)?.external_source : undefined;
+    const externalLabel = external ? candidate : null;
+    const documents = labels
+        .filter((label) => !label || !docStore.get(label)?.external_source)
+        .map((label) => {
             const doc = label ? docIndex[label] : undefined;
-            return doc && { document_id: doc.document_id, version_id: doc.version_id ?? null };
+            return doc
+                ? { document_id: doc.document_id, version_id: doc.version_id ?? null }
+                : undefined;
         });
     return {
         tool: call.name,
         input: JSON.stringify(call.input).slice(0, MAX_INPUT_CHARS),
-        result,
+        result: external ? externalSourceReference(external, externalLabel ?? undefined) : result,
         // Without every document it read, a later turn could not recheck access.
         documents: documents.every((doc): doc is DocumentRef => doc !== undefined) ? documents : [],
     };
@@ -136,6 +165,7 @@ async function withoutUnavailableDocuments(
         && (ref.version_id === null || parents.get(ref.version_id) === ref.document_id);
     let removed = false;
     const records = transcript.records.flatMap((record) => {
+        if (record.tool === "cite_sources") return [citationToolRecord()];
         if (!DOCUMENT_TOOL_NAMES.has(record.tool)) return [record];
         if (!record.documents.length) { removed = true; return []; }
         if (record.documents.every(available)) return [record];
@@ -290,7 +320,7 @@ export function createSubagentRunStore(scope: SubagentStoreScope): SubagentRunSt
                     }),
                     { tags: { component: "chat-stream", operation: "chat.subagent" } },
                 );
-                console.warn("[subagents] run save failed", safeError(error));
+                log.warn("subagents", "run save failed", safeError(error));
             }
         },
         async load(delegationId) {
@@ -328,7 +358,7 @@ export function createSubagentRunStore(scope: SubagentStoreScope): SubagentRunSt
                     }),
                     { tags: { component: "chat-stream", operation: "chat.subagent" } },
                 );
-                console.warn("[subagents] run load failed", safeError(error));
+                log.warn("subagents", "run load failed", safeError(error));
                 return null;
             }
         },

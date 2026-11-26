@@ -27,6 +27,10 @@
 
 import { Router } from "express";
 import { getConfig, getKeyVaultConfig } from "../../lib/config";
+import { controlPlaneUrl } from "../../lib/controlPlaneUrl";
+import { getTenancyMode } from "../../lib/tenancyMode";
+import { entraOAuthConfiguration } from "../../lib/auth/entraConfiguration";
+import { releaseName } from "../../lib/observability/sentry";
 
 export const configRouter = Router();
 
@@ -35,6 +39,9 @@ async function configValue(name: string): Promise<string> {
 }
 
 configRouter.get("/", async (_req, res) => {
+    let tenancyMode;
+    try { tenancyMode = await getTenancyMode(); }
+    catch { res.status(503).json({ detail: "Runtime configuration is unavailable" }); return; }
     const [frontendTelemetryDsn, wordTelemetryDsn] = await Promise.all([
         getKeyVaultConfig("sentry-frontend-dsn").catch(() => ""),
         getKeyVaultConfig("sentry-word-dsn").catch(() => ""),
@@ -60,6 +67,17 @@ configRouter.get("/", async (_req, res) => {
             backendClientId || configValue("entra-backend-client-id"),
         ]);
     }
+    let authority: string | undefined;
+    let externalIdSignIn = false;
+    if (authProvider === "entra" && tenancyMode === "pooled") {
+        // The default identity path: External ID when configured, otherwise
+        // Microsoft (`common`), in which case no External ID value is published.
+        try {
+            const cfg = await entraOAuthConfiguration();
+            tenantId = cfg.tenantId; clientId = cfg.clientId; backendClientId = cfg.backendId; authority = cfg.authority;
+            externalIdSignIn = cfg.kind === "altien";
+        } catch { res.status(503).json({ detail: "Runtime configuration is unavailable" }); return; }
+    }
     const apiScope = backendClientId
         ? `api://${backendClientId}/access_as_user`
         : "";
@@ -67,9 +85,17 @@ configRouter.get("/", async (_req, res) => {
     let backendOrigin = "";
     try { backendOrigin = new URL(backendPublicUrl).origin; } catch { /* Missing public URL is surfaced by the Word login path. */ }
 
+    const sentryRelease = releaseName(
+        process.env.SENTRY_RELEASE,
+        process.env.MIKE_VERSION,
+        process.env.GIT_SHA,
+    );
     res.set("Cache-Control", "public, max-age=60");
     res.json({
         authProvider,
+        tenancyMode,
+        controlPlaneUrl: tenancyMode === "pooled" ? await controlPlaneUrl() : null,
+        ...(tenancyMode === "pooled" ? { onboardingUrl: await configValue("pooled-onboarding-url"), externalIdSignIn } : {}),
         demoMode: process.env.DEMO_MODE?.toLowerCase() === "true",
         // OSS-6 (decisions 4, 7): upstream bakes this into the bundle as
         // NEXT_PUBLIC_WORKFLOW_CONTRIBUTIONS_ENABLED; dev serves it at
@@ -77,10 +103,13 @@ configRouter.get("/", async (_req, res) => {
         // open-source gate (plain env, not a secret; default off).
         workflowContributionsEnabled:
             process.env.WORKFLOW_CONTRIBUTIONS_ENABLED === "true",
-        entra: { tenantId, clientId, apiScope },
+        entra: { tenantId, clientId, apiScope, ...(authority ? { authority } : {}) },
         backendOrigin,
         frontendOrigin: process.env.FRONTEND_URL || "",
         sentryDsn: frontendTelemetryDsn || process.env.SENTRY_FRONTEND_DSN || "",
         wordSentryDsn: wordTelemetryDsn || process.env.SENTRY_WORD_DSN || "",
+        // The web bundle ships inside this image, so the backend's release
+        // (mike@<version>+<sha12>, sync-log: 3bcac35a) is the bundle's too.
+        sentryRelease,
     });
 });

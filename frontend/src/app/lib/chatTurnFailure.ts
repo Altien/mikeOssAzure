@@ -1,3 +1,4 @@
+import { BACKEND_REPORTING_OWNER, CODE_KINDS } from "@mike/client";
 import { UserVisibleError, describeError } from "@/app/lib/userFacingError";
 
 // What a chat surface says, and offers, when a turn fails. The assistant chat
@@ -34,15 +35,18 @@ export function errorFrameFailure(
         safeToDisplay && typeof message === "string" && message.trim()
             ? message.trim()
             : null;
+    // A safe frame's code may say whose problem it is: a refused account
+    // the user or their organization owns is not one support can fix.
+    const codeKind = verbatim && typeof frame.code === "string" ? CODE_KINDS[frame.code] : undefined;
     const failure = new UserVisibleError(verbatim ?? TURN_FAILED_MESSAGE, {
-        kind: "server",
+        kind: codeKind ?? "server",
         retryable: !verbatim,
     });
     // The frame's code and request id ride on the error the way they ride on
     // a MikeApiError, so the report of this failure carries them as tags and
     // the support email can quote the id. Neither is ever rendered.
     return Object.assign(failure, {
-        ...(frame.reportingOwner === "backend" ? { reportingOwner: "backend" as const } : {}),
+        ...(frame.reportingOwner === BACKEND_REPORTING_OWNER ? { reportingOwner: BACKEND_REPORTING_OWNER } : {}),
         ...(typeof frame.code === "string" && frame.code
             ? { code: frame.code }
             : {}),

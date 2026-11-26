@@ -1,5 +1,5 @@
 import { completeWithProvider, streamWithProvider } from "./providers";
-import type { StreamChatParams, StreamChatResult, UserApiKeys } from "./types";
+import type { LlmFeature, StreamChatParams, StreamChatResult, UserApiKeys } from "./types";
 
 export * from "./types";
 export * from "./models";
@@ -18,6 +18,8 @@ export async function completeText(params: {
     abortSignal?: AbortSignal;
     apiKeys?: UserApiKeys;
     reasoningEffort?: "none" | "low" | "high" | "max";
+    /** Usage-ledger tag (multi-tenant issue 015). */
+    feature?: LlmFeature;
 }): Promise<string> {
     return completeWithProvider(params);
 }

@@ -5,6 +5,8 @@ import { renderWithProviders } from "@/test/render";
 
 const {
     listSkillsMock,
+    listSkillCatalogMock,
+    importSkillFromCatalogMock,
     importSkillZipMock,
     listProjectsMock,
     pushMock,
@@ -13,6 +15,8 @@ const {
     deleteSkillVersionMock,
 } = vi.hoisted(() => ({
     listSkillsMock: vi.fn(),
+    listSkillCatalogMock: vi.fn(),
+    importSkillFromCatalogMock: vi.fn(),
     importSkillZipMock: vi.fn(),
     listProjectsMock: vi.fn(),
     pushMock: vi.fn(),
@@ -23,6 +27,8 @@ const {
 
 vi.mock("./api", () => ({
     listSkills: listSkillsMock,
+    listSkillCatalog: listSkillCatalogMock,
+    importSkillFromCatalog: importSkillFromCatalogMock,
     importSkillZip: importSkillZipMock,
     getGitHubSkillImportPolicy: vi.fn().mockResolvedValue(null),
     importSkillFromGitHub: vi.fn(),
@@ -46,6 +52,9 @@ import { SkillsLibrary } from "./SkillsLibrary";
 describe("SkillsLibrary", () => {
     beforeEach(() => {
         listSkillsMock.mockReset();
+        listSkillCatalogMock.mockReset();
+        listSkillCatalogMock.mockResolvedValue({ skills: [] });
+        importSkillFromCatalogMock.mockReset();
         importSkillZipMock.mockReset();
         listProjectsMock.mockReset();
         listProjectsMock.mockResolvedValue([]);
@@ -194,6 +203,29 @@ describe("SkillsLibrary", () => {
         expect(
             screen.queryByText("Import ZIP"),
         ).not.toBeInTheDocument();
+    });
+
+    it("installs a curated copy and refreshes its ordinary review draft", async () => {
+        listSkillCatalogMock.mockResolvedValue({ skills: [{ id: "review", displayName: "Contract review", description: "Review contracts", commit: "a".repeat(40) }] });
+        listSkillsMock.mockResolvedValueOnce({ canManage: true, skills: [] }).mockResolvedValueOnce({ canManage: true, skills: [draftSkill] });
+        importSkillFromCatalogMock.mockResolvedValue({ id: "snapshot", skills: [] });
+        const user = userEvent.setup();
+        renderWithProviders(<SkillsLibrary />, { user: { id: "admin", email: "admin@example.test" } });
+        const picker = await screen.findByRole("combobox", { name: "Altien catalog skill" });
+        expect(screen.getByRole("button", { name: "Install from Altien" })).toBeDisabled();
+        await user.selectOptions(picker, "review");
+        await user.click(screen.getByRole("button", { name: "Install from Altien" }));
+        await waitFor(() => expect(importSkillFromCatalogMock).toHaveBeenCalledWith("review"));
+        expect(await screen.findByRole("heading", { name: "Contract review" })).toBeInTheDocument();
+        expect(listSkillsMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not offer catalog installation to a member", async () => {
+        listSkillCatalogMock.mockResolvedValue({ skills: [{ id: "review", displayName: "Review", description: "", commit: "a".repeat(40) }] });
+        listSkillsMock.mockResolvedValue({ canManage: false, skills: [] });
+        renderWithProviders(<SkillsLibrary />, { user: { id: "member", email: "member@example.test" } });
+        await screen.findByText("No skills are available yet");
+        expect(screen.queryByRole("button", { name: "Install from Altien" })).not.toBeInTheDocument();
     });
 
     it("imports a ZIP and refreshes the admin library", async () => {

@@ -10,40 +10,172 @@ import {
   DropdownLabel,
   DropdownSeparator,
   DropdownTrigger,
-} from "@/shared/ui/dropdown";
+  REASONING_LEVELS,
+  REASONING_LEVEL_LABELS,
+  orderedModelGroups,
+  GlassCardUI,
+  PillButtonUI,
+} from "@mike/ui";
 import {
   useUserProfile,
   type PreferenceField,
 } from "@/app/contexts/UserProfileContext";
-import { type ApiKeyState } from "@/app/lib/mikeApi";
-import { mergeConfiguredModelOptions } from "@/shared/lib/modelCatalog";
+import { type ApiKeyState, type OrgPreferences } from "@/app/lib/mikeApi";
+import { mergeConfiguredModelOptions } from "@mike/client";
 import {
   MODELS,
   SETTINGS_MODELS,
   allRouterModelOptions,
   canonicalModelId,
-  routerSelections,
   type ModelOption,
-} from "@/shared/lib/modelCatalog";
-import {
-  REASONING_LEVELS,
-  REASONING_LEVEL_LABELS,
-  orderedModelGroups,
-} from "@/shared/ui/ModelToggleUI";
+} from "@mike/client";
 import { isModelAvailable } from "@/app/lib/modelAvailability";
 import {
   SettingsDescription,
   SettingsLabel,
 } from "@/app/components/settings/SettingsText";
-import { GlassCardUI } from "@/shared/ui/GlassCardUI";
 import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
 import { SettingsRow } from "@/app/components/settings/SettingsRow";
 import { SETTINGS_CONTROL_CLASS } from "@/app/components/settings/SettingsTextInput";
 import { useAoaiDeployments, type AoaiDeployment } from "@/altien/models/aoaiDeployments";
 import { useConfiguredModels } from "@/app/hooks/useConfiguredModels";
+import { useModelApiKeys } from "@/app/hooks/useModelApiKeys";
+import { useModelRouterSelections } from "@/app/hooks/useModelRouterSelections";
+import { useOrgPreferencesSettings } from "@/app/hooks/useOrgPreferencesSettings";
+import { useWorkspaceSettingsScope } from "@/app/hooks/useWorkspaceSettingsScope";
+import { WorkspaceScopePending } from "@/app/components/settings/WorkspaceScopePending";
+import { ManagedByOrganization } from "@/app/components/settings/ManagedByOrganization";
+import { notifyError } from "@/app/lib/userFacingError";
 
+/** A preference's saved value, by field; `null` until they have loaded. */
+type PreferenceValues = Record<PreferenceField, string | null>;
+
+/** The organization's column for each field. */
+const ORG_COLUMNS = {
+  titleModel: "title_model",
+  tabularModel: "tabular_model",
+  memoryCuratorModel: "memory_curator_model",
+  subagentModel: "subagent_model",
+  subagentReasoning: "subagent_reasoning",
+} as const satisfies Record<PreferenceField, keyof OrgPreferences>;
+
+/** Lower case, for "Couldn't change …". */
+const FIELD_LABELS: Record<PreferenceField, string> = {
+  titleModel: "the chat title model",
+  tabularModel: "the tabular review model",
+  memoryCuratorModel: "the memory curation model",
+  subagentModel: "the subagent model",
+  subagentReasoning: "the subagent reasoning",
+};
+
+/**
+ * Settings > Model Preferences, for the active workspace: the caller's own
+ * in Personal; in an organization's workspace, the organization's, which its
+ * owners and admins set for everyone working there.
+ */
 export default function ModelPreferencesPage() {
+  const scope = useWorkspaceSettingsScope();
+  if (scope.kind === "loading" || scope.kind === "unavailable")
+    return <WorkspaceScopePending unavailable={scope.kind === "unavailable"} />;
+  if (scope.kind === "managed")
+    return (
+      <ManagedByOrganization
+        subject="Model preferences"
+        orgName={scope.orgName}
+      />
+    );
+  if (scope.kind === "organization")
+    return (
+      <OrganizationModelPreferences key={scope.orgId} orgId={scope.orgId} />
+    );
+  return <PersonalModelPreferences />;
+}
+
+function PersonalModelPreferences() {
   const { profile, updateModelPreference } = useUserProfile();
+  return (
+    <ModelPreferencesView
+      values={
+        profile
+          ? {
+              titleModel: profile.titleModel ?? null,
+              tabularModel: profile.tabularModel ?? null,
+              memoryCuratorModel: profile.memoryCuratorModel ?? null,
+              subagentModel: profile.subagentModel ?? null,
+              subagentReasoning: profile.subagentReasoning ?? null,
+            }
+          : null
+      }
+      // The profile context classifies a failure and raises the notice.
+      savePreference={updateModelPreference}
+    />
+  );
+}
+
+function OrganizationModelPreferences({ orgId }: { orgId: string }) {
+  const { preferences, loadError, retry, save } =
+    useOrgPreferencesSettings(orgId);
+
+  const savePreference = async (
+    field: PreferenceField,
+    value: string | null,
+  ): Promise<boolean> => {
+    try {
+      await save({ [ORG_COLUMNS[field]]: value });
+      return true;
+    } catch (error) {
+      notifyError(error, {
+        action: `change ${FIELD_LABELS[field]}`,
+        onRetry: () => void savePreference(field, value),
+      });
+      return false;
+    }
+  };
+
+  if (loadError)
+    return (
+      <GlassCardUI>
+        <SettingsRow>
+          <p className="text-sm text-red-600" role="alert">
+            Could not load the organization&apos;s model preferences.
+          </p>
+          <PillButtonUI tone="white" size="sm" onClick={retry}>
+            Retry
+          </PillButtonUI>
+        </SettingsRow>
+      </GlassCardUI>
+    );
+
+  return (
+    <ModelPreferencesView
+      values={
+        preferences
+          ? (Object.fromEntries(
+              Object.entries(ORG_COLUMNS).map(([field, column]) => [
+                field,
+                preferences[column] as string | null,
+              ]),
+            ) as PreferenceValues)
+          : null
+      }
+      savePreference={savePreference}
+    />
+  );
+}
+
+function ModelPreferencesView({
+  values,
+  savePreference,
+}: {
+  values: PreferenceValues | null;
+  /** Resolves false when the change was refused (and has been reported). */
+  savePreference: (field: PreferenceField, value: string | null) => Promise<boolean>;
+}) {
+  // The keys and model lists that govern the workspace: the caller's own in
+  // Personal, the organization's in its workspace.
+  const apiKeys = useModelApiKeys();
+  const routerLists = useModelRouterSelections();
+  // Dev: no Ollama (OSS-6 §2.3); AOAI deployments feed the organisation note.
   const aoai = useAoaiDeployments();
   const configuredModels = useConfiguredModels();
   const preferenceModelId = (id: string) =>
@@ -58,9 +190,7 @@ export default function ModelPreferencesPage() {
     Partial<Record<PreferenceField, string>>
   >({});
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const selectedRouterOptions = allRouterModelOptions(
-    profile ? routerSelections(profile) : {},
-  );
+  const selectedRouterOptions = allRouterModelOptions(routerLists ?? {});
 
   useEffect(() => {
     return () => {
@@ -72,18 +202,28 @@ export default function ModelPreferencesPage() {
     setOptimisticValues((current) => ({ ...current, [field]: id }));
     setSavedField(null);
     setSavingField(field);
-    const ok = await updateModelPreference(field, id || null);
+    const ok = await savePreference(field, id || null);
     setSavingField((current) => (current === field ? null : current));
     if (ok) {
+      // The saved preferences now hold this choice, so the dropdown reads
+      // them again (unless a later choice is still on its way). Holding on
+      // to the override would hide a value saved some other way since, such
+      // as by the Retry on an earlier, failed choice.
+      setOptimisticValues((current) => {
+        if (current[field] !== id) return current;
+        const next = { ...current };
+        delete next[field];
+        return next;
+      });
       setSavedField(field);
       if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
       savedTimerRef.current = setTimeout(() => {
         setSavedField((current) => (current === field ? null : current));
       }, 1600);
     } else {
-      // The profile context classified the failure and raised the notice with
-      // a Retry; here the dropdown only snaps back to the saved value, so the
-      // page never shows a preference the server did not accept.
+      // `savePreference` has already reported the failure, with a Retry;
+      // here the dropdown only snaps back to the saved value, so the page
+      // never shows a preference the server did not accept.
       setOptimisticValues((current) => {
         const next = { ...current };
         delete next[field];
@@ -95,7 +235,7 @@ export default function ModelPreferencesPage() {
   return (
     <div className="space-y-8">
       <section className="space-y-3">
-        <SettingsHeading>Model Preferences</SettingsHeading>
+        <SettingsHeading id="model-preferences">Model Preferences</SettingsHeading>
         <GlassCardUI>
           <SettingsRow layout="stacked">
             <div className="space-y-1">
@@ -107,14 +247,14 @@ export default function ModelPreferencesPage() {
             </div>
             <ModelPreferenceDropdown
               value={preferenceModelId(
-                optimisticValues.titleModel ?? profile?.titleModel ?? "",
+                optimisticValues.titleModel ?? values?.titleModel ?? "",
               )}
               options={mergeConfiguredModelOptions(configuredModels, [
                 ...SETTINGS_MODELS,
                 ...selectedRouterOptions,
 
               ])}
-              apiKeys={profile?.apiKeys}
+              apiKeys={apiKeys}
               isSaving={savingField === "titleModel"}
               isSaved={savedField === "titleModel"}
               emptyOptionLabel="Automatic — same provider as chat"
@@ -131,14 +271,14 @@ export default function ModelPreferencesPage() {
             </div>
             <ModelPreferenceDropdown
               value={preferenceModelId(
-                optimisticValues.tabularModel ?? profile?.tabularModel ?? "",
+                optimisticValues.tabularModel ?? values?.tabularModel ?? "",
               )}
               options={mergeConfiguredModelOptions(configuredModels, [
                 ...MODELS,
                 ...selectedRouterOptions,
 
               ])}
-              apiKeys={profile?.apiKeys}
+              apiKeys={apiKeys}
               isSaving={savingField === "tabularModel"}
               isSaved={savedField === "tabularModel"}
               emptyOptionLabel="No default model"
@@ -157,7 +297,7 @@ export default function ModelPreferencesPage() {
             <ModelPreferenceDropdown
               value={preferenceModelId(
                 optimisticValues.memoryCuratorModel ??
-                  profile?.memoryCuratorModel ??
+                  values?.memoryCuratorModel ??
                   "",
               )}
               options={mergeConfiguredModelOptions(configuredModels, [
@@ -165,7 +305,7 @@ export default function ModelPreferencesPage() {
                 ...selectedRouterOptions,
 
               ])}
-              apiKeys={profile?.apiKeys}
+              apiKeys={apiKeys}
               isSaving={savingField === "memoryCuratorModel"}
               isSaved={savedField === "memoryCuratorModel"}
               emptyOptionLabel="Automatic — use chat model"
@@ -195,14 +335,14 @@ export default function ModelPreferencesPage() {
             </div>
             <ModelPreferenceDropdown
               value={preferenceModelId(
-                optimisticValues.subagentModel ?? profile?.subagentModel ?? "",
+                optimisticValues.subagentModel ?? values?.subagentModel ?? "",
               )}
               options={mergeConfiguredModelOptions(configuredModels, [
                 ...MODELS,
                 ...selectedRouterOptions,
 
               ])}
-              apiKeys={profile?.apiKeys}
+              apiKeys={apiKeys}
               isSaving={savingField === "subagentModel"}
               isSaved={savedField === "subagentModel"}
               emptyOptionLabel="Chosen per task"
@@ -219,7 +359,7 @@ export default function ModelPreferencesPage() {
             <ReasoningPreferenceDropdown
               value={
                 optimisticValues.subagentReasoning ??
-                profile?.subagentReasoning ??
+                values?.subagentReasoning ??
                 ""
               }
               isSaving={savingField === "subagentReasoning"}

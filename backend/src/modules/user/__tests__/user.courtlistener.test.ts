@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../../../lib/access", () => ({ getOrgRole: mocks.getOrgRole }));
 vi.mock("../../../lib/envSecrets", () => ({ resolveProviderSecret: mocks.resolveProviderSecret }));
 vi.mock("../../../lib/courtlistener", () => ({ courtlistenerBulkDataEnabled: mocks.courtlistenerBulkDataEnabled }));
-vi.mock("../user.apiKeyStore", () => ({
+vi.mock("../../../lib/providerCredentials/index", () => ({
   loadCourtListenerConnection: mocks.loadCourtListenerConnection,
   saveCourtListenerConnection: mocks.saveCourtListenerConnection,
 }));

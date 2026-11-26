@@ -174,7 +174,11 @@ export async function runMigrationCommand(
   command: MigrationCommand,
   directory = "migrations",
   log: Pick<Console, "info" | "warn" | "error"> = console,
-  options: { lockWaitSeconds?: number } = {},
+  options: {
+    lockWaitSeconds?: number;
+    /** Runs under the lock before an `up` applies its first file. Throw to refuse. */
+    beforeApply?: (pendingMigrations: readonly string[]) => Promise<void>;
+  } = {},
 ): Promise<number> {
   const connection = (client as ClientBase & { connectionParameters?: { port?: number } }).connectionParameters;
   if (connection?.port === 6543) throw new Error("Migrations require a direct or session connection; port 6543 transaction poolers are unsupported");
@@ -216,6 +220,7 @@ export async function runMigrationCommand(
       selected = command.kind === "mark" ? [target] : state.pending.filter((file) => file.name <= target.name);
     }
     if (!selected.length) { log.info("Up to date."); return 0; }
+    if (command.kind === "up") await options.beforeApply?.(selected.map((file) => file.name));
 
 
     // Upstream divergence (sync-log: a178e85a): keep the numbered history and

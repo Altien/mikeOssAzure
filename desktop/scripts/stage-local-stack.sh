@@ -9,12 +9,21 @@ test -f backend/dist/workerThread.js || { echo "run local:build to compile role 
 test -f backend/dist/lib/extraction/process.js || { echo "run local:build to compile isolated parsers"; exit 1; }
 test -f backend/dist/workflow-catalog/catalog.json || { echo "run local:build to bundle offline workflows"; exit 1; }
 test -f frontend/out/index.html || { echo "run local:build first"; exit 1; }
+
+# Also cover cached fetch output when staging directly. This must precede
+# electron-builder signing; rewriting a signed release invalidates its seal.
+node desktop/scripts/relocate-postgrest.mjs desktop/local-stack/bin
+
 APP="desktop/local-stack/app"
 rm -rf "$APP"
 mkdir -p "$APP/backend"
 node desktop/scripts/stage-source-notices.mjs "$APP" desktop/local-stack/bin/notices
 cp -R backend/dist "$APP/backend/dist"
 cp backend/package.json backend/pnpm-lock.yaml "$APP/backend/"
+# The supervisor checks Electron's Node against the backend's engines floor
+# with the backend's own script before it spawns the backend.
+mkdir -p "$APP/backend/scripts"
+cp backend/scripts/check-node-version.cjs "$APP/backend/scripts/"
 cp -R backend/migrations "$APP/backend/migrations"
 (cd "$APP/backend" && pnpm install --prod --frozen-lockfile --ignore-workspace)
 cp -R frontend/out "$APP/backend/public"

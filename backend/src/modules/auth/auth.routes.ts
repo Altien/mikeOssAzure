@@ -1,8 +1,15 @@
+import {
+  sendInternalError,
+  sendUpstreamUnavailable,
+} from "../../lib/httpError";
+import { isAuthUpstreamFailure } from "../../lib/authUpstream";
 import { AppError } from "../../lib/appError";
 import { reportError, setOperation } from "../../lib/observability/sentry";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import { getConfig } from "../../lib/config";
+import { entraOAuthConfiguration, type EntraIdentityKind } from "../../lib/auth/entraConfiguration";
+import { getTenancyMode } from "../../lib/tenancyMode";
 import { validateEntraToken } from "../../lib/auth/providers/entra";
 import { validateLocalToken } from "../../lib/auth/providers/local";
 import { validateSupabaseToken } from "../../lib/auth/providers/supabase";
@@ -16,21 +23,36 @@ import {
 import { requireAuth } from "../../middleware/auth";
 import { tenantAccess } from "../../middleware/tenantAccess";
 import { requireTrustedOrigin } from "../../middleware/trustedOrigin";
-import { upsertUserProfile } from "../../lib/userLookup";
+import { initializeAuthenticatedProfile } from "../../lib/auth/profileAdmission";
+import { resolveTenant, runWithTenant } from "../../lib/tenantContext";
 import {
   createSupabaseAuthClient, exchangeSupabaseOAuth, publicSupabaseUser,
   startSupabaseOAuth, startSupabaseSSO, startSupabaseRecovery, supabaseCredential, supabaseExpiresAt, createCredentialClient,
 } from "../../lib/auth/providers/supabaseSession";
 import { ssoConfiguration, ssoDomainSchema } from "../../lib/ssoConfig";
 import { readServerSession } from "../../lib/serverSession";
-import { authProvider, credentialsSchema, signupSchema, passwordSchema } from "./auth.service";
+import { authProvider, credentialsSchema, signupSchema, passwordSchema, signInOptions } from "./auth.service";
 
 import { describeAuthProviderError, describeAuthValidationIssues } from "./auth.messages";
 
 function authError(res: Response, error: unknown, fallback: string) {
   const wire = describeAuthProviderError(error, fallback);
-  if (wire.status >= 500) reportError(new AppError("auth.session_lookup_failed", "Authentication provider failed", { cause: error }), { tags: { component: "http", http_status: wire.status } });
-  res.status(wire.status).json({ code: wire.code, detail: wire.detail });
+  if (wire.status < 500) {
+    return res.status(wire.status).json({ code: wire.code, detail: wire.detail });
+  }
+  // A server-side failure goes through sendInternalError, the one place a
+  // 5xx becomes a Sentry event: reported once, logged, and marked so the
+  // response sanitizer does not file it again. GoTrue being unreachable (no
+  // answer, or a gateway 502/503/504) is an outage the user can only wait
+  // out: 503 upstream_unavailable. A GoTrue 500 is GoTrue failing on
+  // something of ours, so it stays a 500.
+  const failure = new AppError(
+    "auth.session_lookup_failed",
+    "Authentication provider failed",
+    { cause: error },
+  );
+  if (isAuthUpstreamFailure(error)) return sendUpstreamUnavailable(res, failure);
+  return sendInternalError(res, failure);
 }
 
 export const authRouter = Router();
@@ -59,6 +81,22 @@ authRouter.get("/config", async (_req, res) => {
   } catch { res.status(503).json({ detail: "SSO configuration is unavailable" }); }
 });
 
+// Which sign-in routes to offer. Public: the login page asks before anyone is
+// signed in. Dev: first-run setup is not adopted, so setupRequired is false.
+authRouter.get("/options", async (_req, res) => {
+  setOperation("auth.options");
+  try {
+    res.json(await signInOptions());
+  } catch (error) {
+    sendInternalError(
+      res,
+      new AppError("auth.options_failed", "Sign-in options could not be read", {
+        cause: error,
+      }),
+    );
+  }
+});
+
 function frontendOrigin(): URL { return new URL(process.env.FRONTEND_URL || "http://localhost:3000"); }
 
 async function backendPublicOrigin(req: Request): Promise<string> {
@@ -83,16 +121,11 @@ function safeReturnUrl(raw: unknown): string {
   } catch { return fallback; }
 }
 
-async function entraConfiguration(req: Request, word = false) {
-  const [tenantId, clientId, clientSecret, backendId, publicUrl] = await Promise.all([
-    getConfig("entra-tenant-id"), getConfig("entra-client-id"),
-    getConfig("entra-client-secret"), getConfig("entra-backend-client-id"),
-    getConfig("backend-public-url").catch(() => ""),
-  ]);
-  if (!tenantId || !clientId || !backendId) throw new Error("Entra OpenID configuration is unavailable");
+async function entraConfiguration(req: Request, word = false, kind?: EntraIdentityKind) {
+  const cfg = await entraOAuthConfiguration(kind);
+  const publicUrl = await getConfig("backend-public-url").catch(() => "");
   return {
-    tenantId, clientId, clientSecret,
-    scopes: process.env.ENTRA_AUTH_SCOPES || `openid profile email offline_access api://${backendId}/access_as_user`,
+    ...cfg,
     redirectUri: word
       ? `${(process.env.WORD_ADDIN_URL || (process.env.NODE_ENV === "production" ? "" : "https://localhost:3200")).replace(/\/+$/, "")}/api/auth/openid-callback/microsoft`
       : process.env.ENTRA_REDIRECT_URI || `${publicUrl.replace(/\/+$/, "") || `${req.protocol}://${req.get("host")}`}/api/auth/openid-callback/microsoft`,
@@ -109,9 +142,9 @@ export function buildEntraTokenForm(
   return form;
 }
 
-async function exchangeEntraCode(req: Request, code: string, verifier: string, word = false) {
-  const cfg = await entraConfiguration(req, word);
-  const response = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(cfg.tenantId)}/oauth2/v2.0/token`, {
+async function exchangeEntraCode(req: Request, code: string, verifier: string, word = false, kind?: EntraIdentityKind) {
+  const cfg = await entraConfiguration(req, word, kind);
+  const response = await fetch(`${cfg.authority}/oauth2/v2.0/token`, {
     method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: buildEntraTokenForm({ clientId: cfg.clientId, clientSecret: cfg.clientSecret, scopes: cfg.scopes }, {
       grant_type: "authorization_code", code, redirect_uri: cfg.redirectUri, code_verifier: verifier,
@@ -130,23 +163,52 @@ function tokenExpiresAt(token: string): Date {
   return new Date(Date.now() + 5 * 60_000);
 }
 
-async function admit(req: Request, res: Response, credential: ServerCredential): Promise<boolean> {
+async function admit(req: Request, res: Response, credential: ServerCredential, onboardingRedirect = false): Promise<boolean> {
   const result = credential.provider === "entra"
     ? await validateEntraToken(credential.accessToken)
     : credential.provider === "local"
       ? await validateLocalToken(credential.accessToken)
       : await validateSupabaseToken(credential.accessToken);
+  if (!result.ok && result.status === 503) {
+    // Upstream 08bdc1d9, adapted: an unreachable GoTrue is an outage, not a refusal.
+    sendUpstreamUnavailable(res, new AppError("auth.supabase_unavailable", "session lookup could not reach GoTrue", { cause: result.upstreamFailure }));
+    return false;
+  }
+  if (!result.ok && result.status === 500) {
+    // Upstream 156d0fde, adapted: a GoTrue failure of its own is a reported 500.
+    sendInternalError(res, new AppError("auth.supabase_unavailable", "session lookup failed in GoTrue", { cause: result.failure }));
+    return false;
+  }
   if (!result.ok || result.principal.userId !== credential.userId) {
-    res.status(401).json({ detail: "Invalid authentication credential" }); return false;
+    res.status(result.ok ? 401 : result.status).json({ detail: result.ok ? "Invalid authentication credential" : result.detail }); return false;
   }
   res.locals.principal = result.principal;
   res.locals.userId = result.principal.userId;
   res.locals.userEmail = authorizationEmail(result.principal);
-  let allowed = false;
-  await tenantAccess(req, res, () => { allowed = true; });
-  if (!allowed) return false;
-  await upsertUserProfile(result.principal.userId, result.principal.email, result.principal.displayName);
-  return true;
+  // Multi-tenant issue 004: sign-in admission runs as the principal's tenant,
+  // like every request after it (middleware/auth.ts).
+  const principal = result.principal;
+  const admitAs = async (): Promise<boolean> => {
+    let allowed = false;
+    await tenantAccess(req, res, () => { allowed = true; });
+    if (!allowed) return false;
+    const profileError = await initializeAuthenticatedProfile(principal);
+    if (profileError) { res.status(profileError.status).json({ detail: profileError.detail }); return false; }
+    return true;
+  };
+  const tenantId = await resolveTenant(principal);
+  if (!tenantId && onboardingRedirect && principal.identityKind && await getTenancyMode() === "pooled") {
+    const raw = await getConfig("pooled-onboarding-url").catch(() => "");
+    if (raw) {
+      const target = new URL(raw);
+      if (target.protocol !== "https:" && !(process.env.NODE_ENV !== "production" && target.protocol === "http:")) throw new Error("Invalid onboarding URL");
+      res.redirect(target.toString()); return false;
+    }
+  }
+  credential.tenantId = tenantId;
+  credential.directoryId = principal.directoryId;
+  credential.identityKind = principal.identityKind;
+  return tenantId ? runWithTenant({ tenantId, userId: principal.userId }, admitAs) : admitAs();
 }
 
 function publicUser(res: Response) {
@@ -171,6 +233,7 @@ authRouter.get("/select-provider", async (req, res) => {
   if ((await authProvider()) !== "entra") { res.status(404).end(); return; }
   const query = new URLSearchParams({ returnUrl: safeReturnUrl(req.query.returnUrl) });
   if (req.query.selectAccount === "true") query.set("selectAccount", "true");
+  if (req.query.identity === "enterprise") query.set("identity", "enterprise");
   res.redirect(`/api/auth/login-provider/microsoft?${query}`);
 });
 
@@ -185,12 +248,13 @@ authRouter.get("/login-provider/:providerId", async (req, res) => {
     if (word && (!/^[A-Za-z0-9_-]{16,128}$/.test(requestId) || !requestOriginIsWordAddin(wordOrigin))) {
       res.status(400).json({ detail: "Invalid Word login request" }); return;
     }
-    const cfg = await entraConfiguration(req, word);
+    const cfg = await entraConfiguration(req, word, req.query.identity === "enterprise" ? "enterprise" : undefined);
     if (word && process.env.NODE_ENV === "production" && !process.env.WORD_ADDIN_URL) throw new Error("Word redirect is not configured");
     const nonce = randomBytes(32).toString("base64url");
     const verifier = randomBytes(32).toString("base64url");
     const state = await createOAuthState({
       provider: "microsoft", browserNonce: nonce, codeVerifier: verifier,
+      ...(cfg.kind ? { identityKind: cfg.kind } : {}),
       returnUrl: safeReturnUrl(req.query.returnUrl),
       targetOrigin: word ? wordOrigin : frontendOrigin().origin,
       ...(word ? { requestId } : {}),
@@ -200,7 +264,7 @@ authRouter.get("/login-provider/:providerId", async (req, res) => {
       path: "/api/auth", maxAge: 10 * 60_000,
     });
     res.setHeader("Cache-Control", "private, no-store");
-    const authorize = new URL(`https://login.microsoftonline.com/${encodeURIComponent(cfg.tenantId)}/oauth2/v2.0/authorize`);
+    const authorize = new URL(`${cfg.authority}/oauth2/v2.0/authorize`);
     for (const [name, value] of Object.entries({
       client_id: cfg.clientId, response_type: "code", response_mode: "query",
       redirect_uri: cfg.redirectUri, scope: cfg.scopes, state,
@@ -222,14 +286,16 @@ authRouter.get("/openid-callback/:providerId", async (req, res) => {
   try {
     const state = await consumeOAuthState(typeof req.query.state === "string" ? req.query.state : "", nonce);
     if (!state || state.provider !== "microsoft") { res.status(400).json({ detail: "Invalid or expired OpenID state" }); return; }
-    const tokens = await exchangeEntraCode(req, code, state.codeVerifier, !!state.requestId);
+    const tokens = await exchangeEntraCode(req, code, state.codeVerifier, !!state.requestId, state.identityKind);
     const result = await validateEntraToken(tokens.accessToken);
-    if (!result.ok) { res.status(401).json({ detail: "Microsoft identity validation failed" }); return; }
+    if (!result.ok || (state.identityKind && result.principal.identityKind !== state.identityKind)) {
+      res.status(!result.ok ? result.status : 401).json({ detail: "Microsoft identity validation failed" }); return;
+    }
     const credential: ServerCredential = {
       provider: "entra", userId: result.principal.userId, accessToken: tokens.accessToken,
       ...(tokens.refreshToken ? { refreshToken: tokens.refreshToken } : {}),
     };
-    if (!(await admit(req, res, credential))) return;
+    if (!(await admit(req, res, credential, true))) return;
     if (state.requestId) {
       if (!requestOriginIsWordAddin(state.targetOrigin)) { res.status(400).end(); return; }
       const ticket = await createAuthHandoff(credential, state.targetOrigin, state.requestId);
@@ -287,7 +353,9 @@ authRouter.post("/bootstrap", requireAuth, async (req, res) => {
   if (!requestOriginIsWordAddin(req.get("origin")) || res.locals.principal?.provider !== "entra" || res.locals.authSource !== "bearer") {
     res.status(403).json({ detail: "Word bootstrap is unavailable" }); return;
   }
-  const credential: ServerCredential = { provider: "entra", userId: res.locals.userId as string, accessToken: res.locals.token as string };
+  const principal = res.locals.principal;
+  const credential: ServerCredential = { provider: "entra", userId: res.locals.userId as string, accessToken: res.locals.token as string,
+    tenantId: principal.tenantId, directoryId: principal.directoryId, identityKind: principal.identityKind };
   await createServerSession(req, res, credential, tokenExpiresAt(credential.accessToken));
   res.json({ user: publicUser(res) });
 });
@@ -309,7 +377,9 @@ authRouter.post("/handoff", async (req, res) => {
 
 authRouter.post("/logout", async (req, res) => {
   if (!trusted(req, res)) return;
+  let entraCredential: ServerCredential | undefined;
   try {
+    if ((await authProvider()) === "entra") entraCredential = (await readServerSession(req))?.credential;
     if ((await authProvider()) === "supabase") {
       const current = await readServerSession(req);
       if (current?.credential.provider === "supabase") {
@@ -324,9 +394,9 @@ authRouter.post("/logout", async (req, res) => {
   clearServerSessionCookie(req, res);
   const provider = await authProvider();
   if (provider !== "entra") { res.json({ logoutUrl: new URL("/login", frontendOrigin()).toString() }); return; }
-  const tenantId = await getConfig("entra-tenant-id").catch(() => "");
-  if (!tenantId) { res.json({ logoutUrl: new URL("/login", frontendOrigin()).toString() }); return; }
-  const target = new URL(`https://login.microsoftonline.com/${encodeURIComponent(tenantId)}/oauth2/v2.0/logout`);
+  const cfg = await entraOAuthConfiguration(entraCredential?.identityKind, entraCredential?.directoryId).catch(() => undefined);
+  if (!cfg) { res.json({ logoutUrl: new URL("/login", frontendOrigin()).toString() }); return; }
+  const target = new URL(`${cfg.authority}/oauth2/v2.0/logout`);
   target.searchParams.set("post_logout_redirect_uri", new URL("/login", frontendOrigin()).toString());
   res.json({ logoutUrl: target.toString() });
 });

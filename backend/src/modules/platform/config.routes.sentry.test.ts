@@ -32,3 +32,17 @@ it("serves only deployment-configured public Sentry DSNs, vault first", async ()
   expect(disabled.body.sentryDsn).toBe("");
   expect(disabled.body.wordSentryDsn).toBe("");
 });
+
+it("serves the image's release identity for the browser SDK", async () => {
+  const app = express().use("/config", configRouter);
+  vault.mockRejectedValue(new Error("No vault configured"));
+  vi.stubEnv("MIKE_VERSION", "2.1.0");
+  vi.stubEnv("GIT_SHA", "0123456789abcdef0123");
+  vi.stubEnv("SENTRY_RELEASE", "");
+  try {
+    const res = await request(app).get("/config").expect(200);
+    expect(res.body.sentryRelease).toBe("mike@2.1.0+0123456789ab");
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});

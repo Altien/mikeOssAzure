@@ -1,7 +1,11 @@
 import type { Response } from "express";
+import { AsyncResource } from "node:async_hooks";
 import { once } from "node:events";
 import { streamRunCluster, type RunRow } from "./streamRunCluster";
 import { streamRunDeadlines } from "./runtimeConfig";
+import { currentContextLight } from "./logging/contextLight";
+import { log } from "./logging/root";
+import type { ILogger } from "./logging/types";
 
 /**
  * Server-owned streaming runs.
@@ -161,7 +165,14 @@ type RunRecord<Meta> = StreamRun<Meta> & {
     heartbeat?: ReturnType<typeof setInterval> | null;
     bufferedBytes: number;
     bufferExhausted: boolean;
+    /**
+     * Bound at start with the run's ids, so timers and the heartbeat log with
+     * the right context even where the ambient one is lost.
+     */
+    log: ILogger;
 };
+
+type OwnerLostCause = "advertise_invalid" | "advertise_failed" | "renew_lost" | "renew_failed";
 
 /** The registry is meta-agnostic; each caller casts back to its own shape. */
 type StoredRun = RunRecord<unknown>;
@@ -251,6 +262,7 @@ export function startStreamRun<Meta = Record<string, unknown>>(args: {
         heartbeat: null,
         bufferedBytes: 0,
         bufferExhausted: false,
+        log: log().with({ ...currentContextLight(), runId: args.id, userId: args.userId }),
         touch() {
             if (!finished && !stopped) armIdle();
         },
@@ -293,8 +305,8 @@ export function startStreamRun<Meta = Record<string, unknown>>(args: {
                 // lease aborts this owner; remote subscribers pull the bytes
                 // from our volatile buffer through the encrypted relay.
                 void streamRunCluster()?.advertise(args.clusterRow, seq).then((valid) => {
-                    if (!valid && !finished) ownerLost(run);
-                }).catch(() => ownerLost(run));
+                    if (!valid && !finished) ownerLost(run, "advertise_invalid");
+                }).catch(() => ownerLost(run, "advertise_failed"));
             }
             const chunk = frameChunk(frame);
             for (const subscriber of [...run.subscribers]) {
@@ -309,6 +321,14 @@ export function startStreamRun<Meta = Record<string, unknown>>(args: {
         finish() {
             if (finished) return;
             finished = true;
+            run.log.debug("streamrun.finish", {
+                surface: args.key.split(":", 1)[0],
+                seq,
+                stopReason,
+                durationMs: Date.now() - run.startedAt,
+                bufferedBytes: run.bufferedBytes,
+                bufferExhausted: run.bufferExhausted,
+            });
             for (const subscriber of [...run.subscribers]) {
                 try {
                     subscriber.end();
@@ -332,6 +352,7 @@ export function startStreamRun<Meta = Record<string, unknown>>(args: {
             if (finished || stopped) return;
             stopped = true;
             stopReason = reason;
+            run.log.debug("streamrun.stop", { reason, seq });
             if (run.lifetime) clearTimeout(run.lifetime);
             run.lifetime = null;
             if (run.idle) clearTimeout(run.idle);
@@ -375,17 +396,18 @@ export function startStreamRun<Meta = Record<string, unknown>>(args: {
     if (args.clusterRow) {
         run.heartbeat = setInterval(() => {
             void streamRunCluster()?.renew(args.clusterRow!).then((current) => {
-                if (!current) ownerLost(run);
+                if (!current) ownerLost(run, "renew_lost");
                 else if (current.state === "stopping") run.stop();
-            }).catch(() => ownerLost(run));
+            }).catch(() => ownerLost(run, "renew_failed"));
         }, 5_000);
         run.heartbeat.unref?.();
     }
     return run;
 }
 
-function ownerLost(run: StoredRun): void {
+function ownerLost(run: StoredRun, cause: OwnerLostCause): void {
     if (run.finished) return;
+    run.log.debug("streamrun.owner_lost", { cause, seq: run.seq });
     run.controller.abort();
     run.write(`data: ${JSON.stringify({ type: "error", detail: "The response owner became unavailable.", code: "owner_lost" })}\n\n`);
     run.write("data: [DONE]\n\n");
@@ -481,7 +503,9 @@ function remoteRun<Meta>(row: RunRow): StreamRun<Meta> {
                         page = await cluster.request<RunPage>(row.owner_instance, "page", { id: row.id, fence: row.fence, from: cursor });
                         failures = 0;
                     } catch (error) {
-                        if (++failures >= 3) throw error;
+                        failures += 1;
+                        log().debug("relay.page_fetch_fail", { failures, ownerInstance: row.owner_instance, cursor });
+                        if (failures >= 3) throw error;
                         // A missed NOTIFY/reconnect never advances the cursor.
                         await new Promise((resolve) => setTimeout(resolve, 500));
                         continue;
@@ -575,11 +599,19 @@ export function getActiveStreamRun<Meta = Record<string, unknown>>(
  * the streaming routes, so a route that starts a run drives the generation
  * through the run without changing anything else: `write` buffers and fans
  * out, `signal` is the run's (Stop, not socket close), `finish` ends the run.
+ *
+ * `include`, when given, is asked about every chunk this response would
+ * receive (replayed and live) and a chunk it rejects is not sent to THIS
+ * response. A run's frames are written for the user who started it; an
+ * observer whose access is narrower passes the surface's own filter here.
+ * Sequence numbers are untouched, so a filtered reader resumes with `from`
+ * exactly as an unfiltered one does.
  */
 export function attachStreamRunSse(
     res: Response,
     run: StreamRun<unknown>,
     from = 1,
+    include?: (chunk: string) => boolean,
 ): {
     signal: AbortSignal;
     write: (line: string, opts?: StreamRunWriteOptions) => boolean;
@@ -595,6 +627,7 @@ export function attachStreamRunSse(
     const detach = run.subscribe(from, {
         write: async (chunk) => {
             if (ended || res.writableEnded) return;
+            if (include && !include(chunk)) return;
             if (res.writableLength > MAX_SSE_READER_QUEUE_BYTES) {
                 ended = true;
                 res.end(`data: ${JSON.stringify({ type: "error", code: "slow_reader", detail: "Response reader fell behind; reconnect to resume." })}\n\ndata: [DONE]\n\n`);
@@ -611,10 +644,11 @@ export function attachStreamRunSse(
             res.end();
         },
     });
-    res.on("close", () => {
+    // Request context (and tenant) for detach; see lib/assistantSse.ts.
+    res.on("close", AsyncResource.bind(() => {
         ended = true;
         detach();
-    });
+    }));
 
     return {
         signal: run.signal,

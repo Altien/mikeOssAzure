@@ -3,9 +3,7 @@ import { useAuth } from "@/app/contexts/AuthContext";
 import { currentAuthEpoch } from "@/app/lib/authEvents";
 
 import { useEffect, useRef, useState } from "react";
-import { GlassCardUI } from "@/shared/ui/GlassCardUI";
-import { PillButtonUI } from "@/shared/ui/PillButtonUI";
-import { ToggleSwitchUI } from "@/shared/ui/ToggleSwitchUI";
+import { GlassCardUI, PillButtonUI, ToggleSwitchUI } from "@mike/ui";
 import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
 import { SettingsRow } from "@/app/components/settings/SettingsRow";
 import {
@@ -17,12 +15,19 @@ import {
   SettingsLabel,
 } from "@/app/components/settings/SettingsText";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
+import { useWorkspace } from "@/app/contexts/WorkspaceContext";
 import { useAssignLatest } from "@/app/hooks/useLatestRef";
+import { useModelApiKeys } from "@/app/hooks/useModelApiKeys";
 import { isProviderAvailable } from "@/app/lib/modelAvailability";
 import {
+  getOrgPreferences,
   getWebSearchSettings,
+  saveOrgApiKey,
   updateWebSearchSettings,
   WEB_SEARCH_BACKENDS,
+  type ApiKeyState,
+  type OrgPreferences,
+  type OrgPreferencesUpdate,
   type WebSearchBackend,
   type WebSearchSettings,
 } from "@/app/lib/mikeApi";
@@ -63,25 +68,34 @@ type Family = Exclude<Field, "enabled">;
 const PROVIDER_FAMILIES: Array<{
   family: "claude" | "openai";
   label: string;
-  provider: { label: string; description: string };
+  provider: { label: string; runs: string; key: string };
 }> = [
   {
     family: "claude",
     label: "Claude models",
-    provider: {
-      label: "Anthropic Search",
-      description: "Anthropic runs the search. Billed to your Claude API key.",
-    },
+    provider: { label: "Anthropic Search", runs: "Anthropic", key: "Claude" },
   },
   {
     family: "openai",
     label: "OpenAI models",
-    provider: {
-      label: "OpenAI Search",
-      description: "OpenAI runs the search. Billed to your OpenAI API key.",
-    },
+    provider: { label: "OpenAI Search", runs: "OpenAI", key: "OpenAI" },
   },
 ];
+
+/**
+ * Where the section's settings and search-service keys live: the caller's
+ * own in Personal, the organization's in its workspace.
+ */
+export interface WebSearchStore {
+  load: (signal: AbortSignal) => Promise<WebSearchSettings>;
+  save: (update: Partial<WebSearchSettings>) => Promise<WebSearchSettings>;
+  /** The keys that decide which model families can search; unknown while loading. */
+  apiKeys: ApiKeyState | undefined;
+  hasSavedKey: (service: WebSearchBackend) => boolean;
+  saveKey: (service: WebSearchBackend, value: string | null) => Promise<boolean>;
+  /** Whose keys a search is billed to, and whose settings these are. */
+  owner: "your" | "the organization's";
+}
 
 const OFF_OPTION = {
   value: "off",
@@ -97,12 +111,60 @@ function saveAction(field: Field, next: WebSearchSettings[Field]): string {
   return `change web search for ${family?.label ?? "other models"}`;
 }
 
+/** The caller's own web search settings, for the Personal workspace. */
 export function WebSearchSection() {
+  const { profile, updateApiKey } = useUserProfile();
+  const store: WebSearchStore = {
+    load: getWebSearchSettings,
+    save: updateWebSearchSettings,
+    apiKeys: profile?.apiKeys,
+    hasSavedKey: (service) => profile?.apiKeys[service].source === "user",
+    saveKey: (service, value) => updateApiKey(service, value),
+    owner: "your",
+  };
+  return <WebSearchCard store={store} />;
+}
+
+/**
+ * An organization's web search settings, which govern work in its workspace:
+ * its owners and admins choose them, and searches run on its keys.
+ */
+export function OrganizationWebSearchSection({
+  orgId,
+  save,
+}: {
+  orgId: string;
+  /** Saves the organization's preferences and puts the answer in place. */
+  save: (update: OrgPreferencesUpdate) => Promise<OrgPreferences>;
+}) {
+  const { orgApiKeys, refreshOrgApiKeys } = useWorkspace();
+  const apiKeys = useModelApiKeys();
+  const store: WebSearchStore = {
+    load: (signal) =>
+      getOrgPreferences(orgId, signal).then((loaded) => loaded.web_search),
+    save: (update) =>
+      save({ web_search: update }).then((saved) => saved.web_search),
+    apiKeys,
+    // Saved by the organization itself: a deployment-wide key also reads as
+    // configured, but there is no organization key to show or remove.
+    hasSavedKey: (service) => orgApiKeys?.keys.sources?.[service] === "org",
+    saveKey: async (service, value) => {
+      await saveOrgApiKey(orgId, service, value);
+      await refreshOrgApiKeys();
+      return true;
+    },
+    owner: "the organization's",
+  };
+  return <WebSearchCard key={orgId} store={store} />;
+}
+
+function WebSearchCard({ store }: { store: WebSearchStore }) {
+  const { apiKeys } = store;
+  // Dev: writes and loads are fenced to the signed-in identity.
   const { user } = useAuth();
   const identity = `${currentAuthEpoch()}:${user?.id ?? ""}`;
   const identityRef = useRef(identity);
   identityRef.current = identity;
-  const { profile } = useUserProfile();
   const [settings, setSettings] = useState<WebSearchSettings | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [loadVersion, setLoadVersion] = useState(0);
@@ -124,7 +186,8 @@ export function WebSearchSection() {
     setLoadError(false);
     setSaving(false);
     const controller = new AbortController();
-    getWebSearchSettings(controller.signal)
+    store
+      .load(controller.signal)
       .then((loaded) => {
         if (!controller.signal.aborted) setSettings(loaded);
       })
@@ -132,6 +195,9 @@ export function WebSearchSection() {
         if (!controller.signal.aborted) setLoadError(true);
       });
     return () => controller.abort();
+    // Loaded once per store owner (the caller keys the card by it), on Retry,
+    // and again when the signed-in identity changes (Dev).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadVersion, identity]);
 
   const save = async <F extends Field>(field: F, next: WebSearchSettings[F]) => {
@@ -144,7 +210,7 @@ export function WebSearchSection() {
       );
     settle(next);
     try {
-      const saved = await updateWebSearchSettings({ [field]: next });
+      const saved = await store.save({ [field]: next });
       if (identityRef.current !== identity || request !== latestRequestRef.current[field]) return;
       settle(saved[field]);
     } catch (error) {
@@ -165,12 +231,16 @@ export function WebSearchSection() {
   };
 
   const providerFamilies = PROVIDER_FAMILIES.filter(
-    ({ family }) => profile && isProviderAvailable(family, profile.apiKeys),
+    ({ family }) => apiKeys && isProviderAvailable(family, apiKeys),
   ).map(({ family, label, provider }) => ({
     family,
     label,
     options: [
-      { value: "provider", ...provider },
+      {
+        value: "provider",
+        label: provider.label,
+        description: `${provider.runs} runs the search. Billed to ${store.owner} ${provider.key} API key.`,
+      },
       ...SEARCH_SERVICE_OPTIONS,
       OFF_OPTION,
     ],
@@ -188,7 +258,7 @@ export function WebSearchSection() {
     },
   ];
   const chosenServices =
-    settings?.enabled && profile
+    settings?.enabled && apiKeys
       ? WEB_SEARCH_BACKENDS.filter((backend) =>
           families.some(({ family }) => settings[family] === backend),
         )
@@ -201,7 +271,7 @@ export function WebSearchSection() {
         {loadError ? (
           <SettingsRow>
             <p className="text-sm text-red-600" role="alert">
-              Could not load your web search settings.
+              Could not load {store.owner} web search settings.
             </p>
             <PillButtonUI
               tone="white"
@@ -240,7 +310,7 @@ export function WebSearchSection() {
               )}
             </SettingsRow>
             {settings?.enabled &&
-              profile &&
+              apiKeys &&
               families.map(({ family, label, options }) => (
                 <SettingsSelectRow
                   key={family}
@@ -254,11 +324,14 @@ export function WebSearchSection() {
                 />
               ))}
             {chosenServices.map((service) => (
+              // Upstream divergence (sync-log: 74745a6f): upstream renders an
+              // ApiKeyField saving the store owner's search-service key. Dev177:
+              // search-service credentials remain administrator-managed, so the
+              // row only reports whether the governing keys are configured.
               <SettingsRow key={service}>
-                {/* Dev177: credentials remain organization managed. */}
                 <div><SettingsLabel>{SEARCH_SERVICES[service].keyLabel}</SettingsLabel>
                   <SettingsDescription>Managed by your organization.</SettingsDescription></div>
-                <span className="text-sm">{profile?.apiKeys[service].configured
+                <span className="text-sm">{apiKeys?.[service]?.configured
                   ? "Configured" : "Administrator action required"}</span>
               </SettingsRow>
             ))}

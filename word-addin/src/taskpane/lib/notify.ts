@@ -1,3 +1,4 @@
+import { BACKEND_REPORTING_OWNER } from "@mike/client";
 /**
  * How the task pane tells the user something failed.
  *
@@ -9,7 +10,7 @@
  * Word, which is why it is an action and not an anchor.
  *
  * The toast, the Retry and the cancellation rule are the web app's own
- * (`@mike/error-notifier`), so a failure reads the same in Word as it does in
+ * (`createErrorNotifier` in `@mike/client`), so a failure reads the same in Word as it does in
  * the browser; this file adds only what differs in the pane. Screens must
  * never render a raw `error.message` from the API, a stream, or Office.js.
  */
@@ -18,14 +19,13 @@ import {
   describeError,
   type DescribeErrorOptions,
   type UserFacingError,
-} from "@mike/user-error";
-import { retryToastAction, showToast } from "@mike/toast-store";
-import {
+  retryToastAction,
+  showToast,
   createErrorNotifier,
   notifyInfo,
   notifySuccess,
   type NotifyErrorOptions as SharedNotifyErrorOptions,
-} from "@mike/error-notifier";
+} from "@mike/client";
 import {
   isSessionHandledError,
   retryWhenSessionRecovers,
@@ -47,19 +47,15 @@ import {
 } from "./supportHandoff";
 
 export {
-  SUPPORT_EMAIL,
   UserVisibleError,
-  buildSupportMailto,
   describeError,
-  isAbortError,
-  isNetworkError,
   type UserErrorKind,
   type UserFacingError,
-} from "@mike/user-error";
-export { notifyInfo, notifySuccess } from "@mike/error-notifier";
+} from "@mike/client";
+export { notifyInfo, notifySuccess } from "@mike/client";
 
 /** Which client the support email came from. */
-export const SUPPORT_PRODUCT = "word-addin";
+const SUPPORT_PRODUCT = "word-addin";
 
 export interface NotifyErrorOptions extends SharedNotifyErrorOptions {
   /** Short screen name, e.g. "Workflows". Falls back to the pane URL. */
@@ -90,7 +86,7 @@ function reportRealFault(
 ): void {
   if (described.kind !== "unknown" && described.kind !== "server") return;
   if (isReported(error)) return;
-  if (error && typeof error === "object" && "reportingOwner" in error && error.reportingOwner === "backend") return;
+  if (error && typeof error === "object" && "reportingOwner" in error && error.reportingOwner === BACKEND_REPORTING_OWNER) return;
   reportError(error, {
     tags: {
       component: "notify",
@@ -146,7 +142,7 @@ export function supportMailtoFor(
  * independently and the user is told what actually happened. If neither
  * worked they still get the address and the block, on screen, to copy by hand.
  */
-export async function handOffToSupport(
+async function handOffToSupport(
   error: SupportErrorFields,
   options: { note?: string; page?: string } = {},
 ): Promise<void> {

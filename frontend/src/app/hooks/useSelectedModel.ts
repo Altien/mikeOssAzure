@@ -7,7 +7,7 @@ import {
     isAllowedModelId,
     isRouterModelSelected,
     type RouterSelections,
-} from "@/shared/lib/modelCatalog";
+} from "@mike/client";
 import { isModelAvailable } from "../lib/modelAvailability";
 import type { ApiKeyState } from "../lib/mikeApi";
 
@@ -161,4 +161,4 @@ export function useSelectedReasoning(sources: {
     return [level, setLevel];
 }
 
-export { isAllowedModelId } from "@/shared/lib/modelCatalog";
+export { isAllowedModelId } from "@mike/client";

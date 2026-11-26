@@ -4,11 +4,10 @@
 import { randomUUID } from "node:crypto";
 import { downloadFile, uploadFile, deleteFileBestEffort, versionStorageKey } from "../../lib/storage";
 import { resolveTrackedChange } from "../../lib/docxTrackedChanges";
-import { buildDownloadUrl } from "../../lib/downloadTokens";
 import { contentSha256, loadActiveVersion } from "../../lib/documentVersions";
 import { ensureDocAccess } from "../../lib/access";
 import { can, DOCUMENT_EDIT_FORBIDDEN } from "../../lib/permissions";
-import { downloadFilenameForVersion, type Db } from "./documents.shared";
+import { type Db } from "./documents.shared";
 import { updateDocumentVersion } from "./documents.lifecycle";
 // devLog comes from lib/chat/types (a leaf file — importing the whole chat
 // barrel here just for a logger would be a heavy dependency edge).
@@ -18,6 +17,22 @@ import { devLog } from "../../lib/log";
 // Accept / reject a tracked-change edit
 // ---------------------------------------------------------------------------
 
+type ResolveEditResult =
+    | { ok: true; body: Record<string, unknown> }
+    | { ok: false; detail: string; status?: number; error?: unknown };
+
+// Each lost swap means exactly one competing review landed, so N reviews fired
+// together need up to N attempts. Five covers a burst of clicks; the short,
+// jittered pause keeps the losers from retrying in step with each other
+// (the same shape as Kubernetes client-go's retry.DefaultRetry).
+const RESOLVE_ATTEMPTS = 5;
+const RETRY_PAUSE_MS = 15;
+const VERSION_CONFLICT = {
+    ok: false,
+    status: 409,
+    detail: "This document changed. Reopen the latest version and try again.",
+} as const;
+
 export async function resolveEdit(
     mode: "accept" | "reject",
     documentId: string,
@@ -25,10 +40,31 @@ export async function resolveEdit(
     userId: string,
     userEmail: string | undefined,
     db: Db,
-): Promise<
-    | { ok: true; body: Record<string, unknown> }
-    | { ok: false; detail: string; status?: number; error?: unknown }
-> {
+): Promise<ResolveEditResult> {
+    // Another card may have won the byte swap. Re-read the edit and bytes,
+    // but only redo a change that still exists: a competing accept/reject
+    // can remove it before its separate status write becomes visible.
+    for (let attempt = 1; attempt <= RESOLVE_ATTEMPTS; attempt++) {
+        const result = await resolveEditOnce(mode, documentId, editId, userId, userEmail, db, attempt > 1);
+        if (result !== "retry") return result;
+        if (attempt < RESOLVE_ATTEMPTS) {
+            await new Promise((resolve) =>
+                setTimeout(resolve, RETRY_PAUSE_MS * attempt * (0.5 + Math.random())),
+            );
+        }
+    }
+    return VERSION_CONFLICT;
+}
+
+async function resolveEditOnce(
+    mode: "accept" | "reject",
+    documentId: string,
+    editId: string,
+    userId: string,
+    userEmail: string | undefined,
+    db: Db,
+    retrying: boolean,
+): Promise<ResolveEditResult | "retry"> {
     devLog(`[edit-resolution] incoming ${mode}`, {
         userId,
         documentId,
@@ -68,22 +104,11 @@ export async function resolveEdit(
             devLog(`[edit-resolution] doc access denied for resolved edit`);
             return { ok: false, detail: "Document not found" };
         }
-        const activeForResolved = await loadActiveVersion(documentId, db);
         const payload = {
             ok: true,
             already_resolved: true,
             status: edit.status,
             version_id: doc.current_version_id ?? null,
-            download_url: activeForResolved
-                ? buildDownloadUrl(
-                      activeForResolved.storage_path,
-                      downloadFilenameForVersion(
-                          activeForResolved.filename,
-                          activeForResolved.version_number,
-                          activeForResolved.source === "assistant_edit",
-                      ),
-                  )
-                : null,
             remaining_pending: 0,
         };
         devLog(`[edit-resolution] returning already-resolved payload`, payload);
@@ -135,6 +160,9 @@ export async function resolveEdit(
         resolvedByteLength: resolvedBytes?.byteLength ?? 0,
     });
     if (!found) {
+        // The winner may have made the opposite decision. A missing change
+        // cannot establish our requested outcome; leave its status alone.
+        if (retrying) return VERSION_CONFLICT;
         devLog(
             `[edit-resolution] change_id not found in docx — updating status only`,
         );
@@ -148,14 +176,6 @@ export async function resolveEdit(
         const payload = {
             ok: true,
             version_id: doc.current_version_id,
-            download_url: buildDownloadUrl(
-                latestPath,
-                downloadFilenameForVersion(
-                    active?.filename,
-                    active?.version_number ?? null,
-                    active?.source === "assistant_edit",
-                ),
-            ),
             remaining_pending: 0,
         };
         devLog(`[edit-resolution] returning not-found payload`, payload);
@@ -189,7 +209,7 @@ export async function resolveEdit(
         if (!versionErr) await deleteFileBestEffort(nextPath, "edit-resolution-conflict");
         return versionErr
             ? { ok: false, detail: "Failed to resolve edit", error: versionErr }
-            : { ok: false, status: 409, detail: "This document changed. Reopen the latest version and try again." };
+            : "retry";
     }
 
     const { error: statusErr } = await db
@@ -214,14 +234,6 @@ export async function resolveEdit(
     const payload = {
         ok: true,
         version_id: doc.current_version_id,
-        download_url: buildDownloadUrl(
-            nextPath,
-            downloadFilenameForVersion(
-                active?.filename,
-                active?.version_number ?? null,
-                active?.source === "assistant_edit",
-            ),
-        ),
         remaining_pending: remainingPending ?? 0,
     };
     devLog(`[edit-resolution] returning success payload`, payload);

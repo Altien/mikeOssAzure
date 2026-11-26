@@ -170,3 +170,36 @@ describe("validateSupabaseToken — token validation", () => {
     expect(JSON.stringify(result)).not.toContain("service-role-key");
   });
 });
+
+// Upstream 156d0fde, adapted: classify a failed lookup from the error getUser returns.
+describe("validateSupabaseToken — failure classification", () => {
+  beforeEach(() => {
+    process.env[URL_ENV] = "https://x.supabase.co";
+    process.env[KEY_ENV] = "service-role-key";
+  });
+  const authJsError = (name: string, status: number) =>
+    Object.assign(new Error("gotrue"), { __isAuthError: true, name, status });
+
+  it("answers a session GoTrue refused (4xx AuthApiError) with 401 session_expired", async () => {
+    getUser.mockResolvedValueOnce({ data: { user: null }, error: authJsError("AuthApiError", 403) });
+    expect(await validateSupabaseToken("tok")).toEqual({
+      ok: false, status: 401, detail: "Invalid or expired session", code: "session_expired",
+    });
+  });
+
+  it("answers a GoTrue 500 with a 500 carrying the failure, not a sign-out", async () => {
+    const error = authJsError("AuthApiError", 500);
+    getUser.mockResolvedValueOnce({ data: { user: null }, error });
+    expect(await validateSupabaseToken("tok")).toMatchObject({ ok: false, status: 500, failure: error });
+  });
+
+  it("keeps the 503 for an unreachable GoTrue, never session_expired", async () => {
+    getUser.mockResolvedValueOnce({ data: { user: null }, error: authJsError("AuthRetryableFetchError", 503) });
+    expect(await validateSupabaseToken("tok")).toMatchObject({ ok: false, status: 503 });
+  });
+
+  it("keeps the plain 401 when there is no session at all", async () => {
+    getUser.mockResolvedValueOnce({ data: { user: null }, error: authJsError("AuthSessionMissingError", 400) });
+    expect(await validateSupabaseToken("tok")).toEqual({ ok: false, status: 401, detail: "Invalid or expired token" });
+  });
+});

@@ -24,7 +24,14 @@ export type AuthProvider = "supabase" | "local" | "entra";
 
 export interface RuntimeConfig {
     sentryDsn?: string;
+    /** `mike@<version>+<sha12>` of the running image (sync-log: 3bcac35a). */
+    sentryRelease?: string;
     authProvider: AuthProvider;
+    tenancyMode?: "single" | "pooled";
+    onboardingUrl?: string;
+    // Pooled only: true when the Altien External ID sign-in path is configured.
+    externalIdSignIn?: boolean;
+    controlPlaneUrl?: string | null;
     demoMode: boolean;
     // OSS-6 (decisions 4, 7): server WORKFLOW_CONTRIBUTIONS_ENABLED, served at
     // runtime instead of upstream's build-time
@@ -34,6 +41,7 @@ export interface RuntimeConfig {
     workflowContributionsEnabled?: boolean;
     entra: {
         tenantId: string;
+        authority?: string;
         clientId: string;
         // api://<backend-client-id>/access_as_user. Unused by the web app
         // (its login is brokered by /api/auth); consumed by the Word add-in,
@@ -103,7 +111,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
             .then((next) => {
                 if (cancelled) return;
                 setConfig(next);
-                if (next.sentryDsn) initBrowserErrorReporting(next.sentryDsn);
+                if (next.sentryDsn) initBrowserErrorReporting(next.sentryDsn, next.sentryRelease);
                 writeCachedProvider(next.authProvider);
             })
             .catch((err) => {

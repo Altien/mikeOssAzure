@@ -1,6 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { EditCardsSectionUI } from "@/shared/ui/EditCardsSectionUI";
-import { PillButtonUI } from "@/shared/ui/PillButtonUI";
+import { EditCardsSectionUI, PillButtonUI } from "@mike/ui";
 import { RESPONSE_GLASS_SURFACE } from "./messageStyles";
 import { resolveDocumentEdit } from "@/app/lib/mikeApi";
 import type { EditAnnotation } from "../../shared/types";
@@ -11,7 +10,7 @@ import { applyOptimisticResolution } from "../EditCard";
  * multiple tracked-change proposals. Lets the user resolve every pending
  * edit in one click by firing the per-edit accept/reject endpoint for each
  * pending annotation and forwarding each response to `onResolved` so the
- * parent can bump the viewer version, persist override URLs, etc.
+ * parent can bump the viewer version, update download versions, etc.
  *
  * This intentionally doesn't apply the optimistic DOM mutation that
  * EditCard does — bulk operations touch many edits at once and the real
@@ -39,7 +38,7 @@ function BulkEditActions({
         documentId: string;
         status: "accepted" | "rejected";
         versionId: string | null;
-        downloadUrl: string | null;
+
     }) => void;
     onError?: (args: {
         editId: string;
@@ -95,7 +94,7 @@ function BulkEditActions({
                         documentId: annotation.document_id,
                         status: nextStatus,
                         versionId: data.version_id,
-                        downloadUrl: data.download_url,
+
                     });
                 } catch (e) {
                     console.error("[BulkEditActions] resolve failed", e);
@@ -205,7 +204,7 @@ export function EditCardsSection({
         documentId: string;
         status: "accepted" | "rejected";
         versionId: string | null;
-        downloadUrl: string | null;
+
     }) => void;
     onError?: (args: {
         editId: string;

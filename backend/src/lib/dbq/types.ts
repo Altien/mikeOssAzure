@@ -19,6 +19,8 @@ export interface DbJob {
     dedupe_key: string | null;
     result: Record<string, unknown> | null;
     created_at: string;
+    /** Owning tenant (migration 0179); filled from the enqueuing request's JWT claim. */
+    tenant_id?: string | null;
 }
 
 /** A domain handler can defer a claimed job without consuming retry budget. */

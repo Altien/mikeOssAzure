@@ -40,6 +40,7 @@ describe("GET /api/observability/sentry-test", () => {
 
     expect(res.status).toBe(500);
     expect(res.body).toEqual({
+      reporting_owner: "backend",
       code: "internal_error",
       detail: "Something went wrong. Please try again.",
       request_id: res.headers["x-request-id"],
