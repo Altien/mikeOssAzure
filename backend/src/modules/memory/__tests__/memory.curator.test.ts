@@ -1033,6 +1033,8 @@ describe("memory curator Word conversation", () => {
 
   it("learns an organization's Word chat into its author's memory for that workspace", async () => {
     const fake = scriptedDb([
+      // Dev drift (sync-log: 25c76a81): actorEmail reads user_profiles, not auth.admin.
+      { table: "user_profiles", data: { email: "actor@example.com" } },
       { table: "word_chats", data: { id: "word-chat", user_id: "actor", org_id: "firm", model: "m" } },
       // The author is still a member of a team organization.
       { table: "organizations", data: { kind: "team" } },
@@ -1055,6 +1057,8 @@ describe("memory curator Word conversation", () => {
 
   it("skips an organization's Word chat once its author has left", async () => {
     const fake = scriptedDb([
+      // Dev drift (sync-log: 25c76a81): actorEmail reads user_profiles, not auth.admin.
+      { table: "user_profiles", data: { email: "actor@example.com" } },
       { table: "word_chats", data: { id: "word-chat", user_id: "actor", org_id: "firm", model: "m" } },
       { table: "organizations", data: { kind: "team" } },
       { table: "org_members", data: null },
