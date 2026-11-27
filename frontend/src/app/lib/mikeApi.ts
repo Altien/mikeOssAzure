@@ -42,7 +42,7 @@ import {
 import { isPanelDocument } from "@/app/components/shared/types";
 import { authenticatedFetch, currentAuthEpoch } from "@/app/lib/authEvents";
 import { reportApiFailure, reportGatewayLimit, reportError, reportNetworkFailure, trackPendingRequest } from "@/app/lib/errorReporting";
-import { reportedUpstreamMessage } from "@mike/client";
+import { reportedUpstreamMessage, workspaceOrgId } from "@mike/client";
 const apiFetch = async (input: RequestInfo | URL, init?: RequestInit, operation?: Operation): Promise<Response> => {
     const release = trackPendingRequest();
     try {
@@ -961,6 +961,11 @@ export interface UserLookupResult {
 
 export interface AuditEvent {
     org_id?: string | null;
+    /**
+     * Current name of `org_id`'s organization, on personal activity rows
+     * only; `null` when it no longer exists. Absent for Personal rows.
+     */
+    org_name?: string | null;
     id: string;
     created_at: string;
     user_display_name: string | null;
@@ -984,6 +989,8 @@ export interface AuditEvent {
 export async function getAuditHistory(
     params: {
         orgId?: string;
+        /** Personal activity only: "personal" or an organization's id. */
+        workspace?: string;
         username?: string;
         actorUserId?: string;
         q?: string;
@@ -1005,6 +1012,7 @@ export async function getAuditHistory(
 }> {
     const qs = new URLSearchParams();
     if (params.orgId) qs.set("org_id", params.orgId);
+    if (params.workspace) qs.set("workspace", params.workspace);
     if (params.username) qs.set("username", params.username);
     if (params.actorUserId) qs.set("actor_user_id", params.actorUserId);
     if (params.q) qs.set("q", params.q);
@@ -2530,11 +2538,6 @@ function libraryKindOf(scope: LibraryScope): LibraryKind {
 
 function libraryWorkspaceOf(scope: LibraryScope): string | undefined {
     return typeof scope === "string" ? undefined : scope.workspace;
-}
-
-/** `org_id` for an upload made in `workspace`: none in Personal. */
-function workspaceOrgId(workspace: string | undefined): string | undefined {
-    return workspace && workspace !== "personal" ? workspace : undefined;
 }
 
 /** A library route, with the scope's workspace on the query string. */

@@ -884,6 +884,12 @@ describe("audit history", () => {
         await getAuditHistory({ orgId: "org-1", username: "Alex & Pat" });
         expect(lastFetchCall().url).toBe("http://localhost:3001/api/audit?org_id=org-1&username=Alex+%26+Pat");
     });
+    it("narrows personal activity to one workspace", async () => {
+        fetchMock.mockResolvedValueOnce(jsonResponse({ events: [], total: 0, page: 1, pageSize: 50 }));
+        await getAuditHistory({ workspace: "personal" });
+        // Dev: absolute backend API base (sync-log: a5f571b8).
+        expect(lastFetchCall().url).toBe("http://localhost:3001/api/audit?workspace=personal");
+    });
     it("includes the organization scope in audit requests", async () => {
         fetchMock.mockResolvedValueOnce(jsonResponse({ events: [], total: 0, page: 1, pageSize: 50 }));
         await getAuditHistory({ orgId: "org-1" });

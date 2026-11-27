@@ -34,6 +34,7 @@ import {
   auditSubjectEmail,
   auditSummary,
   auditTimestamp,
+  auditWorkspace,
   SURFACE_LABELS,
 } from "./auditPresentation";
 
@@ -230,6 +231,7 @@ export function HistoryEventModal({
     subject.context !== (SURFACE_LABELS[event.surface ?? ""] ?? event.surface)
       ? [{ label: "Location", value: subject.context }]
       : []),
+    ...(personal ? [{ label: "Workspace", value: auditWorkspace(event) }] : []),
     { label: "When", value: auditTimestamp(event.created_at, true) },
     { label: "Status", value: auditLabel(event.status) },
     ...(privateAccess
@@ -238,7 +240,7 @@ export function HistoryEventModal({
     ...(event.surface
       ? [
           {
-            label: "Application",
+            label: "Feature",
             value: SURFACE_LABELS[event.surface] ?? auditLabel(event.surface),
           },
         ]

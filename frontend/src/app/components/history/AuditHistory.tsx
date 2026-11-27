@@ -21,6 +21,11 @@ import {
   X,
 } from "lucide-react";
 import { getAuditHistory, type AuditActor, type AuditEvent } from "@/app/lib/mikeApi";
+import {
+  PERSONAL_WORKSPACE,
+  PERSONAL_WORKSPACE_LABEL,
+  useWorkspace,
+} from "@/app/contexts/WorkspaceContext";
 import { HistoryActorFilter } from "./HistoryActorFilter";
 import { runUserExport } from "@/app/lib/asyncExport";
 import { appendUniqueRows } from "@/app/lib/paginatedRows";
@@ -80,6 +85,7 @@ import {
   auditTimestamp,
   auditDestination,
   auditPrivateAccess,
+  auditWorkspace,
 } from "./auditPresentation";
 import { HistorySkeuoIcon } from "@/app/components/shared/HistorySkeuoIcon";
 import {
@@ -222,6 +228,12 @@ function AuditHistoryOwned({
   const [action, setAction] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [surface, setSurface] = useState<string | null>(null);
+  // Personal activity covers every workspace the person has worked in; this
+  // narrows it to Personal or one organization. An organization's audit log
+  // is already a single workspace.
+  const [workspace, setWorkspace] = useState<string | null>(null);
+  const workspaceFilter = orgId ? undefined : (workspace ?? undefined);
+  const { organizations } = useWorkspace();
   const [sort, setSort] = useState<{
     key: AuditSortKey;
     direction: TableSortDirection;
@@ -261,6 +273,7 @@ function AuditHistoryOwned({
         const out = await getAuditHistory(
           {
             ...(orgId ? { orgId } : {}),
+            workspace: workspaceFilter,
             actorUserId: actor?.user_id,
             q: debouncedSearch || undefined,
             action: action || undefined,
@@ -299,7 +312,7 @@ function AuditHistoryOwned({
         }
       }
     },
-    [capture, orgId, actor?.user_id, action, debouncedSearch, from, sort, status, surface, to],
+    [capture, orgId, workspaceFilter, actor?.user_id, action, debouncedSearch, from, sort, status, surface, to],
   );
 
   useEffect(() => {
@@ -326,6 +339,7 @@ function AuditHistoryOwned({
         ...(eventIds
           ? { event_ids: eventIds }
           : {
+              workspace: workspaceFilter,
               actor_user_id: actor?.user_id,
               q: search.trim() || undefined,
               action: action || undefined,
@@ -375,6 +389,23 @@ function AuditHistoryOwned({
   );
 
   const initialLoading = loading && events.length === 0;
+  // Like the sidebar's switcher, the column appears only for someone with
+  // more than one workspace: a current organization, or rows from one they
+  // have since left.
+  const showWorkspace =
+    !orgId &&
+    (Boolean(organizations?.length) ||
+      workspace !== null ||
+      events.some((event) => event.org_id));
+  // Organization names are not shortened: two long names can share a prefix.
+  const workspaceOptions = [
+    { value: PERSONAL_WORKSPACE, label: PERSONAL_WORKSPACE_LABEL },
+    ...(organizations ?? []).map((org) => ({
+      value: org.id,
+      label: org.name,
+      className: "whitespace-normal! [overflow-wrap:anywhere]",
+    })),
+  ];
   const selectedEvents = events.filter((event) => selectedIds.has(event.id));
   const allSelected =
     events.length > 0 && selectedEvents.length === events.length;
@@ -480,7 +511,8 @@ function AuditHistoryOwned({
         shrink
         breadcrumbs={[
           {
-            label: orgId ? "Organization" : "Settings",
+            // An organization's audit log is its owners' and admins' alone.
+            label: orgId ? "Organization Settings" : "Settings",
             onClick: onBack,
           },
           { label: title },
@@ -573,6 +605,22 @@ function AuditHistoryOwned({
                 )}
               </TableHeaderCell>
             )}
+            {showWorkspace && (
+              <TableHeaderCell className="w-48 pr-4">
+                <span className="mr-1">Workspace</span>
+                {!initialLoading && (
+                  <TableFilters
+                    label="Filter by workspace"
+                    value={workspace}
+                    allLabel="All workspaces"
+                    options={workspaceOptions}
+                    onChange={setWorkspace}
+                    widthClassName="w-64"
+                    contentClassName="max-h-[min(20rem,var(--radix-dropdown-menu-content-available-height))] overflow-y-auto"
+                  />
+                )}
+              </TableHeaderCell>
+            )}
             <TableHeaderCell className="w-48 pr-4">
               <span className="mr-1">Action</span>
               {!initialLoading && (
@@ -598,12 +646,12 @@ function AuditHistoryOwned({
               )}
             </TableHeaderCell>
             <TableHeaderCell className="w-32 pr-4">
-              <span className="mr-1">Application</span>
+              <span className="mr-1">Feature</span>
               {!initialLoading && (
                 <TableFilters
-                  label="Filter by application"
+                  label="Filter by feature"
                   value={surface}
-                  allLabel="All applications"
+                  allLabel="All features"
                   options={SURFACE_OPTIONS}
                   onChange={setSurface}
                 />
@@ -628,7 +676,10 @@ function AuditHistoryOwned({
         }
       >
         {initialLoading ? (
-          <HistoryLoadingRows organization={Boolean(orgId)} />
+          <HistoryLoadingRows
+            organization={Boolean(orgId)}
+            workspace={showWorkspace}
+          />
         ) : error && events.length === 0 ? (
           <TableBody className="flex">
             <TableEmptyState>
@@ -735,6 +786,14 @@ function AuditHistoryOwned({
                         )}
                         <span className="truncate">{actor}</span>
                       </span>
+                    </TableCell>
+                  )}
+                  {showWorkspace && (
+                    <TableCell
+                      className="w-48 pr-4 text-xs text-gray-700"
+                      title={auditWorkspace(event)}
+                    >
+                      {auditWorkspace(event)}
                     </TableCell>
                   )}
                   <TableCell
@@ -1050,7 +1109,13 @@ function DateRangeDropdown({
   );
 }
 
-function HistoryLoadingRows({ organization }: { organization: boolean }) {
+function HistoryLoadingRows({
+  organization,
+  workspace,
+}: {
+  organization: boolean;
+  workspace: boolean;
+}) {
   return (
     <TableBody>
       {[1, 2, 3, 4, 5].map((row) => (
@@ -1068,6 +1133,11 @@ function HistoryLoadingRows({ organization }: { organization: boolean }) {
                 <span className="h-4 w-4 shrink-0 animate-pulse rounded-full bg-gray-100" />
                 <SkeletonLine className="w-28" />
               </span>
+            </TableCell>
+          )}
+          {workspace && (
+            <TableCell className="w-48 pr-4">
+              <SkeletonLine className="w-24" />
             </TableCell>
           )}
           <TableCell className="w-48 pr-4">

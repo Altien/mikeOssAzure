@@ -788,7 +788,7 @@ export function OrganizationDepartedMembers({
         onClose={() => {
           if (!working) setReassigning(null);
         }}
-        breadcrumbs={["Organization", "Departed members", "Reassign"]}
+        breadcrumbs={["Organization Settings", "Departed members", "Reassign"]}
         size="sm"
         cancelAction={{
           label: "Cancel",

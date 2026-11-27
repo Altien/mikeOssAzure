@@ -36,7 +36,7 @@ describe("searchSettings", () => {
         expect(kinds(searchSettings("ark"))["appearance-dark-mode"]).toBeUndefined();
     });
 
-    it("finds Bring Your Own Keys from the words people use for it", () => {
+    it("finds API Keys from the words people use for it", () => {
         for (const query of ["api key", "anthropic", "openai key", "where do I add my claude key", "BYOK"]) {
             expect(ids(searchSettings(query)), query).toContain("byok");
         }

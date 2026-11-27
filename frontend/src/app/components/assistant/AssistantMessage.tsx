@@ -1167,22 +1167,6 @@ function AssistantMessageImpl({
                                         filenameByDocId={filenameByDocId}
                                         cards={cards}
                                         resolvedCount={resolvedCount}
-                                        onViewClick={
-                                            onOpenDocument
-                                                ? (annotation, filename) =>
-                                                      onOpenDocument({
-                                                          documentId:
-                                                              annotation.document_id,
-                                                          filename,
-                                                          versionId:
-                                                              annotation.version_id ??
-                                                              null,
-                                                          versionNumber:
-                                                              annotation.version_number ??
-                                                              null,
-                                                      })
-                                                : undefined
-                                        }
                                         onResolveStart={onEditResolveStart}
                                         onResolved={handleEditResolved}
                                         onError={onEditError}

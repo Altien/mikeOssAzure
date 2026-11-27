@@ -10,6 +10,11 @@ import { renderWithProviders } from "@/test/render";
 import { UserProfileProvider } from "@/app/contexts/UserProfileContext";
 import ApiKeysPage from "./page";
 
+// The page sends an organization's owners and admins to its own settings.
+vi.mock("next/navigation", () => ({
+    useRouter: () => ({ replace: vi.fn() }),
+}));
+
 function profileWith(apiKeyStatus: Record<string, unknown>) {
     return {
         displayName: null, organisation: null, messageCreditsUsed: 0,

@@ -16,16 +16,15 @@ import {
     ChevronDown,
     PackageOpen,
     Loader2,
-    Check,
 } from "lucide-react";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import {
     PERSONAL_WORKSPACE,
-    PERSONAL_WORKSPACE_LABEL,
     useWorkspace,
 } from "@/app/contexts/WorkspaceContext";
+import { workspaceName } from "@mike/client";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { SidebarChatItem } from "@/app/components/shared/SidebarChatItem";
@@ -33,11 +32,8 @@ import {
     Dropdown,
     DropdownContent,
     DropdownItem,
-    DropdownLabel,
-    DropdownRadioGroup,
-    DropdownRadioItem,
-    DropdownSeparator,
     DropdownTrigger,
+    WorkspaceMenuUI,
 } from "@mike/ui";
 import { SidebarHeading } from "@/app/components/shared/SidebarHeading";
 import { SidebarLogo } from "@/app/components/shared/SidebarLogo";
@@ -60,6 +56,7 @@ import { notifyError } from "@/app/lib/userFacingError";
 import { useAssignLatest } from "@/app/hooks/useLatestRef";
 import type { Project } from "@/app/components/shared/types";
 import { cn } from "@/app/lib/utils";
+import { organizationAreaName } from "@/app/lib/organizationAreaName";
 import { useAssistantHistoryStatuses } from "@/app/hooks/useAssistantHistoryStatuses";
 import { useSidebarHistory } from "@/app/hooks/useSidebarHistory";
 import { useTabularHistoryStatuses } from "@/app/hooks/useTabularHistoryStatuses";
@@ -226,10 +223,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
     } | null>(null);
     const switchWorkspace = (next: string) => {
         if (next === workspaceId) return;
-        const name =
-            next === PERSONAL_WORKSPACE
-                ? PERSONAL_WORKSPACE_LABEL
-                : (organizations?.find((org) => org.id === next)?.name ?? "");
+        const name = workspaceName(next, organizations);
         if (pathname === WORKSPACE_HOME) {
             pendingWorkspaceRef.current = null;
             setWorkspace(next);
@@ -252,19 +246,6 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
     // switch never paints the previous workspace's matters from cache.
     const projectsCacheKey = userId ? `${userId}:${workspaceId ?? ""}` : null;
     const projectsRequestRef = useRef(0);
-    // The switcher only exists for somebody who has more than one place to
-    // be. With no organizations there is nothing to choose between, and the
-    // menu stays exactly as it was.
-    const workspaceOptions =
-        workspaceId && organizations && organizations.length > 0
-            ? [
-                  { id: PERSONAL_WORKSPACE, name: PERSONAL_WORKSPACE_LABEL },
-                  ...organizations.map((org) => ({
-                      id: org.id,
-                      name: org.name,
-                  })),
-              ]
-            : null;
     // The sidebar is headed by whose work it is showing: the organization's
     // name in its workspace, and plain "Mike" for personal work. `null` while
     // a remembered organization's name is still loading — saying "Mike" for
@@ -925,8 +906,9 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                     "flex h-9 w-full shrink-0 items-center px-[7px] outline-none [transition:border-radius_300ms_cubic-bezier(0.4,0,0.2,1),background-color_150ms,color_150ms] focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2",
                                     isOpen ? "rounded-xl" : "rounded-[18px]",
                                     !isOpen ? "hidden md:flex" : "",
-                                    pathname.startsWith("/settings") ||
-                                        isDropdownOpen
+                                    // Selected only while its menu is open,
+                                    // not for as long as Settings is.
+                                    isDropdownOpen
                                         ? LIQUID_GLASS_SELECTED_CLASS
                                         : LIQUID_GLASS_HOVER_CLASS,
                                 )}
@@ -959,45 +941,12 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                       : "w-56",
                               )}
                           >
-                              {workspaceOptions ? (
-                                  <>
-                                      {/* Same inset as the items below,
-                                          so the heading sits over their
-                                          text; normal case, and the size
-                                          and weight of the sidebar's own
-                                          section headings. */}
-                                      <DropdownLabel className="px-2 text-xs font-semibold normal-case tracking-normal">
-                                          Workspace
-                                      </DropdownLabel>
-                                      <DropdownRadioGroup
-                                          aria-label="Workspace"
-                                          value={
-                                              workspaceId ?? PERSONAL_WORKSPACE
-                                          }
-                                          onValueChange={switchWorkspace}
-                                          className="max-h-44 overflow-y-auto"
-                                      >
-                                          {workspaceOptions.map((option) => (
-                                              <DropdownRadioItem
-                                                  key={option.id}
-                                                  value={option.id}
-                                                  className="min-h-8 gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-gray-700"
-                                              >
-                                                  <span className="min-w-0 flex-1 whitespace-normal break-words">
-                                                      {option.name}
-                                                  </span>
-                                                  {option.id === workspaceId ? (
-                                                      <Check
-                                                          aria-hidden="true"
-                                                          className="h-3.5 w-3.5 shrink-0 text-gray-500"
-                                                      />
-                                                  ) : null}
-                                              </DropdownRadioItem>
-                                          ))}
-                                      </DropdownRadioGroup>
-                                      <DropdownSeparator className="my-1" />
-                                  </>
-                              ) : null}
+                              <WorkspaceMenuUI
+                                  workspaceId={workspaceId}
+                                  organizations={organizations}
+                                  onSelect={switchWorkspace}
+                                  trailingSeparator
+                              />
                               <DropdownItem
                                   onSelect={() => router.push("/settings")}
                                   className="h-8 gap-2 rounded-md px-2 py-2 text-sm font-medium text-gray-700 hover:text-gray-700 focus:text-gray-700 data-[selected=true]:text-gray-900 data-[selected=true]:hover:text-gray-900 data-[selected=true]:focus:text-gray-900"
@@ -1019,7 +968,9 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                       className="h-8 gap-2 rounded-md px-2 py-2 text-sm font-medium text-gray-700 hover:text-gray-700 focus:text-gray-700 data-[selected=true]:text-gray-900 data-[selected=true]:hover:text-gray-900 data-[selected=true]:focus:text-gray-900"
                                   >
                                       <OrganizationSkeuoIcon className="h-4 w-4 text-black" />
-                                      Organization
+                                      {organizationAreaName(
+                                          activeOrganization.role,
+                                      )}
                                   </DropdownItem>
                               ) : null}
                               <DropdownItem
